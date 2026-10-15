@@ -25,6 +25,7 @@ class _ComposeHost extends StatefulWidget {
 
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
+
   /// Dispatches text edits through the page-wide ordered text queue.
   final Future<Object?> Function(String actionId, String text) onTextInput;
   final ComposeDslWebViewHostContext webViewHostContext;
@@ -37,6 +38,7 @@ class _ComposeHost extends StatefulWidget {
 
 class _ComposeHostState extends State<_ComposeHost> {
   bool _hasDispatchedInitialOnLoad = false;
+  bool _initialOnLoadScheduled = false;
 
   /// Synchronizes widget state with the latest DSL node.
   @override
@@ -54,8 +56,7 @@ class _ComposeHostState extends State<_ComposeHost> {
     final title = widget.dialogTitle;
     final tree = widget.renderResult?.tree;
     final rootIsDialog = tree?.type == 'Dialog' || tree?.type == 'AlertDialog';
-    if (title == null ||
-        (!widget.loading && widget.error == null && rootIsDialog)) {
+    if (title == null || (!widget.loading && rootIsDialog)) {
       return content;
     }
     return AlertDialog(
@@ -82,37 +83,49 @@ class _ComposeHostState extends State<_ComposeHost> {
     if (widget.loading) {
       return const SizedBox.shrink();
     }
-    if (widget.error != null) {
-      return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              widget.error!,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+    final error = widget.error;
+    final errorView = error == null
+        ? null
+        : Material(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                error,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+              ),
             ),
-          ),
-        ),
-      );
-    }
+          );
     if (tree == null) {
-      return const _NoUiView();
+      return errorView == null ? const _NoUiView() : Center(child: errorView);
     }
-    return _ComposeDslRenderer(
-      node: tree,
-      onAction: widget.onAction,
-      onTextInput: widget.onTextInput,
-      webViewHostContext: widget.webViewHostContext,
-      splitMarkdownContent: widget.splitMarkdownContent,
-      embedDialog: widget.dialogTitle != null,
+    // Keep the mounted renderer in a stable slot while reporting action failures.
+    // Removing it would fire disposal callbacks, whose commits can mount it again.
+    return Stack(
+      children: [
+        _ComposeDslRenderer(
+          node: tree,
+          onLoadHandledByHost: true,
+          onAction: widget.onAction,
+          onTextInput: widget.onTextInput,
+          webViewHostContext: widget.webViewHostContext,
+          splitMarkdownContent: widget.splitMarkdownContent,
+          embedDialog: widget.dialogTitle != null,
+        ),
+        if (errorView != null)
+          Positioned(top: 0, left: 0, right: 0, child: errorView),
+      ],
     );
   }
 
-  /// Resolves dispatch root on load for the Compose DSL renderer.
+  /// Runs initial loading once and measures its first subsequent content frame.
   void _dispatchRootOnLoad() {
-    if (_hasDispatchedInitialOnLoad || widget.loading || widget.error != null) {
+    if (_hasDispatchedInitialOnLoad ||
+        _initialOnLoadScheduled ||
+        widget.loading ||
+        widget.error != null) {
       return;
     }
     final rootNode = widget.renderResult?.tree;
@@ -123,8 +136,13 @@ class _ComposeHostState extends State<_ComposeHost> {
     if (rootOnLoadActionId == null) {
       return;
     }
+    _initialOnLoadScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || _hasDispatchedInitialOnLoad) {
+      _initialOnLoadScheduled = false;
+      if (!mounted ||
+          _hasDispatchedInitialOnLoad ||
+          widget.loading ||
+          widget.error != null) {
         return;
       }
       final currentRootNode = widget.renderResult?.tree;
@@ -134,11 +152,58 @@ class _ComposeHostState extends State<_ComposeHost> {
       final currentRootOnLoadActionId = _actionId(
         currentRootNode.props['onLoad'],
       );
-      if (currentRootOnLoadActionId != rootOnLoadActionId) {
+      if (currentRootOnLoadActionId == null) {
         return;
       }
       _hasDispatchedInitialOnLoad = true;
-      await widget.onAction(rootOnLoadActionId, null);
+      final watch = const bool.fromEnvironment('OPERIT_PROFILE_PLUGIN_UI')
+          ? (Stopwatch()..start())
+          : null;
+      final owner = widget.webViewHostContext;
+      await widget.onAction(currentRootOnLoadActionId, null);
+      if (!mounted || widget.error != null) return;
+      WidgetsBinding.instance.ensureVisualUpdate();
+      if (watch == null) return;
+      final actionMicros = watch.elapsedMicroseconds;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            widget.error != null ||
+            widget.webViewHostContext.executionContextKey !=
+                owner.executionContextKey) {
+          return;
+        }
+        watch.stop();
+        ClientLogger.i(
+          'event=compose_onload_frame package=${owner.packageName} '
+          'context=${owner.executionContextKey} elapsedMs=${watch.elapsedMilliseconds} '
+          'actionMs=${(actionMicros / 1000).toStringAsFixed(3)} '
+          'frameWaitMs=${((watch.elapsedMicroseconds - actionMicros) / 1000).toStringAsFixed(3)}',
+          tag: 'ToolPkgUiLauncher',
+        );
+      });
     });
   }
+}
+
+/// Exposes error presentation with the production host lifecycle for widget regression tests.
+@visibleForTesting
+Widget buildComposeDslHostForTest({
+  required Map<String, Object?> node,
+  required ComposeDslWebViewHostContext hostContext,
+  String? error,
+}) {
+  final tree = _ComposeDslNode.parse(node);
+  if (tree == null) {
+    throw const FormatException('A Compose host requires a valid node');
+  }
+  return _ComposeHost(
+    loading: false,
+    error: error,
+    renderResult: _ComposeDslRenderResult(tree: tree, actionResult: null),
+    showLoadingIndicator: false,
+    onAction: hostContext.dispatchAction,
+    onTextInput: (id, text) => hostContext.dispatchAction(id, text),
+    webViewHostContext: hostContext,
+    splitMarkdownContent: (_) async => [],
+  );
 }

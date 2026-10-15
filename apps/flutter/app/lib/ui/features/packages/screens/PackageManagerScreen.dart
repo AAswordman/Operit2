@@ -10,9 +10,11 @@ import '../../../common/components/PageActivityMixin.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/AnimatedLazyIndexedStack.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../common/contributions/ChatSidebarTabHost.dart';
 import '../../../main/navigation/AppNavigationModels.dart';
 import '../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 import '../../../main/screens/OperitScreens.dart';
@@ -65,6 +67,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
   Timer? _searchDebounce;
   StreamSubscription<void>? _catalogSubscription;
   int _snapshotGeneration = 0;
+  Future<void>? _snapshotLoad;
+  bool _snapshotPending = false;
   Map<String, String> _scopes = {};
   StreamSubscription<int>? _scopeSubscription;
 
@@ -88,21 +92,24 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
     _skillReloadRevision += 1;
     _mcpReloadRevision += 1;
     _catalogSubscription = ToolPkgCatalogChangeBus.listen(() {
-      unawaited(_loadSnapshot(rescan: false));
+      unawaited(_loadSnapshot());
     });
+    // Activation already reads the catalog; observe only subsequent revisions.
     _scopeSubscription = widget.clients.application
         .extensionCatalogRevisionFlow()
+        .skip(1)
         .listen((_) {
           if (!mounted || !isPageActive) return;
           setState(() {
             _skillReloadRevision += 1;
             _mcpReloadRevision += 1;
           });
-          unawaited(_loadSnapshot(rescan: false));
+          unawaited(_loadSnapshot());
         });
-    _loadSnapshot();
+    unawaited(_loadSnapshot());
   }
 
+  /// Updates the selected tab when navigation targets a different package section.
   @override
   void didUpdateWidget(covariant PackageManagerScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -122,19 +129,43 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
     super.dispose();
   }
 
-  /// Loads the current package manager state into the screen.
-  Future<void> _loadSnapshot({bool rescan = true}) async {
+  /// Coalesces same-turn requests and waits for the latest catalog read.
+  Future<void> _loadSnapshot() {
     if (!mounted || !isPageActive) {
-      return;
+      return Future<void>.value();
     }
-    final generation = ++_snapshotGeneration;
-    setState(() {
-      _loading = true;
-    });
+    _snapshotPending = true;
+    return _snapshotLoad ??= Future<void>(_drainSnapshotLoads);
+  }
+
+  /// Serializes reads and repeats only when the catalog changes during a read.
+  Future<void> _drainSnapshotLoads() async {
+    if (mounted && isPageActive) {
+      setState(() => _loading = true);
+    }
     try {
-      if (rescan) {
-        await _packageManager.loadAvailablePackages();
+      while (mounted && isPageActive && _snapshotPending) {
+        _snapshotPending = false;
+        await _readSnapshot(_snapshotGeneration);
       }
+    } finally {
+      _snapshotLoad = null;
+      if (mounted && isPageActive) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  /// Rejects obsolete reads after a catalog change or page activity transition.
+  bool _canApplySnapshot(int generation) =>
+      mounted &&
+      isPageActive &&
+      generation == _snapshotGeneration &&
+      !_snapshotPending;
+
+  /// Reads presentation data without changing the runtime package registry.
+  Future<void> _readSnapshot(int generation) async {
+    try {
       final results = await Future.wait<Object>(<Future<Object>>[
         _packageManager.getExecutableAvailablePackages(),
         _packageManager.getEnabledPackageNames(),
@@ -142,8 +173,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         _packageManager.getToolPkgContainerOrder(),
         _packageManager.getBundledExternalPackageCandidates(),
         _packageManager.getBundledExternalToolPkgContainerRuntimes(),
+        widget.clients.application.getExtensionScopes(kind: 'package'),
       ]);
-      if (!mounted || !isPageActive || generation != _snapshotGeneration) {
+      if (!_canApplySnapshot(generation)) {
         return;
       }
       final availablePackages =
@@ -156,21 +188,17 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
           results[4] as List<core_proxy.BundledExternalPackageCandidate>;
       final bundledExternalToolPkgContainers =
           results[5] as List<core_proxy.ToolPkgContainerRuntime>;
+      // Candidate queries populate diagnostics, so read issues after they finish.
       final pluginLoadIssues = await _packageManager.getToolPkgLoadIssues();
-      if (!mounted || !isPageActive || generation != _snapshotGeneration) {
+      if (!_canApplySnapshot(generation)) {
         return;
       }
-      final scopes = await widget.clients.application.getExtensionScopes(
-        kind: 'package',
-      );
+      final scopes = results[6] as Map<String, String>;
       final bundledExternalPluginCandidates = _mergeBundledExternalCandidates(
         bundledExternalCandidates,
         bundledExternalToolPkgContainers,
       );
       final enabledPackageNameSet = enabledPackages.toSet();
-      if (!mounted || generation != _snapshotGeneration) {
-        return;
-      }
       setState(() {
         _scopes = scopes;
         _snapshot = PackageManagerSnapshot(
@@ -187,13 +215,12 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
           bundledExternalCandidates: bundledExternalPluginCandidates,
           pluginLoadIssues: pluginLoadIssues,
         );
-        _loading = false;
       });
     } catch (error, stackTrace) {
       debugPrint(
         'Failed to load package manager snapshot: $error\n$stackTrace',
       );
-      if (!mounted || generation != _snapshotGeneration) {
+      if (!_canApplySnapshot(generation)) {
         return;
       }
       final loadIssue = core_proxy.ToolPkgLoadIssue(
@@ -211,7 +238,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
             loadIssue,
           ],
         );
-        _loading = false;
       });
     }
   }
@@ -237,6 +263,19 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         await _packageManager.disableToolPkgContainer(
           containerPackageName: plugin.packageName,
         );
+        final preferences = UserPreferencesManager(clients: widget.clients);
+        final selectedTab = await preferences.loadChatSidebarTab();
+        final ownsSelectedTab = plugin.navigationEntries.any(
+          (entry) =>
+              entry.surface == 'chat_sidebar_tabs' &&
+              chatSidebarTabIdentity(plugin.packageName, entry.id) ==
+                  selectedTab,
+        );
+        if (ownsSelectedTab) {
+          await preferences.saveChatSidebarTab(
+            UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB,
+          );
+        }
       }
       ToolPkgCatalogChangeBus.notifyCatalogChanged();
       await _loadSnapshot();
@@ -1105,7 +1144,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         XTypeGroup(label: 'ToolPkg', extensions: <String>['toolpkg']),
       ],
     );
-    if (file == null) {
+    if (!mounted || file == null) {
       return;
     }
     final scope = await chooseExtensionScope(context);
@@ -1131,7 +1170,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         ),
       ],
     );
-    if (file == null) {
+    if (!mounted || file == null) {
       return;
     }
     final scope = await chooseExtensionScope(context);

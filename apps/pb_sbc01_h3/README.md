@@ -16,8 +16,7 @@ operit-pb-sbc01-h3-face   local console renderer for the robot face state file
 ## Run
 
 ```bash
-cargo run --manifest-path apps/pb_sbc01_h3/Cargo.toml --bin operit-pb-sbc01-h3 -- \
-  --token "replace-with-a-strong-token"
+cargo run --manifest-path apps/pb_sbc01_h3/Cargo.toml --bin operit-pb-sbc01-h3
 ```
 
 The PB_SBC01_H3 controller writes robot face state to:

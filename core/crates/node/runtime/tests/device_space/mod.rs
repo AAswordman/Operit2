@@ -91,9 +91,19 @@ mod reconcile_protocol {
         "/tests/device_space/reconcile_protocol.rs"
     ));
 }
+mod sync_idle_gate {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/sync_idle_gate.rs"
+    ));
+}
 mod convergence_properties {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/device_space/convergence_properties.rs"
     ));
+}
+
+mod departure {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/device_space/departure.rs"));
 }

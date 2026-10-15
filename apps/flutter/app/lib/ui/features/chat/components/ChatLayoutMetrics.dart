@@ -1,4 +1,6 @@
 // ignore_for_file: file_names
 
-const double chatContentMaxWidth = 700;
-const double chatWideContentMaxWidth = 1040;
+import 'package:operit_ui/operit_ui.dart';
+
+const double chatContentMaxWidth = themeChatContentMaxWidth;
+const double chatWideContentMaxWidth = themeChatWideContentMaxWidth;

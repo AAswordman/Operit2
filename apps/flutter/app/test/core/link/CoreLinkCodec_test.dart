@@ -1,6 +1,8 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +12,423 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 
 /// Verifies Dart preserves MessagePack bin values as Uint8List.
 void main() {
+  test(
+    'shared reference validation and Flow reconstruction preserve ownership',
+    () {
+      final buffer = CoreLinkSharedBuffer(
+        Uint8List.fromList([2, 4, 6, 8]).asUnmodifiableView(),
+        Object(),
+        Object(),
+      );
+      final value = sliceCoreLinkBytes(buffer.bytes, 1, 3);
+      final shared = encodeCoreLinkMessage(
+        value,
+      ).share((bytes) => coreLinkSharedSpan(bytes)!);
+      expect(shared.bytes.length, 27);
+      expect(() => decodeCoreLink(shared.bytes), throwsFormatException);
+      attachCoreLinkBuffers(shared.bytes, [buffer]);
+      final decoded = decodeCoreLink<Uint8List>(shared.bytes);
+      expect(decoded, [4, 6]);
+      expect(identical(coreLinkSharedSpan(decoded)!.buffer, buffer), isTrue);
+      for (final entry in [(2, 0x41), (10, 1), (18, 9), (26, 9)]) {
+        final invalid = Uint8List.fromList(shared.bytes)..[entry.$1] = entry.$2;
+        attachCoreLinkBuffers(invalid, [buffer]);
+        expect(() => decodeCoreLink(invalid), throwsFormatException);
+      }
+      final decoder = CoreLinkEventValueDecoder();
+      final snapshot = encodeCoreLinkMessage({
+        'data': value,
+        'count': 0,
+      }).share((bytes) => coreLinkSharedSpan(bytes)!);
+      attachCoreLinkBuffers(snapshot.bytes, [buffer]);
+      decoder.completeValueBytes(
+        CoreEvent.raw(
+          requestId: 'shared',
+          target: 'core/test7',
+          propertyName: 'flow',
+          kind: 'Snapshot',
+          valueBytes: snapshot.bytes,
+          decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
+        ),
+      );
+      final rebuilt = decoder.completeValueBytes(
+        _rawCoreEvent(
+          kind: 'Delta',
+          value: {
+            r'$coreDelta': [
+              {
+                'op': 'set',
+                'path': ['count'],
+                'value': 1,
+              },
+            ],
+          },
+        ),
+      );
+      final result = decodeCoreLink<Map>(rebuilt);
+      expect(result['count'], 1);
+      expect(
+        identical(
+          coreLinkSharedSpan(result['data'] as Uint8List)!.buffer,
+          buffer,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'message spans fill only the exact destination and preserve nested bytes',
+    () {
+      for (final length in [0, 1, 255, 256, 65535, 65536, 1048576]) {
+        final binary = Uint8List.fromList(
+          List.generate(length, (i) => i & 255),
+        );
+        final args = [
+          binary,
+          {'next': binary, 'text': 'after 中文'},
+          1.5,
+          false,
+        ];
+        final message = encodeNativeCorePushItem('push', 7, args);
+        final expected = encodeCoreLink(['push', 7, args]);
+        final guarded = Uint8List(message.length + 2)
+          ..fillRange(0, message.length + 2, 0x7b);
+        message.writeTo(Uint8List.sublistView(guarded, 1, guarded.length - 1));
+        expect(guarded.first, 0x7b);
+        expect(guarded.last, 0x7b);
+        expect(Uint8List.sublistView(guarded, 1, guarded.length - 1), expected);
+        expect(decodeCoreLink(message.toBytes()), ['push', 7, args]);
+        expect(
+          () => message.writeTo(Uint8List(message.length - 1)),
+          throwsArgumentError,
+        );
+      }
+    },
+  );
+
+  test(
+    'string wire bytes match the standard UTF-8 encoder at every prefix boundary',
+    () {
+      for (final length in [0, 1, 31, 32, 255, 256, 65535, 65536]) {
+        _expectUtf8Wire('a' * length);
+      }
+      for (final value in [
+        '\u0000\u007f\u0080\u07ff\u0800\ud7ff\ue000\uffff',
+        '中文 café 😀 𐐷',
+        '\ufeffBOM',
+        String.fromCharCodes([0xd800, 0xd800, 0xdc00, 0xdc00, 0xdbff]),
+        '汉' * 85,
+        '汉' * 86,
+        '汉' * 21845,
+        '汉' * 21846,
+      ]) {
+        _expectUtf8Wire(value);
+      }
+    },
+  );
+
+  test(
+    'UTF-8 encoding preserves all UTF-16 code units and randomized surrogate sequences',
+    () {
+      _expectUtf8Wire(String.fromCharCodes(List.generate(65536, (i) => i)));
+      final random = Random(28471);
+      for (var round = 0; round < 80; round++) {
+        _expectUtf8Wire(
+          String.fromCharCodes(
+            List.generate(round * 17, (_) => random.nextInt(65536)),
+          ),
+        );
+      }
+    },
+  );
+
+  test(
+    'string range decoding stays strict and never consumes adjacent values',
+    () {
+      for (final malformed in [
+        [0xc0, 0x80],
+        [0xed, 0xa0, 0x80],
+        [0xf4, 0x90, 0x80, 0x80],
+        [0xe6, 0xb1],
+        [0x80],
+      ]) {
+        final encoded = Uint8List.fromList([
+          0x92,
+          0xa0 | malformed.length,
+          ...malformed,
+          0xa1,
+          0x78,
+        ]);
+        expect(() => decodeCoreLink<Object?>(encoded), throwsFormatException);
+      }
+      expect(decodeCoreLink<Object?>(encodeCoreLink(['\ufeff中文😀', 'next'])), [
+        '中文😀',
+        'next',
+      ]);
+    },
+  );
+
+  test(
+    'contiguous output survives growth with nested values, floats and binary data',
+    () {
+      final payload = {
+        'values': List.generate(
+          150,
+          (i) => {'text': 'text-$i-${'中😀' * 20}', 'number': i - 75},
+        ),
+        'float': -1234.5,
+        'data': Uint8List.fromList(List.generate(65536, (i) => i & 255)),
+        'tail': [null, true, false, 'done'],
+      };
+      final encoded = encodeCoreLink(payload);
+      expect(decodeCoreLink<Object?>(encoded), payload);
+      final retained = Uint8List.fromList(encoded);
+      encodeCoreLink({'other': 'x' * 200000});
+      expect(encoded, retained);
+    },
+  );
+
+  test(
+    'full flow events retain their original bytes and isolate delta state',
+    () {
+      final decoder = CoreLinkEventValueDecoder();
+      for (final kind in ['Snapshot', 'Changed']) {
+        final event = _rawCoreEvent(kind: kind, value: {'count': 1});
+        final bytes = decoder.completeValueBytes(event);
+        expect(identical(bytes, event.valueBytes), isTrue);
+        final returned = decodeCoreLink<Map<Object?, Object?>>(bytes);
+        returned['count'] = 99;
+        final delta = decoder.completeValueBytes(
+          _rawCoreEvent(
+            kind: 'Delta',
+            value: {
+              r'$coreDelta': [
+                {
+                  'op': 'set',
+                  'path': ['other'],
+                  'value': 2,
+                },
+              ],
+            },
+          ),
+        );
+        expect(decodeCoreLink<Object?>(delta), {'count': 1, 'other': 2});
+      }
+    },
+  );
+
+  test('full stream events reach typed decoding with the original bytes', () {
+    final decoder = CoreLinkStreamEventValueDecoder();
+    for (final kind in ['Snapshot', 'Changed']) {
+      final bytes = encodeCoreLink({'text': 'full value'});
+      final event = CoreEvent.raw(
+        requestId: 'stream-1',
+        target: 'core/test7',
+        propertyName: 'updates',
+        kind: kind,
+        valueBytes: bytes,
+        decodeValue: (_) => throw StateError('generic decoding must stay lazy'),
+      );
+      var typedCalls = 0;
+      final result = decoder.decode(
+        event,
+        decode: (received) {
+          expect(identical(received, bytes), isTrue);
+          typedCalls++;
+          return decodeCoreLink<String>(
+            received,
+            decode: (reader) {
+              expect(reader.readMapLength(), 1);
+              expect(reader.readString(), 'text');
+              return reader.readString();
+            },
+          );
+        },
+      );
+      expect(result, 'full value');
+      expect(typedCalls, 1);
+    }
+  });
+
+  test('full stream lists replace earlier values without retaining a base', () {
+    final decoder = CoreLinkStreamEventValueDecoder();
+    List<List<int>> read(Uint8List bytes) => decodeCoreLink<List<List<int>>>(
+      bytes,
+      decode: (reader) => List.generate(
+        reader.readArrayLength(),
+        (_) => List.generate(reader.readArrayLength(), (_) => reader.readInt()),
+      ),
+    );
+    final first = decoder.decode(
+      _rawCoreEvent(
+        kind: 'Changed',
+        value: [
+          [1, 2],
+        ],
+      ),
+      decode: read,
+    );
+    first.single[0] = 99;
+    final second = decoder.decode(
+      _rawCoreEvent(
+        kind: 'Changed',
+        value: [
+          [],
+          [3],
+        ],
+      ),
+      decode: read,
+    );
+    expect(second, [
+      [],
+      [3],
+    ]);
+    second.last.add(4);
+    expect(first, [
+      [99, 2],
+    ]);
+    expect(
+      decoder.decode(
+        _rawCoreEvent(kind: 'Changed', value: []),
+        decode: read,
+      ),
+      isEmpty,
+    );
+  });
+
+  test(
+    'full stream decoding rejects delta and terminal events before decoding',
+    () {
+      final decoder = CoreLinkStreamEventValueDecoder();
+      for (final kind in ['Delta', 'Completed', 'Unknown']) {
+        expect(
+          () => decoder.decode(
+            _rawCoreEvent(kind: kind, value: {r'$coreDelta': []}),
+            decode: (_) =>
+                fail('unsupported event must never reach typed decoding'),
+          ),
+          throwsFormatException,
+        );
+      }
+      expect(
+        () => decoder.decode(
+          CoreEvent(
+            requestId: null,
+            target: 'core/test7',
+            propertyName: 'updates',
+            kind: 'Changed',
+            value: null,
+          ),
+          decode: (_) => fail('missing bytes must never reach typed decoding'),
+        ),
+        throwsStateError,
+      );
+    },
+  );
+
+  test('full stream decoding preserves typed payload validation', () {
+    final decoder = CoreLinkStreamEventValueDecoder();
+    expect(
+      () => decoder.decode(
+        _rawCoreEvent(kind: 'Changed', value: 'wrong scalar type'),
+        decode: (bytes) =>
+            decodeCoreLink<int>(bytes, decode: (reader) => reader.readInt()),
+      ),
+      throwsFormatException,
+    );
+    final bytes = Uint8List.fromList([
+      ...encodeCoreLink(1),
+      ...encodeCoreLink(2),
+    ]);
+    expect(
+      () => decoder.decode(
+        CoreEvent.raw(
+          requestId: null,
+          target: 'core/test7',
+          propertyName: 'updates',
+          kind: 'Changed',
+          valueBytes: bytes,
+          decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
+        ),
+        decode: (bytes) =>
+            decodeCoreLink<int>(bytes, decode: (reader) => reader.readInt()),
+      ),
+      throwsFormatException,
+    );
+  });
+
+  test('full stream decoding preserves embedded stream routing', () async {
+    final decoder = CoreLinkStreamEventValueDecoder();
+    final factory = _EmbeddedStreamFactoryRecorder();
+    final event = _rawCoreEvent(
+      kind: 'Changed',
+      value: [
+        {
+          'contentStream': {
+            r'$coreStream': {
+              'streamId': 'stream-ai',
+              'target': 'core/test64',
+              'propertyName': 'openCoreStream',
+              'args': {'streamId': 'stream-ai'},
+            },
+          },
+        },
+      ],
+    );
+    final result = decoder.decode(
+      event,
+      decode: (bytes) => decodeCoreLink<List<Stream<String>?>>(
+        bytes,
+        decode: _decodeStreamList,
+        target: event.target,
+        embeddedStreamFactory: factory.open,
+      ),
+    );
+    expect(factory.openedStreamIds, ['stream-ai']);
+    expect(await result.single!.single, 'stream chunk');
+  });
+
+  test(
+    'message outcomes preserve native tags through JSON and MessagePack',
+    () {
+      final payloads = <Map<String, Object?>>[
+        {
+          'type': 'committed',
+          'status': 'completed',
+          'userMessageTimestamp': 123,
+          'assistant': {'messageTimestamp': 456, 'variantIndex': 2},
+        },
+        {
+          'type': 'committed',
+          'status': 'cancelled',
+          'userMessageTimestamp': null,
+          'assistant': null,
+        },
+        {'type': 'not_persisted', 'status': 'completed'},
+        {'type': 'blocked', 'message': 'Blocked by input hook'},
+        {'type': 'blocked', 'message': null},
+        {
+          'type': 'consumed',
+          'metadata': {'owner': 'character_cards'},
+        },
+      ];
+      for (final payload in payloads) {
+        final fromJson = MessageSendOutcome.fromJson(payload);
+        expect(fromJson.toJson(), payload);
+        final fromMessagePack = decodeCoreLink<MessageSendOutcome>(
+          encodeCoreLink(payload),
+          decode: MessageSendOutcome.fromMessagePack,
+        );
+        expect(fromMessagePack.toJson(), payload);
+        if (payload['type'] == 'blocked' || payload['type'] == 'consumed') {
+          expect(fromJson.status, isNull);
+          expect(fromMessagePack.status, isNull);
+        }
+      }
+    },
+  );
+
   /// Verifies arrays are growable at decode time without copying the decoded tree.
   test('raw decoding creates independently growable nested arrays', () {
     final bytes = encodeCoreLink([
@@ -180,18 +599,18 @@ void main() {
   test('route permission errors expose structured client state', () {
     const error = CoreLinkError(
       code: 'ROUTE_PERMISSION_DENIED',
-      message: 'Space route chatMessagesFlow requires capability chat.read',
+      message: 'switch_core target lacks runtime.execute',
       details: <String, Object?>{
-        'method': 'chatMessagesFlow',
-        'requiredCapability': 'chat.read',
+        'method': 'switch_core',
+        'requiredCapability': 'runtime.execute',
         'targetNodeId': 'windows-node',
       },
     );
 
     expect(error.isRoutePermissionDenied, isTrue);
-    expect(error.requiredCapability, 'chat.read');
+    expect(error.requiredCapability, 'runtime.execute');
     expect(error.targetNodeId, 'windows-node');
-    expect(error.deniedMethod, 'chatMessagesFlow');
+    expect(error.deniedMethod, 'switch_core');
   });
 
   test('native bytes use MessagePack bin', () {
@@ -243,7 +662,7 @@ void main() {
       args: <String, Object?>{'includeArchived': false},
     );
 
-    final encoded = encodeNativeCoreCallRequest(request);
+    final encoded = encodeNativeCoreCallRequest(request).toBytes();
     final decoded = decodeCoreLink(encoded) as List<Object?>;
 
     expect(encoded.first, 0x94);
@@ -302,14 +721,12 @@ void main() {
       methodName: 'interact',
     );
 
-    expect(decodeCoreLink(encodeNativeCorePushOpenRequest(request)), <Object?>[
-      'push-1',
-      'core/test41',
-      'interact',
-      <String, Object?>{},
-    ]);
     expect(
-      decodeCoreLink(encodeNativeCorePushItem('push-1', 4, true)),
+      decodeCoreLink(encodeNativeCorePushOpenRequest(request).toBytes()),
+      <Object?>['push-1', 'core/test41', 'interact', <String, Object?>{}],
+    );
+    expect(
+      decodeCoreLink(encodeNativeCorePushItem('push-1', 4, true).toBytes()),
       <Object?>['push-1', 4, true],
     );
 
@@ -320,12 +737,17 @@ void main() {
       args: null,
     );
     expect(
-      decodeCoreLink(encodeNativeCoreWatchSnapshotRequest(watchRequest)),
+      decodeCoreLink(
+        encodeNativeCoreWatchSnapshotRequest(watchRequest).toBytes(),
+      ),
       <Object?>['watch-1', 'core/test15', 'cards', null],
     );
     expect(
       decodeCoreLink(
-        encodeNativeCoreWatchStreamRequest('subscription-1', watchRequest),
+        encodeNativeCoreWatchStreamRequest(
+          'subscription-1',
+          watchRequest,
+        ).toBytes(),
       ),
       <Object?>['subscription-1', 'watch-1', 'core/test15', 'cards', null],
     );
@@ -344,7 +766,11 @@ void main() {
 
     final decoded =
         decodeCoreLink(
-              encodeNativeCorePushItem('browser-push-1', 0, command.toJson()),
+              encodeNativeCorePushItem(
+                'browser-push-1',
+                0,
+                command.toJson(),
+              ).toBytes(),
             )
             as List<Object?>;
 
@@ -877,6 +1303,25 @@ void main() {
       throwsStateError,
     );
   });
+}
+
+/// Compares complete MessagePack string bytes against the SDK UTF-8 oracle.
+void _expectUtf8Wire(String value) {
+  final bytes = utf8.encode(value);
+  final length = bytes.length;
+  final prefix = switch (length) {
+    <= 31 => [0xa0 | length],
+    <= 255 => [0xd9, length],
+    <= 65535 => [0xda, length >> 8, length & 255],
+    _ => [
+      0xdb,
+      (length >> 24) & 255,
+      (length >> 16) & 255,
+      (length >> 8) & 255,
+      length & 255,
+    ],
+  };
+  expect(encodeCoreLink(value), Uint8List.fromList([...prefix, ...bytes]));
 }
 
 /// Creates one raw Core watch event for protocol decoder tests.

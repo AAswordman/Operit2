@@ -5,63 +5,71 @@ use operit_host_api::{
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
-static ASYNC_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+const RUNTIME_WORKER_COUNT: usize = 16;
 
-/// Owns I/O drivers, timers and spawned tasks for the native process lifetime.
-/// Connections returned by one request may be reused by later requests.
-fn asyncRuntime() -> HostResult<&'static tokio::runtime::Runtime> {
-    let runtime = ASYNC_RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(2)
-            .thread_name("operit-runtime-worker")
-            .build()
-            .map_err(|error| error.to_string())
-    });
-    runtime
-        .as_ref()
-        .map_err(|error| HostError::new(format!("create runtime async executor failed: {error}")))
-}
-
-/// Only opt-in, nonblocking bridge tasks use these reusable owner threads.
-/// Their !Send futures are created and polled inside one LocalSet; sockets and
-/// tokio::spawn children still use the process-lifetime shared I/O runtime.
-struct CooperativeExecutors {
+/// Owns the single process-wide pool and its persistent affine I/O executors.
+struct RuntimeTaskPool {
     workers: Vec<tokio::sync::mpsc::UnboundedSender<HostRuntimeAsyncTask>>,
     next: AtomicUsize,
 }
 
-fn cooperativeExecutors() -> HostResult<&'static CooperativeExecutors> {
-    static WORKERS: OnceLock<Result<CooperativeExecutors, String>> = OnceLock::new();
+/// Initializes exactly sixteen workers shared by all native scheduler instances.
+fn runtimeTaskPool() -> HostResult<&'static RuntimeTaskPool> {
+    static WORKERS: OnceLock<Result<RuntimeTaskPool, String>> = OnceLock::new();
     WORKERS
         .get_or_init(|| {
-            let runtime = asyncRuntime().map_err(|e| e.to_string())?;
-            let mut workers = Vec::new();
-            for index in 0..2 {
+            let mut workers = Vec::with_capacity(RUNTIME_WORKER_COUNT);
+            for index in 0..RUNTIME_WORKER_COUNT {
                 let (sender, mut receiver) =
                     tokio::sync::mpsc::unbounded_channel::<HostRuntimeAsyncTask>();
+                let (ready, started) = std::sync::mpsc::sync_channel(1);
                 std::thread::Builder::new()
-                    .name(format!("operit-bridge-worker-{index}"))
+                    .name(format!("operit-runtime-worker-{index}"))
                     .spawn(move || {
-                        tokio::task::LocalSet::new().block_on(runtime, async move {
+                        let runtime = match tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                        {
+                            Ok(runtime) => runtime,
+                            Err(error) => {
+                                let _ = ready.send(Err(error.to_string()));
+                                return;
+                            }
+                        };
+                        let _ = ready.send(Ok(()));
+                        // The runtime outlives every request and keeps its I/O and
+                        // spawned children alive without additional runtime threads.
+                        let local = tokio::task::LocalSet::new();
+                        local.block_on(&runtime, async {
                             while let Some(task) = receiver.recv().await {
                                 // A factory panic is confined to its task, not the worker.
-                                tokio::task::spawn_local(async move {
+                                local.spawn_local(async move {
                                     task().await;
                                 });
                             }
                         });
                     })
                     .map_err(|e| e.to_string())?;
+                started.recv().map_err(|e| e.to_string())??;
                 workers.push(sender);
             }
-            Ok(CooperativeExecutors {
+            Ok(RuntimeTaskPool {
                 workers,
                 next: AtomicUsize::new(0),
             })
         })
         .as_ref()
-        .map_err(|e| HostError::new(format!("create cooperative task workers failed: {e}")))
+        .map_err(|e| HostError::new(format!("create runtime task pool failed: {e}")))
+}
+
+impl RuntimeTaskPool {
+    /// Enqueues one task on a persistent owner without creating a request thread.
+    fn schedule(&self, taskName: &str, task: HostRuntimeAsyncTask) -> HostResult<()> {
+        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.workers.len();
+        self.workers[index]
+            .send(task)
+            .map_err(|_| HostError::new(format!("runtime task worker closed: {taskName}")))
+    }
 }
 
 #[cfg(test)]
@@ -70,11 +78,21 @@ mod tests {
     use std::{rc::Rc, sync::mpsc, time::Duration};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    /// Waits for a request thread to finish before accessing shared resources.
+    /// Waits for one pooled request to finish before accessing shared resources.
     fn runRequest(task: HostRuntimeAsyncTask) {
-        std::thread::spawn(move || runAsyncRuntimeTask(task))
-            .join()
-            .expect("request thread panicked");
+        let (done, completion) = mpsc::channel();
+        NativeHostRuntimeTaskSchedulerHost
+            .scheduleHostRuntimeAsyncTask(
+                "test-request",
+                Box::new(move || {
+                    Box::pin(async move {
+                        task().await;
+                        done.send(()).unwrap();
+                    })
+                }),
+            )
+            .unwrap();
+        completion.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 
     /// Verifies socket I/O remains valid after the creating request ends.
@@ -126,7 +144,7 @@ mod tests {
         completion.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 
-    /// Verifies non-Send futures remain on the request thread.
+    /// Verifies non-Send futures remain on the same pooled owner across waits.
     #[test]
     fn requestFutureCanRemainNonSend() {
         runRequest(Box::new(|| {
@@ -141,16 +159,7 @@ mod tests {
     }
 }
 
-/// Runs one asynchronous runtime task on its dedicated named native thread.
-fn runAsyncRuntimeTask(task: HostRuntimeAsyncTask) {
-    // block_on keeps the possibly !Send request future on its named thread;
-    // the shared runtime keeps its sockets and tokio::spawn children alive.
-    asyncRuntime()
-        .expect("create runtime task executor failed")
-        .block_on(async move { task().await });
-}
-
-/// Schedules one-shot runtime tasks on named native threads.
+/// Schedules native runtime tasks on one process-wide pool of sixteen workers.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeHostRuntimeTaskSchedulerHost;
 
@@ -165,69 +174,54 @@ impl HostRuntimeTaskSchedulerHost for NativeHostRuntimeTaskSchedulerHost {
     /// Reads the process-local monotonic clock used for native elapsed-time measurements.
     fn monotonicTimeMillis(&self) -> HostResult<u64> {
         static START: OnceLock<std::time::Instant> = OnceLock::new();
-        Ok(START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64)
+        Ok(START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_millis() as u64)
     }
 
-    /// Starts the task on a named native thread.
+    /// Executes synchronous work on the same bounded pool as asynchronous requests.
     fn scheduleHostRuntimeTask(&self, taskName: &str, task: HostRuntimeTask) -> HostResult<()> {
-        std::thread::Builder::new()
-            .name(taskName.to_string())
-            .spawn(task)
-            .map(|_| ())
-            .map_err(|error| {
-                HostError::new(format!(
-                    "create runtime task thread {taskName} failed: {error}"
-                ))
-            })
+        self.scheduleHostRuntimeAsyncTask(
+            taskName,
+            Box::new(move || Box::pin(async move { task() })),
+        )
     }
 
-    /// Starts an asynchronous task on its own named native thread.
+    /// Creates and polls an asynchronous request on one of sixteen persistent owners.
     fn scheduleHostRuntimeAsyncTask(
         &self,
         taskName: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
-        // Report initialization errors to the caller, not just a detached thread.
-        asyncRuntime()?;
-        std::thread::Builder::new()
-            .name(taskName.to_string())
-            .spawn(move || runAsyncRuntimeTask(task))
-            .map(|_| ())
-            .map_err(|error| {
-                HostError::new(format!(
-                    "create runtime async task thread {taskName} failed: {error}"
-                ))
-            })
+        runtimeTaskPool()?.schedule(taskName, task)
     }
 
+    /// Uses the same pool for cooperative callers without creating another executor.
     fn scheduleHostRuntimeCooperativeAsyncTask(
         &self,
         taskName: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
-        let executors = cooperativeExecutors()?;
-        let index = executors.next.fetch_add(1, Ordering::Relaxed) % executors.workers.len();
-        executors.workers[index]
-            .send(task)
-            .map_err(|_| HostError::new(format!("cooperative task worker closed: {taskName}")))
+        self.scheduleHostRuntimeAsyncTask(taskName, task)
     }
 
-    /// Starts a named native task after the requested delay.
+    /// Waits asynchronously and executes delayed work within the same sixteen workers.
     fn scheduleDelayedHostRuntimeTask(
         &self,
         taskName: &str,
         delayMs: u64,
         task: HostRuntimeTask,
     ) -> HostResult<()> {
-        let taskName = taskName.to_string();
-        asyncRuntime()?.spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(delayMs)).await;
-            std::thread::Builder::new()
-                .name(taskName)
-                .spawn(task)
-                .expect("delayed runtime task thread must start");
-        });
-        Ok(())
+        self.scheduleHostRuntimeAsyncTask(
+            taskName,
+            Box::new(move || {
+                Box::pin(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(delayMs)).await;
+                    task();
+                })
+            }),
+        )
     }
 
     /// Waits for a later native executor turn without occupying the caller thread.
@@ -257,7 +251,9 @@ mod timer_clock_tests {
         let scheduler = NativeHostRuntimeTaskSchedulerHost::new();
         let before = scheduler.monotonicTimeMillis().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let after = NativeHostRuntimeTaskSchedulerHost::new().monotonicTimeMillis().unwrap();
+        let after = NativeHostRuntimeTaskSchedulerHost::new()
+            .monotonicTimeMillis()
+            .unwrap();
         assert!(after >= before + 1);
     }
 
@@ -265,9 +261,13 @@ mod timer_clock_tests {
     #[test]
     fn local_scheduler_uses_the_native_timer_clock() {
         let local = crate::LocalHostRuntimeTaskSchedulerHost::new().unwrap();
-        let before = NativeHostRuntimeTaskSchedulerHost.monotonicTimeMillis().unwrap();
+        let before = NativeHostRuntimeTaskSchedulerHost
+            .monotonicTimeMillis()
+            .unwrap();
         let now = local.monotonicTimeMillis().unwrap();
-        let after = NativeHostRuntimeTaskSchedulerHost.monotonicTimeMillis().unwrap();
+        let after = NativeHostRuntimeTaskSchedulerHost
+            .monotonicTimeMillis()
+            .unwrap();
         assert!(before <= now && now <= after);
     }
 }
@@ -277,6 +277,7 @@ mod cooperative_tests {
     use super::*;
     use std::{collections::HashSet, rc::Rc, sync::mpsc, time::Duration};
 
+    /// Verifies cooperative tasks share the native pool and keep non-Send values affine.
     #[test]
     fn cooperative_tasks_reuse_threads_and_keep_non_send_futures_affine() {
         let scheduler = NativeHostRuntimeTaskSchedulerHost;
@@ -302,9 +303,10 @@ mod cooperative_tests {
         let threads = (0..64)
             .map(|_| receive.recv_timeout(Duration::from_secs(5)).unwrap())
             .collect::<HashSet<_>>();
-        assert_eq!(threads.len(), 2);
+        assert!(threads.len() <= RUNTIME_WORKER_COUNT);
     }
 
+    /// Verifies suspended work leaves every owner available to another ready task.
     #[test]
     fn cooperative_waiting_task_does_not_block_other_tasks_on_the_same_worker() {
         let scheduler = NativeHostRuntimeTaskSchedulerHost;
@@ -320,8 +322,8 @@ mod cooperative_tests {
                 }),
             )
             .unwrap();
-        // Submit to both workers: one must share the waiting task's executor.
-        for _ in 0..2 {
+        // Cover the whole pool so ready tasks also reach the waiting task's owner.
+        for _ in 0..RUNTIME_WORKER_COUNT {
             let done = done.clone();
             scheduler
                 .scheduleHostRuntimeCooperativeAsyncTask(
@@ -334,11 +336,13 @@ mod cooperative_tests {
                 )
                 .unwrap();
         }
-        receive.recv_timeout(Duration::from_secs(5)).unwrap();
-        receive.recv_timeout(Duration::from_secs(5)).unwrap();
+        for _ in 0..RUNTIME_WORKER_COUNT {
+            receive.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
         release.send(()).unwrap();
     }
 
+    /// Verifies a panicking factory cannot destroy a worker or force a new thread.
     #[test]
     fn cooperative_factory_panic_does_not_kill_its_owner_thread() {
         let scheduler = NativeHostRuntimeTaskSchedulerHost;
@@ -354,7 +358,7 @@ mod cooperative_tests {
             .unwrap();
         let original = receive.recv_timeout(Duration::from_secs(5)).unwrap();
         let (done, receive) = mpsc::channel();
-        // Enough consecutive submissions to cover both owners, even when other
+        // Enough consecutive submissions to cover all owners, even when other
         // scheduler tests concurrently advance the round-robin index.
         for _ in 0..64 {
             let done = done.clone();
@@ -373,9 +377,10 @@ mod cooperative_tests {
             .map(|_| receive.recv_timeout(Duration::from_secs(5)).unwrap())
             .collect::<HashSet<_>>();
         assert!(threads.contains(&original));
-        assert_eq!(threads.len(), 2);
+        assert!(threads.len() <= RUNTIME_WORKER_COUNT);
     }
 
+    /// Verifies spawned I/O children survive the completion of their parent request.
     #[test]
     fn cooperative_spawned_io_child_survives_parent_completion() {
         let scheduler = NativeHostRuntimeTaskSchedulerHost;
@@ -397,5 +402,120 @@ mod cooperative_tests {
             .unwrap();
         release.send(()).unwrap();
         receive.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+    use std::{collections::HashSet, rc::Rc, sync::mpsc, time::Duration};
+
+    /// Verifies every scheduler API and scheduler instance reuses the same sixteen threads.
+    #[test]
+    fn all_task_kinds_share_sixteen_persistent_workers() {
+        let scheduler = NativeHostRuntimeTaskSchedulerHost::new();
+        let (sender, receiver) = mpsc::channel();
+        let mut first_threads = HashSet::new();
+        for round in 0..2 {
+            for index in 0..512 {
+                let sender = sender.clone();
+                let other = NativeHostRuntimeTaskSchedulerHost::new();
+                match index % 4 {
+                    0 => scheduler.scheduleHostRuntimeTask(
+                        "pool-sync",
+                        Box::new(move || {
+                            sender.send(std::thread::current().id()).unwrap();
+                        }),
+                    ),
+                    1 => other.scheduleHostRuntimeAsyncTask(
+                        "pool-async",
+                        Box::new(move || {
+                            Box::pin(async move {
+                                let local = Rc::new(42);
+                                let owner = std::thread::current().id();
+                                tokio::time::sleep(Duration::from_millis(1)).await;
+                                assert_eq!(owner, std::thread::current().id());
+                                assert_eq!(*local, 42);
+                                sender.send(owner).unwrap();
+                            })
+                        }),
+                    ),
+                    2 => other.scheduleHostRuntimeCooperativeAsyncTask(
+                        "pool-cooperative",
+                        Box::new(move || {
+                            Box::pin(async move {
+                                sender.send(std::thread::current().id()).unwrap();
+                            })
+                        }),
+                    ),
+                    _ => scheduler.scheduleDelayedHostRuntimeTask(
+                        "pool-delayed",
+                        1,
+                        Box::new(move || {
+                            sender.send(std::thread::current().id()).unwrap();
+                        }),
+                    ),
+                }
+                .unwrap();
+            }
+            let threads = (0..512)
+                .map(|_| receiver.recv_timeout(Duration::from_secs(5)).unwrap())
+                .collect::<HashSet<_>>();
+            assert_eq!(threads.len(), 16);
+            if round == 0 {
+                first_threads = threads;
+            } else {
+                assert_eq!(threads, first_threads);
+            }
+        }
+    }
+
+    /// Verifies more than sixteen pending streams suspend without blocking new requests.
+    #[test]
+    fn suspended_tasks_do_not_exhaust_the_worker_pool() {
+        let scheduler = NativeHostRuntimeTaskSchedulerHost;
+        let (entered, started) = mpsc::channel();
+        let (completed, done) = mpsc::channel();
+        let mut releases = Vec::new();
+        for _ in 0..128 {
+            let (release, wait) = tokio::sync::oneshot::channel();
+            releases.push(release);
+            let entered = entered.clone();
+            let completed = completed.clone();
+            scheduler
+                .scheduleHostRuntimeAsyncTask(
+                    "pool-waiting",
+                    Box::new(move || {
+                        Box::pin(async move {
+                            entered.send(()).unwrap();
+                            wait.await.unwrap();
+                            completed.send(()).unwrap();
+                        })
+                    }),
+                )
+                .unwrap();
+        }
+        for _ in 0..128 {
+            started.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        let (sender, receiver) = mpsc::channel();
+        for _ in 0..64 {
+            let sender = sender.clone();
+            scheduler
+                .scheduleHostRuntimeAsyncTask(
+                    "pool-ready",
+                    Box::new(move || Box::pin(async move { sender.send(()).unwrap() })),
+                )
+                .unwrap();
+        }
+        for _ in 0..64 {
+            receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for _ in 0..128 {
+            done.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
     }
 }

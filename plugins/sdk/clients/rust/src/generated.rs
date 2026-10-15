@@ -316,6 +316,10 @@ pub struct SdkToolPkgContainerRuntime {
     pub author: Vec<String>,
     #[serde(rename = "mainEntry")]
     pub mainEntry: String,
+    #[serde(rename = "themes")]
+    pub themes: Vec<SdkToolPkgManifestTheme>,
+    #[serde(rename = "license")]
+    pub license: Option<String>,
     #[serde(rename = "sourceType")]
     pub sourceType: SdkToolPkgSourceType,
     #[serde(rename = "sourcePath")]
@@ -354,6 +358,8 @@ pub struct SdkToolPkgContainerRuntime {
     pub chatViewHooks: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageHooks")]
     pub chatMessageHooks: Vec<SdkToolPkgFunctionHookRuntime>,
+    #[serde(rename = "chatLifecycleHooks")]
+    pub chatLifecycleHooks: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageMenuItems")]
     pub chatMessageMenuItems: Vec<SdkToolPkgChatMessageMenuItemRuntime>,
     #[serde(rename = "chatRuntimeHooks")]
@@ -488,6 +494,19 @@ pub struct SdkToolPkgManifestRequirement {
     pub maxVersion: Option<String>,
 }
 
+/// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgManifestTheme`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgManifestTheme {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "preview")]
+    pub preview: String,
+    #[serde(rename = "files")]
+    pub files: Vec<SdkManifestFile>,
+}
+
 /// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgMarketOrigin`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SdkToolPkgMarketOrigin {
@@ -517,6 +536,8 @@ pub struct SdkToolPkgNavigationEntryRuntime {
     pub id: String,
     #[serde(rename = "routeId")]
     pub routeId: String,
+    #[serde(rename = "params")]
+    pub params: Option<operit_link::CoreValue>,
     #[serde(rename = "surface")]
     pub surface: String,
     #[serde(rename = "title")]
@@ -614,6 +635,8 @@ pub struct SdkToolPkgUiModuleRuntime {
     pub runtime: String,
     #[serde(rename = "screen")]
     pub screen: String,
+    #[serde(rename = "screenExport")]
+    pub screenExport: Option<String>,
     #[serde(rename = "title")]
     pub title: SdkLocalizedText,
     #[serde(rename = "keepAlive")]
@@ -631,6 +654,8 @@ pub struct SdkToolPkgUiRouteRuntime {
     pub runtime: String,
     #[serde(rename = "screen")]
     pub screen: String,
+    #[serde(rename = "screenExport")]
+    pub screenExport: Option<String>,
     #[serde(rename = "title")]
     pub title: SdkLocalizedText,
     #[serde(rename = "keepAlive")]
@@ -678,6 +703,19 @@ pub struct SdkToolPkgWorkspaceTemplateRuntime {
     pub resource_key: String,
     #[serde(rename = "project_type")]
     pub project_type: String,
+}
+
+/// Generated SDK model for `operit_plugin_theme::ManifestFile`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkManifestFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "mediaType")]
+    pub media_type: String,
+    #[serde(rename = "bytes")]
+    pub bytes: usize,
+    #[serde(rename = "sha256")]
+    pub sha256: String,
 }
 
 /// Generated SDK model for `operit_tools::ConversationMarkupManager::ToolResult`.

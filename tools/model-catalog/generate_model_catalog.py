@@ -15,6 +15,7 @@ import certifi
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 TARGET = REPO_ROOT / "core" / "crates" / "foundation" / "model" / "collects" / "ModelCatalog.rs"
+CODEX_MODEL_ROWS = SCRIPT_DIR / "codex_model_rows.txt"
 
 USER_AGENT = "operit-model-catalog-generator/1.0"
 MODELS_DEV_URL = "https://models.dev/api.json"
@@ -80,11 +81,6 @@ PROVIDERS = [
         "ccswitch",
     ),
     SourceProvider(
-        "DEEPSEEK",
-        "DeepSeek",
-        "ccswitch",
-    ),
-    SourceProvider(
         "ZHIPU",
         "Zhipu GLM",
         "ccswitch",
@@ -96,7 +92,7 @@ PROVIDERS = [
     ),
     SourceProvider(
         "ALIYUN",
-        "Bailian",
+        "千问AI平台",
         "ccswitch",
     ),
     SourceProvider(
@@ -116,7 +112,7 @@ PROVIDERS = [
     ),
     SourceProvider(
         "DOUBAO",
-        "DouBaoSeed",
+        "Volcengine Doubao",
         "ccswitch",
     ),
     SourceProvider(
@@ -175,11 +171,6 @@ LITELLM_HISTORY_PROVIDERS = [
     SourceProvider(
         "MISTRAL",
         "mistral",
-        "litellm",
-    ),
-    SourceProvider(
-        "OPENROUTER",
-        "openrouter",
         "litellm",
     ),
 ]
@@ -439,7 +430,6 @@ def model_row(
             "0",
             currency,
             format_decimal(tokens_to_k(context_tokens)),
-            "false",
             bool_field(direct_image),
             bool_field(direct_audio),
             bool_field(direct_video),
@@ -1141,7 +1131,7 @@ def collect_ccswitch(
 # Return the provider and model identity fields from one rendered row.
 def model_row_key(model_row_data: str) -> tuple[str, str]:
     parts = model_row_data.split("|")
-    if len(parts) != 16:
+    if len(parts) != 15:
         raise ValueError(f"invalid model catalog row: {model_row_data}")
     return parts[0].casefold(), parts[1].casefold()
 
@@ -1168,6 +1158,18 @@ def append_new_model_rows(target: list[str], incoming: list[str], existing_keys:
         target.append(model_row_data)
 
 
+# Read the explicit Codex model source and validate every row identity.
+def collect_codex_model_rows() -> list[str]:
+    rows = CODEX_MODEL_ROWS.read_text(encoding="utf-8").splitlines()
+    if not rows:
+        raise ValueError("Codex model source produced zero rows")
+    for model_row_data in rows:
+        provider_id, _ = model_row_key(model_row_data)
+        if provider_id != "openai_codex":
+            raise ValueError(f"invalid Codex provider row: {model_row_data}")
+    return rows
+
+
 # Generate all provider model rows.
 def generate_rows() -> list[str]:
     models_dev = required_object(fetch_json(MODELS_DEV_URL), "models.dev")
@@ -1186,6 +1188,7 @@ def generate_rows() -> list[str]:
             raise ValueError(f"{provider.provider_type_id} produced zero rows")
         model_rows.extend(rows)
 
+    model_rows.extend(collect_codex_model_rows())
     model_rows = unique_model_rows(model_rows)
     existing_keys = {model_row_key(model_row_data) for model_row_data in model_rows}
     for provider in LITELLM_HISTORY_PROVIDERS:

@@ -198,4 +198,15 @@ impl operit_link::CoreLinkSharedClient for SpaceRuntime {
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         SpaceRuntime::watch(self, request).await
     }
+
+    /// Rejects input-stream routes because current Space annotations declare none.
+    async fn openPush(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
+        Err(CoreLinkError::new(
+            "SPACE_PUSH_NOT_REGISTERED",
+            format!("Space push route is not registered: {}", request.methodName),
+        ))
+    }
 }

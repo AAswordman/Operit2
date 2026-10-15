@@ -67,30 +67,14 @@ impl RuntimeStorePaths {
         self.runtime_storage_path(MCP_SERVER_STATUS_PATH)
     }
 
-    /// Returns the character card preferences path.
-    pub fn character_cards_preferences_path(&self) -> PathBuf {
-        self.runtime_storage_path(CHARACTER_CARDS_PREFERENCES_PATH)
-    }
 
-    /// Returns the character group preferences path.
-    pub fn character_groups_preferences_path(&self) -> PathBuf {
-        self.runtime_storage_path(CHARACTER_GROUPS_PREFERENCES_PATH)
-    }
 
     /// Returns the named workspace preferences path.
     pub fn workspaces_preferences_path(&self) -> PathBuf {
         self.runtime_storage_path(WORKSPACES_PREFERENCES_PATH)
     }
 
-    /// Returns the prompt tag preferences path.
-    pub fn prompt_tags_preferences_path(&self) -> PathBuf {
-        self.runtime_storage_path(PROMPT_TAGS_PREFERENCES_PATH)
-    }
 
-    /// Returns the shared memory store preferences path.
-    pub fn shared_memory_stores_preferences_path(&self) -> PathBuf {
-        self.runtime_storage_path(SHARED_MEMORY_STORES_PREFERENCES_PATH)
-    }
 
     /// Returns the TTS configuration preferences path.
     pub fn tts_configs_preferences_path(&self) -> PathBuf {

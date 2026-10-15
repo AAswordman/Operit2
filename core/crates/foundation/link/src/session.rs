@@ -17,7 +17,7 @@ struct Push {
 
 /// One admitted connection's subscriptions and input streams. Dropping it releases
 /// those resources; it never installs a global route or starts application tasks.
-/// No socket, platform, node-role or PeerFrame dependency is required.
+/// The dispatcher has no socket, platform or node-role dependency.
 pub struct CoreLinkSession<C> {
     client: C,
     watches: BTreeMap<CoreRequestId, CoreEventStream>,

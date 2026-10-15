@@ -1,3 +1,5 @@
+import 'support/markdown_event_fixture.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -264,46 +266,8 @@ Widget _messagePartApp(
 }
 
 /// Produces a complete plain Markdown event sequence for renderer tests.
-Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
-  return <MarkdownStreamEvent>[
-    MarkdownStreamEvent(
-      chatId: 'test',
-      eventType: 'markdownBlockStart',
-      value: null,
-      id: null,
-      blockId: 1,
-      inlineId: null,
-      parentBlockId: null,
-      nodeType: null,
-      headerLevel: null,
-      xml: null,
-    ),
-    MarkdownStreamEvent(
-      chatId: 'test',
-      eventType: 'markdownBlockChunk',
-      value: content,
-      id: null,
-      blockId: 1,
-      inlineId: null,
-      parentBlockId: null,
-      nodeType: null,
-      headerLevel: null,
-      xml: null,
-    ),
-    const MarkdownStreamEvent(
-      chatId: 'test',
-      eventType: 'completed',
-      value: null,
-      id: null,
-      blockId: null,
-      inlineId: null,
-      parentBlockId: null,
-      nodeType: null,
-      headerLevel: null,
-      xml: null,
-    ),
-  ];
-}
+Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) =>
+    splitMarkdownEventFixture(content);
 
 /// Creates a generated Markdown stream event for renderer tests.
 MarkdownStreamEvent _markdownEvent(String type, {String? value, int? blockId}) {

@@ -7,17 +7,17 @@ import 'dart:ui' as ui;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
-import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../chat/components/style/bubble/BubbleSurface.dart';
-import '../../../common/CharacterAvatar.dart';
 import '../../../common/components/OperitDialog.dart';
+import '../../../common/layout/ApplicationZoom.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
 import '../../../theme/OperitThemeAssets.dart';
 import '../components/SettingsControlStyles.dart';
 import 'ChatAppearancePreview.dart';
+import 'ThemeConfigurationControl.dart';
 
 enum _AppearanceSettingsTab { theme, background, bubbles, interaction }
 
@@ -42,7 +42,8 @@ class AppearanceSettingsPanel extends StatelessWidget {
       length: _appearanceSettingsTabs.length,
       child: Column(
         children: <Widget>[
-          _AppearanceHeaderBar(themeController: themeController),
+          const ThemeConfigurationControl(),
+          const _AppearanceHeaderBar(),
           Expanded(
             child: TabBarView(
               children: <Widget>[
@@ -64,6 +65,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
     OperitThemeController themeController,
     ThemePreferenceSnapshot snapshot,
   ) {
+    final applicationZoom = ApplicationZoomScope.of(context);
     final hasCustomFont =
         snapshot.customFontPath != null && snapshot.customFontPath!.isNotEmpty;
     return _ResponsivePreviewSplitTabView(
@@ -89,10 +91,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
             const SizedBox(height: 10),
             _AppearanceFieldBlock(
               label: l10n.settingsAppearanceMessageSurface,
-              badge: _messageSurfaceLabel(
-                l10n,
-                _surfaceFromSnapshot(snapshot),
-              ),
+              badge: _messageSurfaceLabel(l10n, _surfaceFromSnapshot(snapshot)),
               child: _MessageSurfaceSelector(
                 value: _surfaceFromSnapshot(snapshot),
                 onChanged: (value) {
@@ -122,11 +121,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
               },
               onCustomTap: () {
                 unawaited(
-                  _showThemeColorDialog(
-                    context,
-                    themeController,
-                    snapshot,
-                  ),
+                  _showThemeColorDialog(context, themeController, snapshot),
                 );
               },
             ),
@@ -136,52 +131,71 @@ class AppearanceSettingsPanel extends StatelessWidget {
           title: l10n.settingsAppearanceTextSection,
           icon: Icons.text_fields_outlined,
           children: <Widget>[
-            _AppearanceFieldBlock(
-              label: l10n.settingsAppearanceFontFamily,
-              badge: _fontFamilyLabel(l10n, snapshot),
-              child: _FontFamilySelector(
-                value: _fontFamilyPresetFromSnapshot(snapshot),
-                onChanged: (value) {
-                  unawaited(
-                    themeController.saveThemeSettings(
-                      fontType: UserPreferencesManager.FONT_TYPE_SYSTEM,
-                      systemFontName: _systemFontNameFromPreset(value),
-                      useCustomFont: false,
-                      customFontPath: '',
-                    ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 10),
-            _CompactAssetTile(
-              icon: Icons.font_download_outlined,
-              title: l10n.settingsAppearanceCustomFont,
-              subtitle: _customFontLabel(l10n, snapshot.customFontPath),
-              actions: <Widget>[
-                FilledButton.tonalIcon(
-                  style: SettingsControlStyles.sectionTextButton(),
-                  onPressed: () {
-                    unawaited(_pickCustomFont(themeController));
+            ...<Widget>[
+              _AppearanceFieldBlock(
+                label: l10n.settingsAppearanceFontFamily,
+                badge: _fontFamilyLabel(l10n, snapshot),
+                child: _FontFamilySelector(
+                  value: _fontFamilyPresetFromSnapshot(snapshot),
+                  onChanged: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        fontType: UserPreferencesManager.FONT_TYPE_SYSTEM,
+                        systemFontName: _systemFontNameFromPreset(value),
+                        useCustomFont: false,
+                        customFontPath: '',
+                      ),
+                    );
                   },
-                  icon: const Icon(Icons.folder_open_outlined, size: 16),
-                  label: Text(l10n.settingsAppearanceChooseCustomFont),
                 ),
-                if (hasCustomFont)
-                  SettingsEntityIconButton(
-                    tooltip: l10n.settingsAppearanceClearCustomFont,
-                    icon: Icons.close,
+              ),
+              const SizedBox(height: 10),
+              _CompactAssetTile(
+                icon: Icons.font_download_outlined,
+                title: l10n.settingsAppearanceCustomFont,
+                subtitle: _customFontLabel(l10n, snapshot.customFontPath),
+                actions: <Widget>[
+                  FilledButton.tonalIcon(
+                    style: SettingsControlStyles.sectionTextButton(),
                     onPressed: () {
-                      unawaited(
-                        themeController.saveThemeSettings(
-                          useCustomFont: false,
-                          fontType: UserPreferencesManager.FONT_TYPE_SYSTEM,
-                          customFontPath: '',
-                        ),
-                      );
+                      unawaited(_pickCustomFont(themeController));
                     },
+                    icon: const Icon(Icons.folder_open_outlined, size: 16),
+                    label: Text(l10n.settingsAppearanceChooseCustomFont),
                   ),
-              ],
+                  if (hasCustomFont)
+                    SettingsEntityIconButton(
+                      tooltip: l10n.settingsAppearanceClearCustomFont,
+                      icon: Icons.close,
+                      onPressed: () {
+                        unawaited(
+                          themeController.saveThemeSettings(
+                            useCustomFont: false,
+                            fontType: UserPreferencesManager.FONT_TYPE_SYSTEM,
+                            customFontPath: '',
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+            SettingsSliderRow(
+              icon: Icons.zoom_in_outlined,
+              label: l10n.settingsAppearanceInterfaceScale,
+              value: ApplicationZoom.levels
+                  .indexOf(applicationZoom.zoom)
+                  .toDouble(),
+              min: 0,
+              max: (ApplicationZoom.levels.length - 1).toDouble(),
+              divisions: ApplicationZoom.levels.length - 1,
+              valueText: '${(applicationZoom.zoom * 100).round()}%',
+              onChanged: (value) {
+                applicationZoom.onZoomChanged(
+                  ApplicationZoom.levels[value.round()],
+                );
+              },
             ),
             const SizedBox(height: 8),
             SettingsSliderRow(
@@ -196,9 +210,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
                 themeController.previewThemeSettings(fontScale: value);
               },
               onChangeEnd: (value) {
-                unawaited(
-                  themeController.saveThemeSettings(fontScale: value),
-                );
+                unawaited(themeController.saveThemeSettings(fontScale: value));
               },
             ),
           ],
@@ -266,7 +278,10 @@ class AppearanceSettingsPanel extends StatelessWidget {
                   ? Icons.movie_creation_outlined
                   : Icons.image_outlined,
               title: l10n.settingsAppearanceBackgroundImage,
-              subtitle: _backgroundImageLabel(l10n, snapshot.backgroundImageUri),
+              subtitle: _backgroundImageLabel(
+                l10n,
+                snapshot.backgroundImageUri,
+              ),
               actions: <Widget>[
                 FilledButton.tonalIcon(
                   style: SettingsControlStyles.sectionTextButton(),
@@ -443,10 +458,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
             const SizedBox(height: 10),
             _AppearanceFieldBlock(
               label: l10n.settingsAppearanceMessageDensity,
-              badge: _messageDensityLabel(
-                l10n,
-                _densityFromSnapshot(snapshot),
-              ),
+              badge: _messageDensityLabel(l10n, _densityFromSnapshot(snapshot)),
               child: _MessageDensitySelector(
                 value: _densityFromSnapshot(snapshot),
                 onChanged: (value) {
@@ -512,11 +524,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
               },
               onCustomTap: () {
                 unawaited(
-                  _showMessageColorDialog(
-                    context,
-                    themeController,
-                    snapshot,
-                  ),
+                  _showMessageColorDialog(context, themeController, snapshot),
                 );
               },
             ),
@@ -930,10 +938,10 @@ class AppearanceSettingsPanel extends StatelessWidget {
 }
 
 class _AppearanceHeaderBar extends StatelessWidget {
-  const _AppearanceHeaderBar({required this.themeController});
+  /// Creates the independent appearance-category header.
+  const _AppearanceHeaderBar();
 
-  final OperitThemeController themeController;
-
+  /// Builds the responsive appearance tabs without plugin-owned target selection.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -963,14 +971,6 @@ class _AppearanceHeaderBar extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 240,
-                      child: _ThemeTargetSelector(
-                        themeController: themeController,
-                        padding: EdgeInsets.zero,
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -985,7 +985,6 @@ class _AppearanceHeaderBar extends StatelessWidget {
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            _ThemeTargetSelector(themeController: themeController),
             Material(
               color: Colors.transparent,
               child: TabBar(
@@ -997,61 +996,6 @@ class _AppearanceHeaderBar extends StatelessWidget {
                 ],
               ),
             ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _ResponsiveTwoColumnTabView extends StatelessWidget {
-  const _ResponsiveTwoColumnTabView({
-    required this.leftChildren,
-    required this.rightChildren,
-  });
-
-  final List<Widget> leftChildren;
-  final List<Widget> rightChildren;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth >= 720) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1120),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: leftChildren,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: rightChildren,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }
-
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          children: <Widget>[
-            ...leftChildren,
-            ...rightChildren,
           ],
         );
       },
@@ -1083,8 +1027,10 @@ class _ResponsivePreviewSplitTabViewState
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth >= 820) {
-          final previewWidth =
-              (constraints.maxWidth * 0.40).clamp(340.0, 420.0);
+          final previewWidth = (constraints.maxWidth * 0.40).clamp(
+            340.0,
+            420.0,
+          );
           return Align(
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
@@ -1119,8 +1065,9 @@ class _ResponsivePreviewSplitTabViewState
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Material(
-                color:
-                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                color: colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.35,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                   side: BorderSide(
@@ -1150,9 +1097,8 @@ class _ResponsivePreviewSplitTabViewState
                         Expanded(
                           child: Text(
                             l10n.settingsAppearanceLivePreviewTitle,
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
                           ),
                         ),
                         SettingsInfoBadge(
@@ -1209,439 +1155,6 @@ class _ChatAppearanceLivePreviewCard extends StatelessWidget {
       ],
     );
   }
-}
-
-class _ThemeTargetCatalog {
-  /// Creates a catalog of available theme targets.
-  const _ThemeTargetCatalog({required this.cards, required this.groups});
-
-  final List<core_proxy.CharacterCard> cards;
-  final List<core_proxy.CharacterGroupCard> groups;
-}
-
-class _ThemeTargetOption {
-  /// Creates a selectable target option for the theme editor.
-  const _ThemeTargetOption({
-    required this.target,
-    required this.label,
-    required this.typeLabel,
-    required this.icon,
-    this.avatarUri,
-  });
-
-  /// Creates one character card target option.
-  factory _ThemeTargetOption.characterCard(
-    core_proxy.CharacterCard card,
-    AppLocalizations l10n,
-  ) {
-    return _ThemeTargetOption(
-      target: core_proxy.ActivePrompt.characterCard(id: card.id),
-      label: card.name,
-      typeLabel: l10n.settingsCharactersCardsSection,
-      avatarUri: card.avatarUri,
-      icon: Icons.person_outline,
-    );
-  }
-
-  /// Creates one character group target option.
-  factory _ThemeTargetOption.characterGroup(
-    core_proxy.CharacterGroupCard group,
-    AppLocalizations l10n,
-  ) {
-    return _ThemeTargetOption(
-      target: core_proxy.ActivePrompt.characterGroup(id: group.id),
-      label: group.name,
-      typeLabel: l10n.settingsCharactersGroupsSection,
-      icon: Icons.groups_outlined,
-    );
-  }
-
-  final core_proxy.ActivePrompt target;
-  final String label;
-  final String typeLabel;
-  final IconData icon;
-  final String? avatarUri;
-}
-
-class _ThemeTargetSelector extends StatefulWidget {
-  /// Creates the top-level theme target selector.
-  const _ThemeTargetSelector({
-    required this.themeController,
-    this.padding = const EdgeInsets.fromLTRB(16, 10, 16, 6),
-  });
-
-  final OperitThemeController themeController;
-  final EdgeInsetsGeometry padding;
-
-  /// Creates the selector state that owns the target catalog request.
-  @override
-  State<_ThemeTargetSelector> createState() => _ThemeTargetSelectorState();
-}
-
-class _ThemeTargetSelectorState extends State<_ThemeTargetSelector> {
-  late Future<_ThemeTargetCatalog> _catalogFuture;
-
-  /// Loads the target catalog for the first selector frame.
-  @override
-  void initState() {
-    super.initState();
-    _refreshCatalog();
-  }
-
-  /// Reloads the catalog when a new controller instance is provided.
-  @override
-  void didUpdateWidget(covariant _ThemeTargetSelector oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.themeController != widget.themeController) {
-      _refreshCatalog();
-    }
-  }
-
-  /// Builds the target selector card and grouped target menu.
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<_ThemeTargetCatalog>(
-      future: _catalogFuture,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          Error.throwWithStackTrace(
-            snapshot.error!,
-            snapshot.stackTrace ?? StackTrace.current,
-          );
-        }
-        final catalog = snapshot.data;
-        if (catalog == null) {
-          return Padding(
-            padding: widget.padding,
-            child: const SizedBox(
-              height: 36,
-              child: Center(child: LinearProgressIndicator(minHeight: 2)),
-            ),
-          );
-        }
-        final l10n = AppLocalizations.of(context)!;
-        final activeTarget = widget.themeController.activeThemeTarget;
-        final selected = _selectedThemeTargetOption(
-          catalog,
-          activeTarget,
-          l10n,
-        );
-        return Padding(
-          padding: widget.padding,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final menuWidth = constraints.maxWidth.isFinite
-                  ? constraints.maxWidth.clamp(200.0, 320.0)
-                  : 240.0;
-              final colorScheme = Theme.of(context).colorScheme;
-              return PopupMenuButton<_ThemeTargetOption>(
-                tooltip: l10n.settingsAppearanceThemeTarget,
-                position: PopupMenuPosition.under,
-                offset: const Offset(0, 6),
-                elevation: 8,
-                color: colorScheme.surfaceContainerHigh,
-                surfaceTintColor: Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  side: BorderSide(
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.28),
-                    width: 0.8,
-                  ),
-                ),
-                menuPadding: const EdgeInsets.symmetric(vertical: 6),
-                constraints: BoxConstraints(
-                  minWidth: menuWidth,
-                  maxWidth: menuWidth,
-                  maxHeight: 340,
-                ),
-                onSelected: (option) {
-                  unawaited(
-                    widget.themeController.setActiveThemeTarget(option.target),
-                  );
-                },
-                itemBuilder: (context) =>
-                    _themeTargetMenuEntries(catalog, activeTarget, l10n),
-                child: _ThemeTargetSelectorCard(
-                  option: selected,
-                  title: l10n.settingsAppearanceThemeTarget,
-                ),
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  /// Starts one catalog request for character cards and groups.
-  void _refreshCatalog() {
-    _catalogFuture = _loadThemeTargetCatalog(widget.themeController);
-  }
-}
-
-class _ThemeTargetSelectorCard extends StatelessWidget {
-  /// Creates the visible selector card for the current target.
-  const _ThemeTargetSelectorCard({required this.option, required this.title});
-
-  final _ThemeTargetOption option;
-  final String title;
-
-  /// Builds the current target summary row.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return OperitGlassSurface(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.38),
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(
-        color: colorScheme.outlineVariant.withValues(alpha: 0.24),
-        width: 0.8,
-      ),
-      layer: OperitGlassSurfaceLayer.control,
-      material: true,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        child: Row(
-          children: <Widget>[
-            _ThemeTargetAvatar(option: option, size: 24),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Row(
-                children: <Widget>[
-                  Flexible(
-                    child: Text(
-                      option.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  SettingsInfoBadge(label: option.typeLabel),
-                ],
-              ),
-            ),
-            const SizedBox(width: 4),
-            Icon(
-              Icons.unfold_more_rounded,
-              size: 16,
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ThemeTargetAvatar extends StatelessWidget {
-  /// Creates a compact avatar for a character card or group target.
-  const _ThemeTargetAvatar({required this.option, required this.size});
-
-  final _ThemeTargetOption option;
-  final double size;
-
-  /// Builds a character avatar or group icon in the current settings style.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final child = option.target.tag == 'CharacterCard'
-        ? CharacterAvatarImage(avatarUri: option.avatarUri, fit: BoxFit.cover)
-        : Icon(
-            option.icon,
-            color: colorScheme.onSurfaceVariant,
-            size: size * 0.56,
-          );
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        shape: BoxShape.circle,
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: IconTheme(
-        data: IconThemeData(color: colorScheme.onSurfaceVariant),
-        child: child,
-      ),
-    );
-  }
-}
-
-class _ThemeTargetMenuHeader extends StatelessWidget {
-  /// Creates a non-selectable section label inside the target menu.
-  const _ThemeTargetMenuHeader(this.label);
-
-  final String label;
-
-  /// Builds the menu section label.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: colorScheme.primary,
-          fontWeight: FontWeight.w700,
-          fontSize: 11,
-        ),
-      ),
-    );
-  }
-}
-
-class _ThemeTargetMenuRow extends StatelessWidget {
-  /// Creates one selectable row inside the target menu.
-  const _ThemeTargetMenuRow({required this.option, required this.selected});
-
-  final _ThemeTargetOption option;
-  final bool selected;
-
-  /// Builds one target row with avatar, label, and selected mark.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: selected
-            ? colorScheme.primary.withValues(alpha: 0.12)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: <Widget>[
-          _ThemeTargetAvatar(option: option, size: 22),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              option.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.bodyMedium?.copyWith(
-                fontSize: 13,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                color: selected ? colorScheme.primary : colorScheme.onSurface,
-              ),
-            ),
-          ),
-          if (selected) ...<Widget>[
-            const SizedBox(width: 8),
-            Icon(
-              Icons.check_rounded,
-              color: colorScheme.primary,
-              size: 16,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// Loads character cards and groups for the theme target selector.
-Future<_ThemeTargetCatalog> _loadThemeTargetCatalog(
-  OperitThemeController themeController,
-) async {
-  final cards = await themeController.loadThemeCharacterCards();
-  final groups = await themeController.loadThemeCharacterGroups();
-  return _ThemeTargetCatalog(cards: cards, groups: groups);
-}
-
-/// Builds target menu entries grouped by card and group sections.
-List<PopupMenuEntry<_ThemeTargetOption>> _themeTargetMenuEntries(
-  _ThemeTargetCatalog catalog,
-  core_proxy.ActivePrompt activeTarget,
-  AppLocalizations l10n,
-) {
-  final entries = <PopupMenuEntry<_ThemeTargetOption>>[
-    PopupMenuItem<_ThemeTargetOption>(
-      enabled: false,
-      height: 24,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: _ThemeTargetMenuHeader(l10n.settingsCharactersCardsSection),
-    ),
-    for (final card in catalog.cards)
-      _themeTargetMenuItem(
-        _ThemeTargetOption.characterCard(card, l10n),
-        activeTarget,
-      ),
-  ];
-  if (catalog.groups.isNotEmpty) {
-    entries.add(const PopupMenuDivider(height: 8));
-    entries.add(
-      PopupMenuItem<_ThemeTargetOption>(
-        enabled: false,
-        height: 24,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: _ThemeTargetMenuHeader(l10n.settingsCharactersGroupsSection),
-      ),
-    );
-    entries.addAll(<PopupMenuEntry<_ThemeTargetOption>>[
-      for (final group in catalog.groups)
-        _themeTargetMenuItem(
-          _ThemeTargetOption.characterGroup(group, l10n),
-          activeTarget,
-        ),
-    ]);
-  }
-  return entries;
-}
-
-/// Builds one selectable popup menu item for a theme target.
-PopupMenuEntry<_ThemeTargetOption> _themeTargetMenuItem(
-  _ThemeTargetOption option,
-  core_proxy.ActivePrompt activeTarget,
-) {
-  final selected = _themeTargetEquals(option.target, activeTarget);
-  return PopupMenuItem<_ThemeTargetOption>(
-    value: option,
-    height: 36,
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-    child: _ThemeTargetMenuRow(option: option, selected: selected),
-  );
-}
-
-/// Returns the selected option for the active theme target.
-_ThemeTargetOption _selectedThemeTargetOption(
-  _ThemeTargetCatalog catalog,
-  core_proxy.ActivePrompt activeTarget,
-  AppLocalizations l10n,
-) {
-  for (final option in _themeTargetOptions(catalog, l10n)) {
-    if (_themeTargetEquals(option.target, activeTarget)) {
-      return option;
-    }
-  }
-  throw StateError('active theme target is absent from selector catalog');
-}
-
-/// Builds all selectable theme target options in display order.
-List<_ThemeTargetOption> _themeTargetOptions(
-  _ThemeTargetCatalog catalog,
-  AppLocalizations l10n,
-) {
-  return <_ThemeTargetOption>[
-    for (final card in catalog.cards)
-      _ThemeTargetOption.characterCard(card, l10n),
-    for (final group in catalog.groups)
-      _ThemeTargetOption.characterGroup(group, l10n),
-  ];
-}
-
-/// Reports whether two active prompt values point at the same theme target.
-bool _themeTargetEquals(
-  core_proxy.ActivePrompt left,
-  core_proxy.ActivePrompt right,
-) {
-  return left.tag == right.tag && left.id == right.id;
 }
 
 /// Returns the localized tab label for one appearance settings section.
@@ -2466,8 +1979,12 @@ Future<void> _showBubbleImageAdjustDialog(
                       color: previewColor,
                       borderRadius: BorderRadius.circular(
                         isUser
-                            ? snapshot.bubbleUserRoundedCornersEnabled ? 12 : 4
-                            : snapshot.bubbleAiRoundedCornersEnabled ? 12 : 4,
+                            ? snapshot.bubbleUserRoundedCornersEnabled
+                                  ? 12
+                                  : 4
+                            : snapshot.bubbleAiRoundedCornersEnabled
+                            ? 12
+                            : 4,
                       ),
                       imageStyle: previewStyle,
                       child: Padding(
@@ -2563,7 +2080,9 @@ Future<void> _showBubbleImageAdjustDialog(
                         value: repeatEnd,
                         min: repeatStart + 0.01,
                         max: 0.95,
-                        divisions: ((0.95 - (repeatStart + 0.01)) * 100).round().clamp(1, 100),
+                        divisions: ((0.95 - (repeatStart + 0.01)) * 100)
+                            .round()
+                            .clamp(1, 100),
                         valueText: '${(repeatEnd * 100).round()}%',
                         onChanged: (value) => update(() => repeatEnd = value),
                       ),
@@ -2578,7 +2097,10 @@ Future<void> _showBubbleImageAdjustDialog(
                         onChanged: (value) => update(() {
                           repeatYStart = value;
                           if (repeatYEnd <= repeatYStart + 0.01) {
-                            repeatYEnd = (repeatYStart + 0.01).clamp(0.06, 0.95);
+                            repeatYEnd = (repeatYStart + 0.01).clamp(
+                              0.06,
+                              0.95,
+                            );
                           }
                         }),
                       ),
@@ -2588,7 +2110,9 @@ Future<void> _showBubbleImageAdjustDialog(
                         value: repeatYEnd,
                         min: repeatYStart + 0.01,
                         max: 0.95,
-                        divisions: ((0.95 - (repeatYStart + 0.01)) * 100).round().clamp(1, 100),
+                        divisions: ((0.95 - (repeatYStart + 0.01)) * 100)
+                            .round()
+                            .clamp(1, 100),
                         valueText: '${(repeatYEnd * 100).round()}%',
                         onChanged: (value) => update(() => repeatYEnd = value),
                       ),
@@ -3908,8 +3432,8 @@ class _BubbleImageRenderModeSelector extends StatelessWidget {
       onChanged: onChanged,
       segments: <ButtonSegment<String>>[
         ButtonSegment<String>(
-          value: UserPreferencesManager
-              .BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
+          value:
+              UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
           icon: const Icon(Icons.grid_view_outlined, size: 16),
           label: Text(l10n.settingsAppearanceBubbleImageTiledNineSlice),
         ),
@@ -4144,7 +3668,9 @@ class _SectionCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       title,
-                      style: SettingsControlStyles.sectionTitleTextStyle(context),
+                      style: SettingsControlStyles.sectionTitleTextStyle(
+                        context,
+                      ),
                     ),
                   ),
                   if (action != null) ...<Widget>[
@@ -4277,10 +3803,7 @@ class _CompactAssetTile extends StatelessWidget {
               ),
             ],
           ),
-          if (bottom != null) ...<Widget>[
-            const SizedBox(height: 6),
-            bottom!,
-          ],
+          if (bottom != null) ...<Widget>[const SizedBox(height: 6), bottom!],
         ],
       ),
     );
@@ -4314,15 +3837,9 @@ class _TwoColumnSliderGrid extends StatelessWidget {
               ),
             );
           }
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: rows,
-          );
+          return Column(mainAxisSize: MainAxisSize.min, children: rows);
         }
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: children,
-        );
+        return Column(mainAxisSize: MainAxisSize.min, children: children);
       },
     );
   }

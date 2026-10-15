@@ -140,6 +140,29 @@ impl WebSocketHost for NativeHttpHost {
     }
 }
 
+/// Opens one plain TCP stream to a WebSocket URL within the given budget.
+/// `tungstenite::connect` dials without a timeout, so a black-holed address
+/// holds this dedicated thread for the kernel's whole SYN retry budget instead
+/// of failing; that turns "peer is unreachable" into "caller waits minutes".
+fn dialWebSocketTcpStream(
+    uri: &tungstenite::http::Uri,
+    connectTimeoutSeconds: u64,
+) -> Result<std::net::TcpStream, String> {
+    use std::net::ToSocketAddrs;
+    let host = uri.host().ok_or_else(|| "WebSocket URL has no host".to_string())?;
+    let port = uri.port_u16().unwrap_or(if uri.scheme_str() == Some("wss") { 443 } else { 80 });
+    let timeout = Duration::from_secs(connectTimeoutSeconds);
+    let addresses = (host, port).to_socket_addrs().map_err(|error| error.to_string())?;
+    let mut lastError = None;
+    for address in addresses {
+        match std::net::TcpStream::connect_timeout(&address, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => lastError = Some(error.to_string()),
+        }
+    }
+    Err(lastError.unwrap_or_else(|| format!("WebSocket host did not resolve: {host}")))
+}
+
 /// Runs one native WebSocket until the peer or its owner closes the connection.
 fn executeNativeWebSocket(
     request: WebSocketRequestData,
@@ -147,6 +170,7 @@ fn executeNativeWebSocket(
     onOpened: WebSocketOpenedCallback,
     onMessage: WebSocketMessageCallback,
 ) -> HostResult<()> {
+    let connectTimeoutSeconds = request.connectTimeoutSeconds;
     let mut websocketRequest = request
         .url
         .into_client_request()
@@ -160,8 +184,26 @@ fn executeNativeWebSocket(
             .headers_mut()
             .insert(headerName, headerValue);
     }
-    let (mut socket, _) = tungstenite::connect(websocketRequest)
-        .map_err(|error| HostError::new(format!("WebSocket connect failed: {error}")))?;
+    // The dial honours the request's connect budget; TLS stays tungstenite's
+    // job. A wss URL pays one reachability dial first, which is what keeps the
+    // TLS path untouched while still failing fast on an unreachable host.
+    let uri = websocketRequest.uri().clone();
+    let (mut socket, _) = if connectTimeoutSeconds == 0 {
+        tungstenite::connect(websocketRequest)
+            .map_err(|error| error.to_string())
+    } else if uri.scheme_str() == Some("wss") {
+        dialWebSocketTcpStream(&uri, connectTimeoutSeconds)
+            .and_then(|_| tungstenite::connect(websocketRequest).map_err(|error| error.to_string()))
+    } else {
+        dialWebSocketTcpStream(&uri, connectTimeoutSeconds).and_then(|stream| {
+            tungstenite::client(
+                websocketRequest,
+                tungstenite::stream::MaybeTlsStream::Plain(stream),
+            )
+            .map_err(|error| error.to_string())
+        })
+    }
+    .map_err(|error| HostError::new(format!("WebSocket connect failed: {error}")))?;
     setWebSocketReadTimeout(&mut socket);
     onOpened();
     loop {

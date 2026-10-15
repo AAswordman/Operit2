@@ -3,7 +3,6 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use quote::quote;
 use syn::{Expr, FnArg, Item, Lit, Pat, TraitItem};
 use tree_sitter::Parser;
 
@@ -29,76 +28,22 @@ const HOST_TRAITS: &[(&str, &str, &str)] = &[
         "SoftwareSettingsHost",
         "SoftwareSettings",
     ),
+    ("js_sdk/models.rs", "ModelsHost", "Models"),
+    ("js_sdk/tts.rs", "TtsHost", "Tts"),
+    ("js_sdk/stt.rs", "SttHost", "Stt"),
+    ("js_sdk/theme.rs", "ThemeHost", "Theme"),
+    ("js_sdk/catalog.rs", "CatalogHost", "Catalog"),
     ("js_sdk/chat.rs", "ChatHost", "Chat"),
-    ("js_sdk/memory.rs", "MemoryHost", "Memory"),
-    ("js_sdk/edge.rs", "EdgeHost", "Edge"),
-    ("js_sdk/edge.rs", "IoHost", "Io"),
+    ("js_sdk/storage.rs", "StorageHost", "Storage"),
 ];
-
-/// Generates concrete active Tools host trait implementations from canonical Rust signatures.
-pub fn generate_js_tools_host_implementation(
-    sdk_src: &Path,
-    bindings_path: &Path,
-    output_path: &Path,
-) -> Result<(), Box<dyn Error>> {
-    let javascript_bindings = parse_rust_tool_bindings(bindings_path)?;
-    let mut files = BTreeMap::<PathBuf, syn::File>::new();
-    let mut output =
-        String::from("// Generated from canonical Rust Tools traits. Do not edit.\n\n");
-
-    for (relative_path, trait_name, namespace) in HOST_TRAITS {
-        let path = sdk_src.join(relative_path);
-        if !files.contains_key(&path) {
-            files.insert(path.clone(), syn::parse_file(&fs::read_to_string(&path)?)?);
-        }
-        let file = files.get(&path).expect("inserted Rust SDK file is present");
-        let item_trait = file.items.iter().find_map(|item| match item {
-            Item::Trait(item_trait) if item_trait.ident == *trait_name => Some(item_trait),
-            _ => None,
-        });
-        let item_trait = item_trait.ok_or_else(|| format!("missing Rust trait `{trait_name}`"))?;
-        output.push_str(&format!("impl {trait_name} for AIToolHandler {{\n"));
-        for item in &item_trait.items {
-            let TraitItem::Fn(method) = item else {
-                continue;
-            };
-            let runtime_name = runtime_method_name(&method.sig.ident.to_string());
-            let binding = javascript_bindings
-                .get(&(namespace.to_string(), runtime_name.clone()))
-                .ok_or_else(|| {
-                    format!("missing JavaScript binding for `{namespace}.{runtime_name}`")
-                })?;
-            let tool_variant = rust_variant_name(&binding.tool);
-            let signature = &method.sig;
-            let arguments = method_arguments(signature)?;
-            output.push_str(&format!(
-                "    /// Executes the canonical `{namespace}.{runtime_name}` Tools binding.\n"
-            ));
-            output.push_str("    ");
-            output.push_str(
-                &quote!(#signature)
-                    .to_string()
-                    .replace("super :: JsNever", "operit_plugin_sdk :: js_sdk :: JsNever"),
-            );
-            output.push_str(" {\n");
-            output.push_str(&generated_method_body(
-                namespace,
-                &runtime_name,
-                &tool_variant,
-                &arguments,
-            ));
-            output.push_str("    }\n\n");
-        }
-        output.push_str("}\n\n");
-    }
-    fs::write(output_path, output)?;
-    Ok(())
-}
 
 /// Describes one generated JavaScript Tools method binding.
 #[derive(Clone, Debug)]
 struct JsToolBindingSpec {
     tool: String,
+    strict_arguments: bool,
+    facade: String,
+    fixed_parameters: Vec<(String, String)>,
     api_variants: Vec<JsToolApiVariantSpec>,
 }
 
@@ -135,6 +80,9 @@ fn parse_rust_tool_bindings(
         let mut namespace = None;
         let mut method = None;
         let mut tool = None;
+        let mut strict_arguments = false;
+        let mut facade = None;
+        let mut fixed_parameters = None;
         for field in &binding.fields {
             let syn::Member::Named(name) = &field.member else {
                 continue;
@@ -150,13 +98,19 @@ fn parse_rust_tool_bindings(
                         method = Some(value.value());
                     }
                 }
-                ("tool", Expr::Path(value)) => {
-                    tool = value
-                        .path
-                        .segments
-                        .last()
-                        .map(|segment| pascal_case_to_snake_case(&segment.ident.to_string()));
+                ("target", Expr::Path(value)) => {
+                    let segments = &value.path.segments;
+                    if segments.len() != 2 || segments[0].ident != "BuiltinToolName" {
+                        return Err("Tools must target a canonical BuiltinToolName".into());
+                    }
+                    tool = Some(pascal_case_to_snake_case(&segments[1].ident.to_string()));
                 }
+                ("strict_arguments", Expr::Lit(value)) => {
+                    let Lit::Bool(value) = &value.lit else { return Err("Argument validation must be a boolean".into()); };
+                    strict_arguments = value.value;
+                }
+                ("facade", Expr::Path(value)) => facade = Some(value.path.segments.last().ok_or("Result facade is missing")?.ident.to_string()),
+                ("fixed_parameters", expression) => fixed_parameters = Some(parse_fixed_parameters(expression)?),
                 _ => {}
             }
         }
@@ -168,7 +122,10 @@ fn parse_rust_tool_bindings(
             .insert(
                 key.clone(),
                 JsToolBindingSpec {
-                    tool: tool.ok_or("JsToolBinding tool is missing")?,
+                    tool: tool.ok_or("JsToolBinding target is missing")?,
+                    strict_arguments,
+                    facade: facade.ok_or("JsToolBinding result facade is missing")?,
+                    fixed_parameters: fixed_parameters.ok_or("Builtin binding fixed parameters must be declared")?,
                     api_variants: Vec::new(),
                 },
             )
@@ -345,35 +302,44 @@ pub fn generate_js_tools_runtime(
         .into());
     }
 
-    let mut output = String::from(
+    let parameter_rules = generate_parameter_rules(bindings_path, &methods)?;
+    let mut output = format!("var __operitToolParameterRules = {parameter_rules};\n");
+    output.push_str(
         r#"// Generated from canonical Rust Tools traits and bindings. Do not edit.
 var Tools = {};
 var tools = Tools;
 
+/** Converts public argument spelling to the executor naming convention. */
 function __operitToolsSnakeCase(name) {
     return String(name).replace(/[A-Z]/g, function(character) {
         return "_" + character.toLowerCase();
     });
 }
 
+/** Selects object expansion using the parameter conventions declared in the SDK contract. */
 function __operitToolsFlattens(name) {
-    return name === "options" || name === "params" || name === "updates" ||
-        name.endsWith("OrOptions") || name.endsWith("OrParams");
+    return __operitToolParameterRules.flattenArguments.indexOf(name) !== -1 ||
+        __operitToolParameterRules.scalarUnionSuffixes.some(function(suffix) { return name.endsWith(suffix); });
 }
 
+/** Resolves the scalar branch name of a declared union argument. */
 function __operitToolsScalarField(name) {
-    return __operitToolsSnakeCase(name.replace(/OrOptions$|OrParams$/, ""));
-}
-
-function __operitToolsWireName(namespace, method, name) {
-    if (namespace === "Files" && method === "writeBinary" && name === "base64Content") return "base64Content";
-    if (namespace === "Files" && (method === "apply" || method === "create" || method === "edit") && name === "newContent") return "new";
-    if (namespace === "Files" && method === "edit" && name === "oldContent") return "old";
-    if (namespace === "System" && method === "sleep" && name === "milliseconds") return "duration_ms";
-    if (namespace === "System" && method === "listApps" && name === "includeSystem") return "include_system_apps";
+    for (var suffix of __operitToolParameterRules.scalarUnionSuffixes) {
+        if (name.endsWith(suffix)) return __operitToolsSnakeCase(name.slice(0, -suffix.length));
+    }
     return __operitToolsSnakeCase(name);
 }
 
+/** Resolves an exact positional alias or applies the declared snake-case naming convention. */
+function __operitToolsWireName(namespace, method, name) {
+    var key = namespace + "." + method + "." + name;
+    if (Object.prototype.hasOwnProperty.call(__operitToolParameterRules.argumentNames, key)) {
+        return __operitToolParameterRules.argumentNames[key];
+    }
+    return __operitToolsSnakeCase(name);
+}
+
+/** Selects the declared object or positional overload from the actual arguments. */
 function __operitToolsSelectOverload(overloads, args) {
     if (overloads.length === 1) return overloads[0];
     if (args.length > 0 && args[0] !== null && typeof args[0] === "object" && !Array.isArray(args[0])) {
@@ -390,7 +356,8 @@ function __operitToolsSelectOverload(overloads, args) {
     return selected;
 }
 
-function __operitToolsBuildParameters(namespace, method, overloads, args) {
+/** Maps declared SDK arguments and fixed fields to one executor request. */
+function __operitToolsBuildParameters(namespace, method, overloads, args, fixedParameters) {
     var names = __operitToolsSelectOverload(overloads, args);
     var parameters = {};
     for (var index = 0; index < names.length; index += 1) {
@@ -400,7 +367,7 @@ function __operitToolsBuildParameters(namespace, method, overloads, args) {
             if (value === undefined || value === null) continue;
             if (typeof value === "object" && !Array.isArray(value)) {
                 Object.keys(value).forEach(function(field) {
-                    var wireField = namespace === "Net" ? field : __operitToolsSnakeCase(field);
+                    var wireField = __operitToolParameterRules.preserveObjectNamespaces.indexOf(namespace) !== -1 ? field : __operitToolsSnakeCase(field);
                     parameters[wireField] = value[field];
                 });
             } else {
@@ -410,22 +377,26 @@ function __operitToolsBuildParameters(namespace, method, overloads, args) {
             parameters[__operitToolsWireName(namespace, method, name)] = value;
         }
     }
-    if (namespace === "Net" && method === "httpGet") parameters.method = "GET";
-    if (namespace === "Net" && method === "httpPost") parameters.method = "POST";
-    if (namespace === "Net.cookies" && method === "get") parameters.action = "get";
-    if (namespace === "Net.cookies" && method === "set") parameters.action = "set";
-    if (namespace === "Net.cookies" && method === "clear") parameters.action = "clear";
-    if (namespace === "Memory" && Array.isArray(parameters.titles)) parameters.titles = parameters.titles.join(",");
+    for (var fixed of fixedParameters) parameters[fixed[0]] = fixed[1];
     return parameters;
 }
 
-function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args) {
-    return toolCall(toolName, __operitToolsBuildParameters(namespace, method, overloads, args));
+/** Sends one mapped request through the existing structured tool transport. */
+function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args, fixedParameters, receiver) {
+    var parameters = __operitToolsBuildParameters(namespace, method, overloads, args, fixedParameters);
+    if (receiver && receiver.__operitDeviceContext) {
+        var device = receiver.__operitDeviceContext;
+        return __operitDeviceToolCall(device.nodeId, "default", toolName, parameters, device.options);
+    }
+    return toolCall(toolName, parameters);
 }
+
 
 "#,
     );
     let mut initialized_namespaces = BTreeSet::new();
+    output.push_str(&fs::read_to_string(sdk_src.join("chat_runtime.js"))?);
+    output.push_str(&fs::read_to_string(sdk_src.join("js_sdk/storage_runtime.js"))?);
     let mut chat_namespace_open = false;
     for ((namespace, method), overloads) in methods {
         let binding = bindings
@@ -440,11 +411,7 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
             for segment in namespace.split('.') {
                 expression.push_str(&format!("[\"{segment}\"]"));
                 if initialized_namespaces.insert(expression.clone()) {
-                    if matches!(namespace.as_str(), "Edge" | "Io") {
-                        output.push_str(&format!("{expression} = class {segment} {{ constructor() {{ throw new Error('{segment} is a static class'); }} }};\n"));
-                    } else {
-                        output.push_str(&format!("{expression} = {expression} || {{}};\n"));
-                    }
+                    output.push_str(&format!("{expression} = {expression} || {{}};\n"));
                 }
             }
         }
@@ -467,81 +434,70 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
             })
             .collect::<Vec<_>>()
             .join(", ");
-        if namespace == "Chat" {
-            if !chat_namespace_open {
-                output
-                    .push_str("Tools[\"Chat\"] = __operitToolPkgApi.namespace(\"Tools.Chat\", {\n");
-                chat_namespace_open = true;
+        // Argument checks and result facades never select another native execution path.
+        let make_function = |signature: &str, overloads: &str| -> Result<String, Box<dyn Error>> {
+            match binding.facade.as_str() {
+                "AsyncIterator" => Ok(format!("function({signature}) {{ if (arguments.length !== 1) throw new Error(\"{namespace}.{method} requires exactly one request\"); return __operitCreateToolStream(\"{}\", {signature}); }}", binding.tool)),
+                "Promise" | "Storage" => {
+                    let validation = if binding.strict_arguments {
+                        Some(argument_checks(sdk_src, &namespace, &method)?)
+                    } else { None };
+                    Ok(generated_js_function(&namespace, &method, &binding.tool, signature, overloads, &binding.fixed_parameters, validation.as_deref()))
+                }
+                _ => Err(format!("Unknown result facade: {}", binding.facade).into()),
             }
-            output.push_str(&format!("\"{method}\": "));
-            if binding.api_variants.is_empty() {
-                output.push_str(&generated_js_function(
-                    &namespace,
-                    &method,
-                    &binding.tool,
-                    &canonical_signature,
-                    &canonical_overloads,
-                ));
-            } else {
-                output.push_str("__operitToolPkgApi.method()");
-                for variant in &binding.api_variants {
-                    let signature = variant
-                        .arguments
-                        .as_ref()
-                        .map(|arguments| arguments.join(", "))
-                        .unwrap_or_else(|| canonical_signature.clone());
-                    let variant_overloads = variant
-                        .arguments
-                        .as_ref()
-                        .map(|arguments| {
-                            format!(
-                                "[{}]",
-                                arguments
-                                    .iter()
-                                    .map(|argument| format!("\"{argument}\""))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )
-                        })
-                        .unwrap_or_else(|| canonical_overloads.clone());
-                    let function = generated_js_function(
-                        &namespace,
-                        &method,
-                        &binding.tool,
-                        &signature,
-                        &variant_overloads,
-                    );
-                    if let Some(until) = &variant.until {
-                        output.push_str(&format!(
-                            ".between(\"{}\", \"{}\", {})",
-                            variant.since, until, function
-                        ));
-                    } else {
-                        output.push_str(&format!(".since(\"{}\", {})", variant.since, function));
-                    }
+        };
+        let function = if binding.api_variants.is_empty() {
+            make_function(&canonical_signature, &canonical_overloads)?
+        } else {
+            let mut expression = "__operitToolPkgApi.method()".to_string();
+            for variant in &binding.api_variants {
+                let signature = variant.arguments.as_ref().map(|args| args.join(", ")).unwrap_or_else(|| canonical_signature.clone());
+                let overloads = variant.arguments.as_ref().map(|args| format!("[{}]", args.iter().map(|arg| format!("{arg:?}")).collect::<Vec<_>>().join(", "))).unwrap_or_else(|| canonical_overloads.clone());
+                let function = make_function(&signature, &overloads)?;
+                if let Some(until) = &variant.until {
+                    expression.push_str(&format!(".between(\"{}\", \"{}\", {})", variant.since, until, function));
+                } else {
+                    expression.push_str(&format!(".since(\"{}\", {})", variant.since, function));
                 }
             }
-            output.push_str(",\n");
+            expression
+        };
+        if namespace == "Chat" {
+            if !chat_namespace_open {
+                output.push_str("Tools[\"Chat\"] = __operitToolPkgApi.namespace(\"Tools.Chat\", {\n");
+                chat_namespace_open = true;
+            }
+            output.push_str(&format!("\"{method}\": {function},\n"));
         } else {
-            let function = generated_js_function(
-                &namespace,
-                &method,
-                &binding.tool,
-                &canonical_signature,
-                &canonical_overloads,
-            );
+            let function = if binding.api_variants.is_empty() { function } else { format!("{function}.build(\"Tools.{namespace}.{method}\")") };
             output.push_str(&format!("{expression}[\"{method}\"] = {function};\n"));
         }
+        if binding.facade == "Storage" { output.push_str("__operitInstallStorageFacade();\n"); }
     }
     if chat_namespace_open {
         output.push_str("});\n");
     }
+    output.push_str(r#"
+function __operitCopyToolsNamespaces(source) {
+    var target = {};
+    Object.keys(source).forEach(function(key) {
+        var value = source[key];
+        target[key] = value && typeof value === "object" ? __operitCopyToolsNamespaces(value) : value;
+    });
+    return target;
+}
+var __operitCanonicalTools = __operitCopyToolsNamespaces(Tools);
+"#);
     // Embed the handwritten legacy adapters after the canonical Tools namespace exists.
     for relative_path in [
         "compat/v1/files.js",
         "compat/v1/chat.js",
         "compat/v1/workflow.js",
+        "compat/v1/characters.js",
+        "compat/v1/memory.js",
         "compat/v1/install.js",
+        "DeviceTools.script.js",
     ] {
         output.push('\n');
         output.push_str(&fs::read_to_string(sdk_src.join(relative_path))?);
@@ -551,6 +507,103 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
     Ok(())
 }
 
+/// Counts the exact positional arguments required by a validated SDK method.
+fn overloads_count(signature: &str) -> usize {
+    if signature.is_empty() { 0 } else { signature.split(',').count() }
+}
+
+/// Derives public argument checks from canonical Rust types without selecting a separate transport.
+fn argument_checks(sdk_src: &Path, namespace: &str, method: &str) -> Result<String, Box<dyn Error>> {
+    let mut checks = Vec::new();
+    for (path, trait_name, declared_namespace) in HOST_TRAITS {
+        if *declared_namespace != namespace { continue; }
+        let file = syn::parse_file(&fs::read_to_string(sdk_src.join(path))?)?;
+        let contract = file.items.iter().find_map(|item| match item {
+            Item::Trait(item) if item.ident == *trait_name => Some(item), _ => None,
+        }).ok_or("Canonical Tools trait is missing")?;
+        let operation = contract.items.iter().find_map(|item| match item {
+            TraitItem::Fn(item) if runtime_method_name(&item.sig.ident.to_string()) == method => Some(item), _ => None,
+        }).ok_or("Canonical Tools method is missing")?;
+        for argument in &operation.sig.inputs {
+            let FnArg::Typed(argument) = argument else { continue; };
+            let Pat::Ident(name) = &*argument.pat else { return Err("Tool arguments require named fields".into()); };
+            let name = name.ident.to_string();
+            match &*argument.ty {
+                syn::Type::Path(path) if path.path.is_ident("String") => checks.push(format!("if (typeof {name} !== 'string' || {name}.trim() === '' || {name}.trim() !== {name}) throw new TypeError('Identifier must be exact nonblank text');")),
+                syn::Type::Path(_) => checks.push(format!("{name} = __operitSnapshotJsonObject({name});")),
+                _ => return Err("Unsupported validated tool argument type".into()),
+            }
+        }
+    }
+    Ok(checks.join(" "))
+}
+
+/// Emits parameter metadata from the canonical contract and verifies every exact positional alias.
+fn generate_parameter_rules(
+    path: &Path,
+    methods: &BTreeMap<(String, String), Vec<Vec<String>>>,
+) -> Result<String, Box<dyn Error>> {
+    let file = syn::parse_file(&fs::read_to_string(path)?)?;
+    let item = file.items.iter().find_map(|item| match item {
+        Item::Const(item) if item.ident == "JS_TOOL_PARAMETER_RULES" => Some(item),
+        _ => None,
+    }).ok_or("Missing canonical tool parameter rules")?;
+    let Expr::Struct(rules) = &*item.expr else { return Err("Tool parameter rules must be declared as a struct".into()); };
+    let mut fields = BTreeMap::new();
+    for field in &rules.fields {
+        let syn::Member::Named(name) = &field.member else { return Err("Parameter rule fields must be named".into()); };
+        if fields.insert(name.to_string(), &field.expr).is_some() { return Err("Duplicate parameter rule field".into()); }
+    }
+    if fields.len() != 4 { return Err("Unexpected tool parameter rule fields".into()); }
+    let text_array = |name: &str| -> Result<Vec<String>, Box<dyn Error>> {
+        let Expr::Reference(reference) = fields.get(name).ok_or("Missing parameter rule array")? else { return Err("Parameter rules must use static arrays".into()); };
+        parse_string_array(&reference.expr, name)
+    };
+    let flattened = text_array("flatten_arguments")?;
+    let suffixes = text_array("scalar_union_suffixes")?;
+    let preserved = text_array("preserve_object_namespaces")?;
+    let Expr::Reference(reference) = fields.get("argument_names").ok_or("Missing positional argument names")? else { return Err("Argument names must use a static tuple array".into()); };
+    let Expr::Array(entries) = &*reference.expr else { return Err("Argument names must be an array".into()); };
+    let mut aliases = BTreeMap::new();
+    for entry in &entries.elems {
+        let Expr::Tuple(tuple) = entry else { return Err("Argument names must contain exact four-field tuples".into()); };
+        let mut values = Vec::new();
+        for value in &tuple.elems {
+            let Expr::Lit(value) = value else { return Err("Argument names must be literals".into()); };
+            let Lit::Str(value) = &value.lit else { return Err("Argument names must be text".into()); };
+            values.push(value.value());
+        }
+        let [namespace, method, argument, wire]: [String; 4] = values.try_into().map_err(|_| "Argument aliases require exactly four fields")?;
+        let overloads = methods.get(&(namespace.clone(), method.clone())).ok_or("Argument alias references an undeclared method")?;
+        if !overloads.iter().any(|arguments| arguments.iter().any(|name| name == &argument)) { return Err("Argument alias references an undeclared positional argument".into()); }
+        if aliases.insert(format!("{namespace}.{method}.{argument}"), wire).is_some() { return Err("Duplicate positional argument alias".into()); }
+    }
+    let array = |values: &[String]| format!("[{}]", values.iter().map(|value| format!("{value:?}")).collect::<Vec<_>>().join(", "));
+    let aliases = aliases.iter().map(|(key, value)| format!("{key:?}: {value:?}")).collect::<Vec<_>>().join(", ");
+    Ok(format!("{{flattenArguments: {}, scalarUnionSuffixes: {}, preserveObjectNamespaces: {}, argumentNames: {{{aliases}}}}}", array(&flattened), array(&suffixes), array(&preserved)))
+}
+
+/// Reads each explicitly declared fixed executor parameter from the canonical binding contract.
+fn parse_fixed_parameters(expression: &Expr) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+    let Expr::Reference(reference) = expression else { return Err("Fixed parameters must be a static tuple slice".into()); };
+    let Expr::Array(array) = &*reference.expr else { return Err("Fixed parameters must be an array".into()); };
+    let mut parameters = Vec::new();
+    let mut names = BTreeSet::new();
+    for entry in &array.elems {
+        let Expr::Tuple(tuple) = entry else { return Err("Fixed parameters must contain string pairs".into()); };
+        let mut fields = Vec::new();
+        for field in &tuple.elems {
+            let Expr::Lit(value) = field else { return Err("Fixed parameter fields must be string literals".into()); };
+            let Lit::Str(value) = &value.lit else { return Err("Fixed parameter fields must be text".into()); };
+            fields.push(value.value());
+        }
+        let [name, value]: [String; 2] = fields.try_into().map_err(|_| "Fixed parameters require exactly two fields")?;
+        if !names.insert(name.clone()) { return Err("Duplicate fixed executor parameter".into()); }
+        parameters.push((name, value));
+    }
+    Ok(parameters)
+}
+
 /// Generates one JavaScript function expression for a Tools API variant.
 fn generated_js_function(
     namespace: &str,
@@ -558,10 +611,18 @@ fn generated_js_function(
     tool: &str,
     signature: &str,
     overloads: &str,
+    fixed_parameters: &[(String, String)],
+    validation: Option<&str>,
 ) -> String {
-    format!(
-        "function({signature}) {{\n    return __operitInvokeToolsBinding(\"{namespace}\", \"{method}\", \"{tool}\", [{overloads}], Array.prototype.slice.call(arguments));\n}}"
-    )
+    let fixed_parameters = format!("[{}]", fixed_parameters.iter().map(|(key, value)| format!("[{key:?}, {value:?}]")).collect::<Vec<_>>().join(", "));
+    let invoke = format!("return __operitInvokeToolsBinding(\"{namespace}\", \"{method}\", \"{tool}\", [{overloads}], Array.prototype.slice.call(arguments), {fixed_parameters}, this);");
+    match validation {
+        Some(validation) => {
+            let count = overloads_count(signature);
+            format!("function({signature}) {{ if (arguments.length !== {count}) return Promise.reject(new Error(\"{namespace}.{method} requires exactly {count} arguments\")); try {{ {validation} {invoke} }} catch (error) {{ return Promise.reject(error); }} }}")
+        }
+        None => format!("function({signature}) {{\n    {invoke}\n}}"),
+    }
 }
 
 /// Reads every overload's ordered argument names from active Rust host traits.
@@ -636,48 +697,8 @@ fn method_arguments(signature: &syn::Signature) -> Result<Vec<String>, Box<dyn E
         .collect()
 }
 
-/// Emits one generated host method body using the shared runtime parameter adapter.
-fn generated_method_body(
-    namespace: &str,
-    method: &str,
-    tool_variant: &str,
-    arguments: &[String],
-) -> String {
-    if namespace == "System.terminal" && method == "execStreaming" {
-        return format!(
-            "        invoke_terminal_streaming(\n            self,\n            BuiltinToolName::{tool_variant},\n            sessionId,\n            command,\n            options,\n        )\n"
-        );
-    }
-    if namespace == "Chat" && method == "sendMessageStreaming" {
-        return format!(
-            "        invoke_chat_streaming(\n            self,\n            BuiltinToolName::{tool_variant},\n            message,\n            chatId,\n            roleCardId,\n            senderName,\n            options,\n        )\n"
-        );
-    }
-    let ignores_uninhabited_options = matches!(
-        (namespace, method),
-        ("Net", "browserNavigateBack") | ("Net", "browserClose") | ("Net", "browserCloseAll")
-    );
-    let arguments = arguments
-        .iter()
-        .map(|argument| {
-            if ignores_uninhabited_options && argument == "options" {
-                "generated_empty_argument(\"options\")".to_string()
-            } else {
-                format!("generated_argument(\"{argument}\", {argument})")
-            }
-        })
-        .collect::<Vec<_>>();
-    let arguments = if arguments.is_empty() {
-        "generated_no_arguments()".to_string()
-    } else {
-        format!("vec![{}]", arguments.join(", "))
-    };
-    format!(
-        "        invoke_generated(\n            self,\n            BuiltinToolName::{tool_variant},\n            \"{namespace}\",\n            \"{method}\",\n            {arguments},\n        )\n"
-    )
-}
-
 /// Converts one snake-case built-in name into its generated enum variant identifier.
+#[cfg(test)]
 fn rust_variant_name(name: &str) -> String {
     name.split('_')
         .filter(|segment| !segment.is_empty())

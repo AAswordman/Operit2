@@ -6,7 +6,6 @@ use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::RuntimeStorageLayout::RUNTIME_TTS_AUDIO_DIR_PATH;
 
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use crate::services::LocalProviderService::LocalProviderService;
 use operit_host_api::HostManager::HostManager;
@@ -18,10 +17,9 @@ use operit_util::TtsCleaner::TtsCleaner;
 use operit_util::TtsSegmenter::TtsSegmenter;
 
 #[derive(Clone)]
-/// Synthesizes speech audio using configured character or TTS profiles.
+/// Synthesizes speech audio using exact resolved TTS configurations.
 pub struct TtsSynthesisService {
     paths: RuntimeStorePaths,
-    characterCardManager: CharacterCardManager,
     ttsConfigManager: TtsConfigManager,
     context: Option<HostManager>,
 }
@@ -70,7 +68,6 @@ impl TtsSynthesisService {
     /// Creates a synthesis service for explicit runtime paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            characterCardManager: CharacterCardManager::new(paths.clone()),
             ttsConfigManager: TtsConfigManager::new(paths.clone()),
             paths,
             context: None,
@@ -80,45 +77,13 @@ impl TtsSynthesisService {
     /// Creates a synthesis service with runtime paths and host context.
     pub fn newWithContext(paths: RuntimeStorePaths, context: HostManager) -> Self {
         Self {
-            characterCardManager: CharacterCardManager::new(paths.clone()),
             ttsConfigManager: TtsConfigManager::new(paths.clone()),
             paths,
             context: Some(context),
         }
     }
 
-    /// Synthesizes text with the TTS configuration bound to a character card.
-    pub fn synthesizeForCharacter(
-        &self,
-        characterCardId: &str,
-        text: &str,
-    ) -> Result<TtsSynthesisResult, String> {
-        let characterCardId = characterCardId.trim();
-        if characterCardId.is_empty() {
-            return Err("character card id is empty".to_string());
-        }
-        let cleanedText = TtsCleaner::clean(text);
-        if cleanedText.is_empty() {
-            return Err("tts text is empty".to_string());
-        }
-        let card = self
-            .characterCardManager
-            .getCharacterCard(characterCardId)
-            .map_err(|error| error.to_string())?;
-        let config = match card.ttsConfigId.as_ref().map(|value| value.trim()) {
-            Some(configId) if !configId.is_empty() => self
-                .ttsConfigManager
-                .getTtsConfig(configId)
-                .map_err(|error| error.to_string())?,
-            _ => self
-                .ttsConfigManager
-                .getCurrentTtsConfig()
-                .map_err(|error| error.to_string())?,
-        };
-        self.synthesizeWithResolvedConfig(characterCardId, &config, &cleanedText)
-    }
-
-    /// Synthesizes text with a selected TTS configuration.
+    /// Synthesizes text with the exact configuration selected by a resolved chat profile.
     pub fn synthesizeWithConfig(
         &self,
         ttsConfigId: &str,
@@ -137,6 +102,30 @@ impl TtsSynthesisService {
             .getTtsConfig(ttsConfigId)
             .map_err(|error| error.to_string())?;
         self.synthesizeWithResolvedConfig(ttsConfigId, &config, &cleanedText)
+    }
+
+    /// Returns provider audio directly for host plugins and remote device playback.
+    pub fn synthesizeAudioWithConfig(&self, id: &str, text: &str)
+        -> Result<operit_plugin_sdk::js_sdk::results::TtsSynthesizeResultData, String> {
+        if id.trim().is_empty() { return Err("tts config id is empty".into()); }
+        let text = TtsCleaner::clean(text);
+        if text.is_empty() { return Err("tts text is empty".into()); }
+        let config = self.ttsConfigManager.getTtsConfig(id).map_err(|e| e.to_string())?;
+        let provider = self.createVoiceService(&config)?;
+        let extension = provider.outputExtension(&config)?;
+        let contentType = match extension {
+            "wav" => "audio/wav", "mp3" => "audio/mpeg", "ogg" => "audio/ogg",
+            "opus" => "audio/opus", "flac" => "audio/flac", "aac" => "audio/aac",
+            "pcm" => "application/octet-stream",
+            _ => return Err(format!("Unsupported TTS output format: {extension}")),
+        };
+        let mut segments = Vec::new();
+        for segment in TtsSegmenter::segment(&text, 4000) {
+            let audio = provider.synthesize(&config, &segment)?;
+            if audio.is_empty() { return Err("TTS provider returned empty audio".into()); }
+            segments.push(operit_plugin_sdk::js_sdk::results::TtsAudioSegment { audio, contentType: contentType.into() });
+        }
+        Ok(operit_plugin_sdk::js_sdk::results::TtsSynthesizeResultData { segments })
     }
 
     /// Synthesizes cleaned text and writes every generated segment to runtime storage.

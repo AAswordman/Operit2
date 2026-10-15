@@ -386,8 +386,17 @@ mod tests {
         );
     }
 
+    /// Initializes the required storage roots before verifying that untrusted server IDs remain one path component.
     #[test]
     fn config_marker_names_do_not_trust_server_ids_as_paths() {
+        let testRoot =
+            std::env::temp_dir().join(format!("operit-market-marker-{}", uuid::Uuid::new_v4()));
+        operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
+            operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(
+                testRoot.join("runtime"),
+                testRoot.join("workspaces"),
+            ),
+        );
         let root = mcp_config_marker_root("../../outside");
         assert_eq!(
             root.parent().unwrap(),

@@ -17,7 +17,6 @@ import sys
 import tempfile
 import termios
 import time
-import uuid
 
 
 class Terminal:
@@ -37,10 +36,9 @@ class Terminal:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
         env = dict(os.environ, HOME=str(home), OPERIT_CLI_CONFIG_DIR=str(config))
-        self.token = str(uuid.uuid4())
         self.argv = [
             str(binary), 'cli', '--json', 'link', 'session', transport,
-            '--bind', f'127.0.0.1:{port}', '--token', self.token, '--no-discovery',
+            '--bind', f'127.0.0.1:{port}', '--no-discovery',
         ]
         self.env = env
         self.log_path = root / f'{name}.log'
@@ -131,7 +129,7 @@ class Terminal:
 
 
 def pair(source, target, transport):
-    pending = source.command('pair-start', target.node, target.address, transport, '--token', target.token)
+    pending = source.command('pair-start', target.node, target.address, transport)
     prompt = next(p for p in target.command('prompts') if p['pairingId'] == pending['pairingId'])
     assert len(prompt['confirmationCode']) == 6 and prompt['confirmationCode'].isdigit()
     source.command('pair-finish', pending['pairingId'], prompt['confirmationCode'])

@@ -1,0 +1,27 @@
+name: operit_ui
+description: Shared Operit Flutter UI components, appearance models, and rendering resources.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  crypto: ^3.0.6
+  flutter:
+    sdk: flutter
+  flutter_svg: ^2.3.0
+  liquid_glass_widgets:
+    path: ../../thirdparty/liquid_glass_widgets
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/fixtures/theme-v1.json
+    - assets/fonts/
+    - assets/licenses/

@@ -287,4 +287,10 @@ impl RuntimeSqliteTransaction for WebRuntimeSqliteTransaction {
         call_sqlite("commitTransaction", &[JsValue::from_str(&self.id)])?;
         Ok(())
     }
+
+    /// Aborts the exact browser transaction through the registered JavaScript SQLite host.
+    fn rollback(self: Box<Self>) -> HostResult<()> {
+        call_sqlite("rollbackTransaction", &[JsValue::from_str(&self.id)])?;
+        Ok(())
+    }
 }

@@ -1309,8 +1309,17 @@ where
             "core-rslinkrs-json-events",
             Box::new(move || {
                 Box::pin(async move {
+                    let profile = std::env::var_os("OPERIT_PROFILE_COMPOSE_STAGES").is_some();
                     let mut collector = |item| {
+                        let started = profile.then(std::time::Instant::now);
                         let value = to_core_value(item).expect("stream item must serialize");
+                        if let Some(started) = started {
+                            let line = format!("event=compose_pipeline_stage stage=rust-core-value durationMs={:.3} wallMicros={} request={}\n",
+                                started.elapsed().as_secs_f64() * 1000.0,
+                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_micros(),
+                                request.requestId.0);
+                            let _ = std::io::Write::write_all(&mut std::io::stderr().lock(), line.as_bytes());
+                        }
                         let _ = sender.send(CoreEvent {
                             requestId: Some(request.requestId.clone()),
                             target: request.target.clone(),

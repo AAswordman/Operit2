@@ -619,23 +619,7 @@ footer {
   font-size:11px;
   overflow-wrap:anywhere;
 }
-.simulator-details .sim-token {
-  display:flex;
-  align-items:center;
-  gap:8px;
-  padding:6px 8px;
-}
-.sim-token input {
-  margin:0;
-  min-height:30px;
-  padding:5px 8px;
-  font:11px ui-monospace,Consolas,monospace;
-}
-.sim-token button {
-  min-height:30px;
-  padding:4px 10px;
-  flex:none;
-}
+
 .simulator-log {
   font-size:11px;
 }

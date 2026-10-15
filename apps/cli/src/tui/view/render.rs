@@ -1567,20 +1567,6 @@ impl OperitTui {
                             field_style(wizard.field == PairField::Transport),
                         ),
                     ]),
-                    Line::from(vec![
-                        Span::styled(
-                            format!("{} ", text.network_pair_wizard_token()),
-                            field_style(wizard.field == PairField::Token),
-                        ),
-                        Span::styled(
-                            format!("{}▏", wizard.token),
-                            field_style(wizard.field == PairField::Token),
-                        ),
-                        Span::styled(
-                            format!(" ({})", text.network_pair_wizard_token_optional()),
-                            Style::default().fg(theme::TEXT_SUBTLE),
-                        ),
-                    ]),
                     blank_line(),
                     Line::from(Span::styled(
                         text.network_pair_wizard_start_hint(),

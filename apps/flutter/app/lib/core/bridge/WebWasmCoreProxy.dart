@@ -64,7 +64,7 @@ class WebWasmCoreProxy extends CoreProxy {
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     return _invokeBytes('call', <JSAny?>[
-      encodeNativeCoreCallRequest(request).toJS,
+      encodeNativeCoreCallRequest(request).toBytes().toJS,
     ]);
   }
 
@@ -72,7 +72,7 @@ class WebWasmCoreProxy extends CoreProxy {
   @override
   Future<Uint8List> callControlBytes(CoreCallRequest request) async {
     return _invokeBytes('controlCall', <JSAny?>[
-      encodeNativeCoreCallRequest(request).toJS,
+      encodeNativeCoreCallRequest(request).toBytes().toJS,
     ]);
   }
 
@@ -80,7 +80,7 @@ class WebWasmCoreProxy extends CoreProxy {
   @override
   Future<CorePushSink> push(CorePushRequest request) async {
     final responseBytes = await _invokeBytes('pushOpen', <JSAny?>[
-      encodeNativeCorePushOpenRequest(request).toJS,
+      encodeNativeCorePushOpenRequest(request).toBytes().toJS,
     ]);
     final pushId = decodeNativeCorePushOpenResult(responseBytes);
     if (pushId != request.requestId) {
@@ -95,7 +95,7 @@ class WebWasmCoreProxy extends CoreProxy {
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     final responseBytes = await _invokeBytes('watchSnapshot', <JSAny?>[
-      encodeNativeCoreWatchSnapshotRequest(request).toJS,
+      encodeNativeCoreWatchSnapshotRequest(request).toBytes().toJS,
     ]);
     return decodeNativeCoreWatchSnapshotResult(responseBytes);
   }
@@ -116,7 +116,10 @@ class WebWasmCoreProxy extends CoreProxy {
       unawaited(() async {
         try {
           final subscriptionBytes = await _invokeBytes('watchStream', <JSAny?>[
-            encodeNativeCoreWatchStreamRequest(subscriptionId, request).toJS,
+            encodeNativeCoreWatchStreamRequest(
+              subscriptionId,
+              request,
+            ).toBytes().toJS,
             onEvent,
           ]);
           final openedSubscriptionId = decodeNativeCoreWatchStreamResult(
@@ -169,7 +172,7 @@ class _WebCorePushSink implements CorePushSink {
     final sequence = _sequence++;
     _tail = _tail.then((_) async {
       final responseBytes = await _invokeBytes('pushItem', <JSAny?>[
-        encodeNativeCorePushItem(_pushId, sequence, args).toJS,
+        encodeNativeCorePushItem(_pushId, sequence, args).toBytes().toJS,
       ]);
       decodeNativeCoreVoidResult(responseBytes);
     });

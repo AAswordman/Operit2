@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -23,6 +24,104 @@ void main() {
 
   Future<Uri> map(ComposeDslWebViewResourceLoader loader, String url) =>
       loader.localUriFor(url, isMainFrame: true);
+
+  test(
+    'image file responses sniff magic bytes for imported .image paths',
+    () async {
+      final formats = {
+        'image/png': [137, 80, 78, 71, 13, 10, 26, 10],
+        'image/jpeg': [255, 216, 255, 224],
+        'image/gif': ascii.encode('GIF89a'),
+        'image/webp': [82, 73, 70, 70, 20, 0, 0, 0, 87, 69, 66, 80],
+        'image/bmp': [66, 77, 0, 0],
+      };
+      for (final entry in formats.entries) {
+        final loader = create(
+          dispatch: (_) async => {
+            'action': 'respond',
+            'response': {'filePath': '/app/avatar.image'},
+          },
+          read: (_) async => entry.value,
+        );
+        final uri = await map(loader, 'https://characters.test/avatars/1');
+        final response = await loader.handleRequest(
+          WebViewLocalResourceRequest(url: '$uri'),
+        );
+        expect(response.statusCode, 200);
+        expect(response.mimeType, entry.key);
+        expect(response.body, entry.value);
+      }
+    },
+  );
+
+  test(
+    'overlapping image requests share IO; later reads see new bytes and retry errors',
+    () async {
+      var reads = 0;
+      var pending = Completer<List<int>>();
+      final loader = create(
+        dispatch: (_) async => {
+          'action': 'respond',
+          'response': {'filePath': '/app/avatar.image'},
+        },
+        read: (_) {
+          reads++;
+          return pending.future;
+        },
+      );
+      final uri = await map(loader, 'https://characters.test/avatars/1');
+      Future<WebViewLocalResourceResponse> load() =>
+          loader.handleRequest(WebViewLocalResourceRequest(url: '$uri'));
+      final first = List.generate(20, (_) => load());
+      await Future<void>.delayed(Duration.zero);
+      expect(reads, 1);
+      pending.complete([137, 80, 78, 71, 13, 10, 26, 10]);
+      expect(
+        (await Future.wait(first)).every((r) => r.mimeType == 'image/png'),
+        true,
+      );
+      pending = Completer<List<int>>();
+      final changed = load();
+      await Future<void>.delayed(Duration.zero);
+      expect(reads, 2);
+      pending.complete([255, 216, 255, 224]);
+      expect((await changed).mimeType, 'image/jpeg');
+      pending = Completer<List<int>>();
+      final failed = List.generate(3, (_) => load());
+      await Future<void>.delayed(Duration.zero);
+      expect(reads, 3);
+      pending.completeError(StateError('temporary'));
+      expect(
+        (await Future.wait(failed)).every((r) => r.statusCode == 500),
+        true,
+      );
+      pending = Completer<List<int>>();
+      final retry = load();
+      await Future<void>.delayed(Duration.zero);
+      pending.complete([66, 77]);
+      expect((await retry).mimeType, 'image/bmp');
+      expect(reads, 4);
+    },
+  );
+
+  test('closing the image loader rejects a pending response', () async {
+    final pending = Completer<List<int>>();
+    final loader = create(
+      dispatch: (_) async => {
+        'action': 'respond',
+        'response': {'filePath': '/app/avatar.image'},
+      },
+      read: (_) => pending.future,
+    );
+    final uri = await map(loader, 'https://characters.test/avatars/1');
+    final response = loader.handleRequest(
+      WebViewLocalResourceRequest(url: '$uri'),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await loader.close();
+    pending.complete([66, 77]);
+    expect((await response).statusCode, 410);
+  });
 
   for (final scheme in ['https', 'operit-vfs']) {
     group(scheme, () {
@@ -186,11 +285,12 @@ void main() {
     var loop = false;
     final loader = create(
       dispatch: (r) async {
-        if (!loop && (r['url'] as String).endsWith('/target'))
+        if (!loop && (r['url'] as String).endsWith('/target')) {
           return {
             'action': 'respond',
             'response': {'text': 'rewritten'},
           };
+        }
         return {'action': 'rewrite', 'url': '/target'};
       },
     );

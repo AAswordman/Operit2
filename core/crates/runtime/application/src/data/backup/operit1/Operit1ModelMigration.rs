@@ -65,6 +65,25 @@ impl ParsedOperit1Snapshot {
                 detectedDomains.push(name);
             }
         }
+        if self
+            .archive
+            .entries
+            .keys()
+            .any(|entry| isOperit1LegacyMemoryEntry(entry))
+            || self
+                .archive
+                .datastorePreferences
+                .get(ENTRY_USER_PREFERENCES)
+                .is_some_and(|preferences| {
+                    preferences.keys().any(|key| {
+                        key == KEY_ACTIVE_MEMORY_SPACE_ID
+                            || key == KEY_MEMORY_SPACE_LIST
+                            || key.starts_with(KEY_MEMORY_SPACE_PREFIX)
+                    })
+                })
+        {
+            detectedDomains.push("memory".to_string());
+        }
         if importedFileCount > 0 || importedExternalFileCount > 0 {
             detectedDomains.push("user_files".to_string());
         }
@@ -154,7 +173,8 @@ impl ParsedOperit1Snapshot {
             .entries
             .keys()
             .filter(|entry| entry.starts_with(prefix))
-            .filter(|entry| !isArchiveDataStoreEntry(entry))
+            .filter(|entry| !entry.starts_with(ENTRY_DATASTORE_PREFIX))
+            .filter(|entry| !isOperit1LegacyMemoryEntry(entry))
             .count() as i32
     }
 }
@@ -349,9 +369,9 @@ impl Operit1ModelConfig {
 
         let providerType = self.apiProviderType.trim();
         if !providerType.is_empty() {
-            return self.knownProviderType(providerType).ok_or_else(|| {
-                format!("无法识别 Operit1 供应商类型：{}", providerType)
-            });
+            return self
+                .knownProviderType(providerType)
+                .ok_or_else(|| format!("无法识别 Operit1 供应商类型：{}", providerType));
         }
 
         if providerTypeId.is_empty() {
@@ -397,10 +417,7 @@ impl Operit1ModelConfig {
 }
 
 #[allow(non_snake_case)]
-fn buildModelProfile(
-    modelId: &str,
-    config: &Operit1ModelConfig,
-) -> Result<ModelProfile, String> {
+fn buildModelProfile(modelId: &str, config: &Operit1ModelConfig) -> Result<ModelProfile, String> {
     let mut model = ModelProfile::new(modelId.to_string());
     model.contextOverride = Some(ModelContextSpec {
         maxContextLength: config.maxContextLength,
@@ -561,6 +578,31 @@ fn splitModelIds(modelName: &str) -> Vec<String> {
 }
 
 impl Operit1PreferenceValue {
+    /// Preserves the released DataStore primitive type while rewriting its declared resource paths.
+    fn toTargetNativePreferenceEntry(
+        &self,
+        key: &str,
+        fileImportPlan: &SnapshotFileImportPlan,
+    ) -> Result<(String, Value), String> {
+        let targetKey = fileImportPlan.rewritePreferenceKey(key)?;
+        let value = match self {
+            Self::Boolean(value) => serde_json::to_value(value),
+            Self::Float(value) => serde_json::to_value(value),
+            Self::Double(value) => serde_json::to_value(value),
+            Self::Int(value) => serde_json::to_value(value),
+            Self::Long(value) => serde_json::to_value(value),
+            Self::StringSet(value) => serde_json::to_value(value),
+            Self::String(value) => {
+                return Ok((
+                    targetKey,
+                    Value::String(fileImportPlan.rewritePreferenceValue(key, value)?),
+                ))
+            }
+        }
+        .map_err(|error| error.to_string())?;
+        Ok((targetKey, value))
+    }
+
     /// Converts one legacy preference value into its target text representation.
     fn toTargetPreferenceStringForKey(
         &self,
@@ -591,4 +633,3 @@ impl Operit1PreferenceValue {
         Ok((targetKey, targetValue))
     }
 }
-

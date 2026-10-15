@@ -282,6 +282,7 @@ test('production Tools transport sends exact interpreter types and preserves exp
   const end = generator.indexOf('"#', start);
   const calls = [];
   const context = vm.createContext({
+    __operitToolParameterRules: { flattenArguments: [], scalarUnionSuffixes: [], preserveObjectNamespaces: [], argumentNames: {} },
     /** Records the exact production transport payload rather than mocking positional argument mapping. */
     async toolCall(name, params) {
       calls.push({ name, params: JSON.parse(JSON.stringify(params)) });
@@ -291,7 +292,7 @@ test('production Tools transport sends exact interpreter types and preserves exp
   vm.runInContext(generator.slice(start, end), context);
   const create = vm.runInContext(`(function(${names.join(', ')}) {
     return __operitInvokeToolsBinding('System.terminal', 'create', 'create_terminal_session',
-      [${JSON.stringify(names)}], Array.prototype.slice.call(arguments));
+      [${JSON.stringify(names)}], Array.prototype.slice.call(arguments), []);
   })`, context);
   for (const type of ['shell', 'bash', 'powershell', '']) {
     await create('chat', type);

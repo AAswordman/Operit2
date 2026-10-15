@@ -69,10 +69,28 @@ fn console_toast(message: &str) -> HostResult<()> {
     Ok(())
 }
 
+/// Isolates explicit CLI profiles across all native IPC carriers.
+fn create_cli_plugin_sdk_ipc_host(
+    runtimeRoot: &std::path::Path,
+) -> Arc<dyn operit_host_api::PluginSdkIpcHost> {
+    if env::var_os("OPERIT_CLI_CONFIG_DIR").is_some_and(|path| !path.is_empty())
+        && !env::var_os("OPERIT_PLUGIN_SDK_INSTANCE").is_some_and(|value| !value.is_empty())
+    {
+        use sha2::{Digest, Sha256};
+        let key = format!(
+            "{:x}",
+            Sha256::digest(runtimeRoot.as_os_str().as_encoded_bytes())
+        );
+        return Arc::new(NativePluginSdkIpcHost::withInstance(&key[..16]));
+    }
+    Arc::new(NativePluginSdkIpcHost::new())
+}
+
 /// Creates the CLI host manager with frontend-owned toast presentation.
 fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> HostManager {
     let storageConfig = CliStorageConfig::read();
     let (runtimeRoot, workspaceRoot) = storageConfig.activeRoots();
+    let pluginSdkIpcHost = create_cli_plugin_sdk_ipc_host(&runtimeRoot);
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
@@ -81,10 +99,17 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
         workspaceRoot.clone(),
     ));
     let runtimeStorageWriteHost = Arc::new(
-        operit_host_native_common::NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot),
+        operit_host_native_common::NativeRuntimeStorageHost::new(runtimeRoot.clone(), workspaceRoot),
     );
     let runtimeSqliteHost = runtimeStorageHost.clone();
-    let hostSecretStore = runtimeStorageHost.clone();
+    let hostSecretStore: Arc<dyn operit_host_api::HostSecretStore> =
+        if env::var("OPERIT_CLI_SECRET_STORE").as_deref() == Ok("file") {
+            Arc::new(operit_host_native_common::NativeFileSecretStore(
+                runtimeRoot.join("secrets"),
+            ))
+        } else {
+            runtimeStorageHost.clone()
+        };
     let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
         Arc::new(NativeFileSystemHost::new()),
         Arc::new(NativeWebVisitHost::new()),
@@ -122,30 +147,36 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
     context =
         context.withHostJavaScriptRuntimeHost(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
-    context = context.withPluginSdkIpcHost(Arc::new(NativePluginSdkIpcHost::new()));
+    context = context.withPluginSdkIpcHost(pluginSdkIpcHost);
     let commandContext = context.clone();
     context.withCoreCommandExecutor(Arc::new(move |args: Vec<String>| {
         let commandContext = commandContext.clone();
-        Box::pin(async move {
-            let scheduler = commandContext.hostRuntimeTaskSchedulerHost.clone()
-                .ok_or_else(|| "Runtime task scheduler host is not configured".to_string())?;
-            let (mut sender, receiver) = tokio::sync::oneshot::channel();
-            // Core may await executor-local Host futures. Create and poll those
-            // futures on the owning Host, returning only an owned result across threads.
-            scheduler.scheduleHostRuntimeAsyncTask("operit-cli-core-command", Box::new(move || {
+        // JS/plugin command futures stay on their owning local runtime; the host boundary awaits a Send receipt.
+        let executionContext = operit_tools::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+        let (mut sender, receiver) = tokio::sync::oneshot::channel();
+        let scheduler = commandContext.hostRuntimeTaskSchedulerHost.clone()
+            .expect("CLI requires its configured host runtime task scheduler");
+        let scheduled = scheduler.scheduleHostRuntimeAsyncTask("cli-core-command", Box::new(move || {
                 Box::pin(async move {
+                    let command = async move {
+                        let output = operit_command_core::run_core_command_with_context(commandContext, &args).await?;
+                        persist_cli_storage_config(&output.stdout)?;
+                        Ok(output.stdout)
+                    };
+                    let result = async { match executionContext {
+                        Some(context) => operit_tools::ToolExecutionManager::ToolExecutionManager::scopeToolRuntimeContext(context, command).await,
+                        None => command.await,
+                    } };
                     tokio::select! {
                         biased;
                         _ = sender.closed() => {},
-                        result = async {
-                            let output = operit_command_core::run_core_command_with_context(commandContext, &args).await?;
-                            persist_cli_storage_config(&output.stdout)?;
-                            Ok(output.stdout)
-                        } => { let _ = sender.send(result); }
+                        result = result => { let _ = sender.send(result); }
                     }
                 })
-            })).map_err(|error| error.to_string())?;
-            receiver.await.map_err(|_| "Core command task ended without a result".to_string())?
+            }));
+        Box::pin(async move {
+            scheduled.map_err(|error| format!("CLI command scheduling failed: {error}"))?;
+            receiver.await.map_err(|error| format!("CLI command ended without a result: {error}"))?
         })
     }))
 }

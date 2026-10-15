@@ -1,0 +1,132 @@
+#![allow(non_snake_case)]
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::task::{Context, Poll, Wake, Waker};
+
+mod operit_link {
+    #[derive(Debug, PartialEq)]
+    pub enum CoreValue { Null }
+    #[derive(Debug, PartialEq)]
+    pub struct CoreLinkError(pub String);
+    impl CoreLinkError {
+        /// Preserves unknown method failures in the fixture protocol.
+        pub fn methodNotFound(key: &str) -> Self { Self(key.into()) }
+    }
+    pub struct CoreCallRequest { pub methodName: String, pub args: Option<String> }
+    impl CoreCallRequest {
+        /// Supplies the routed method key for generated error reporting.
+        pub fn registryKey(&self) -> String { self.methodName.clone() }
+    }
+}
+mod operit_rslink_runtime {
+    use super::operit_link::CoreLinkError;
+    /// Rejects malformed arguments before entering a service operation.
+    pub fn object_args(args: Option<String>) -> Result<String, CoreLinkError> {
+        args.ok_or_else(|| CoreLinkError("invalid arguments".into()))
+    }
+    /// Decodes the fixture's sole borrowed string parameter into owned storage.
+    pub fn decode_core_arg(args: &mut String, _key: &str) -> Result<String, CoreLinkError> {
+        Ok(std::mem::take(args))
+    }
+    /// Preserves business error messages at the response boundary.
+    pub fn core_call_error(message: String, _details: ()) -> CoreLinkError { CoreLinkError(message) }
+}
+/// Supplies the generated error converter's fixture signature.
+fn generated_core_proxy_error_details_for_string(_: &String) {}
+
+struct Lease(Arc<AtomicUsize>);
+impl Drop for Lease {
+    /// Tracks cleanup when a captured future completes or is cancelled.
+    fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); }
+}
+struct Subject {
+    owner: Weak<Mutex<Subject>>, ready: Arc<AtomicBool>, live: Arc<AtomicUsize>, captures: usize,
+}
+impl Subject {
+    /// Creates an owned operation while recording mutation on the canonical receiver.
+    fn run(&mut self, label: &str) -> impl Future<Output = ()> + 'static {
+        self.captures += 1;
+        self.live.fetch_add(1, Ordering::SeqCst);
+        let lease = Lease(self.live.clone());
+        let owner = self.owner.clone();
+        let ready = self.ready.clone();
+        let label = label.to_string();
+        async move {
+            assert_eq!(label, "owned argument");
+            std::future::poll_fn(|_| {
+                assert!(owner.upgrade().unwrap().try_lock().is_ok(), "receiver lock held while polling");
+                if ready.load(Ordering::SeqCst) { Poll::Ready(()) } else { Poll::Pending }
+            }).await;
+            drop(lease);
+        }
+    }
+    /// Produces a business failure after the receiver is released.
+    fn fail(&self) -> impl Future<Output = Result<(), String>> + 'static {
+        async { Err("original failure".into()) }
+    }
+    /// Exercises mixed synchronous dispatch against the same canonical state.
+    fn touch(&mut self) { self.captures += 1; }
+}
+struct NoopWake;
+impl Wake for NoopWake {
+    /// Supplies a waker for deterministic manual polling without a runtime.
+    fn wake(self: Arc<Self>) {}
+}
+/// Polls a future exactly once so tests can inspect an intentionally suspended operation.
+fn poll<T>(future: Pin<&mut impl Future<Output = T>>) -> Poll<T> {
+    let waker = Waker::from(Arc::new(NoopWake));
+    future.poll(&mut Context::from_waker(&waker))
+}
+/// Creates a service whose future can attempt to acquire its own receiver lock.
+fn subject() -> Arc<Mutex<Subject>> {
+    Arc::new_cyclic(|owner| Mutex::new(Subject {
+        owner: owner.clone(), ready: Arc::new(AtomicBool::new(false)),
+        live: Arc::new(AtomicUsize::new(0)), captures: 0,
+    }))
+}
+/// Creates the same owned request representation used by the generated dispatcher.
+fn request(method: &str) -> operit_link::CoreCallRequest {
+    operit_link::CoreCallRequest { methodName: method.into(), args: Some("owned argument".into()) }
+}
+/// A suspended asynchronous operation permits another call and preserves canonical mutations.
+#[test]
+fn reentry_and_completion() {
+    let object = subject();
+    let mut pending = Box::pin(invoke(object.clone(), request("run")));
+    assert!(poll(pending.as_mut()).is_pending());
+    let mut other = Box::pin(invoke(object.clone(), request("touch")));
+    assert_eq!(poll(other.as_mut()), Poll::Ready(Ok(operit_link::CoreValue::Null)));
+    let state = object.try_lock().unwrap();
+    assert_eq!(state.captures, 2);
+    assert_eq!(state.live.load(Ordering::SeqCst), 1);
+    state.ready.store(true, Ordering::SeqCst);
+    drop(state);
+    assert_eq!(poll(pending.as_mut()), Poll::Ready(Ok(operit_link::CoreValue::Null)));
+    assert_eq!(object.lock().unwrap().live.load(Ordering::SeqCst), 0);
+}
+/// Cancelling an in-flight call releases captured resources without retaining the receiver lock.
+#[test]
+fn cancellation_drops_capture() {
+    let object = subject();
+    let mut pending = Box::pin(invoke(object.clone(), request("run")));
+    assert!(poll(pending.as_mut()).is_pending());
+    drop(pending);
+    assert_eq!(object.try_lock().unwrap().live.load(Ordering::SeqCst), 0);
+}
+/// Argument decoding rejects invalid requests without running the capture method.
+#[test]
+fn invalid_arguments_do_not_mutate_state() {
+    let object = subject();
+    let mut invalid = request("run"); invalid.args = None;
+    let mut pending = Box::pin(invoke(object.clone(), invalid));
+    assert_eq!(poll(pending.as_mut()), Poll::Ready(Err(operit_link::CoreLinkError("invalid arguments".into()))));
+    assert_eq!(object.lock().unwrap().captures, 0);
+}
+/// A business error retains the original message through the asynchronous response conversion.
+#[test]
+fn business_error_is_preserved() {
+    let mut pending = Box::pin(invoke(subject(), request("fail")));
+    assert_eq!(poll(pending.as_mut()), Poll::Ready(Err(operit_link::CoreLinkError("original failure".into()))));
+}

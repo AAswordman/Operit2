@@ -1,10 +1,14 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
-import '../../../../common/CharacterAvatar.dart';
+import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../theme/OperitGlassSurface.dart';
 import 'WorkspaceOverviewModels.dart';
 
@@ -127,7 +131,7 @@ class _WorkspaceStatusSummary extends StatelessWidget {
   final VoidCallback onOpenTerminalSessions;
   final VoidCallback onOpenBrowserSessions;
 
-  /// Builds the workspace overview card and role usage stack.
+  /// Builds the workspace overview card and registered contribution avatar strip.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -191,8 +195,8 @@ class _WorkspaceStatusSummary extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       if (hasWorkspace)
-                        _WorkspaceCharacterAvatarStrip(
-                          usages: workspaceUsage.characterUsages,
+                        _WorkspaceContributionAvatarStrip(
+                          contributions: workspaceUsage.contributions,
                         )
                       else
                         Text(
@@ -207,6 +211,9 @@ class _WorkspaceStatusSummary extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            _WorkspaceContributionStateNotice(
+              contributions: workspaceUsage.contributions,
             ),
             const SizedBox(height: 8),
             ValueListenableBuilder<int>(
@@ -291,16 +298,17 @@ class _WorkspaceStatusSummary extends StatelessWidget {
   }
 }
 
-class _WorkspaceCharacterAvatarStrip extends StatelessWidget {
-  /// Creates the compact character avatar strip under the workspace name.
-  const _WorkspaceCharacterAvatarStrip({required this.usages});
+class _WorkspaceContributionAvatarStrip extends StatelessWidget {
+  /// Creates the compact avatar strip for successfully loaded contribution usage.
+  const _WorkspaceContributionAvatarStrip({required this.contributions});
 
-  final List<WorkspaceCharacterUsage> usages;
+  final WorkspaceContributionsState contributions;
 
-  /// Builds one avatar per character card used in this workspace.
+  /// Preserves catalog order for equal counts without assigning unused sections.
   @override
   Widget build(BuildContext context) {
-    if (usages.isEmpty) {
+    final state = contributions;
+    if (state is! WorkspaceContributionsReady || state.usages.isEmpty) {
       return const SizedBox(height: 2);
     }
     return Padding(
@@ -309,44 +317,219 @@ class _WorkspaceCharacterAvatarStrip extends StatelessWidget {
         spacing: 4,
         runSpacing: 4,
         children: <Widget>[
-          for (final usage in usages) _WorkspaceCharacterAvatar(usage: usage),
+          for (final usage in state.usages)
+            _WorkspaceContributionAvatar(
+              key: ValueKey(usage.identity),
+              usage: usage,
+            ),
         ],
       ),
     );
   }
 }
 
-class _WorkspaceCharacterAvatar extends StatelessWidget {
-  /// Creates one character avatar in the workspace title area.
-  const _WorkspaceCharacterAvatar({required this.usage});
+class _WorkspaceContributionStateNotice extends StatelessWidget {
+  /// Creates a visible status for pending or failed contribution requests.
+  const _WorkspaceContributionStateNotice({required this.contributions});
 
-  final WorkspaceCharacterUsage usage;
+  final WorkspaceContributionsState contributions;
 
-  /// Builds the character avatar with the shared avatar image renderer.
+  /// Displays the real failure instead of presenting an empty successful catalog.
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final colors = Theme.of(context).colorScheme;
+    final Widget status;
+    switch (contributions) {
+      case WorkspaceContributionsReady():
+        return const SizedBox.shrink();
+      case WorkspaceContributionsLoading():
+        status = _WorkspaceInlineState(
+          icon: Icons.sync,
+          text: '正在读取工作区贡献项',
+          progress: true,
+          color: colors.onSurfaceVariant,
+        );
+      case WorkspaceContributionsFailed(:final error):
+        status = _WorkspaceInlineState(
+          icon: Icons.error_outline,
+          text: '工作区贡献项加载失败：$error',
+          color: colors.error,
+        );
+    }
+    return Padding(padding: const EdgeInsets.only(top: 8), child: status);
+  }
+}
+
+class _WorkspaceContributionAvatar extends StatefulWidget {
+  /// Creates one plugin-owned preview affordance in the workspace title area.
+  const _WorkspaceContributionAvatar({super.key, required this.usage});
+
+  final WorkspaceContributionUsage usage;
+
+  /// Owns the preview request so repeated taps cannot start overlapping dialogs.
+  @override
+  State<_WorkspaceContributionAvatar> createState() =>
+      _WorkspaceContributionAvatarState();
+}
+
+class _WorkspaceContributionAvatarState
+    extends State<_WorkspaceContributionAvatar> {
+  static const _clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
+  bool _presenting = false;
+
+  /// Delegates the untouched preview action to its registered owning route.
+  Future<void> _presentPreview() async {
+    if (_presenting) {
+      return;
+    }
+    setState(() => _presenting = true);
+    try {
+      await widget.usage.preview.present(context: context, clients: _clients);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('贡献项预览失败：$error')));
+    } finally {
+      if (mounted) {
+        setState(() => _presenting = false);
+      }
+    }
+  }
+
+  /// Keeps the original circular avatar dimensions and exposes a labeled action.
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final usage = widget.usage;
+    final label = '${usage.title} · ${usage.conversationCount} 个对话';
     return Tooltip(
-      message: '${usage.name} · ${usage.conversationCount} 次',
+      message: label,
       waitDuration: const Duration(milliseconds: 450),
-      child: Container(
-        width: 22,
-        height: 22,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: colorScheme.primaryContainer,
-          border: Border.all(
-            color: colorScheme.surface.withValues(alpha: 0.90),
-            width: 1.4,
+      child: Semantics(
+        button: true,
+        label: label,
+        enabled: !_presenting,
+        child: Material(
+          shape: CircleBorder(
+            side: BorderSide(
+              color: colors.surface.withValues(alpha: 0.90),
+              width: 1.4,
+            ),
+          ),
+          color: colors.primaryContainer,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: _presenting ? null : () => unawaited(_presentPreview()),
+            child: SizedBox.square(
+              dimension: 22,
+              child: _WorkspaceContributionAvatarImage(
+                avatarUri: usage.avatarUri,
+              ),
+            ),
           ),
         ),
-        child: ClipOval(
-          child: CharacterAvatarImage(
-            avatarUri: usage.avatarUri,
-            fit: BoxFit.cover,
-          ),
-        ),
+      ),
+    );
+  }
+}
+
+class _WorkspaceContributionAvatarImage extends StatefulWidget {
+  /// Creates a display-only image backed by the existing runtime asset host.
+  const _WorkspaceContributionAvatarImage({required this.avatarUri});
+
+  final String? avatarUri;
+
+  /// Retains the image request until the plugin changes its display URI.
+  @override
+  State<_WorkspaceContributionAvatarImage> createState() =>
+      _WorkspaceContributionAvatarImageState();
+}
+
+class _WorkspaceContributionAvatarImageState
+    extends State<_WorkspaceContributionAvatarImage> {
+  static const _clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
+  Future<Uint8List>? _bytes;
+
+  /// Starts the request for the exact display URI published by the contribution.
+  @override
+  void initState() {
+    super.initState();
+    _loadImage();
+  }
+
+  /// Replaces image requests when the authoritative display URI changes.
+  @override
+  void didUpdateWidget(covariant _WorkspaceContributionAvatarImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.avatarUri != widget.avatarUri) {
+      _loadImage();
+    }
+  }
+
+  /// Reads the runtime asset without searching character stores or platform paths.
+  Future<Uint8List> _readImage(String uri) async {
+    final encoded = await _clients.repositoryRuntimeStorageRepository
+        .readBase64(path: uri);
+    if (encoded == null) {
+      throw StateError('The contribution avatar asset is missing: $uri');
+    }
+    return base64Decode(encoded);
+  }
+
+  /// Uses explicit image absence only when the catalog publishes a null URI.
+  void _loadImage() {
+    final uri = widget.avatarUri;
+    _bytes = uri == null ? null : _readImage(uri);
+  }
+
+  /// Displays loading and asset errors without synthesizing an avatar identity.
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    if (bytes == null) {
+      return Icon(
+        Icons.extension_outlined,
+        size: 14,
+        color: Theme.of(context).colorScheme.onPrimaryContainer,
+      );
+    }
+    return FutureBuilder<Uint8List>(
+      key: ValueKey(widget.avatarUri),
+      future: bytes,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _imageError(snapshot.error!);
+        }
+        final data = snapshot.data;
+        if (data == null) {
+          return const Padding(
+            padding: EdgeInsets.all(5),
+            child: CircularProgressIndicator(strokeWidth: 1.5),
+          );
+        }
+        return Image.memory(
+          data,
+          fit: BoxFit.cover,
+          width: 22,
+          height: 22,
+          errorBuilder: (context, error, stackTrace) => _imageError(error),
+        );
+      },
+    );
+  }
+
+  /// Makes failed avatar assets explicit rather than substituting another image.
+  Widget _imageError(Object error) {
+    return Tooltip(
+      message: '贡献项头像加载失败：$error',
+      child: Icon(
+        Icons.broken_image_outlined,
+        size: 14,
+        color: Theme.of(context).colorScheme.error,
       ),
     );
   }
@@ -383,11 +566,23 @@ class _WorkspaceSessionButton extends StatelessWidget {
   }
 }
 
-/// Builds the static summary line for workspace overview counts.
+/// Keeps host conversation and folder counts visible while contributions load.
 String _workspaceSummaryText(WorkspaceOverviewUsage usage) {
-  return '${usage.conversationCount} 个对话 · '
-      '${usage.characterUsages.length} 个角色卡 · '
-      '${usage.mountedFolders.length} 个文件夹';
+  final conversations = usage.conversationCount;
+  final conversationText = conversations == null
+      ? '对话数未就绪'
+      : '$conversations 个对话';
+  final contributionText = switch (usage.contributions) {
+    WorkspaceContributionsReady(:final usages) => '${usages.length} 个贡献项',
+    WorkspaceContributionsLoading() => '贡献项读取中',
+    WorkspaceContributionsFailed() => '贡献项加载失败',
+  };
+  final folderText = usage.mountedFoldersLoading
+      ? '文件夹读取中'
+      : usage.mountedFoldersError != null
+      ? '文件夹加载失败'
+      : '${usage.mountedFolders.length} 个文件夹';
+  return '$conversationText · $contributionText · $folderText';
 }
 
 class _WorkspaceMountedFolderStack extends StatelessWidget {

@@ -1,0 +1,30 @@
+/// Shared Flutter UI components and appearance resources for the app and Studio.
+library;
+
+export 'src/assets/theme_asset_resolver.dart';
+export 'src/assets/theme_image_decoder.dart';
+export 'src/fixtures/theme_surface_probe.dart';
+export 'src/fixtures/theme_client_scene.dart';
+export 'src/fonts/theme_font_registry.dart';
+export 'src/fonts/theme_font_glyphs.dart';
+export 'src/fonts/builtin_theme_fonts.dart';
+export 'src/preview/theme_probe_preparation.dart';
+export 'src/model/theme_preference_defaults.dart';
+export 'src/model/theme_preference_snapshot.dart';
+export 'src/model/theme_visual_spec_v1.dart';
+export 'src/render/bubble_surface.dart';
+export 'src/render/chat_input_surface.dart';
+export 'src/render/theme_background.dart';
+export 'src/render/theme_data.dart';
+export 'src/render/theme_glass_surface.dart';
+export 'src/render/theme_render_root.dart';
+export 'src/render/theme_layout_metrics.dart';
+export 'src/render/theme_inspection_target.dart';
+export 'src/render/new_chat_greeting.dart';
+export 'src/render/desktop_sidebar_surface.dart';
+export 'src/render/drawer_chrome.dart';
+export 'src/render/history_chrome.dart';
+export 'src/render/top_bar_chrome.dart';
+export 'src/render/composer_chrome.dart';
+export 'src/render/composer_surface.dart';
+export 'src/render/prepared_theme_visual.dart';

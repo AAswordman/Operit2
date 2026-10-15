@@ -1,0 +1,2 @@
+# Preserve exact bytes of hash-verified font licenses across platforms.
+apps/flutter/packages/operit_ui/assets/licenses/*.txt -text

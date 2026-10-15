@@ -81,7 +81,7 @@ fn channel(scheduler: Arc<RecordingScheduler>) -> Arc<MultiplexedChannel> {
     }));
     let encrypted = Channel::new(raw, &[7; 32], b"test", true).unwrap();
     let live = super::super::LiveChannel::start(encrypted, scheduler.clone(), || {}).unwrap();
-    MultiplexedChannel::start(live, scheduler).unwrap()
+    MultiplexedChannel::start(live, scheduler, None).unwrap()
 }
 
 /// No Tokio runtime exists on this thread: a dropped watch must use its own Host.
@@ -126,4 +126,20 @@ fn failedWatchCloseSchedulingIsReportedWithoutFallback() {
         .message
         .contains("scheduler unavailable"));
     scheduler.tasks.lock().unwrap().clear();
+}
+
+
+#[tokio::test]
+async fn duplicate_correlation_does_not_cancel_the_original_request() {
+    let channel = channel(Arc::new(RecordingScheduler::default()));
+    let (sender, receiver) = oneshot::channel();
+    channel.pending.lock().await.insert("call:same-id".into(), sender);
+    let duplicate = channel.exchange(CoreLinkRequest::Call(CoreCallRequest::new(
+        "same-id", "test", "read", CoreValue::Null,
+    ))).await.unwrap_err();
+    assert!(duplicate.message.contains("already in flight"));
+    channel.dispatchResponse(CoreLinkResponse::Call(CoreCallResponse::ok(
+        CoreRequestId("same-id".into()), CoreValue::Null,
+    ))).await;
+    assert!(matches!(receiver.await.unwrap().unwrap(), CoreLinkResponse::Call(CoreCallResponse { result: Ok(CoreValue::Null), .. })));
 }

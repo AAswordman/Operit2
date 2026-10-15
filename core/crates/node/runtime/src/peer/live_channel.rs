@@ -46,6 +46,9 @@ impl LiveChannel {
     /// Reports whether this connection generation has reached a terminal failure.
     pub(super) fn isAvailable(&self) -> bool { self.failure.lock().unwrap().is_none() }
 
+    /// Returns the authenticated channel these frames belong to.
+    pub(super) fn channel(&self) -> Arc<Channel> { self.channel.clone() }
+
     /// Sends an authenticated frame and makes explicit write failures terminal for this channel.
     pub(super) async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> {
         if let Some(error) = self.failure.lock().unwrap().clone() { return Err(error); }

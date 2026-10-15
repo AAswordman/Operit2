@@ -650,8 +650,9 @@ async function toggleWorldBookEntry(id) {
     return toWorldBookListEntry(nextEntry);
 }
 async function listWorldBookCharacterCards() {
-    const result = await Tools.Chat.listCharacterCards();
-    const cards = Array.isArray(result?.cards) ? result.cards : [];
+    const cards = await ToolPkg.callDependency("com.operit.character_cards", "character.list", {});
+    if (!Array.isArray(cards))
+        throw new Error("Character plugin returned an invalid directory");
     return cards
         .map((card) => ({
         id: String(card?.id || "").trim(),

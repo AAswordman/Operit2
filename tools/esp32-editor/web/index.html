@@ -156,7 +156,7 @@
           <div class="panel-body">
             <div id="layers">
             </div>
-            <p class="note">历史组件图层不用于 Core 插件场景；场景图层由插件通过 Tools.Edge 更新。</p>
+            <p class="note">历史组件图层不用于 Core 插件场景；场景图层由插件通过 Tools.device(nodeId).Edge 更新。</p>
             <button id="reload-layout" class="full-width" disabled>草稿读取未启用</button>
           </div>
         </section>
@@ -273,7 +273,7 @@
       </div><button id="deploy-close" aria-label="关闭部署">×</button>
     </div>
     <div class="dialog-body">
-      <p>当前固件不支持布局包部署。系统 UI 修改需重建固件；插件场景通过 Core 的 Tools.Edge 下发。</p>
+      <p>当前固件不支持布局包部署。系统 UI 修改需重建固件；插件场景通过 Core 的 Tools.device(nodeId).Edge 下发。</p>
       <div class="dialog-actions"><button id="export-layout">导出项目 JSON</button><button
           id="export-package">导出 OUI2 草稿</button></div>
       <label>设备地址<input id="device-address" placeholder="http://192.168.1.50" autocomplete="off"></label>
@@ -337,7 +337,7 @@
           placeholder="例如：点击打开网络设置页，并实现返回上一页的逻辑" maxlength="2000"></textarea>
         <div class="dialog-actions"><button id="component-send" class="primary">发送组件到对话</button><button
             id="component-copy">复制源码引用</button></div>
-        <p class="note">布局与事件绑定仅保留为草稿；当前固定 UI 不应用草稿。系统页面改动需重建，插件场景由 Core 通过 Tools.Edge 下发。</p>
+        <p class="note">布局与事件绑定仅保留为草稿；当前固定 UI 不应用草稿。系统页面改动需重建，插件场景由 Core 通过 Tools.device(nodeId).Edge 下发。</p>
       </section>
       <details class="route-fields">
         <summary>手动配置现有路由</summary><label>点击执行<select id="component-click-route"></select></label><label>长按执行<select

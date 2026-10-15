@@ -14,7 +14,7 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::MessagePartEntity::MessagePartEntity;
 
 /// Current SQLite schema version expected by the runtime.
-pub const DATABASE_VERSION: i32 = 27;
+pub const DATABASE_VERSION: i32 = 28;
 
 #[derive(Debug, Error)]
 /// Error surface for opening and migrating the application database.
@@ -91,6 +91,7 @@ impl AppDatabase {
         &self.store
     }
 
+    /// Opens the canonical schema and applies each required physical migration before publishing the database.
     fn openWithMigrations(&self) -> Result<(), AppDatabaseError> {
         let currentVersion = self.store.getUserVersion()?;
         if currentVersion == DATABASE_VERSION {
@@ -135,6 +136,7 @@ impl AppDatabase {
             24 => MIGRATION_24_25(self)?,
             25 => MIGRATION_25_26(self)?,
             26 => MIGRATION_26_27(self)?,
+            27 => MIGRATION_27_28(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -145,6 +147,7 @@ impl AppDatabase {
         self.openWithMigrations()
     }
 
+    /// Creates the current production tables through the registered cross-platform SQLite host.
     fn createAllTables(&self) -> Result<(), SqliteStoreError> {
         createAllTables(&self.store)
     }
@@ -994,10 +997,9 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             workspaceId TEXT,
             workspaceEnv TEXT,
             parentChatId TEXT,
-            characterCardName TEXT,
-            characterGroupId TEXT,
             locked INTEGER NOT NULL DEFAULT 0,
-            pinned INTEGER NOT NULL DEFAULT 0
+            pinned INTEGER NOT NULL DEFAULT 0,
+            pluginExtensions TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE TABLE messages (
@@ -1020,6 +1022,7 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             completedExecutionGeneration INTEGER NOT NULL DEFAULT 0,
             displayMode TEXT NOT NULL DEFAULT 'NORMAL',
             isFavorite INTEGER NOT NULL DEFAULT 0,
+            pluginExtensions TEXT NOT NULL DEFAULT '{}',
             FOREIGN KEY(chatId) REFERENCES chats(id) ON DELETE CASCADE
         );
 
@@ -1038,6 +1041,7 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             outputDurationMs INTEGER NOT NULL DEFAULT 0,
             waitDurationMs INTEGER NOT NULL DEFAULT 0,
             completedAt INTEGER NOT NULL DEFAULT 0,
+            pluginExtensions TEXT NOT NULL DEFAULT '{}',
             FOREIGN KEY(chatId) REFERENCES chats(id) ON DELETE CASCADE
         );
 
@@ -1212,10 +1216,9 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             workspaceId TEXT,
             workspaceEnv TEXT,
             parentChatId TEXT,
-            characterCardName TEXT,
-            characterGroupId TEXT,
             locked INTEGER NOT NULL,
             pinned INTEGER NOT NULL,
+            pluginExtensions TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY(opId, id),
             FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
         );
@@ -1240,6 +1243,7 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             completedExecutionGeneration INTEGER NOT NULL,
             displayMode TEXT NOT NULL,
             isFavorite INTEGER NOT NULL,
+            pluginExtensions TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY(opId, chatId, timestamp),
             FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
         );
@@ -1259,6 +1263,7 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             outputDurationMs INTEGER NOT NULL,
             waitDurationMs INTEGER NOT NULL,
             completedAt INTEGER NOT NULL,
+            pluginExtensions TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY(opId, chatId, messageTimestamp, variantIndex),
             FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
         );
@@ -1293,3 +1298,38 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
         "#,
     )
 }
+
+/// Stages legacy role bindings before removing their columns for the centralized plugin migration.
+/// Native "group" values in chats and historical sync rows survive 27 -> 28.
+fn MIGRATION_27_28(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    database.store.transaction(|transaction| {
+        for statement in migration27To28Statements() {
+            transaction.execute(statement, Vec::new())?;
+        }
+        Ok(())
+    })
+}
+
+/// Returns the physical record-schema upgrade with the version update strictly last.
+fn migration27To28Statements() -> &'static [&'static str] {
+    &[
+        "ALTER TABLE chats ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE sync_sql_chat_rows ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
+        "UPDATE chats SET pluginExtensions=json_object('com.operit.character_cards.migration',json_object('characterCardName',characterCardName,'characterGroupId',characterGroupId))",
+        "UPDATE sync_sql_chat_rows SET pluginExtensions=json_object('com.operit.character_cards.migration',json_object('characterCardName',characterCardName,'characterGroupId',characterGroupId))",
+        "ALTER TABLE chats DROP COLUMN characterCardName",
+        "ALTER TABLE chats DROP COLUMN characterGroupId",
+        "ALTER TABLE sync_sql_chat_rows DROP COLUMN characterCardName",
+        "ALTER TABLE sync_sql_chat_rows DROP COLUMN characterGroupId",
+        "ALTER TABLE messages ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE message_variants ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE sync_sql_message_rows ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE sync_sql_message_variant_rows ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
+        "UPDATE sync_sql_operations SET schemaVersion = 7 WHERE domain = 'chat' AND schemaVersion = 6",
+        "PRAGMA user_version = 28",
+    ]
+}
+
+#[cfg(test)]
+#[path = "AppDatabaseMigrationTests.rs"]
+mod migration_tests;

@@ -22,7 +22,7 @@ fn large_call_request() -> CoreCallRequest {
         "publishBrowserSessionEvent",
         CoreValue::Map(BTreeMap::from([(
             "frameData".to_string(),
-            CoreValue::Bytes(vec![0x5a; 256 * 1024]),
+            CoreValue::Bytes(vec![0x5a; 256 * 1024].into()),
         )])),
     )
 }

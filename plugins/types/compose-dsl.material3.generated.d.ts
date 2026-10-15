@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { ComposeAlignment, ComposeArrangement, ComposeBorder, ComposeCanvasCommand, ComposeChildren, ComposeColor, ComposeCommonProps, ComposeContentScale, ComposeNodeFactory, ComposePadding, ComposeShape, ComposeTextFieldStyle, ComposeTextOverflow, ComposeTextStyle } from "./compose-dsl";
+import type { ComposeAlignment, ComposeArrangement, ComposeBorder, ComposeCanvasCommand, ComposeChildren, ComposeColor, ComposeCommonProps, ComposeContentScale, ComposeLazyViewport, ComposeNodeFactory, ComposePadding, ComposeShape, ComposeTextFieldStyle, ComposeTextOverflow, ComposeTextStyle } from "./compose-dsl";
 
 /**
  * Completion returned by the row click handler, either immediately or asynchronously.
@@ -316,6 +316,10 @@ export interface ComposeGeneratedLazyColumnProps extends ComposeCommonProps {
  * Properties configuring a horizontally scrolling lazy list that composes visible child content.
  */
 export interface ComposeGeneratedLazyRowProps extends ComposeCommonProps {
+  /**
+   * Optional viewport protocol supplied by lazyItems for generated content.
+   */
+  viewport?: ComposeLazyViewport;
   /**
    * Child nodes rendered inside the component.
    */

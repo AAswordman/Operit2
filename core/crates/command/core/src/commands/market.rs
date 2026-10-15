@@ -38,10 +38,12 @@ impl MarketCommand {
     }
 
     /// Creates an authenticated marketplace service client for this command.
-    fn api(&self) -> MarketStatsApiService {
-        MarketStatsApiService::new_with_github_token(
-            GitHubAuthPreferences::getInstance().getCurrentAccessToken(),
-        )
+    fn api(&self) -> Result<MarketStatsApiService, String> {
+        Ok(MarketStatsApiService::new_with_github_token(
+            GitHubAuthPreferences::getInstance()
+                .getCurrentAccessToken()
+                .map_err(|error| error.to_string())?,
+        ))
     }
 
     /// Returns the GitHub auth preference service used by market writes.
@@ -140,7 +142,7 @@ pub fn run_market_command(
                 .get(1)
                 .ok_or_else(|| "usage: operit2 market like <entryId>".to_string())?;
             require_login(core)?;
-            core.api().create_entry_reaction(entry_id)?;
+            core.api()?.create_entry_reaction(entry_id)?;
             output.push_stdout_line(format!("Liked market entry: {entry_id}"));
             output.setJsonStdout(json!({
                 "entryId": entry_id,
@@ -156,9 +158,9 @@ pub fn run_market_command(
         "my" => print_my_entries(core, output),
         "publish" => run_publish(core, &args[1..], output),
         "install" => {
-            let entry_id = args.get(1).ok_or_else(|| {
-                "usage: operit2 market install <entryId> [versionId]".to_string()
-            })?;
+            let entry_id = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 market install <entryId> [versionId]".to_string())?;
             let version_id = args.get(2).map(String::as_str);
             install_entry(core, entry_id, version_id, output)
         }
@@ -166,7 +168,7 @@ pub fn run_market_command(
             let asset_id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 market download <assetId>".to_string())?;
-            let bytes = core.api().download_asset(asset_id)?;
+            let bytes = core.api()?.download_asset(asset_id)?;
             output.push_stdout_line(format!(
                 "Downloaded market asset: {asset_id} ({} bytes)",
                 bytes.len()
@@ -217,7 +219,7 @@ fn print_list(
     page: i32,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let list = core.api().get_list_page(sort, page)?;
+    let list = core.api()?.get_list_page(sort, page)?;
     let total_pages = market_total_pages(list.total, list.page_size)?;
     output.push_stdout_line("Market entries");
     output.push_stdout_line(format!("Sort: {sort}"));
@@ -255,12 +257,12 @@ fn print_list_filtered(
     let category = clean_optional_arg(category);
     let list = match (type_filter, category) {
         (Some(r#type), Some(category_id)) => {
-            core.api()
+            core.api()?
                 .get_type_category_page(r#type, category_id, sort, page)?
         }
-        (Some(r#type), None) => core.api().get_type_page(r#type, sort, page)?,
-        (None, Some(category_id)) => core.api().get_category_page(category_id, sort, page)?,
-        (None, None) => core.api().get_list_page(sort, page)?,
+        (Some(r#type), None) => core.api()?.get_type_page(r#type, sort, page)?,
+        (None, Some(category_id)) => core.api()?.get_category_page(category_id, sort, page)?,
+        (None, None) => core.api()?.get_list_page(sort, page)?,
     };
     let total_pages = market_total_pages(list.total, list.page_size)?;
     output.push_stdout_line("Market entries");
@@ -365,12 +367,12 @@ fn load_market_page(
 ) -> Result<MarketListPage, String> {
     match (type_filter, category) {
         (Some(r#type), Some(category_id)) => {
-            core.api()
+            core.api()?
                 .get_type_category_page(r#type, category_id, sort, page)
         }
-        (Some(r#type), None) => core.api().get_type_page(r#type, sort, page),
-        (None, Some(category_id)) => core.api().get_category_page(category_id, sort, page),
-        (None, None) => core.api().get_list_page(sort, page),
+        (Some(r#type), None) => core.api()?.get_type_page(r#type, sort, page),
+        (None, Some(category_id)) => core.api()?.get_category_page(category_id, sort, page),
+        (None, None) => core.api()?.get_list_page(sort, page),
     }
 }
 
@@ -409,7 +411,7 @@ fn print_entry(
     entry_id: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let entry = core.api().get_entry_by_id(entry_id)?;
+    let entry = core.api()?.get_entry_by_id(entry_id)?;
     output.push_stdout_line(format!("Market entry: {}", entry.title));
     output.push_stdout_line(format!("ID: {}", entry.id));
     output.push_stdout_line(format!("Type: {}", entry.r#type));
@@ -494,7 +496,7 @@ fn print_comments(
     page: i32,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let comments_page = core.api().get_comments_page(entry_id, page)?;
+    let comments_page = core.api()?.get_comments_page(entry_id, page)?;
     output.push_stdout_line(format!("Comments for market entry: {entry_id}"));
     output.push_stdout_line(format!(
         "Page: {} | Total: {}",
@@ -520,7 +522,7 @@ fn print_notifications(
     offset: i32,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let resp = core.api().get_notifications(limit, offset, None)?;
+    let resp = core.api()?.get_notifications(limit, offset, None)?;
     output.push_stdout_line(format!("Market notifications: {}", resp.items.len()));
     output.push_stdout_line(format!("Window: {limit} items starting at {offset}"));
     for n in &resp.items {
@@ -542,7 +544,7 @@ fn print_my_entries(
     core: &mut MarketCommand,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let resp = core.api().get_my_entries()?;
+    let resp = core.api()?.get_my_entries()?;
     output.push_stdout_line(format!("My market entries: {}", resp.entries.len()));
     for e in &resp.entries {
         output.push_stdout_line(format!(
@@ -567,7 +569,7 @@ fn run_comment(
             let body_arg = args.get(2).ok_or_else(|| "usage: operit2 market comment edit <commentId> <body-or-@file>".to_string())?;
             require_login(core)?;
             let body = read_content_arg(body_arg)?;
-            core.api().edit_entry_comment(comment_id, &body)?;
+            core.api()?.edit_entry_comment(comment_id, &body)?;
             output.push_stdout_line(format!("Edited market comment: {comment_id}"));
             output.setJsonStdout(json!({
                 "action": "edit",
@@ -578,7 +580,7 @@ fn run_comment(
         Some("delete") => {
             let comment_id = args.get(1).ok_or_else(|| "usage: operit2 market comment delete <commentId>".to_string())?;
             require_login(core)?;
-            core.api().delete_entry_comment(comment_id)?;
+            core.api()?.delete_entry_comment(comment_id)?;
             output.push_stdout_line(format!("Deleted market comment: {comment_id}"));
             output.setJsonStdout(json!({
                 "action": "delete",
@@ -590,7 +592,7 @@ fn run_comment(
             let body_arg = args.get(1).ok_or_else(|| "usage: operit2 market comment <entryId> <body-or-@file>".to_string())?;
             require_login(core)?;
             let body = read_content_arg(body_arg)?;
-            let comment_id = core.api().create_entry_comment(entry_id, &body)?;
+            let comment_id = core.api()?.create_entry_comment(entry_id, &body)?;
             output.push_stdout_line(format!("Created market comment: {comment_id}"));
             output.setJsonStdout(json!({
                 "action": "create",
@@ -635,7 +637,7 @@ fn publish_artifact_cli(
     let description = read_content_arg(&args[2])?;
     let detail = read_content_arg(&args[3])?;
     let changelog = parse_optional_content_arg(&args[8])?;
-    let resp = core.api().publish_artifact(
+    let resp = core.api()?.publish_artifact(
         &args[0],
         &args[1],
         &description,
@@ -675,7 +677,7 @@ fn publish_repo_cli(
     let description = read_content_arg(&args[2])?;
     let detail = read_content_arg(&args[3])?;
     let install_config = read_content_arg(&args[9])?;
-    let resp = core.api().publish_repo_entry(
+    let resp = core.api()?.publish_repo_entry(
         &args[0],
         &args[1],
         &description,
@@ -719,7 +721,7 @@ fn publish_artifact_version_cli(
         return Err("usage: operit2 market publish version artifact <entryId> <version> <formatVer> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-] [apiVersion-or-]".to_string());
     }
     require_login(core)?;
-    let resp = core.api().publish_artifact_version(
+    let resp = core.api()?.publish_artifact_version(
         &args[0],
         &args[1],
         &args[2],
@@ -757,7 +759,7 @@ fn publish_repo_version_cli(
     }
     require_login(core)?;
     let install_config = read_content_arg(&args[6])?;
-    let resp = core.api().publish_repo_version(
+    let resp = core.api()?.publish_repo_version(
         &args[0],
         &args[1],
         &args[2],
@@ -787,7 +789,7 @@ fn update_entry_cli(
         return Err("usage: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->".to_string());
     }
     require_login(core)?;
-    let resp = core.api().update_entry(
+    let resp = core.api()?.update_entry(
         &args[0],
         parse_optional_string(&args[1]),
         parse_optional_content_arg(&args[2])?,
@@ -832,7 +834,7 @@ fn install_entry(
     version_id: Option<&str>,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let entry = core.api().get_entry_by_id(entry_id)?;
+    let entry = core.api()?.get_entry_by_id(entry_id)?;
     match entry.r#type.as_str() {
         "skill" => install_skill_from_entry(core, entry, output),
         "mcp" => install_mcp_from_entry(core, entry, output),
@@ -999,7 +1001,7 @@ fn download_asset_to_temp_file(
     core: &mut MarketCommand,
     asset: &MarketEntryAsset,
 ) -> Result<PathBuf, String> {
-    let bytes = core.api().download_asset(&asset.id)?;
+    let bytes = core.api()?.download_asset(&asset.id)?;
     verify_market_asset_sha256(&bytes, &asset.sha256)?;
     let tmp = market_asset_temp_path(asset)?;
     fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
@@ -1059,7 +1061,12 @@ fn sanitize_id(title: &str) -> String {
 
 /// Requires the GitHub OAuth broker session needed by market write operations.
 fn require_login(core: &mut MarketCommand) -> Result<(), String> {
-    if core.github_auth().getCurrentAccessToken().is_some() {
+    if core
+        .github_auth()
+        .getCurrentAccessToken()
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
         Ok(())
     } else {
         Err("GitHub login required.".to_string())

@@ -3,7 +3,7 @@
 import type { EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData } from "./results";
 
 /**
- * Reads and updates environment variables and executes core commands.
+ * Manages environment variables and executes core commands.
  */
 export namespace SoftwareSettings {
   /**

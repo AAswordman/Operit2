@@ -14,14 +14,12 @@ use crate::status::FirmwareStatus;
 const SETTINGS_NAMESPACE: &str = "operit_setup";
 const WIFI_SSID_KEY: &str = "wifi_ssid";
 const WIFI_PASSWORD_KEY: &str = "wifi_password";
-const EDGE_TOKEN_KEY: &str = "edge_token";
 
 /// Runtime configuration loaded from device NVS.
 #[derive(Clone, Debug, Default)]
 pub struct Esp32FirmwareSettings {
     pub wifiSsid: String,
     pub wifiPassword: String,
-    pub edgeToken: String,
 }
 
 impl Esp32FirmwareSettings {
@@ -29,15 +27,13 @@ impl Esp32FirmwareSettings {
         Ok(Self {
             wifiSsid: getString(nvs, WIFI_SSID_KEY)?,
             wifiPassword: getString(nvs, WIFI_PASSWORD_KEY)?,
-            edgeToken: getString(nvs, EDGE_TOKEN_KEY)?,
         })
     }
 
     /// Writes all fields, including empty values that intentionally clear them.
     fn save(&self, nvs: &Mutex<EspDefaultNvs>) -> HostResult<()> {
         setString(nvs, WIFI_SSID_KEY, &self.wifiSsid)?;
-        setString(nvs, WIFI_PASSWORD_KEY, &self.wifiPassword)?;
-        setString(nvs, EDGE_TOKEN_KEY, &self.edgeToken)
+        setString(nvs, WIFI_PASSWORD_KEY, &self.wifiPassword)
     }
 }
 
@@ -109,12 +105,6 @@ impl Esp32SetupServer {
                         .trim()
                         .to_string(),
                     wifiPassword: form.get("password").cloned().unwrap_or_default(),
-                    edgeToken: form
-                        .get("token")
-                        .cloned()
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string(),
                 };
                 if settings.wifiSsid.is_empty() {
                     request
@@ -243,7 +233,6 @@ fn renderSetupPage(_snapshot: &crate::status::FirmwareStatusSnapshot) -> String 
 <form method=\"post\" action=\"/settings\">\
 <label>Wi-Fi SSID<br><input name=\"ssid\" required></label><br>\
 <label>Wi-Fi 密码<br><input name=\"password\" type=\"password\"></label><br>\
-<label>Edge token<br><input name=\"token\"></label><br>\
 <button type=\"submit\">保存并重启</button>\
 </form>\
 <p><a href=\"/status.json\">状态</a></p>\
@@ -264,9 +253,8 @@ mod tests {
 
     #[test]
     fn parsesSpacesAndPercentEncoding() {
-        let mut form = parseUrlEncoded(b"ssid=Home%20Net&password=a%2Bb%20c&token=Operit%20123");
+        let mut form = parseUrlEncoded(b"ssid=Home%20Net&password=a%2Bb%20c");
         assert_eq!(form.remove("ssid").as_deref(), Some("Home Net"));
         assert_eq!(form.remove("password").as_deref(), Some("a+b c"));
-        assert_eq!(form.remove("token").as_deref(), Some("Operit 123"));
     }
 }

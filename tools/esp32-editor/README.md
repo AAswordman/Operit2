@@ -4,13 +4,14 @@
 
 设备与 Wasm 预览直接编译 `apps/esp32/ui_port/operit_mini_ui.c`；
 Rust 适配器为 `apps/esp32/src/ui.rs`，C ABI 为 `operit_ui_*`。
-已删除 LVGL 依赖、旧页面/软键盘/emoji 实现及后端切换标记，不再提供回退构建。
+系统页面、文字、触摸和状态表情由共享 C 实现；页面修改后重新构建预览与固件。
 
 ```powershell
 # 仓库根目录
 npm run build --prefix tools/esp32-editor             # 同源 Wasm 预览
 npm run check --prefix tools/esp32-editor             # TypeScript 检查
 npm test --prefix tools/esp32-editor                  # 自绘 UI、协议、工具与存储测试
+npm run test:device-space --prefix tools/esp32-editor # 真实 mDNS、Core/Edge、键盘、取消和审批恢复
 npm run build:firmware --prefix tools/esp32-editor    # 构建固件/预览；不烧录
 npm run dev --prefix tools/esp32-editor -- --port COMxx --no-monitor
 npm start --prefix tools/esp32-editor                # 预览仍在 8766
@@ -20,18 +21,18 @@ npm start --prefix tools/esp32-editor                # 预览仍在 8766
 
 - 固定 320×240 页面：首页左侧表情、右侧对话并排显示；另有配对、设置、空间审批、Core 插件列表与详情页、独立表情屏及退出/解除配对确认。
 - 左上角点击展开/收起侧栏；右侧空白也可收起。侧栏左下角进入插件，右下角进入设置，点击表情进入独立表情屏。
-- 设置分为连接、设备空间、设备三个分组，分别放置监听/配对码、退出空间、新对话/解除配对；聊天页只保留发送按钮。配对码与待审批申请优先显示，不会被侧栏遮挡。
+- 设置分为网络连接、设备空间、设备操作三个分组。所有配对入口集中在「设置 → 设备空间」：发现节点并发起配对、查看本机配对码、查看并审批加入申请；「空间与配对管理」提供申请/取消加入、退出空间和单向解除本机配对。收到配对/审批请求时设置入口显示提示，聊天和插件场景不被自动切换。
+- 发起配对时在对端查看六位配对码，用屏幕数字键盘输入；错误码可修改后重试。验证成功后向对端空间申请加入，仍需管理员审批。固件和模拟器共用 `apps/esp32/src/device_space_ui.rs`；审批状态定时刷新，并从现有持久化申请恢复待审批状态，不复制 Core 业务数据。
+- 解除配对只清除本机凭据，所以对端仍可显示已配对。本机重新发起配对时，对端允许新的配对码流程；只有验证成功才替换旧凭据并关闭旧会话，单纯发起或输入错误码不会覆盖旧记录。
 - 表情源文件为 `apps/esp32/ui_port/face.svg`。`npm run build` 在构建时生成 flash 常量 `mini_face.h`，真机和 Wasm 用同一套整数绘制指令，不引入运行时 SVG 解码或图片缓冲；支持由设备状态驱动的普通、难过、困倦三个静态表情，编辑器不提供手动切换。SVG 仅支持实色 ellipse 和 M/L 路径，其他语法会被构建拒绝。
 - 无动态 UI 分配池；两行 RGB565 缓冲为 1280 字节。
 - 编译断言约束渲染器静态 RAM（含调试 JSON）≤10 KiB，不包括调用栈、
   驱动、Rust/网络服务或浏览器 framebuffer。debug snapshot 返回实际 `staticBytes`。
 - 中文和数字使用仓库独立的 `ui_port/mini_font.h`，保留 OFL 授权，不需下载或提取第三方 UI 字体。
 - 审批仍调用共享节点服务；busy 禁止重复提交，配对码优先；解除配对需要确认。
-- 固定系统 UI 不提供通用 emoji、机内软键盘、聊天翻页、会话选择和动态布局。
-  聊天图片可由电脑输入区发送 PNG/JPEG 原件至 Core，屏幕显示有界预览；
+- 电脑输入区支持文字与图片；PNG/JPEG 原件发送至 Core，屏幕显示有界预览。
   JS 插件可以通过可选 `display.scene` 服务显示像素素材并播放本地动画。
-  电脑输入仍可发送文字与图片；网页布局编辑开关停用。布局文档仅作为 Editor 草稿保留；旧分区地址保持不变，但固件不再加载或写入布局包。
-- Rust 模拟器 memory 只报告应用注入的资源限制，不再使用退役 UI 的历史堆预算；
+- Rust 模拟器 memory 只报告应用注入的资源限制；
   `simulator_heap_*` 为 0 只表示无 UI 动态分配池，不代表整机剩余堆为 0。
 - 预览构建无需 ESP-IDF 缓存，仅需 Node.js/Emscripten；固件构建另需 Rust/ESP-IDF/espflash。
 
@@ -39,27 +40,56 @@ npm start --prefix tools/esp32-editor                # 预览仍在 8766
 `npm run device:setup --prefix tools/esp32-editor -- --idf <ESP-IDF目录>`。
 这只保存本机 SDK 路径，不关闭 SDK 的 Git 子模块检查。
 
+## 独立运行验证
+
+`npm run test:standalone --prefix tools/esp32-editor` 启动真实 CLI、Rust ESP 模拟器和共享 C/Wasm UI，
+完成配对与 Core 审批，确认正式边缘节点身份，然后同步 `chat` 配置。
+测试先收发一轮，再退出 CLI 并确认所有对端断开，通过屏幕发送按钮继续收发；
+随后重启 ESP 模拟器，在 CLI 关闭时再次收发，并检查没有复制聊天库、插件或业务日志。
+只有外部模型服务使用本地确定性 HTTP fixture；配对、同步、原生请求和界面都使用真实实现。
+
+本机需先构建 Wasm。可通过 `OPERIT_SIM_TEST_CLI` 指向已构建的 CLI；
+`OPERIT_SIM_TEST_SCREENSHOT` 可指定关闭 CLI 后的 RGB565 屏幕输出文件。
+独立模式只保留有界内存上下文，重启后配置仍在，但不会恢复完整历史。
+
 ## ESP32 模拟设备：真实配对与聊天
 
 运行 `npm start --prefix tools/esp32-editor`，打开 http://127.0.0.1:8766，页面会自动启动 ESP32 模拟设备，也可用底部的启动/停止按钮控制生命周期。
 首次启动需要可用的桌面 Rust/Cargo 工具链，工具会编译并启动本机 Rust 模拟器。
-面板展示实际 TCP 地址、Edge Token、连接状态和编译日志；配对码在设备屏幕显示。停止按钮会终止模拟设备，编辑器退出也会回收进程。
+面板展示实际 TCP 地址、连接状态和编译日志；配对码在设备屏幕显示。模拟 Edge 的配对不需要 token，也不生成或保存 token 文件。停止按钮会终止模拟设备，编辑器退出也会回收进程。
+模拟器默认通过共享 Host 的 mDNS 服务广播，Core 可以扫描发现；已经配对的设备从扫描候选中排除，应在已配对设备列表查看。隔离测试可设置 `OPERIT_SIM_DISCOVERY=false` 关闭广播。局域网发现时应监听 `0.0.0.0`，仅绑定 `127.0.0.1` 的节点供本机直连测试使用。
 
 1. 在运行本次 Edge 功能版本的 Core 应用中打开 Space 设备面板，选择 Edge 配对。
-2. 填写模拟器显示的局域网 TCP 地址（默认监听 `0.0.0.0:18765`，面板会显示可连接的局域网 IP）和“复制 Token”得到的令牌。
+2. 填写模拟器显示的局域网 TCP 地址（默认监听 `0.0.0.0:18765`，面板会显示可连接的局域网 IP）。
 3. Core 发起配对后，设备屏幕显示六位配对码；将其填回 Core 完成配对。配对完成不等于已加入设备空间。
 4. 从 Core 发起加入设备空间，在模拟设备屏幕批准申请。已有授权空间/Binding 就绪后，聊天界面才能调用 Core；编辑器面板仅管理生命周期、连接信息和日志。
 5. 检查流式回复、Core 端历史记录和错误提示。停止模拟器后 Core 应显示离线；重启保留设备身份与配对凭据，Core 重新连接后恢复固定聊天。
 
 如需指定绑定地址，在启动编辑器的终端设置 `$env:OPERIT_SIM_BIND = "0.0.0.0:18765"`；
 也可设置 `$env:OPERIT_SIM_ADVERTISE = "192.168.1.20"` 指定面板展示给 Core 的局域网 IP。防火墙需允许该 TCP 端口。
-模拟器的身份与真实板卡分开；令牌及配对凭据保存在忽略提交的 `generated/simulator/`，聊天数据仍存于 Core。
+模拟器的身份与真实板卡分开；配对凭据保存在忽略提交的 `generated/simulator/`，聊天数据仍存于 Core。
 
 模拟器直接编译固件的 `apps/esp32/src/edge_chat.rs`，复用 `operit-node-runtime`
 的配对、加密会话、PeerLink，以及设备空间审批和 SpaceBinding 路由。
 编辑器到本机进程的 IPC 只承接 UI 和生命周期，不替代节点之间的 Link 协议。
-自绘 UI 画布继续运行共享 C/Wasm，连接指示跟随真实会话。聊天文字、懒加载翻页与触摸由同一份自绘 C UI 执行；电脑键盘/串口草稿用于测试输入，当前无设备软键盘。
+自绘 UI 画布继续运行共享 C/Wasm，连接指示跟随真实会话。聊天文字、懒加载翻页与触摸由同一份自绘 C UI 执行；电脑键盘/串口草稿用于测试输入。
 此环境模拟设备运行能力，不执行 ESP32 指令集，不模拟 Wi-Fi 无线电、SPI 时序或板上 RAM 限制。
+
+网页与 Rust 模拟设备是两个运行时：C/Wasm 管理屏幕导航、滚动和输入草稿，Rust 管理真实
+Edge 会话及 Core 返回的业务状态。前台网页每 250 毫秒读取一次 `/api/simulator/state`，
+点击设备操作或发送消息后主动刷新；浏览器后台标签页可能节流计时器。状态适配包含历史
+分页标志，停止时清理旧配对码、审批、聊天窗口、插件及场景。审批提交期间保留 busy，
+审批仍使用点击时屏幕上的 requestId 与 assignmentVersion。
+
+状态查询保留最近一次发送回执及编号，查询本身不会取走回执；网页按编号去重，并通过
+仅用于本地编辑器的 sendId 对应自己的发送，其他页面或调试查询不会替它确认草稿。
+每次 Rust 进程启动生成新的 sessionId，让网页即使错过停止状态，也会重新加载同一
+revision 的场景。sessionId/sendId 不进入公共 Link 协议，不改变设备身份和授权。
+多个网页的页面导航和输入草稿各自独立；共享的是设备会话及 Core 业务状态。
+
+源码修改的生效入口也各自独立：修改 Web TypeScript 后刷新网页；修改共享 C UI 后运行
+预览构建并刷新；修改 Rust 模拟器或共享 edge_chat 后停止／启动模拟设备，启动会由 Cargo
+重新检查和编译。单独刷新预览不会重启一个已经运行的 Rust 进程。
 
 验证命令（仓库根目录执行）：
 
@@ -75,6 +105,15 @@ Rust 测试通过真实 TCP 连接检查密码学配对、固件聊天的 routed
 
 浏览器与 ESP32 使用同一个 `apps/esp32/ui_port/operit_mini_ui.c`，不再用 JavaScript 重写界面。
 自绘 UI 的文字绘制、触摸与页面逻辑在 WebAssembly 中运行；HTML 仅提供开发面板，Canvas 显示 自绘 UI 输出的 RGB565 像素。
+
+侧栏的“对话列表”读取当前 Core 已有的有界元数据投影（最多 24 条），每屏显示 3 条，支持上一页、下一页、刷新及新建。
+列表在用户第一次打开时订阅，普通聊天无需加载列表。点击条目仅切换当前 Edge 的查看对象，不改变 Core/App 的当前对话。
+当前条目以背景标记；成功切换后清空原对话草稿，失败或返回保留草稿。配对码、空间审批优先于列表，离线和发送中禁止切换。
+C UI 仅保存当前屏的 3 条记录，并复用发送暂存区，静态 RAM 继续保持在 10 KiB 内。
+
+聊天输入栏包含麦克风入口、文字草稿和发送按钮。麦克风入口仅在 Core 聊天连接就绪且未发送消息时可点；
+当前 ESP32 固件尚未注册真实麦克风，模拟器的测试音频源也尚未接入聊天语音转文字流程，点击会显示具体提示。
+已有音频采集由 Core 插件通过 Edge 音频接口启动，设备按钮不会绕过空间鉴权直接采集或上传。
 
 ## 使用与开发构建
 
@@ -149,7 +188,7 @@ Invoke-RestMethod http://127.0.0.1:8766/api/simulator/memory
 ```
 
 桌面进程仍由操作系统分配内存，无法用本机 RSS 证明真机不会 OOM。
-整板堆和 NVS 应通过真实设备 `device:health` 获取；历史 UI 内存预算不再限制图片发送。
+整板堆和 NVS 应通过真实设备 `device:health` 获取。
 
 
 普通使用只需 Node.js 22.6+ 和已有的 `generated/ui.mjs`、`ui.wasm`、`manifest.json`：
@@ -167,7 +206,7 @@ npm run build --prefix ./tools/esp32-editor
 
 然后重新打开编辑器。底层 C/Rust 运行时变更则执行 `npm run build:firmware --prefix ./tools/esp32-editor`。
 
-访问 http://127.0.0.1:8766 。当前页面预览固定自绘屏幕；布局 JSON 可作为草稿保存，但不会应用到设备屏幕。固件部署使用构建产物。USB 操作需要电脑已安装 espflash、Python/pyserial；当前固定 UI 不支持 Wi-Fi/USB 布局下发；两个部署入口都会在访问设备或串口前明确拒绝。手机可通过端口转发访问此服务，默认不开放局域网监听。
+访问 http://127.0.0.1:8766 查看自绘屏幕预览。固件部署使用构建产物；USB 操作需要电脑已安装 espflash、Python/pyserial。手机可通过端口转发访问此服务，默认不开放局域网监听。
 
 开发者修改共享 C/Rust 或新增底层能力后，在开发环境执行：
 
@@ -177,9 +216,9 @@ npm run build:firmware --prefix ./tools/esp32-editor
 
 只生成浏览器预览时用 `npm run build --prefix ./tools/esp32-editor`。预览构建需要 Node.js/Emscripten；固件构建还需 Rust/ESP-IDF。通过 `EMSDK` 或 `--emsdk` 指定 Emscripten 安装目录；不在代码中写入机器绝对路径。Windows 上脚本自动把 Cargo target 放在当前工作区所在盘的 `\esp32`，并把 `CARGO_TARGET_DIR` 与 `CARGO_WORKSPACE_DIR` 注入固件构建。预览独立编译仓库自绘 C 源码，不查找第三方 UI 缓存。仅保留当前增量对象与当前产物。
 
-- 保存 JSON / 编辑 C 都不会自动启动编译；调试面板只显示运行时状态。
+- 编辑源码后显式启动编译；调试面板显示运行时状态。
 - 显式构建生成同源 Wasm 与基础固件。构建失败保留旧预览并显示错误。
-- `apps/esp32/dist/operit-esp32.bin` 是程序镜像（0x10000），另含 bootloader（0x1000）和 partition-table（0x8000）。网页默认清理程序分区后烧录这些已有文件，保留 NVS 和布局分区；勾选清空设备时删除全部历史设备数据。
+- `apps/esp32/dist/operit-esp32.bin` 是程序镜像（0x10000），另含 bootloader（0x1000）和 partition-table（0x8000）。网页默认清理程序分区后烧录这些已有文件，保留 NVS；勾选清空设备时删除全部历史设备数据。
 - 合并的 `operit-esp32-4mb-full.bin` 用于初始部署，不应当作日常界面修改方式。
 - 调试面板的临时状态不写设备设置。屏幕设计与绘制请修改共用 C；Rust 继续负责状态/动作。
 
@@ -195,14 +234,12 @@ npm run build:firmware --prefix ./tools/esp32-editor
 - `wasm/bridge.c`：RGB565 帧缓冲、触摸、自绘 UI 内存统计和动作回调。
 - `wasm/esp_timer.h`：浏览器时钟适配。
 - `web/app.ts`：WebAssembly 宿主和调试面板，不包含按钮布局绘制逻辑。
-- `src/server.mts`：本地服务、运行时状态、布局/AI/部署接口。
-- `src/api/`：布局、部署、AI 的 HTTP 路由。
-- `src/layout/`：项目模型、组件目录、路由和设备布局包。
-- `src/source/`：组件源码引用。
-- `tests/`：Node 测试与 C store 夹具。
+- `src/server.mts`：本地服务、静态资源与运行时构建状态。
+- `src/api/`：模拟设备、UI 调试、AI 与固件安装的 HTTP 路由。
+- `tests/`：渲染器、设备协议、模拟器与调试台测试。
 - `generated/`：忽略提交的构建产物和日志。
 
-集成软件本体时可将前端与 `generated/ui.mjs`、`ui.wasm` 放入 WebView；布局与部署由后端管理，基础运行时构建由开发环境完成。
+集成软件本体时可将前端与 `generated/ui.mjs`、`ui.wasm` 放入 WebView；模拟设备与固件安装由后端管理，运行时构建由开发环境完成。
 
 ## 磁盘占用
 
@@ -210,13 +247,10 @@ npm run build:firmware --prefix ./tools/esp32-editor
 临时链接文件与发布暂存文件在构建结束（包括失败）时自动清理；固件日志只保留最新 256 KiB，服务内存中的构建输出限制为 16,000 字符。
 Emscripten 编译工具链单独安装，不属于调试器运行包；运行已构建的预览无需携带工具链。安装下载包及分片无需保留。
 
-## 布局草稿与未来 UI 开发
+## 系统 UI 开发
 
-布局模型、HTTP/MCP 文档接口和布局包导出仍保留，但当前固定渲染器不使用布局文档。
-旧布局编辑器的拖拽/组件主题/软键盘等退役视图不会因保存项目自动恢复；设备侧栏由固定渲染器绘制。
-修改屏幕请编辑 `apps/esp32/ui_port/operit_mini_ui.c`，修改表情矢量请编辑 `face.svg`，然后重新构建。
-服务返回的 `/api/board` capabilities 表明当前不支持布局编辑、图片或软键盘。
-协议和软件工作区嵌入接口见 [AGENT_API.md](AGENT_API.md) 与 [FRONTEND.md](FRONTEND.md)。
+修改屏幕请编辑 `apps/esp32/ui_port/operit_mini_ui.c`；状态与动作修改对应的 Rust 适配；表情矢量修改 `face.svg`，然后重新构建。
+开发与调试接口见 [AGENT_API.md](AGENT_API.md)，前端和软件内嵌约定见 [FRONTEND.md](FRONTEND.md)。
 
 ### 模拟器设备空间端到端回归
 
@@ -237,9 +271,9 @@ npm run test:space --prefix tools/esp32-editor
 ## Core 插件与其他 Edge 平台
 
 本调试台模拟的是 ESP32-2432S028 的 320×240 呈现，不是所有 Edge 的通用屏幕模板。
-Core 的 `Tools.Edge`、`Tools.Io` 与 `on_edge_event` 不按芯片型号分支。
+Core 的 `Tools.device(nodeId).Edge`、`Tools.device(nodeId).Io` 与通用传输入口不按芯片型号分支。
 其他单片机或系统通过现有节点/Host 适配提供自己的能力和动作；无屏幕设备无需场景库。
-公共 Edge 节点/事件定义在 `core/crates/node/edge` 与 `edge-contract`，
+公共 Edge 节点及硬件契约在 `core/crates/node/edge` 与 `edge-contract`，
 显示服务及其协议在端侧可选 `hosts/common/operit-edge-scene`。
 ESP32/模拟器显式传入 320×240、24 像素顶部保留区和触摸能力；其他设备自行配置。
 
@@ -247,16 +281,29 @@ ESP32/模拟器显式传入 320×240、24 像素顶部保留区和触摸能力�
 
 | 修改内容 | 验证方式 | 固件是否需要更新 |
 | --- | --- | --- |
-| Core JS/TS 插件业务、存档、action 处理 | 编译 ToolPkg 并在 Core 导入/启用；真实事件联调 | 已安装兼容服务时不需要 |
-| 插件场景素材 | 通过 `Tools.Edge.execute` 分块上传并更新场景 | 格式/容量符合能力时不需要 |
+| 宿主 JS/TS 配置编辑与厂商协议 | 编译 ToolPkg 并在宿主导入/启用；真实通道联调 | 已安装兼容服务时不需要 |
+| 插件场景素材 | 通过 `Tools.device(nodeId).Edge.execute` 分块上传并更新场景 | 格式/容量符合能力时不需要 |
 | ESP32 固定系统页面、屏幕适配、原生能力 | C/Wasm 预览、模拟器测试、固件构建及实机验证 | 需要 |
-| 历史布局 JSON / OUI2 草稿 | 仅校验与导出草稿 | 当前固件不应用草稿 |
 
 “刷新预览页”仅重载网页及 Wasm；“停止/启动模拟设备”控制 Rust 模拟器进程。
 刷新网页会按现有逻辑请求自动启动模拟器，不清除身份、配对或 Core 存档。
 面板显示“Core 对话已就绪”只证明对话连接可用，不等于所有业务数据已同步。
 专属/一般分类使用通用 manifest 扩展 `"edge": {"exclusive": true}`；旧 `esp32` 标记需迁移。
 
-桌宠联调步骤、事件处理及素材边界见
+桌宠配置、设备本地交互及素材边界见
 [插件作者指南](../../plugins/docs/edge-plugin-guide.md)、
 [示例插件](../../plugins/packages/external/edge_pixel_pet/README.md)。
+
+### 通用设备链路
+
+宿主插件通过 `Tools.device(nodeId).transport` 使用现有 Call / Watch / Push，
+在 Stream / ReverseStream 上传输结构化数据和字节。业务协议由厂商设备和宿主插件解释。
+设备聊天保持原生请求和同步。设备本地场景保存配置后自行显示和处理点击。
+
+模拟器提供应用自有的 `operit.device.speech` 示例协议，直接注册在通用 Watch / Push 端点上。
+在手机或桌面宿主安装 [语音处理 ToolPkg](../../plugins/packages/examples/device_speech_processor/README.md)，
+并调用 `device_speech_processor:start({node_id})`，即可由宿主当前配置的 STT/TTS 服务处理设备请求。
+浏览器提供模拟设备的麦克风和播放驱动：麦克风识别结果回填聊天草稿，
+“朗读最新回复”把合成音频送回设备侧播放。设备聊天请求和同步仍沿用原生链路。
+专用 Core 音频采集路由已经移除；配置编辑器无需为语音处理保持运行。
+接口及插件边界见 [硬件 ToolPkg 接入](../../plugins/docs/edge-plugin-guide.md)。

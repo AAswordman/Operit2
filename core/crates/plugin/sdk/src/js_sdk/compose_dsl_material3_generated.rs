@@ -256,6 +256,8 @@ pub struct ComposeGeneratedLazyColumnProps {
 }
 /// Properties configuring a horizontally scrolling lazy list that composes visible child content.
 pub struct ComposeGeneratedLazyRowProps {
+    /// Optional viewport protocol supplied by lazyItems for generated content.
+    pub viewport: Option<ComposeLazyViewport>,
     /// Common layout, sizing, semantics, and modifier properties applied to this node.
     pub base_compose_common_props: ComposeCommonProps,
     /// Child nodes rendered inside the component.

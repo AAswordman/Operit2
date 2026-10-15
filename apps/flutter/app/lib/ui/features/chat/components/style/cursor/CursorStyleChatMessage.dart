@@ -12,7 +12,8 @@ class CursorStyleChatMessage extends StatelessWidget {
   const CursorStyleChatMessage({
     super.key,
     required this.message,
-    this.currentCharacterCardAvatarUri,
+    this.identityAvatarUri,
+    this.onIdentityTap,
     this.splitMarkdownContent,
     this.onDeleteMessage,
     this.onEditSummary,
@@ -20,7 +21,8 @@ class CursorStyleChatMessage extends StatelessWidget {
   });
 
   final ChatUiMessage message;
-  final String? currentCharacterCardAvatarUri;
+  final String? identityAvatarUri;
+  final VoidCallback? onIdentityTap;
   final MarkdownContentSplitter? splitMarkdownContent;
   final Future<void> Function(int timestamp)? onDeleteMessage;
   final ValueChanged<ChatUiMessage>? onEditSummary;
@@ -35,7 +37,8 @@ class CursorStyleChatMessage extends StatelessWidget {
         return AiMessageComposable(
           message: message,
           useBubbleStyle: false,
-          avatarImagePath: currentCharacterCardAvatarUri,
+          avatarImagePath: identityAvatarUri,
+          onIdentityTap: enableDialogs ? onIdentityTap : null,
           splitMarkdownContent: splitMarkdownContent,
         );
       case 'summary':

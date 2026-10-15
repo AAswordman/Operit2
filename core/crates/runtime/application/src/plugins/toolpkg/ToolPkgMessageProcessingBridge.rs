@@ -29,8 +29,9 @@ impl ToolPkgMessageProcessingBridge {
         MessageProcessingPluginRegistry::register(Arc::new(MessageProcessingBridge { runtime }));
     }
 
+    /// Synchronizes this bridge from the committed active package catalog.
     #[allow(non_snake_case)]
-    pub fn syncToolPkgRegistrations(activeContainers: Vec<ToolPkgContainerRuntime>) {
+    pub fn syncToolPkgRegistrations(activeContainers: &[ToolPkgContainerRuntime]) {
         let mut hooks = activeContainers
             .iter()
             .flat_map(|container| {
@@ -150,7 +151,6 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
                 let executionIdForWorker = executionId.clone();
                 let released = Arc::new(AtomicBool::new(false));
                 let released_for_worker = released.clone();
-                manager.acquireToolPkgExecutionEngine(&executionId, &hook.containerPackageName);
                 self.runtime
                     .host_manager()
                     .hostRuntimeTaskSchedulerHost
@@ -162,6 +162,22 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
                         "operit-toolpkg-message-processing",
                         Box::new(move || {
                             Box::pin(async move {
+                                if released_for_worker.load(Ordering::Acquire) {
+                                    stream_for_final.close();
+                                    return;
+                                }
+                                if let Err(error) = manager_for_worker.acquireToolPkgExecutionEngine(&executionIdForWorker, &hook_for_worker.containerPackageName).await {
+                                    ChainLogger::error(PLUGIN_CHAIN, "plugin.toolpkg.message_processing.initialize.error", &[
+                                        ("package", hook_for_worker.containerPackageName.clone()), ("error", error),
+                                    ]);
+                                    stream_for_final.close();
+                                    return;
+                                }
+                                if released_for_worker.load(Ordering::Acquire) {
+                                    manager_for_worker.releaseToolPkgExecutionEngine(&executionIdForWorker, &hook_for_worker.containerPackageName);
+                                    stream_for_final.close();
+                                    return;
+                                }
                                 ChainLogger::info(
                                     PLUGIN_CHAIN,
                                     "plugin.toolpkg.message_processing.run.start",

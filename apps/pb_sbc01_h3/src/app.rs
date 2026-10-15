@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use operit_link::LinkDeviceInfo;
-use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::{PeerStateStore, PeerHostConfig, PeerHostPortMode}};
+use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::PeerStateStore};
 use operit_board_pb_sbc01_h3::{PbSbc01H3Board, PbSbc01H3BoardConfig, PB_SBC01_H3_BOARD_ID};
 use operit_core_application::{CoreApplication, CoreApplicationConfig};
 use operit_host_api::HostManager::HostManager;
@@ -38,17 +38,8 @@ pub async fn run() -> Result<(), String> {
 
     // 原配置文件是唯一来源；命令行只覆盖显式给出的字段。
     let store = PeerStateStore::new(core.nodeRuntime().runtimeStorageHost());
-    let mut listenerConfig = match store.hostConfig()? {
-        Some(saved) => saved,
-        None => PeerHostConfig {
-            bindAddress: "0.0.0.0:4819".into(),
-            token: config.token.clone().ok_or("Configure a pairing token with --token before listening")?,
-            transports: vec![PeerTransport::Http], discoveryEnabled: true,
-            portMode: PeerHostPortMode::Fixed, updatedAt: 0,
-        },
-    };
+    let mut listenerConfig = store.hostConfig()?.ok_or("Node listener preferences are not initialized")?;
     if let Some(bind) = config.bindAddress { listenerConfig.bindAddress = bind; }
-    if let Some(token) = config.token { listenerConfig.token = token; }
     store.saveHostConfig(&listenerConfig)?;
     core.accessServices().startListening(vec![PeerTransport::Http]).await.map_err(|error| error.to_string())?;
     boardProxy.setExpression("online".into()).await.map_err(|error| error.to_string())?;

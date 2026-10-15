@@ -200,12 +200,13 @@ async fn stream_limit_is_shared_and_disconnect_drops_resources() {
     assert_eq!(state.pushCloses.load(Ordering::SeqCst), 0);
 }
 
+/// Round-trips standard operations and rejects tags outside the Link operation families.
 #[test]
 fn protocol_has_only_three_operation_families() {
     for request in [open_watch("w"), open_push("p"), CoreLinkRequest::Call(CoreCallRequest::new("c", "t", "m", CoreValue::Null))] {
         assert_eq!(decodeLink::<CoreLinkRequest>(&encodeLink(&request).unwrap()).unwrap(), request);
     }
-    for tag in ["PeerFrame", "SpaceContext", "PairStart", "Authenticated", "Heartbeat"] {
+    for tag in ["Snapshot", "Open", "Item", "Close", "UnknownOperation"] {
         let value = serde_json::json!({"type": tag, "body": {}});
         assert!(decodeLink::<CoreLinkRequest>(&encodeLink(&value).unwrap()).is_err(), "{tag}");
     }

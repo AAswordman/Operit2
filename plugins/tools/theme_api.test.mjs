@@ -1,3 +1,4 @@
+import { composeContextScript } from "../../tools/runtime/compose_scripts.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -5,13 +6,7 @@ import { runInNewContext } from "node:vm";
 
 /** Runs the production SDK JavaScript without compiling the Rust wrapper. */
 async function createRuntime(theme) {
-  const source = await readFile(new URL(
-    "../../core/crates/plugin/sdk/src/toolpkg/ToolPkgComposeDslBridge.rs", import.meta.url,
-  ), "utf8");
-  const start = source.indexOf('r#"') + 3;
-  const end = source.lastIndexOf('"#');
-  assert.ok(start >= 3 && end > start);
-  const runtime = runInNewContext(source.slice(start, end) + "; OperitComposeDslRuntime;", { console });
+  const runtime = runInNewContext(composeContextScript() + "; OperitComposeDslRuntime;", { console });
   return runtime.createContext({ theme });
 }
 

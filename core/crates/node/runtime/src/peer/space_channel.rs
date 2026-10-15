@@ -28,6 +28,8 @@ struct Offer {
     secret: String,
     port: u16,
     transport: PeerTransport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host: Option<std::net::IpAddr>,
 }
 
 impl HostRuntimePeerService {
@@ -80,21 +82,8 @@ impl HostRuntimePeerService {
         let requestId = operit_link::nextCoreRouteRequestId("space-channel");
         Ok(Some(CoreCallRequest::new(requestId, TARGET, "offer", toCoreValue(Offer {
             id: grant.id, spaceId: grant.spaceId, secret: grant.secret, port: grant.port, transport: grant.transport,
+            host: (!socket.ip().is_unspecified()).then_some(socket.ip()),
         }).map_err(|e| error(e.to_string()))?)))
-    }
-
-    /// Publishes a scoped callback offer over the original authenticated channel.
-    pub(super) async fn offerSpaceChannel(&self, peer: &str, pairingId: &str, channel: &Arc<Channel>) -> Result<(), CoreLinkError> {
-        let Some(request) = self.spaceChannelOfferRequest(peer, pairingId).await? else { return Ok(()); };
-        let requestId = request.requestId.0.clone();
-        match channel.exchange(CoreLinkRequest::Call(request)).await? {
-            CoreLinkResponse::Call(response) if response.requestId.0 == requestId => match response.result {
-                Ok(_) => Ok(()),
-                Err(e) if e.code == "SPACE_CHANNEL_NOT_ADMITTED" => Ok(()),
-                Err(e) => Err(e),
-            },
-            _ => Err(error("Space channel offer response mismatch")),
-        }
     }
 
     /// Publishes a scoped callback offer through a multiplexed channel already in the pool.
@@ -125,7 +114,11 @@ impl HostRuntimePeerService {
             || BASE64.decode(&offer.secret).map_err(|_| error("Invalid Space channel credential"))?.len() != 32 {
             return Err(error("Invalid Space channel offer"));
         }
-        let address = std::net::SocketAddr::new(raw.remoteAddress().ok_or_else(|| error("Space channel requires an observed peer address"))?.ip(), offer.port);
+        let observed = raw.remoteAddress().ok_or_else(|| error("Space channel requires an observed peer address"))?;
+        // A specific listener can use a different interface/address family from this connection.
+        // Wildcard binds and old peers still use the observed source address.
+        let host = offer.host.filter(|host| !host.is_unspecified()).unwrap_or(observed.ip());
+        let address = std::net::SocketAddr::new(host, offer.port);
         let endpoint = match offer.transport {
             PeerTransport::Http => format!("http://{address}/link"),
             PeerTransport::WebSocket => format!("ws://{address}/link"),

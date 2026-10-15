@@ -1,3 +1,5 @@
+import 'support/native_sidebar_bridge.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
@@ -45,6 +47,7 @@ void main() {
               hostInteractionHostsEnabled: false,
               child: Scaffold(
                 body: PhoneLayout(
+                  bridge: NativeSidebarBridge(),
                   content: const SizedBox.expand(),
                   navigationEntries: const <NavigationEntrySpec>[
                     NavigationEntrySpec(

@@ -1,3 +1,5 @@
+import 'support/native_sidebar_bridge.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -162,6 +164,7 @@ void main() {
             hostInteractionHostsEnabled: false,
             child: Scaffold(
               body: PhoneLayout(
+                bridge: NativeSidebarBridge(),
                 content: _ContentProbe(counts: counts),
                 navigationEntries: const [],
                 pluginSidebarEntries: const [],
@@ -358,6 +361,7 @@ void main() {
             hostInteractionHostsEnabled: false,
             child: Scaffold(
               body: PhoneLayout(
+                bridge: NativeSidebarBridge(),
                 content: const SizedBox.expand(),
                 navigationEntries: const [],
                 pluginSidebarEntries: const [],
@@ -426,6 +430,7 @@ Future<void> _pumpSwipeTestLayout(
       hostInteractionHostsEnabled: false,
       child: Scaffold(
         body: PhoneLayout(
+          bridge: NativeSidebarBridge(),
           content: content,
           navigationEntries: const [],
           pluginSidebarEntries: const [],

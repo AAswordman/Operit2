@@ -11,6 +11,17 @@ surfaces live here.
   tool access rules.
 - Own ToolPkg package loading, package manager behavior, package hook models,
   and package resource helpers.
+- Capture Compose script and session requests as owned futures. `ToolPkgResourceReader`
+  performs archive and text-resource I/O after proxy dispatch releases the package manager.
+  It shares the existing cache lock and holds it through reads to serialize invalidation;
+  session publication rechecks the exact engine identity against concurrent context release.
+- Capture IPC state with `withReady` instead of cloning the runtime package manager.
+  IPC and public API calls load only their declared main entry through the revision-scoped
+  text cache. Cold calls decompress one entry and borrow immutable asset bytes; warm calls
+  reuse cached text. Full resource snapshots are loaded only when requested by UI sessions.
+  Both read forms share the same package slots and invalidation lifecycle. Resource I/O
+  runs outside the manager lock, and dispatch checks engine identity after loading.
+  Package reload and removal use the existing resource invalidation lifecycle.
 - Isolate every ToolPkg main-script registration in a temporary JavaScript engine so one package
   cannot retain registration state or block later package scans.
 - Own MCP package models, MCP runtime repository code, MCP bridge helpers, and

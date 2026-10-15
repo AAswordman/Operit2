@@ -184,7 +184,7 @@ async fn review_admission_rejects_a_self_referential_space_before_the_log_append
         .networkControlStore
         .admitSpaceForReview(
             spaceId.clone(),
-            std::collections::BTreeSet::from(["review-self-member".into()]),
+            std::collections::BTreeMap::from([("review-self-member".into(), "user".into())]),
             "self-review",
         )
         .unwrap_err();

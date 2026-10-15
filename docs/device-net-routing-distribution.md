@@ -187,7 +187,7 @@ upstream stream and two B-to-consumer streams. A source event crosses A-B once.
 The control plane remains individual and authenticated:
 
 ```text
-WatchOpen, WatchClose, route errors, and LinkAdvertisement
+CoreLinkWatchRequest::Open, CoreLinkWatchRequest::Close, route errors, and LinkAdvertisement
 ```
 
 The data plane may be shared only after the `SnapshotShared` declaration has

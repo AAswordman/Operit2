@@ -16,13 +16,11 @@ static HOST_EVENT_HOOKS: OnceLock<Mutex<Vec<ToolPkgHostEventRegistration>>> = On
 pub struct ToolPkgHostEventHookBridge;
 
 impl ToolPkgHostEventHookBridge {
-    /// Registers host event hook support for one application runtime.
-    pub fn register(_runtime: ToolPkgBridgeRuntime) {}
-
+    /// Synchronizes host event hooks and schedules from the active package catalog.
     #[allow(non_snake_case)]
     pub fn syncToolPkgRegistrations(
         runtime: &ToolPkgBridgeRuntime,
-        activeContainers: Vec<ToolPkgContainerRuntime>,
+        activeContainers: &[ToolPkgContainerRuntime],
     ) {
         let hooks = activeContainers
             .iter()

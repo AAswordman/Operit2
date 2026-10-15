@@ -21,5 +21,6 @@ base64.workspace = true
 http-body = "1"
 
 [dev-dependencies]
+operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", default-features = false, features = ["tcp"] }
 operit-host-native-http = { path = "../../../../hosts/common/operit-host-native-http" }
 tokio = { workspace = true, features = ["rt", "macros", "time", "net"] }

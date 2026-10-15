@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders renderer slots for Compose DSL nodes.
-extension _ComposeRendererSlots on _ComposeDslRenderer {
+extension _ComposeRendererSlots on _ComposeDslRendererState {
   /// Evaluates enabled for the Compose DSL renderer.
   bool _enabled() => node.props['enabled'] != false;
 
@@ -15,6 +15,20 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     pathPrefix: nodePath,
     modifierScope: modifierScope,
   );
+
+  /// A native decorator must not reinterpret its child's row weight as column flex.
+  Widget _decoratorChild() =>
+      node.children.length == 1 ? _children().single : _childrenColumn();
+
+  /// Renders a single decorator slot without imposing a Row/Column flex scope.
+  Widget? _optionalSlot(String name) {
+    final nodes = node.slots[name];
+    if (nodes == null || nodes.isEmpty) return null;
+    final widgets = _buildNodeWidgets(nodes, pathPrefix: '$nodePath:$name');
+    return widgets.length == 1
+        ? widgets.single
+        : Column(mainAxisSize: MainAxisSize.min, children: widgets);
+  }
 
   /// Keeps Compose content start-aligned without forcing a cross-axis size.
   Widget _childrenColumn() => Column(
@@ -43,6 +57,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
         onTextInput: onTextInput,
         webViewHostContext: webViewHostContext,
         splitMarkdownContent: splitMarkdownContent,
+        dispatchOnLoad: widget.dispatchOnLoad,
         nodePath: '$nodePath:$name/0',
       );
     }
@@ -104,6 +119,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
             onTextInput: onTextInput,
             webViewHostContext: webViewHostContext,
             splitMarkdownContent: splitMarkdownContent,
+            dispatchOnLoad: widget.dispatchOnLoad,
             nodePath: '$pathPrefix/${entry.key}',
             modifierScope: modifierScope,
           ),
@@ -245,6 +261,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
       onTextInput: onTextInput,
       webViewHostContext: webViewHostContext,
       splitMarkdownContent: splitMarkdownContent,
+      dispatchOnLoad: widget.dispatchOnLoad,
       nodePath: '$nodePath:$name/0',
     );
   }
@@ -320,7 +337,11 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     Widget child;
     final source = _imageSource().trim();
     if (source.isNotEmpty) {
-      child = Image.network(source, fit: fit);
+      child = _ComposeStableImage(
+        source: source,
+        fit: fit,
+        hostContext: webViewHostContext,
+      );
     } else {
       final iconName = _string(
         node.props['name'] ?? node.props['icon'] ?? 'info',

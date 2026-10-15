@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.character_cards",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "public_api": "src/api.ts",
+  "display_name": {
+    "zh": "角色卡",
+    "en": "Characters"
+  },
+  "description": {
+    "zh": "离线 Material 角色卡插件：角色、群组、角色编辑器及内置的记忆库、USER.md 和记忆图谱。业务记录通过插件 Storage 接口保存；旧角色卡和记忆由应用启动迁移统一导入。",
+    "en": "An offline Material character plugin with groups, an editor, memory libraries, USER.md and graphs. Domain records use plugin Storage; application startup centrally imports legacy characters and memories."
+  },
+  "enabled_by_default": true,
+  "subpackages": [
+    {
+      "id": "character_memory",
+      "entry": "dist/tools.js"
+    }
+  ],
+  "resources": [
+    {
+      "key": "character_memory_html",
+      "path": "resources/character-memory.html",
+      "mime": "text/html"
+    },
+    {
+      "key": "character_default_avatar",
+      "path": "resources/operit-avatar.png",
+      "mime": "image/png"
+    }
+  ]
+}

@@ -41,7 +41,7 @@ export interface ToolDefinition {
   description: string;
   parameters: ToolParameterSchema[];
   category: string;
-  source: "builtin" | "package";
+  source: string;
   packageName?: string;
 }
 export interface ManifestWorkflowTemplate {

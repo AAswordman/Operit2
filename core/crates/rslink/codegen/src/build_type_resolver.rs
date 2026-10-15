@@ -337,6 +337,7 @@ fn serializable_struct_type(
     item_struct: &ItemStruct,
     resolver: &TypeResolver,
 ) -> SerializableType {
+    let rename_all = serde_rename_all(&item_struct.attrs);
     let fields = match &item_struct.fields {
         Fields::Named(fields) => fields
             .named
@@ -347,8 +348,9 @@ fn serializable_struct_type(
                 let field_name = field.ident.as_ref()?.to_string();
                 Some(SerializableField {
                     name: field_name.clone(),
-                    json_name: serde_rename(&field.attrs)
-                        .unwrap_or_else(|| field_name.trim_start_matches("r#").to_string()),
+                    json_name: serde_struct_field_name(
+                        &field_name, &field.attrs, rename_all.as_deref(),
+                    ),
                     ty: normalize_type(&field.ty, resolver),
                     has_serde_default: serde_field_has_default(&field.attrs),
                 })
@@ -562,7 +564,7 @@ fn serde_skips_field(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-/// Reads a serde enum-wide variant naming rule from an attribute list.
+/// Reads a serde container-wide naming rule from an attribute list.
 fn serde_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
         if !attr.path().is_ident("serde") {
@@ -606,6 +608,69 @@ fn serde_case_name(name: &str, rule: &str) -> String {
         "lowercase" => words.join("").to_ascii_lowercase(),
         "UPPERCASE" => words.join("").to_ascii_uppercase(),
         other => panic!("unsupported serde rename_all rule: {other}"),
+    }
+}
+
+/// Field naming follows serde's field rules (not its enum-variant rules).
+/// Explicit field renames override the container rule. This is wire-format
+/// projection, not an alternate deserialization spelling.
+fn serde_struct_field_name(name: &str, attrs: &[syn::Attribute], rule: Option<&str>) -> String {
+    if let Some(renamed) = serde_rename(attrs) { return renamed; }
+    let field = name.trim_start_matches("r#");
+    match rule {
+        None | Some("lowercase" | "snake_case") => field.to_string(),
+        Some("UPPERCASE" | "SCREAMING_SNAKE_CASE") => field.to_ascii_uppercase(),
+        Some("kebab-case") => field.replace('_', "-"),
+        Some("SCREAMING-KEBAB-CASE") => field.to_ascii_uppercase().replace('_', "-"),
+        Some("PascalCase" | "camelCase") => {
+            let mut output = String::new();
+            let mut capitalize = true;
+            for ch in field.chars() {
+                if ch == '_' { capitalize = true; continue; }
+                output.push(if capitalize { ch.to_ascii_uppercase() } else { ch });
+                capitalize = false;
+            }
+            if rule == Some("camelCase") && !output.is_empty() {
+                let first = output[..1].to_ascii_lowercase();
+                output.replace_range(..1, &first);
+            }
+            output
+        }
+        Some(other) => panic!("unsupported serde field rename_all rule: {other}"),
+    }
+}
+
+#[cfg(test)]
+mod serde_struct_field_tests {
+    use super::*;
+
+    #[test]
+    fn theme_wire_fields_follow_container_rename_all() {
+        let file = syn::parse_file(r#"
+            #[derive(Serialize, Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            pub struct ThemeReceipt {
+                pub archive_sha256: String,
+                pub theme_json: String,
+                #[serde(rename = "explicit_key")]
+                pub private_appearance_json: String,
+            }
+        "#).unwrap();
+        let resolver = TypeResolver::from_file(
+            &file, "example", "example", HashSet::new(), HashSet::new(), TypeRegistry::default(),
+        );
+        let Item::Struct(item) = &file.items[0] else { panic!("fixture is a struct"); };
+        let definition = serializable_struct_type("example::ThemeReceipt".into(), item, &resolver);
+        let SerializableTypeKind::Struct { fields } = definition.kind else { panic!("expected struct"); };
+        assert_eq!(fields.iter().map(|field| field.json_name.as_str()).collect::<Vec<_>>(),
+            vec!["archiveSha256", "themeJson", "explicit_key"]);
+    }
+
+    #[test]
+    fn serde_field_rules_preserve_word_separators_for_lowercase() {
+        assert_eq!(serde_struct_field_name("archive_sha256", &[], Some("lowercase")), "archive_sha256");
+        assert_eq!(serde_struct_field_name("r#type", &[], None), "type");
+        assert_eq!(serde_struct_field_name("archive_sha256", &[], Some("SCREAMING-KEBAB-CASE")), "ARCHIVE-SHA256");
     }
 }
 

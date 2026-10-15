@@ -1,0 +1,887 @@
+{
+  "version": 1,
+  "collections": {
+    "cards": {
+      "kind": "object",
+      "fields": {
+        "id": {
+          "kind": "text"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "description": {
+          "kind": "text"
+        },
+        "characterSetting": {
+          "kind": "text"
+        },
+        "openingStatement": {
+          "kind": "text"
+        },
+        "otherContentChat": {
+          "kind": "text"
+        },
+        "otherContentVoice": {
+          "kind": "text"
+        },
+        "avatarUri": {
+          "kind": "text",
+          "nullable": true
+        },
+        "attachedTagIds": {
+          "kind": "array",
+          "item": {
+            "kind": "text"
+          }
+        },
+        "advancedCustomPrompt": {
+          "kind": "text"
+        },
+        "marks": {
+          "kind": "text"
+        },
+        "chatModelBindingMode": {
+          "kind": "text"
+        },
+        "chatModelId": {
+          "kind": "text",
+          "nullable": true
+        },
+        "ttsConfigId": {
+          "kind": "text",
+          "nullable": true
+        },
+        "themeConfigId": {
+          "kind": "text",
+          "nullable": true
+        },
+        "memoryBindingMode": {
+          "kind": "text"
+        },
+        "sharedMemoryId": {
+          "kind": "text",
+          "nullable": true
+        },
+        "sharedMemoryMounts": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "sharedMemoryId": {
+                "kind": "text"
+              },
+              "readable": {
+                "kind": "boolean"
+              },
+              "writable": {
+                "kind": "boolean"
+              }
+            }
+          }
+        },
+        "toolAccessConfig": {
+          "kind": "object",
+          "fields": {
+            "enabled": {
+              "kind": "boolean"
+            },
+            "allowedBuiltinTools": {
+              "kind": "array",
+              "item": {
+                "kind": "text"
+              }
+            },
+            "allowedPackages": {
+              "kind": "array",
+              "item": {
+                "kind": "text"
+              }
+            },
+            "allowedSkills": {
+              "kind": "array",
+              "item": {
+                "kind": "text"
+              }
+            },
+            "allowedMcpServers": {
+              "kind": "array",
+              "item": {
+                "kind": "text"
+              }
+            }
+          }
+        },
+        "isDefault": {
+          "kind": "boolean"
+        },
+        "createdAt": {
+          "kind": "integer"
+        },
+        "updatedAt": {
+          "kind": "integer"
+        }
+      }
+    },
+    "groups": {
+      "kind": "object",
+      "fields": {
+        "id": {
+          "kind": "text"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "description": {
+          "kind": "text"
+        },
+        "members": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "characterCardId": {
+                "kind": "text"
+              },
+              "orderIndex": {
+                "kind": "integer"
+              }
+            }
+          }
+        },
+        "themeConfigId": {
+          "kind": "text",
+          "nullable": true
+        },
+        "createdAt": {
+          "kind": "integer"
+        },
+        "updatedAt": {
+          "kind": "integer"
+        }
+      }
+    },
+    "tags": {
+      "kind": "object",
+      "fields": {
+        "id": {
+          "kind": "text"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "description": {
+          "kind": "text"
+        },
+        "promptContent": {
+          "kind": "text"
+        },
+        "tagType": {
+          "kind": "text"
+        },
+        "createdAt": {
+          "kind": "integer"
+        },
+        "updatedAt": {
+          "kind": "integer"
+        }
+      }
+    },
+    "stores": {
+      "kind": "object",
+      "fields": {
+        "id": {
+          "kind": "text"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "createdAt": {
+          "kind": "integer"
+        },
+        "updatedAt": {
+          "kind": "integer"
+        }
+      }
+    },
+    "conversationGroups": {
+      "kind": "object",
+      "fields": {
+        "id": {
+          "kind": "text"
+        },
+        "ownerSelection": {
+          "kind": "text",
+          "nullable": true
+        },
+        "name": {
+          "kind": "text"
+        },
+        "chatIds": {
+          "kind": "array",
+          "item": {
+            "kind": "text"
+          }
+        },
+        "displayOrder": {
+          "kind": "integer"
+        },
+        "pinned": {
+          "kind": "boolean"
+        },
+        "createdAt": {
+          "kind": "integer"
+        },
+        "updatedAt": {
+          "kind": "integer"
+        }
+      }
+    },
+    "owners": {
+      "kind": "object",
+      "fields": {
+        "ownerKey": {
+          "kind": "text"
+        },
+        "settings": {
+          "kind": "object",
+          "fields": {
+            "autoSaveIntervalMinutes": {
+              "kind": "integer"
+            },
+            "nextAutoSaveRunAtMs": {
+              "kind": "integer"
+            },
+            "memoryExtractionCustomRules": {
+              "kind": "text"
+            },
+            "profileAutoUpdateEnabled": {
+              "kind": "boolean"
+            },
+            "profileAutoUpdateLocked": {
+              "kind": "boolean"
+            },
+            "cloudEmbeddingEnabled": {
+              "kind": "boolean"
+            },
+            "cloudEmbeddingEndpoint": {
+              "kind": "text"
+            },
+            "cloudEmbeddingApiKey": {
+              "kind": "text"
+            },
+            "cloudEmbeddingModel": {
+              "kind": "text"
+            }
+          }
+        },
+        "searchConfig": {
+          "kind": "object",
+          "fields": {
+            "scoreMode": {
+              "kind": "text"
+            },
+            "keywordWeight": {
+              "kind": "number"
+            },
+            "tagWeight": {
+              "kind": "number"
+            },
+            "vectorWeight": {
+              "kind": "number"
+            },
+            "edgeWeight": {
+              "kind": "number"
+            }
+          }
+        },
+        "userDocumentPath": {
+          "kind": "text"
+        },
+        "rebuildProgress": {
+          "kind": "object",
+          "fields": {
+            "status": {
+              "kind": "text"
+            },
+            "totalChats": {
+              "kind": "integer"
+            },
+            "completedChats": {
+              "kind": "integer"
+            },
+            "totalWindows": {
+              "kind": "integer"
+            },
+            "completedWindows": {
+              "kind": "integer"
+            },
+            "totalSourceMessages": {
+              "kind": "integer"
+            },
+            "processedSourceMessages": {
+              "kind": "integer"
+            },
+            "failedWindows": {
+              "kind": "integer"
+            },
+            "currentChatTitle": {
+              "kind": "text"
+            },
+            "lastError": {
+              "kind": "text"
+            }
+          }
+        },
+        "rebuildTask": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "text"
+            },
+            "windows": {
+              "kind": "array",
+              "item": {
+                "kind": "object",
+                "fields": {
+                  "chatId": {
+                    "kind": "text"
+                  },
+                  "chatTitle": {
+                    "kind": "text"
+                  },
+                  "messages": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "object",
+                      "fields": {
+                        "sender": {
+                          "kind": "text"
+                        },
+                        "content": {
+                          "kind": "text"
+                        },
+                        "timestamp": {
+                          "kind": "integer"
+                        },
+                        "variantIndex": {
+                          "kind": "integer"
+                        },
+                        "variantCount": {
+                          "kind": "integer"
+                        },
+                        "provider": {
+                          "kind": "text"
+                        },
+                        "modelName": {
+                          "kind": "text"
+                        }
+                      }
+                    }
+                  },
+                  "sourceMessageCount": {
+                    "kind": "integer"
+                  }
+                }
+              }
+            },
+            "nextWindow": {
+              "kind": "integer"
+            }
+          },
+          "nullable": true
+        }
+      }
+    },
+    "memories": {
+      "kind": "object",
+      "fields": {
+        "ownerKey": {
+          "kind": "text"
+        },
+        "record": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "text"
+            },
+            "uuid": {
+              "kind": "text"
+            },
+            "title": {
+              "kind": "text"
+            },
+            "content": {
+              "kind": "text"
+            },
+            "contentType": {
+              "kind": "text"
+            },
+            "source": {
+              "kind": "text"
+            },
+            "credibility": {
+              "kind": "number"
+            },
+            "importance": {
+              "kind": "number"
+            },
+            "documentPath": {
+              "kind": "text",
+              "nullable": true
+            },
+            "isDocumentNode": {
+              "kind": "boolean"
+            },
+            "chunkIndexFilePath": {
+              "kind": "text",
+              "nullable": true
+            },
+            "folderPath": {
+              "kind": "text",
+              "nullable": true
+            },
+            "createdAt": {
+              "kind": "integer"
+            },
+            "updatedAt": {
+              "kind": "integer"
+            },
+            "lastAccessedAt": {
+              "kind": "integer"
+            },
+            "tags": {
+              "kind": "array",
+              "item": {
+                "kind": "object",
+                "fields": {
+                  "id": {
+                    "kind": "text"
+                  },
+                  "name": {
+                    "kind": "text"
+                  }
+                }
+              }
+            },
+            "properties": {
+              "kind": "array",
+              "item": {
+                "kind": "object",
+                "fields": {
+                  "id": {
+                    "kind": "text"
+                  },
+                  "key": {
+                    "kind": "text"
+                  },
+                  "value": {
+                    "kind": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "links": {
+      "kind": "object",
+      "fields": {
+        "ownerKey": {
+          "kind": "text"
+        },
+        "record": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "text"
+            },
+            "sourceMemoryId": {
+              "kind": "text"
+            },
+            "targetMemoryId": {
+              "kind": "text"
+            },
+            "type_": {
+              "kind": "text"
+            },
+            "weight": {
+              "kind": "number"
+            },
+            "description": {
+              "kind": "text"
+            }
+          }
+        }
+      }
+    },
+    "chunks": {
+      "kind": "object",
+      "fields": {
+        "ownerKey": {
+          "kind": "text"
+        },
+        "record": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "text"
+            },
+            "memoryUuid": {
+              "kind": "text"
+            },
+            "chunkIndex": {
+              "kind": "integer"
+            },
+            "content": {
+              "kind": "text"
+            }
+          }
+        }
+      }
+    },
+    "candidates": {
+      "kind": "object",
+      "fields": {
+        "ownerKey": {
+          "kind": "text"
+        },
+        "record": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "text"
+            },
+            "chatId": {
+              "kind": "text"
+            },
+            "triggerMessageTimestamp": {
+              "kind": "integer"
+            },
+            "triggerVariantIndex": {
+              "kind": "integer"
+            },
+            "createdAt": {
+              "kind": "integer"
+            },
+            "updatedAt": {
+              "kind": "integer"
+            },
+            "status": {
+              "kind": "text"
+            },
+            "attemptCount": {
+              "kind": "integer"
+            },
+            "lastError": {
+              "kind": "text"
+            },
+            "sourceType": {
+              "kind": "text"
+            }
+          }
+        }
+      }
+    },
+    "embeddings": {
+      "kind": "object",
+      "fields": {
+        "ownerKey": {
+          "kind": "text"
+        },
+        "record": {
+          "kind": "object",
+          "fields": {
+            "endpoint": {
+              "kind": "text"
+            },
+            "model": {
+              "kind": "text"
+            },
+            "text": {
+              "kind": "text"
+            },
+            "vector": {
+              "kind": "vector"
+            },
+            "updatedAt": {
+              "kind": "integer"
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "kind": "object",
+      "fields": {
+        "version": {
+          "kind": "integer"
+        },
+        "nextId": {
+          "kind": "text"
+        },
+        "active": {
+          "kind": "object",
+          "nullable": true,
+          "fields": {
+            "CharacterCard": {
+              "kind": "object",
+              "optional": true,
+              "fields": {
+                "id": {
+                  "kind": "text"
+                }
+              }
+            },
+            "CharacterGroup": {
+              "kind": "object",
+              "optional": true,
+              "fields": {
+                "id": {
+                  "kind": "text"
+                }
+              }
+            }
+          }
+        },
+        "memoryPreferences": {
+          "kind": "object",
+          "fields": {
+            "userDescriptionEnabled": {
+              "kind": "boolean"
+            },
+            "autoUpdateEnabled": {
+              "kind": "boolean"
+            }
+          },
+          "optional": true
+        },
+        "migrationStatus": {
+          "kind": "text",
+          "optional": true
+        },
+        "migrationSource": {
+          "kind": "text",
+          "optional": true
+        }
+      }
+    },
+    "chat_bindings": {
+      "kind": "object",
+      "fields": {
+        "version": {
+          "kind": "integer"
+        },
+        "selection": {
+          "kind": "text"
+        }
+      }
+    },
+    "chat_drafts": {
+      "kind": "object",
+      "fields": {
+        "version": {
+          "kind": "integer"
+        },
+        "selection": {
+          "kind": "text"
+        }
+      }
+    },
+    "message_snapshots": {
+      "kind": "object",
+      "fields": {
+        "version": {
+          "kind": "integer"
+        },
+        "selection": {
+          "kind": "text"
+        },
+        "promptFunctionType": {
+          "kind": "text"
+        },
+        "primaryOwnerKey": {
+          "kind": "text"
+        },
+        "profile": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "text"
+            },
+            "name": {
+              "kind": "text"
+            },
+            "avatarUri": {
+              "kind": "text",
+              "nullable": true
+            },
+            "introPrompt": {
+              "kind": "text"
+            },
+            "userPreferencesText": {
+              "kind": "text"
+            },
+            "openingStatement": {
+              "kind": "text"
+            },
+            "modelBinding": {
+              "kind": "object",
+              "fields": {
+                "providerId": {
+                  "kind": "text"
+                },
+                "modelId": {
+                  "kind": "text"
+                }
+              }
+            },
+            "ttsConfigId": {
+              "kind": "text"
+            },
+            "toolAccess": {
+              "kind": "object",
+              "fields": {
+                "enabled": {
+                  "kind": "boolean"
+                },
+                "allowedBuiltinTools": {
+                  "kind": "array",
+                  "item": {
+                    "kind": "text"
+                  }
+                },
+                "allowedPackages": {
+                  "kind": "array",
+                  "item": {
+                    "kind": "text"
+                  }
+                },
+                "allowedSkills": {
+                  "kind": "array",
+                  "item": {
+                    "kind": "text"
+                  }
+                },
+                "allowedMcpServers": {
+                  "kind": "array",
+                  "item": {
+                    "kind": "text"
+                  }
+                }
+              }
+            },
+            "resources": {
+              "kind": "array",
+              "item": {
+                "kind": "object",
+                "fields": {
+                  "key": {
+                    "kind": "text"
+                  },
+                  "readable": {
+                    "kind": "boolean"
+                  },
+                  "writable": {
+                    "kind": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "participants": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "text"
+              },
+              "name": {
+                "kind": "text"
+              },
+              "avatarUri": {
+                "kind": "text",
+                "nullable": true
+              },
+              "introPrompt": {
+                "kind": "text"
+              },
+              "userPreferencesText": {
+                "kind": "text"
+              },
+              "openingStatement": {
+                "kind": "text"
+              },
+              "modelBinding": {
+                "kind": "object",
+                "fields": {
+                  "providerId": {
+                    "kind": "text"
+                  },
+                  "modelId": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "ttsConfigId": {
+                "kind": "text"
+              },
+              "toolAccess": {
+                "kind": "object",
+                "fields": {
+                  "enabled": {
+                    "kind": "boolean"
+                  },
+                  "allowedBuiltinTools": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "text"
+                    }
+                  },
+                  "allowedPackages": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "text"
+                    }
+                  },
+                  "allowedSkills": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "text"
+                    }
+                  },
+                  "allowedMcpServers": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "text"
+                    }
+                  }
+                }
+              },
+              "resources": {
+                "kind": "array",
+                "item": {
+                  "kind": "object",
+                  "fields": {
+                    "key": {
+                      "kind": "text"
+                    },
+                    "readable": {
+                      "kind": "boolean"
+                    },
+                    "writable": {
+                      "kind": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

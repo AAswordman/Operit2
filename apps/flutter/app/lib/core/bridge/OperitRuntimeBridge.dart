@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../link/CoreLinkCodec.dart';
 import '../link/CoreLinkProtocol.dart';
+import '../link/CoreLinkRequestId.dart';
 
 abstract class OperitRuntimeBridge {
   const OperitRuntimeBridge();
@@ -71,8 +72,7 @@ abstract class OperitRuntimeBridge {
     embedded = _EmbeddedCoreStream<T>(
       streamId,
       () {
-        final requestId =
-            'embedded-core-stream-${DateTime.now().microsecondsSinceEpoch}';
+        final requestId = nextCoreLinkRequestId(prefix: 'embedded-core-stream');
         debugPrint(
           'CoreStreamTrace dart.embedded.open streamId=$streamId '
           'requestId=$requestId target=$target property=$propertyName',
@@ -86,15 +86,11 @@ abstract class OperitRuntimeBridge {
           ),
         );
       },
-      (event) {
-        final valueBytes = event.valueBytes;
-        if (valueBytes == null) {
-          throw StateError('Embedded Core stream event has no payload bytes');
-        }
+      (valueBytes, target) {
         return decodeCoreLink<T>(
           valueBytes,
           decode: decode,
-          target: event.target,
+          target: target,
           embeddedStreamFactory: openEmbeddedCoreStream,
         );
       },
@@ -116,13 +112,14 @@ abstract class OperitRuntimeBridge {
     return embedded.stream;
   }
 
+  /// Calls the application route with an independently allocated request id.
   Future<Object?> callApplication(
     String methodName, {
     Map<String, Object?> args = const {},
   }) {
     return call(
       CoreCallRequest(
-        requestId: 'flutter-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: nextCoreLinkRequestId(),
         target: 'core/application',
         methodName: methodName,
         args: args,
@@ -133,6 +130,7 @@ abstract class OperitRuntimeBridge {
 
 /// Keeps one stable client-side stream proxy for one Core watch source.
 class _EmbeddedCoreStream<T> {
+  /// Retains one typed decoder and one replayable source for independent values.
   _EmbeddedCoreStream(
     this._streamId,
     this._open,
@@ -144,8 +142,9 @@ class _EmbeddedCoreStream<T> {
   StreamSubscription<CoreEvent>? _watchSubscription;
   final String _streamId;
   final Stream<CoreEvent> Function() _open;
-  final T Function(CoreEvent event) _decode;
-  final CoreLinkEventValueDecoder _valueDecoder = CoreLinkEventValueDecoder();
+  final T Function(Uint8List bytes, String target) _decode;
+  final CoreLinkStreamEventValueDecoder _valueDecoder =
+      CoreLinkStreamEventValueDecoder();
   final StreamController<T> _events = StreamController<T>.broadcast(sync: true);
   final List<T> _replay = <T>[];
   Object? _terminalError;
@@ -233,16 +232,10 @@ class _EmbeddedCoreStream<T> {
     }
     try {
       _eventCount += 1;
-      final completeValueBytes = _valueDecoder.completeValueBytes(event);
-      final completeEvent = CoreEvent.raw(
-        requestId: event.requestId,
-        target: event.target,
-        propertyName: event.propertyName,
-        kind: event.kind,
-        valueBytes: completeValueBytes,
-        decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
+      final value = _valueDecoder.decode<T>(
+        event,
+        decode: (bytes) => _decode(bytes, event.target),
       );
-      final value = _decode(completeEvent);
       _replay.add(value);
       _events.add(value);
     } catch (error, stackTrace) {

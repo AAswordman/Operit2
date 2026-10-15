@@ -1,0 +1,1147 @@
+{
+  "type": "Dialog",
+  "props": {
+    "key": "character-presentation",
+    "onLoad": {
+      "__actionId": "__action_8"
+    },
+    "closeOnDismissRequest": false,
+    "onDismissRequest": {
+      "__actionId": "__action_9"
+    },
+    "containerColor": {
+      "__colorToken": "surfaceContainerHigh",
+      "copy": {
+        "__actionId": "__action_10"
+      }
+    },
+    "shape": {
+      "cornerRadius": 28
+    },
+    "properties": {
+      "fullscreen": false,
+      "usePlatformDefaultWidth": false,
+      "dismissOnClickOutside": false
+    }
+  },
+  "children": [
+    {
+      "type": "Column",
+      "props": {
+        "key": "native-entity-panel",
+        "width": 680,
+        "height": 760,
+        "modifier": {
+          "__modifierOps": [
+            {
+              "name": "clip",
+              "args": [
+                {
+                  "cornerRadius": 28
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "children": [
+        {
+          "type": "Row",
+          "props": {
+            "key": "entity-header",
+            "fillMaxWidth": true,
+            "paddingStart": 24,
+            "paddingTop": 18,
+            "paddingEnd": 16,
+            "paddingBottom": 8,
+            "verticalAlignment": "center"
+          },
+          "children": [
+            {
+              "type": "Text",
+              "props": {
+                "text": "角色卡",
+                "style": "labelLarge",
+                "fontWeight": "600",
+                "color": {
+                  "__colorToken": "onSurfaceVariant",
+                  "copy": {
+                    "__actionId": "__action_11"
+                  }
+                },
+                "fontSize": 14,
+                "maxLines": 2,
+                "overflow": "ellipsis",
+                "weight": 1
+              },
+              "children": [],
+              "slots": {}
+            },
+            {
+              "type": "IconButton",
+              "props": {
+                "key": "entity-close",
+                "icon": "Close",
+                "enabled": true,
+                "onClick": {
+                  "__actionId": "__action_12"
+                }
+              },
+              "children": [],
+              "slots": {}
+            }
+          ],
+          "slots": {}
+        },
+        {
+          "type": "Box",
+          "props": {
+            "key": "entity-content",
+            "weight": 1,
+            "fillMaxWidth": true
+          },
+          "children": [
+            {
+              "type": "LazyColumn",
+              "props": {
+                "key": "entity-preview-body",
+                "fillMaxWidth": true
+              },
+              "children": [
+                {
+                  "type": "Box",
+                  "props": {
+                    "key": "entity-preview-body-item-entity-preview-identity",
+                    "fillMaxWidth": true,
+                    "paddingStart": 24,
+                    "paddingEnd": 24,
+                    "paddingTop": 8,
+                    "paddingBottom": 0
+                  },
+                  "children": [
+                    {
+                      "type": "Column",
+                      "props": {
+                        "key": "entity-preview-identity",
+                        "fillMaxWidth": true,
+                        "spacing": 14,
+                        "paddingBottom": 22
+                      },
+                      "children": [
+                        {
+                          "type": "Row",
+                          "props": {
+                            "fillMaxWidth": true,
+                            "spacing": 16,
+                            "verticalAlignment": "center"
+                          },
+                          "children": [
+                            {
+                              "type": "Image",
+                              "props": {
+                                "key": "entity-avatar",
+                                "path": "/Users/ylvira/Documents/Operit2/plugins/packages/buildin/character_cards/resources/operit-avatar.png",
+                                "width": 72,
+                                "height": 72,
+                                "contentScale": "crop",
+                                "contentDescription": "温和的伙伴",
+                                "modifier": {
+                                  "__modifierOps": [
+                                    {
+                                      "name": "clip",
+                                      "args": [
+                                        {
+                                          "cornerRadius": 20
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              "children": [],
+                              "slots": {}
+                            },
+                            {
+                              "type": "Column",
+                              "props": {
+                                "weight": 1,
+                                "spacing": 6
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "key": "entity-preview-name",
+                                    "text": "温和的伙伴",
+                                    "style": "headlineSmall",
+                                    "fontSize": 24,
+                                    "fontWeight": "700",
+                                    "fillMaxWidth": true
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "SelectionContainer",
+                          "props": {
+                            "key": "entity-preview-description"
+                          },
+                          "children": [
+                            {
+                              "type": "Text",
+                              "props": {
+                                "text": "一个温和、可靠的伙伴，陪你整理思路，把想法变成行动。",
+                                "fillMaxWidth": true,
+                                "style": "bodyMedium",
+                                "color": {
+                                  "__colorToken": "onSurfaceVariant",
+                                  "copy": {
+                                    "__actionId": "__action_39"
+                                  }
+                                }
+                              },
+                              "children": [],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "FlowRow",
+                          "props": {
+                            "key": "entity-preview-tags",
+                            "spacing": 6,
+                            "runSpacing": 6
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "key": "entity-preview-tag-tag-1",
+                                "paddingHorizontal": 10,
+                                "paddingVertical": 5,
+                                "backgroundColor": {
+                                  "__colorToken": "primaryContainer",
+                                  "alpha": 0.38,
+                                  "copy": {
+                                    "__actionId": "__action_40"
+                                  }
+                                },
+                                "backgroundShape": {
+                                  "cornerRadius": 8
+                                }
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "温和可靠",
+                                    "style": "labelMedium",
+                                    "color": {
+                                      "__colorToken": "onPrimaryContainer",
+                                      "copy": {
+                                        "__actionId": "__action_41"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    }
+                  ],
+                  "slots": {}
+                },
+                {
+                  "type": "Box",
+                  "props": {
+                    "key": "entity-preview-body-item-entity-preview-opening",
+                    "fillMaxWidth": true,
+                    "paddingStart": 24,
+                    "paddingEnd": 24,
+                    "paddingTop": 0,
+                    "paddingBottom": 0
+                  },
+                  "children": [
+                    {
+                      "type": "Box",
+                      "props": {
+                        "key": "entity-preview-opening",
+                        "fillMaxWidth": true,
+                        "paddingBottom": 22
+                      },
+                      "children": [
+                        {
+                          "type": "Column",
+                          "props": {
+                            "fillMaxWidth": true,
+                            "spacing": 10,
+                            "padding": 18,
+                            "backgroundColor": {
+                              "__colorToken": "primaryContainer",
+                              "alpha": 0.22,
+                              "copy": {
+                                "__actionId": "__action_42"
+                              }
+                            },
+                            "backgroundShape": {
+                              "cornerRadius": 16
+                            }
+                          },
+                          "children": [
+                            {
+                              "type": "Row",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "spacing": 8,
+                                "verticalAlignment": "center"
+                              },
+                              "children": [
+                                {
+                                  "type": "Icon",
+                                  "props": {
+                                    "name": "FormatQuote",
+                                    "size": 20,
+                                    "tint": {
+                                      "__colorToken": "primary",
+                                      "copy": {
+                                        "__actionId": "__action_43"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "开场白",
+                                    "style": "titleSmall",
+                                    "fontWeight": "600",
+                                    "color": {
+                                      "__colorToken": "primary",
+                                      "copy": {
+                                        "__actionId": "__action_44"
+                                      }
+                                    },
+                                    "weight": 1
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "SelectionContainer",
+                              "props": {
+                                "key": "entity-preview-opening-text"
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "你好，今天有什么想一起聊聊的？",
+                                    "fillMaxWidth": true,
+                                    "style": "bodyMedium",
+                                    "color": {
+                                      "__colorToken": "onSurface",
+                                      "copy": {
+                                        "__actionId": "__action_45"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    }
+                  ],
+                  "slots": {}
+                },
+                {
+                  "type": "Box",
+                  "props": {
+                    "key": "entity-preview-body-item-entity-preview-setting",
+                    "fillMaxWidth": true,
+                    "paddingStart": 24,
+                    "paddingEnd": 24,
+                    "paddingTop": 0,
+                    "paddingBottom": 0
+                  },
+                  "children": [
+                    {
+                      "type": "Box",
+                      "props": {
+                        "key": "entity-preview-setting",
+                        "fillMaxWidth": true,
+                        "paddingBottom": 22
+                      },
+                      "children": [
+                        {
+                          "type": "Column",
+                          "props": {
+                            "fillMaxWidth": true,
+                            "spacing": 10
+                          },
+                          "children": [
+                            {
+                              "type": "Row",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "spacing": 8,
+                                "verticalAlignment": "center"
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "角色设定",
+                                    "style": "titleSmall",
+                                    "fontWeight": "600",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_46"
+                                      }
+                                    },
+                                    "weight": 1
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "SelectionContainer",
+                              "props": {
+                                "key": "entity-preview-setting-text"
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "你是一位可靠、温和的助手。\n认真倾听，给出清楚、具体的回答；遇到不确定的事情，坦诚说明。",
+                                    "fillMaxWidth": true,
+                                    "style": "bodyMedium",
+                                    "color": {
+                                      "__colorToken": "onSurface",
+                                      "copy": {
+                                        "__actionId": "__action_47"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    }
+                  ],
+                  "slots": {}
+                },
+                {
+                  "type": "Box",
+                  "props": {
+                    "key": "entity-preview-body-item-entity-preview-chat",
+                    "fillMaxWidth": true,
+                    "paddingStart": 24,
+                    "paddingEnd": 24,
+                    "paddingTop": 0,
+                    "paddingBottom": 0
+                  },
+                  "children": [
+                    {
+                      "type": "Box",
+                      "props": {
+                        "key": "entity-preview-chat",
+                        "fillMaxWidth": true,
+                        "paddingBottom": 22
+                      },
+                      "children": [
+                        {
+                          "type": "Column",
+                          "props": {
+                            "fillMaxWidth": true,
+                            "spacing": 10
+                          },
+                          "children": [
+                            {
+                              "type": "Row",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "spacing": 8,
+                                "verticalAlignment": "center"
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "聊天附加内容",
+                                    "style": "titleSmall",
+                                    "fontWeight": "600",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_48"
+                                      }
+                                    },
+                                    "weight": 1
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "SelectionContainer",
+                              "props": {
+                                "key": "entity-preview-chat-text"
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "保持自然的交流节奏，用简洁的语言表达。",
+                                    "fillMaxWidth": true,
+                                    "style": "bodyMedium",
+                                    "color": {
+                                      "__colorToken": "onSurface",
+                                      "copy": {
+                                        "__actionId": "__action_49"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    }
+                  ],
+                  "slots": {}
+                },
+                {
+                  "type": "Box",
+                  "props": {
+                    "key": "entity-preview-body-item-entity-preview-notes",
+                    "fillMaxWidth": true,
+                    "paddingStart": 24,
+                    "paddingEnd": 24,
+                    "paddingTop": 0,
+                    "paddingBottom": 0
+                  },
+                  "children": [
+                    {
+                      "type": "Box",
+                      "props": {
+                        "key": "entity-preview-notes",
+                        "fillMaxWidth": true,
+                        "paddingBottom": 22
+                      },
+                      "children": [
+                        {
+                          "type": "Column",
+                          "props": {
+                            "fillMaxWidth": true,
+                            "spacing": 10
+                          },
+                          "children": [
+                            {
+                              "type": "Row",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "spacing": 8,
+                                "verticalAlignment": "center"
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "备注",
+                                    "style": "titleSmall",
+                                    "fontWeight": "600",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_50"
+                                      }
+                                    },
+                                    "weight": 1
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "SelectionContainer",
+                              "props": {
+                                "key": "entity-preview-notes-text"
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "记录每次对话中值得记住的细节。",
+                                    "fillMaxWidth": true,
+                                    "style": "bodyMedium",
+                                    "color": {
+                                      "__colorToken": "onSurface",
+                                      "copy": {
+                                        "__actionId": "__action_51"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    }
+                  ],
+                  "slots": {}
+                },
+                {
+                  "type": "Box",
+                  "props": {
+                    "key": "entity-preview-body-item-entity-preview-config",
+                    "fillMaxWidth": true,
+                    "paddingStart": 24,
+                    "paddingEnd": 24,
+                    "paddingTop": 0,
+                    "paddingBottom": 24
+                  },
+                  "children": [
+                    {
+                      "type": "Column",
+                      "props": {
+                        "key": "entity-preview-config",
+                        "fillMaxWidth": true,
+                        "backgroundColor": {
+                          "__colorToken": "surfaceContainerLow",
+                          "copy": {
+                            "__actionId": "__action_52"
+                          }
+                        },
+                        "backgroundShape": {
+                          "cornerRadius": 16
+                        }
+                      },
+                      "children": [
+                        {
+                          "type": "Surface",
+                          "props": {
+                            "key": "entity-preview-config-toggle",
+                            "fillMaxWidth": true,
+                            "color": "transparent",
+                            "shape": {
+                              "cornerRadius": 16
+                            },
+                            "onClick": {
+                              "__actionId": "__action_53"
+                            }
+                          },
+                          "children": [
+                            {
+                              "type": "Row",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "padding": 16,
+                                "spacing": 10,
+                                "verticalAlignment": "center"
+                              },
+                              "children": [
+                                {
+                                  "type": "Icon",
+                                  "props": {
+                                    "name": "Tune",
+                                    "size": 20,
+                                    "tint": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_54"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "Column",
+                                  "props": {
+                                    "weight": 1,
+                                    "spacing": 3
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "配置摘要",
+                                        "style": "titleSmall",
+                                        "fontWeight": "600"
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    },
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "模型、语音与记忆",
+                                        "style": "bodySmall",
+                                        "color": {
+                                          "__colorToken": "onSurfaceVariant",
+                                          "copy": {
+                                            "__actionId": "__action_55"
+                                          }
+                                        }
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "Icon",
+                                  "props": {
+                                    "name": "ExpandLess",
+                                    "size": 20,
+                                    "tint": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_56"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Column",
+                          "props": {
+                            "key": "entity-preview-config-details",
+                            "fillMaxWidth": true,
+                            "paddingStart": 16,
+                            "paddingEnd": 16,
+                            "paddingBottom": 18,
+                            "spacing": 14
+                          },
+                          "children": [
+                            {
+                              "type": "Column",
+                              "props": {
+                                "key": "entity-preview-config-model",
+                                "fillMaxWidth": true,
+                                "spacing": 4
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "聊天模型",
+                                    "style": "labelMedium",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_72"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "SelectionContainer",
+                                  "props": {
+                                    "key": "entity-preview-config-model-value"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "DashScope · qwen-plus",
+                                        "fillMaxWidth": true,
+                                        "style": "bodyMedium",
+                                        "color": {
+                                          "__colorToken": "onSurface",
+                                          "copy": {
+                                            "__actionId": "__action_73"
+                                          }
+                                        }
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "Column",
+                              "props": {
+                                "key": "entity-preview-config-theme",
+                                "fillMaxWidth": true,
+                                "spacing": 4
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "主题",
+                                    "style": "labelMedium",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_74"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "SelectionContainer",
+                                  "props": {
+                                    "key": "entity-preview-config-theme-value"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "跟随当前主题",
+                                        "fillMaxWidth": true,
+                                        "style": "bodyMedium",
+                                        "color": {
+                                          "__colorToken": "onSurface",
+                                          "copy": {
+                                            "__actionId": "__action_75"
+                                          }
+                                        }
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "Column",
+                              "props": {
+                                "key": "entity-preview-config-tts",
+                                "fillMaxWidth": true,
+                                "spacing": 4
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "语音",
+                                    "style": "labelMedium",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_76"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "SelectionContainer",
+                                  "props": {
+                                    "key": "entity-preview-config-tts-value"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "测试语音",
+                                        "fillMaxWidth": true,
+                                        "style": "bodyMedium",
+                                        "color": {
+                                          "__colorToken": "onSurface",
+                                          "copy": {
+                                            "__actionId": "__action_77"
+                                          }
+                                        }
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "Column",
+                              "props": {
+                                "key": "entity-preview-config-memory",
+                                "fillMaxWidth": true,
+                                "spacing": 4
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "记忆库",
+                                    "style": "labelMedium",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_78"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "SelectionContainer",
+                                  "props": {
+                                    "key": "entity-preview-config-memory-value"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "日常对话记忆",
+                                        "fillMaxWidth": true,
+                                        "style": "bodyMedium",
+                                        "color": {
+                                          "__colorToken": "onSurface",
+                                          "copy": {
+                                            "__actionId": "__action_79"
+                                          }
+                                        }
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "Column",
+                              "props": {
+                                "key": "entity-preview-config-mounts",
+                                "fillMaxWidth": true,
+                                "spacing": 4
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "共享记忆挂载",
+                                    "style": "labelMedium",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_80"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "SelectionContainer",
+                                  "props": {
+                                    "key": "entity-preview-config-mounts-value"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "日常对话记忆（可读）",
+                                        "fillMaxWidth": true,
+                                        "style": "bodyMedium",
+                                        "color": {
+                                          "__colorToken": "onSurface",
+                                          "copy": {
+                                            "__actionId": "__action_81"
+                                          }
+                                        }
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            },
+                            {
+                              "type": "Column",
+                              "props": {
+                                "key": "entity-preview-config-tools",
+                                "fillMaxWidth": true,
+                                "spacing": 4
+                              },
+                              "children": [
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "工具访问",
+                                    "style": "labelMedium",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_82"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "SelectionContainer",
+                                  "props": {
+                                    "key": "entity-preview-config-tools-value"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "内置工具",
+                                        "fillMaxWidth": true,
+                                        "style": "bodyMedium",
+                                        "color": {
+                                          "__colorToken": "onSurface",
+                                          "copy": {
+                                            "__actionId": "__action_83"
+                                          }
+                                        }
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    }
+                  ],
+                  "slots": {}
+                }
+              ],
+              "slots": {}
+            }
+          ],
+          "slots": {}
+        },
+        {
+          "type": "FlowRow",
+          "props": {
+            "key": "entity-footer",
+            "fillMaxWidth": true,
+            "paddingStart": 24,
+            "paddingTop": 0,
+            "paddingEnd": 24,
+            "paddingBottom": 20,
+            "horizontalArrangement": "end",
+            "spacing": 8,
+            "runSpacing": 8
+          },
+          "children": [
+            {
+              "type": "TextButton",
+              "props": {
+                "key": "entity-cancel",
+                "text": "关闭",
+                "enabled": true,
+                "onClick": {
+                  "__actionId": "__action_13"
+                }
+              },
+              "children": [],
+              "slots": {}
+            },
+            {
+              "type": "Button",
+              "props": {
+                "key": "entity-primary",
+                "text": "编辑",
+                "enabled": true,
+                "onClick": {
+                  "__actionId": "__action_57"
+                }
+              },
+              "children": [],
+              "slots": {}
+            }
+          ],
+          "slots": {}
+        }
+      ],
+      "slots": {}
+    }
+  ],
+  "slots": {}
+}

@@ -14,7 +14,7 @@ pub use operit_rslink_runtime::{CoreReverseStreamSession, CoreStreamPool};
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_tools::runtime_support::{
-    EdgeToolRuntime, CoreNodeToolRuntime, CoreRouteChangeHandler, ToolRuntimeSupport,
+    CoreNodeToolRuntime, CoreRouteChangeHandler, ToolRuntimeSupport,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -40,6 +40,7 @@ pub struct LocalCoreProxy {
     chatRuntimeHolder: Arc<tokio::sync::Mutex<ChatRuntimeHolder>>,
     hostManager: HostManager,
     toolRuntimeSupport: Arc<dyn ToolRuntimeSupport>,
+    deviceToolService: Arc<dyn operit_tools::tools::DeviceTools::DeviceToolService>,
     coreStreamPool: Arc<CoreStreamPool>,
 }
 
@@ -54,6 +55,13 @@ impl LocalCoreProxy {
         })
     }
 
+    /// Returns this application's incoming device tool service.
+    pub fn deviceToolService(&self) -> Arc<dyn operit_tools::tools::DeviceTools::DeviceToolService> {
+        self.deviceToolService.clone()
+    }
+    pub fn bindDeviceToolRuntime(&self, runtime: Arc<dyn operit_tools::tools::DeviceTools::DeviceToolRuntime>) -> Result<(), String> {
+        self.toolRuntimeSupport.bindDeviceToolRuntime(runtime)
+    }
     /// Returns the host manager captured by this local proxy.
     pub fn hostManager(&self) -> &HostManager {
         &self.hostManager
@@ -78,11 +86,6 @@ impl LocalCoreProxy {
         self.toolRuntimeSupport
             .bindCoreNodeToolRuntime(runtime)
             .map_err(CoreLinkError::internal)
-    }
-
-    /// Installs the explicit-node hardware capability owned by the Core tree.
-    pub fn bindEdgeToolRuntime(&self, runtime: Arc<dyn EdgeToolRuntime>) -> Result<(), String> {
-        self.toolRuntimeSupport.bindEdgeToolRuntime(runtime)
     }
 
     /// Installs the route change controller used after a completed AI turn.
@@ -121,11 +124,13 @@ impl LocalCoreProxy {
         #[cfg(not(target_arch = "wasm32"))]
         let coreCommandRuntime = Self::installCoreCommandExecutor(&mut application);
         let toolRuntimeSupport = application.toolHandler.runtimeSupport();
+        let deviceToolService = Arc::new(application.toolHandler.clone());
         let chatRuntimeHolder = application.chatRuntimeHolder.clone();
         Self {
             peerServices: Arc::new(std::sync::OnceLock::new()),
             hostManager: application.hostManager.clone(),
             toolRuntimeSupport,
+            deviceToolService,
             application: Arc::new(Mutex::new(application)),
             #[cfg(not(target_arch = "wasm32"))]
             _coreCommandRuntime: coreCommandRuntime,
@@ -329,6 +334,14 @@ impl CoreLinkSharedClient for LocalCoreProxy {
                 error
             })
     }
+
+    /// Opens one generated reverse stream through the shared local Core client.
+    async fn openPush(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
+        self.openPushLocal(request)
+    }
 }
 
 #[async_trait(?Send)]
@@ -373,6 +386,14 @@ impl LocalApplicationBridgeTarget for LocalCoreProxy {
             request,
             self.streamAttachmentAdopter(),
         )
+    }
+
+    /// Opens one generated application input stream through the local reverse-stream dispatcher.
+    async fn openLocalApplicationPush(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        self.openPushLocal(request)
     }
 }
 

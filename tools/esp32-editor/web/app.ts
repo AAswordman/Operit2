@@ -1,5 +1,7 @@
 import type {DeviceState} from './device-state.js';
 import {ScenePreview} from './scene-renderer.js';
+import {DeviceView} from './device-view.js';
+import {DeviceSpeech} from './device-speech.js';
 import {request} from './transport.js';
 import {performDeviceAction} from './device-actions.js';
 import {point, pixel} from './model.js';
@@ -45,35 +47,47 @@ let pressed = false;
 let sourceHash = '';
 let miniStaticBytes = 0;
 const scenePreview = new ScenePreview();
-let deviceRunning = false;
+let deviceView: DeviceView | null = null;
+let pendingReview: string | undefined;
+let pendingSend: string | undefined;
 let latestDeviceState: DeviceState | null = null;
 const composer = document.createElement('form');
 composer.className = 'host-composer';
-composer.innerHTML = '<label>电脑键盘输入（支持中文输入法）<input name="message" maxlength="120" autocomplete="off" placeholder="输入后发送到屏幕中的当前对话"></label><button type="submit">发送</button><label class="image-picker">发送图片（PNG/JPEG，≤512 KiB）<input id="host-image" type="file" accept="image/png,image/jpeg"></label><output aria-live="polite"></output>';
+composer.innerHTML = '<label><input name="message" aria-label="消息" maxlength="120" autocomplete="off" placeholder="输入后发送到屏幕中的当前对话"></label><button type="submit">发送</button><label class="image-picker">发送图片（PNG/JPEG，≤512 KiB）<input id="host-image" type="file" accept="image/png,image/jpeg"></label><output aria-live="polite"></output>';
 stage.after(composer);
 const hostInput = composer.querySelector<HTMLInputElement>('input')!;
 const hostStatus = composer.querySelector<HTMLOutputElement>('output')!;
 const hostImage = composer.querySelector<HTMLInputElement>('#host-image')!;
+const speech = new DeviceSpeech(message => {hostStatus.textContent=message;});
+const speakButton = document.createElement('button');speakButton.type='button';speakButton.textContent='朗读最新回复';
+composer.append(speakButton);
+speakButton.addEventListener('click', () => {
+  const message = latestDeviceState?.chat?.messages?.filter(item=>item.sender!=='user'&&item.text?.trim()).at(-1);
+  if(message) void speech.speak(message.text);else hostStatus.textContent='没有可朗读的回复';
+});
 hostImage.addEventListener('change', async () => {
   const file = hostImage.files?.[0];
   if (!file) return;
   if (file.size === 0 || file.size > 512 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) {
     hostStatus.textContent = '只支持非空、大小不超过 512 KiB 的 PNG/JPEG 图片'; hostImage.value = ''; return;
   }
-  hostStatus.textContent = '正在传输图片…'; hostImage.disabled = true;
+  if (pendingSend) { hostStatus.textContent = '请等待当前消息发送完成'; hostImage.value = ''; return; }
+  const sendId = crypto.randomUUID();
+  hostStatus.textContent = '正在传输图片…'; hostImage.disabled = true; pendingSend = sendId;
   try {
-    const response = await fetch('/api/simulator/send-image', {method:'POST', headers:{'Content-Type':file.type}, body:file});
+    const response = await fetch('/api/simulator/send-image', {method:'POST', headers:{'Content-Type':file.type, 'X-Operit-Send-Id':sendId}, body:file});
     const result = await response.json() as {error?:string};
     if (!response.ok) throw new Error(result.error ?? `上传失败 (${response.status})`);
+    window.dispatchEvent(new Event('operit-simulator-refresh'));
     // Acceptance only queues the Link call; the state poll confirms delivery.
     if (hostStatus.textContent === '正在传输图片…') hostStatus.textContent = '等待 Core 确认图片发送…';
-  } catch (error) { hostStatus.textContent = errorMessage(error); }
+  } catch (error) { pendingSend = undefined; hostStatus.textContent = errorMessage(error); }
   finally { hostImage.disabled = false; hostImage.value = ''; }
 });
 let submittedHostText = '';
 composer.addEventListener('submit', event => {
   event.preventDefault();
-  if (!runtime || window.operitEditor?.isEditing()) return;
+  if (!runtime || pendingSend || window.operitEditor?.isEditing()) return;
   submittedHostText = hostInput.value;
   runtime.ccall('operit_ui_set_chat_draft', null, ['string'], [hostInput.value]);
   runtime.ccall('operit_ui_submit_chat', null, [], []);
@@ -81,21 +95,15 @@ composer.addEventListener('submit', event => {
 window.addEventListener('operit-simulator-state', event => {
   const state = (event as CustomEvent<DeviceState>).detail;
   latestDeviceState = state;
+  speech.update(state);
   wifiInput.disabled = !!state.running;
   edgeInput.disabled = !!state.running;
-  if (state.running) {
-    wifiInput.checked = true;
-    edgeInput.checked = !!state.connected;
-    if (runtime) {
-      applyControls();
-      setDeviceState(state);
-    }
-  } else if (deviceRunning && runtime) {
-    wifiInput.checked = edgeInput.checked = false;
-    applyControls();
-    setDeviceState({chatTask: '离线', chatScreen: '模拟设备已停止', chatSendResult: {ok: false, error: '模拟设备已停止，草稿已保留'}});
-  }
-  deviceRunning = !!state.running;
+  wifiInput.checked = !!state.running;
+  edgeInput.checked = !!state.connected;
+  if (runtime) applyControls();
+  if (pendingReview && pendingReview === state.spaceJoinRequestId) state.spaceJoinBusy = true;
+  deviceView?.update(state);
+  if (!state.running && pendingSend) finishSend(false, '模拟设备已停止，草稿已保留');
 });
 
 /** Adds a timestamped message to the bounded event log. */
@@ -152,53 +160,9 @@ function applyControls(): void {
   currentRuntime.ccall('operit_ui_set_expression', null, ['string'], [expressionSelect.value]);
 }
 
-function setDeviceState(state: DeviceState): void {
-  if (!runtime) return;
-  scenePreview.update(runtime, state.scene);
-  if (state.paired !== undefined) runtime._operit_ui_set_paired(state.paired);
-  runtime.ccall('operit_ui_set_pairing_code', null, ['string'], [state.pairingCode ?? '']);
-  runtime.ccall('operit_ui_set_space_state', null, ['string'], [state.spaceState ?? '等待连接 Operit']);
-  runtime.ccall('operit_ui_set_space_join_prompt', null, ['string', 'number'],
-    [state.spaceJoinPrompt ?? '', state.spaceJoinBusy ? 1 : 0]);
-  const chat = state.chat;
-  if (chat) {
-    runtime.ccall('operit_ui_set_chat_identity', null, ['string', 'string'], [chat.chatId ?? '', state.chatPreview ?? 'Operit']);
-    const messages = (chat.messages ?? []).filter(message => message.text?.trim()).slice(-12);
-    messages.forEach((message, index) => {
-      runtime!.ccall('operit_ui_set_message', null,
-        ['number', 'number', 'string'], [index, message.sender === 'user' ? 1 : 0, message.text]);
-    });
-    runtime.ccall('operit_ui_finish_messages', null, ['number'], [messages.length]);
-    const conversations = (chat.conversations ?? []).slice(0, 24);
-    conversations.forEach((item, index) => runtime!.ccall('operit_ui_set_conversation', null,
-      ['number', 'string', 'string', 'string', 'number'],
-      [index, item.id, item.title, item.characterCardName ?? '', item.id === chat.chatId ? 1 : 0]));
-    runtime.ccall('operit_ui_finish_conversations', null, ['number'], [conversations.length]);
-  }
-  const plugins = state.plugins;
-  runtime.ccall('operit_ui_set_plugin_category', null, ['number'], [plugins?.category === 'exclusive' ? 1 : 0]);
-  const items = (plugins?.items ?? []).slice(0, 6);
-  items.forEach((item, index) => {
-    const status = item.status === 'probing' ? 1 : item.status === 'success' ? 2 : item.status === 'failure' ? 3 : 0;
-    const toolStatus = item.toolStatus === 'probing' ? 1 : item.toolStatus === 'success' ? 2 : item.toolStatus === 'failure' ? 3 : 0;
-    runtime!.ccall('operit_ui_set_plugin', null, ['number', 'string', 'string', 'number', 'number'],
-      [index, item.id, item.name, status, item.latencyMs ?? 0]);
-    runtime!.ccall('operit_ui_set_plugin_test', null, ['number', 'number', 'number', 'string'],
-      [index, toolStatus, item.toolLatencyMs ?? 0, item.testError ?? '']);
-  });
-  const details = plugins?.details;
-  runtime.ccall('operit_ui_set_plugin_details', null, ['string', 'string', 'string', 'number', 'number', 'number', 'string'],
-    [details?.id ?? '', details?.description ?? '', (details?.tools ?? []).slice(0, 3).join('\n'), details?.toolOffset ?? 0,
-      details?.toolTotal ?? 0, details?.loading ? 1 : 0, details?.error ?? '']);
-  runtime.ccall('operit_ui_set_plugin_testing', null, ['number'], [plugins?.testing ? 1 : 0]);
-  runtime.ccall('operit_ui_finish_plugins', null, ['number', 'number', 'number', 'number', 'string'],
-    [items.length, plugins?.offset ?? 0, plugins?.total ?? 0, plugins?.loading ? 1 : 0, plugins?.error ?? '']);
-  runtime.ccall('operit_ui_set_chat_screen', null, ['string'], [state.chatScreen ?? '连接 Operit 后开始聊天']);
-  runtime.ccall('operit_ui_set_chat_task', null, ['string'], [state.chatTask ?? '离线']);
-  if (state.chatSendResult) finishSend(state.chatSendResult.ok, state.chatSendResult.error);
-}
-
 function finishSend(ok: boolean, error = ''): void {
+  if (!pendingSend) return;
+  pendingSend = undefined;
   runtime?.ccall('operit_ui_chat_send_result', null, ['number', 'string'], [ok ? 1 : 0, error]);
   hostStatus.textContent = ok ? '已发送' : error;
   if (ok && hostInput.value === submittedHostText) hostInput.value = '';
@@ -278,21 +242,27 @@ function handleRuntimeAction(value: string): void {
     return;
   }
   log('自绘 UI action: ' + value);
+  if (value === 'edge_voice') { void speech.action(); return; }
   if (value === 'edge_send') {
     const text = activeRuntime().ccall('operit_ui_chat_draft', 'string', [], []);
     hostStatus.textContent = '发送中';
+    const sendId = crypto.randomUUID();
+    pendingSend = sendId;
     void fetch('/api/simulator/send', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text}),
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text, sendId}),
     }).then(async response => {
       if (!response.ok) {
         const result = await response.json() as {error?: string};
         throw new Error(result.error ?? `发送失败 (${response.status})`);
       }
+      window.dispatchEvent(new Event('operit-simulator-refresh'));
       // The state poll acknowledges completion of the remote call.
     }).catch(error => finishSend(false, errorMessage(error)));
     return;
   }
   if (value.startsWith('edge_')) {
+    const reviewAction = value === 'edge_space_approve' || value === 'edge_space_reject';
+    if (reviewAction) pendingReview = latestDeviceState?.spaceJoinRequestId;
     void performDeviceAction(runtime, value, async request => {
       const response = await fetch('/api/simulator/action', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -304,7 +274,11 @@ function handleRuntimeAction(value: string): void {
       }
     }, {requestId: latestDeviceState?.spaceJoinRequestId,
       assignmentVersion: latestDeviceState?.spaceJoinAssignmentVersion})
-      .catch(error => log('设备 action 错误: ' + errorMessage(error)));
+      .catch(error => log('设备 action 错误: ' + errorMessage(error)))
+      .finally(() => {
+        if (reviewAction) pendingReview = undefined;
+        window.dispatchEvent(new Event('operit-simulator-refresh'));
+      });
   }
   pageLabel.textContent = value;
   if (value === 'face_online' || value === 'run_node') {
@@ -372,7 +346,10 @@ async function initialize(): Promise<void> {
   runtime.onAction = handleRuntimeAction;
   if (!runtime._simulator_init()) throw new Error('自绘 UI 初始化失败');
   applyControls();
-  setDeviceState(latestDeviceState ?? {});
+  deviceView = new DeviceView(runtime, scenePreview, (ok, error, sendId) => {
+    if (sendId === pendingSend) finishSend(ok, error);
+  });
+  deviceView.update(latestDeviceState ?? {});
   syncTheme();
   sourceLabel.textContent = `共用源码：${manifest.source ?? 'apps/esp32/ui_port/operit_mini_ui.c'} / 自绘 UI`;
   miniStaticBytes = (JSON.parse(runtime.ccall('operit_ui_debug_snapshot', 'string', [], []) as string) as {staticBytes: number}).staticBytes;

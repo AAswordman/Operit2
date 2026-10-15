@@ -214,6 +214,8 @@ pub struct SourceMethod {
     pub args: Vec<SourceArg>,
     pub rust_return_type: String,
     pub is_async: bool,
+    /// Marks a synchronous capture method returning an explicitly owned future.
+    pub returns_owned_future: bool,
     pub cfg_attrs: Vec<String>,
     pub doc_lines: Vec<String>,
     pub protocol: MethodProtocol,

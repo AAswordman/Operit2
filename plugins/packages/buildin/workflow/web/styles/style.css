@@ -214,15 +214,21 @@ body,
 
 .template-option {
   justify-content: flex-start !important;
+  min-width: 0 !important;
   padding: 12px 14px !important;
   text-align: left;
+  white-space: normal;
 }
 
-.template-option .MuiTypography-caption {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.template-option > .MuiStack-root {
+  width: 100%;
+  min-width: 0;
+}
+
+.template-option .MuiTypography-root {
   max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .empty {

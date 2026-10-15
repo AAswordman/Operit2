@@ -1,0 +1,1922 @@
+{
+  "type": "Dialog",
+  "props": {
+    "key": "character-presentation",
+    "onLoad": {
+      "__actionId": "__action_9"
+    },
+    "closeOnDismissRequest": false,
+    "onDismissRequest": {
+      "__actionId": "__action_10"
+    },
+    "containerColor": {
+      "__colorToken": "surfaceContainerHigh",
+      "copy": {
+        "__actionId": "__action_11"
+      }
+    },
+    "shape": {
+      "cornerRadius": 28
+    },
+    "properties": {
+      "fullscreen": false,
+      "usePlatformDefaultWidth": false,
+      "dismissOnClickOutside": false
+    }
+  },
+  "children": [
+    {
+      "type": "Column",
+      "props": {
+        "key": "native-entity-panel",
+        "width": 760,
+        "height": 820,
+        "modifier": {
+          "__modifierOps": [
+            {
+              "name": "clip",
+              "args": [
+                {
+                  "cornerRadius": 28
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "children": [
+        {
+          "type": "Row",
+          "props": {
+            "key": "entity-header",
+            "fillMaxWidth": true,
+            "paddingStart": 24,
+            "paddingTop": 22,
+            "paddingEnd": 16,
+            "paddingBottom": 12,
+            "verticalAlignment": "center"
+          },
+          "children": [
+            {
+              "type": "Text",
+              "props": {
+                "text": "编辑角色卡",
+                "style": "headlineSmall",
+                "fontWeight": "700",
+                "maxLines": 2,
+                "overflow": "ellipsis",
+                "weight": 1
+              },
+              "children": [],
+              "slots": {}
+            },
+            {
+              "type": "IconButton",
+              "props": {
+                "key": "entity-close",
+                "icon": "Close",
+                "enabled": true,
+                "onClick": {
+                  "__actionId": "__action_12"
+                }
+              },
+              "children": [],
+              "slots": {}
+            }
+          ],
+          "slots": {}
+        },
+        {
+          "type": "Box",
+          "props": {
+            "key": "entity-content",
+            "weight": 1,
+            "fillMaxWidth": true
+          },
+          "children": [
+            {
+              "type": "Column",
+              "props": {
+                "fillMaxSize": true
+              },
+              "children": [
+                {
+                  "type": "PrimaryTabRow",
+                  "props": {
+                    "key": "entity-tab",
+                    "fillMaxWidth": true,
+                    "selectedTabIndex": 0
+                  },
+                  "children": [],
+                  "slots": {
+                    "tabs": [
+                      {
+                        "type": "Tab",
+                        "props": {
+                          "key": "entity-tab-0",
+                          "selected": true,
+                          "enabled": true,
+                          "onClick": {
+                            "__actionId": "__action_73"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "Text",
+                            "props": {
+                              "text": "基础",
+                              "style": "titleSmall"
+                            },
+                            "children": [],
+                            "slots": {}
+                          }
+                        ],
+                        "slots": {}
+                      },
+                      {
+                        "type": "Tab",
+                        "props": {
+                          "key": "entity-tab-1",
+                          "selected": false,
+                          "enabled": true,
+                          "onClick": {
+                            "__actionId": "__action_74"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "Text",
+                            "props": {
+                              "text": "内容",
+                              "style": "titleSmall"
+                            },
+                            "children": [],
+                            "slots": {}
+                          }
+                        ],
+                        "slots": {}
+                      },
+                      {
+                        "type": "Tab",
+                        "props": {
+                          "key": "entity-tab-2",
+                          "selected": false,
+                          "enabled": true,
+                          "onClick": {
+                            "__actionId": "__action_75"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "Text",
+                            "props": {
+                              "text": "绑定",
+                              "style": "titleSmall"
+                            },
+                            "children": [],
+                            "slots": {}
+                          }
+                        ],
+                        "slots": {}
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "HorizontalPager",
+                  "props": {
+                    "key": "entity-pager",
+                    "weight": 1,
+                    "fillMaxWidth": true,
+                    "currentPage": 0,
+                    "onPageChanged": {
+                      "__actionId": "__action_76"
+                    }
+                  },
+                  "children": [
+                    {
+                      "type": "LazyColumn",
+                      "props": {
+                        "key": "entity-body-0",
+                        "fillMaxWidth": true
+                      },
+                      "children": [
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-0-item-0",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 10,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "TextField",
+                                  "props": {
+                                    "key": "entity-field-name",
+                                    "label": "角色名称",
+                                    "value": "原生角色卡",
+                                    "fillMaxWidth": true,
+                                    "enabled": true,
+                                    "singleLine": true,
+                                    "minLines": 1,
+                                    "maxLines": 1,
+                                    "style": {},
+                                    "onValueChange": {
+                                      "__actionId": "__action_77"
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-0-item-1",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "TextField",
+                                  "props": {
+                                    "key": "entity-field-description",
+                                    "label": "描述",
+                                    "value": "来自 main 的对照布局",
+                                    "fillMaxWidth": true,
+                                    "enabled": true,
+                                    "singleLine": true,
+                                    "minLines": 1,
+                                    "maxLines": 1,
+                                    "style": {},
+                                    "onValueChange": {
+                                      "__actionId": "__action_78"
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-0-item-2",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "InputDecorator",
+                                  "props": {
+                                    "label": "角色头像",
+                                    "enabled": true
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Row",
+                                      "props": {
+                                        "fillMaxWidth": true,
+                                        "verticalAlignment": "center"
+                                      },
+                                      "children": [
+                                        {
+                                          "type": "Image",
+                                          "props": {
+                                            "key": "entity-edit-avatar",
+                                            "path": "/Users/ylvira/Documents/Operit2/plugins/packages/buildin/character_cards/resources/operit-avatar.png",
+                                            "width": 44,
+                                            "height": 44,
+                                            "contentScale": "crop",
+                                            "contentDescription": "角色头像",
+                                            "modifier": {
+                                              "__modifierOps": [
+                                                {
+                                                  "name": "clip",
+                                                  "args": [
+                                                    {
+                                                      "type": "circle"
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "children": [],
+                                          "slots": {}
+                                        },
+                                        {
+                                          "type": "Spacer",
+                                          "props": {
+                                            "width": 12
+                                          },
+                                          "children": [],
+                                          "slots": {}
+                                        },
+                                        {
+                                          "type": "Text",
+                                          "props": {
+                                            "text": "未设置",
+                                            "style": "bodyMedium",
+                                            "weight": 1,
+                                            "maxLines": 1,
+                                            "overflow": "ellipsis"
+                                          },
+                                          "children": [],
+                                          "slots": {}
+                                        },
+                                        {
+                                          "type": "Spacer",
+                                          "props": {
+                                            "width": 8
+                                          },
+                                          "children": [],
+                                          "slots": {}
+                                        },
+                                        {
+                                          "type": "TextButton",
+                                          "props": {
+                                            "key": "entity-choose-avatar",
+                                            "text": "选择",
+                                            "enabled": true,
+                                            "onClick": {
+                                              "__actionId": "__action_79"
+                                            }
+                                          },
+                                          "children": [],
+                                          "slots": {}
+                                        }
+                                      ],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-0-item-3",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "TextField",
+                                  "props": {
+                                    "key": "entity-field-characterSetting",
+                                    "label": "角色设定",
+                                    "value": "角色设定正文",
+                                    "fillMaxWidth": true,
+                                    "enabled": true,
+                                    "singleLine": false,
+                                    "minLines": 6,
+                                    "maxLines": 6,
+                                    "style": {},
+                                    "onValueChange": {
+                                      "__actionId": "__action_80"
+                                    },
+                                    "suffixIconWidth": 36,
+                                    "suffixIconHeight": 36
+                                  },
+                                  "children": [],
+                                  "slots": {
+                                    "trailingIcon": [
+                                      {
+                                        "type": "Box",
+                                        "props": {
+                                          "width": 36,
+                                          "height": 36,
+                                          "contentAlignment": "center"
+                                        },
+                                        "children": [
+                                          {
+                                            "type": "IconButton",
+                                            "props": {
+                                              "key": "entity-expand-characterSetting",
+                                              "width": 28,
+                                              "height": 28,
+                                              "contentPadding": {
+                                                "horizontal": 0,
+                                                "vertical": 0
+                                              },
+                                              "enabled": true,
+                                              "onClick": {
+                                                "__actionId": "__action_81"
+                                              }
+                                            },
+                                            "children": [
+                                              {
+                                                "type": "Icon",
+                                                "props": {
+                                                  "name": "Fullscreen",
+                                                  "size": 18
+                                                },
+                                                "children": [],
+                                                "slots": {}
+                                              }
+                                            ],
+                                            "slots": {}
+                                          }
+                                        ],
+                                        "slots": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-0-item-4",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "TextField",
+                                  "props": {
+                                    "key": "entity-field-openingStatement",
+                                    "label": "开场白",
+                                    "value": "你好。",
+                                    "fillMaxWidth": true,
+                                    "enabled": true,
+                                    "singleLine": false,
+                                    "minLines": 3,
+                                    "maxLines": 3,
+                                    "style": {},
+                                    "onValueChange": {
+                                      "__actionId": "__action_82"
+                                    },
+                                    "suffixIconWidth": 36,
+                                    "suffixIconHeight": 36
+                                  },
+                                  "children": [],
+                                  "slots": {
+                                    "trailingIcon": [
+                                      {
+                                        "type": "Box",
+                                        "props": {
+                                          "width": 36,
+                                          "height": 36,
+                                          "contentAlignment": "center"
+                                        },
+                                        "children": [
+                                          {
+                                            "type": "IconButton",
+                                            "props": {
+                                              "key": "entity-expand-openingStatement",
+                                              "width": 28,
+                                              "height": 28,
+                                              "contentPadding": {
+                                                "horizontal": 0,
+                                                "vertical": 0
+                                              },
+                                              "enabled": true,
+                                              "onClick": {
+                                                "__actionId": "__action_83"
+                                              }
+                                            },
+                                            "children": [
+                                              {
+                                                "type": "Icon",
+                                                "props": {
+                                                  "name": "Fullscreen",
+                                                  "size": 18
+                                                },
+                                                "children": [],
+                                                "slots": {}
+                                              }
+                                            ],
+                                            "slots": {}
+                                          }
+                                        ],
+                                        "slots": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-0-item-5",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 10
+                          },
+                          "children": [
+                            {
+                              "type": "Column",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "Row",
+                                  "props": {
+                                    "fillMaxWidth": true,
+                                    "verticalAlignment": "center"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Text",
+                                      "props": {
+                                        "text": "标签",
+                                        "weight": 1,
+                                        "fontWeight": "700"
+                                      },
+                                      "children": [],
+                                      "slots": {}
+                                    },
+                                    {
+                                      "type": "TextButton",
+                                      "props": {
+                                        "key": "entity-tags-manage",
+                                        "enabled": true,
+                                        "onClick": {
+                                          "__actionId": "__action_84"
+                                        }
+                                      },
+                                      "children": [
+                                        {
+                                          "type": "Row",
+                                          "props": {
+                                            "spacing": 8,
+                                            "verticalAlignment": "center"
+                                          },
+                                          "children": [
+                                            {
+                                              "type": "Icon",
+                                              "props": {
+                                                "name": "Tune",
+                                                "size": 18
+                                              },
+                                              "children": [],
+                                              "slots": {}
+                                            },
+                                            {
+                                              "type": "Text",
+                                              "props": {
+                                                "text": "管理标签"
+                                              },
+                                              "children": [],
+                                              "slots": {}
+                                            }
+                                          ],
+                                          "slots": {}
+                                        }
+                                      ],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "Spacer",
+                                  "props": {
+                                    "height": 6
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                },
+                                {
+                                  "type": "Text",
+                                  "props": {
+                                    "text": "暂无提示词标签",
+                                    "fillMaxWidth": true,
+                                    "style": "bodySmall",
+                                    "color": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "copy": {
+                                        "__actionId": "__action_85"
+                                      }
+                                    }
+                                  },
+                                  "children": [],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    },
+                    {
+                      "type": "LazyColumn",
+                      "props": {
+                        "key": "entity-body-1",
+                        "fillMaxWidth": true
+                      },
+                      "children": [
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-1-item-0",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 10,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "TextField",
+                                  "props": {
+                                    "key": "entity-field-otherContentChat",
+                                    "label": "聊天附加内容",
+                                    "value": "聊天附加正文",
+                                    "fillMaxWidth": true,
+                                    "enabled": true,
+                                    "singleLine": false,
+                                    "minLines": 4,
+                                    "maxLines": 4,
+                                    "style": {},
+                                    "onValueChange": {
+                                      "__actionId": "__action_86"
+                                    },
+                                    "suffixIconWidth": 36,
+                                    "suffixIconHeight": 36
+                                  },
+                                  "children": [],
+                                  "slots": {
+                                    "trailingIcon": [
+                                      {
+                                        "type": "Box",
+                                        "props": {
+                                          "width": 36,
+                                          "height": 36,
+                                          "contentAlignment": "center"
+                                        },
+                                        "children": [
+                                          {
+                                            "type": "IconButton",
+                                            "props": {
+                                              "key": "entity-expand-otherContentChat",
+                                              "width": 28,
+                                              "height": 28,
+                                              "contentPadding": {
+                                                "horizontal": 0,
+                                                "vertical": 0
+                                              },
+                                              "enabled": true,
+                                              "onClick": {
+                                                "__actionId": "__action_87"
+                                              }
+                                            },
+                                            "children": [
+                                              {
+                                                "type": "Icon",
+                                                "props": {
+                                                  "name": "Fullscreen",
+                                                  "size": 18
+                                                },
+                                                "children": [],
+                                                "slots": {}
+                                              }
+                                            ],
+                                            "slots": {}
+                                          }
+                                        ],
+                                        "slots": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-1-item-1",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "TextField",
+                                  "props": {
+                                    "key": "entity-field-otherContentVoice",
+                                    "label": "语音附加内容",
+                                    "value": "",
+                                    "fillMaxWidth": true,
+                                    "enabled": true,
+                                    "singleLine": false,
+                                    "minLines": 4,
+                                    "maxLines": 4,
+                                    "style": {},
+                                    "onValueChange": {
+                                      "__actionId": "__action_88"
+                                    },
+                                    "suffixIconWidth": 36,
+                                    "suffixIconHeight": 36
+                                  },
+                                  "children": [],
+                                  "slots": {
+                                    "trailingIcon": [
+                                      {
+                                        "type": "Box",
+                                        "props": {
+                                          "width": 36,
+                                          "height": 36,
+                                          "contentAlignment": "center"
+                                        },
+                                        "children": [
+                                          {
+                                            "type": "IconButton",
+                                            "props": {
+                                              "key": "entity-expand-otherContentVoice",
+                                              "width": 28,
+                                              "height": 28,
+                                              "contentPadding": {
+                                                "horizontal": 0,
+                                                "vertical": 0
+                                              },
+                                              "enabled": true,
+                                              "onClick": {
+                                                "__actionId": "__action_89"
+                                              }
+                                            },
+                                            "children": [
+                                              {
+                                                "type": "Icon",
+                                                "props": {
+                                                  "name": "Fullscreen",
+                                                  "size": 18
+                                                },
+                                                "children": [],
+                                                "slots": {}
+                                              }
+                                            ],
+                                            "slots": {}
+                                          }
+                                        ],
+                                        "slots": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-1-item-2",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "TextField",
+                                  "props": {
+                                    "key": "entity-field-advancedCustomPrompt",
+                                    "label": "高级自定义 Prompt",
+                                    "value": "",
+                                    "fillMaxWidth": true,
+                                    "enabled": true,
+                                    "singleLine": false,
+                                    "minLines": 4,
+                                    "maxLines": 4,
+                                    "style": {},
+                                    "onValueChange": {
+                                      "__actionId": "__action_90"
+                                    },
+                                    "suffixIconWidth": 36,
+                                    "suffixIconHeight": 36
+                                  },
+                                  "children": [],
+                                  "slots": {
+                                    "trailingIcon": [
+                                      {
+                                        "type": "Box",
+                                        "props": {
+                                          "width": 36,
+                                          "height": 36,
+                                          "contentAlignment": "center"
+                                        },
+                                        "children": [
+                                          {
+                                            "type": "IconButton",
+                                            "props": {
+                                              "key": "entity-expand-advancedCustomPrompt",
+                                              "width": 28,
+                                              "height": 28,
+                                              "contentPadding": {
+                                                "horizontal": 0,
+                                                "vertical": 0
+                                              },
+                                              "enabled": true,
+                                              "onClick": {
+                                                "__actionId": "__action_91"
+                                              }
+                                            },
+                                            "children": [
+                                              {
+                                                "type": "Icon",
+                                                "props": {
+                                                  "name": "Fullscreen",
+                                                  "size": 18
+                                                },
+                                                "children": [],
+                                                "slots": {}
+                                              }
+                                            ],
+                                            "slots": {}
+                                          }
+                                        ],
+                                        "slots": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-1-item-3",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 10
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "fillMaxWidth": true,
+                                "paddingBottom": 12
+                              },
+                              "children": [
+                                {
+                                  "type": "TextField",
+                                  "props": {
+                                    "key": "entity-field-marks",
+                                    "label": "备注",
+                                    "value": "",
+                                    "fillMaxWidth": true,
+                                    "enabled": true,
+                                    "singleLine": false,
+                                    "minLines": 3,
+                                    "maxLines": 3,
+                                    "style": {},
+                                    "onValueChange": {
+                                      "__actionId": "__action_92"
+                                    },
+                                    "suffixIconWidth": 36,
+                                    "suffixIconHeight": 36
+                                  },
+                                  "children": [],
+                                  "slots": {
+                                    "trailingIcon": [
+                                      {
+                                        "type": "Box",
+                                        "props": {
+                                          "width": 36,
+                                          "height": 36,
+                                          "contentAlignment": "center"
+                                        },
+                                        "children": [
+                                          {
+                                            "type": "IconButton",
+                                            "props": {
+                                              "key": "entity-expand-marks",
+                                              "width": 28,
+                                              "height": 28,
+                                              "contentPadding": {
+                                                "horizontal": 0,
+                                                "vertical": 0
+                                              },
+                                              "enabled": true,
+                                              "onClick": {
+                                                "__actionId": "__action_93"
+                                              }
+                                            },
+                                            "children": [
+                                              {
+                                                "type": "Icon",
+                                                "props": {
+                                                  "name": "Fullscreen",
+                                                  "size": 18
+                                                },
+                                                "children": [],
+                                                "slots": {}
+                                              }
+                                            ],
+                                            "slots": {}
+                                          }
+                                        ],
+                                        "slots": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    },
+                    {
+                      "type": "LazyColumn",
+                      "props": {
+                        "key": "entity-body-2",
+                        "fillMaxWidth": true
+                      },
+                      "children": [
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-2-item-entity-model",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 10,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "key": "entity-model",
+                                "fillMaxWidth": true,
+                                "paddingBottom": 7
+                              },
+                              "children": [
+                                {
+                                  "type": "Box",
+                                  "props": {
+                                    "fillMaxWidth": true,
+                                    "modifier": {
+                                      "__modifierOps": [
+                                        {
+                                          "name": "border",
+                                          "args": [
+                                            1,
+                                            {
+                                              "__colorToken": "outlineVariant",
+                                              "alpha": 0.24,
+                                              "copy": {
+                                                "__actionId": "__action_94"
+                                              }
+                                            },
+                                            {
+                                              "cornerRadius": 12
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "paddingHorizontal": 10,
+                                    "paddingVertical": 6
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Column",
+                                      "props": {
+                                        "fillMaxWidth": true
+                                      },
+                                      "children": [
+                                        {
+                                          "type": "Row",
+                                          "props": {
+                                            "fillMaxWidth": true,
+                                            "modifier": {
+                                              "__modifierOps": [
+                                                {
+                                                  "name": "heightIn",
+                                                  "args": [
+                                                    {
+                                                      "minHeight": 46
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            "verticalAlignment": "center",
+                                            "spacing": 8
+                                          },
+                                          "children": [
+                                            {
+                                              "type": "Column",
+                                              "props": {
+                                                "weight": 1,
+                                                "spacing": 1
+                                              },
+                                              "children": [
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "聊天模型",
+                                                    "fontSize": 14,
+                                                    "fontWeight": "700",
+                                                    "color": {
+                                                      "__colorToken": "onSurface",
+                                                      "copy": {
+                                                        "__actionId": "__action_95"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                },
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "跟随全局模型配置",
+                                                    "fontSize": 12,
+                                                    "color": {
+                                                      "__colorToken": "onSurfaceVariant",
+                                                      "copy": {
+                                                        "__actionId": "__action_96"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                }
+                                              ],
+                                              "slots": {}
+                                            },
+                                            {
+                                              "type": "Switch",
+                                              "props": {
+                                                "key": "entity-model-switch",
+                                                "checked": false,
+                                                "enabled": true,
+                                                "modifier": {
+                                                  "__modifierOps": [
+                                                    {
+                                                      "name": "scale",
+                                                      "args": [
+                                                        0.82
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                "onCheckedChange": {
+                                                  "__actionId": "__action_97"
+                                                }
+                                              },
+                                              "children": [],
+                                              "slots": {}
+                                            }
+                                          ],
+                                          "slots": {}
+                                        }
+                                      ],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-2-item-entity-theme",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "key": "entity-theme",
+                                "fillMaxWidth": true,
+                                "paddingBottom": 7
+                              },
+                              "children": [
+                                {
+                                  "type": "Box",
+                                  "props": {
+                                    "fillMaxWidth": true,
+                                    "modifier": {
+                                      "__modifierOps": [
+                                        {
+                                          "name": "border",
+                                          "args": [
+                                            1,
+                                            {
+                                              "__colorToken": "outlineVariant",
+                                              "alpha": 0.24,
+                                              "copy": {
+                                                "__actionId": "__action_98"
+                                              }
+                                            },
+                                            {
+                                              "cornerRadius": 12
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "paddingHorizontal": 10,
+                                    "paddingVertical": 6
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Column",
+                                      "props": {
+                                        "fillMaxWidth": true
+                                      },
+                                      "children": [
+                                        {
+                                          "type": "Row",
+                                          "props": {
+                                            "fillMaxWidth": true,
+                                            "modifier": {
+                                              "__modifierOps": [
+                                                {
+                                                  "name": "heightIn",
+                                                  "args": [
+                                                    {
+                                                      "minHeight": 46
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            "verticalAlignment": "center",
+                                            "spacing": 8
+                                          },
+                                          "children": [
+                                            {
+                                              "type": "Column",
+                                              "props": {
+                                                "weight": 1,
+                                                "spacing": 1
+                                              },
+                                              "children": [
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "主题配置",
+                                                    "fontSize": 14,
+                                                    "fontWeight": "700",
+                                                    "color": {
+                                                      "__colorToken": "onSurface",
+                                                      "copy": {
+                                                        "__actionId": "__action_99"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                },
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "不改变当前独立主题",
+                                                    "fontSize": 12,
+                                                    "color": {
+                                                      "__colorToken": "onSurfaceVariant",
+                                                      "copy": {
+                                                        "__actionId": "__action_100"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                }
+                                              ],
+                                              "slots": {}
+                                            },
+                                            {
+                                              "type": "Switch",
+                                              "props": {
+                                                "key": "entity-theme-switch",
+                                                "checked": false,
+                                                "enabled": true,
+                                                "modifier": {
+                                                  "__modifierOps": [
+                                                    {
+                                                      "name": "scale",
+                                                      "args": [
+                                                        0.82
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                "onCheckedChange": {
+                                                  "__actionId": "__action_101"
+                                                }
+                                              },
+                                              "children": [],
+                                              "slots": {}
+                                            }
+                                          ],
+                                          "slots": {}
+                                        }
+                                      ],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-2-item-entity-tts",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "key": "entity-tts",
+                                "fillMaxWidth": true,
+                                "paddingBottom": 7
+                              },
+                              "children": [
+                                {
+                                  "type": "Box",
+                                  "props": {
+                                    "fillMaxWidth": true,
+                                    "modifier": {
+                                      "__modifierOps": [
+                                        {
+                                          "name": "border",
+                                          "args": [
+                                            1,
+                                            {
+                                              "__colorToken": "outlineVariant",
+                                              "alpha": 0.24,
+                                              "copy": {
+                                                "__actionId": "__action_102"
+                                              }
+                                            },
+                                            {
+                                              "cornerRadius": 12
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "paddingHorizontal": 10,
+                                    "paddingVertical": 6
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Column",
+                                      "props": {
+                                        "fillMaxWidth": true
+                                      },
+                                      "children": [
+                                        {
+                                          "type": "Row",
+                                          "props": {
+                                            "fillMaxWidth": true,
+                                            "modifier": {
+                                              "__modifierOps": [
+                                                {
+                                                  "name": "heightIn",
+                                                  "args": [
+                                                    {
+                                                      "minHeight": 46
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            "verticalAlignment": "center",
+                                            "spacing": 8
+                                          },
+                                          "children": [
+                                            {
+                                              "type": "Column",
+                                              "props": {
+                                                "weight": 1,
+                                                "spacing": 1
+                                              },
+                                              "children": [
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "TTS 配置",
+                                                    "fontSize": 14,
+                                                    "fontWeight": "700",
+                                                    "color": {
+                                                      "__colorToken": "onSurface",
+                                                      "copy": {
+                                                        "__actionId": "__action_103"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                },
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "跟随全局 TTS 配置",
+                                                    "fontSize": 12,
+                                                    "color": {
+                                                      "__colorToken": "onSurfaceVariant",
+                                                      "copy": {
+                                                        "__actionId": "__action_104"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                }
+                                              ],
+                                              "slots": {}
+                                            },
+                                            {
+                                              "type": "Switch",
+                                              "props": {
+                                                "key": "entity-tts-switch",
+                                                "checked": false,
+                                                "enabled": true,
+                                                "modifier": {
+                                                  "__modifierOps": [
+                                                    {
+                                                      "name": "scale",
+                                                      "args": [
+                                                        0.82
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                "onCheckedChange": {
+                                                  "__actionId": "__action_105"
+                                                }
+                                              },
+                                              "children": [],
+                                              "slots": {}
+                                            }
+                                          ],
+                                          "slots": {}
+                                        }
+                                      ],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-2-item-entity-memory",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 0
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "key": "entity-memory",
+                                "fillMaxWidth": true,
+                                "paddingBottom": 7
+                              },
+                              "children": [
+                                {
+                                  "type": "Box",
+                                  "props": {
+                                    "fillMaxWidth": true,
+                                    "modifier": {
+                                      "__modifierOps": [
+                                        {
+                                          "name": "border",
+                                          "args": [
+                                            1,
+                                            {
+                                              "__colorToken": "outlineVariant",
+                                              "alpha": 0.24,
+                                              "copy": {
+                                                "__actionId": "__action_106"
+                                              }
+                                            },
+                                            {
+                                              "cornerRadius": 12
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "paddingHorizontal": 10,
+                                    "paddingVertical": 6
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Column",
+                                      "props": {
+                                        "fillMaxWidth": true
+                                      },
+                                      "children": [
+                                        {
+                                          "type": "Row",
+                                          "props": {
+                                            "fillMaxWidth": true,
+                                            "modifier": {
+                                              "__modifierOps": [
+                                                {
+                                                  "name": "heightIn",
+                                                  "args": [
+                                                    {
+                                                      "minHeight": 46
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            "verticalAlignment": "center",
+                                            "spacing": 8
+                                          },
+                                          "children": [
+                                            {
+                                              "type": "Column",
+                                              "props": {
+                                                "weight": 1,
+                                                "spacing": 1
+                                              },
+                                              "children": [
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "记忆绑定",
+                                                    "fontSize": 14,
+                                                    "fontWeight": "700",
+                                                    "color": {
+                                                      "__colorToken": "onSurface",
+                                                      "alpha": 0.46,
+                                                      "copy": {
+                                                        "__actionId": "__action_107"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                },
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "使用角色记忆",
+                                                    "fontSize": 12,
+                                                    "color": {
+                                                      "__colorToken": "onSurfaceVariant",
+                                                      "alpha": 0.46,
+                                                      "copy": {
+                                                        "__actionId": "__action_108"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                }
+                                              ],
+                                              "slots": {}
+                                            },
+                                            {
+                                              "type": "Switch",
+                                              "props": {
+                                                "key": "entity-memory-switch",
+                                                "checked": false,
+                                                "enabled": false,
+                                                "modifier": {
+                                                  "__modifierOps": [
+                                                    {
+                                                      "name": "scale",
+                                                      "args": [
+                                                        0.82
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                "onCheckedChange": {
+                                                  "__actionId": "__action_109"
+                                                }
+                                              },
+                                              "children": [],
+                                              "slots": {}
+                                            }
+                                          ],
+                                          "slots": {}
+                                        },
+                                        {
+                                          "type": "Spacer",
+                                          "props": {
+                                            "height": 6
+                                          },
+                                          "children": [],
+                                          "slots": {}
+                                        },
+                                        {
+                                          "type": "Text",
+                                          "props": {
+                                            "text": "还没有共享记忆库",
+                                            "fillMaxWidth": true,
+                                            "style": "bodySmall",
+                                            "color": {
+                                              "__colorToken": "onSurfaceVariant",
+                                              "copy": {
+                                                "__actionId": "__action_110"
+                                              }
+                                            }
+                                          },
+                                          "children": [],
+                                          "slots": {}
+                                        }
+                                      ],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        },
+                        {
+                          "type": "Box",
+                          "props": {
+                            "key": "entity-body-2-item-entity-tool",
+                            "fillMaxWidth": true,
+                            "paddingStart": 18,
+                            "paddingEnd": 18,
+                            "paddingTop": 0,
+                            "paddingBottom": 10
+                          },
+                          "children": [
+                            {
+                              "type": "Box",
+                              "props": {
+                                "key": "entity-tool",
+                                "fillMaxWidth": true,
+                                "paddingBottom": 7
+                              },
+                              "children": [
+                                {
+                                  "type": "Box",
+                                  "props": {
+                                    "fillMaxWidth": true,
+                                    "modifier": {
+                                      "__modifierOps": [
+                                        {
+                                          "name": "border",
+                                          "args": [
+                                            1,
+                                            {
+                                              "__colorToken": "outlineVariant",
+                                              "alpha": 0.24,
+                                              "copy": {
+                                                "__actionId": "__action_111"
+                                              }
+                                            },
+                                            {
+                                              "cornerRadius": 12
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "paddingHorizontal": 10,
+                                    "paddingVertical": 6
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "Column",
+                                      "props": {
+                                        "fillMaxWidth": true
+                                      },
+                                      "children": [
+                                        {
+                                          "type": "Row",
+                                          "props": {
+                                            "fillMaxWidth": true,
+                                            "modifier": {
+                                              "__modifierOps": [
+                                                {
+                                                  "name": "heightIn",
+                                                  "args": [
+                                                    {
+                                                      "minHeight": 46
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            "verticalAlignment": "center",
+                                            "spacing": 8
+                                          },
+                                          "children": [
+                                            {
+                                              "type": "Column",
+                                              "props": {
+                                                "weight": 1,
+                                                "spacing": 1
+                                              },
+                                              "children": [
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "工具访问",
+                                                    "fontSize": 14,
+                                                    "fontWeight": "700",
+                                                    "color": {
+                                                      "__colorToken": "onSurface",
+                                                      "copy": {
+                                                        "__actionId": "__action_112"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                },
+                                                {
+                                                  "type": "Text",
+                                                  "props": {
+                                                    "text": "跟随全局工具配置",
+                                                    "fontSize": 12,
+                                                    "color": {
+                                                      "__colorToken": "onSurfaceVariant",
+                                                      "copy": {
+                                                        "__actionId": "__action_113"
+                                                      }
+                                                    }
+                                                  },
+                                                  "children": [],
+                                                  "slots": {}
+                                                }
+                                              ],
+                                              "slots": {}
+                                            },
+                                            {
+                                              "type": "Switch",
+                                              "props": {
+                                                "key": "entity-tool-switch",
+                                                "checked": false,
+                                                "enabled": true,
+                                                "modifier": {
+                                                  "__modifierOps": [
+                                                    {
+                                                      "name": "scale",
+                                                      "args": [
+                                                        0.82
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                "onCheckedChange": {
+                                                  "__actionId": "__action_114"
+                                                }
+                                              },
+                                              "children": [],
+                                              "slots": {}
+                                            }
+                                          ],
+                                          "slots": {}
+                                        }
+                                      ],
+                                      "slots": {}
+                                    }
+                                  ],
+                                  "slots": {}
+                                }
+                              ],
+                              "slots": {}
+                            }
+                          ],
+                          "slots": {}
+                        }
+                      ],
+                      "slots": {}
+                    }
+                  ],
+                  "slots": {}
+                }
+              ],
+              "slots": {}
+            }
+          ],
+          "slots": {}
+        },
+        {
+          "type": "FlowRow",
+          "props": {
+            "key": "entity-footer",
+            "fillMaxWidth": true,
+            "paddingStart": 24,
+            "paddingTop": 0,
+            "paddingEnd": 24,
+            "paddingBottom": 20,
+            "horizontalArrangement": "end",
+            "spacing": 8,
+            "runSpacing": 8
+          },
+          "children": [
+            {
+              "type": "TextButton",
+              "props": {
+                "key": "entity-delete",
+                "text": "删除",
+                "enabled": true,
+                "onClick": {
+                  "__actionId": "__action_13"
+                }
+              },
+              "children": [],
+              "slots": {}
+            },
+            {
+              "type": "TextButton",
+              "props": {
+                "key": "entity-export",
+                "text": "导出",
+                "enabled": true,
+                "onClick": {
+                  "__actionId": "__action_14"
+                }
+              },
+              "children": [],
+              "slots": {}
+            },
+            {
+              "type": "TextButton",
+              "props": {
+                "key": "entity-cancel",
+                "text": "取消",
+                "enabled": true,
+                "onClick": {
+                  "__actionId": "__action_15"
+                }
+              },
+              "children": [],
+              "slots": {}
+            },
+            {
+              "type": "Button",
+              "props": {
+                "key": "entity-primary",
+                "text": "保存",
+                "enabled": true,
+                "onClick": {
+                  "__actionId": "__action_115"
+                }
+              },
+              "children": [],
+              "slots": {}
+            }
+          ],
+          "slots": {}
+        }
+      ],
+      "slots": {}
+    }
+  ],
+  "slots": {}
+}

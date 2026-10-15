@@ -37,7 +37,8 @@ impl TestPeerService {
 #[async_trait(?Send)]
 impl RuntimePeerService for TestPeerService {
     async fn discoverPeers(&self, _: u64) -> Result<Vec<DiscoveredPeer>, CoreLinkError> { Err(Self::unsupported()) }
-    async fn startPairing(&self, _: PeerEndpoint, _: PeerTransport, _: Option<&str>) -> Result<PendingPairing, CoreLinkError> { Err(Self::unsupported()) }
+    /// Rejects pairing requests outside this routing fixture contract.
+    async fn startPairing(&self, _: PeerEndpoint, _: Option<PeerTransport>) -> Result<PendingPairing, CoreLinkError> { Err(Self::unsupported()) }
     async fn finishPairing(&self, _: &str, _: &str) -> Result<PairedPeer, CoreLinkError> { Err(Self::unsupported()) }
     async fn cancelPairing(&self, _: &str) -> Result<(), CoreLinkError> { Err(Self::unsupported()) }
     /// Declares that this routing fixture owns no listener or discovery Host.

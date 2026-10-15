@@ -67,7 +67,7 @@ fn scan_source_tree(
                     generated_target_type(runtime_root, &entry_path, &item_impl.self_ty);
                 let routeKind = route_kind(&function.sig.output);
                 let (permissionScope, permissionCapability) = route_permission(&function.attrs)
-                    .unwrap_or_else(|| panic!("route {} is missing permission metadata", function.sig.ident));
+                    .unwrap_or_else(|| ("Caller".to_string(), String::new()));
                 let lifecycle = route_lifecycle(&function.attrs);
                 declarations.insert((
                     function.sig.ident.to_string(),

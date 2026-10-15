@@ -69,11 +69,11 @@ async fn imported_attachment_keeps_its_actual_node_and_ephemeral_storage() {
                 CoreCallRequest::new("begin-file", transfer_target, "beginAttachmentUpload",
                     toCoreValue(json!({"fileName": "文档.pdf", "expectedByteLength": 3})).unwrap()),
             ).await.result.unwrap()).unwrap();
-            let mut stream = proxy.openPushLocal(CorePushRequest::new(
+            let mut stream = CoreLinkSharedClient::openPush(&proxy, CorePushRequest::new(
                 "write-file", transfer_target, "writeAttachmentUpload",
             ).withArgs(toCoreValue(json!({
                 "uploadId": upload_id, "fileName": "文档.pdf", "expectedByteLength": 3,
-            })).unwrap())).unwrap();
+            })).unwrap())).await.unwrap();
             stream.send(toCoreValue(vec![0u8]).unwrap()).await.unwrap();
             stream.send(toCoreValue(vec![1u8, 255]).unwrap()).await.unwrap();
             stream.close().await.unwrap();

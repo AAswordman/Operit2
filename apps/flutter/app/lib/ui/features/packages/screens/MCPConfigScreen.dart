@@ -7,7 +7,6 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
-import '../components/PackageGrid.dart';
 import '../components/ExtensionScopeControls.dart';
 import '../components/PackageListItem.dart';
 import '../dialogs/MCPDetailsDialog.dart';
@@ -304,7 +303,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
                             scope: _scopes[serverId]!,
                             onMove: () => _moveScope(serverId),
                             localMcp:
-                                server?.command?.trim().isNotEmpty == true,
+                                server?.command.trim().isNotEmpty == true,
                           ),
                         ],
                         onEnabledChanged: (value) =>

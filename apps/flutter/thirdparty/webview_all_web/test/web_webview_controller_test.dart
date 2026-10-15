@@ -564,7 +564,7 @@ void main() {
         );
       });
 
-      test('rejects null or undefined JavaScript results', () async {
+      test('returns null for null or undefined JavaScript results', () async {
         final params = WebWebViewControllerCreationParams();
         final controller = WebWebViewController(params);
         addTearDown(() {
@@ -573,14 +573,11 @@ void main() {
 
         await _attachAndLoadScrollableHtml(controller, params);
 
-        await expectLater(
-          () => controller.runJavaScriptReturningResult('undefined'),
-          throwsA(isA<ArgumentError>()),
+        expect(
+          await controller.runJavaScriptReturningResult('undefined'),
+          isNull,
         );
-        await expectLater(
-          () => controller.runJavaScriptReturningResult('null'),
-          throwsA(isA<ArgumentError>()),
-        );
+        expect(await controller.runJavaScriptReturningResult('null'), isNull);
       });
 
       test('can disable JavaScript for iframe loads', () async {
@@ -899,12 +896,10 @@ void main() {
             return SynchronousFuture<bool>(request.message == 'continue?');
           });
 
-          final Object accepted = await controller.runJavaScriptReturningResult(
-            "confirm('continue?')",
-          );
-          final Object rejected = await controller.runJavaScriptReturningResult(
-            "confirm('stop?')",
-          );
+          final Object? accepted = await controller
+              .runJavaScriptReturningResult("confirm('continue?')");
+          final Object? rejected = await controller
+              .runJavaScriptReturningResult("confirm('stop?')");
 
           expect(accepted, isTrue);
           expect(rejected, isFalse);
@@ -938,15 +933,14 @@ void main() {
           return SynchronousFuture<bool>(request.message == 'controller-b');
         });
 
-        final Object resultA = await controllerA.runJavaScriptReturningResult(
+        final Object? resultA = await controllerA.runJavaScriptReturningResult(
           "confirm('controller-a')",
         );
-        final Object resultB = await controllerB.runJavaScriptReturningResult(
+        final Object? resultB = await controllerB.runJavaScriptReturningResult(
           "confirm('controller-b')",
         );
-        final Object rejectedA = await controllerA.runJavaScriptReturningResult(
-          "confirm('controller-b')",
-        );
+        final Object? rejectedA = await controllerA
+            .runJavaScriptReturningResult("confirm('controller-b')");
 
         expect(resultA, isTrue);
         expect(resultB, isTrue);
@@ -969,7 +963,7 @@ void main() {
         });
         await _attachAndLoadScrollableHtml(controller, params);
 
-        final Object result = await controller.runJavaScriptReturningResult(
+        final Object? result = await controller.runJavaScriptReturningResult(
           "prompt('name', 'world')",
         );
 
@@ -1010,7 +1004,7 @@ void main() {
             });
         ''');
 
-        final Object result = await _waitForJavaScriptValue(
+        final Object? result = await _waitForJavaScriptValue(
           controller,
           'window.permissionResult',
           isNot('pending'),
@@ -1061,7 +1055,7 @@ void main() {
             });
         ''');
 
-        final Object result = await _waitForJavaScriptValue(
+        final Object? result = await _waitForJavaScriptValue(
           controller,
           'window.permissionResult',
           isNot('pending'),
@@ -1232,7 +1226,7 @@ Future<void> _installFakeGetUserMedia(WebWebViewController controller) {
   ''');
 }
 
-Future<Object> _waitForJavaScriptValue(
+Future<Object?> _waitForJavaScriptValue(
   WebWebViewController controller,
   String expression,
   Matcher matcher,

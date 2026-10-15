@@ -1687,13 +1687,14 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2",
+ "sqlparser",
  "thiserror 1.0.69",
  "uuid",
 ]
 
 [[package]]
 name = "operit-util"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "chrono",
  "flate2",
@@ -2201,6 +2202,27 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sqlparser"
+version = "0.63.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3679862809bd1f92e563cf6fd820e28f39135303668001c10331d5027183e8b4"
+dependencies = [
+ "log",
+ "sqlparser_derive",
+]
+
+[[package]]
+name = "sqlparser_derive"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2905ae8e8148d8f7f5748ea95d1e949fa4fc1d7f5161547b758ad118b2e4b0aa"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
 ]
 
 [[package]]

@@ -18,6 +18,8 @@ void main() {
     expect(MaterialIconNameResolver.resolve('QrCode2'), Icons.qr_code_2);
     expect(MaterialIconNameResolver.resolve('Brightness4'), Icons.brightness_4);
     expect(MaterialIconNameResolver.resolve('Class'), Icons.class_);
+    expect(MaterialIconNameResolver.resolve('more'), Icons.more);
+    expect(MaterialIconNameResolver.resolve('forward'), Icons.forward);
   });
 
   test('distinct SDK names are not merged or restyled', () {
@@ -37,8 +39,6 @@ void main() {
       'file',
       'play',
       'back',
-      'more',
-      'forward',
       'unknown_icon',
     ]) {
       expect(() => MaterialIconNameResolver.resolve(name), throwsArgumentError);

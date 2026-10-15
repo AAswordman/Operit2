@@ -1,5 +1,11 @@
+#[path = "JsComposeCompiler.rs"]
+mod JsComposeCompiler;
+
 #[path = "JsEngine.rs"]
 pub mod JsEngine;
+
+#[path = "PreparedEnginePool.rs"]
+mod PreparedEnginePool;
 
 #[path = "JsExecutionProvider.rs"]
 pub mod JsExecutionProvider;

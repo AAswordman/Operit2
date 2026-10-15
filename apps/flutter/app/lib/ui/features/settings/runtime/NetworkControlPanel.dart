@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -8,6 +9,8 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../components/SettingsControlStyles.dart';
+import 'SpaceAuditLabels.dart';
 import 'SpaceIdentityLabels.dart';
 
 /// Shows the local identity and the administrator controls it unlocks.
@@ -88,32 +91,27 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: Text(
-                l10n.settingsRuntimeNetworkControlDescription,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            IconButton(
-              tooltip: MaterialLocalizations.of(
-                context,
-              ).refreshIndicatorSemanticLabel,
-              onPressed: _reloadSettings,
-              icon: const Icon(Icons.refresh_outlined),
-            ),
-          ],
-        ),
         if (state == null || topology == null)
-          const SizedBox(
-            height: 36,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: M3LoadingIndicator(size: 18),
-            ),
+          Row(
+            children: <Widget>[
+              if (_error == null)
+                const Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: M3LoadingIndicator(size: 18),
+                  ),
+                )
+              else
+                const Spacer(),
+              IconButton(
+                tooltip: MaterialLocalizations.of(
+                  context,
+                ).refreshIndicatorSemanticLabel,
+                style: SettingsControlStyles.entityIconButton(),
+                onPressed: _reloadSettings,
+                icon: const Icon(Icons.refresh_outlined),
+              ),
+            ],
           )
         else
           ..._sections(context, l10n, state, topology),
@@ -142,143 +140,492 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
       'network.identity.manage',
     );
     final canReadAudit = _hasCapability(topology, 'network.audit.read');
+    final refresh = IconButton(
+      tooltip: MaterialLocalizations.of(context).refreshIndicatorSemanticLabel,
+      style: SettingsControlStyles.entityIconButton(),
+      onPressed: _reloadSettings,
+      icon: const Icon(Icons.refresh_outlined),
+    );
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        refresh,
+      ],
+    );
     return <Widget>[
-      _selfIdentity(l10n, topology),
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final identity = _selfIdentity(l10n, topology);
+          if (constraints.maxWidth >= 420) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(child: identity),
+                const SizedBox(width: 12),
+                actions,
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              identity,
+              Align(alignment: Alignment.centerRight, child: actions),
+            ],
+          );
+        },
+      ),
       if (canManageIdentities)
         _CollapsibleSection(
           title: l10n.settingsRuntimeControlIdentityDefinitions,
-          summary: l10n.settingsRuntimeControlIdentityCount(
-            state.roles.length,
-          ),
-          action: FilledButton.tonalIcon(
+          summary: l10n.settingsRuntimeControlIdentityCount(state.roles.length),
+          action: TextButton.icon(
+            style: SettingsControlStyles.sectionTextButton(),
             onPressed: () => _defineIdentity(l10n),
-            icon: const Icon(Icons.add_outlined, size: 18),
+            icon: const Icon(Icons.add_outlined, size: 16),
             label: Text(l10n.settingsRuntimeControlAddRole),
           ),
-          children: <Widget>[
-            for (final role in state.roles.values)
-              _identityCard(context, role, l10n),
-          ],
+          child: _FlatList(
+            children: <Widget>[
+              for (final role in state.roles.values)
+                _identityRow(context, role, l10n),
+            ],
+          ),
         ),
       if (canReadAudit)
         _CollapsibleSection(
           title: l10n.settingsRuntimeControlAudit,
-          summary: l10n.settingsRuntimeControlAuditCount(
-            _audit?.length ?? 0,
-          ),
-          children: _auditRecords(context, l10n),
+          summary: l10n.settingsRuntimeControlAuditCount(_audit?.length ?? 0),
+          child: _auditRecords(context, l10n, topology),
         ),
     ];
   }
 
-  /// Shows what the current identity is and what it may do.
-  ///
-  /// This is the only identity information every member owns; devices show the
-  /// same readout for their own identities in the device section.
+  /// Gives the local role one clear headline, with individually readable grants.
   Widget _selfIdentity(
     AppLocalizations l10n,
     generated.RuntimeDeviceSpaceTopology topology,
   ) {
+    final theme = Theme.of(context);
     final identity = _localIdentityOf(topology);
-    final capabilities = identity == null
+    final grants = identity == null
         ? const <String>[]
-        : spaceCapabilityValues(identity.capabilities)
-              .map((value) => spaceCapabilityLabel(value, l10n))
-              .toList(growable: false);
+        : spaceCapabilityValues(identity.capabilities);
+    final allPermissions = grants.contains('*');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          '${l10n.settingsRuntimeControlCurrentIdentity}: ${identity == null ? l10n.settingsRuntimeControlNoIdentity : spaceIdentityDisplayName(identity.displayName, l10n)}',
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        if (capabilities.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 2),
-          Text(
-            '${l10n.settingsRuntimeControlCurrentCapabilities}: ${capabilities.join('、')}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 4,
+          children: <Widget>[
+            Icon(
+              Icons.verified_user_outlined,
+              size: 18,
+              color: theme.colorScheme.primary,
             ),
-          ),
+            Text(
+              l10n.settingsRuntimeControlLocalIdentity,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            Text(
+              identity == null
+                  ? l10n.settingsRuntimeControlNoIdentity
+                  : spaceIdentityDisplayName(identity.displayName, l10n),
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (allPermissions)
+              _SmallLabel(label: l10n.settingsRuntimeControlCapabilityAll),
+          ],
+        ),
+        if (grants.isNotEmpty && !allPermissions) ...<Widget>[
+          const SizedBox(height: 6),
+          _CapabilityLabels(capabilities: grants),
         ],
       ],
     );
   }
 
-  /// Builds one identity definition card.
-  Widget _identityCard(
+  /// Uses one flat row instead of an oversized elevated card per role.
+  Widget _identityRow(
     BuildContext context,
     generated.NetworkControlRole role,
     AppLocalizations l10n,
   ) {
-    final capabilities = spaceCapabilityValues(
-      role.capabilities,
-    ).map((value) => spaceCapabilityLabel(value, l10n)).join('、');
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: const Icon(Icons.badge_outlined),
-        title: Text(spaceIdentityDisplayName(role.displayName, l10n)),
-        subtitle: Text(
-          '${l10n.settingsRuntimeControlCurrentCapabilities}: $capabilities',
+    final topology = _topology;
+    final editable =
+        topology != null &&
+        _hasCapability(topology, 'network.identity.manage') &&
+        !_builtinRoleIds.contains(role.roleId);
+    final actions = editable
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              IconButton(
+                tooltip: l10n.settingsRuntimeControlEditRole,
+                icon: const Icon(Icons.edit_outlined, size: 20),
+                onPressed: () => _editIdentity(role, l10n),
+              ),
+              IconButton(
+                tooltip: l10n.settingsRuntimeControlDeleteRole,
+                icon: const Icon(Icons.delete_outline, size: 20),
+                onPressed: () => _deleteIdentity(role, l10n),
+              ),
+            ],
+          )
+        : null;
+    return Padding(
+      key: ValueKey('space-role-${role.roleId}'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final name = Text(
+            spaceIdentityDisplayName(role.displayName, l10n),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          );
+          final capabilities = _CapabilityLabels(
+            capabilities: spaceCapabilityValues(role.capabilities),
+          );
+          final grantCount = spaceCapabilityValues(role.capabilities).length;
+          final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
+          final minimumWidth =
+              (grantCount <= 1 ? 240 : 320) * textScale + (editable ? 96 : 0);
+          if (constraints.maxWidth >= minimumWidth) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                SizedBox(width: 96 * textScale, child: name),
+                const SizedBox(width: 12),
+                Expanded(child: capabilities),
+                if (actions != null) actions,
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Expanded(child: name),
+                  if (actions != null) actions,
+                ],
+              ),
+              const SizedBox(height: 6),
+              capabilities,
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Opens the identity editor pre-filled for updating one existing role.
+  Future<void> _editIdentity(
+    generated.NetworkControlRole role,
+    AppLocalizations l10n,
+  ) async {
+    final topology = _topology;
+    if (topology == null) {
+      return;
+    }
+    final result = await _IdentityEditor.show(
+      context,
+      title: l10n.settingsRuntimeControlEditRole,
+      choices: spaceCapabilityChoices(l10n)
+          .where((choice) => _hasCapability(topology, choice.value))
+          .toList(growable: false),
+      initialName: role.displayName,
+      initialCapabilities: spaceCapabilityValues(role.capabilities),
+    );
+    if (result == null) {
+      return;
+    }
+    await _runCommand(
+      () =>
+          widget.clients.server.runtimeRemoteLinkService.updateDeviceSpaceRole(
+            role: generated.NetworkControlRole(
+              roleId: role.roleId,
+              displayName: result.name,
+              capabilities: result.capabilities,
+            ),
+          ),
+      feedback: l10n.settingsRuntimeControlEditRole,
+    );
+  }
+
+  /// Confirms and removes one custom role.
+  Future<void> _deleteIdentity(
+    generated.NetworkControlRole role,
+    AppLocalizations l10n,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          l10n.settingsRuntimeControlDeleteRoleTitle(
+            spaceIdentityDisplayName(role.displayName, l10n),
+          ),
+        ),
+        content: Text(l10n.settingsRuntimeControlDeleteRoleMessage),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(
+              MaterialLocalizations.of(dialogContext).cancelButtonLabel,
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(MaterialLocalizations.of(dialogContext).okButtonLabel),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await _runCommand(
+      () => widget.clients.server.runtimeRemoteLinkService
+          .removeDeviceSpaceRole(roleId: role.roleId),
+      feedback: l10n.settingsRuntimeControlDeleteRole,
+    );
+  }
+
+  /// Keeps history newest-first and bounded, rather than growing the whole page.
+  Widget _auditRecords(
+    BuildContext context,
+    AppLocalizations l10n,
+    generated.RuntimeDeviceSpaceTopology topology,
+  ) {
+    final records = _audit;
+    if (records == null) {
+      return const SizedBox(
+        height: 24,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: M3LoadingIndicator(size: 18),
+        ),
+      );
+    }
+    if (records.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Row(
+          children: <Widget>[
+            Icon(
+              Icons.history_outlined,
+              size: 18,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                l10n.settingsRuntimeControlNoAudit,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final sorted = records.toList()
+      ..sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
+    return Container(
+      decoration: _listDecoration(context),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 320),
+        child: ListView.separated(
+          primary: false,
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          itemCount: sorted.length,
+          separatorBuilder: (context, index) => _listDivider(context),
+          itemBuilder: (context, index) =>
+              _auditRow(context, l10n, sorted[index], topology),
         ),
       ),
     );
   }
 
-  /// Builds the authorization history shown inside the audit section.
-  List<Widget> _auditRecords(BuildContext context, AppLocalizations l10n) {
-    final records = _audit;
-    if (records == null) {
-      return const <Widget>[
-        SizedBox(
-          height: 24,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: M3LoadingIndicator(size: 18),
-          ),
-        ),
-      ];
-    }
-    if (records.isEmpty) {
-      return <Widget>[
-        Text(
-          l10n.settingsRuntimeControlNoAudit,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ];
-    }
-    return <Widget>[
-      for (final record in records) _auditCard(context, l10n, record),
-    ];
-  }
-
-  /// Builds one authorization history entry.
-  Widget _auditCard(
+  /// Leads with the action and result; protocol details are available on demand.
+  Widget _auditRow(
     BuildContext context,
     AppLocalizations l10n,
     generated.NetworkControlAuditRecord record,
+    generated.RuntimeDeviceSpaceTopology topology,
   ) {
-    final accepted = record.accepted;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: Icon(
-          accepted ? Icons.verified_outlined : Icons.error_outline,
-          color: accepted
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.error,
-        ),
-        title: Text(record.summary),
-        subtitle: Text(
-          '${accepted ? l10n.settingsRuntimeControlGranted : l10n.settingsRuntimeControlRevoked} · ${record.reason}',
+    final theme = Theme.of(context);
+    final summary = spaceAuditSummary(
+      record.summary,
+      l10n,
+      identityNames:
+          _state?.roles.values.map((role) => role.displayName) ??
+          const <String>[],
+    );
+    final result = record.accepted
+        ? l10n.settingsRuntimeControlAuditAccepted
+        : l10n.settingsRuntimeControlAuditRejected;
+    final resultColor = record.accepted
+        ? theme.colorScheme.primary
+        : theme.colorScheme.error;
+    final time = _auditTime(record.recordedAt);
+    return InkWell(
+      key: ValueKey('space-audit-${record.commandId}'),
+      onTap: () => _showAuditDetails(l10n, record, topology),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(
+                record.accepted
+                    ? Icons.check_circle_outline
+                    : Icons.block_outlined,
+                size: 18,
+                color: resultColor,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: <Widget>[
+                      Text(
+                        summary.action,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      _SmallLabel(label: result, color: resultColor),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 3,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: <Widget>[
+                      if (summary.target.isNotEmpty)
+                        Text(
+                          summary.target,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      Text(
+                        time,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  /// Preserves the complete diagnostic record without putting it in the overview.
+  Future<void> _showAuditDetails(
+    AppLocalizations l10n,
+    generated.NetworkControlAuditRecord record,
+    generated.RuntimeDeviceSpaceTopology topology,
+  ) async {
+    final summary = spaceAuditSummary(
+      record.summary,
+      l10n,
+      identityNames:
+          _state?.roles.values.map((role) => role.displayName) ??
+          const <String>[],
+    );
+    String deviceLabel(String id) {
+      for (final device in topology.devices) {
+        if (device.deviceId == id) return device.deviceName;
+      }
+      return id;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(summary.action),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (summary.target.isNotEmpty) Text(summary.target),
+                const SizedBox(height: 12),
+                Text(
+                  record.accepted
+                      ? l10n.settingsRuntimeControlAuditAccepted
+                      : l10n.settingsRuntimeControlAuditRejected,
+                ),
+                Text(_auditTime(record.recordedAt)),
+                Text(
+                  '${l10n.settingsRuntimeControlAuditIssuer}: ${deviceLabel(record.issuerNodeId)}',
+                ),
+                const Divider(height: 24),
+                Text(
+                  l10n.settingsRuntimeControlAuditDetails,
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  const JsonEncoder.withIndent('  ').convert(record.toJson()),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(MaterialLocalizations.of(context).closeButtonLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shows an unambiguous local date without exposing epoch timestamps.
+  String _auditTime(int milliseconds) {
+    final time = DateTime.fromMillisecondsSinceEpoch(milliseconds);
+    final localizations = MaterialLocalizations.of(context);
+    return '${localizations.formatCompactDate(time)} · ${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(time), alwaysUse24HourFormat: true)}';
   }
 
   /// Opens the administrator identity definition editor.
@@ -298,8 +645,8 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
       return;
     }
     await _runCommand(
-      () => widget.clients.server.runtimeRemoteLinkService
-          .defineDeviceSpaceRole(
+      () =>
+          widget.clients.server.runtimeRemoteLinkService.defineDeviceSpaceRole(
             role: generated.NetworkControlRole(
               roleId: _generatedControlId('identity'),
               displayName: result.name,
@@ -343,58 +690,144 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
   }
 }
 
-/// Keeps one long administrator list collapsed behind a counted header.
-///
-/// The identity definitions and the audit history grow without bound, so the
-/// page only pays for their height once an administrator opens them.
+/// A one-line counted disclosure, with its action outside the toggle target.
 class _CollapsibleSection extends StatelessWidget {
   const _CollapsibleSection({
     required this.title,
     required this.summary,
-    required this.children,
+    required this.child,
     this.action,
   });
 
   final String title;
   final String summary;
-  final List<Widget> children;
+  final Widget child;
   final Widget? action;
 
-  /// Builds the counted header with the list it opens.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Theme(
-      data: theme.copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        tilePadding: EdgeInsets.zero,
-        childrenPadding: const EdgeInsets.only(top: 8),
-        shape: const Border(),
-        collapsedShape: const Border(),
-        title: Row(
-          children: <Widget>[
-            Expanded(
-              child: Text(
-                title,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _listDivider(context),
+          Theme(
+            data: theme.copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 4),
+              shape: const Border(),
+              collapsedShape: const Border(),
+              dense: true,
+              minTileHeight: 48,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: <Widget>[
+                  Text(
+                    title,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  _SmallLabel(label: summary),
+                ],
               ),
+              trailing: action ?? const SizedBox.shrink(),
+              children: <Widget>[child],
             ),
-            ?action,
-          ],
-        ),
-        subtitle: Text(
-          summary,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
           ),
-        ),
-        children: children,
+        ],
       ),
     );
   }
 }
+
+/// Small permission tokens, not repeated prose or oversized interactive chips.
+class _CapabilityLabels extends StatelessWidget {
+  const _CapabilityLabels({required this.capabilities});
+  final List<String> capabilities;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final values = capabilities.contains('*')
+        ? const <String>['*']
+        : capabilities;
+    return Wrap(
+      spacing: 5,
+      runSpacing: 5,
+      children: <Widget>[
+        for (final value in values)
+          _SmallLabel(label: spaceCapabilityLabel(value, l10n)),
+      ],
+    );
+  }
+}
+
+class _SmallLabel extends StatelessWidget {
+  const _SmallLabel({required this.label, this.color});
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = color ?? theme.colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color:
+            color?.withValues(alpha: 0.08) ??
+            theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(color: foreground),
+      ),
+    );
+  }
+}
+
+/// A shared, low-contrast outline around the list, without per-item elevation.
+class _FlatList extends StatelessWidget {
+  const _FlatList({required this.children});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: _listDecoration(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (var index = 0; index < children.length; index++) ...<Widget>[
+            if (index > 0) _listDivider(context),
+            children[index],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+BoxDecoration _listDecoration(BuildContext context) => BoxDecoration(
+  border: Border.all(
+    color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5),
+  ),
+  borderRadius: BorderRadius.circular(8),
+);
+
+Widget _listDivider(BuildContext context) => Divider(
+  height: 1,
+  thickness: 1,
+  color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.35),
+);
 
 /// Represents the submitted identity definition form.
 class _IdentityDefinition {
@@ -408,20 +841,34 @@ class _IdentityDefinition {
 /// Edits an identity name and its human-readable capabilities.
 class _IdentityEditor extends StatefulWidget {
   /// Creates the identity editor.
-  const _IdentityEditor({required this.title, required this.choices});
+  const _IdentityEditor({
+    required this.title,
+    required this.choices,
+    this.initialName,
+    this.initialCapabilities,
+  });
 
   final String title;
   final List<SpaceCapabilityChoice> choices;
+  final String? initialName;
+  final List<String>? initialCapabilities;
 
   /// Opens the editor and returns a validated definition.
   static Future<_IdentityDefinition?> show(
     BuildContext context, {
     required String title,
     required List<SpaceCapabilityChoice> choices,
+    String? initialName,
+    List<String>? initialCapabilities,
   }) {
     return showDialog<_IdentityDefinition>(
       context: context,
-      builder: (_) => _IdentityEditor(title: title, choices: choices),
+      builder: (_) => _IdentityEditor(
+        title: title,
+        choices: choices,
+        initialName: initialName,
+        initialCapabilities: initialCapabilities,
+      ),
     );
   }
 
@@ -439,8 +886,11 @@ class _IdentityEditorState extends State<_IdentityEditor> {
   @override
   void initState() {
     super.initState();
-    _name = TextEditingController();
-    _selected = <String>{};
+    _name = TextEditingController(text: widget.initialName ?? '');
+    // Capabilities the current administrator cannot see stay selected so an
+    // edit never silently narrows a role the issuer holds no capability for;
+    // the replicated command still rejects unauthorized capability grants.
+    _selected = <String>{...?widget.initialCapabilities};
   }
 
   /// Releases the editor controls.
@@ -547,6 +997,16 @@ bool _hasCapability(
       (identity.capabilities.contains('*') ||
           identity.capabilities.contains(capability));
 }
+
+/// Role ids seeded by the Space bootstrap; built-in roles cannot be edited or removed.
+const _builtinRoleIds = <String>{
+  'admin',
+  'user',
+  'relay',
+  'storage',
+  'runner',
+  'auditor',
+};
 
 /// Generates an internal assignment identifier for the replicated command.
 String _generatedControlId(String prefix) {

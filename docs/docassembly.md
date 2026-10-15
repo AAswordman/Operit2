@@ -1334,60 +1334,34 @@ OperitRuntimeBridge.hostDescriptor()
 CorePushRequest 只在本地 bridge 与 runtime dispatch 之间传输。应用层不拼装远程
 请求，也不维护远程对象路径。
 
-Space 节点间调用由 `CoreNodeRouter` 包装成 `RoutedCoreRequest<T>`，通过
-`PeerLink` 的 `PeerFrame` 传输。Call、Handoff、BindingApply、WatchSnapshot、
-WatchOpen/Close 和 PushOpen/Item/Close 共用这一套节点载体。Watch 使用
-`subscriptionId`，Push 使用 `pushId`；同一 id 内保持顺序。
+Space 节点间调用由 `CoreNodeRouter` 包装成 `RoutedCoreRequest<T>`，交给
+`RuntimePeerService` 完成会话认证、加密和连接管理。`PeerConnection` 统一传输
+`CoreLinkRequest` / `CoreLinkResponse`，操作族只有 Call、Watch、Push。
+路由元数据存放在操作打开请求的 args 中；Watch 使用 requestId，Push 使用 pushId
+和递增 sequence。远端解密后进入 `CoreLinkSession` 和 `PeerRouter`。
 
-PeerLink 的控制面只保留配对、session、Space adopt 和 Peer channel；本地 Flutter
-bridge 不会调用这些节点间入口。
-
-Access signed headers：
-
-```text
-content-type: application/msgpack
-x-operit-link-version: 4
-x-operit-session
-x-operit-device
-x-operit-signature
-```
-
-签名：
-
-```text
-Hmac(sha256, base64Decode(sessionSecret), exactMessagePackBodyBytes)
-```
-
-签名、session 和配对属于 Flutter app access；`operit-link` 不持有这些状态。
+配对使用 `$peer.pairing` 的标准 Call。认证后的消息由 `$peer.session/data` Call
+携带加密字节，身份、认证标签、序号和通道授权由 Peer runtime 校验。
+HTTP、WebSocket、TCP、Serial、Bluetooth 使用同一套 Link 消息和 Host transport
+适配，本地 Flutter bridge 直接调用当前进程的 runtime。
 
 Native bridge：
 
 ```text
 apps/flutter/native/operit-flutter-bridge/src/lib.rs
-apps/flutter/native/operit-flutter-bridge/src/access.rs
+apps/flutter/native/operit-flutter-bridge/src/BridgeExports.rs
+apps/flutter/native/operit-flutter-bridge/src/BridgeTransport.rs
+apps/flutter/native/operit-flutter-bridge/src/PlatformRuntimeExecution.rs
 ```
 
-Native bridge 持有：
+本地 bridge 持有本地 Core Proxy、Watch/Push 生命周期和平台 Host 适配。
+节点配对、认证会话及连接状态由下列 runtime 模块持有：
 
 ```text
-tokio::runtime::Runtime
-Mutex<LocalCoreProxy>
-Mutex<HashMap<String, CoreEventStream>>
-FlutterApprovalBridge
-FlutterBrowserAutomationBridge
-NativeTerminalHost
-TtsSynthesisHost
-TtsPlaybackHost
-```
-
-Native app access 持有：
-
-```text
-pairing endpoints
-accepted session store
-request signature verification
-Web Access host server
-operit-link HTTP dispatcher wiring
+core/crates/node/runtime/src/HostRuntimePeerService.rs
+core/crates/node/runtime/src/PeerStateStore.rs
+core/crates/node/runtime/src/peer/crypto.rs
+core/crates/node/runtime/src/peer/dispatch.rs
 ```
 
 权限桥：
@@ -1466,7 +1440,6 @@ SendMessageOptions
   functionType
   promptFunctionType
   enableThinking
-  enableMemoryAutoUpdate
   customSystemPromptTemplate
   isSubTask
   characterName
@@ -1679,7 +1652,6 @@ ToolPkgParser.rs
 ToolPkgLoader.rs
 ToolPkgManager.rs
 ToolPkgMainRegistrationScriptParser.rs
-ToolPkgComposeDslParser.rs
 ToolPkgTemplateModels.rs
 ToolPkgHookModels.rs
 ```

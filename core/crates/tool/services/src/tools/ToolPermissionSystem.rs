@@ -87,6 +87,18 @@ impl ToolPermissionSystem {
         }
     }
 
+    /// Creates an isolated permission system backed by the explicitly supplied runtime storage Host.
+    pub fn newWithStorage(storage: Arc<dyn operit_host_api::RuntimeStorageHost>) -> Self {
+        Self {
+            dataStore: PreferencesDataStore::newWithStorage(
+                storage, operit_util::RuntimeStorageLayout::TOOL_PERMISSIONS_PREFERENCES_PATH,
+            ),
+            operationDescriptionRegistry: Arc::new(Mutex::new(BTreeMap::new())),
+            asyncPermissionRequester: Arc::new(Mutex::new(None)),
+            sessionApprovedTools: Arc::new(Mutex::new(BTreeSet::new())),
+        }
+    }
+
     /// Creates a permission system using the default runtime store paths.
     #[allow(non_snake_case)]
     pub fn getInstance() -> Self {
@@ -160,11 +172,7 @@ impl ToolPermissionSystem {
     #[allow(non_snake_case)]
     pub fn getAiPermissionMode(&self) -> Result<AiPermissionMode, PreferencesDataStoreError> {
         let preferences = self.dataStore.data()?;
-        AiPermissionMode::fromString(
-            preferences
-                .get(&Self::AI_PERMISSION_MODE())
-                .map(String::as_str),
-        )
+        AiPermissionMode::fromString(preferences.getTyped::<String>(&Self::AI_PERMISSION_MODE())?.as_deref())
     }
 
     /// Builds the description shown to the requester for a tool invocation.

@@ -5,10 +5,14 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:mime/mime.dart';
 import 'package:webview_all/webview_all.dart';
 
 typedef ComposeDslWebViewResourceDecisionDispatcher =
     Future<Object?> Function(Map<String, Object?> payload);
+
+final _resourceMimeTypes = MimeTypeResolver()
+  ..addMagicNumber([0x42, 0x4d], 'image/bmp');
 
 /// Routes native WebView requests to the existing plugin/VFS resource API.
 /// No listening socket is used. Storage identity must never include a view,
@@ -33,6 +37,7 @@ class ComposeDslWebViewResourceLoader {
   final ComposeDslWebViewResourceDecisionDispatcher dispatchDecision;
   final Future<List<int>> Function(String path) readFileBytes;
   final Map<String, Uri> _origins = {};
+  final Map<String, Future<List<int>>> _pendingFiles = {};
   final Set<HttpClient> _clients = {};
   bool _closed = false;
 
@@ -93,6 +98,7 @@ class ComposeDslWebViewResourceLoader {
   Future<void> close() async {
     _closed = true;
     _origins.clear();
+    _pendingFiles.clear();
     for (final client in _clients) {
       client.close(force: true);
     }
@@ -165,6 +171,19 @@ class ComposeDslWebViewResourceLoader {
     }
   }
 
+  /// Shares only active file reads; later requests still observe changed files.
+  Future<List<int>> _readFile(String path) async {
+    final existing = _pendingFiles[path];
+    if (existing != null) return existing;
+    final pending = Future<List<int>>.sync(() => readFileBytes(path));
+    _pendingFiles[path] = pending;
+    try {
+      return await pending;
+    } finally {
+      if (identical(_pendingFiles[path], pending)) _pendingFiles.remove(path);
+    }
+  }
+
   Future<WebViewLocalResourceResponse> _response(Object? raw) async {
     final value = _map(raw);
     final status = int.tryParse('${value['statusCode']}') ?? 200;
@@ -179,8 +198,7 @@ class ComposeDslWebViewResourceLoader {
     final parsedType = contentType == null
         ? null
         : ContentType.parse(contentType);
-    final mime =
-        (value['mimeType'] as String?) ?? parsedType?.mimeType ?? 'text/plain';
+    final declaredMime = (value['mimeType'] as String?) ?? parsedType?.mimeType;
     final encoding =
         Encoding.getByName(
           value['encoding'] as String? ?? parsedType?.charset ?? 'utf-8',
@@ -189,7 +207,7 @@ class ComposeDslWebViewResourceLoader {
     final filePath = (value['filePath'] as String? ?? '').trim();
     final List<int> bytes;
     if (filePath.isNotEmpty) {
-      bytes = await readFileBytes(filePath);
+      bytes = await _readFile(filePath);
     } else if (value.containsKey('base64')) {
       bytes = base64.decode(value['base64'] as String? ?? '');
     } else {
@@ -199,7 +217,15 @@ class ComposeDslWebViewResourceLoader {
       body: Uint8List.fromList(bytes),
       statusCode: status,
       reasonPhrase: _reason(value['reasonPhrase'], status),
-      mimeType: mime,
+      mimeType:
+          declaredMime ??
+          (filePath.isEmpty
+              ? 'text/plain'
+              : _resourceMimeTypes.lookup(
+                      filePath,
+                      headerBytes: bytes.take(32).toList(),
+                    ) ??
+                    'application/octet-stream'),
       encoding: encoding.name,
       headers: headers,
     );
@@ -211,10 +237,12 @@ class ComposeDslWebViewResourceLoader {
   ) async {
     // Native interception APIs do not consistently supply request bodies. Never
     // silently forward a POST/PUT without its body or perform it twice.
-    if (request.method != 'GET' && request.method != 'HEAD')
+    if (request.method != 'GET' && request.method != 'HEAD') {
       return _empty(405, 'Method Not Allowed');
-    if (uri.scheme != 'http' && uri.scheme != 'https')
+    }
+    if (uri.scheme != 'http' && uri.scheme != 'https') {
       return _empty(404, 'Not Found');
+    }
     if (uri.host.endsWith('.operit.invalid')) return _empty(403, 'Forbidden');
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
@@ -237,8 +265,9 @@ class ComposeDslWebViewResourceLoader {
       final incoming = await outgoing.close().timeout(
         const Duration(seconds: 20),
       );
-      if (incoming.statusCode >= 300 && incoming.statusCode < 400)
+      if (incoming.statusCode >= 300 && incoming.statusCode < 400) {
         return _empty(502, 'Unsupported Resource Redirect');
+      }
       final bytes = BytesBuilder(copy: false);
       await for (final chunk in incoming.timeout(const Duration(seconds: 20))) {
         bytes.add(chunk);
@@ -251,8 +280,9 @@ class ComposeDslWebViewResourceLoader {
           'content-encoding',
           'content-length',
           'set-cookie',
-        }.contains(name))
+        }.contains(name)) {
           headers[name] = values.join(', ');
+        }
       });
       return WebViewLocalResourceResponse(
         body: bytes.takeBytes(),

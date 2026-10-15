@@ -400,9 +400,14 @@ fn write_entry(
         )
     {
         if !operit_host_api::tryLogHostConsole(priority, tag, &line) {
+            use std::io::Write as _;
             match priority {
-                ERROR | ASSERT => eprint!("{line}"),
-                _ => print!("{line}"),
+                ERROR | ASSERT => {
+                    let _ = std::io::stderr().write_all(line.as_bytes());
+                }
+                _ => {
+                    let _ = std::io::stdout().write_all(line.as_bytes());
+                }
             }
         }
     }

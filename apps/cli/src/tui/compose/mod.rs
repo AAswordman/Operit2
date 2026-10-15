@@ -2,6 +2,11 @@ mod renderer;
 
 use super::{app::OperitTui, i18n::TuiText, link_proxy_rs::TuiCore};
 use operit_link::{CoreEventKind, CoreEventStream};
+use operit_tools::tools::packTool::ToolPkgComposeDslSession::{ToolPkgComposeDslCommand, ToolPkgComposeDslEvent};
+use operit_tools::tools::packTool::ToolPkgComposeDslNodeStore::ToolPkgComposeDslNodeStore;
+use operit_util::stream::ReverseStream::{ReverseStream, ReverseStreamSender};
+use futures_util::{future::LocalBoxFuture, FutureExt};
+use std::task::{Context, Poll};
 use ratatui::text::Line;
 use renderer::{Hit, Node};
 use serde_json::{json, Value};
@@ -29,6 +34,11 @@ struct Session {
     tree: Option<Node>,
     error: Option<String>,
     stream: Option<CoreEventStream>,
+    sender: ReverseStreamSender<ToolPkgComposeDslCommand>,
+    submission: Option<LocalBoxFuture<'static, Result<(), operit_link::CoreLinkError>>>,
+    store: ToolPkgComposeDslNodeStore,
+    pending: HashSet<String>,
+    next_request: u64,
     loaded_key: Option<String>,
 }
 
@@ -64,100 +74,72 @@ fn required(value: &Value, name: &str) -> Result<String, String> {
 }
 
 impl Session {
-    /// Accepts the canonical tree and state returned by the JavaScript runtime.
-    fn update(&mut self, raw: &str) -> Result<(), String> {
-        let result: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
-        if result.get("success").and_then(Value::as_bool) == Some(false) {
-            return Err(format!("Compose render failed: {result}"));
-        }
-        if result
-            .get("navigationCommands")
-            .and_then(Value::as_array)
-            .is_some_and(|commands| !commands.is_empty())
-        {
-            return Err(
-                "Navigation is not supported in an embedded terminal Compose surface".into(),
-            );
-        }
-        let tree = serde_json::from_value(
-            result
-                .get("tree")
-                .ok_or_else(|| format!("Compose result is missing tree: {result}"))?
-                .clone(),
-        )
-        .map_err(|error| error.to_string())?;
-        for name in ["state", "memo"] {
-            let value = result
-                .get(name)
-                .filter(|value| value.is_object())
-                .ok_or_else(|| format!("Compose result is missing {name}"))?;
-            self.options.insert(name.into(), value.clone());
-        }
-        self.tree = Some(tree);
-        self.error = None;
-        Ok(())
+    /// Rebuilds the terminal renderer input directly from retained records without a JSON tree codec.
+    fn tree_node(&self, id: &str) -> Result<Node, String> {
+        let record = self.store.node(id)?;
+        Ok(Node {
+            kind: record.nodeType.clone(), props: record.props.clone().into_iter().collect(),
+            children: record.children.iter().map(|id| self.tree_node(id)).collect::<Result<_, _>>()?,
+            slots: record.slots.iter().map(|(name, ids)| Ok((name.clone(), ids.iter().map(|id| self.tree_node(id)).collect::<Result<_, String>>()?))).collect::<Result<_, String>>()?,
+        })
     }
 
-    /// Dispatches callbacks through the same Core action stream used by graphical clients.
-    async fn dispatch(
-        &mut self,
-        core: &mut TuiCore,
-        id: String,
-        payload: Option<Value>,
-    ) -> Result<(), String> {
-        if self.stream.is_some() {
-            return Err("This plugin UI is processing an action".into());
+    /// Submits one command on the generated persistent reverse stream.
+    async fn submit(&mut self, mut command: ToolPkgComposeDslCommand) -> Result<(), String> {
+        self.next_request += 1;
+        let request = self.next_request.to_string();
+        command.requestId = request.clone();
+        tokio::select! {
+            sent = self.sender.send(command) => sent?,
+            result = self.submission.as_mut().ok_or("Compose command stream has closed")? => {
+                self.submission.take();
+                result.map_err(|error| error.to_string())?;
+                return Err("Compose command stream closed before admission".into());
+            },
         }
-        let mut application = core.application();
-        self.stream = Some(
-            application
-                .packageManager()
-                .dispatchToolPkgComposeDslActionEvents(
-                    self.context.clone(),
-                    self.package.clone(),
-                    id,
-                    payload,
-                    self.options.clone(),
-                    BTreeMap::new(),
-                )
-                .await
-                .map_err(|error| error.to_string())?,
-        );
-        Ok(())
+        self.pending.insert(request);
+        self.poll()
     }
 
-    /// Drains available intermediate renders without blocking the terminal event loop.
+    /// Dispatches a callback through the same owned session as graphical clients.
+    async fn dispatch(&mut self, _core: &mut TuiCore, id: String, payload: Option<Value>) -> Result<(), String> {
+        if !self.pending.is_empty() { return Err("This plugin UI is processing a command".into()); }
+        let mut options = self.options.clone();
+        options.remove("state");
+        options.remove("memo");
+        self.submit(ToolPkgComposeDslCommand {
+            requestId: String::new(), operation: "action".into(), script: None, actionId: Some(id), payload,
+            runtimeOptions: options, envOverrides: BTreeMap::new(),
+        }).await
+    }
+
+    /// Advances generated command delivery and drains typed updates without blocking the terminal loop.
     fn poll(&mut self) -> Result<(), String> {
+        let mut context = Context::from_waker(futures_util::task::noop_waker_ref());
+        if let Poll::Ready(result) = self.submission.as_mut().ok_or("Compose command stream has closed")?.poll_unpin(&mut context) {
+            self.submission.take();
+            result.map_err(|error| error.to_string())?;
+            return Err("Compose command stream closed unexpectedly".into());
+        }
         loop {
-            let event = match self.stream.as_mut() {
-                None => break,
-                Some(stream) => match stream.try_recv() {
-                    Ok(event) => event,
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        self.stream = None;
-                        break;
-                    }
-                },
+            let event = match self.stream.as_mut().ok_or("Compose update stream is closed")?.try_recv() {
+                Ok(event) => event,
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return Err("Compose update stream disconnected".into()),
             };
-            if event.kind == CoreEventKind::Completed {
-                self.stream = None;
-                break;
+            if event.kind == CoreEventKind::Completed { return Err("Compose update stream completed unexpectedly".into()); }
+            let response: ToolPkgComposeDslEvent = operit_link::fromCoreValue(event.value).map_err(|error| error.to_string())?;
+            if let Some(error) = response.error { return Err(error); }
+            if !response.navigationCommands.is_empty() { return Err("Navigation is not supported in an embedded terminal Compose surface".into()); }
+            if let Some(update) = response.update {
+                self.store.apply(update)?;
+                self.tree = Some(self.tree_node(&self.store.root()?.id)?);
+                self.error = None;
             }
-            let raw: String =
-                operit_link::fromCoreValue(event.value).map_err(|error| error.to_string())?;
-            let value: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
-            match value.get("phase").and_then(Value::as_str) {
-                Some("intermediate" | "final") => self.update(&required(&value, "result")?)?,
-                Some("complete") => {
-                    self.stream = None;
-                    break;
-                }
-                Some("error") => {
-                    self.stream = None;
-                    return Err(required(&value, "error")?);
-                }
-                phase => return Err(format!("Unknown Compose action phase: {phase:?}")),
+            match response.phase.as_str() {
+                "intermediate" | "final" => {},
+                "complete" => { self.pending.remove(&response.requestId); },
+                phase => return Err(format!("Unknown Compose session phase: {phase}")),
             }
         }
         Ok(())
@@ -165,7 +147,7 @@ impl Session {
 
     /// Runs the root load callback once per mounted root key.
     async fn load(&mut self, core: &mut TuiCore) -> Result<(), String> {
-        if self.stream.is_some() || self.error.is_some() {
+        if !self.pending.is_empty() || self.error.is_some() {
             return Ok(());
         }
         let Some(tree) = &self.tree else {
@@ -188,12 +170,13 @@ impl Session {
 
     /// Releases ownership of this message's plugin execution context.
     async fn release(&mut self, core: &mut TuiCore) -> Result<(), String> {
+        self.sender.close();
+        let completion = if let Some(submission) = self.submission.take() { submission.await } else { Ok(()) };
         self.stream = None;
-        core.application()
-            .packageManager()
-            .releaseToolPkgExecutionEngine(&self.context, &self.package)
-            .await
-            .map_err(|error| error.to_string())
+        let release = core.application().packageManager()
+            .releaseToolPkgExecutionEngine(&self.context, &self.package).await;
+        completion.map_err(|error| error.to_string())?;
+        release.map_err(|error| error.to_string())
     }
 }
 
@@ -230,7 +213,7 @@ impl ComposeHost {
         }
         for entry in self.entries.values_mut() {
             if let Some(session) = &mut entry.session {
-                if session.stream.is_some() {
+                if !session.pending.is_empty() {
                     self.pressed = None;
                 }
                 if let Err(error) = session.poll() {
@@ -251,7 +234,7 @@ impl ComposeHost {
                     || entry
                         .session
                         .as_ref()
-                        .is_some_and(|session| session.stream.is_some())
+                        .is_some_and(|session| !session.pending.is_empty())
             }) {
                 continue;
             }
@@ -308,6 +291,14 @@ impl ComposeHost {
                         .acquireToolPkgExecutionEngine(&context, &package)
                         .await
                         .map_err(|error| error.to_string())?;
+                    let session_id = manager.openComposeDslSession(&context, &package).await.map_err(|error| error.to_string())?;
+                    let stream = core.services_compose_dsl_session_service().updates(session_id.clone()).await.map_err(|error| error.to_string())?;
+                    let (sender, commands) = ReverseStream::channel();
+                    let mut command_proxy = core.composeCommandProxy();
+                    let command_session = session_id.clone();
+                    let submission = async move {
+                        command_proxy.services_compose_dsl_session_service().submit(command_session, commands).await
+                    }.boxed_local();
                     entry.session = Some(Session {
                         package: package.clone(),
                         context: context.clone(),
@@ -334,7 +325,8 @@ impl ComposeHost {
                         ]),
                         tree: None,
                         error: None,
-                        stream: None,
+                        stream: Some(stream), sender, submission: Some(submission),
+                        store: ToolPkgComposeDslNodeStore::default(), pending: HashSet::new(), next_request: 0,
                         loaded_key: None,
                     });
                 }
@@ -346,26 +338,19 @@ impl ComposeHost {
                     .get("state")
                     .and_then(Value::as_object)
                     .ok_or("XML renderer state is missing")?;
-                session
-                    .options
-                    .get_mut("state")
-                    .and_then(Value::as_object_mut)
-                    .ok_or("Compose state must be an object")?
-                    .extend(state.clone());
-                let raw = core
-                    .application()
-                    .packageManager()
-                    .executeToolPkgComposeDslScript(
-                        &session.context,
-                        &session.package,
-                        &session.script,
-                        session.options.clone(),
-                        BTreeMap::new(),
-                    )
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .ok_or("Compose returned no render result")?;
-                session.update(&raw)?;
+                let mut options = session.options.clone();
+                if session.next_request == 0 {
+                    options.insert("state".into(), Value::Object(state.clone()));
+                } else {
+                    options.remove("state");
+                    options.remove("memo");
+                    options.insert("__operit_update_inputs".into(), Value::Bool(true));
+                    options.insert("__operit_input_state".into(), Value::Object(state.clone()));
+                }
+                session.submit(ToolPkgComposeDslCommand {
+                    requestId: String::new(), operation: "render".into(), script: Some(session.script.clone()),
+                    actionId: None, payload: None, runtimeOptions: options, envOverrides: BTreeMap::new(),
+                }).await?;
                 session.load(core).await?;
             }
             kind => return Err(format!("Unsupported XML render result: {kind:?}")),
@@ -409,7 +394,7 @@ impl ComposeHost {
                     if entry
                         .session
                         .as_ref()
-                        .is_some_and(|session| session.stream.is_some())
+                        .is_some_and(|session| !session.pending.is_empty())
                     {
                         surface.hits.clear();
                     }
@@ -554,6 +539,7 @@ mod tests {
 
     /// Builds a mounted test surface without starting a JavaScript engine.
     fn entry(label: &str, id: &str) -> Entry {
+        let (sender, _commands) = ReverseStream::channel();
         Entry {
             content: String::new(),
             replacement: None,
@@ -565,7 +551,9 @@ mod tests {
                 module: "screen".into(),
                 options: BTreeMap::new(),
                 error: None,
-                stream: None,
+                stream: Some(CoreEventStream::channel().1), sender,
+                submission: Some(futures_util::future::pending().boxed_local()),
+                store: ToolPkgComposeDslNodeStore::default(), pending: HashSet::new(), next_request: 0,
                 loaded_key: None,
                 tree: Some(
                     serde_json::from_value(
@@ -577,7 +565,7 @@ mod tests {
         }
     }
 
-    /// Keeps later control coordinates correct when earlier XML blocks change rendered height.
+    /// Preserves idle controls on persistent session streams and remaps later XML and fold coordinates.
     #[test]
     fn projection_remaps_multiple_surfaces_and_fold_hits() {
         let mut host = ComposeHost::default();

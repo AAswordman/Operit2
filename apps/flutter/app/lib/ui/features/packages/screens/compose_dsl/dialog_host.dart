@@ -57,10 +57,13 @@ class _ComposeDialogHostState extends State<_ComposeDialogHost> {
 
   /// Removes only the route owned by this dialog node.
   void _close() {
-    if (_closed) return;
+    if (!mounted || _closed) return;
     _closed = true;
     if (widget.embedded) {
-      Navigator.of(context).pop();
+      // The action result may already have completed the caller's dialog.
+      // Its exit animation keeps this node mounted; popping again exits the page below.
+      final route = ModalRoute.of(context);
+      if (route?.isCurrent == true) route!.navigator!.pop();
       return;
     }
     final route = _route;
@@ -99,6 +102,7 @@ class _ComposeDialogHostState extends State<_ComposeDialogHost> {
 
   /// Shares modal content and dismissal policies with caller-owned routes.
   Widget _buildDialog(BuildContext context) {
+    if (!mounted || _closed) return const SizedBox.shrink();
     Widget dialog = widget.dialogBuilder(context, _close);
     if (widget.properties['decorFitsSystemWindows'] != false) {
       dialog = SafeArea(child: dialog);

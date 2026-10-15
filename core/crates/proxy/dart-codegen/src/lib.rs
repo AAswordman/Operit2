@@ -184,6 +184,7 @@ fn render_core_proxy_error_details() -> String {
     output
 }
 
+/// Emits Dart proxy clients using the shared request-id allocator.
 fn render_dart_clients(
     objects: &[SourceObject],
     serializable_types: &HashMap<String, SerializableType>,
@@ -193,9 +194,10 @@ fn render_dart_clients(
     output.push_str("import '../../bridge/OperitRuntimeBridge.dart';\n");
     output.push_str("import '../../link/CoreLinkCodec.dart';\n");
     output.push_str("import '../../link/CoreLinkProtocol.dart';\n");
+    output.push_str("import '../../link/CoreLinkRequestId.dart';\n");
     output.push_str("import 'CoreProxyModels.g.dart';\n\n");
     output.push_str(
-        "String _coreProxyRequestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';\nMap<String, Object?> _coreProxyArgs(Map<String, Object?> args, Map<String, Object?> objectArgs) => <String, Object?>{...objectArgs, ...args};\n\n",
+        "/// Allocates one request id independently of the platform clock resolution.\nString _coreProxyRequestId() => nextCoreLinkRequestId();\nMap<String, Object?> _coreProxyArgs(Map<String, Object?> args, Map<String, Object?> objectArgs) => <String, Object?>{...objectArgs, ...args};\n\n",
     );
     output.push_str("class GeneratedCoreProxyClients {\n");
     output.push_str("  const GeneratedCoreProxyClients(this.bridge);\n\n");
@@ -218,12 +220,6 @@ fn render_dart_clients(
         if object.schema_key == "chatRuntimeHolderMain" {
             output.push_str(&format!(
                 "  /// Returns the generated proxy for one detached chat runtime.\n  {class_name} chatRuntimeHolderMainForSlot(String slotId) => {class_name}._(bridge, {}, objectArgs: <String, Object?>{{'__core_instance_id': slotId}});\n",
-                format!("{:?}", object.object_id)
-            ));
-        }
-        if object.schema_key == "repository.memoryRepository" {
-            output.push_str(&format!(
-                "  /// Returns the generated proxy for one memory owner.\n  {class_name} repositoryMemoryRepositoryForOwner(String ownerKey) => {class_name}._(bridge, {}, objectArgs: <String, Object?>{{'__core_instance_id': ownerKey}});\n",
                 format!("{:?}", object.object_id)
             ));
         }
@@ -375,11 +371,7 @@ fn render_dart_client_class(
             output.push_str(&render_dart_call_method(object, method, serializable_types));
         }
         if method.watch_protocol().is_some() {
-            output.push_str(&render_dart_watch_method(
-                object,
-                method,
-                serializable_types,
-            ));
+            output.push_str(&render_dart_watch_method(method, serializable_types));
         }
         if method.reverse_stream_protocol().is_some() {
             output.push_str(&render_dart_reverse_stream_method(
@@ -571,7 +563,8 @@ fn render_dart_factory_method(
         .iter()
         .find(|candidate| candidate.schema_key == factory.target_schema_key)
         .expect("factory target object must be generated")
-        .object_id.clone();
+        .object_id
+        .clone();
     let mut output = render_dart_doc_comments(method, "  ");
     output.push_str(&format!(
         "  {class_name} {factory_method_name}({params}) {{\n    return {class_name}._(bridge, {target_route:?}, objectArgs: {object_args_expr});\n  }}\n\n"
@@ -579,9 +572,8 @@ fn render_dart_factory_method(
     output
 }
 
-/// Renders a typed watch, decoding list deltas at the element boundary.
+/// Renders a typed watch using the declared full-stream or incremental protocol.
 fn render_dart_watch_method(
-    _object: &SourceObject,
     method: &SourceMethod,
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
@@ -598,7 +590,14 @@ fn render_dart_watch_method(
     let list_item_type = value_type
         .strip_prefix("List<")
         .and_then(|inner| inner.strip_suffix('>'));
-    if let Some(item_type) = list_item_type {
+    let full_stream = matches!(
+        watch.stream,
+        WatchStreamProtocol::JsonStream | WatchStreamProtocol::StringStream
+    );
+    let incremental_list_item_type = list_item_type.filter(|_| !full_stream);
+    if full_stream {
+        output.push_str("    final eventValueDecoder = CoreLinkStreamEventValueDecoder();\n");
+    } else if let Some(item_type) = incremental_list_item_type {
         output.push_str(&format!(
             "    final eventValueDecoder = CoreLinkListEventDecoder<{item_type}>();\n"
         ));
@@ -612,7 +611,7 @@ fn render_dart_watch_method(
     ));
     output.push_str("        .where((event) => event.kind != 'Completed')\n");
     output.push_str("        .map((event) {\n");
-    if let Some(item_type) = list_item_type {
+    if let Some(item_type) = incremental_list_item_type {
         output.push_str(&format!(
             "          return eventValueDecoder.decode(event, decodeItem: (reader) => {}, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
             dart_message_pack_decode_expr("reader", item_type, serializable_types)
@@ -849,7 +848,11 @@ fn render_dart_tagged_enum(
                 let field_type =
                     dart_tagged_enum_field_type(&field.name, variants, serializable_types);
                 let default_val = dart_default_value(&field_type);
-                output.push_str(&format!("    this.{} = {},\n", name, default_val));
+                if default_val == "null" && !field_type.ends_with('?') {
+                    output.push_str(&format!("    required this.{},\n", name));
+                } else {
+                    output.push_str(&format!("    this.{} = {},\n", name, default_val));
+                }
                 seen_fields.push(name);
             }
         }
@@ -986,11 +989,26 @@ fn render_dart_tagged_enum(
             "\n  factory {enum_name}.fromJson(Object? json) {{\n"
         ));
         output.push_str(&format!("    final map = json as Map<String, Object?>;\n"));
-        // externally tagged: {{\"CharacterCard\": {{\"id\": \"...\"}}}}
-        output.push_str("    final tag = map.keys.first;\n");
-        output.push_str(
-            "    final data = map[tag] as Map<String, Object?>? ?? <String, Object?>{};\n",
-        );
+        if externally_tagged {
+            output.push_str("    final tag = map.keys.single;\n");
+            output.push_str(
+                "    final data = map[tag] as Map<String, Object?>? ?? <String, Object?>{};\n",
+            );
+        } else {
+            let tag_name = tag_name.expect("tagged enum tag metadata is missing");
+            output.push_str(&format!(
+                "    final tag = map['{}'] as String;\n",
+                dart_string_literal(tag_name)
+            ));
+            if let Some(content_name) = content_name {
+                output.push_str(&format!(
+                    "    final data = map['{}'] as Map<String, Object?>? ?? <String, Object?>{{}};\n",
+                    dart_string_literal(content_name)
+                ));
+            } else {
+                output.push_str("    final data = map;\n");
+            }
+        }
         output.push_str("    return switch (tag) {\n");
         for variant in variants {
             let variant_name = dart_identifier(&variant.name);
@@ -1042,7 +1060,22 @@ fn render_dart_tagged_enum(
             output.push_str("      },\n");
         }
         output.push_str("    };\n");
-        output.push_str("    return <String, Object?>{tag: data};\n");
+        if externally_tagged {
+            output.push_str("    return <String, Object?>{tag: data};\n");
+        } else {
+            let tag_name =
+                dart_string_literal(tag_name.expect("tagged enum tag metadata is missing"));
+            if let Some(content_name) = content_name {
+                output.push_str(&format!(
+                    "    return <String, Object?>{{'{tag_name}': tag, '{}': data}};\n",
+                    dart_string_literal(content_name)
+                ));
+            } else {
+                output.push_str(&format!(
+                    "    return <String, Object?>{{'{tag_name}': tag, ...data}};\n"
+                ));
+            }
+        }
         output.push_str("  }\n");
     }
     output.push_str(&render_dart_tagged_enum_message_pack_decoder(
@@ -1322,7 +1355,19 @@ fn dart_tagged_enum_field_type(
     field_types.sort();
     field_types.dedup();
     if field_types.len() == 1 {
-        field_types.remove(0)
+        let mut field_type = field_types.remove(0);
+        // Object fields have no valid default on variants that do not declare them.
+        // Preserve the existing scalar/collection backing defaults and keep each
+        // public variant factory's original non-nullable parameter.
+        if !field_type.ends_with('?')
+            && dart_default_value(&field_type) == "null"
+            && variants
+                .iter()
+                .any(|variant| !variant.fields.iter().any(|field| field.name == field_name))
+        {
+            field_type.push('?');
+        }
+        field_type
     } else {
         "Object?".to_string()
     }
@@ -2065,4 +2110,167 @@ fn render_dart_doc_comments(method: &SourceMethod, indent: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn watch_method(item_type: &str, stream: WatchStreamProtocol) -> SourceMethod {
+        SourceMethod {
+            name: "updates".to_string(),
+            sdk_exposed: false,
+            args: vec![],
+            rust_return_type: String::new(),
+            is_async: false,
+            returns_owned_future: false,
+            cfg_attrs: vec![],
+            doc_lines: vec![],
+            protocol: MethodProtocol::Watch(operit_rslink_codegen::WatchProtocol {
+                snapshot_type: None,
+                item_type: item_type.to_string(),
+                stream,
+            }),
+        }
+    }
+
+    #[test]
+    fn full_stream_watches_decode_directly_for_scalars_and_lists() {
+        for (protocol, item_type, dart_type) in [
+            (WatchStreamProtocol::JsonStream, "String", "String"),
+            (WatchStreamProtocol::JsonStream, "Vec<String>", "List<String>"),
+            (WatchStreamProtocol::StringStream, "String", "String"),
+        ] {
+            let output = render_dart_watch_method(&watch_method(item_type, protocol), &HashMap::new());
+            assert!(output.contains("CoreLinkStreamEventValueDecoder()"));
+            assert!(output.contains(&format!("eventValueDecoder.decode<{dart_type}>")));
+            assert!(!output.contains("CoreLinkListEventDecoder"));
+            assert!(!output.contains("CoreLinkEventValueDecoder()"));
+            assert!(output.contains("event.target"));
+            assert!(output.contains("bridge.openEmbeddedCoreStream"));
+        }
+    }
+
+    #[test]
+    fn flow_and_state_watches_keep_incremental_decoding() {
+        for fallible in [false, true] {
+            for protocol in [
+                WatchStreamProtocol::JsonFlow { fallible },
+                WatchStreamProtocol::JsonState { fallible },
+            ] {
+                let scalar = render_dart_watch_method(
+                    &watch_method("String", protocol.clone()),
+                    &HashMap::new(),
+                );
+                let list = render_dart_watch_method(
+                    &watch_method("Vec<String>", protocol),
+                    &HashMap::new(),
+                );
+                assert!(scalar.contains("CoreLinkEventValueDecoder()"));
+                assert!(list.contains("CoreLinkListEventDecoder<String>()"));
+                assert!(list.contains("decodeItem:"));
+                assert!(!scalar.contains("CoreLinkStreamEventValueDecoder"));
+                assert!(!list.contains("CoreLinkStreamEventValueDecoder"));
+            }
+        }
+    }
+
+    fn variant(name: &str, fields: &[(&str, &str)]) -> SerializableEnumVariant {
+        SerializableEnumVariant {
+            name: name.to_string(),
+            json_name: name.to_string(),
+            fields_are_unit: fields.is_empty(),
+            fields_are_named: !fields.is_empty(),
+            fields: fields
+                .iter()
+                .map(|(name, ty)| SerializableField {
+                    name: name.to_string(),
+                    json_name: name.to_string(),
+                    ty: ty.to_string(),
+                    has_serde_default: false,
+                })
+                .collect(),
+        }
+    }
+
+    fn render(
+        variants: &[SerializableEnumVariant],
+        tag: Option<&str>,
+        content: Option<&str>,
+    ) -> String {
+        let ty = SerializableType {
+            full_type: "Outcome".to_string(),
+            supports_serialize: true,
+            supports_deserialize: true,
+            kind: SerializableTypeKind::TaggedEnum {
+                externally_tagged: tag.is_none(),
+                tag_name: tag.map(str::to_string),
+                content_name: content.map(str::to_string),
+                variants: variants.to_vec(),
+            },
+        };
+        let types = HashMap::from([(ty.full_type.clone(), ty.clone())]);
+        let status = SerializableType {
+            full_type: "Status".to_string(),
+            supports_serialize: true,
+            supports_deserialize: true,
+            kind: SerializableTypeKind::Enum {
+                variants: vec![variant("completed", &[])],
+                unit_only: true,
+            },
+        };
+        let mut types = types;
+        types.insert(status.full_type.clone(), status);
+        render_dart_tagged_enum(&ty, variants, tag.is_none(), tag, content, &types)
+    }
+
+    #[test]
+    fn variant_specific_fields_are_nullable_but_factories_retain_required_types() {
+        let code = render(
+            &[
+                variant("committed", &[("status", "Status"), ("count", "i64")]),
+                variant("blocked", &[("message", "Option<String>")]),
+            ],
+            Some("type"),
+            None,
+        );
+        assert!(code.contains("final Status? status;"));
+        assert!(code.contains("final int count;"));
+        assert!(code.contains("required Status status"));
+        assert!(code.contains("this.status = null"));
+        assert!(code.contains("'status': (status as Status).toJson()"));
+    }
+
+    #[test]
+    fn common_nonnullable_object_field_is_required_in_backing_constructor() {
+        let code = render(
+            &[
+                variant("completed", &[("status", "Status")]),
+                variant("cancelled", &[("status", "Status")]),
+            ],
+            None,
+            None,
+        );
+        assert!(code.contains("required this.status,"));
+        assert!(code.contains("final Status status;"));
+        assert!(!code.contains("this.status = null"));
+    }
+
+    #[test]
+    fn json_preserves_internal_adjacent_and_external_enum_tags() {
+        let variants = [
+            variant("committed", &[("count", "i64")]),
+            variant("blocked", &[]),
+        ];
+        let internal = render(&variants, Some("type"), None);
+        assert!(internal.contains("final tag = map['type'] as String"));
+        assert!(internal.contains("final data = map;"));
+        assert!(internal.contains("{'type': tag, ...data}"));
+        let adjacent = render(&variants, Some("kind"), Some("payload"));
+        assert!(adjacent.contains("final data = map['payload'] as Map<String, Object?>?"));
+        assert!(adjacent.contains("{'kind': tag, 'payload': data}"));
+        let external = render(&variants, None, None);
+        assert!(external.contains("final tag = map.keys.single;"));
+        assert!(external.contains("'committed': <String, Object?>{"));
+    }
 }

@@ -32,6 +32,9 @@ class AndroidPlatformChannel(
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
             "androidRuntimePaths" -> androidRuntimePaths(result)
+            "hostEventScheduleFailures" -> runtimeHost.runRuntime(result) {
+                AndroidHostEventScheduler.readUndelivered(activity).map { it.toMap() }
+            }
             "localRuntimeStorageDefaults" -> localRuntimeStorageDefaults(result)
             "runtimeBootstrapRead" -> runtimeBootstrapRead(result)
             "runtimeBootstrapWrite" -> runtimeBootstrapWrite(call, result)

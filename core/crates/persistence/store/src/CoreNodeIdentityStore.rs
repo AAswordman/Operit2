@@ -6,7 +6,7 @@ use operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_IDENTITY_PATH;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::PreferencesDataStore::{emptyPreferences, stringPreferencesKey, CoreNodeStateStore};
+use crate::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore, PreferencesDataStoreError};
 use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, defaultRuntimeStorageHostOption};
 
 const CORE_NODE_IDENTITY_RECORD_KEY: &str = "record";
@@ -56,7 +56,7 @@ impl CoreNodeIdentityStore {
     /// Creates the stable CoreNode identity and returns the persisted value.
     pub fn initialize(&self) -> Result<CoreNodeIdentity, String> {
         let store = self.dataStore();
-        let preferences = store.data().map_err(|error| error.to_string())?;
+        let mut preferences = store.data().map_err(|error| error.to_string())?;
         if let Some(encoded) = preferences.get(&stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY))
         {
             return decodeIdentity(encoded);
@@ -64,10 +64,9 @@ impl CoreNodeIdentityStore {
         let identity = CoreNodeIdentity {
             nodeId: format!("core-{}-{}", currentTimeMillis(), Uuid::new_v4().simple()),
         };
-        let mut preferences = emptyPreferences();
         preferences.set(
             &stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY),
-            serde_json::to_string(&serde_json::json!({
+            serde_json::to_value(&serde_json::json!({
                 "deviceId": identity.nodeId.clone(),
             }))
             .map_err(|error| error.to_string())?,
@@ -85,7 +84,7 @@ impl CoreNodeIdentityStore {
         let mut preferences = store.data().map_err(|error| error.to_string())?;
         let key = stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY);
         let mut record = match preferences.get(&key) {
-            Some(encoded) => serde_json::from_str::<serde_json::Value>(encoded)
+            Some(encoded) => serde_json::from_value::<serde_json::Value>(encoded.clone())
                 .map_err(|error| error.to_string())?,
             None => serde_json::json!({}),
         };
@@ -95,7 +94,7 @@ impl CoreNodeIdentityStore {
         object.insert("deviceId".to_string(), serde_json::Value::String(nodeId));
         preferences.set(
             &key,
-            serde_json::to_string(&record).map_err(|error| error.to_string())?,
+            serde_json::to_value(&record).map_err(|error| error.to_string())?,
         );
         store
             .replace(preferences)
@@ -103,15 +102,28 @@ impl CoreNodeIdentityStore {
     }
 
     /// Creates the node-local datastore that contains identity and Link Access presentation data.
-    fn dataStore(&self) -> CoreNodeStateStore {
+    pub fn dataStore(&self) -> CoreNodeStateStore {
         CoreNodeStateStore::newWithStorage(self.storage.clone(), RUNTIME_LINK_ACCESS_IDENTITY_PATH)
+            .withSchema(2, |version, preferences| match version {
+                0 => Ok(()),
+                1 => {
+                    let key = stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY);
+                    if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                        let record: serde_json::Value = serde_json::from_str(&encoded)?;
+                        decodeIdentity(&record).map_err(PreferencesDataStoreError::Message)?;
+                        preferences.set(&key, record);
+                    }
+                    Ok(())
+                }
+                from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+            })
     }
 }
 
 /// Decodes the shared Link Access identity record into the CoreNode identity projection.
-fn decodeIdentity(encoded: &str) -> Result<CoreNodeIdentity, String> {
+fn decodeIdentity(encoded: &serde_json::Value) -> Result<CoreNodeIdentity, String> {
     let record: serde_json::Value =
-        serde_json::from_str(encoded).map_err(|error| error.to_string())?;
+        serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
     let nodeId = record
         .get("deviceId")
         .and_then(serde_json::Value::as_str)

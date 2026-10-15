@@ -15,6 +15,47 @@ void main() {
     expect(() => ApplicationZoom.step(0.95, 1), throwsArgumentError);
   });
 
+  testWidgets('zoom controls and shortcuts share the effective zoom', (
+    tester,
+  ) async {
+    final zoom = ValueNotifier<double>(1.2);
+    addTearDown(zoom.dispose);
+    await tester.pumpWidget(
+      _zoomApp(
+        zoom,
+        Builder(
+          builder: (context) {
+            final scope = ApplicationZoomScope.of(context);
+            return TextButton(
+              style: TextButton.styleFrom(
+                splashFactory: NoSplash.splashFactory,
+              ),
+              onPressed: () => scope.onZoomChanged(1.3),
+              child: Text('${(scope.zoom * 100).round()}%'),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('120%'), findsOneWidget);
+
+    await tester.tap(find.byType(TextButton));
+    await tester.pumpAndSettle();
+    expect(zoom.value, 1.3);
+    expect(find.text('130%'), findsOneWidget);
+
+    await _shortcut(tester, LogicalKeyboardKey.minus);
+    expect(zoom.value, 1.2);
+    expect(find.text('120%'), findsOneWidget);
+
+    await _shortcut(tester, LogicalKeyboardKey.digit0);
+    expect(zoom.value, 1);
+    expect(find.text('100%'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('zoom shortcuts preserve draft, focus, and input state', (
     tester,
   ) async {

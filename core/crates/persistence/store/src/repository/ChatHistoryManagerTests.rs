@@ -1,9 +1,166 @@
 use super::*;
 
 use crate::sync::SqlChatSyncStore::tests::{openTestStore, DATABASE_MUTEX};
+use std::sync::mpsc;
+use std::time::Duration;
 
 const CHAT_ID: &str = "chat-variants";
 const MESSAGE_TIMESTAMP: i64 = 123;
+
+/// Opens a chat whose binding arrives before its workspace preference record.
+fn workspaceMetadataFixture(name: &str) -> (ChatHistoryManager, Arc<AppDatabase>, Workspace) {
+    crate::PreferencesDataStore::installPreferenceObserverTestHost();
+    let (paths, database, _) = openTestStore(name);
+    let workspace = Workspace {
+        id: "workspace-metadata".to_string(),
+        name: "Project".to_string(),
+        folders: vec![WorkspaceFolder {
+            name: "project".to_string(),
+            path: "/app/workspaces/project".to_string(),
+        }],
+        createdAt: 1,
+        updatedAt: 1,
+    };
+    let mut chat = ChatEntity::new(CHAT_ID.to_string(), "Workspace chat".to_string(), 1);
+    chat.workspaceId = Some(workspace.id.clone());
+    database.chatDao().insertChat(chat).unwrap();
+    let manager = ChatHistoryManager::create(paths).unwrap();
+    (manager, database, workspace)
+}
+
+/// Receives a real repository emission without triggering a chat-table refresh.
+fn receiveWorkspaceChat(receiver: &mpsc::Receiver<Vec<ChatHistory>>) -> ChatHistory {
+    let histories = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(histories.len(), 1);
+    histories.into_iter().next().unwrap()
+}
+
+/// Refreshes bound workspace names and paths when preference records arrive or change alone.
+#[test]
+fn workspace_preferences_refresh_chat_metadata_without_sql_changes() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, database, mut workspace) = workspaceMetadataFixture("workspace-metadata-arrival");
+    let originalChat = database.chatDao().getChatById(CHAT_ID).unwrap().unwrap();
+    let histories = manager.chatHistoriesFlow().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let subscription = histories.subscribe(move |value| sender.send(value).unwrap());
+
+    let initial = receiveWorkspaceChat(&receiver);
+    assert_eq!(initial.workspaceId.as_deref(), Some(workspace.id.as_str()));
+    assert_eq!(initial.workspaceName, None);
+    assert_eq!(initial.workspacePrimaryPath, None);
+
+    manager.workspaceStore.upsert(workspace.clone()).unwrap();
+    let arrived = receiveWorkspaceChat(&receiver);
+    assert_eq!(arrived.workspaceName.as_deref(), Some("Project"));
+    assert_eq!(
+        arrived.workspacePrimaryPath.as_deref(),
+        Some("/app/workspaces/project")
+    );
+    assert_eq!(arrived, manager.loadChatHistories().unwrap().remove(0));
+
+    workspace.name = "Renamed project".to_string();
+    workspace.folders[0].path = "/app/workspaces/renamed".to_string();
+    workspace.updatedAt = 2;
+    manager.workspaceStore.upsert(workspace).unwrap();
+    let renamed = receiveWorkspaceChat(&receiver);
+    assert_eq!(renamed.workspaceName.as_deref(), Some("Renamed project"));
+    assert_eq!(
+        renamed.workspacePrimaryPath.as_deref(),
+        Some("/app/workspaces/renamed")
+    );
+    assert_eq!(renamed, manager.loadChatHistories().unwrap().remove(0));
+    assert_eq!(
+        database.chatDao().getChatById(CHAT_ID).unwrap().unwrap(),
+        originalChat
+    );
+    histories.unsubscribe(subscription);
+}
+
+/// Keeps an unbound chat free of workspace metadata after later workspace preference changes.
+#[test]
+fn workspace_preferences_do_not_restore_an_unbound_chat() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, database, mut workspace) = workspaceMetadataFixture("workspace-metadata-unbind");
+    let histories = manager.chatHistoriesFlow().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let subscription = histories.subscribe(move |value| sender.send(value).unwrap());
+    receiveWorkspaceChat(&receiver);
+    manager.workspaceStore.upsert(workspace.clone()).unwrap();
+    receiveWorkspaceChat(&receiver);
+
+    database
+        .chatDao()
+        .updateChatWorkspaceId(CHAT_ID, None, 2)
+        .unwrap();
+    let unbound = receiveWorkspaceChat(&receiver);
+    assert_eq!(unbound.workspaceId, None);
+    assert_eq!(unbound.workspaceName, None);
+    assert_eq!(unbound.workspacePrimaryPath, None);
+    assert_eq!(manager.getWorkspaceForChat(CHAT_ID).unwrap(), None);
+
+    workspace.name = "Updated after unbind".to_string();
+    workspace.updatedAt = 3;
+    manager.workspaceStore.upsert(workspace).unwrap();
+    assert_eq!(histories.value(), vec![unbound.clone()]);
+    assert_eq!(manager.loadChatHistories().unwrap(), vec![unbound]);
+    assert_eq!(manager.getWorkspaceForChat(CHAT_ID).unwrap(), None);
+    histories.unsubscribe(subscription);
+}
+
+/// Deletes an unlocked orphaned workspace chat, its messages, selection, and binding without resolving the workspace.
+#[test]
+fn missing_workspace_chat_deletion_preserves_lock_policy_and_removes_history() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, database, workspace) = workspaceMetadataFixture("workspace-metadata-delete");
+    manager.bindingStore.createLocal(CHAT_ID).unwrap();
+    manager.setCurrentChatId(CHAT_ID.to_string()).unwrap();
+    let message = ChatMessage::new_with_markdown_timestamp(
+        "user".to_string(),
+        "Orphaned conversation".to_string(),
+        MESSAGE_TIMESTAMP,
+    );
+    database
+        .messageDao()
+        .insertMessage(MessageEntity::fromChatMessage(
+            CHAT_ID.to_string(),
+            message,
+            1,
+            0,
+        ))
+        .unwrap();
+    let histories = manager.chatHistoriesFlow().unwrap();
+    assert_eq!(
+        histories.value()[0].workspaceId.as_deref(),
+        Some(workspace.id.as_str())
+    );
+    assert_eq!(histories.value()[0].workspaceName, None);
+    assert!(manager
+        .workspaceStore
+        .getById(&workspace.id)
+        .unwrap()
+        .is_none());
+
+    manager.updateChatLocked(CHAT_ID.to_string(), true).unwrap();
+    assert!(!manager.deleteChatHistory(CHAT_ID.to_string()).unwrap());
+    assert!(database.chatDao().getChatById(CHAT_ID).unwrap().is_some());
+    assert!(manager.bindingStore.contains(CHAT_ID).unwrap());
+
+    manager
+        .updateChatLocked(CHAT_ID.to_string(), false)
+        .unwrap();
+    assert!(manager.deleteChatHistory(CHAT_ID.to_string()).unwrap());
+    assert!(database.chatDao().getChatById(CHAT_ID).unwrap().is_none());
+    assert!(database
+        .messageDao()
+        .getMessagesForChat(CHAT_ID)
+        .unwrap()
+        .is_empty());
+    assert!(histories.value().is_empty());
+    assert_eq!(manager.currentChatIdFlow().unwrap(), None);
+    assert!(!manager.bindingStore.contains(CHAT_ID).unwrap());
+    assert!(manager.workspaceStore.getAll().unwrap().is_empty());
+}
 
 /// Creates one original reply and ordered variants with colliding part identities.
 fn variantFixture(name: &str, alternateCount: i32) -> Arc<AppDatabase> {
@@ -264,13 +421,16 @@ fn chatOrderFixture(name: &str) -> (ChatHistoryManager, Arc<AppDatabase>) {
         let mut chat = ChatEntity::new(id.to_string(), id.to_string(), 1);
         chat.displayOrder = index as i64;
         chat.pinned = id == "pinned";
-        chat.group = Some("saved-group".to_string());
-        chat.characterCardName = Some("saved-character".to_string());
+        chat.pluginExtensions.insert(
+            "fixture.owner".to_string(),
+            serde_json::json!({"opaque": id}),
+        );
         database.chatDao().insertChat(chat).unwrap();
     }
     (manager, database)
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 fn sidebarChatIds(manager: &ChatHistoryManager) -> Vec<String> {
     manager
         .chatHistoriesFlow()
@@ -281,6 +441,7 @@ fn sidebarChatIds(manager: &ChatHistoryManager) -> Vec<String> {
         .collect()
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn new_user_message_promotes_chat_below_pins_and_preserves_metadata() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -300,6 +461,7 @@ fn new_user_message_promotes_chat_below_pins_and_preserves_metadata() {
     assert_eq!(
         promoted.clone(),
         ChatEntity {
+            group: None,
             displayOrder: promoted.displayOrder,
             updatedAt: promoted.updatedAt,
             ..original
@@ -311,6 +473,7 @@ fn new_user_message_promotes_chat_below_pins_and_preserves_metadata() {
     );
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn successive_user_sends_follow_send_order_even_with_negative_display_orders() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -319,12 +482,7 @@ fn successive_user_sends_follow_send_order_even_with_negative_display_orders() {
     // still move ahead of it rather than relying solely on the wall clock.
     database
         .chatDao()
-        .updateChatOrderAndGroup(
-            "recent",
-            -9_000_000_000_000_000,
-            Some("saved-group".to_string()),
-            1,
-        )
+        .updateChatOrder("recent", -9_000_000_000_000_000)
         .unwrap();
     for (index, id) in ["older", "recent", "older"].into_iter().enumerate() {
         manager
@@ -342,6 +500,7 @@ fn successive_user_sends_follow_send_order_even_with_negative_display_orders() {
     }
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn replies_edits_and_duplicate_user_saves_do_not_promote_chat() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -396,6 +555,7 @@ fn replies_edits_and_duplicate_user_saves_do_not_promote_chat() {
     }
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn new_background_user_message_promotes_chat_through_update_path() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -427,6 +587,7 @@ fn new_background_user_message_promotes_chat_through_update_path() {
     );
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn user_send_in_pinned_chat_moves_it_to_front_without_unpinning() {
     let _guard = DATABASE_MUTEX.lock().unwrap();

@@ -24,6 +24,12 @@ pub trait LocalApplicationBridgeTarget: Send + Sync {
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEventStream, CoreLinkError>;
+
+    /// Opens one application-owned input stream.
+    async fn openLocalApplicationPush(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, CoreLinkError>;
 }
 
 /// Adapts one local application dispatch target into a shared Link client.
@@ -81,5 +87,16 @@ where
             return Err(self.targetError(&request.target));
         }
         self.target.watchLocalApplication(request).await
+    }
+
+    /// Opens an input stream after enforcing the application object boundary.
+    async fn openPush(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
+        if request.target != self.application_object_id {
+            return Err(self.targetError(&request.target));
+        }
+        self.target.openLocalApplicationPush(request).await
     }
 }

@@ -20,22 +20,11 @@ struct AppLifecycleReplayEvent {
 pub struct ToolPkgAppLifecycleHookBridge;
 
 impl ToolPkgAppLifecycleHookBridge {
-    /// Registers app lifecycle hooks for one application runtime.
-    pub fn register(runtime: ToolPkgBridgeRuntime) {
-        let manager = runtime.package_manager();
-        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(move |activeContainers| {
-            ToolPkgAppLifecycleHookBridge::syncAndReplayToolPkgRegistrations(
-                &runtime,
-                activeContainers,
-            );
-        }));
-    }
-
     /// Synchronizes app lifecycle hooks and replays application events to newly added hooks.
     #[allow(non_snake_case)]
     pub fn syncAndReplayToolPkgRegistrations(
         runtime: &ToolPkgBridgeRuntime,
-        activeContainers: Vec<ToolPkgContainerRuntime>,
+        activeContainers: &[ToolPkgContainerRuntime],
     ) {
         let previousHooks = APP_LIFECYCLE_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))

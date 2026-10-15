@@ -9,3 +9,5 @@ Notes for Operit2 plugin authors live here.
 - [ToolPkg v1 compatibility](V1_COMPATIBILITY.md): contract ownership, runtime adapters, checks, and remaining capability gaps.
 
 - [Prerequisite public APIs](PUBLIC_API.md): manifest-declared single-file clients, explicit public handlers, dependency calls, and the v1 workflow adapter.
+
+- [Device tools (v2)](DEVICE_TOOLS.md): execute canonical tools and plugin tools on an explicit Core device, with discovery, deadlines and cancellation.

@@ -588,7 +588,7 @@ class _TagEditorDialogState extends State<_TagEditorDialog> {
             controller: _tagController,
             decoration: const InputDecoration(
               labelText: '标签名',
-              hintText: '例如 memory',
+              hintText: '例如 custom_tag',
             ),
             onChanged: (_) => setState(() {}),
           ),

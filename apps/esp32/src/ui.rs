@@ -54,6 +54,7 @@ unsafe extern "C" {
         selected: bool,
     );
     fn operit_ui_finish_conversations(count: u32);
+    fn operit_ui_set_conversations_state(loading: bool, error: *const c_char);
     fn operit_ui_action_error(error: *const c_char);
     fn operit_ui_set_chat_task(text: *const c_char);
     fn operit_ui_set_plugin(index: u32, id: *const c_char, name: *const c_char, status: u32, latency_ms: u32);
@@ -65,6 +66,8 @@ unsafe extern "C" {
     fn operit_ui_finish_plugins(count: u32, offset: u32, total: u32, loading: bool, error: *const c_char);
     fn operit_ui_chat_send_result(ok: bool, error: *const c_char);
     fn operit_ui_set_chat_draft(value: *const c_char);
+    fn operit_ui_set_speech_state(phase: u32);
+    fn operit_ui_set_device_space_state(phase: u32, status: *const c_char, first: *const c_char, second: *const c_char, third: *const c_char, pending: bool);
     fn operit_ui_chat_draft() -> *const c_char;
     fn operit_ui_debug_tree() -> *const c_char;
     fn operit_ui_debug_snapshot() -> *const c_char;
@@ -81,7 +84,7 @@ pub struct Esp32Ui {
 struct UiContext {
     board: *const operit_board_esp32::Esp32Board,
     actions: Mutex<VecDeque<String>>,
-    scene: Option<std::sync::Arc<operit_edge_scene::ScenePlugin>>,
+    scene: Option<std::sync::Arc<operit_edge_scene::SceneService>>,
 }
 
 unsafe impl Send for UiContext {}
@@ -137,7 +140,7 @@ impl Esp32Ui {
     }
 
     /// Attaches the bounded native painter to the existing RGB565 strip.
-    pub fn attachScene(&mut self, scene: std::sync::Arc<operit_edge_scene::ScenePlugin>) {
+    pub fn attachScene(&mut self, scene: std::sync::Arc<operit_edge_scene::SceneService>) {
         self.context.scene = Some(scene);
         unsafe {
             operit_ui_scene_painter(Some(scenePainter));
@@ -183,6 +186,16 @@ impl Esp32Ui {
         let text = CString::new(text.replace('\0', "")).unwrap();
         unsafe { operit_ui_set_space_join_prompt(text.as_ptr(), busy); }
     }
+    pub fn setDeviceSpaceState(&mut self, state: &serde_json::Value) {
+        let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
+        let status = string(state["status"].as_str().unwrap_or(""));
+        let candidates = state["candidates"].as_array();
+        let first = string(candidates.and_then(|v| v.get(0)).and_then(|v| v.as_str()).unwrap_or(""));
+        let second = string(candidates.and_then(|v| v.get(1)).and_then(|v| v.as_str()).unwrap_or(""));
+        let third = string(candidates.and_then(|v| v.get(2)).and_then(|v| v.as_str()).unwrap_or(""));
+        unsafe { operit_ui_set_device_space_state(state["phase"].as_u64().unwrap_or(0) as u32,
+            status.as_ptr(), first.as_ptr(), second.as_ptr(), third.as_ptr(), state["pendingJoin"].as_bool().unwrap_or(false)); }
+    }
     pub fn setSpaceState(&mut self, state: &str) {
         setText(state, operit_ui_set_space_state);
     }
@@ -223,6 +236,10 @@ impl Esp32Ui {
             state["total"].as_u64().unwrap_or(0) as u32, state["loading"] == true,
             string(state["error"].as_str().unwrap_or("")).as_ptr()); }
     }
+
+    pub fn setSpeechState(&mut self, phase: u32) { unsafe { operit_ui_set_speech_state(phase); } }
+
+    pub fn setChatDraft(&mut self, text: &str) { setText(text, operit_ui_set_chat_draft); }
 
     pub fn setChatState(&mut self, state: &serde_json::Value) {
         unsafe { operit_ui_set_chat_history(state["hasOlder"].as_bool().unwrap_or(false), state["hasNewer"].as_bool().unwrap_or(false)); }
@@ -281,6 +298,7 @@ impl Esp32Ui {
         }
         unsafe {
             operit_ui_finish_conversations(rows.len() as u32);
+            operit_ui_set_conversations_state(state["conversationsLoading"].as_bool().unwrap_or(false), string(state["conversationsError"].as_str().unwrap_or("")).as_ptr());
         }
     }
 

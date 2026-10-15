@@ -5,6 +5,22 @@ use super::*;
 /// Reconnect works; current revocation and local management boundaries still hold.
 #[tokio::test]
 async fn real_tcp_single_pairing_admission_enables_scoped_return_channel() {
+    tcpAdmissionReturnChannel("127.0.0.1:0").await;
+}
+
+/// The dialer's IPv6 listener must be reachable even when its pairing connection uses IPv4.
+#[tokio::test]
+async fn real_tcp_return_channel_uses_listener_address_family() {
+    tcpAdmissionReturnChannel("[::1]:0").await;
+}
+
+/// Wildcard listeners keep using the observed peer address for callbacks.
+#[tokio::test]
+async fn real_tcp_return_channel_resolves_wildcard_listener() {
+    tcpAdmissionReturnChannel("0.0.0.0:0").await;
+}
+
+async fn tcpAdmissionReturnChannel(macBind: &str) {
     use crate::HostRuntimePeerService::HostRuntimePeerService;
     use crate::PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore};
     use operit_host_api::HostManager::HostManager;
@@ -59,11 +75,14 @@ async fn real_tcp_single_pairing_admission_enables_scoped_return_channel() {
         (*iosRouter).clone(),
     );
     // Both devices expose a listener; only Mac performs the six-digit pairing.
-    for (router, peer) in [(&macRouter, &macPeer), (&iosRouter, &iosPeer)] {
+    for (router, peer, bind) in [(&macRouter, &macPeer, macBind), (&iosRouter, &iosPeer, "127.0.0.1:0")] {
+        let reservation = std::net::TcpListener::bind(bind).unwrap();
+        let bind = reservation.local_addr().unwrap().to_string();
+        drop(reservation);
         PeerStateStore::new(router.localCore.runtimeStorageHost())
             .saveHostConfig(&PeerHostConfig {
-                bindAddress: "127.0.0.1:0".into(),
-                token: "test-token".into(),
+                bindAddress: bind.into(),
+
                 transports: vec![PeerTransport::Tcp],
                 discoveryEnabled: false,
                 portMode: PeerHostPortMode::Automatic,
@@ -84,8 +103,7 @@ async fn real_tcp_single_pairing_admission_enables_scoped_return_channel() {
                     nodeId: "tcp-ios".into(),
                     address,
                 },
-                PeerTransport::Tcp,
-                Some("test-token"),
+                Some(PeerTransport::Tcp),
             )
             .await
             .unwrap();
@@ -203,7 +221,18 @@ async fn real_tcp_single_pairing_admission_enables_scoped_return_channel() {
         let reverse = iosPeer.call("tcp-mac", returnRequest()).await;
         assert!(reverse.result.is_ok(), "{:?}", reverse.result);
         assert!(iosPeer.spaceClient().is_some(), "TCP grants expose the shared Space client");
-        assert_eq!(iosPeer.pooledChannelCount("tcp-mac").await, 1);
+        // The receiver reuses the caller's connection without opening a reverse socket.
+        assert_eq!(iosPeer.pooledChannelCount("tcp-mac").await, 0);
+        assert_eq!(macPeer.pooledChannelCount("tcp-ios").await, 1);
+        // Different origins may reuse the same request ID at a shared relay hop.
+        let (first, second) = tokio::join!(
+            iosPeer.call("tcp-mac", returnRequest()),
+            iosPeer.call("tcp-mac", returnRequest()),
+        );
+        for response in [first, second] {
+            assert_eq!(response.requestId.0, "return-space");
+            assert!(response.result.is_ok(), "Concurrent correlation: {:?}", response.result);
+        }
         // Return credentials survive reconnect without any second confirmation.
         iosPeer.disconnectPeer("tcp-mac").await.unwrap();
         assert_eq!(iosPeer.pooledChannelCount("tcp-mac").await, 0);
@@ -376,7 +405,7 @@ async fn real_tcp_space_remove_deletes_pairing_and_allows_repairing() {
         PeerStateStore::new(router.localCore.runtimeStorageHost())
             .saveHostConfig(&PeerHostConfig {
                 bindAddress: "127.0.0.1:0".into(),
-                token: "test-token".into(),
+
                 transports: vec![PeerTransport::Tcp],
                 discoveryEnabled: false,
                 portMode: PeerHostPortMode::Automatic,
@@ -397,8 +426,7 @@ async fn real_tcp_space_remove_deletes_pairing_and_allows_repairing() {
                     nodeId: "remove-ios".into(),
                     address: address.clone(),
                 },
-                PeerTransport::Tcp,
-                Some("test-token"),
+                Some(PeerTransport::Tcp),
             )
             .await
             .unwrap();
@@ -450,8 +478,7 @@ async fn real_tcp_space_remove_deletes_pairing_and_allows_repairing() {
                     nodeId: "remove-ios".into(),
                     address,
                 },
-                PeerTransport::Tcp,
-                Some("test-token"),
+                Some(PeerTransport::Tcp),
             )
             .await
             .unwrap();
@@ -544,7 +571,7 @@ async fn real_tcp_listener_gate_reports_revocation_to_dialer() {
         PeerStateStore::new(router.localCore.runtimeStorageHost())
             .saveHostConfig(&PeerHostConfig {
                 bindAddress: "127.0.0.1:0".into(),
-                token: "test-token".into(),
+
                 transports: vec![PeerTransport::Tcp],
                 discoveryEnabled: false,
                 portMode: PeerHostPortMode::Automatic,
@@ -565,8 +592,7 @@ async fn real_tcp_listener_gate_reports_revocation_to_dialer() {
                     nodeId: "gate-ios".into(),
                     address,
                 },
-                PeerTransport::Tcp,
-                Some("test-token"),
+                Some(PeerTransport::Tcp),
             )
             .await
             .unwrap();
@@ -680,7 +706,7 @@ async fn outbound_only_hosts_pair_over_http_and_websocket() {
         PeerStateStore::new(serverRouter.localCore.runtimeStorageHost())
             .saveHostConfig(&PeerHostConfig {
                 bindAddress: "127.0.0.1:0".into(),
-                token: "required-test-token".into(),
+
                 transports: vec![transport],
                 discoveryEnabled: false,
                 portMode: PeerHostPortMode::Automatic,
@@ -701,11 +727,8 @@ async fn outbound_only_hosts_pair_over_http_and_websocket() {
             assert!(promptFlow.value().is_empty());
             assert!(clientPromptFlow.value().is_empty());
             assert!(client.discoverPeers(1).await.is_err());
-            assert!(client.startPairing(serverRouter.localNodeId(), endpoint.clone(), transport,
-                Some("wrong-token".into())).await.is_err());
             assert!(server.pairingPrompts().unwrap().is_empty());
-            let pairing = client.startPairing(serverRouter.localNodeId(), endpoint.clone(), transport,
-                Some("required-test-token".into())).await.unwrap();
+            let pairing = client.startPairing(serverRouter.localNodeId(), endpoint.clone(), Some(transport)).await.unwrap();
             let prompts = server.pairingPrompts().unwrap();
             assert_eq!(prompts.len(), 1);
             let code = prompts.iter().find(|prompt| prompt.pairingId == pairing.pairingId)
@@ -726,17 +749,36 @@ async fn outbound_only_hosts_pair_over_http_and_websocket() {
             assert!(serverPeer.pairedPeers().unwrap()[0].inbound);
             for nodeId in [serverRouter.localNodeId(), String::new()] {
                 let duplicate = clientPeer.startPairing(PeerEndpoint { nodeId, address: endpoint.clone() },
-                    transport, Some("required-test-token")).await.unwrap_err();
+                    Some(transport)).await.unwrap_err();
                 assert_eq!(duplicate.code, "PEER_ALREADY_PAIRED");
             }
             let reverse = serverPeer.startPairing(PeerEndpoint { nodeId: clientRouter.localNodeId(), address: endpoint.clone() },
-                transport, Some("required-test-token")).await.unwrap_err();
+                Some(transport)).await.unwrap_err();
             assert_eq!(reverse.code, "PEER_ALREADY_PAIRED");
-            assert!(server.pairingPrompts().unwrap().is_empty());
+            // Address-only discovery learned the identity after starting a new
+            // challenge. Receiver now allows challenges for retained pairings;
+            // without a fresh code this must not alter the stored credential.
+            assert_eq!(server.pairingPrompts().unwrap().len(), 1);
             let clientStore = PeerStateStore::new(clientRouter.localCore.runtimeStorageHost());
             let serverStore = PeerStateStore::new(serverRouter.localCore.runtimeStorageHost());
             assert_eq!(clientStore.records::<crate::PeerStateStore::StoredOutbound>(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).unwrap().len(), 1);
             assert_eq!(serverStore.records::<crate::PeerStateStore::StoredInbound>(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap().len(), 1);
+            // One-sided unpair and a new code replace the receiver's credential
+            // over both HTTP and WebSocket, without deleting the remote record
+            // until confirmation succeeds.
+            let old = serverStore.records::<crate::PeerStateStore::StoredInbound>(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap();
+            clientPeer.removePairedPeer(&serverRouter.localNodeId()).await.unwrap();
+            assert_eq!(serverPeer.pairedPeers().unwrap().len(), 1);
+            let fresh = client.startPairing(serverRouter.localNodeId(), endpoint.clone(), Some(transport)).await.unwrap();
+            let code = server.pairingPrompts().unwrap().into_iter()
+                .find(|prompt| prompt.pairingId == fresh.pairingId).unwrap().confirmationCode;
+            assert!(old.keys().all(|id| serverStore.records::<crate::PeerStateStore::StoredInbound>(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap().contains_key(id)));
+            client.finishPairing(fresh.pairingId.clone(), code).await.unwrap();
+            let updated = serverStore.records::<crate::PeerStateStore::StoredInbound>(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap();
+            assert_eq!(updated.len(), 1);
+            assert!(updated.contains_key(&fresh.pairingId));
+            assert!(old.keys().all(|id| !updated.contains_key(id)));
+            assert!(server.pairingPrompts().unwrap().is_empty());
             drop((promptFlow, clientPromptFlow, overview));
             clientPeer.stop().await.unwrap();
             let restored = HostRuntimePeerService::new(clientHost.clone(), &clientRouter,
@@ -814,7 +856,7 @@ async fn listener_capabilities_validate_all_transports_before_binding() {
     store
         .saveHostConfig(&PeerHostConfig {
             bindAddress: "127.0.0.1:0".into(),
-            token: "capability-test-token".into(),
+
             transports: vec![PeerTransport::Tcp, PeerTransport::Http],
             discoveryEnabled: true,
             portMode: PeerHostPortMode::Automatic,

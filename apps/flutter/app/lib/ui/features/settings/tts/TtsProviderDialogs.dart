@@ -47,14 +47,14 @@ class _TtsProviderDialog extends StatefulWidget {
     required this.deleteBlockedReason,
   });
 
-  final core_proxy.TtsConfig config;
+  final core_proxy.CoreOperitModelTtsConfigTtsConfig config;
   final List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries;
   final String? deleteBlockedReason;
 
   /// Opens the TTS provider editor and returns the selected provider action.
   static Future<_TtsProviderEditResult?> show({
     required BuildContext context,
-    required core_proxy.TtsConfig config,
+    required core_proxy.CoreOperitModelTtsConfigTtsConfig config,
     required List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries,
     required String? deleteBlockedReason,
   }) {
@@ -540,7 +540,7 @@ sealed class _TtsVoiceEditResult {
 class _TtsVoiceEditSaved extends _TtsVoiceEditResult {
   const _TtsVoiceEditSaved(this.config);
 
-  final core_proxy.TtsConfig config;
+  final core_proxy.CoreOperitModelTtsConfigTtsConfig config;
 }
 
 class _TtsVoiceEditDeleted extends _TtsVoiceEditResult {
@@ -554,13 +554,13 @@ class _TtsVoiceConfigDialog extends StatefulWidget {
     required this.onTest,
   });
 
-  final core_proxy.TtsConfig config;
+  final core_proxy.CoreOperitModelTtsConfigTtsConfig config;
   final String? deleteBlockedReason;
   final Future<void> Function() onTest;
 
   static Future<_TtsVoiceEditResult?> show({
     required BuildContext context,
-    required core_proxy.TtsConfig config,
+    required core_proxy.CoreOperitModelTtsConfigTtsConfig config,
     required String? deleteBlockedReason,
     required Future<void> Function() onTest,
   }) {
@@ -749,7 +749,7 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
     final current = widget.config;
     Navigator.of(context).pop(
       _TtsVoiceEditSaved(
-        core_proxy.TtsConfig(
+        core_proxy.CoreOperitModelTtsConfigTtsConfig(
           id: current.id,
           name: current.name,
           providerType: current.providerType,
@@ -777,11 +777,11 @@ class _TtsConfigDialog extends StatefulWidget {
 
   final List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries;
 
-  static Future<core_proxy.TtsConfig?> show({
+  static Future<core_proxy.CoreOperitModelTtsConfigTtsConfig?> show({
     required BuildContext context,
     required List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries,
   }) {
-    return showDialog<core_proxy.TtsConfig>(
+    return showDialog<core_proxy.CoreOperitModelTtsConfigTtsConfig>(
       context: context,
       builder: (context) =>
           _TtsConfigDialog(providerCatalogEntries: providerCatalogEntries),
@@ -1037,7 +1037,7 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
     final speed = double.parse(_speedController.text.trim());
     final now = DateTime.now().millisecondsSinceEpoch;
     Navigator.of(context).pop(
-      core_proxy.TtsConfig(
+      core_proxy.CoreOperitModelTtsConfigTtsConfig(
         id: '',
         name: _nameController.text.trim(),
         providerType: _providerType,

@@ -960,6 +960,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Keeps persisted mounts out of the builtin-only mapper on every host.
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn builtinOnlyExplicitlyExcludesPersistedMounts() {
@@ -976,10 +977,11 @@ mod tests {
         let builtin = PathMapper::builtinOnly(root.clone(), root.join("workspaces"));
         assert!(builtin.resolve(&path).is_err());
         assert_eq!(builtin.resolve("/app/data/config/example.json").unwrap().physicalPath,
-            root.join("config/example.json").to_string_lossy());
+            root.join("config/example.json").to_string_lossy().replace('\\', "/"));
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Preserves native mount paths and rejects resources outside their registered roots.
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn nativeMountsAndResourceSearchResultsRespectTheirBoundaries() {
@@ -990,7 +992,7 @@ mod tests {
         let registry = MountRegistry::withStorage(storage.clone());
         let mount = registry.register("/mnt/local/folders", "native", root.to_str().unwrap(), "Local").unwrap();
         let mapper = PathMapper::new(root.clone(), root.join("workspaces"), storage.clone());
-        assert_eq!(mapper.resolve(&format!("{}/a.txt", mount.vfsPath())).unwrap().nativePath().unwrap(), root.join("a.txt").to_string_lossy());
+        assert_eq!(mapper.resolve(&format!("{}/a.txt", mount.vfsPath())).unwrap().nativePath().unwrap(), root.join("a.txt").to_string_lossy().replace('\\', "/"));
         for platform in ["android", "windows", "macos", "linux"] {
             let path = format!("/mnt/{platform}/folders/mount-a/project");
             assert_eq!(PathMapper::normalizeWorkspaceBindingPath(&path).unwrap(), path);

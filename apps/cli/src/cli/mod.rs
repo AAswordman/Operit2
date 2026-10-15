@@ -11,13 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
 use operit_link::CoreLinkError;
-use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::ApiKeyInfo::ApiKeyInfo;
 use operit_model::AttachmentInfo::AttachmentInfo;
-use operit_model::CharacterCard::{
-    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardToolAccessConfig,
-};
-use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
@@ -25,19 +20,14 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::ModelConfigData::ApiProviderType;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_model::PromptTag::TagType;
 use operit_model::TtsConfig::{TtsConfig, TtsProviderType};
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::market::MarketStatsApiService::{MarketEntrySummary, MarketListPage};
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
-use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
-use operit_runtime::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 use operit_runtime::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::services::GitHubOAuthBrokerService::GitHubOAuthBrokerLoginCompletion;
@@ -45,6 +35,7 @@ use operit_runtime::services::TtsSynthesisService::TtsSynthesisService;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_tools::tools::packTool::RuntimePackageManager::ToolPkgCoreCommandInfo;
 use operit_util::stream::Stream::Stream;
 use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
@@ -69,7 +60,7 @@ use crate::bootstrap::{
 };
 use crate::browser_callback::CliOAuthCallback;
 use crate::chat_runtime::{
-    run_chat_send_command_with_core, run_chat_shell_command_with_core, run_shell_command,
+    run_chat_shell_command_with_core, run_shell_command,
 };
 use crate::core_proxy::local_cli_core;
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
@@ -125,23 +116,16 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
 /// Dispatches one CLI invocation after global options are removed.
 async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
-        print_cli_usage();
-        return Ok(());
+        return print_cli_usage().await;
     }
 
-    // Help and unknown-command handling run before any Core runtime is created.
+    // Local help routes remain explicit; plugin help uses the ready Core command catalog.
     if matches!(args[0].as_str(), "help" | "-h" | "--help") {
         return print_cli_help(args.get(1).map(String::as_str)).await;
     }
     if args.len() >= 2 && matches!(args[1].as_str(), "help" | "-h" | "--help") {
         return print_cli_help(Some(&args[0])).await;
     }
-    if !CLI_COMMANDS.iter().any(|(name, _)| *name == args[0]) {
-        eprintln!("Unknown command: {}", args[0]);
-        eprintln!("Run 'operit2 cli help' to list commands.");
-        return Ok(());
-    }
-
     if args[0].as_str() == "link" {
         return run_link_command(&args[1..]).await;
     }
@@ -164,6 +148,7 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
 
     let localArgs = scope_cli_storage_command_args(args)?;
     let mut core = local_cli_core().await?;
+    let pluginCommands = read_cli_plugin_commands(&mut core).await?;
 
     let result = match localArgs[0].as_str() {
         "model" if localArgs.get(1).map(String::as_str) == Some("codex-login") => {
@@ -176,14 +161,10 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
         "log" => run_core_command_and_print(&mut core, &args).await,
         "local-models" => run_core_command_and_print(&mut core, &args).await,
         "stt" => run_core_command_and_print(&mut core, &args).await,
-        "memory" => run_core_command_and_print(&mut core, &args).await,
         "tts" => run_tts_cli_command(&core, &args[1..]).await,
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
         "backup" => run_backup_command(&mut core, &args[1..]).await,
-        "chat" if args.get(1).map(String::as_str) == Some("send") => {
-            run_chat_send_command_with_core(&mut core, &args[2..]).await
-        }
         "chat" if args.get(1).map(String::as_str) == Some("shell") => {
             run_chat_shell_command_with_core(&mut core, &args[2..]).await
         }
@@ -191,10 +172,6 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
         "workspace" => run_core_command_and_print(&mut core, &args).await,
         "storage" => run_local_core_command_and_print(&mut core, &localArgs).await,
         "shell" => run_shell_command(&mut core, &args[1..]).await,
-        "tag" => run_core_command_and_print(&mut core, &args).await,
-        "character" => run_core_command_and_print(&mut core, &args).await,
-        "group" => run_core_command_and_print(&mut core, &args).await,
-        "active-prompt" => run_core_command_and_print(&mut core, &args).await,
         "approval" => run_core_command_and_print(&mut core, &args).await,
         "tool" => run_core_command_and_print(&mut core, &args).await,
         "market" => run_market_cli_command(&mut core, &args).await,
@@ -205,10 +182,10 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
         "plugin" => run_core_command_and_print(&mut core, &args).await,
         "mcp" => run_core_command_and_print(&mut core, &args).await,
         "usage" => run_core_command_and_print(&mut core, &args).await,
-        _ => {
-            print_cli_usage();
-            Ok(())
+        command if pluginCommands.iter().any(|entry| entry.name == command) => {
+            run_core_command_and_print(&mut core, &localArgs).await
         }
+        command => Err(format!("Unknown command: {command}; run 'operit2 cli help' to list commands.")),
     };
     result.map_err(rewrite_cli_usage_message)
 }
@@ -461,25 +438,16 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Synthesizes speech through a character or exact TTS configuration.
-/// Synthesizes speech through the selected character or TTS configuration.
+/// Synthesizes speech through an explicit TTS configuration.
 fn run_tts_synthesize_cli_command(
     core: &crate::core_proxy::CliCore,
     args: &[String],
 ) -> Result<(), String> {
-    let mut characterId: Option<String> = None;
     let mut configId: Option<String> = None;
     let mut text: Option<String> = None;
     let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
-            "--character" => {
-                index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| "--character requires a value".to_string())?;
-                characterId = Some(value.clone());
-            }
             "--text" => {
                 index += 1;
                 let value = args
@@ -500,15 +468,8 @@ fn run_tts_synthesize_cli_command(
     }
     let text = text.ok_or_else(|| "--text is required".to_string())?;
     let service = TtsSynthesisService::getInstance(core.localHostManager()?);
-    let result = match (characterId, configId) {
-        (Some(characterId), None) => service.synthesizeForCharacter(&characterId, &text)?,
-        (None, Some(configId)) => service.synthesizeWithConfig(&configId, &text)?,
-        _ => {
-            return Err(
-                "tts synthesize requires exactly one of --character or --config".to_string(),
-            )
-        }
-    };
+    let configId = configId.ok_or_else(|| "tts synthesize requires --config <id>".to_string())?;
+    let result = service.synthesizeWithConfig(&configId, &text)?;
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({ "audioPaths": result.audioPaths }));
     } else {
@@ -534,7 +495,6 @@ fn print_tts_usage() {
     println!("operit2 cli tts config create-local <name> <model-id> <version> <voice> <speed>");
     println!("operit2 cli tts config update <id> <name|endpoint|api-key|model|voice|response-format|speed|http-method|request-body|content-type> <value>");
     println!("operit2 cli tts config delete <id>");
-    println!("operit2 cli tts synthesize --character <id> --text <text>");
     println!("operit2 cli tts synthesize --config <id> --text <text>");
 }
 
@@ -1844,18 +1804,12 @@ pub(crate) fn print_root_usage() {
 }
 
 /// One CLI command family with the short description shown by `operit2 cli help`.
-/// Every dispatched family must appear here; help routes core-owned families back
-/// to the core so its per-family usage stays the single source of truth.
+/// Inherent CLI families live here; plugin families come from the enabled Core catalog.
 const CLI_COMMANDS: &[(&str, &str)] = &[
     ("version", "Show CLI, core, and link versions"),
     ("identity", "Manage local node identities"),
     ("chat", "Manage chat sessions and messages"),
     ("shell", "Interactive chat shell"),
-    ("character", "Manage character cards"),
-    ("group", "Manage character groups"),
-    ("tag", "Manage prompt tags"),
-    ("active-prompt", "Show or set the active prompt card"),
-    ("memory", "Manage character and shared memory"),
     ("tts", "Configure text-to-speech and synthesize"),
     ("stt", "Configure speech-to-text and transcribe"),
     ("model", "Manage providers, models, and parameters"),
@@ -1885,17 +1839,40 @@ const CLI_COMMANDS: &[(&str, &str)] = &[
 ];
 
 /// Prints the compact level-1 command list shown by `operit2 cli [help]`.
-fn print_cli_usage() {
+async fn print_cli_usage() -> Result<(), String> {
+    let mut core = local_cli_core().await?;
+    let pluginCommands = read_cli_plugin_commands(&mut core).await?;
+    let lines = cli_usage_lines(&pluginCommands);
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": cli_usage_lines() }));
-        return;
+        emit_cli_json(serde_json::json!({ "usage": lines }));
+    } else {
+        for line in lines {
+            println!("{line}");
+        }
     }
-    for line in cli_usage_lines() {
-        println!("{line}");
-    }
+    Ok(())
 }
 
-fn cli_usage_lines() -> Vec<String> {
+/// Reads enabled plugin commands through the existing authenticated Core registry.
+async fn read_cli_plugin_commands(
+    core: &mut crate::core_proxy::CliCore,
+) -> Result<Vec<ToolPkgCoreCommandInfo>, String> {
+    let output = core
+        .runCoreCommand(&["plugin".to_string(), "commands".to_string(), "--json".to_string()])
+        .await
+        .map_err(core_command_error_message)?;
+    let commands: Vec<ToolPkgCoreCommandInfo> = serde_json::from_str(&output.stdout)
+        .map_err(|error| format!("Invalid plugin command catalog: {error}"))?;
+    for command in &commands {
+        if CLI_COMMANDS.iter().any(|(name, _)| *name == command.name) {
+            return Err(format!("Plugin command conflicts with CLI command: {}", command.name));
+        }
+    }
+    Ok(commands)
+}
+
+/// Formats inherent CLI commands together with the actual enabled plugin descriptions.
+fn cli_usage_lines(pluginCommands: &[ToolPkgCoreCommandInfo]) -> Vec<String> {
     let mut lines = vec![
         "operit2 cli <command> [arguments...]".to_string(),
         String::new(),
@@ -1908,6 +1885,9 @@ fn cli_usage_lines() -> Vec<String> {
     for (name, description) in CLI_COMMANDS {
         lines.push(format!("  {name:<15}  {description}"));
     }
+    for command in pluginCommands {
+        lines.push(format!("  {:<15}  {}", command.name, command.description));
+    }
     lines.push(String::new());
     lines.push("Run 'operit2 cli help <command>' for details on one command.".to_string());
     lines
@@ -1918,8 +1898,7 @@ fn cli_usage_lines() -> Vec<String> {
 /// locally; the rest forward to the core, which prints its own usage.
 async fn print_cli_help(command: Option<&str>) -> Result<(), String> {
     let Some(command) = command else {
-        print_cli_usage();
-        return Ok(());
+        return print_cli_usage().await;
     };
     match command {
         "identity" => {
@@ -1958,10 +1937,13 @@ async fn print_cli_help(command: Option<&str>) -> Result<(), String> {
             let mut core = local_cli_core().await?;
             run_core_command_and_print(&mut core, &[family.to_string()]).await
         }
-        other => {
-            eprintln!("Unknown command: {other}");
-            eprintln!("Run 'operit2 cli help' to list commands.");
-            Ok(())
+        command => {
+            let mut core = local_cli_core().await?;
+            let pluginCommands = read_cli_plugin_commands(&mut core).await?;
+            if !pluginCommands.iter().any(|entry| entry.name == command) {
+                return Err(format!("Unknown command: {command}; run 'operit2 cli help' to list commands."));
+            }
+            run_core_command_and_print(&mut core, &[command.to_string()]).await
         }
     }
 }
@@ -2029,7 +2011,6 @@ fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {
     println!("Input tokens: {}", chat.inputTokens);
     println!("Output tokens: {}", chat.outputTokens);
     println!("Context window: {}", chat.currentWindowSize);
-    println!("Group: {}", chat.group.clone().unwrap_or_default());
     println!("Display order: {}", chat.displayOrder);
     println!(
         "Workspace: {}",
@@ -2038,14 +2019,6 @@ fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {
     println!(
         "Parent chat: {}",
         chat.parentChatId.clone().unwrap_or_default()
-    );
-    println!(
-        "Character: {}",
-        chat.characterCardName.clone().unwrap_or_default()
-    );
-    println!(
-        "Character group: {}",
-        chat.characterGroupId.clone().unwrap_or_default()
     );
     println!("Locked: {}", chat.locked);
     println!("Pinned: {}", chat.pinned);
@@ -2056,7 +2029,8 @@ fn print_chat_message(message: &operit_model::ChatMessage::ChatMessage) {
     println!("--- message ---");
     println!("Sender: {}", message.sender);
     println!("Timestamp: {}", message.timestamp);
-    println!("Role: {}", message.roleName);
+    let responder = if message.roleName.is_empty() { &message.modelName } else { &message.roleName };
+    println!("Responder: {}", responder);
     println!("Selected variant: {}", message.selectedVariantIndex);
     println!("Variants: {}", message.variantCount);
     println!("Provider: {}", message.provider);
@@ -2073,111 +2047,12 @@ fn print_chat_message(message: &operit_model::ChatMessage::ChatMessage) {
     println!("Content: {}", message.displayText());
 }
 
-/// Prints one prompt tag for a human reader.
-fn print_tag(tag: &operit_model::PromptTag::PromptTag) {
-    println!("Tag {}", tag.id);
-    println!("Name: {}", tag.name);
-    println!("Description: {}", tag.description);
-    println!("Prompt: {}", tag.promptContent);
-    println!("Type: {}", tagTypeName(&tag.tagType));
-    println!("Created: {}", tag.createdAt);
-    println!("Updated: {}", tag.updatedAt);
-}
-
-/// Prints one character card for a human reader.
-fn print_character_card(card: &CharacterCard) {
-    println!("Character {}", card.id);
-    println!("Name: {}", card.name);
-    println!("Description: {}", card.description);
-    println!("Character setting: {}", card.characterSetting);
-    println!("Opening statement: {}", card.openingStatement);
-    println!("Chat content: {}", card.otherContentChat);
-    println!("Voice content: {}", card.otherContentVoice);
-    println!("Tags: {}", card.attachedTagIds.join(","));
-    println!("Advanced prompt: {}", card.advancedCustomPrompt);
-    println!("Marks: {}", card.marks);
-    println!("Chat model binding: {}", card.chatModelBindingMode);
-    println!(
-        "Chat model: {}",
-        card.chatModelId.clone().unwrap_or_default()
-    );
-    println!(
-        "TTS config: {}",
-        card.ttsConfigId.clone().unwrap_or_default()
-    );
-    println!(
-        "Shared memory mounts: {}",
-        serde_json::to_string(&card.sharedMemoryMounts).expect("sharedMemoryMounts must serialize")
-    );
-    println!(
-        "Tool access: {}",
-        serde_json::to_string(&card.toolAccessConfig).expect("toolAccessConfig must serialize")
-    );
-    println!("Default: {}", card.isDefault);
-    println!("Created: {}", card.createdAt);
-    println!("Updated: {}", card.updatedAt);
-}
-
-/// Prints one character group card for a human reader.
-fn print_character_group_card(group: &CharacterGroupCard) {
-    println!("Character group {}", group.id);
-    println!("Name: {}", group.name);
-    println!("Description: {}", group.description);
-    println!(
-        "Members: {}",
-        group
-            .members
-            .iter()
-            .map(|member| format!("{}:{}", member.characterCardId, member.orderIndex))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    println!("Created: {}", group.createdAt);
-    println!("Updated: {}", group.updatedAt);
-}
-
-fn parse_group_members(value: &str) -> Vec<GroupMemberConfig> {
-    let mut result = Vec::new();
-    for (index, item) in value.split(',').enumerate() {
-        let trimmed = item.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        result.push(GroupMemberConfig {
-            characterCardId: trimmed.to_string(),
-            orderIndex: index as i32,
-        });
-    }
-    result
-}
-
-fn parseTagType(value: Option<&str>) -> Result<TagType, String> {
-    match value.unwrap_or("CUSTOM") {
-        "TONE" => Ok(TagType::TONE),
-        "CHARACTER" => Ok(TagType::CHARACTER),
-        "FUNCTION" => Ok(TagType::FUNCTION),
-        "CUSTOM" => Ok(TagType::CUSTOM),
-        other => Err(format!(
-            "invalid tagType: {other}; expected TONE | CHARACTER | FUNCTION | CUSTOM"
-        )),
-    }
-}
-
 fn parse_permission_level_arg(value: Option<&str>) -> Result<AiPermissionMode, String> {
     match value {
         Some("allow") | Some("ALLOW") => Ok(AiPermissionMode::Full),
         Some("ask") | Some("ASK") => Ok(AiPermissionMode::WorkspaceWrite),
         Some("forbid") | Some("FORBID") => Ok(AiPermissionMode::ReadOnly),
         _ => Err("expected allow, ask, or forbid".to_string()),
-    }
-}
-
-fn tagTypeName(tagType: &TagType) -> &'static str {
-    match tagType {
-        TagType::TONE => "TONE",
-        TagType::CHARACTER => "CHARACTER",
-        TagType::FUNCTION => "FUNCTION",
-        TagType::CUSTOM => "CUSTOM",
     }
 }
 
@@ -2283,50 +2158,6 @@ fn parseCsvList(value: &str) -> Vec<String> {
     result
 }
 
-/// Prints one memory in compact human-readable list form.
-fn print_memory_item_line(memory: &operit_model::Memory::Memory) {
-    println!(
-        "{}\t{}\t{}\t{}",
-        memory.id,
-        memory.title,
-        memory.folderPath.clone().unwrap_or_else(String::new),
-        memory
-            .tags
-            .iter()
-            .map(|tag| tag.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-}
-
-/// Prints one memory with labeled fields for a human reader.
-fn print_memory_item(memory: &operit_model::Memory::Memory) {
-    println!("Memory {}", memory.id);
-    println!("UUID: {}", memory.uuid);
-    println!("Title: {}", memory.title);
-    println!("Content: {}", memory.content);
-    println!("Content type: {}", memory.contentType);
-    println!("Source: {}", memory.source);
-    println!("Credibility: {}", memory.credibility);
-    println!("Importance: {}", memory.importance);
-    println!(
-        "Folder: {}",
-        memory.folderPath.clone().unwrap_or_else(String::new)
-    );
-    println!("Created: {}", memory.createdAt);
-    println!("Updated: {}", memory.updatedAt);
-    println!("Last accessed: {}", memory.lastAccessedAt);
-    println!(
-        "Tags: {}",
-        memory
-            .tags
-            .iter()
-            .map(|tag| tag.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-}
-
 /// Returns a trimmed string only when the value is non-empty.
 fn nonBlankString(value: String) -> Option<String> {
     let trimmed = value.trim();
@@ -2361,7 +2192,7 @@ mod tests {
         let uniqueCount = names.len();
         names.dedup();
         assert_eq!(names.len(), uniqueCount, "CLI_COMMANDS names must be unique");
-        assert_eq!(uniqueCount, 35, "CLI_COMMANDS must cover every dispatched family");
+        assert_eq!(uniqueCount, 30, "CLI_COMMANDS must cover inherent CLI families");
         assert!(CLI_COMMANDS
             .iter()
             .all(|(_, description)| !description.is_empty()));
@@ -2372,7 +2203,7 @@ mod tests {
     fn cli_route_permission_error_keeps_structured_diagnostics() {
         let error = CoreLinkError::withDetails(
             "ROUTE_PERMISSION_DENIED",
-            "Space route chatMessagesFlow requires capability chat.read on caller cli-client",
+            "Space route switch_core target cli-client lacks runtime.execute",
             operit_link::CoreValue::Map(BTreeMap::from([
                 (
                     "subject".to_string(),
@@ -2380,7 +2211,7 @@ mod tests {
                 ),
                 (
                     "requiredCapability".to_string(),
-                    operit_link::CoreValue::String("chat.read".to_string()),
+                    operit_link::CoreValue::String("runtime.execute".to_string()),
                 ),
                 (
                     "callerNodeId".to_string(),
@@ -2395,7 +2226,7 @@ mod tests {
         let message = core_command_error_message(error);
         assert!(message.contains("ROUTE_PERMISSION_DENIED"));
         assert!(message.contains("caller"));
-        assert!(message.contains("chat.read"));
+        assert!(message.contains("runtime.execute"));
         assert!(message.contains("cli-client"));
         assert!(message.contains("windows-owner"));
     }

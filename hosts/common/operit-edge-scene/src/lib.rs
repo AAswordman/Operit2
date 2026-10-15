@@ -1,13 +1,13 @@
 //! Bounded, device-owned presentation. No scripts, filesystem paths or business state.
 use base64::{engine::general_purpose::STANDARD, Engine};
-use operit_node_edge::{EdgePlugin, EdgePluginManifest, EdgeServiceError};
 pub mod protocol;
 use operit_link::CoreValue;
 use protocol::*;
+use operit_host_api::RuntimeStorageHost;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::BTreeMap,
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -80,418 +80,227 @@ struct Upload {
     sha: String,
     data: Vec<u8>,
 }
-/// Captured at lease.open; a reconnect may replace the entry, never the Space/chat.
-pub use operit_node_edge::events::EdgeEventRoute as SceneEventRoute;
-pub type SceneRouteProvider = operit_node_edge::events::EdgeEventRouteProvider;
-#[derive(Clone)]
-pub struct SceneDelivery {
-    pub route: SceneEventRoute,
-    pub batch: SceneEventBatch,
+
+const CONFIG_PATH: &str = "runtime/device/display_scene.json";
+const MAX_STORED_BYTES: usize = ((MAX_CACHE + 2) / 3) * 4 + MAX_REQUEST + 1024;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneConfiguration {
+    pub enabled: bool,
+    pub background: u16,
+    pub layers: Vec<Layer>,
 }
-struct Lease {
-    handle: String,
-    rect: Rect,
-    deadline: u64,
-    ttl: u64,
-    closed: Option<&'static str>,
-    route: Option<SceneEventRoute>,
-    acknowledged: u64,
+impl Default for SceneConfiguration {
+    fn default() -> Self { Self { enabled: false, background: 0, layers: vec![] } }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredConfiguration {
+    v: u32,
+    config: SceneConfiguration,
+    packs: BTreeMap<String, String>,
 }
 struct State {
-    changed: Arc<tokio::sync::Notify>,
-    lease: Option<Lease>,
+    config: SceneConfiguration,
+    active: bool,
     packs: BTreeMap<String, Pack>,
     upload: Option<Upload>,
     layers: Vec<Layer>,
     background: u16,
     started: u64,
-    events: VecDeque<Value>,
-    sequence: u64,
+    taps: u64,
     revision: u32,
 }
 impl State {
-    fn event(&mut self, kind: &str, x: Option<u16>, y: Option<u16>, target: Option<&str>) {
-        self.changed.notify_one();
-        self.sequence += 1;
-        if self.events.len() == MAX_EVENTS {
-            self.events.pop_front();
-        }
-        self.events
-            .push_back(json!({"seq":self.sequence,"type":kind,"x":x,"y":y,"target":target}));
+    fn resource(&self, name: &str) -> Result<(&Pack, &Asset)> {
+        let (pack, asset) = name.split_once(':').ok_or_else(invalid)?;
+        let pack = self.packs.get(pack).ok_or(("SCENE_RESOURCE", "pack not cached"))?;
+        Ok((pack, pack.assets.get(asset).ok_or(("SCENE_RESOURCE", "asset not cached"))?))
     }
-    fn close(&mut self, reason: &'static str) {
-        if let Some(l) = &mut self.lease {
-            l.closed = Some(reason);
-        }
-        self.layers.clear();
-        self.upload = None;
-        self.revision = self.revision.wrapping_add(1);
-        self.event(reason, None, None, None);
+    fn in_use(&self, name: &str) -> bool {
+        self.config.layers.iter().any(|layer| layer.asset.split_once(':').is_some_and(|(pack, _)| pack == name))
     }
-    fn expire(&mut self, now: u64) {
-        if self
-            .lease
-            .as_ref()
-            .is_some_and(|l| l.closed.is_none() && now >= l.deadline)
-        {
-            self.close("lease.expired");
-        }
-    }
-    fn active(&self) -> bool {
-        self.lease.as_ref().is_some_and(|l| l.closed.is_none())
-    }
-    fn check(&self, a: &Value, allow_closed: bool) -> Result<()> {
-        let l = self
-            .lease
-            .as_ref()
-            .ok_or(("SCENE_LEASE", "no display lease"))?;
-        if a["lease"].as_str() != Some(&l.handle) {
-            return Err(("SCENE_LEASE", "wrong display lease"));
-        }
-        if !allow_closed {
-            if let Some(reason) = l.closed {
-                return Err((
-                    if reason == "lease.expired" {
-                        "SCENE_EXPIRED"
-                    } else {
-                        "SCENE_CLOSED"
-                    },
-                    "display lease is closed",
-                ));
+    fn validate(&self, config: &SceneConfiguration) -> Result<()> {
+        if config.layers.len() > MAX_LAYERS { return Err(("SCENE_LIMIT", "too many layers")); }
+        for layer in &config.layers {
+            let (_, asset) = self.resource(&layer.asset)?;
+            if !(1..=8).contains(&layer.scale) || !["tl", "center", "bc"].contains(&layer.anchor.as_str())
+                || layer.frame >= asset.frames || layer.target.as_ref().is_some_and(|target| !id(target)) {
+                return Err(invalid());
             }
         }
         Ok(())
     }
-    fn resource(&self, name: &str) -> Result<(&Pack, &Asset)> {
-        let (p, a) = name
-            .split_once(':')
-            .ok_or(("SCENE_RESOURCE", "expected packId:assetId"))?;
-        let pack = self
-            .packs
-            .get(p)
-            .ok_or(("SCENE_RESOURCE", "pack not cached"))?;
-        Ok((
-            pack,
-            pack.assets
-                .get(a)
-                .ok_or(("SCENE_RESOURCE", "asset not cached"))?,
-        ))
-    }
-    fn in_use(&self, p: &str) -> bool {
-        self.layers
-            .iter()
-            .any(|l| l.asset.split_once(':').is_some_and(|(pack, _)| pack == p))
+    fn apply(&mut self, config: SceneConfiguration, now: u64) {
+        self.active = config.enabled;
+        self.layers = config.layers.clone();
+        self.background = config.background;
+        self.config = config;
+        self.started = now;
+        self.taps = 0;
+        self.revision = self.revision.wrapping_add(1);
     }
 }
-/// Owns at most 8 KiB committed asset bytes and one 4 KiB upload. Rendering uses
-/// the existing RGB565 two-row strip, never a framebuffer or decoded image copy.
-pub struct ScenePlugin {
-    changed: Arc<tokio::sync::Notify>,
-    route_provider: Mutex<Option<Arc<SceneRouteProvider>>>,
+
+/// Device-owned display configuration and local rendering. Host packages only
+/// upload resources and edit configuration; there are no display leases or hooks.
+pub struct SceneService {
     state: Mutex<State>,
+    storage: Option<Arc<dyn RuntimeStorageHost>>,
     clock: Instant,
     width: u16,
     height: u16,
     reserved_top: u16,
     touch: bool,
 }
-impl ScenePlugin {
-    /// The device application owns its display dimensions and system UI area.
-    /// A device without a top system bar may pass zero for reserved_top.
+impl SceneService {
     pub fn new(width: u16, height: u16, reserved_top: u16, touch: bool) -> Self {
         assert!(width > 0 && height > reserved_top);
-        let changed = Arc::new(tokio::sync::Notify::new());
         Self {
-            changed: changed.clone(),
-            route_provider: Mutex::new(None),
-            state: Mutex::new(State {
-                changed,
-                lease: None,
-                packs: BTreeMap::new(),
-                upload: None,
-                layers: vec![],
-                background: 0,
-                started: 0,
-                events: VecDeque::new(),
-                sequence: 0,
-                revision: 0,
-            }),
-            clock: Instant::now(),
-            width,
-            height,
-            reserved_top,
-            touch,
+            state: Mutex::new(State { config: SceneConfiguration::default(), active: false,
+                packs: BTreeMap::new(), upload: None, layers: vec![], background: 0,
+                started: 0, taps: 0, revision: 0 }),
+            storage: None, clock: Instant::now(), width, height, reserved_top, touch,
         }
     }
-    pub fn set_route_provider(&self, provider: Arc<SceneRouteProvider>) {
-        *self.route_provider.lock().unwrap() = Some(provider);
-    }
-    pub async fn wait_event(&self) {
-        self.changed.notified().await;
-    }
-    /// Snapshot only; no lock is held during Link I/O. At most one worker per device.
-    pub fn pending_delivery(&self) -> Option<SceneDelivery> {
-        let s = self.state.lock().unwrap();
-        let l = s.lease.as_ref()?;
-        let route = l.route.clone()?;
-        let events = s
-            .events
-            .iter()
-            .filter(|e| e["seq"].as_u64().unwrap() > l.acknowledged)
-            .take(MAX_PUSH_EVENTS)
-            .cloned()
-            .map(serde_json::from_value)
-            .collect::<std::result::Result<Vec<SceneEvent>, _>>()
-            .ok()?;
-        let next = events.last()?.seq;
-        Some(SceneDelivery {
-            route,
-            batch: SceneEventBatch {
-                v: VERSION,
-                lease: l.handle.clone(),
-                events,
-                next,
-                lost_before: s.events.front()?.get("seq")?.as_u64()?.saturating_sub(1),
-                closed: if next == s.sequence {
-                    l.closed.map(str::to_string)
-                } else {
-                    None
-                },
-            },
-        })
-    }
-    pub fn disable_delivery(&self, delivery: &SceneDelivery) {
-        let mut s = self.state.lock().unwrap();
-        if let Some(l) = &mut s.lease {
-            if l.handle == delivery.batch.lease && l.route.as_ref() == Some(&delivery.route) {
-                l.route = None;
+    /// Restore configuration and assets from this device's own durable storage.
+    pub fn with_storage(mut self, storage: Arc<dyn RuntimeStorageHost>) -> std::result::Result<Self, String> {
+        if storage.exists(CONFIG_PATH).map_err(|error| error.message)? {
+            let bytes = storage.readBytes(CONFIG_PATH).map_err(|error| error.message)?;
+            if bytes.len() > MAX_STORED_BYTES { return Err("Stored scene exceeds capacity".into()); }
+            let record: StoredConfiguration = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            if record.v != VERSION || record.packs.len() > MAX_PACKS { return Err("Invalid stored scene version or pack count".into()); }
+            let mut state = self.state.lock().unwrap();
+            let mut total = 0usize;
+            for (name, data) in record.packs {
+                let bytes = STANDARD.decode(data).map_err(|error| error.to_string())?;
+                total += bytes.len();
+                if !id(&name) || bytes.len() > MAX_PACK || total > MAX_CACHE { return Err("Invalid stored scene assets".into()); }
+                let assets = parse_pack(&bytes).map_err(|(_, message)| message.to_string())?;
+                let sha = pack_hash(&bytes);
+                state.packs.insert(name, Pack { bytes, sha, assets });
             }
+            state.validate(&record.config).map_err(|(_, message)| message.to_string())?;
+            state.apply(record.config, 0);
         }
+        self.storage = Some(storage);
+        Ok(self)
     }
-    /// ACK only the exact lease/receiver and a sequence actually sent.
-    pub fn acknowledge(&self, delivery: &SceneDelivery, next: u64) -> bool {
-        let mut s = self.state.lock().unwrap();
-        let Some(l) = s.lease.as_mut() else {
-            return false;
-        };
-        if l.handle != delivery.batch.lease
-            || l.route.as_ref() != Some(&delivery.route)
-            || next != delivery.batch.next
-            || next < l.acknowledged
-        {
-            return false;
-        }
-        l.acknowledged = next;
-        true
+    fn persist(&self, state: &State, config: &SceneConfiguration) -> Result<()> {
+        let Some(storage) = &self.storage else { return Ok(()); };
+        let packs = state.packs.iter().filter(|(name, _)| config.layers.iter().any(|layer|
+            layer.asset.split_once(':').is_some_and(|(pack, _)| pack == name.as_str())))
+            .map(|(name, pack)| (name.clone(), STANDARD.encode(&pack.bytes))).collect();
+        let record = StoredConfiguration { v: VERSION, config: config.clone(), packs };
+        let bytes = serde_json::to_vec(&record).map_err(|_| invalid())?;
+        if bytes.len() > MAX_STORED_BYTES { return Err(("SCENE_LIMIT", "stored scene exceeds capacity")); }
+        storage.writeBytesAtomically(CONFIG_PATH, &bytes).map_err(|_| ("SCENE_STORAGE", "failed to persist device configuration"))
     }
-    fn now(&self) -> u64 {
-        self.clock.elapsed().as_millis() as u64
-    }
+    fn now(&self) -> u64 { self.clock.elapsed().as_millis() as u64 }
+    fn rect(&self) -> Rect { Rect { x: 0, y: self.reserved_top, w: self.width, h: self.height - self.reserved_top } }
     pub fn summary(&self) -> Value {
-        let mut s = self.state.lock().unwrap();
-        s.expire(self.now());
-        json!({"active":s.active(),"revision":s.revision})
+        let state = self.state.lock().unwrap();
+        json!({"active":state.active,"revision":state.revision,"taps":state.taps})
     }
-    /// Local simulator adapter only. Never exposed through Tools.Edge or containing lease handles.
+    /// Local editor mirror only; resource data is not part of the remote config API.
     pub fn visual_snapshot(&self) -> Value {
-        let mut s = self.state.lock().unwrap();
-        s.expire(self.now());
-        json!({"active":s.active(),"revision":s.revision,"rect":s.lease.as_ref().map(|l|l.rect),"background":s.background,
-            "elapsed":self.now().saturating_sub(s.started),"layers":s.layers,"packs":s.packs.iter().map(|(id,p)|json!({"id":id,"data":STANDARD.encode(&p.bytes)})).collect::<Vec<_>>()})
+        let state = self.state.lock().unwrap();
+        json!({"active":state.active,"revision":state.revision,"rect":self.rect(),"background":state.background,
+            "elapsed":self.now().saturating_sub(state.started),"layers":state.layers,
+            "packs":state.packs.iter().map(|(id,pack)|json!({"id":id,"data":STANDARD.encode(&pack.bytes)})).collect::<Vec<_>>()})
     }
+    /// Local exit affects the current presentation, not the stored configuration.
     pub fn system_exit(&self) {
-        let mut s = self.state.lock().unwrap();
-        s.expire(self.now());
-        if s.active() {
-            s.close("system.exit");
-        }
+        let mut state = self.state.lock().unwrap();
+        state.active = false;
+        state.revision = state.revision.wrapping_add(1);
     }
-    pub fn touch(&self, x: u16, y: u16) {
-        if !self.touch {
-            return;
-        }
+    pub fn touch(&self, x: u16, y: u16) -> Option<String> {
+        if !self.touch { return None; }
         let now = self.now();
-        let mut s = self.state.lock().unwrap();
-        s.expire(now);
-        if !s.active() {
-            return;
-        }
-        let r = s.lease.as_ref().unwrap().rect;
-        if x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h {
-            return;
-        }
-        let (x, y) = (x - r.x, y - r.y);
-        let target = s.layers.iter().rev().find_map(|l| {
-            let target = l.target.as_ref()?;
-            let (p, a) = s.resource(&l.asset).ok()?;
-            sample(p, a, l, x as i32, y as i32, now.saturating_sub(s.started))
-                .filter(|(_, alpha)| *alpha > 0)
-                .map(|_| target.clone())
+        let mut state = self.state.lock().unwrap();
+        let rect = self.rect();
+        if !state.active || x < rect.x || y < rect.y || x >= rect.x + rect.w || y >= rect.y + rect.h { return None; }
+        let (x, y) = (x - rect.x, y - rect.y);
+        let target = state.layers.iter().rev().find_map(|layer| {
+            let target = layer.target.as_ref()?;
+            let (pack, asset) = state.resource(&layer.asset).ok()?;
+            sample(pack, asset, layer, x as i32, y as i32, now.saturating_sub(state.started))
+                .filter(|(_, alpha)| *alpha > 0).map(|_| target.clone())
         });
-        if let Some(target) = target {
-            s.event("target.tap", Some(x), Some(y), Some(&target));
-        }
+        if target.is_some() { state.taps = state.taps.saturating_add(1); }
+        target
     }
-    /// tick is frozen at frame start by the C renderer. All pixels blend in RGB565.
+    pub fn advance_target_frame(&self, target: &str) {
+        let mut state = self.state.lock().unwrap();
+        if !state.active { return; }
+        let updates = state.layers.iter().enumerate().filter_map(|(index, layer)| {
+            if layer.target.as_deref() != Some(target) { return None; }
+            let (_, asset) = state.resource(&layer.asset).ok()?;
+            Some((index, (layer.frame + 1) % asset.frames))
+        }).collect::<Vec<_>>();
+        for (index, frame) in updates { state.layers[index].frame = frame; state.layers[index].play = false; }
+        state.revision = state.revision.wrapping_add(1);
+    }
     pub fn paint_strip(&self, bytes: &mut [u8], y: u16, rows: u16, tick: u32) {
-        let mut s = self.state.lock().unwrap();
-        s.expire(self.now());
-        if !s.active() || bytes.len() != self.width as usize * rows as usize * 2 {
-            return;
-        }
-        let r = s.lease.as_ref().unwrap().rect;
-        let elapsed = tick.wrapping_sub(s.started as u32) as u64;
+        let state = self.state.lock().unwrap();
+        if !state.active || bytes.len() != self.width as usize * rows as usize * 2 { return; }
+        let rect = self.rect();
+        let elapsed = tick.wrapping_sub(state.started as u32) as u64;
         for row in 0..rows {
             let sy = y + row;
-            if sy < r.y || sy >= r.y + r.h {
-                continue;
-            }
-            for x in r.x..r.x + r.w {
-                let mut pixel = s.background;
-                for l in &s.layers {
-                    if let Ok((p, a)) = s.resource(&l.asset) {
-                        if let Some((color, alpha)) =
-                            sample(p, a, l, (x - r.x) as i32, (sy - r.y) as i32, elapsed)
-                        {
+            if sy < rect.y || sy >= rect.y + rect.h { continue; }
+            for x in rect.x..rect.x + rect.w {
+                let mut pixel = state.background;
+                for layer in &state.layers {
+                    if let Ok((pack, asset)) = state.resource(&layer.asset) {
+                        if let Some((color, alpha)) = sample(pack, asset, layer, (x - rect.x) as i32, (sy - rect.y) as i32, elapsed) {
                             pixel = blend(pixel, color, alpha);
                         }
                     }
                 }
-                let i = ((row as usize * self.width as usize) + x as usize) * 2;
-                bytes[i..i + 2].copy_from_slice(&pixel.to_le_bytes());
+                let index = ((row as usize * self.width as usize) + x as usize) * 2;
+                bytes[index..index + 2].copy_from_slice(&pixel.to_le_bytes());
             }
         }
     }
-    pub fn tick(&self) -> u32 {
-        self.now() as u32
-    }
-    fn dispatch(&self, action: &str, a: Value, now: u64) -> Result<Value> {
-        if !a.is_object() || serde_json::to_vec(&a).map_err(|_| invalid())?.len() > MAX_REQUEST {
-            return Err(("SCENE_LIMIT", "request exceeds 1024 bytes"));
-        }
-        if a["v"].as_u64() != Some(VERSION as u64) {
-            return Err(("SCENE_VERSION", "expected protocol v:1"));
-        }
+    pub fn tick(&self) -> u32 { self.now() as u32 }
+    fn dispatch(&self, action: &str, args: Value, now: u64) -> Result<Value> {
+        if !args.is_object() || serde_json::to_vec(&args).map_err(|_| invalid())?.len() > MAX_REQUEST { return Err(("SCENE_LIMIT", "request exceeds capacity")); }
+        if args["v"].as_u64() != Some(VERSION as u64) { return Err(("SCENE_VERSION", "expected protocol v:1")); }
         let fields: &[&str] = match action {
-            "capabilities" => &[],
-            "lease.open" => &["owner", "rect", "ttlMs", "notify"],
-            "lease.renew" => &["lease"],
-            "lease.close" => &["lease"],
-            "pack.begin" => &["lease", "packId", "bytes", "sha256"],
-            "pack.chunk" => &["lease", "upload", "offset", "data"],
-            "pack.commit" | "pack.abort" => &["lease", "upload"],
-            "pack.remove" => &["lease", "packId"],
-            "scene.set" => &["lease", "background", "layers"],
-            "events.poll" => &["lease", "after"],
+            "capabilities" | "config.read" | "config.clear" | "state" => &[],
+            "config.apply" => &["enabled", "background", "layers"],
+            "pack.begin" => &["packId", "bytes", "sha256"],
+            "pack.chunk" => &["upload", "offset", "data"],
+            "pack.commit" | "pack.abort" => &["upload"],
+            "pack.remove" => &["packId"],
             _ => return Err(invalid()),
         };
-        if a.as_object()
-            .unwrap()
-            .keys()
-            .any(|k| k != "v" && !fields.contains(&k.as_str()))
-        {
-            return Err(invalid());
-        }
+        if args.as_object().unwrap().keys().any(|field| field != "v" && !fields.contains(&field.as_str())) { return Err(invalid()); }
         let mut s = self.state.lock().unwrap();
-        s.expire(now);
-        if action == "capabilities" {
-            return Ok(
-                json!({"protocol":VERSION,"screen":{"width":self.width,"height":self.height,"format":"RGB565_LE"},
-            "events":{"push":self.route_provider.lock().unwrap().is_some(),"method":"chatEdgeEvent","maxBatch":MAX_PUSH_EVENTS,"ack":true},
-            "reserved":{"x":0,"y":0,"w":self.width,"h":self.reserved_top},"touch":self.touch,"animation":{"local":true,"minFrameMs":50,"maxFrameMs":2000,"maxFrames":8},
-            "formats":{"pack":"ESP1","asset":"ESI1","alpha":"straight","paletteMax":16,"maxWidth":96,"maxHeight":96},
-            "limits":{"requestBytes":MAX_REQUEST,"replyBytes":MAX_REPLY,"packBytes":MAX_PACK,"cacheBytes":MAX_CACHE,"packs":MAX_PACKS,"assetsPerPack":MAX_ASSETS,"layers":MAX_LAYERS,"chunkBytes":MAX_CHUNK,"scaleMax":8,"events":MAX_EVENTS,"pollPage":8,"uploadBytes":MAX_PACK},
-            "cache":{"persistent":false,"usedBytes":s.packs.values().map(|p|p.bytes.len()).sum::<usize>(),"packs":s.packs.iter().map(|(id,p)|json!({"id":id,"bytes":p.bytes.len(),"sha256":p.sha,"assets":p.assets.keys().collect::<Vec<_>>()})).collect::<Vec<_>>()}}),
-            );
-        }
-        if action == "lease.open" {
-            if s.active() {
-                return Err(("SCENE_BUSY", "display region already leased"));
-            }
-            if !a["owner"].as_str().is_some_and(id) {
-                return Err(invalid());
-            }
-            let rect: Rect = match a.get("rect") {
-                Some(r) => serde_json::from_value(r.clone()).map_err(|_| invalid())?,
-                None => Rect {
-                    x: 0,
-                    y: self.reserved_top,
-                    w: self.width,
-                    h: self.height - self.reserved_top,
-                },
-            };
-            if rect.y < self.reserved_top
-                || rect.w == 0
-                || rect.h == 0
-                || rect.x as u32 + rect.w as u32 > self.width as u32
-                || rect.y as u32 + rect.h as u32 > self.height as u32
-            {
-                return Err((
-                    "SCENE_LIMIT",
-                    "region intersects system exit or screen bounds",
-                ));
-            }
-            let ttl = match a.get("ttlMs") {
-                None => 30000,
-                Some(n) => n.as_u64().ok_or_else(invalid)?,
-            };
-            if !(1000..=60000).contains(&ttl) {
-                return Err(("SCENE_LIMIT", "ttlMs must be 1000..60000"));
-            }
-            let route = match a.get("notify") {
-                None => None,
-                Some(notify) => {
-                    let package = notify["packageName"].as_str().ok_or_else(invalid)?;
-                    if notify.as_object().is_none_or(|m| m.len() != 1)
-                        || package.is_empty()
-                        || package.len() > 108
-                        || !package
-                            .bytes()
-                            .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
-                    {
-                        return Err(invalid());
-                    }
-                    Some(
-                        self.route_provider
-                            .lock()
-                            .unwrap()
-                            .as_ref()
-                            .and_then(|p| p(package))
-                            .ok_or((
-                                "SCENE_NOTIFY",
-                                "no authorized Space chat for event delivery",
-                            ))?,
-                    )
-                }
-            };
-            let handle = uuid::Uuid::new_v4().to_string();
-            s.lease = Some(Lease {
-                handle: handle.clone(),
-                rect,
-                deadline: now + ttl,
-                ttl,
-                closed: None,
-                route,
-                acknowledged: s.sequence,
-            });
-            s.events.clear();
-            s.background = 0;
-            s.started = now;
-            s.revision = s.revision.wrapping_add(1);
-            return Ok(json!({"lease":handle,"rect":rect,"ttlMs":ttl,"cursor":s.sequence}));
-        }
-        s.check(&a, action == "events.poll" || action == "lease.close")?;
+        let a = args;
         match action {
-            "lease.renew" => {
-                let l = s.lease.as_mut().unwrap();
-                l.deadline = now + l.ttl;
-                Ok(json!({"ttlMs":l.ttl}))
-            }
-            "lease.close" => {
-                if s.active() {
-                    s.close("lease.closed");
-                }
-                Ok(json!({}))
+            "capabilities" => Ok(json!({"protocol":VERSION,"screen":{"width":self.width,"height":self.height,"format":"RGB565_LE"},
+                "input":{"local":true},"reserved":{"x":0,"y":0,"w":self.width,"h":self.reserved_top},"touch":self.touch,
+                "configuration":{"persistent":self.storage.is_some(),"hostRequired":false},
+                "animation":{"local":true,"minFrameMs":50,"maxFrameMs":2000,"maxFrames":8},
+                "formats":{"pack":"ESP1","asset":"ESI1","alpha":"straight","paletteMax":16,"maxWidth":96,"maxHeight":96},
+                "limits":{"requestBytes":MAX_REQUEST,"replyBytes":MAX_REPLY,"packBytes":MAX_PACK,"cacheBytes":MAX_CACHE,"packs":MAX_PACKS,"assetsPerPack":MAX_ASSETS,"layers":MAX_LAYERS,"chunkBytes":MAX_CHUNK,"scaleMax":8,"uploadBytes":MAX_PACK},
+                "cache":{"persistent":self.storage.is_some(),"usedBytes":s.packs.values().map(|pack|pack.bytes.len()).sum::<usize>(),
+                    "packs":s.packs.iter().map(|(id,pack)|json!({"id":id,"bytes":pack.bytes.len(),"sha256":pack.sha,"assets":pack.assets.keys().collect::<Vec<_>>()})).collect::<Vec<_>>()}})),
+            "config.read" => serde_json::to_value(&s.config).map_err(|_| invalid()),
+            "state" => Ok(json!({"active":s.active,"taps":s.taps,"revision":s.revision})),
+            "config.apply" | "config.clear" => {
+                let config = if action == "config.clear" { SceneConfiguration::default() } else {
+                    let mut fields = a.as_object().unwrap().clone(); fields.remove("v");
+                    serde_json::from_value::<SceneConfiguration>(Value::Object(fields)).map_err(|_| invalid())?
+                };
+                s.validate(&config)?;
+                self.persist(&s, &config)?;
+                s.apply(config, now);
+                Ok(json!({"configured":true,"persistent":self.storage.is_some(),"revision":s.revision}))
             }
             "pack.begin" => {
                 if s.upload.is_some() {
@@ -616,162 +425,21 @@ impl ScenePlugin {
                 s.revision = s.revision.wrapping_add(1);
                 Ok(json!({}))
             }
-            "scene.set" => {
-                let layers = a["layers"].as_array().ok_or_else(invalid)?;
-                if layers.len() > MAX_LAYERS {
-                    return Err(("SCENE_LIMIT", "too many layers"));
-                }
-                let layers: Vec<Layer> =
-                    serde_json::from_value(a["layers"].clone()).map_err(|_| invalid())?;
-                let bg = match a.get("background") {
-                    None => 0,
-                    Some(v) => v.as_u64().filter(|x| *x <= 65535).ok_or_else(invalid)? as u16,
-                };
-                for l in &layers {
-                    let (_, asset) = s.resource(&l.asset)?;
-                    if !(1..=8).contains(&l.scale)
-                        || !["tl", "center", "bc"].contains(&l.anchor.as_str())
-                        || l.frame >= asset.frames
-                        || l.target.as_ref().is_some_and(|t| !id(t))
-                    {
-                        return Err(invalid());
-                    }
-                }
-                if s.layers != layers || s.background != bg {
-                    s.layers = layers;
-                    s.background = bg;
-                    s.started = now;
-                    s.revision = s.revision.wrapping_add(1);
-                }
-                Ok(json!({"revision":s.revision}))
-            }
-            "events.poll" => {
-                let after = match a.get("after") {
-                    None => 0,
-                    Some(n) => n.as_u64().ok_or_else(invalid)?,
-                };
-                if after > s.sequence {
-                    return Err(invalid());
-                }
-                let events = s
-                    .events
-                    .iter()
-                    .filter(|e| e["seq"].as_u64().unwrap() > after)
-                    .take(8)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let next = events
-                    .last()
-                    .and_then(|e| e["seq"].as_u64())
-                    .unwrap_or(after);
-                Ok(
-                    json!({"events":events,"next":next,"lostBefore":s.events.front().map(|e|e["seq"].as_u64().unwrap().saturating_sub(1)).unwrap_or(s.sequence),"closed":s.lease.as_ref().unwrap().closed}),
-                )
-            }
             _ => Err(invalid()),
         }
     }
-}
-impl operit_node_edge::events::EdgeEventSource for ScenePlugin {
-    fn set_event_route_provider(
-        &self,
-        provider: Arc<operit_node_edge::events::EdgeEventRouteProvider>,
-    ) {
-        self.set_route_provider(provider);
-    }
-    fn pending_event_delivery(&self) -> Option<operit_node_edge::events::EdgeEventDelivery> {
-        let delivery = self.pending_delivery()?;
-        Some(operit_node_edge::events::EdgeEventDelivery {
-            route: delivery.route,
-            batch: operit_edge_contract::events::EdgeEventBatch {
-                v: VERSION,
-                source: PLUGIN_ID.into(),
-                stream: delivery.batch.lease,
-                next: delivery.batch.next,
-                lost_before: delivery.batch.lost_before,
-                events: delivery
-                    .batch
-                    .events
-                    .into_iter()
-                    .map(|e| {
-                        let data = if e.r#type == "target.tap" {
-                            json!({"x":e.x,"y":e.y,"target":e.target})
-                        } else {
-                            json!({})
-                        };
-                        operit_edge_contract::events::EdgeActionEvent {
-                            seq: e.seq,
-                            action: e.r#type,
-                            data,
-                        }
-                    })
-                    .collect(),
-            },
-        })
-    }
-    fn disable_event_delivery(&self, delivery: &operit_node_edge::events::EdgeEventDelivery) {
-        let mut s = self.state.lock().unwrap();
-        if let Some(l) = &mut s.lease {
-            if l.handle == delivery.batch.stream && l.route.as_ref() == Some(&delivery.route) {
-                l.route = None;
-            }
-        }
-    }
-    fn acknowledge_event_delivery(
-        &self,
-        delivery: &operit_node_edge::events::EdgeEventDelivery,
-        next: u64,
-    ) -> bool {
-        let mut s = self.state.lock().unwrap();
-        let Some(l) = s.lease.as_mut() else {
-            return false;
-        };
-        if delivery.batch.source != PLUGIN_ID
-            || l.handle != delivery.batch.stream
-            || l.route.as_ref() != Some(&delivery.route)
-            || next != delivery.batch.next
-            || next < l.acknowledged
-        {
-            return false;
-        }
-        l.acknowledged = next;
-        true
-    }
-    fn wait_for_event(
-        &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        Box::pin(self.wait_event())
-    }
-}
-
-impl EdgePlugin for ScenePlugin {
-    fn manifest(&self) -> EdgePluginManifest {
-        EdgePluginManifest {
-            id: PLUGIN_ID.into(),
-            name: "Scene display v1".into(),
-            actions: ACTIONS.iter().map(|s| s.to_string()).collect(),
-        }
-    }
-    fn invoke(
-        &self,
-        action: &str,
-        args: CoreValue,
-    ) -> std::result::Result<CoreValue, EdgeServiceError> {
-        let args = operit_link::fromCoreValue::<Value>(args)
-            .map_err(|e| EdgeServiceError::new(e.to_string()))?;
-        let out = match self.dispatch(action, args, self.now()) {
+    pub fn call(&self, method: &str, args: CoreValue) -> std::result::Result<CoreValue, String> {
+        let args = operit_link::fromCoreValue::<Value>(args).map_err(|error| error.to_string())?;
+        let reply = match self.dispatch(method, args, self.now()) {
             Ok(result) => json!({"v":VERSION,"ok":true,"result":result}),
-            Err((code, message)) => {
-                json!({"v":VERSION,"ok":false,"error":{"code":code,"message":message}})
-            }
+            Err((code, message)) => json!({"v":VERSION,"ok":false,"error":{"code":code,"message":message}}),
         };
-        if serde_json::to_vec(&out).unwrap().len() > MAX_REPLY {
-            return Err(EdgeServiceError::new(
-                "scene reply exceeds bounded capacity",
-            ));
-        }
-        operit_link::toCoreValue(out).map_err(|e| EdgeServiceError::new(e.to_string()))
+        if serde_json::to_vec(&reply).unwrap().len() > MAX_REPLY { return Err("Scene reply exceeds capacity".into()); }
+        operit_link::toCoreValue(reply).map_err(|error| error.to_string())
     }
+}
+fn pack_hash(bytes: &[u8]) -> String {
+    ring::digest::digest(&ring::digest::SHA256, bytes).as_ref().iter().map(|byte|format!("{byte:02x}")).collect()
 }
 fn parse_pack(data: &[u8]) -> Result<BTreeMap<String, Asset>> {
     let format = ("SCENE_FORMAT", "invalid ESP1/ESI1 package");
@@ -900,520 +568,80 @@ mod tests {
             .map(|b| format!("{b:02x}"))
             .collect()
     }
-    fn push_plugin() -> ScenePlugin {
-        let p = ScenePlugin::new(320, 240, 24, true);
-        p.set_route_provider(Arc::new(|package| {
-            Some(SceneEventRoute {
-                space_id: "space-a".into(),
-                chat_id: "chat-a".into(),
-                package_name: package.into(),
-            })
-        }));
-        p
-    }
-    fn push_open(p: &ScenePlugin, now: u64) -> String {
-        call(
-            p,
-            "lease.open",
-            json!({"owner":"pet.demo","notify":{"packageName":"com.operit.pet"}}),
-            now,
-        )
-        .unwrap()["lease"]
-            .as_str()
-            .unwrap()
-            .into()
-    }
-    #[test]
-    fn push_idle_is_asleep_and_requires_an_authorized_chat() {
-        use std::future::Future;
-        let p = ScenePlugin::new(320, 240, 24, true);
-        assert!(call(
-            &p,
-            "lease.open",
-            json!({"owner":"pet","notify":{"packageName":"com.operit.pet"}}),
-            0
-        )
-        .is_err());
-        let p = push_plugin();
-        push_open(&p, 0);
-        assert!(p.pending_delivery().is_none());
-        let mut wait = Box::pin(p.wait_event());
-        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-        assert!(wait.as_mut().poll(&mut cx).is_pending());
-        p.system_exit();
-        assert!(wait.as_mut().poll(&mut cx).is_ready());
-        let d = p.pending_delivery().unwrap();
-        assert_eq!(d.batch.events[0].r#type, "system.exit");
-        assert!(d.batch.valid());
-    }
-    #[test]
-    fn push_bounded_queue_batches_replay_and_late_lease_ack() {
-        let p = push_plugin();
-        let lease = push_open(&p, 0);
-        {
-            let mut s = p.state.lock().unwrap();
-            for _ in 0..20 {
-                s.event("target.tap", Some(1), Some(2), Some("pet"));
-            }
+
+    #[derive(Default)]
+    struct Storage {files:Mutex<BTreeMap<String,Vec<u8>>>, fail: std::sync::atomic::AtomicBool}
+    impl RuntimeStorageHost for Storage {
+        fn runtimeRootDir(&self)->Option<std::path::PathBuf> {None}
+        fn workspaceRootDir(&self)->Option<std::path::PathBuf> {None}
+        fn readBytes(&self,path:&str)->operit_host_api::HostResult<Vec<u8>> {self.files.lock().unwrap().get(path).cloned().ok_or_else(||operit_host_api::HostError::new("missing"))}
+        fn writeBytes(&self,path:&str,data:&[u8])->operit_host_api::HostResult<()> {self.files.lock().unwrap().insert(path.into(),data.to_vec());Ok(())}
+        fn writeBytesAtomically(&self,path:&str,data:&[u8])->operit_host_api::HostResult<()> {
+            if self.fail.swap(false,std::sync::atomic::Ordering::SeqCst) {return Err(operit_host_api::HostError::new("disk failure"));}
+            self.writeBytes(path,data)
         }
-        let d = p.pending_delivery().unwrap();
-        assert_eq!(d.batch.lease, lease);
-        assert_eq!(d.batch.events.len(), 4);
-        assert_eq!(d.batch.events[0].seq, 5);
-        assert_eq!(d.batch.lost_before, 4);
-        assert_eq!(
-            p.pending_delivery().unwrap().batch.next,
-            d.batch.next,
-            "no ACK means replay"
-        );
-        assert!(!p.acknowledge(&d, d.batch.next + 1));
-        assert!(p.acknowledge(&d, d.batch.next));
-        let second = p.pending_delivery().unwrap();
-        assert_eq!(second.batch.events[0].seq, 9);
-        p.system_exit();
-        assert!(
-            p.pending_delivery().unwrap().batch.closed.is_none(),
-            "do not close before draining final page"
-        );
-        while let Some(page) = p.pending_delivery() {
-            assert!(page.batch.valid());
-            assert!(p.acknowledge(&page, page.batch.next));
-        }
-        assert!(p.pending_delivery().is_none());
-        push_open(&p, 1);
-        assert!(
-            !p.acknowledge(&d, d.batch.next),
-            "old ACK must not advance new lease"
-        );
-        {
-            p.state
-                .lock()
-                .unwrap()
-                .event("target.tap", Some(1), Some(2), Some("pet"));
-        }
-        let next = p.pending_delivery().unwrap();
-        assert_eq!(next.route.space_id, "space-a");
-        p.disable_delivery(&d);
-        assert!(
-            p.pending_delivery().is_some(),
-            "old invalidation cannot kill new lease"
-        );
-        p.disable_delivery(&next);
-        assert!(p.pending_delivery().is_none());
+        fn appendBytes(&self,_:&str,_:&[u8])->operit_host_api::HostResult<()> {unimplemented!()}
+        fn delete(&self,path:&str,_:bool)->operit_host_api::HostResult<()> {self.files.lock().unwrap().remove(path);Ok(())}
+        fn exists(&self,path:&str)->operit_host_api::HostResult<bool> {Ok(self.files.lock().unwrap().contains_key(path))}
+        fn list(&self,_:&str)->operit_host_api::HostResult<Vec<operit_host_api::RuntimeStorageEntry>> {Ok(vec![])}
+    }
+    fn upload(scene:&SceneService, sha: &str)->Result<Value> {
+        let data=bytes();
+        let started=scene.dispatch("pack.begin",json!({"v":1,"packId":"demo","bytes":data.len(),"sha256":sha}),0)?;
+        let handle=started["upload"].as_str().unwrap();
+        scene.dispatch("pack.chunk",json!({"v":1,"upload":handle,"offset":0,"data":STANDARD.encode(data)}),0)?;
+        scene.dispatch("pack.commit",json!({"v":1,"upload":handle}),0)
+    }
+    fn configuration()->Value {json!({"v":1,"enabled":true,"background":0,"layers":[{"asset":"demo:pet","x":4,"y":4,"scale":2,"target":"pet"}]})}
+    #[test]
+    fn configuration_restores_assets_and_runs_without_a_host_or_lease() {
+        let storage=Arc::new(Storage::default());
+        let scene=SceneService::new(32,32,2,true).with_storage(storage.clone()).unwrap();
+        upload(&scene,&hash(&bytes())).unwrap();
+        scene.dispatch("config.apply",configuration(),10).unwrap();
+        assert!(scene.dispatch("state",json!({"v":1}),600_000).unwrap()["active"].as_bool().unwrap());
+        assert_eq!(scene.touch(4,6).as_deref(),Some("pet"));
+        scene.advance_target_frame("pet");
+        assert_eq!(scene.summary()["taps"],1);
+        let mut strip=vec![0u8;32*2*8];scene.paint_strip(&mut strip,0,8,100);
+        assert!(strip.iter().any(|byte|*byte!=0));
+        drop(scene);
+        let restored=SceneService::new(32,32,2,true).with_storage(storage).unwrap();
+        assert_eq!(restored.summary()["active"],true);
+        assert_eq!(restored.visual_snapshot()["packs"].as_array().unwrap().len(),1);
+        assert_eq!(restored.touch(4,6).as_deref(),Some("pet"));
+        restored.system_exit();
+        assert_eq!(restored.summary()["active"],false);
+        assert_eq!(restored.dispatch("config.read",json!({"v":1}),0).unwrap()["enabled"],true);
     }
     #[test]
-    fn scene_adapter_uses_generic_actions_and_rejects_late_stream_acks() {
-        use operit_node_edge::events::EdgeEventSource;
-        let p = push_plugin();
-        let lease = push_open(&p, 0);
-        p.state
-            .lock()
-            .unwrap()
-            .event("target.tap", Some(1), Some(2), Some("pet"));
-        let d = p.pending_event_delivery().unwrap();
-        assert!(d.batch.valid());
-        assert_eq!(d.batch.source, "display.scene");
-        assert_eq!(d.batch.stream, lease);
-        assert_eq!(d.batch.events[0].action, "target.tap");
-        assert_eq!(d.batch.events[0].data, json!({"x":1,"y":2,"target":"pet"}));
-        assert!(!p.acknowledge_event_delivery(&d, d.batch.next + 1));
-        assert!(p.acknowledge_event_delivery(&d, d.batch.next));
-        p.system_exit();
-        let exited = p.pending_event_delivery().unwrap();
-        assert_eq!(exited.batch.events[0].action, "system.exit");
-        assert_eq!(exited.batch.events[0].data, json!({}));
-        push_open(&p, 1);
-        assert!(!p.acknowledge_event_delivery(&exited, exited.batch.next));
+    fn failed_atomic_save_and_invalid_config_keep_previous_state() {
+        let storage=Arc::new(Storage::default());
+        let scene=SceneService::new(32,32,2,true).with_storage(storage.clone()).unwrap();
+        upload(&scene,&hash(&bytes())).unwrap();
+        scene.dispatch("config.apply",configuration(),0).unwrap();
+        let before=storage.readBytes(CONFIG_PATH).unwrap();
+        storage.fail.store(true,std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(scene.dispatch("config.clear",json!({"v":1}),0).unwrap_err().0,"SCENE_STORAGE");
+        assert_eq!(storage.readBytes(CONFIG_PATH).unwrap(),before);
+        assert_eq!(scene.summary()["active"],true);
+        let mut bad=configuration();bad["layers"][0]["asset"]=json!("missing:asset");
+        assert!(scene.dispatch("config.apply",bad,0).is_err());
+        assert_eq!(storage.readBytes(CONFIG_PATH).unwrap(),before);
+        scene.dispatch("config.clear",json!({"v":1}),0).unwrap();
+        let restored=SceneService::new(32,32,2,true).with_storage(storage).unwrap();
+        assert_eq!(restored.summary()["active"],false);
     }
     #[test]
-    fn compatibility_poll_does_not_ack_or_enable_push() {
-        let p = ScenePlugin::new(320, 240, 24, true);
-        let l = open(&p);
-        p.system_exit();
-        assert!(p.pending_delivery().is_none());
-        assert_eq!(
-            call(&p, "events.poll", json!({"lease":l}), 0).unwrap()["events"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
+    fn uploads_verify_hash_and_enforce_capacity() {
+        let scene=SceneService::new(32,32,2,true);
+        assert_eq!(upload(&scene,&"0".repeat(64)).unwrap_err().0,"SCENE_HASH");
+        assert!(scene.visual_snapshot()["packs"].as_array().unwrap().is_empty());
+        assert!(scene.dispatch("pack.begin",json!({"v":1,"packId":"demo","bytes":MAX_PACK+1,"sha256":hash(&bytes())}),0).is_err());
+        // Failed hash leaves the upload cancellable so a caller can retry.
+        let handle=scene.state.lock().unwrap().upload.as_ref().map(|u|u.handle.clone());
+        if let Some(handle)=handle {scene.dispatch("pack.abort",json!({"v":1,"upload":handle}),0).unwrap();}
+        upload(&scene,&hash(&bytes())).unwrap();
     }
-    fn call(p: &ScenePlugin, action: &str, mut args: Value, now: u64) -> Result<Value> {
-        args["v"] = json!(1);
-        p.dispatch(action, args, now)
-    }
-    fn open(p: &ScenePlugin) -> String {
-        call(p, "lease.open", json!({"owner":"pet.demo"}), 0).unwrap()["lease"]
-            .as_str()
-            .unwrap()
-            .into()
-    }
-    #[test]
-    fn device_owned_geometry_supports_other_screens_and_no_system_bar() {
-        for (width, height, reserved_top, touch) in [
-            (128, 128, 0, false),
-            (480, 272, 16, true),
-            (64, 48, 5, false),
-        ] {
-            let p = ScenePlugin::new(width, height, reserved_top, touch);
-            let capabilities = call(&p, "capabilities", json!({}), 0).unwrap();
-            assert_eq!(capabilities["screen"]["width"], width);
-            assert_eq!(capabilities["screen"]["height"], height);
-            assert_eq!(capabilities["reserved"]["h"], reserved_top);
-            assert_eq!(capabilities["touch"], touch);
-            let region = call(&p, "lease.open", json!({"owner":"test.device"}), 0).unwrap();
-            assert_eq!(
-                region["rect"],
-                json!({"x":0,"y":reserved_top,"w":width,"h":height-reserved_top})
-            );
-            let lease = region["lease"].clone();
-            call(
-                &p,
-                "scene.set",
-                json!({"lease":lease,"background":0xf800,"layers":[]}),
-                0,
-            )
-            .unwrap();
-            let mut row = vec![0x55; width as usize * 2];
-            p.paint_strip(&mut row, reserved_top, 1, 0);
-            assert!(row.chunks_exact(2).all(|pixel| pixel == [0, 248]));
-            if reserved_top > 0 {
-                row.fill(0x55);
-                p.paint_strip(&mut row, 0, 1, 0);
-                assert!(row.iter().all(|byte| *byte == 0x55));
-                call(&p, "lease.close", json!({"lease":lease}), 0).unwrap();
-                assert_eq!(
-                    call(
-                        &p,
-                        "lease.open",
-                        json!({"owner":"test.device", "rect":{"x":0,"y":0,"w":width,"h":height}}),
-                        0
-                    )
-                    .unwrap_err()
-                    .0,
-                    "SCENE_LIMIT"
-                );
-            }
-        }
-    }
-    fn install(p: &ScenePlugin, l: &str, name: &str, data: &[u8]) {
-        let u = call(
-            p,
-            "pack.begin",
-            json!({"lease":l,"packId":name,"bytes":data.len(),"sha256":hash(data)}),
-            0,
-        )
-        .unwrap()["upload"]
-            .clone();
-        for (index, part) in data.chunks(MAX_CHUNK).enumerate() {
-            call(
-                p,
-                "pack.chunk",
-                json!({"lease":l,"upload":u,"offset":index*MAX_CHUNK,"data":STANDARD.encode(part)}),
-                0,
-            )
-            .unwrap();
-        }
-        call(p, "pack.commit", json!({"lease":l,"upload":u}), 0).unwrap();
-    }
-    fn scene(p: &ScenePlugin, l: &str, layers: Value) {
-        call(p, "scene.set", json!({"lease":l,"layers":layers}), 0).unwrap();
-    }
-    #[test]
-    fn parser_rejects_every_truncation_and_bad_palette() {
-        let pack = bytes();
-        assert!(parse_pack(&pack).is_ok());
-        for n in 0..pack.len() {
-            assert!(parse_pack(&pack[..n]).is_err(), "prefix {n}");
-        }
-        let mut bad = pack.clone();
-        bad.push(0);
-        assert!(parse_pack(&bad).is_err());
-        let mut bad = pack;
-        *bad.last_mut().unwrap() = 4;
-        assert!(parse_pack(&bad).is_err());
-    }
-    #[test]
-    fn leases_protect_system_region_and_expire_without_core() {
-        let p = ScenePlugin::new(320, 240, 24, true);
-        assert_eq!(
-            call(
-                &p,
-                "lease.open",
-                json!({"owner":"pet","rect":{"x":0,"y":0,"w":320,"h":240}}),
-                0
-            )
-            .unwrap_err()
-            .0,
-            "SCENE_LIMIT"
-        );
-        let l = open(&p);
-        assert_eq!(
-            call(&p, "lease.open", json!({"owner":"other"}), 0)
-                .unwrap_err()
-                .0,
-            "SCENE_BUSY"
-        );
-        assert_eq!(
-            call(&p, "lease.renew", json!({"lease":"wrong"}), 0)
-                .unwrap_err()
-                .0,
-            "SCENE_LEASE"
-        );
-        call(&p, "lease.renew", json!({"lease":l}), 1000).unwrap();
-        assert_eq!(
-            call(&p, "scene.set", json!({"lease":l,"layers":[]}), 31000)
-                .unwrap_err()
-                .0,
-            "SCENE_EXPIRED"
-        );
-        let events = call(&p, "events.poll", json!({"lease":l}), 31000).unwrap();
-        assert_eq!(events["events"][0]["type"], "lease.expired");
-        let next = call(&p, "lease.open", json!({"owner":"new"}), 31000).unwrap();
-        assert_ne!(next["lease"], l);
-        assert_eq!(
-            call(&p, "events.poll", json!({"lease":l}), 31000)
-                .unwrap_err()
-                .0,
-            "SCENE_LEASE"
-        );
-    }
-    #[test]
-    fn upload_is_ordered_idempotent_and_atomic() {
-        let p = ScenePlugin::new(320, 240, 24, true);
-        let l = open(&p);
-        let data = bytes();
-        let u = call(
-            &p,
-            "pack.begin",
-            json!({"lease":l,"packId":"demo","bytes":data.len(),"sha256":hash(&data)}),
-            0,
-        )
-        .unwrap()["upload"]
-            .clone();
-        assert_eq!(
-            call(
-                &p,
-                "pack.chunk",
-                json!({"lease":l,"upload":u,"offset":1,"data":STANDARD.encode(&data)}),
-                0
-            )
-            .unwrap_err()
-            .0,
-            "SCENE_OFFSET"
-        );
-        assert_eq!(
-            call(&p, "pack.commit", json!({"lease":l,"upload":u}), 0)
-                .unwrap_err()
-                .0,
-            "SCENE_OFFSET"
-        );
-        for _ in 0..2 {
-            let result = call(
-                &p,
-                "pack.chunk",
-                json!({"lease":l,"upload":u,"offset":0,"data":STANDARD.encode(&data)}),
-                0,
-            )
-            .unwrap();
-            assert_eq!(result["offset"], data.len());
-        }
-        call(&p, "pack.commit", json!({"lease":l,"upload":u}), 0).unwrap();
-        let u = call(
-            &p,
-            "pack.begin",
-            json!({"lease":l,"packId":"demo","bytes":data.len(),"sha256":"0".repeat(64)}),
-            0,
-        )
-        .unwrap()["upload"]
-            .clone();
-        call(
-            &p,
-            "pack.chunk",
-            json!({"lease":l,"upload":u,"offset":0,"data":STANDARD.encode(&data)}),
-            0,
-        )
-        .unwrap();
-        assert_eq!(
-            call(&p, "pack.commit", json!({"lease":l,"upload":u}), 0)
-                .unwrap_err()
-                .0,
-            "SCENE_HASH"
-        );
-        assert_eq!(
-            call(&p, "capabilities", json!({}), 0).unwrap()["cache"]["packs"][0]["sha256"],
-            hash(&data)
-        );
-        call(&p, "pack.abort", json!({"lease":l,"upload":u}), 0).unwrap();
-        install(&p, &l, "two", &data);
-        assert_eq!(
-            call(
-                &p,
-                "pack.begin",
-                json!({"lease":l,"packId":"three","bytes":data.len(),"sha256":hash(&data)}),
-                0
-            )
-            .unwrap_err()
-            .0,
-            "SCENE_LIMIT"
-        );
-    }
-    #[test]
-    fn scene_updates_are_atomic_and_displayed_assets_cannot_be_replaced() {
-        let p = ScenePlugin::new(320, 240, 24, true);
-        let l = open(&p);
-        let data = bytes();
-        install(&p, &l, "demo", &data);
-        scene(&p, &l, json!([{"asset":"demo:pet","x":0,"y":0}]));
-        let revision = p.summary()["revision"].clone();
-        assert!(call(&p,"scene.set",json!({"lease":l,"layers":[{"asset":"demo:pet","x":0,"y":0},{"asset":"missing:pet","x":0,"y":0}]}),0).is_err());
-        assert_eq!(p.summary()["revision"], revision);
-        assert_eq!(
-            call(&p, "pack.remove", json!({"lease":l,"packId":"demo"}), 0)
-                .unwrap_err()
-                .0,
-            "SCENE_IN_USE"
-        );
-        assert_eq!(
-            call(
-                &p,
-                "pack.begin",
-                json!({"lease":l,"packId":"demo","bytes":data.len(),"sha256":hash(&data)}),
-                0
-            )
-            .unwrap_err()
-            .0,
-            "SCENE_IN_USE"
-        );
-        scene(&p, &l, json!([]));
-        call(&p, "pack.remove", json!({"lease":l,"packId":"demo"}), 0).unwrap();
-    }
-    #[test]
-    fn rgb565_animation_alpha_anchors_clipping_and_touch_golden() {
-        let p = ScenePlugin::new(320, 240, 24, true);
-        let l = open(&p);
-        install(&p, &l, "demo", &bytes());
-        scene(
-            &p,
-            &l,
-            json!([{"asset":"demo:pet","x":2,"y":2,"scale":2,"anchor":"bc","play":true,"target":"pet"}]),
-        );
-        let mut strip = vec![0x55; 1280];
-        p.paint_strip(&mut strip, 24, 2, 0);
-        assert_eq!(&strip[..4], &[0, 248, 0, 248]);
-        assert_eq!(&strip[4..8], &[0, 0, 0, 0]);
-        p.paint_strip(&mut strip, 24, 2, 50);
-        assert_eq!(&strip[..4], &[224, 7, 224, 7]);
-        assert_eq!(&strip[4..8], &[16, 0, 16, 0]);
-        p.paint_strip(&mut strip, 24, 2, 100);
-        assert_eq!(&strip[..4], &[0, 248, 0, 248]);
-        let mut reserved = vec![0x55; 1280];
-        p.paint_strip(&mut reserved, 0, 2, 50);
-        assert!(reserved.iter().all(|b| *b == 0x55));
-        p.touch(0, 0);
-        p.touch(0, 24);
-        let e = call(&p, "events.poll", json!({"lease":l}), 0).unwrap();
-        assert_eq!(e["events"].as_array().unwrap().len(), 1);
-        assert_eq!(e["events"][0]["target"], "pet");
-        let (_, a) = {
-            let s = p.state.lock().unwrap();
-            let (pack, a) = s.resource("demo:pet").unwrap();
-            assert!(sample(
-                pack,
-                a,
-                &Layer {
-                    asset: "demo:pet".into(),
-                    x: -1,
-                    y: 0,
-                    scale: 1,
-                    anchor: "tl".into(),
-                    frame: 0,
-                    play: false,
-                    r#loop: true,
-                    target: None
-                },
-                0,
-                0,
-                0
-            )
-            .is_some());
-            ((), a.clone())
-        };
-        assert_eq!(a.frames, 2);
-    }
-    #[test]
-    fn event_pages_signal_loss_and_system_exit_remains_pollable() {
-        let p = ScenePlugin::new(320, 240, 24, true);
-        let l = open(&p);
-        {
-            let mut s = p.state.lock().unwrap();
-            for _ in 0..20 {
-                s.event("target.tap", Some(1), Some(2), Some("pet"));
-            }
-        }
-        let e = call(&p, "events.poll", json!({"lease":l,"after":0}), 0).unwrap();
-        assert_eq!(e["lostBefore"], 4);
-        assert_eq!(e["events"].as_array().unwrap().len(), 8);
-        assert_eq!(e["next"], 12);
-        p.system_exit();
-        assert_eq!(p.summary()["active"], false);
-        let e = call(&p, "events.poll", json!({"lease":l,"after":20}), 0).unwrap();
-        assert_eq!(e["events"][0]["type"], "system.exit");
-        assert_eq!(
-            call(&p, "scene.set", json!({"lease":l,"layers":[]}), 0)
-                .unwrap_err()
-                .0,
-            "SCENE_CLOSED"
-        );
-    }
-    #[test]
-    fn wire_envelopes_are_bounded_and_strict() {
-        let p = ScenePlugin::new(320, 240, 24, false);
-        let args = operit_link::toCoreValue(json!({"v":2})).unwrap();
-        let reply = p.invoke("capabilities", args).unwrap();
-        let reply: Value = operit_link::fromCoreValue(reply).unwrap();
-        assert_eq!(reply["error"]["code"], "SCENE_VERSION");
-        assert!(call(&p, "capabilities", json!({"surprise":true}), 0).is_err());
-        assert_eq!(
-            call(&p, "lease.open", json!({"owner":"x".repeat(1024)}), 0)
-                .unwrap_err()
-                .0,
-            "SCENE_LIMIT"
-        );
-        let l = open(&p);
-        install(&p, &l, "demo", &bytes());
-        install(&p, &l, "second", &bytes());
-        for action in ["capabilities", "events.poll"] {
-            let reply = call(
-                &p,
-                action,
-                if action == "capabilities" {
-                    json!({})
-                } else {
-                    json!({"lease":l})
-                },
-                0,
-            )
-            .unwrap();
-            assert!(serde_json::to_vec(&reply).unwrap().len() < MAX_REPLY);
-        }
-        assert_eq!(
-            call(
-                &p,
-                "pack.begin",
-                json!({"lease":l,"packId":"bad","bytes":4097,"sha256":"0".repeat(64)}),
-                0
-            )
-            .unwrap_err()
-            .0,
-            "SCENE_LIMIT"
-        );
-        assert_eq!(
-            call(&p, "lease.open", json!({"owner":"bad"}), 0)
-                .unwrap_err()
-                .0,
-            "SCENE_BUSY"
-        );
-    }
+
 }

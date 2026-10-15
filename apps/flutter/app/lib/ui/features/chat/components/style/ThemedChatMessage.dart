@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../common/ChatMessageIdentity.dart';
 import '../../viewmodel/ChatViewModel.dart';
 import 'bubble/BubbleStyleChatMessage.dart';
 import 'bubble/BubbleSurface.dart';
@@ -18,17 +19,19 @@ Widget buildThemedChatMessage({
   required ThemePreferenceSnapshot snapshot,
   required ColorScheme colorScheme,
   required ChatUiMessage message,
-  String? currentCharacterCardAvatarUri,
+  VoidCallback? onIdentityTap,
   MarkdownContentSplitter? splitMarkdownContent,
   Future<void> Function(int timestamp)? onDeleteMessage,
   ValueChanged<ChatUiMessage>? onEditSummary,
   bool enableDialogs = true,
 }) {
+  final identityAvatarUri = readChatMessageIdentity(message)?.avatarUri;
   if (snapshot.chatStyle != UserPreferencesManager.CHAT_STYLE_BUBBLE) {
     return CursorStyleChatMessage(
       key: key,
       message: message,
-      currentCharacterCardAvatarUri: currentCharacterCardAvatarUri,
+      identityAvatarUri: identityAvatarUri,
+      onIdentityTap: onIdentityTap,
       splitMarkdownContent: splitMarkdownContent,
       onDeleteMessage: onDeleteMessage,
       onEditSummary: onEditSummary,
@@ -54,7 +57,8 @@ Widget buildThemedChatMessage({
     bubbleUserContentPaddingRight: snapshot.bubbleUserContentPaddingRight,
     bubbleAiContentPaddingLeft: snapshot.bubbleAiContentPaddingLeft,
     bubbleAiContentPaddingRight: snapshot.bubbleAiContentPaddingRight,
-    currentCharacterCardAvatarUri: currentCharacterCardAvatarUri,
+    identityAvatarUri: identityAvatarUri,
+    onIdentityTap: onIdentityTap,
     splitMarkdownContent: splitMarkdownContent,
     onDeleteMessage: onDeleteMessage,
     onEditSummary: onEditSummary,

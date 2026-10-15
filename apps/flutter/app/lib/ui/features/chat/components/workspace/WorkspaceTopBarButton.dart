@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 class WorkspaceTopBarButton extends StatelessWidget {
   const WorkspaceTopBarButton({
@@ -16,21 +17,10 @@ class WorkspaceTopBarButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsetsDirectional.only(end: 4),
-      child: SizedBox(
-        width: 48,
-        height: 48,
-        child: IconButton(
-          onPressed: onPressed,
-          icon: Icon(
-            hasBoundWorkspace ? Icons.code : Icons.code_off,
-            color: open ? colorScheme.primary : colorScheme.onSurface,
-          ),
-          tooltip: open ? 'Close workspace' : 'Workspace',
-        ),
-      ),
+    return ThemeWorkspaceTopBarButton(
+      open: open,
+      hasBoundWorkspace: hasBoundWorkspace,
+      onPressed: onPressed,
     );
   }
 }

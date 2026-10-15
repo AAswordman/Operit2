@@ -45,6 +45,7 @@ void operit_ui_set_chat_history(bool older, bool newer);
 void operit_ui_finish_messages(unsigned count);
 void operit_ui_set_conversation(unsigned index, const char *id, const char *title, const char *character, bool selected);
 void operit_ui_finish_conversations(unsigned count);
+void operit_ui_set_conversations_state(bool loading, const char *error);
 void operit_ui_action_error(const char *error);
 void operit_ui_set_chat_task(const char *text);
 void operit_ui_set_plugin(unsigned index, const char *id, const char *name, unsigned status, unsigned latency_ms);
@@ -56,6 +57,8 @@ void operit_ui_set_plugin_details(const char *id, const char *description, const
 void operit_ui_finish_plugins(unsigned count, unsigned offset, unsigned total, bool loading, const char *error);
 const char *operit_ui_chat_draft(void);
 void operit_ui_set_chat_draft(const char *text);
+void operit_ui_set_speech_state(unsigned phase);
+void operit_ui_set_device_space_state(unsigned phase, const char *status, const char *first, const char *second, const char *third, bool pending);
 void operit_ui_submit_chat(void);
 void operit_ui_chat_send_result(bool ok, const char *error);
 

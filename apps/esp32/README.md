@@ -2,33 +2,63 @@
 
 The ESP32 advertises `_operit-edge._tcp` over mDNS. Use the Core application's
 device scan to discover it, start pairing, and enter the code displayed on the
-ESP32. Core and Edge must be on the same reachable LAN. Opening the browser
-editor automatically starts a separately identified `esp32-edge-simulator`.
+ESP32. LAN discovery finds local devices; a remote Edge can also be paired by
+its reachable address. Opening the browser editor automatically starts a
+separately identified `esp32-edge-simulator`.
 
-The firmware registers a native `device.status` plugin. Its `read` action
-returns board id, expression, IP address, and Wi-Fi name over the paired Link.
-The pairing code is excluded from plugin results. Core ToolPkg UI is not
-rendered on this display unless it has an explicit Edge adaptation.
+The firmware owns native device services. `edge.status/read` returns board id,
+expression, IP address and Wi-Fi name over the paired Link. The pairing code is
+excluded from service results. ToolPkg runs on a phone/desktop as an optional
+configuration editor; it is not an Edge runtime dependency.
 
 ## Local configuration
 
-The ESP32 uses the same Edge token as the Core/CLI main link. Put that token in
-the local `.edge-token` file under `apps/esp32`; the firmware build reads it
-automatically. The file is ignored by Git and must never be committed or
-included in logs. `OPERIT_EDGE_TOKEN` can still override it for CI or a
-deliberate one-off build:
+Edge pairing uses the six-digit code shown on the receiving device, for both
+serial and network connections. No Edge token, `.edge-token` file, or
+`OPERIT_EDGE_TOKEN` environment variable is needed. Legacy token settings are
+ignored; the shared listener configuration no longer contains a token field.
 
-```powershell
-cargo build --release
-```
-
-Leave the setup page's token field empty to keep using this same token. Enter a
-different value only when the Core/CLI token is intentionally being rotated.
+Configure Wi-Fi from the setup page or with `OPERIT_WIFI_SSID` and
+`OPERIT_WIFI_PASSWORD`. Pairing still verifies the devices and shared keys;
+joining a Space remains a separate, approved action. A Core receiving a remote
+pairing uses the same code-confirmed shared handshake.
 
 Use the ESP32 toolchain and partition table documented in the repository's
 `BUILDING.md`. Select the actual serial port for your device rather than assuming
 the port in a developer's local configuration. Preserve existing Wi-Fi/NVS data
 when updating only the application image.
+
+## Independent operation and device preferences
+
+An ESP admitted to another Space receives the durable `edge` identity. It does
+not need `storage.provide` to synchronize its own small preferences or send chat.
+That capability controls full business replicas, not local storage or operation.
+
+The native application chooses its data: encrypted configuration persists;
+chat context is an eight-message / 6144-text-byte RAM window, with at most 2048
+bytes per message. No chat database, ToolPkg or business replica journal is
+created. Reboot retains configuration and starts a fresh local conversation.
+Other members disconnecting does not clear a direct conversation.
+
+Set the device's `chat` preference with `endpoint`, `model`, optional `apiKey`
+and `systemPrompt`. The endpoint is a complete OpenAI-compatible streaming chat
+completion URL reachable **from the device**. Firmware sends HTTPS/HTTP itself
+through its Host provider and renders SSE replies; it does not call Core or
+require a Binding. The HTTP worker verifies HTTPS using the ESP-IDF certificate
+bundle and keeps I/O off the UI task. Internet/service availability is still
+required; this does not install an on-device language model.
+
+Use `space preference-set <esp-id> chat <JSON>` and `space sync` in CLI, or call
+native `edge.preferences/read|set|remove` through the existing generic device
+API from a configuration ToolPkg. Preferences are scoped to the target device
+and Space, at most 24 keys and a 6144-byte plaintext file. The protocol exchanges
+only the current per-key state and deletion markers, not unbounded history.
+See [CLI commands](../../../docs/cli-network-control.md).
+
+Without a `chat` configuration, the optional remote Core mode below remains
+available. Existing STT/TTS Stream/ReverseStream processing is retained. The
+ESP32-2432S028 firmware still has no microphone capture or speaker playback
+driver, so independent text chat does not imply verified physical voice I/O.
 
 ## Memory and connection lifetime
 
@@ -40,7 +70,7 @@ when updating only the application image.
   pairing socket and background receivers survive between commands. The Rust
   DLL requires a native rebuild and application restart, not Dart hot reload.
 
-## Space chat routing
+## Optional remote Core chat routing
 
 After admission, the shared Edge return client sends annotated calls and watches
 through the adjacent Core's Binding resolver. Resolved execution remains in the
@@ -72,8 +102,7 @@ the stack/mirror fix without rebooting. This is **not** verification of complete
 correct-code pairing, Space admission, reconnect, or chat.
 
 The fixed self-drawn UI handles pairing, status, Space admission, a bounded
-chat text view, unpair confirmation, and local Space-exit confirmation. Core still owns chat history and
-permissions. A paired device remains in chat when offline. The host/computer
+chat text view, unpair confirmation, and local Space-exit confirmation. In remote mode Core owns full chat history; direct mode uses only the device RAM window. A paired device remains in chat when offline. The host/computer
 composer can send drafts; an on-device keyboard, images, conversation lists,
 animations and dynamic layouts are not currently implemented.
 
@@ -144,6 +173,30 @@ The only renderer is `ui_port/operit_mini_ui.c`. Rust uses `src/ui.rs` and the
 `activateUi` / `flushUi`. There is no third-party widget runtime, allocator
 pool, backend marker or fallback build. Native firmware and Wasm compile the
 same C sources.
+
+LVGL is no longer a firmware or preview dependency. The Cargo component list,
+`components_esp32.lock`, SDK defaults and `ui_port/CMakeLists.txt` select only
+the self-drawn UI. Optional plugin scenes use `operit-edge-scene`; the device
+retains the system bar and exit action. Scene rendering does not make Host
+responsible for plugin business logic.
+
+An existing ESP-IDF build cache can still contain `managed_components/lvgl__lvgl`
+and `build/esp-idf/lvgl__lvgl` or `lvgl_port` archives from earlier firmware.
+Those generated files are not dependencies in the current build graph. To
+remove the old component downloads and archives, clean the generated firmware
+target directory, then rebuild. This also removes the cached firmware ELF and
+other build artifacts; it does not erase or flash the device:
+
+```powershell
+cargo clean --manifest-path apps/esp32/Cargo.toml --target-dir D:/esp32
+npm run build:firmware --prefix tools/esp32-editor
+```
+
+The editor uses an `esp32` target directory at the root of the repository's
+drive; adjust `D:/esp32` to that location, or to your direct Cargo build's
+custom target directory. A package-only clean may miss outputs from retired
+build fingerprints. ESP-IDF's bundled examples may still mention LVGL;
+those SDK examples are not linked into this firmware.
 
 The 320×240 renderer uses two-row RGB565 strips (1280 bytes). A compile-time
 assertion limits its static state, strip and inspection buffer to 10 KiB.
@@ -220,8 +273,8 @@ UI/prompt-only plugins explicitly report that they have no business tools.
 Missing exports, failed tests, disabled packages and exceptions are failures,
 never fallback successes based on file readability.
 
-The diagnostic route is chat Binding-owned and requires `caller:chat.write`;
-the read-only list still requires `caller:chat.read`. Edge cannot choose an
+The diagnostic route and read-only list use the authenticated Space and chat Binding.
+There are no separate chat read/write permissions. Edge cannot choose an
 arbitrary function/tool name or arguments. Only bounded success/message data
 returns, not tool payloads or JavaScript stack/source. Green/red numbers are the
 Edge-to-Core round trip **including that test function**, not a pure network
@@ -248,3 +301,21 @@ lists omit the tools section and tool-test button. The white top-right lightning
 sequentially tests connectivity for all enabled plugins in the selected category.
 Individual tests continue to run the existing fixed Core diagnostic exports;
 no scripts, arguments or result payloads are copied to the device.
+
+## Device-space settings
+
+All pairing controls live under Settings → Device Space. The Edge can discover
+nearby nodes, initiate pairing, enter the receiver's six-digit code, display its
+own incoming pairing code, and review assigned Space join requests. Management
+provides outgoing join/cancel, local Space exit and one-sided local unpair.
+Incoming prompts remain available in settings without taking over chat or a
+plugin scene. Wrong codes can be edited and retried within the service's attempt
+and expiration limits; network work runs on the existing Host scheduler.
+
+The firmware and desktop simulator compile the same `device_space_ui.rs`
+controller and the same fixed C renderer. Pending outgoing consent survives
+restart through the node service's existing records, and approved membership is
+refreshed automatically. Pairing, approval and membership remain separate.
+A retained remote pairing is replaced only after a fresh code succeeds; unpair
+itself remains local-only. No new Link wire encoding, transport or Host API is
+introduced.

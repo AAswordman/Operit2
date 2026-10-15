@@ -35,8 +35,9 @@ checks; they are not anonymous network endpoints.
 An approved join merges the applicant's complete current Space, including members
 reachable only through existing peers. The request freezes the source membership,
 real device profiles and directed link advertisements. The reviewer approves that
-exact set with one `AdmitSpace` command; source administrators do not inherit
-administrator rights in the target Space. Approval displays the source device
+exact device-to-identity map with one `AdmitSpace` command. Identity IDs are
+validated against the target policy and persist with the approval for deterministic
+replay; source administrators do not inherit administrator rights in the target Space. Approval displays the source device
 names together.
 
 Direct peer projection exchange carries profiles, topology and target control
@@ -114,6 +115,11 @@ cargo check --manifest-path core/Cargo.toml -p operit-proxy-local
   and current Space admission; it creates neither reverse pairing nor a role.
 - The embedding app owns the `PeerRouter`. Peer services and idle dispatchers
   hold weak references; releasing the router returns `PEER_ROUTER_CLOSED`.
+- Pairing policy is selected locally by the embedding node. The normal
+  constructors retain Core's token requirement for non-LAN pairing; Edge uses
+  `peer::createPeerService` with `ConfirmationCodeOnly`. The wire handshake,
+  six-digit confirmation, encrypted sessions and Space authorization are shared.
+  This policy never comes from the connecting device's metadata.
 - `newWithLimits` accepts `PeerRuntimeLimits`; the existing `new` keeps normal
   defaults. Firmware and simulator select `constrained()` explicitly. Shared
   session limits and probe concurrency do not depend on an OS name.
@@ -152,3 +158,22 @@ cargo test --manifest-path core/Cargo.toml -p operit-node-edge --lib rejoin
 cargo test --manifest-path core/Cargo.toml -p operit-node-edge --lib uncommitted_claim
 cargo test --manifest-path core/Cargo.toml -p operit-store --lib node_local_
 ```
+
+## One-sided unpair and pairing replacement
+
+`removePairedPeer` forgets only the local node's credentials (both authorization
+directions); it neither sends a remote unpair notice nor removes Space membership.
+The initiator must forget its own record before starting another pairing. A
+receiver retaining an old record now accepts a fresh pairing challenge for that
+node instead of rejecting it as already paired.
+
+Starting, cancelling, expiring or failing a code challenge never replaces the
+receiver's old credential. Only successful proof of the new six-digit code
+replaces the retained device's inbound/outbound credentials, invalidates scoped
+return grants and old pending consent, and disconnects old business sessions.
+New pairings use the upstream confirmation path. A confirmed replacement uses
+the same credential and scoped-grant cleanup as the upstream local unpair API,
+then stores its credential through the existing handshake and storage schema.
+It does not import membership or bypass Space approval/revocation checks. Cross-file
+persistence is not atomic: write failures are reported and old sessions closed;
+the user may need to restart the code-confirmed pairing after a storage error.

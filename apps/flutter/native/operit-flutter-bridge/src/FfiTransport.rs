@@ -3,10 +3,10 @@
 
 use crate::BridgeCodec::*;
 use crate::BridgeExports;
-use crate::BridgeExports::{bridge_native_call, bridge_push_item, bridge_watch_snapshot};
 use crate::OperitFlutterBridge;
 use futures_util::FutureExt;
 use operit_host_native_common::DartPort::{DartPort, PostCObject};
+use operit_host_native_common::SharedBuffer::{SharedBuffer, shared_allocate, shared_data, shared_seal, shared_release, shared_retain};
 use operit_link::{CoreEventKind, CoreLinkError, CoreLinkSharedClient};
 use std::collections::HashSet;
 use std::collections::{hash_map::Entry, HashMap};
@@ -24,21 +24,18 @@ pub struct FfiSession {
 }
 
 impl FfiSession {
-    /// Sends a framed response without retaining pointers into Rust-owned storage.
-    fn post(&self, kind: u8, request: i64, payload: &[u8]) {
+    /// Shares the existing ABI byte frame with the VM while retaining its wire layout.
+    fn post(&self, frame: NativeFrame) {
         let delivery = self.delivery.lock().expect("FFI delivery lock");
         if self.closed.load(Ordering::Acquire) {
             return;
         }
-        let mut frame = Vec::with_capacity(9 + payload.len());
-        frame.push(kind);
-        frame.extend_from_slice(&request.to_le_bytes());
-        frame.extend_from_slice(payload);
+        let (bytes, buffers) = frame.into_parts();
         if !self
             .port
             .get()
             .expect("FFI session must be connected")
-            .send(&frame)
+            .send(bytes, buffers)
         {
             drop(delivery);
             self.close();
@@ -53,9 +50,9 @@ impl FfiSession {
     }
 
     /// Opens a watch on the host scheduler and reports source errors to Dart.
-    fn watch(self: &Arc<Self>, request_id: i64, bytes: &[u8]) -> Vec<u8> {
+    fn watch(self: &Arc<Self>, request_id: i64, bytes: &[u8], buffers: Arc<[operit_link::CoreBytes]>) -> NativeFrame {
         let result = (|| {
-            let (id, request) = decode_native_watch_stream_request(bytes)?;
+            let (id, request) = operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_watch_stream_request(bytes))?;
             let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
             {
                 let mut watches = self.watches.lock().expect("FFI watches lock");
@@ -102,36 +99,24 @@ impl FfiSession {
                                 let Some(session) = weak.upgrade() else {
                                     break;
                                 };
-                                session.post(
-                                    1,
-                                    request_id,
-                                    &native_watch_event_vec(&task_id, event),
-                                );
+                                session.post(NativeFrame::watch(request_id, &task_id, event));
                                 if completed {
                                     break;
                                 }
                             },
                             Err(error) => {
                                 if let Some(session) = weak.upgrade() {
-                                    session.post(
-                                        2,
-                                        request_id,
-                                        &native_result_vec(Err::<(), _>(error)),
-                                    );
+                                    session.post(NativeFrame::result(2, request_id, Err::<(), _>(error)));
                                 }
                             }
                         }
                         }).catch_unwind().await;
                             if let Err(payload) = outcome {
                                 if let Some(session) = weak.upgrade() {
-                                    session.post(
-                                        2,
-                                        request_id,
-                                        &native_result_error_vec(
+                                    session.post(NativeFrame::error(2, request_id,
                                             "FATAL_CORE_PANIC",
                                             BridgeExports::panic_payload_message(payload.as_ref()),
-                                        ),
-                                    );
+                                    ));
                                 }
                             }
                             if let Some(session) = weak.upgrade() {
@@ -140,7 +125,7 @@ impl FfiSession {
                                     .lock()
                                     .expect("FFI watches lock")
                                     .remove(&task_id);
-                                session.post(3, request_id, &[]);
+                                session.post(NativeFrame::empty(3, request_id));
                             }
                         })
                     }),
@@ -151,18 +136,24 @@ impl FfiSession {
             }
             Ok(id)
         })();
-        native_result_vec(result)
+        NativeFrame::result(0, request_id, result)
     }
 
     /// Executes one protocol operation using shared references to the retained runtime.
-    fn dispatch(self: &Arc<Self>, operation: u32, request: i64, bytes: &[u8]) -> Vec<u8> {
+    async fn dispatch(self: &Arc<Self>, operation: u32, request: i64, bytes: &[u8], buffers: Arc<[operit_link::CoreBytes]>) -> NativeFrame {
         if self.closed.load(Ordering::Acquire) {
-            return native_result_error_vec("FFI_CLOSED", "FFI connection is closed");
+            return NativeFrame::error(0, request, "FFI_CLOSED", "FFI connection is closed");
         }
         match operation {
-            0 => bridge_native_call(&self.bridge, bytes),
+            0 => {
+                let result = match operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_call_request(bytes)) {
+                    Ok(request) => self.bridge.prepareCall(request).execute().await.result,
+                    Err(error) => Err(error),
+                };
+                NativeFrame::result(0, request, result)
+            }
             1 => {
-                let result = decode_native_push_open_request(bytes).and_then(|request| {
+                let result = operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_push_open_request(bytes)).and_then(|request| {
                     let id = self.bridge.pushOpen(request)?;
                     self.pushes
                         .lock()
@@ -170,12 +161,12 @@ impl FfiSession {
                         .insert(id.clone());
                     Ok(id)
                 });
-                native_result_vec(result)
+                NativeFrame::result(0, request, result)
             }
             2 => {
-                let item = match decode_native_push_item(bytes) {
+                let item = match operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_push_item(bytes)) {
                     Ok(item) => item,
-                    Err(error) => return native_result_vec(Err::<(), _>(error)),
+                    Err(error) => return NativeFrame::result(0, request, Err::<(), _>(error)),
                 };
                 if !self
                     .pushes
@@ -183,37 +174,52 @@ impl FfiSession {
                     .expect("FFI pushes lock")
                     .contains(&item.pushId)
                 {
-                    return native_result_error_vec(
+                    return NativeFrame::error(
+                        0,
+                        request,
                         "PUSH_NOT_FOUND",
                         "push is not owned by this connection",
                     );
                 }
-                bridge_push_item(&self.bridge, bytes)
+                let result = match self.bridge.preparePushItem(item) {
+                    Ok(task) => task.execute().await,
+                    Err(error) => Err(error),
+                };
+                NativeFrame::result(0, request, result)
             }
-            3 => native_result_vec(
-                std::str::from_utf8(bytes)
-                    .map_err(|error| CoreLinkError::internal(error.to_string()))
-                    .and_then(|id| {
-                        if !self.pushes.lock().expect("FFI pushes lock").remove(id) {
-                            return Err(CoreLinkError::new(
-                                "PUSH_NOT_FOUND",
-                                "push is not owned by this connection",
-                            ));
-                        }
-                        let result = self.bridge.pushClose(id);
-                        result
-                    }),
-            ),
-            4 => bridge_watch_snapshot(&self.bridge, bytes),
-            5 => self.watch(request, bytes),
-            6 => native_result_vec(
+            3 => {
+                let result = async {
+                    let id = std::str::from_utf8(bytes)
+                        .map_err(|error| CoreLinkError::internal(error.to_string()))?;
+                    if !self.pushes.lock().expect("FFI pushes lock").remove(id) {
+                        return Err(CoreLinkError::new(
+                            "PUSH_NOT_FOUND",
+                            "push is not owned by this connection",
+                        ));
+                    }
+                    self.bridge.preparePushClose(id)?.execute().await
+                }
+                .await;
+                NativeFrame::result(0, request, result)
+            }
+            4 => {
+                let result = match operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_watch_snapshot_request(bytes)) {
+                    Ok(request) => self.bridge.prepareWatchSnapshot(request).execute().await,
+                    Err(error) => Err(error),
+                };
+                NativeFrame::result(0, request, result.map(native_watch_event_payload))
+            }
+            5 => self.watch(request, bytes, buffers),
+            6 => NativeFrame::result(
+                0,
+                request,
                 std::str::from_utf8(bytes)
                     .map_err(|error| CoreLinkError::internal(error.to_string()))
                     .map(|id| {
                         self.watches.lock().expect("FFI watches lock").remove(id);
                     }),
             ),
-            _ => native_result_error_vec("FFI_OPERATION", "unknown FFI operation"),
+            _ => NativeFrame::error(0, request, "FFI_OPERATION", "unknown FFI operation"),
         }
     }
 }
@@ -247,13 +253,18 @@ pub unsafe extern "C" fn operit_flutter_bridge_ffi_connect(
         closed: AtomicBool::new(false),
     });
     let descriptor = serde_json::json!({
-        "version": 1,
+        "version": 2,
         // Addresses cross JSON as strings because JSON numbers cannot represent every
         // 64-bit pointer exactly on Dart's decoder.
         "session": (Arc::into_raw(session) as usize).to_string(),
         "attach": (ffi_attach as *const () as usize).to_string(),
         "submit": (ffi_submit as *const () as usize).to_string(),
         "allocate": (ffi_allocate as *const () as usize).to_string(),
+        "bufferAllocate": (shared_allocate as *const () as usize).to_string(),
+        "bufferData": (shared_data as *const () as usize).to_string(),
+        "bufferSeal": (shared_seal as *const () as usize).to_string(),
+        "bufferRelease": (shared_release as *const () as usize).to_string(),
+        "bufferRetain": (shared_retain as *const () as usize).to_string(),
         "free": (ffi_free as *const () as usize).to_string(),
         "release": (ffi_release as *const () as usize).to_string(),
     });
@@ -267,15 +278,15 @@ unsafe extern "C" fn ffi_attach(session: *const FfiSession, post: PostCObject, p
     (*session).port.set(DartPort::new(post, port)).is_ok()
 }
 
-/// Allocates initialized request storage for transfer to submit or explicit release by free.
+/// Allocates request storage that Dart completely initializes before submitting it.
 unsafe extern "C" fn ffi_allocate(length: usize) -> *mut u8 {
-    Box::into_raw(vec![0u8; length].into_boxed_slice()) as *mut u8
+    Box::into_raw(Box::<[u8]>::new_uninit_slice(length)).cast::<u8>()
 }
 
 /// Releases exactly one buffer allocated by the connection's allocator.
 unsafe extern "C" fn ffi_free(pointer: *mut u8, length: usize) {
     drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-        pointer, length,
+        pointer.cast::<std::mem::MaybeUninit<u8>>(), length,
     )));
 }
 
@@ -286,36 +297,49 @@ unsafe extern "C" fn ffi_submit(
     request: i64,
     bytes: *mut u8,
     length: usize,
+    handles: *const *const SharedBuffer,
+    handle_count: usize,
 ) {
     Arc::increment_strong_count(pointer);
     let session = Arc::from_raw(pointer);
-    let bytes = Box::from_raw(std::ptr::slice_from_raw_parts_mut(bytes, length));
+    let width = std::mem::size_of::<usize>();
+    let allocation_length = (length + width - 1) / width * width + handle_count * width;
+    let bytes = Box::from_raw(std::ptr::slice_from_raw_parts_mut(bytes, allocation_length));
+    let buffers: Arc<[operit_link::CoreBytes]> = (0..handle_count)
+        .map(|index| SharedBuffer::retain(*handles.add(index))).collect();
     let worker_session = session.clone();
     let result = session
         .bridge
         .runtimeTaskScheduler()
-        .scheduleHostRuntimeTask(
+        .scheduleHostRuntimeAsyncTask(
             "operit-ffi-request",
             Box::new(move || {
-                let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    worker_session.dispatch(operation, request, &bytes)
-                }));
-                let response = match response {
-                    Ok(response) => response,
-                    Err(payload) => native_result_error_vec(
-                        "FATAL_CORE_PANIC",
-                        BridgeExports::panic_payload_message(payload.as_ref()),
-                    ),
-                };
-                worker_session.post(0, request, &response);
+                Box::pin(async move {
+                    let response = std::panic::AssertUnwindSafe(
+                        worker_session.dispatch(operation, request, &bytes[..length], buffers),
+                    )
+                    .catch_unwind()
+                    .await;
+                    let response = match response {
+                        Ok(response) => response,
+                        Err(payload) => NativeFrame::error(
+                            0,
+                            request,
+                            "FATAL_CORE_PANIC",
+                            BridgeExports::panic_payload_message(payload.as_ref()),
+                        ),
+                    };
+                    worker_session.post(response);
+                })
             }),
         );
     if let Err(error) = result {
-        session.post(
+        session.post(NativeFrame::error(
             0,
             request,
-            &native_result_error_vec("FFI_SCHEDULE", error.to_string()),
-        );
+            "FFI_SCHEDULE",
+            error.to_string(),
+        ));
     }
 }
 

@@ -33,5 +33,11 @@
         "en": "CRUD tools for world book entries"
       }
     }
+  ],
+  "requires": [
+    {
+      "id": "com.operit.character_cards",
+      "min_version": "0.1.0"
+    }
   ]
 }

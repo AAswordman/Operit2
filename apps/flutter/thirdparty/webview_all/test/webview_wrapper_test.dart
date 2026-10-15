@@ -139,7 +139,7 @@ void main() {
     expect(platform.navigationDelegate, navigationDelegate);
     expect(result, 42);
     expect(platform.javaScript, 'window.value = 1');
-    expect(platform.javaScriptReturningResult, contains('"window.value"'));
+    expect(platform.javaScriptReturningResult, 'window.value');
     expect(platform.javaScriptChannelParams!.name, 'TestChannel');
     expect(platform.receivedJavaScriptMessage, 'hello');
     expect(platform.removedJavaScriptChannel, 'TestChannel');
@@ -413,7 +413,7 @@ class _FakePlatformWebViewController extends PlatformWebViewController {
   @override
   Future<Object> runJavaScriptReturningResult(String javaScript) async {
     javaScriptReturningResult = javaScript;
-    return '{"value":42}';
+    return 42;
   }
 
   @override

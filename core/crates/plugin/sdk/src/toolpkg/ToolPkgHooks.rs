@@ -156,6 +156,20 @@ pub struct ToolPkgAiProviderRegistration {
     pub calculateInputTokensFunctionSource: Option<String>,
 }
 
+/// Registers a single creation initializer owned by one authenticated ToolPkg container.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(non_snake_case)]
+pub struct ToolPkgChatLifecycleHookRegistration {
+    /// Identifies the actual registered and enabled package, never a plugin-returned owner.
+    pub containerPackageName: String,
+    /// Identifies the single package registration selected for this draft.
+    pub hookId: String,
+    /// Identifies the real exported or durable module-backed main hook function.
+    pub functionName: String,
+    /// Preserves the existing serialized module handler when supplied by SDK capture.
+    pub functionSource: Option<String>,
+}
+
 /// Registration for one host-originated event hook.
 #[derive(Clone, Debug, serde::Serialize)]
 #[allow(non_snake_case)]

@@ -23,7 +23,6 @@ impl ApiPreferences {
     pub const DEFAULT_ENABLE_THINKING_MODE: bool = false;
     pub const DEFAULT_THINKING_QUALITY_LEVEL: i32 = 2;
     pub const DEFAULT_FEATURE_TOGGLE_STATE: bool = false;
-    pub const DEFAULT_ENABLE_MEMORY_AUTO_UPDATE: bool = true;
     pub const DEFAULT_ENABLE_TOOLS: bool = true;
     pub const DEFAULT_DISABLE_STREAM_OUTPUT: bool = false;
     pub const DEFAULT_DISABLE_USER_PREFERENCE_DESCRIPTION: bool = false;
@@ -42,11 +41,19 @@ impl ApiPreferences {
     /// Creates preferences using the default runtime data directory.
     pub fn getInstance() -> Self {
         Self {
-            apiDataStore: PreferencesDataStore::newWithStorage(
-                defaultRuntimeStorageHost(),
-                OperitPaths::API_PREFERENCES_PATH,
-            ),
+            apiDataStore: Self::store(defaultRuntimeStorageHost()),
         }
+    }
+
+    /// Opens this module's single preference owner using an explicit runtime storage host.
+    pub(crate) fn store(storage: std::sync::Arc<dyn RuntimeStorageHost>) -> PreferencesDataStore {
+        PreferencesDataStore::newWithStorage(storage, OperitPaths::API_PREFERENCES_PATH)
+            .withSchema(2, Self::migratePreferences)
+    }
+
+    /// Reads the committed typed values for another owning runtime module.
+    pub(crate) fn snapshot(&self) -> Result<Preferences, PreferencesDataStoreError> {
+        self.apiDataStore.data()
     }
 
     /// Creates preferences rooted at the supplied directory.
@@ -54,7 +61,68 @@ impl ApiPreferences {
         let path = OperitPaths::runtimePathFromRoot(&root_dir, OperitPaths::API_PREFERENCES_PATH)
             .expect("API preferences path must use the runtime storage prefix");
         Self {
-            apiDataStore: PreferencesDataStore::new(path),
+            apiDataStore: PreferencesDataStore::new(path).withSchema(2, Self::migratePreferences),
+        }
+    }
+
+    /// Converts the API module's declared scalar and structured values at version one.
+    pub(crate) fn migratePreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => Ok(()),
+            1 => {
+                for key in [
+                    "enable_thinking_mode",
+                    "enable_tools",
+                    "disable_stream_output",
+                    "disable_user_preference_description",
+                    "enable_memory_auto_update",
+                ] {
+                    let key = stringPreferencesKey(key);
+                    if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                        let value: bool = serde_json::from_str(&encoded)?;
+                        preferences.set(&key, value);
+                    }
+                }
+                let counters = preferences
+                    .iterEntries()
+                    .filter_map(|(key, _)| {
+                        (key.starts_with("token_input_")
+                            || key.starts_with("token_cached_input_")
+                            || key.starts_with("token_output_"))
+                        .then(|| key.to_owned())
+                    })
+                    .chain(
+                        [
+                            "thinking_quality_level",
+                            "max_image_history_user_turns",
+                            "max_media_history_user_turns",
+                            "mcp_startup_timeout_seconds",
+                            "toolpkg_pre_hook_timeout_seconds",
+                        ]
+                        .into_iter()
+                        .map(str::to_owned),
+                    )
+                    .collect::<Vec<_>>();
+                for key in counters {
+                    let key = stringPreferencesKey(&key);
+                    if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                        let value: i64 = serde_json::from_str(&encoded)?;
+                        preferences.set(&key, value);
+                    }
+                }
+                for key in ["feature_toggles_json", "tool_prompt_visibility_json"] {
+                    let key = stringPreferencesKey(key);
+                    if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                        let value: HashMap<String, bool> = serde_json::from_str(&encoded)?;
+                        preferences.set(&key, serde_json::to_value(value)?);
+                    }
+                }
+                Ok(())
+            }
+            from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }
     }
 
@@ -150,7 +218,7 @@ impl ApiPreferences {
         preferences
             .get(&stringPreferencesKey(keyName))
             .map(|value| {
-                value.parse::<i64>().map_err(|error| {
+                serde_json::from_value::<i64>(value.clone()).map_err(|error| {
                     PreferencesDataStoreError::Message(format!(
                         "invalid token count for preference key {keyName}: {error}"
                     ))
@@ -192,7 +260,7 @@ impl ApiPreferences {
                 continue;
             };
             let providerModel = Self::decodeProviderModelFromKeySuffix(encoded);
-            let inputTokens = value.parse::<i64>().map_err(|error| {
+            let inputTokens = serde_json::from_value::<i64>(value.clone()).map_err(|error| {
                 PreferencesDataStoreError::Message(format!(
                     "invalid token count for preference key {keyName}: {error}"
                 ))
@@ -239,15 +307,15 @@ impl ApiPreferences {
 
             preferences.set(
                 &stringPreferencesKey(&inputKey),
-                (currentInputTokens + inputTokens).to_string(),
+                (currentInputTokens + inputTokens),
             );
             preferences.set(
                 &stringPreferencesKey(&cachedInputKey),
-                (currentCachedInputTokens + cachedInputTokens).to_string(),
+                (currentCachedInputTokens + cachedInputTokens),
             );
             preferences.set(
                 &stringPreferencesKey(&outputKey),
-                (currentOutputTokens + outputTokens).to_string(),
+                (currentOutputTokens + outputTokens),
             );
             Ok(())
         })?;
@@ -338,26 +406,25 @@ impl ApiPreferences {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
                 &stringPreferencesKey(&Self::tokenInputKey(providerModel)),
-                "0".to_string(),
+                0,
             );
             preferences.set(
                 &stringPreferencesKey(&Self::tokenCachedInputKey(providerModel)),
-                "0".to_string(),
+                0,
             );
             preferences.set(
                 &stringPreferencesKey(&Self::tokenOutputKey(providerModel)),
-                "0".to_string(),
+                0,
             );
         })
     }
 
     /// Observes whether thinking mode is enabled.
     pub fn enableThinkingModeFlow(&self) -> Flow<bool> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("enable_thinking_mode"))
-                .and_then(|value| value.parse::<bool>().ok())
-                .unwrap_or(Self::DEFAULT_ENABLE_THINKING_MODE)
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<bool>(&stringPreferencesKey("enable_thinking_mode"))?
+                .unwrap_or(Self::DEFAULT_ENABLE_THINKING_MODE))
         })
     }
 
@@ -367,7 +434,7 @@ impl ApiPreferences {
             preferences
                 .get(&stringPreferencesKey("feature_toggles_json"))
                 .map(|value| {
-                    serde_json::from_str::<HashMap<String, bool>>(value)
+                    serde_json::from_value::<HashMap<String, bool>>(value.clone())
                         .expect("feature_toggles_json must be a boolean map")
                 })
                 .unwrap_or_else(|| {
@@ -393,32 +460,20 @@ impl ApiPreferences {
 
     /// Observes the current thinking quality level.
     pub fn thinkingQualityLevelFlow(&self) -> Flow<i32> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("thinking_quality_level"))
-                .and_then(|value| value.parse::<i32>().ok())
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<i32>(&stringPreferencesKey("thinking_quality_level"))?
                 .unwrap_or(Self::DEFAULT_THINKING_QUALITY_LEVEL)
-                .clamp(1, 4)
-        })
-    }
-
-    /// Observes whether memory auto-update is enabled.
-    pub fn enableMemoryAutoUpdateFlow(&self) -> Flow<bool> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("enable_memory_auto_update"))
-                .and_then(|value| value.parse::<bool>().ok())
-                .unwrap_or(Self::DEFAULT_ENABLE_MEMORY_AUTO_UPDATE)
+                .clamp(1, 4))
         })
     }
 
     /// Observes whether AI tools are enabled.
     pub fn enableToolsFlow(&self) -> Flow<bool> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("enable_tools"))
-                .and_then(|value| value.parse::<bool>().ok())
-                .unwrap_or(Self::DEFAULT_ENABLE_TOOLS)
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<bool>(&stringPreferencesKey("enable_tools"))?
+                .unwrap_or(Self::DEFAULT_ENABLE_TOOLS))
         })
     }
 
@@ -428,7 +483,7 @@ impl ApiPreferences {
             preferences
                 .get(&stringPreferencesKey("tool_prompt_visibility_json"))
                 .map(|value| {
-                    serde_json::from_str::<HashMap<String, bool>>(value)
+                    serde_json::from_value::<HashMap<String, bool>>(value.clone())
                         .expect("tool_prompt_visibility_json must be a boolean map")
                 })
                 .unwrap_or_else(|| {
@@ -442,74 +497,65 @@ impl ApiPreferences {
 
     /// Observes whether streaming output is disabled.
     pub fn disableStreamOutputFlow(&self) -> Flow<bool> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("disable_stream_output"))
-                .and_then(|value| value.parse::<bool>().ok())
-                .unwrap_or(Self::DEFAULT_DISABLE_STREAM_OUTPUT)
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<bool>(&stringPreferencesKey("disable_stream_output"))?
+                .unwrap_or(Self::DEFAULT_DISABLE_STREAM_OUTPUT))
         })
     }
 
     /// Observes whether user preference descriptions are hidden from prompts.
     pub fn disableUserPreferenceDescriptionFlow(&self) -> Flow<bool> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("disable_user_preference_description"))
-                .and_then(|value| value.parse::<bool>().ok())
-                .unwrap_or(Self::DEFAULT_DISABLE_USER_PREFERENCE_DESCRIPTION)
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<bool>(&stringPreferencesKey("disable_user_preference_description"))?
+                .unwrap_or(Self::DEFAULT_DISABLE_USER_PREFERENCE_DESCRIPTION))
         })
     }
 
     /// Observes the image-history turn limit.
     pub fn maxImageHistoryUserTurnsFlow(&self) -> Flow<i32> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("max_image_history_user_turns"))
-                .and_then(|value| value.parse::<i32>().ok())
-                .unwrap_or(2)
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<i32>(&stringPreferencesKey("max_image_history_user_turns"))?
+                .unwrap_or(2))
         })
     }
 
     /// Observes the media-history turn limit.
     pub fn maxMediaHistoryUserTurnsFlow(&self) -> Flow<i32> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("max_media_history_user_turns"))
-                .and_then(|value| value.parse::<i32>().ok())
-                .unwrap_or(1)
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<i32>(&stringPreferencesKey("max_media_history_user_turns"))?
+                .unwrap_or(1))
         })
     }
 
     /// Observes the MCP startup timeout in seconds.
     pub fn mcpStartupTimeoutSecondsFlow(&self) -> Flow<i32> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("mcp_startup_timeout_seconds"))
-                .and_then(|value| value.parse::<i32>().ok())
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<i32>(&stringPreferencesKey("mcp_startup_timeout_seconds"))?
                 .unwrap_or(Self::DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS)
-                .clamp(1, 10)
+                .clamp(1, 10))
         })
     }
 
     /// Observes the total timeout for one ToolPkg pre-hook dispatch chain in seconds.
     #[allow(non_snake_case)]
     pub fn toolPkgPreHookTimeoutSecondsFlow(&self) -> Flow<i32> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"))
-                .and_then(|value| value.parse::<i32>().ok())
+        self.apiDataStore.dataFlow().mapResult(|preferences| {
+            Ok(preferences
+                .getTyped::<i32>(&stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"))?
                 .unwrap_or(Self::DEFAULT_TOOLPKG_PRE_HOOK_TIMEOUT_SECONDS)
-                .clamp(1, 60)
+                .clamp(1, 60))
         })
     }
 
     /// Saves the thinking-mode toggle.
     pub fn saveEnableThinkingMode(&self, isEnabled: bool) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
-            preferences.set(
-                &stringPreferencesKey("enable_thinking_mode"),
-                isEnabled.to_string(),
-            );
+            preferences.set(&stringPreferencesKey("enable_thinking_mode"), isEnabled);
         })
     }
 
@@ -527,7 +573,7 @@ impl ApiPreferences {
             let mut currentMap = preferences
                 .get(&stringPreferencesKey("feature_toggles_json"))
                 .map(|value| {
-                    serde_json::from_str::<HashMap<String, bool>>(value)
+                    serde_json::from_value::<HashMap<String, bool>>(value.clone())
                         .expect("feature_toggles_json must be a boolean map")
                 })
                 .unwrap_or_else(|| {
@@ -539,7 +585,7 @@ impl ApiPreferences {
             currentMap.insert(normalizedKey.clone(), isEnabled);
             preferences.set(
                 &stringPreferencesKey("feature_toggles_json"),
-                serde_json::to_string(&currentMap).expect("feature toggle map must serialize"),
+                serde_json::to_value(&currentMap).expect("feature toggle map must serialize"),
             );
         })
     }
@@ -549,20 +595,7 @@ impl ApiPreferences {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
                 &stringPreferencesKey("thinking_quality_level"),
-                level.clamp(1, 4).to_string(),
-            );
-        })
-    }
-
-    /// Saves the memory auto-update toggle.
-    pub fn saveEnableMemoryAutoUpdate(
-        &self,
-        isEnabled: bool,
-    ) -> Result<(), PreferencesDataStoreError> {
-        self.apiDataStore.edit(|preferences| {
-            preferences.set(
-                &stringPreferencesKey("enable_memory_auto_update"),
-                isEnabled.to_string(),
+                level.clamp(1, 4),
             );
         })
     }
@@ -570,7 +603,7 @@ impl ApiPreferences {
     /// Saves the global tools toggle.
     pub fn saveEnableTools(&self, isEnabled: bool) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
-            preferences.set(&stringPreferencesKey("enable_tools"), isEnabled.to_string());
+            preferences.set(&stringPreferencesKey("enable_tools"), isEnabled);
         })
     }
 
@@ -584,7 +617,7 @@ impl ApiPreferences {
             let mut currentMap = preferences
                 .get(&stringPreferencesKey("tool_prompt_visibility_json"))
                 .map(|value| {
-                    serde_json::from_str::<HashMap<String, bool>>(value)
+                    serde_json::from_value::<HashMap<String, bool>>(value.clone())
                         .expect("tool_prompt_visibility_json must be a boolean map")
                 })
                 .unwrap_or_else(|| {
@@ -596,7 +629,7 @@ impl ApiPreferences {
             currentMap.insert(toolName.to_string(), isVisible);
             preferences.set(
                 &stringPreferencesKey("tool_prompt_visibility_json"),
-                serde_json::to_string(&currentMap)
+                serde_json::to_value(&currentMap)
                     .expect("tool prompt visibility map must serialize"),
             );
         })
@@ -610,7 +643,7 @@ impl ApiPreferences {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
                 &stringPreferencesKey("tool_prompt_visibility_json"),
-                serde_json::to_string(&visibilityMap)
+                serde_json::to_value(&visibilityMap)
                     .expect("tool prompt visibility map must serialize"),
             );
         })
@@ -624,7 +657,7 @@ impl ApiPreferences {
         let map = preferences
             .get(&stringPreferencesKey("tool_prompt_visibility_json"))
             .map(|value| {
-                serde_json::from_str::<HashMap<String, bool>>(value)
+                serde_json::from_value::<HashMap<String, bool>>(value.clone())
                     .expect("tool_prompt_visibility_json must be a boolean map")
             })
             .unwrap_or_else(|| {
@@ -642,10 +675,7 @@ impl ApiPreferences {
         isDisabled: bool,
     ) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
-            preferences.set(
-                &stringPreferencesKey("disable_stream_output"),
-                isDisabled.to_string(),
-            );
+            preferences.set(&stringPreferencesKey("disable_stream_output"), isDisabled);
         })
     }
 
@@ -657,7 +687,7 @@ impl ApiPreferences {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
                 &stringPreferencesKey("disable_user_preference_description"),
-                isDisabled.to_string(),
+                isDisabled,
             );
         })
     }
@@ -671,11 +701,11 @@ impl ApiPreferences {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
                 &stringPreferencesKey("max_image_history_user_turns"),
-                maxImageHistoryUserTurns.to_string(),
+                maxImageHistoryUserTurns,
             );
             preferences.set(
                 &stringPreferencesKey("max_media_history_user_turns"),
-                maxMediaHistoryUserTurns.to_string(),
+                maxMediaHistoryUserTurns,
             );
         })
     }
@@ -688,7 +718,7 @@ impl ApiPreferences {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
                 &stringPreferencesKey("mcp_startup_timeout_seconds"),
-                seconds.clamp(1, 10).to_string(),
+                seconds.clamp(1, 10),
             );
         })
     }
@@ -702,7 +732,7 @@ impl ApiPreferences {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
                 &stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"),
-                seconds.clamp(1, 60).to_string(),
+                seconds.clamp(1, 60),
             );
         })
     }
@@ -711,8 +741,7 @@ impl ApiPreferences {
     pub fn getMcpStartupTimeoutSeconds(&self) -> Result<i32, PreferencesDataStoreError> {
         let preferences = self.apiDataStore.data()?;
         Ok(preferences
-            .get(&stringPreferencesKey("mcp_startup_timeout_seconds"))
-            .and_then(|value| value.parse::<i32>().ok())
+            .getTyped::<i32>(&stringPreferencesKey("mcp_startup_timeout_seconds"))?
             .unwrap_or(Self::DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS)
             .clamp(1, 10))
     }
@@ -722,8 +751,7 @@ impl ApiPreferences {
     pub fn getToolPkgPreHookTimeoutSeconds(&self) -> Result<i32, PreferencesDataStoreError> {
         let preferences = self.apiDataStore.data()?;
         Ok(preferences
-            .get(&stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"))
-            .and_then(|value| value.parse::<i32>().ok())
+            .getTyped::<i32>(&stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"))?
             .unwrap_or(Self::DEFAULT_TOOLPKG_PRE_HOOK_TIMEOUT_SECONDS)
             .clamp(1, 60))
     }
@@ -738,13 +766,13 @@ impl ApiPreferences {
             if let Some(enableThinkingMode) = enableThinkingMode {
                 preferences.set(
                     &stringPreferencesKey("enable_thinking_mode"),
-                    enableThinkingMode.to_string(),
+                    enableThinkingMode,
                 );
             }
             if let Some(thinkingQualityLevel) = thinkingQualityLevel {
                 preferences.set(
                     &stringPreferencesKey("thinking_quality_level"),
-                    thinkingQualityLevel.clamp(1, 4).to_string(),
+                    thinkingQualityLevel.clamp(1, 4),
                 );
             }
         })

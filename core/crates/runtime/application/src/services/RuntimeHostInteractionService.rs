@@ -32,6 +32,8 @@ pub enum RuntimeHostInteractionKind {
     ComposeWebViewController,
     #[serde(rename = "compose_file_picker")]
     ComposeFilePicker,
+    #[serde(rename = "compose_file_save")]
+    ComposeFileSave,
     #[serde(rename = "system_capture_screenshot")]
     SystemCaptureScreenshot,
     #[serde(rename = "system_language_code")]
@@ -70,6 +72,7 @@ pub struct RuntimeHostInteractionRequest {
     pub webVisit: Option<RuntimeHostInteractionWebVisitPayload>,
     pub composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerPayload>,
     pub composeFilePicker: Option<RuntimeHostInteractionComposeFilePickerPayload>,
+    pub composeFileSave: Option<RuntimeHostInteractionComposeFileSavePayload>,
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotPayload>,
     pub systemLanguageCode: Option<RuntimeHostInteractionSystemLanguageCodePayload>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextPayload>,
@@ -129,6 +132,13 @@ impl RuntimeHostInteractionRequest {
     fn composeFilePicker(payload: RuntimeHostInteractionComposeFilePickerPayload) -> Self {
         let mut request = Self::empty(RuntimeHostInteractionKind::ComposeFilePicker);
         request.composeFilePicker = Some(payload);
+        request
+    }
+
+    /// Creates a request for the owner file-save selector.
+    fn composeFileSave(payload: RuntimeHostInteractionComposeFileSavePayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::ComposeFileSave);
+        request.composeFileSave = Some(payload);
         request
     }
 
@@ -226,6 +236,7 @@ impl RuntimeHostInteractionRequest {
             webVisit: None,
             composeWebViewController: None,
             composeFilePicker: None,
+            composeFileSave: None,
             systemCaptureScreenshot: None,
             systemLanguageCode: None,
             systemRecognizeText: None,
@@ -285,6 +296,12 @@ pub struct RuntimeHostInteractionComposeWebViewControllerPayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Compose DSL file-picker request payload.
 pub struct RuntimeHostInteractionComposeFilePickerPayload {
+    pub requestJson: String,
+}
+
+/// Compose DSL file-save request payload.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionComposeFileSavePayload {
     pub requestJson: String,
 }
 
@@ -437,6 +454,7 @@ pub struct RuntimeHostInteractionResponse {
     pub webVisit: Option<RuntimeHostInteractionWebVisitResponse>,
     pub composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerResponse>,
     pub composeFilePicker: Option<RuntimeHostInteractionComposeFilePickerResponse>,
+    pub composeFileSave: Option<RuntimeHostInteractionComposeFileSaveResponse>,
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotResponse>,
     pub systemLanguageCode: Option<RuntimeHostInteractionSystemLanguageCodeResponse>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextResponse>,
@@ -486,6 +504,13 @@ impl RuntimeHostInteractionResponse {
     pub fn composeFilePicker(response: RuntimeHostInteractionComposeFilePickerResponse) -> Self {
         let mut value = Self::empty();
         value.composeFilePicker = Some(response);
+        value
+    }
+
+    /// Creates the response for an owner file-save interaction.
+    pub fn composeFileSave(response: RuntimeHostInteractionComposeFileSaveResponse) -> Self {
+        let mut value = Self::empty();
+        value.composeFileSave = Some(response);
         value
     }
 
@@ -585,6 +610,7 @@ impl RuntimeHostInteractionResponse {
             webVisit: None,
             composeWebViewController: None,
             composeFilePicker: None,
+            composeFileSave: None,
             systemCaptureScreenshot: None,
             systemLanguageCode: None,
             systemRecognizeText: None,
@@ -659,6 +685,12 @@ pub struct RuntimeHostInteractionComposeWebViewControllerResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Compose DSL file-picker response payload.
 pub struct RuntimeHostInteractionComposeFilePickerResponse {
+    pub resultJson: String,
+}
+
+/// Compose DSL file-save response payload.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionComposeFileSaveResponse {
     pub resultJson: String,
 }
 
@@ -1360,6 +1392,19 @@ pub fn requestOwnerComposeFilePicker(
     response
         .composeFilePicker
         .ok_or_else(|| "compose file picker response payload is missing".to_string())
+}
+
+/// Requests an export through the owner host file-save selector.
+pub fn requestOwnerComposeFileSave(
+    payload: RuntimeHostInteractionComposeFileSavePayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionComposeFileSaveResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::composeFileSave(payload),
+        timeout,
+    )?;
+    response.composeFileSave.ok_or_else(|| "compose file save response payload is missing".to_string())
 }
 
 /// Requests a screenshot capture from the owner host.

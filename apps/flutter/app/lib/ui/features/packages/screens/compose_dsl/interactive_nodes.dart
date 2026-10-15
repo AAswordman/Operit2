@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders interactive nodes for Compose DSL nodes.
-extension _ComposeInteractiveNodes on _ComposeDslRenderer {
+extension _ComposeInteractiveNodes on _ComposeDslRendererState {
   /// Builds pull to refresh box for the Compose DSL renderer.
   Widget _pullToRefreshBox(BuildContext context) {
     final refreshing = _bool(node.props['isRefreshing']);
@@ -184,7 +184,13 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
       context,
       node.props['uncheckedTrackColor'],
     );
+    final fitToBounds =
+        _number(node.props['width']) != null &&
+        _number(node.props['height']) != null;
     final control = Switch(
+      materialTapTargetSize: fitToBounds
+          ? MaterialTapTargetSize.shrinkWrap
+          : MaterialTapTargetSize.padded,
       value: checked,
       onChanged: enabled ? (value) => _invokeAction(actionId, value) : null,
       thumbColor: _stateColor(
@@ -197,7 +203,7 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
       ),
     );
     if (!_hasSlot('thumbContent')) {
-      return control;
+      return fitToBounds ? FittedBox(child: control) : control;
     }
     return SizedBox(
       width: 58,
@@ -258,10 +264,13 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
       },
       closeOnDismissRequest: node.props['closeOnDismissRequest'] != false,
       dialogBuilder: (context, close) {
+        if (!mounted || node.isDisposed) return const SizedBox.shrink();
+
         /// Dispatches an explicit dialog button action and applies its close policy.
         Future<void> activate(String actionName, String closeName) async {
           final action = _actionId(node.props[actionName]);
           if (action != null) await onAction(action);
+          if (!mounted || node.isDisposed) return;
           if (node.props[closeName] != false) close();
         }
 
@@ -271,6 +280,26 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
             : null;
         final shape = _borderRadius(node.props['shape']);
         if (!alert) {
+          final content = _withSlotColor(
+            context,
+            // Retain viewport bounds, including IME insets, in both modes.
+            _ComposeBox(
+              alignment: Alignment.center,
+              nodes: _slotNodes('content', useChildren: true),
+              children: _slotChildren(
+                'content',
+                useChildren: true,
+                modifierScope: _ComposeDslModifierScope.box,
+              ),
+            ),
+            _color(context, node.props['contentColor']),
+          );
+          if (properties['fullscreen'] == true) {
+            return Dialog.fullscreen(
+              backgroundColor: _color(context, node.props['containerColor']),
+              child: content,
+            );
+          }
           return Dialog(
             constraints: constraints,
             backgroundColor: _color(context, node.props['containerColor']),
@@ -278,23 +307,18 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
             shape: shape == null
                 ? null
                 : RoundedRectangleBorder(borderRadius: shape),
-            child: _withSlotColor(
-              context,
-              // Dialog content must retain the viewport bounds, including IME insets.
-              // An implicit Column gives its children infinite height and forces width.
-              _ComposeBox(
-                alignment: Alignment.center,
-                nodes: _slotNodes('content', useChildren: true),
-                children: _slotChildren(
-                  'content',
-                  useChildren: true,
-                  modifierScope: _ComposeDslModifierScope.box,
-                ),
-              ),
-              _color(context, node.props['contentColor']),
-            ),
+            child: content,
           );
         }
+
+        final plainText =
+            node.props['text'] is String &&
+            !_hasSlot('text') &&
+            !_hasSlot('content') &&
+            node.children.isEmpty &&
+            node.props['markdown'] == null &&
+            node.props['width'] == null &&
+            node.props['height'] == null;
         return AlertDialog(
           constraints: constraints,
           backgroundColor: _color(context, node.props['containerColor']),
@@ -309,39 +333,48 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
               : node.props['title'] is String
               ? Text(node.props['title'] as String)
               : null,
-          titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
-            color: _color(context, node.props['titleContentColor']),
-          ),
-          contentTextStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: _color(context, node.props['textContentColor']),
-          ),
-          content: SizedBox(
-            width: _number(node.props['width']) ?? 560,
-            height: _number(node.props['height']) ?? 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                if (_hasSlot('text')) _slotColumn('text'),
-                if (node.props['text'] is String)
-                  Text(node.props['text'] as String),
-                if (node.props['markdown'] is String)
-                  _ComposeDslRenderer(
-                    node: _ComposeDslNode(
-                      type: 'Markdown',
-                      props: <String, Object?>{'text': node.props['markdown']},
-                      children: const [],
-                      slots: const {},
-                    ),
-                    onAction: onAction,
-                    onTextInput: onTextInput,
-                    webViewHostContext: webViewHostContext,
-                    splitMarkdownContent: splitMarkdownContent,
+          titleTextStyle: plainText
+              ? null
+              : Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: _color(context, node.props['titleContentColor']),
+                ),
+          contentTextStyle: plainText
+              ? null
+              : Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: _color(context, node.props['textContentColor']),
+                ),
+          content: plainText
+              ? Text(node.props['text'] as String)
+              : SizedBox(
+                  width: _number(node.props['width']) ?? 560,
+                  height: _number(node.props['height']) ?? 360,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      if (_hasSlot('text')) _slotColumn('text'),
+                      if (node.props['text'] is String)
+                        Text(node.props['text'] as String),
+                      if (node.props['markdown'] is String)
+                        _ComposeDslRenderer(
+                          node: _ComposeDslNode(
+                            type: 'Markdown',
+                            props: <String, Object?>{
+                              'text': node.props['markdown'],
+                            },
+                            children: const [],
+                            slots: const {},
+                          ),
+                          onAction: onAction,
+                          onTextInput: onTextInput,
+                          webViewHostContext: webViewHostContext,
+                          splitMarkdownContent: splitMarkdownContent,
+                          dispatchOnLoad: widget.dispatchOnLoad,
+                        ),
+                      ..._slotChildren('content', useChildren: true),
+                    ],
                   ),
-                ..._slotChildren('content', useChildren: true),
-              ],
-            ),
-          ),
+                ),
           actions: <Widget>[
             if (_hasSlot('dismissButton'))
               _slotInline('dismissButton')
@@ -403,6 +436,14 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
       hintText: placeholderSlot == null ? _plainSlotText('placeholder') : null,
       hint: placeholderSlot,
       prefixIcon: _hasSlot('leadingIcon') ? _slotColumn('leadingIcon') : null,
+      suffixIconConstraints:
+          node.props['suffixIconWidth'] != null ||
+              node.props['suffixIconHeight'] != null
+          ? BoxConstraints.tightFor(
+              width: _number(node.props['suffixIconWidth']),
+              height: _number(node.props['suffixIconHeight']),
+            )
+          : null,
       suffixIcon: _hasSlot('trailingIcon') ? _slotColumn('trailingIcon') : null,
       prefix: _hasSlot('prefix') ? _slotColumn('prefix') : null,
       suffix: _hasSlot('suffix') ? _slotColumn('suffix') : null,
@@ -410,9 +451,7 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
       helperText: supportingSlot == null
           ? _plainSlotText('supportingText')
           : null,
-      border: type == 'TextField'
-          ? const OutlineInputBorder()
-          : const OutlineInputBorder(),
+      border: type == 'OutlinedTextField' ? const OutlineInputBorder() : null,
       onChanged: (value) => onTextInput(
         _requiredActionId(node.props['onValueChange'], 'onValueChange'),
         value,
@@ -503,6 +542,7 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
       onTextInput: onTextInput,
       webViewHostContext: webViewHostContext,
       splitMarkdownContent: splitMarkdownContent,
+      dispatchOnLoad: widget.dispatchOnLoad,
       nodePath: '$nodePath:$name/0',
     );
   }
@@ -531,6 +571,10 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
               _ => -1,
             }),
       nodes: nodes,
+      window: node.props['viewport'] == null
+          ? null
+          : _ComposeLazyWindow.parse(node.props['viewport'], nodes.length),
+      onAction: onAction,
       itemBuilder: (context, index) => _ComposeDslRenderer(
         key: nodes[index].props['key'] == null
             ? null
@@ -540,6 +584,7 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
         onTextInput: onTextInput,
         webViewHostContext: webViewHostContext,
         splitMarkdownContent: splitMarkdownContent,
+        dispatchOnLoad: widget.dispatchOnLoad,
         nodePath: '$nodePath:content/$index',
       ),
     );

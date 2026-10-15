@@ -65,9 +65,10 @@ pub use SyncBlobTransferManager::*;
 
 pub(crate) mod media;
 
-#[path = "MemoryManagementService.rs"]
-pub mod MemoryManagementService;
 
 #[path = "AttachmentTransferManager.rs"]
 pub mod AttachmentTransferManager;
 pub use AttachmentTransferManager::*;
+
+#[path = "ComposeDslSessionService.rs"]
+pub mod ComposeDslSessionService;

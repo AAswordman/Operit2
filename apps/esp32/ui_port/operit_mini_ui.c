@@ -11,7 +11,7 @@
 enum { WIDTH = 320, HEIGHT = 240, ROWS = 2, NODE_LIMIT = 14,
        CHAT_X = 126, CHAT_W = 182, CHAT_WRAP = CHAT_W - 10, CHAT_ROWS = 6 };
 enum { ICON_NONE, ICON_MENU, ICON_CLOSE, ICON_BACK, ICON_CHAT, ICON_FACE,
-       ICON_PLUGIN, ICON_SETTINGS, ICON_LINK, ICON_SPACE, ICON_DEVICE, ICON_SEND, ICON_BOLT };
+       ICON_PLUGIN, ICON_SETTINGS, ICON_LINK, ICON_SPACE, ICON_DEVICE, ICON_SEND, ICON_BOLT, ICON_MIC };
 typedef struct {
     const char *id, *text, *action;
     int16_t x, y, w, h;
@@ -23,6 +23,7 @@ typedef struct {
     char action[128], name[43], latency[16];
     uint8_t status;
 } plugin_t;
+typedef struct { char action[109], title[49]; bool selected; } conversation_t;
 typedef struct {
     operit_ui_scene_cb_t scene_painter;
     bool scene_active, scene_press;
@@ -31,13 +32,20 @@ typedef struct {
     operit_ui_action_cb_t action;
     void *context;
     bool wifi, connected, paired, busy, pressed, dirty, refresh_again, sending, sidebar, dimmed;
-    uint8_t expression;
+    uint8_t expression, speech_phase;
     int page, pressed_node, render_y;
     uint16_t press_x, press_y;
     unsigned node_count, message_count, chat_scroll;
     bool chat_follow_tail, chat_has_older, chat_has_newer;
     char code[7], prompt[256], space[96], chat[1024], task[128];
-    char error[192], draft[512], submitted[512];
+    char error[192], draft[512], chat_id[97];
+    uint8_t device_space_phase;
+    bool device_space_pending;
+    char device_space_status[112], device_space_peers[3][40], pair_input[7];
+    /* Browsing is disabled while sending; three list rows reuse send scratch. */
+    union { char submitted[512]; conversation_t conversations[3]; };
+    unsigned conversation_count, conversation_offset, conversation_total;
+    bool conversations_loading, conversations_error_shown;
     node_t nodes[NODE_LIMIT];
     plugin_t plugins[6];
     unsigned plugin_count, plugin_offset, plugin_total;
@@ -60,7 +68,7 @@ typedef struct {
 static mini_state_t ui;
 static uint8_t strip[WIDTH * ROWS * 2];
 /* A bounded inspection buffer is included in the real device RAM budget. */
-static char debug_json[3584];
+static char debug_json[3328];
 static size_t json_at;
 static bool json_ok;
 _Static_assert(sizeof(ui) + sizeof(strip) + sizeof(debug_json) + sizeof(json_at) + sizeof(json_ok) <= 10 * 1024,
@@ -230,9 +238,11 @@ static bool chat_swipe(const char *direction) {
     } else return false;
     invalidate();return true;
 }
-static int page(void) { return ui.code[0] ? 0 : ui.prompt[0] ? 3 : ui.scene_active&&!ui.error[0] ? 12 : ui.sidebar ? 8 : ui.page; }
+static int page(void) { return ui.scene_active&&!ui.error[0] ? 12 : ui.sidebar ? 8 : ui.page; }
 const char *operit_ui_current_page(void) {
     switch(page()) {
+        case 14: return "PairDiscovery"; case 15: return "PairCodeEntry"; case 16: return "SpaceManage";
+        case 13: return "Conversations";
         case 12: return "edge_scene";
         case 0:return "Pairing"; case 1:return "Settings"; case 2:return "Chat";
         case 3:return "Space"; case 4:return "Unpair"; case 5:return "LeaveSpace";
@@ -242,11 +252,13 @@ const char *operit_ui_current_page(void) {
 }
 static const char *page_title(void) {
     switch(page()) {
+        case 14: return "发现节点"; case 15: return "输入配对码"; case 16: return "空间管理";
+        case 13: return "对话列表";
         case 12: return "edge_scene";
         case 0:return "配对码"; case 1:return "设置"; case 2:return "Operit";
         case 3:return "空间审批"; case 4:return "解除配对"; case 5:return "退出空间";
         case 6:return "插件"; case 7:return "表情"; case 8:return "Operit";
-        case 9:return "连接与配对"; case 10:return "设备空间"; default:return "设备操作";
+        case 9:return "网络连接"; case 10:return "设备空间"; default:return "设备操作";
     }
 }
 static void node(const char *id,const char *caption,const char *action,int x,int y,int w,int h,bool enabled,int scale) {
@@ -292,54 +304,85 @@ static void scene(void) {
         icon_node("sidebar_toggle","","close_sidebar",136,0,44,40,true,ICON_CLOSE);
         node("sidebar_face","","expression",49,43,82,51,true,1);
         icon_node("sidebar_expression","表情","expression",12,102,156,36,true,ICON_FACE);
-        icon_node("sidebar_chat","表情 / 对话","chat",12,143,156,36,true,ICON_CHAT);
+        icon_node("sidebar_chat","对话列表","conversations",12,143,156,36,ui.connected&&!ui.sending&&!ui.speech_phase,ICON_CHAT);
         icon_node("sidebar_plugins","插件","plugins",12,190,48,44,true,ICON_PLUGIN);
         icon_node("sidebar_settings","设置","settings",120,190,48,44,true,ICON_SETTINGS);
         node("sidebar_backdrop","","close_sidebar",180,0,140,240,true,1);
         return;
     }
-    bool detail=page()==9||page()==10||page()==11||(page()==0&&!ui.code[0]);
-    bool menuEnabled=!ui.code[0]&&!ui.prompt[0]&&page()!=4&&page()!=5;
-    if(detail)icon_node("page_back","","settings",0,0,44,42,true,ICON_BACK);
+    bool detail=page()==13||page()==9||page()==10||page()==11||page()==14||page()==15||page()==16||page()==0||page()==3;
+    bool menuEnabled=page()!=4&&page()!=5;
+    if(page()==15) icon_node("pair_input_back","","edge_pair_cancel",0,0,44,42,ui.device_space_phase!=4,ICON_BACK);
+    else if(detail)icon_node("page_back","",page()==13?"chat":(page()==14||page()==16||page()==0||page()==3)?"space_settings":"settings",0,0,44,42,true,ICON_BACK);
     else icon_node("sidebar_toggle","","sidebar",0,0,44,42,menuEnabled,ICON_MENU);
-    node("title",page_title(),NULL,44,6,142,30,true,1);
-    if(page()==6)icon_node("plugins_test_all","","edge_plugins_test_all",276,0,44,42,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing,ICON_BOLT);
+    if(page()!=15) node("title",page_title(),NULL,44,6,142,30,true,1);
+    // The large digit font needs 36 pixels plus the text inset to avoid clipping.
+    if(page()==15) node("pair_input",ui.pair_input[0]?ui.pair_input:"输入Core六位配对码",NULL,48,1,270,40,true,ui.pair_input[0]?2:1);
+    else if(page()==6)icon_node("plugins_test_all","","edge_plugins_test_all",276,0,44,42,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing,ICON_BOLT);
+    else if(page()==13)icon_node("edge_new","新建","edge_new",216,0,104,42,ui.connected&&!ui.sending&&!ui.speech_phase,ICON_CHAT);
     else node("link_status",ui.connected ? "已连接" : ui.paired ? "已配对 / 离线" : "未配对",NULL,188,6,130,30,true,1);
-    if (ui.error[0] && !ui.code[0] && !ui.prompt[0]) {
+    if (ui.error[0] && page()!=0 && page()!=3) {
         node("error",ui.error,NULL,16,50,288,122,true,1);
         node("dismiss_error","返回","dismiss",16,184,288,40,true,1);
     } else if (page()==0) {
         node("pairing_hint","请在 Operit 中输入验证码",NULL,16,54,288,46,true,1);
         node("pairing_code",ui.code[0] ? ui.code : "等待配对请求",NULL,90,112,224,48,true,ui.code[0] ? 2 : 1);
-        node("pairing_settings","连接与配对",NULL,106,186,176,30,true,1);
+        node("pairing_settings","返回设备空间","space_settings",106,186,176,30,true,1);
     } else if (page()==3) {
         node("space_join_body",ui.busy ? "正在处理，请稍候…" : ui.prompt,NULL,16,46,288,ui.error[0]&&!ui.busy?82:123,true,1);
         if(ui.error[0]&&!ui.busy) node("space_join_error",ui.error,NULL,16,130,288,46,true,1);
-        node("edge_space_reject","拒绝","edge_space_reject",16,184,138,40,!ui.busy,1);
-        node("edge_space_approve","确认加入","edge_space_approve",166,184,138,40,!ui.busy,1);
+        node("edge_space_reject","拒绝","edge_space_reject",16,184,138,40,ui.prompt[0]&&!ui.busy,1);
+        node("edge_space_approve","确认加入","edge_space_approve",166,184,138,40,ui.prompt[0]&&!ui.busy,1);
     } else if (page()==4) {
         node("unpair_warning","解除配对后需重新连接。\n确认解除当前设备配对？",NULL,16,56,288,108,true,1);
-        node("unpair_cancel","返回","operations",16,184,138,40,true,1);
+        node("unpair_cancel","返回","unpair_cancel",16,184,138,40,true,1);
         node("unpair_confirm","确认解除","confirm_unpair",166,184,138,40,true,1);
     } else if (page()==5) {
         node("space_leave_warning","退出当前设备空间？\n配对和 Wi-Fi 将保留。\n新空间加入仍需审批。",NULL,16,56,288,108,true,1);
-        node("space_leave_cancel","返回","space_settings",16,184,138,40,true,1);
+        node("space_leave_cancel","返回","space_leave_cancel",16,184,138,40,true,1);
         node("space_leave_confirm","确认退出","confirm_space_leave",166,184,138,40,true,1);
     } else if (page()==1) {
         node("settings_label","设备设置",NULL,16,45,288,24,true,1);
-        icon_node("settings_connection","连接与配对","connection",14,75,292,44,true,ICON_LINK);
-        icon_node("settings_space","设备空间","space_settings",14,122,292,44,true,ICON_SPACE);
+        icon_node("settings_connection","网络连接","connection",14,75,292,44,true,ICON_LINK);
+        icon_node("settings_space",ui.prompt[0]?"设备空间（待审批）":ui.code[0]?"设备空间（待配对）":"设备空间","space_settings",14,122,292,44,true,ICON_SPACE);
         icon_node("settings_device","设备操作","operations",14,169,292,44,true,ICON_DEVICE);
     } else if (page()==9) {
-        node("wifi",ui.wifi ? "Wi-Fi 已连接" : "Wi-Fi 未连接",NULL,16,50,288,26,true,1);
-        icon_node("pairing_open","查看配对码","pairing",14,90,292,44,true,ICON_LINK);
-        icon_node("pair_listen","开始监听","edge_pair",14,140,292,44,true,ICON_DEVICE);
+        node("wifi",ui.wifi ? "Wi-Fi 已连接" : "Wi-Fi 未连接",NULL,16,50,288,36,true,1);
+        icon_node("connection_space","配对和空间管理已移至设备空间","space_settings",14,108,292,48,true,ICON_SPACE);
     } else if (page()==10) {
-        node("space",ui.space,NULL,16,50,288,66,true,1);
-        icon_node("space_leave","退出设备空间","space_leave",14,136,292,44,!ui.busy,ICON_SPACE);
+        node("space",ui.space,NULL,16,45,288,42,true,1);
+        icon_node("space_pair",ui.device_space_phase==3?"继续输入配对码":"发现节点并发起配对",ui.device_space_phase==3?"edge_pair_resume":"edge_pair_discover",14,91,292,34,ui.device_space_phase!=1&&ui.device_space_phase!=4&&!ui.device_space_pending,ICON_LINK);
+        node("space_pair_code",ui.code[0]?"查看本机配对码":"接收配对：查看本机配对码","pairing",14,130,292,34,true,1);
+        node("space_review",ui.prompt[0]?"审批加入申请：点此查看":"暂无待审批的空间申请",ui.prompt[0]?"edge_space_review":NULL,14,169,292,34,ui.prompt[0]&&!ui.busy,1);
+        icon_node("space_manage","空间与配对管理","space_manage",14,208,292,28,true,ICON_SETTINGS);
     } else if (page()==11) {
-        icon_node("edge_new","新建对话","edge_new",14,66,292,44,ui.connected&&!ui.sending,ICON_CHAT);
-        icon_node("edge_unpair","解除配对","edge_unpair",14,122,292,44,ui.paired,ICON_LINK);
+        icon_node("edge_new","新建对话","edge_new",14,66,292,44,ui.connected&&!ui.sending&&!ui.speech_phase,ICON_CHAT);
+        icon_node("operations_space","设备空间与配对","space_settings",14,122,292,44,true,ICON_SPACE);
+    } else if (page()==14) {
+        static const char *ids[]={"space_peer_0","space_peer_1","space_peer_2"};
+        static const char *actions[]={"edge_pair_candidate:0","edge_pair_candidate:1","edge_pair_candidate:2"};
+        node("pair_discovery_status",ui.device_space_status,NULL,14,44,292,42,true,1);
+        for(unsigned i=0;i<3;++i) if(ui.device_space_peers[i][0])
+            node(ids[i],ui.device_space_peers[i],actions[i],14,89+(int)i*34,292,30,ui.device_space_phase==2,1);
+        icon_node("pair_scan_again","重新发现","edge_pair_discover",14,198,138,30,ui.device_space_phase==2,ICON_LINK);
+        icon_node("pair_cancel","返回","edge_pair_cancel",166,198,138,30,ui.device_space_phase!=4,ICON_BACK);
+    } else if (page()==15) {
+        if(ui.device_space_phase==3) {
+            static const char *ids[]={"pair_digit_1","pair_digit_2","pair_digit_3","pair_digit_4","pair_digit_5","pair_digit_6","pair_digit_7","pair_digit_8","pair_digit_9"};
+            static const char *labels[]={"1","2","3","4","5","6","7","8","9"};
+            static const char *actions[]={"edge_pair_digit:1","edge_pair_digit:2","edge_pair_digit:3","edge_pair_digit:4","edge_pair_digit:5","edge_pair_digit:6","edge_pair_digit:7","edge_pair_digit:8","edge_pair_digit:9"};
+            for(unsigned i=0;i<9;++i)
+                node(ids[i],labels[i],actions[i],24+(int)(i%3)*94,48+(int)(i/3)*36,78,31,true,1);
+            node("pair_digit_0","0","edge_pair_digit:0",24,156,78,31,true,1);
+            node("pair_digit_delete","删除","edge_pair_backspace",118,156,78,31,true,1);
+            node("pair_digit_submit","确认配对","edge_pair_submit",212,156,92,31,strlen(ui.pair_input)==6,1);
+            // Paint the hint below the keypad without consuming a touch node.
+        } else node("pairing_progress",ui.device_space_status,NULL,16,72,288,92,true,1);
+    } else if (page()==16) {
+        node("space_manage_status",ui.device_space_status[0]?ui.device_space_status:ui.paired?"本机保存有配对凭据":"本机未保存配对凭据",NULL,16,46,288,62,true,1);
+        node("space_join",ui.device_space_phase==3?"取消当前配对":ui.device_space_pending?"取消加入申请":"申请加入已配对节点的空间",(ui.device_space_pending||ui.device_space_phase==3)?"edge_pair_cancel":"edge_space_join",14,114,292,32,ui.device_space_phase==0||ui.device_space_phase==3,1);
+        icon_node("space_leave","退出当前设备空间","space_leave",14,154,292,32,!ui.busy&&ui.device_space_phase==0&&!ui.device_space_pending,ICON_SPACE);
+        icon_node("edge_unpair","解除本机配对","edge_unpair",14,194,292,32,ui.paired&&ui.device_space_phase==0&&!ui.device_space_pending,ICON_LINK);
     } else if (page()==6) {
         bool tabs=ui.connected&&!ui.plugins_loading&&!ui.plugins_testing;
         node("plugins_exclusive","专属","edge_plugins_exclusive",10,40,146,32,tabs,1);
@@ -354,6 +397,17 @@ static void scene(void) {
         node("plugins_prev","上一页","edge_plugins_prev",10,199,70,32,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing&&ui.plugin_offset>0,1);
         node("plugins_refresh",ui.plugins_testing?"测试中":ui.plugins_loading?"读取中":"刷新","edge_plugins_refresh",123,199,70,32,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing,1);
         node("plugins_next","下一页","edge_plugins_next",240,199,70,32,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing&&ui.plugin_offset+ui.plugin_count<ui.plugin_total,1);
+    } else if (page()==13) {
+        static const char *ids[]={"conversation_0","conversation_1","conversation_2"};
+        for(unsigned i=0;i<ui.conversation_count;++i) {
+            conversation_t *p=ui.conversations+i;
+            node(ids[i],p->title,p->action,14,52+i*47,292,43,ui.connected&&!ui.sending&&!ui.speech_phase&&!ui.conversations_loading&&p->action[0],1);
+            ui.nodes[ui.node_count-1].icon=ICON_CHAT;
+        }
+        if(!ui.conversation_count)node("conversations_empty",!ui.connected?"等待 Core 连接":ui.conversations_loading?"读取对话列表…":"暂无对话",NULL,22,76,276,76,true,1);
+        node("conversations_prev","上一页","conversations_prev",10,199,70,32,ui.connected&&!ui.conversations_loading&&ui.conversation_offset>0,1);
+        node("conversations_refresh",ui.conversations_loading?"读取中":"刷新","conversations_refresh",123,199,70,32,ui.connected&&!ui.sending&&!ui.speech_phase&&!ui.conversations_loading,1);
+        node("conversations_next","下一页","conversations_next",240,199,70,32,ui.connected&&!ui.conversations_loading&&ui.conversation_offset+3<ui.conversation_total,1);
     } else if (page()==7) {
         node("expression_face","",NULL,70,68,180,112,true,1);
         node("expression_caption","Operit",NULL,134,191,100,26,true,1);
@@ -361,8 +415,9 @@ static void scene(void) {
         node("home_face","",NULL,8,92,104,65,true,1);
         node("chat_task",ui.task[0]?ui.task:ui.connected?"就绪":"离线",NULL,14,170,98,50,true,1);
         node("chat_text",ui.chat[0] ? chat_line(ui.chat_scroll) : "连接 Operit 后\n开始聊天",NULL,CHAT_X,44,CHAT_W,132,true,1);
-        node("chat_draft",ui.draft[0]?ui.draft:"电脑输入…",NULL,CHAT_X,191,132,34,true,1);
-        icon_node("edge_send","","edge_send",268,187,40,40,ui.connected&&ui.draft[0]&&!ui.sending,ICON_SEND);
+        icon_node("edge_voice",ui.speech_phase==1?"结束":"","edge_voice",CHAT_X,187,40,40,ui.connected&&!ui.sending&&(ui.speech_phase==0||ui.speech_phase==1),ui.speech_phase==1?ICON_CLOSE:ICON_MIC);
+        node("chat_draft",ui.draft[0]?ui.draft:"电脑输入…",NULL,170,191,88,34,true,1);
+        icon_node("edge_send","","edge_send",268,187,40,40,ui.connected&&ui.draft[0]&&!ui.sending&&!ui.speech_phase,ICON_SEND);
     }
 }
 /* Small integer-only SVG painter. Geometry lives in flash, not a framebuffer. */
@@ -507,6 +562,21 @@ static const icon_line_t icon_lines[] = {
     {ICON_BOLT, 9, 22, 20, 10},
     {ICON_BOLT, 20, 10, 13, 10},
     {ICON_BOLT, 13, 10, 14, 2},
+    {ICON_MIC, 10, 3, 14, 3},
+    {ICON_MIC, 14, 3, 16, 5},
+    {ICON_MIC, 16, 5, 16, 11},
+    {ICON_MIC, 16, 11, 14, 13},
+    {ICON_MIC, 14, 13, 10, 13},
+    {ICON_MIC, 10, 13, 8, 11},
+    {ICON_MIC, 8, 11, 8, 5},
+    {ICON_MIC, 8, 5, 10, 3},
+    {ICON_MIC, 5, 10, 5, 13},
+    {ICON_MIC, 5, 13, 8, 17},
+    {ICON_MIC, 8, 17, 16, 17},
+    {ICON_MIC, 16, 17, 19, 13},
+    {ICON_MIC, 19, 13, 19, 10},
+    {ICON_MIC, 12, 17, 12, 21},
+    {ICON_MIC, 8, 21, 16, 21},
     {ICON_SEND, 3, 11, 21, 3},
     {ICON_SEND, 21, 3, 13, 21},
     {ICON_SEND, 13, 21, 11, 11},
@@ -601,6 +671,7 @@ static void paint_nodes(void) {
         bool active=(same(item->id,"sidebar_chat")&&ui.page==2)||(same(item->id,"sidebar_expression")&&ui.page==7);
         bool confirm=same(item->id,"unpair_confirm")||same(item->id,"space_leave_confirm");
         bool filled=active||same(item->id,"edge_space_approve");
+        if(!strncmp(item->id,"conversation_",13))filled=ui.conversations[item->id[13]-'0'].selected;
         if(filled)rect(item->x,item->y,item->w,item->h,rgb(0x263e31));
         if(confirm||same(item->id,"edge_space_reject")||same(item->id,"unpair_cancel")||same(item->id,"space_leave_cancel"))
             outline(item->x,item->y,item->w,item->h,rgb(confirm?0x73534d:0x344d3d));
@@ -637,9 +708,13 @@ static void paint_page(void) {
     if(page()==12 && ui.scene_painter) ui.scene_painter(strip,sizeof(strip),ui.render_y,ROWS,ui.frame_tick,ui.context);
     if(page()==2&&!ui.error[0]) {
         rect(117,58,1,116,rgb(0x25332e));
-        outline(CHAT_X,187,132,40,rgb(0x344b3d));
+        outline(170,187,88,40,rgb(0x344b3d));
     }
     paint_nodes();
+    if(page()==15&&ui.device_space_phase==3) {
+        node_t hint={"pair_code_hint",ui.device_space_status,NULL,16,192,288,44,rgb(0xecf3f0),1,ICON_NONE,true};
+        text(&hint);
+    }
 }
 static int hit(unsigned x,unsigned y) {
     for (unsigned i=0;i<ui.node_count;++i) {
@@ -673,16 +748,40 @@ static void activate(const char *action) {
     else if (!strcmp(action,"close_sidebar")) ui.sidebar=false;
     else if (!strcmp(action,"settings")) {ui.sidebar=false;ui.page=1;}
     else if (!strcmp(action,"connection")) {ui.sidebar=false;ui.page=9;}
+    else if (!strcmp(action,"pairing")) {ui.sidebar=false;ui.page=0;if(ui.action)ui.action("edge_pair",ui.context);}
     else if (!strcmp(action,"space_settings")) {ui.sidebar=false;ui.page=10;}
+    else if (!strcmp(action,"space_manage")) {ui.page=16;}
     else if (!strcmp(action,"operations")) {ui.sidebar=false;ui.page=11;}
+    else if (!strcmp(action,"edge_space_review")) {if(ui.prompt[0])ui.page=3;}
+    else if (!strcmp(action,"edge_pair_resume")) {if(ui.device_space_phase==3)ui.page=15;}
+    else if (!strcmp(action,"edge_pair_discover")) {ui.page=14;ui.pair_input[0]=0;if(ui.action)ui.action(action,ui.context);}
+    else if (!strncmp(action,"edge_pair_candidate:",20)) {ui.page=15;ui.pair_input[0]=0;if(ui.action)ui.action(action,ui.context);}
+    else if (!strncmp(action,"edge_pair_digit:",16)) {if(strlen(ui.pair_input)<6){size_t n=strlen(ui.pair_input);ui.pair_input[n]=action[16];ui.pair_input[n+1]=0;}}
+    else if (!strcmp(action,"edge_pair_backspace")) {size_t n=strlen(ui.pair_input);if(n)ui.pair_input[n-1]=0;}
+    else if (!strcmp(action,"edge_pair_submit")) {if(strlen(ui.pair_input)==6&&ui.action){char submit[48];snprintf(submit,sizeof(submit),"edge_pair_submit:%.6s",ui.pair_input);ui.device_space_phase=4;ui.action(submit,ui.context);}}
+    else if (!strcmp(action,"edge_pair_cancel")) {if(ui.device_space_phase==4)return;ui.pair_input[0]=0;ui.page=10;if(ui.action)ui.action(action,ui.context);}
     else if (!strcmp(action,"plugins")) {ui.sidebar=false;ui.page=6;if(ui.action&&ui.connected)ui.action("edge_plugins_refresh",ui.context);}
     else if (!strcmp(action,"expression")) {ui.sidebar=false;ui.page=7;}
-    else if (!strcmp(action,"pairing")) ui.page=0;
-    else if (!strcmp(action,"chat")) {ui.sidebar=false;ui.page=2;}
+    else if (!strcmp(action,"chat")) {ui.sidebar=false;ui.page=2;if(!ui.sending)ui.submitted[0]=0;}
+    else if (!strcmp(action,"conversations")||!strcmp(action,"conversations_refresh")||!strcmp(action,"conversations_prev")||!strcmp(action,"conversations_next")) {
+        if(!ui.connected||ui.sending||ui.speech_phase)return;
+        if(!strcmp(action,"conversations")){ui.sidebar=false;ui.page=13;ui.conversation_offset=0;}
+        else if(!strcmp(action,"conversations_prev"))ui.conversation_offset=ui.conversation_offset>=3?ui.conversation_offset-3:0;
+        else if(!strcmp(action,"conversations_next")&&ui.conversation_offset+3<ui.conversation_total)ui.conversation_offset+=3;
+        memset(ui.conversations,0,sizeof(ui.conversations));ui.conversation_count=0;ui.conversations_loading=true;ui.conversations_error_shown=false;ui.error[0]=0;
+        if(ui.action)ui.action("edge_conversations_refresh",ui.context);
+    }
+    else if (!strncmp(action,"edge_select:",12)) {
+        if(!ui.connected||ui.sending||ui.speech_phase)return;
+        if(!strcmp(action+12,ui.chat_id)){ui.page=2;ui.submitted[0]=0;}
+        else if(ui.action)ui.action(action,ui.context);
+    }
     else if (!strcmp(action,"space_leave")) ui.page=5;
-    else if (!strcmp(action,"confirm_space_leave")) { if(ui.action) ui.action("edge_space_leave",ui.context); ui.page=1; }
+    else if (!strcmp(action,"confirm_space_leave")) { if(ui.action) ui.action("edge_space_leave",ui.context); ui.page=10; }
     else if (!strcmp(action,"edge_unpair")) ui.page=4;
-    else if (!strcmp(action,"confirm_unpair")) { if(ui.action) ui.action("edge_unpair",ui.context); ui.page=1; }
+    else if (!strcmp(action,"confirm_unpair")) { if(ui.action) ui.action("edge_unpair",ui.context); ui.page=10; }
+    else if (!strcmp(action,"unpair_cancel")) ui.page=16;
+    else if (!strcmp(action,"space_leave_cancel")) ui.page=16;
     else if (!strcmp(action,"edge_new")) {ui.page=2;if(ui.action)ui.action(action,ui.context);}
     else if (!strcmp(action,"edge_send")) { operit_ui_submit_chat(); return; }
     else if (ui.action) ui.action(action,ui.context);
@@ -748,21 +847,34 @@ void operit_ui_set_touch(uint16_t x,uint16_t y,bool down) {
     }
     ui.pressed=down;
 }
-void operit_ui_navigate_home(void) { ui.sidebar=false;ui.page=2;invalidate(); }
+void operit_ui_navigate_home(void) { ui.sidebar=false;ui.page=2;if(!ui.sending)ui.submitted[0]=0;invalidate(); }
 void operit_ui_navigate_apps(void) { ui.sidebar=false;ui.page=6;invalidate(); }
 void operit_ui_set_connection(bool wifi,bool edge) { if(ui.wifi!=wifi||ui.connected!=edge){ui.wifi=wifi;ui.connected=edge;invalidate();} }
-void operit_ui_set_paired(bool paired) { if(ui.paired!=paired){ui.paired=paired;ui.sidebar=false;if(ui.page==0)ui.page=2;invalidate();} }
+void operit_ui_set_paired(bool paired) { if(ui.paired!=paired){ui.paired=paired;invalidate();} }
 void operit_ui_set_pairing_code(const char *code) {
     bool valid=code&&strlen(code)==6;
     if(valid) for(unsigned i=0;i<6;++i) if(code[i]<'0'||code[i]>'9') valid=false;
-    if(valid)ui.sidebar=false;
-    if(copy(ui.code,sizeof(ui.code),valid?code:"")) invalidate();
+    bool hadCode=ui.code[0];
+    if(copy(ui.code,sizeof(ui.code),valid?code:"")) {
+        if(hadCode&&!ui.code[0]&&ui.page==0)ui.page=10;
+        invalidate();
+    }
 }
 void operit_ui_set_space_join_prompt(const char *prompt,bool busy) {
     bool changed=ui.busy!=busy;ui.busy=busy;
     if(!busy) changed=copy(ui.prompt,sizeof(ui.prompt),prompt)||changed;
-    if(ui.prompt[0])ui.sidebar=false;
+    if(!ui.prompt[0]&&!busy&&ui.page==3){ui.page=10;changed=true;}
     if(changed) invalidate();
+}
+void operit_ui_set_device_space_state(unsigned phase,const char *status,const char *first,const char *second,const char *third,bool pending) {
+    bool changed=ui.device_space_phase!=phase;ui.device_space_phase=(uint8_t)(phase>4?0:phase);
+    changed=(ui.device_space_pending!=pending)||changed;ui.device_space_pending=pending;
+    changed=copy(ui.device_space_status,sizeof(ui.device_space_status),status)||changed;
+    changed=copy(ui.device_space_peers[0],sizeof(ui.device_space_peers[0]),first)||changed;
+    changed=copy(ui.device_space_peers[1],sizeof(ui.device_space_peers[1]),second)||changed;
+    changed=copy(ui.device_space_peers[2],sizeof(ui.device_space_peers[2]),third)||changed;
+    if(ui.page==15&&ui.device_space_phase!=3&&ui.device_space_phase!=4){ui.page=ui.device_space_phase==2?14:16;ui.pair_input[0]=0;changed=true;}
+    if(changed)invalidate();
 }
 #define SETTER(name,field) void operit_ui_set_##name(const char *value){if(copy(ui.field,sizeof(ui.field),value))invalidate();}
 SETTER(space_state,space)
@@ -772,10 +884,18 @@ void operit_ui_set_chat_screen(const char *value){
     else if(!ui.message_count&&copy(ui.chat,sizeof(ui.chat),""))invalidate();
 }
 SETTER(chat_task,task)
+void operit_ui_set_speech_state(unsigned phase){
+    if(phase>3)phase=0;if(ui.speech_phase!=phase){ui.speech_phase=(uint8_t)phase;invalidate();}
+}
 SETTER(chat_draft,draft)
 void operit_ui_action_error(const char *value){if(copy(ui.error,sizeof(ui.error),value))invalidate();}
 void operit_ui_set_chat_preview(const char *value){(void)value;}
-void operit_ui_set_chat_identity(const char *id,const char *character){(void)id;(void)character;}
+void operit_ui_set_chat_identity(const char *id,const char *character){
+    (void)character;if(!id)id="";
+    bool switched=ui.chat_id[0]&&strcmp(ui.chat_id,id);
+    if(copy(ui.chat_id,sizeof(ui.chat_id),id))invalidate();
+    if(switched){ui.draft[0]=0;ui.submitted[0]=0;ui.conversation_count=0;if(ui.page==13)ui.page=2;invalidate();}
+}
 void operit_ui_set_expression(const char *expression){
     uint8_t next=expression&&(!strcmp(expression,"sad")||!strcmp(expression,"error"))?1:
         expression&&(!strcmp(expression,"sleepy")||!strcmp(expression,"booting"))?2:0;
@@ -789,13 +909,13 @@ unsigned operit_ui_emoji_style(void){return 0;}
 bool operit_emoji_color_available(void){return false;}
 const char *operit_ui_chat_draft(void){return ui.submitted;}
 void operit_ui_submit_chat(void){
-    if(!ui.connected||!ui.draft[0]||ui.sending) return;
+    if(ui.page==13||!ui.connected||!ui.draft[0]||ui.sending||ui.speech_phase) return;
     copy(ui.submitted,sizeof(ui.submitted),ui.draft);ui.sending=true;
     if(ui.action) ui.action("edge_send",ui.context);invalidate();
 }
 void operit_ui_chat_send_result(bool ok,const char *error){
     ui.sending=false;
-    if(ok) {ui.draft[0]=0;ui.submitted[0]=0;} else copy(ui.error,sizeof(ui.error),error&&*error?error:"发送失败");
+    if(ok) {ui.draft[0]=0;if(ui.page!=13)ui.submitted[0]=0;} else copy(ui.error,sizeof(ui.error),error&&*error?error:"发送失败");
     invalidate();
 }
 /* One bounded, volatile window shared by painting and screen inspection. */
@@ -878,8 +998,35 @@ void operit_ui_finish_plugins(unsigned count,unsigned offset,unsigned total,bool
     ui.plugin_count=count;ui.plugin_offset=offset;ui.plugin_total=total;ui.plugins_loading=loading;
     if(changed)invalidate();
 }
-void operit_ui_set_conversation(unsigned index,const char *id,const char *title,const char *character,bool selected){(void)index;(void)id;(void)title;(void)character;(void)selected;}
-void operit_ui_finish_conversations(unsigned count){(void)count;}
+void operit_ui_set_conversation(unsigned index,const char *id,const char *title,const char *character,bool selected){
+    (void)character;
+    if(ui.page!=13||index<ui.conversation_offset||index>=ui.conversation_offset+3)return;
+    conversation_t *p=ui.conversations+(index-ui.conversation_offset);
+    char action[109]={0};
+    /* Never truncate an identifier into a different selectable conversation. */
+    if(id&&*id&&strlen(id)<=96)snprintf(action,sizeof(action),"edge_select:%s",id);
+    bool changed=copy(p->action,sizeof(p->action),action);
+    changed=copy(p->title,sizeof(p->title),title&&*title?title:"未命名对话")||changed;
+    if(p->selected!=selected){p->selected=selected;changed=true;}
+    if(changed)invalidate();
+}
+void operit_ui_finish_conversations(unsigned count){
+    if(ui.page!=13)return;if(count>24)count=24;
+    if(ui.conversation_offset>=count&&ui.conversation_offset){
+        ui.conversation_offset=count?((count-1)/3)*3:0;
+        ui.conversation_count=0;memset(ui.conversations,0,sizeof(ui.conversations));
+        if(ui.action)ui.action("edge_conversations_refresh",ui.context);
+        invalidate();return;
+    }
+    unsigned visible=count>ui.conversation_offset?count-ui.conversation_offset:0;if(visible>3)visible=3;
+    if(ui.conversation_count!=visible||ui.conversation_total!=count){ui.conversation_count=visible;ui.conversation_total=count;invalidate();}
+}
+void operit_ui_set_conversations_state(bool loading,const char *error){
+    if(ui.page!=13)return;
+    if(ui.conversations_loading!=loading){ui.conversations_loading=loading;invalidate();}
+    if(loading||!error||!*error)ui.conversations_error_shown=false;
+    else if(!ui.conversations_error_shown){ui.conversations_error_shown=true;operit_ui_action_error(error);}
+}
 /* The renderer explicitly rejects dynamic layout editing. Never silently
  * turn a deployed layout into a different set of touch targets. */
 void operit_ui_layout_clear(uint32_t color){(void)color;operit_ui_action_error("自绘 UI 暂不支持布局编辑");}
@@ -918,6 +1065,7 @@ static const char *inspect_format(bool compact) {
         node_t *n=ui.nodes+i;
         append("%s{\"id\":",i?",":"");string(n->id);append(",\"text\":");string(n->text);
         if(!strncmp(n->id,"plugin_probe_",13)){plugin_t *p=ui.plugins+(n->id[strlen(n->id)-1]-'0');append(",\"probeState\":%u,\"latency\":",p->status);string(p->latency);append(",\"latencyColor\":%u",(unsigned)rgb(p->status==2?0x71e5a2:p->status==3?0xf07878:0x849c8d));}
+        if(!strncmp(n->id,"conversation_",13))append(",\"selected\":%s",ui.conversations[n->id[13]-'0'].selected?"true":"false");
         if(same(n->id,"plugins_test_all"))append(",\"iconColor\":%u",(unsigned)rgb(0xffffff));
         append(",\"action\":");string(n->action);
         if(!compact)append(",\"role\":\"%s\",\"visible\":true,\"clickable\":%s",n->action?"button":"label",n->action?"true":"false");

@@ -22,7 +22,7 @@ impl ImagePreviewChunk {
             ("width".into(), CoreValue::Unsigned(self.width as u64)),
             ("height".into(), CoreValue::Unsigned(self.height as u64)),
             ("offset".into(), CoreValue::Unsigned(self.offset as u64)),
-            ("bytes".into(), CoreValue::Bytes(self.bytes)),
+            ("bytes".into(), CoreValue::Bytes(self.bytes.into())),
         ]))
     }
 
@@ -48,7 +48,7 @@ impl ImagePreviewChunk {
             offset >= width * height * 2 || bytes.len() > width * height * 2 - offset {
             return Err("Image chunk exceeds preview limits".into());
         }
-        Ok(Self {width, height, offset, bytes})
+        Ok(Self {width, height, offset, bytes: bytes.to_vec()})
     }
 }
 

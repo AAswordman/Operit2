@@ -142,7 +142,7 @@ class _FfiPushSink implements CorePushSink {
       decodeNativeCoreVoidResult(
         await _transport.request(
           CoreTransportOperation.pushClose,
-          Uint8List.fromList(utf8.encode(_id)),
+          CoreLinkMessage.bytes(utf8.encode(_id)),
         ),
       );
     }

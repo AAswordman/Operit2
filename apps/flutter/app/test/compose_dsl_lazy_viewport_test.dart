@@ -38,6 +38,110 @@ Widget _harness(Widget child) => MaterialApp(
 
 /// Verifies natural viewport geometry without depending on runtime or theme modules.
 void main() {
+  for (final axis in Axis.values) {
+    for (final reverse in [false, true]) {
+      for (final shrinkWrap in [false, true]) {
+        testWidgets(
+          'resizes retained $axis items with reverse=$reverse, shrinkWrap=$shrinkWrap',
+          (tester) async {
+            final controller = ScrollController();
+            addTearDown(controller.dispose);
+            // Reuse the widget so a rebuild cannot hide missing render invalidation.
+            final list = ComposeDslLazyListView(
+              controller: controller,
+              scrollDirection: axis,
+              reverse: reverse,
+              shrinkWrap: shrinkWrap,
+              childrenDelegate: SliverChildBuilderDelegate(
+                (context, index) => ComposeDslLazyListItem(
+                  key: ValueKey(index),
+                  axis: axis,
+                  alignment: Alignment.topLeft,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => SizedBox(
+                      width: axis == Axis.vertical
+                          ? constraints.maxWidth / 2
+                          : 100,
+                      height: axis == Axis.horizontal
+                          ? constraints.maxHeight / 2
+                          : 100,
+                      child: _RememberingItem(index: index),
+                    ),
+                  ),
+                ),
+                childCount: 20,
+              ),
+            );
+            for (final crossExtent in [300.0, 500.0, 180.0, 400.0]) {
+              await tester.pumpWidget(
+                MaterialApp(
+                  home: Scaffold(
+                    body: Align(
+                      alignment: Alignment.topLeft,
+                      child: SizedBox(
+                        width: axis == Axis.vertical ? crossExtent : 390,
+                        height: axis == Axis.horizontal ? crossExtent : 390,
+                        child: list,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+              await tester.pumpAndSettle();
+              expect(tester.takeException(), isNull);
+              if (crossExtent == 300) {
+                await tester.tap(find.text('Count 0: 0'));
+                await tester.pump();
+              }
+              final item = find.widgetWithText(TextButton, 'Count 0: 1');
+              expect(item, findsOneWidget);
+              final size = tester.getSize(item);
+              expect(
+                axis == Axis.vertical ? size.width : size.height,
+                crossExtent / 2,
+              );
+              expect(controller.offset, 0);
+              expect(controller.position.viewportDimension, 390);
+            }
+          },
+        );
+      }
+    }
+  }
+
+  testWidgets('retains a horizontal list across bounded and natural sizing', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final list = _list(controller, [const Size(40, 30)]);
+    for (final height in [90.0, null, 40.0, null]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 180,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [SizedBox(height: height, child: list)],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(
+        tester.getSize(find.byType(ComposeDslLazyListView)),
+        Size(180, height ?? 30),
+      );
+      expect(tester.getSize(find.text('Item 0')).height, 30);
+    }
+  });
+
   testWidgets('measures real children and updates the same controller', (
     tester,
   ) async {

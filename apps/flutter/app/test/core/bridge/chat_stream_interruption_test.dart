@@ -409,6 +409,7 @@ class _LiveChatBridge extends OperitRuntimeBridge {
           'completedAt': backendRunning ? 0 : 1,
           'displayMode': 'NORMAL',
           'isFavorite': false,
+          'pluginExtensions': <String, Object?>{},
           'contentStream': {
             r'$coreStream': {
               'streamId': streamId,

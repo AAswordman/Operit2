@@ -12,7 +12,7 @@ pub struct PendingPairing {
     pub displayName: String,
 }
 
-/// 局域网发现结果只包含寻址和展示信息；token 不进入发现结果或外围 UI。
+/// Discovery candidates contain addressing and display metadata only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveredPeer {
     pub nodeId: String,
@@ -32,6 +32,24 @@ pub struct PairedPeer {
     /// this generation; absent on records from older cores.
     #[serde(default)]
     pub pairingIncarnation: Option<String>,
+}
+
+/// Pairing grants remain directional; Space membership is checked separately.
+#[derive(Clone, Copy)]
+pub enum PairingDirection {
+    Inbound,
+    Outbound,
+    Either,
+}
+
+impl PairedPeer {
+    pub fn authorizes(&self, direction: PairingDirection) -> bool {
+        match direction {
+            PairingDirection::Inbound => self.inbound,
+            PairingDirection::Outbound => self.outbound,
+            PairingDirection::Either => self.inbound || self.outbound,
+        }
+    }
 }
 
 /// 只供本地操作界面展示，不通过匿名 Link 请求返回。
@@ -109,14 +127,12 @@ mod tests {
                 displayName: "board".into(),
             }])
         }
+        /// Records a pending pairing without accepting a listener credential.
         async fn startPairing(
             &self,
             target: PeerEndpoint,
-            transport: PeerTransport,
-            token: Option<&str>,
+            transport: Option<PeerTransport>,
         ) -> Result<PendingPairing, CoreLinkError> {
-            // LAN discovery may intentionally start without a user-supplied token.
-            let _token = token;
             self.calls.lock().unwrap().push(format!(
                 "start:{}:{}:{transport:?}",
                 target.nodeId, target.address
@@ -227,6 +243,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn pairing_queries_preserve_direction_and_require_a_grant() {
+        let service = RecordingPeerService::default();
+        assert!(service
+            .hasPairing("board", PairingDirection::Outbound)
+            .unwrap());
+        assert!(!service
+            .hasPairing("board", PairingDirection::Inbound)
+            .unwrap());
+        assert!(service
+            .hasPairing("board", PairingDirection::Either)
+            .unwrap());
+        assert!(!service
+            .hasPairing("unknown", PairingDirection::Either)
+            .unwrap());
+        let mut peer = service.pairedPeers().unwrap().remove(0);
+        peer.inbound = true;
+        peer.outbound = false;
+        assert!(peer.authorizes(PairingDirection::Inbound));
+        assert!(!peer.authorizes(PairingDirection::Outbound));
+        assert!(peer.authorizes(PairingDirection::Either));
+        peer.inbound = false;
+        assert!(!peer.authorizes(PairingDirection::Either));
+    }
+
     #[tokio::test]
     async fn disconnect_preserves_pairing_and_uses_the_shared_service() {
         let backend = Arc::new(RecordingPeerService::default());
@@ -261,8 +302,7 @@ mod tests {
                         nodeId: "board".into(),
                         address: "endpoint".into(),
                     },
-                    transport,
-                    None,
+                    Some(transport),
                 )
                 .await
                 .unwrap();
@@ -278,7 +318,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lan_pairing_can_start_without_user_token_and_revoke_is_device_wide() {
+    async fn pairing_uses_code_confirmation_and_revoke_is_device_wide() {
         let backend = Arc::new(RecordingPeerService::default());
         let services = NodeServices::new(backend.clone());
         let endpoint = PeerEndpoint {
@@ -286,17 +326,16 @@ mod tests {
             address: "endpoint".into(),
         };
         services.peers()
-            .startPairing(endpoint.clone(), PeerTransport::Tcp, None)
+            .startPairing(endpoint.clone(), Some(PeerTransport::Tcp))
             .await
             .unwrap();
         services.peers()
-            .startPairing(endpoint, PeerTransport::Tcp, Some("secret-token"))
+            .startPairing(endpoint, Some(PeerTransport::Tcp))
             .await
             .unwrap();
         services.peers().removePairedPeer("board").await.unwrap();
         let calls = backend.calls.lock().unwrap();
         assert_eq!(&calls[2..], &["remove:board"]);
-        assert!(!calls.iter().any(|call| call.contains("secret-token")));
     }
 
     #[tokio::test]

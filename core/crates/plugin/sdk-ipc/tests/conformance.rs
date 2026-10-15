@@ -5,16 +5,15 @@ use operit_host_api::PluginSdkIpcEndpoint;
 use operit_host_native_plugin_sdk_ipc::MemoryPluginSdkIpcHost;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream,
-    CoreLinkError, CoreLinkPushSession, CorePushRequest, CoreValue, CoreWatchRequest,
+    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushRequest, CoreValue, CoreWatchRequest,
 };
-use operit_plugin_sdk_ipc::{PluginSdkClient, PluginSdkIpcServer, PluginSdkLinkTarget};
+use operit_plugin_sdk_ipc::{PluginSdkClient, PluginSdkIpcServer};
 
-/// Provides deterministic Core Link behavior for the cross-process conformance test.
-#[derive(Clone)]
+/// Provides deterministic shared Link behavior without mutable ownership or client cloning.
 struct TestCoreLinkTarget;
 
 #[async_trait(?Send)]
-impl PluginSdkLinkTarget for TestCoreLinkTarget {
+impl CoreLinkSharedClient for TestCoreLinkTarget {
     /// Returns the input argument through the canonical call response.
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         CoreCallResponse::ok(request.requestId, request.args)
@@ -116,6 +115,7 @@ fn pair() -> (
     (host, client, server)
 }
 
+/// Exercises all Link families through a shared client and a shared-only IPC target.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn forwards_call_watch_snapshot_watch_and_push() {
     let (_host, client, server) = pair();
@@ -155,7 +155,8 @@ async fn forwards_call_watch_snapshot_watch_and_push() {
     assert_eq!(stream.recv().await.expect("completed event").kind, CoreEventKind::Completed);
     drop(stream);
 
-    let mut push = client
+    let shared: &dyn CoreLinkSharedClient = &client;
+    let mut push = shared
         .openPush(CorePushRequest::new("push-1", "core/test", "input"))
         .await
         .expect("push opens");

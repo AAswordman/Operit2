@@ -378,11 +378,12 @@ pub fn diagnose(service: &dyn NodeSpaceContext, repair: bool) -> Result<SpaceHea
     }
 
     // D6: dual-copy consistency between journals and the control projection.
-    let projectionStore = CoreNodeStateStore::newWithStorage(service.storage(), CONTROL_PROJECTION_PATH);
+    let projectionStore = operit_store::NetworkControlStore::NetworkControlStore::projectionStore(service.storage());
     let projectionEntries = projectionStore.data().map_err(|error| error.to_string())?.entries();
     let mut projectionOperations = Vec::new();
-    for (_, encoded) in &projectionEntries {
-        match serde_json::from_str::<SyncOperation>(encoded) {
+    for (key, encoded) in &projectionEntries {
+        if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
+        match serde_json::from_value::<SyncOperation>(encoded.clone()) {
             Ok(operation) => projectionOperations.push(operation),
             Err(error) => findings.push(SpaceDoctorFinding {
                 severity: "error".into(),
@@ -495,9 +496,10 @@ fn runRepair(
         let scan = sync.scanOperationLog(&deviceId).map_err(|error| error.to_string())?;
         shadowOperations.extend(scan.operations.iter().cloned());
     }
-    let projectionStore = CoreNodeStateStore::newWithStorage(service.storage(), CONTROL_PROJECTION_PATH);
-    for (_, encoded) in projectionStore.data().map_err(|error| error.to_string())?.entries() {
-        if let Ok(operation) = serde_json::from_str::<SyncOperation>(&encoded) {
+    let projectionStore = operit_store::NetworkControlStore::NetworkControlStore::projectionStore(service.storage());
+    for (key, encoded) in projectionStore.data().map_err(|error| error.to_string())?.entries() {
+        if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
+        if let Ok(operation) = serde_json::from_value::<SyncOperation>(encoded) {
             shadowOperations.push(operation);
         }
     }

@@ -91,8 +91,8 @@ test('persistent mounts use an opaque generic host resource contract', () => {
   assert.match(catalog, /pub backend: String/);
   assert.match(catalog, /pub root: String/);
   assert.match(catalog, /config\/vfs_mounts\.json/);
-  assert.match(catalog, /file\.sync_all\(\)/);
-  assert.match(catalog, /fs::rename\(&temporary, &self\.catalog\)/);
+  assert.match(catalog, /storage\.writeBytesAtomically\(CATALOG_PATH, &bytes\)/);
+  assert.doesNotMatch(catalog.split("#[cfg(all(test")[0], /std::fs|fs::rename/);
   const mapper = source(mapperPath);
   assert.match(mapper, /FileSystemResource \{/);
   assert.doesNotMatch(mapper.split('#[cfg(test)]')[0], /com\.termux\.documents/);

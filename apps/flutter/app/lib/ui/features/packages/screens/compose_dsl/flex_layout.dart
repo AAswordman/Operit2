@@ -37,27 +37,65 @@ class _ComposeFlex extends Flex {
   ) {
     super.updateRenderObject(context, renderObject);
     renderObject.nodes = nodes;
-    renderObject.markNeedsLayout();
   }
 }
 
 class _ComposeRenderFlex extends RenderFlex {
   /// Configures standard flex measurement with plugin child metadata.
   _ComposeRenderFlex({
-    required this.nodes,
+    required List<_ComposeDslNode> nodes,
     required super.direction,
     required super.mainAxisSize,
     required super.mainAxisAlignment,
     required super.crossAxisAlignment,
     required super.textDirection,
     super.spacing,
-  });
+  }) : _nodes = nodes {
+    for (final node in _nodes) {
+      node.addListener(_nodeChanged);
+    }
+  }
 
-  List<_ComposeDslNode> nodes;
+  List<_ComposeDslNode> _nodes;
+  List<RenderBox>? _paintChildren;
+
+  /// Exposes child metadata used by layout and paint.
+  List<_ComposeDslNode> get nodes => _nodes;
+
+  /// Rebinds child metadata listeners when the flex membership changes.
+  set nodes(List<_ComposeDslNode> value) {
+    if (listEquals(_nodes, value)) return;
+    for (final node in _nodes) {
+      node.removeListener(_nodeChanged);
+    }
+    _nodes = value;
+    _paintChildren = null;
+    for (final node in _nodes) {
+      node.addListener(_nodeChanged);
+    }
+    markNeedsLayout();
+  }
+
+  /// Invalidates layout and drawing when retained child metadata changes.
+  void _nodeChanged() {
+    _paintChildren = null;
+    markNeedsLayout();
+    markNeedsPaint();
+  }
+
+  /// Releases retained child subscriptions with the render object.
+  @override
+  void dispose() {
+    for (final node in _nodes) {
+      node.removeListener(_nodeChanged);
+    }
+    super.dispose();
+  }
 
   /// Applies explicit child alignment after Flutter distributes flex space.
   @override
   void performLayout() {
+    _paintChildren = null;
     super.performLayout();
     var child = firstChild;
     var index = 0;
@@ -99,27 +137,33 @@ class _ComposeRenderFlex extends RenderFlex {
   }
 
   /// Sorts draw order without disturbing measured positions or keyed elements.
-  List<RenderBox> _paintOrder() {
+  List<RenderBox> _paintOrder() => _paintChildren ??= _computePaintOrder();
+
+  /// Computes once per layout/metadata change, shared by paint and hit testing.
+  List<RenderBox> _computePaintOrder() {
     final entries = <({RenderBox child, double z, int index})>[];
     var child = firstChild;
     var index = 0;
+    var ordered = true;
+    var previousZ = double.negativeInfinity;
     while (child != null) {
       final props = nodes[index].props;
       final args =
           _modifierOpByToken(props['modifier'], 'zindex')?['args']
               as List<Object?>?;
-      entries.add((
-        child: child,
-        z: _number(props['zIndex'] ?? args?.firstOrNull) ?? 0,
-        index: index,
-      ));
+      final z = _number(props['zIndex'] ?? args?.firstOrNull) ?? 0;
+      if (z < previousZ) ordered = false;
+      previousZ = z;
+      entries.add((child: child, z: z, index: index));
       child = childAfter(child);
       index++;
     }
-    entries.sort((a, b) {
-      final order = a.z.compareTo(b.z);
-      return order == 0 ? a.index.compareTo(b.index) : order;
-    });
+    if (!ordered) {
+      entries.sort((a, b) {
+        final order = a.z.compareTo(b.z);
+        return order == 0 ? a.index.compareTo(b.index) : order;
+      });
+    }
     return entries.map((entry) => entry.child).toList(growable: false);
   }
 

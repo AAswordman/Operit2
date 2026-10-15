@@ -89,39 +89,36 @@ class TtsPlaybackController extends ChangeNotifier {
   /// Returns the latest playback snapshot.
   TtsPlaybackState get state => _state;
 
-  /// Starts character speech and completes after playback actually starts.
-  Future<void> speakForCharacter({
+  /// Queues the displayed message locator before resolving its persisted execution voice.
+  Future<void> speakForMessage({
     required OperitRuntimeBridge bridge,
-    required String characterCardId,
+    required String chatId,
+    required int messageTimestamp,
+    required int variantIndex,
     required String text,
-    required String title,
     bool interrupt = true,
   }) async {
+    if (chatId.trim().isEmpty || variantIndex < 0 || text.trim().isEmpty) {
+      throw ArgumentError(
+        'Message speech requires a chat, selected variant, and text.',
+      );
+    }
     if (interrupt) {
       await stop();
       _throwStopError();
     }
-    final request = _TtsPlaybackRequest.character(
-      bridge: bridge,
-      characterCardId: characterCardId,
-      text: text,
-      title: title,
-      generation: _generation,
-    );
-    _queue.add(request);
-    _publish(
-      _state.copyWith(
-        phase: _state.phase == TtsPlaybackPhase.idle
-            ? TtsPlaybackPhase.preparing
-            : _state.phase,
-        queueLength: _queue.length,
-        clearError: true,
+    await _queueRequest(
+      _TtsPlaybackRequest(
+        bridge: bridge,
+        source: _MessageTtsSource(
+          chatId: chatId,
+          messageTimestamp: messageTimestamp,
+          variantIndex: variantIndex,
+        ),
+        text: text,
+        generation: _generation,
       ),
     );
-    if (!_draining) {
-      unawaited(_drainQueue());
-    }
-    await request.started;
   }
 
   /// Starts configured speech and completes after playback actually starts.
@@ -132,17 +129,27 @@ class TtsPlaybackController extends ChangeNotifier {
     required String title,
     bool interrupt = true,
   }) async {
+    if (ttsConfigId.trim().isEmpty || text.trim().isEmpty) {
+      throw ArgumentError(
+        'Configured speech requires a nonblank voice ID and text.',
+      );
+    }
     if (interrupt) {
       await stop();
       _throwStopError();
     }
-    final request = _TtsPlaybackRequest.config(
-      bridge: bridge,
-      ttsConfigId: ttsConfigId,
-      text: text,
-      title: title,
-      generation: _generation,
+    await _queueRequest(
+      _TtsPlaybackRequest(
+        bridge: bridge,
+        source: _ConfigTtsSource(ttsConfigId: ttsConfigId, title: title),
+        text: text,
+        generation: _generation,
+      ),
     );
+  }
+
+  /// Attaches startup completion to the existing ordered and cancellable queue.
+  Future<void> _queueRequest(_TtsPlaybackRequest request) async {
     _queue.add(request);
     _publish(
       _state.copyWith(
@@ -296,7 +303,7 @@ class TtsPlaybackController extends ChangeNotifier {
         _publish(
           _state.copyWith(
             phase: TtsPlaybackPhase.preparing,
-            title: request.title,
+            title: '',
             currentText: request.text,
             currentAudioPath: '',
             queueLength: _queue.length,
@@ -305,16 +312,24 @@ class TtsPlaybackController extends ChangeNotifier {
             clearError: true,
           ),
         );
-        final usesHostSystemSpeech = await _usesHostSystemSpeech(request);
+        final voice = await _resolveVoice(request);
+        if (request.generation != _generation) {
+          continue;
+        }
+        _publish(_state.copyWith(title: voice.title));
+        final usesHostSystemSpeech = await _usesHostSystemSpeech(
+          request,
+          voice,
+        );
         if (request.generation != _generation) {
           continue;
         }
         if (usesHostSystemSpeech) {
-          final audioPath = _hostSpeechPath(request.displayId);
+          final audioPath = _hostSpeechPath(voice.ttsConfigId);
           _hostSpeechBridge = request.bridge;
           _hostSpeechClients = request.clients;
           try {
-            final status = await _speakHostSystem(request);
+            final status = await _speakHostSystem(request, voice);
             if (request.generation != _generation) {
               await _stopLateHostSpeech(request.clients);
               continue;
@@ -344,7 +359,7 @@ class TtsPlaybackController extends ChangeNotifier {
           }
           continue;
         }
-        final audioSources = await _synthesize(request);
+        final audioSources = await _synthesize(request, voice);
         if (request.generation != _generation) {
           continue;
         }
@@ -391,18 +406,43 @@ class TtsPlaybackController extends ChangeNotifier {
     }
   }
 
-  /// Resolves whether a request uses live host system speech.
-  Future<bool> _usesHostSystemSpeech(_TtsPlaybackRequest request) async {
-    final config = switch (request.source) {
-      _TtsPlaybackSource.character => await _resolvedCharacterTtsConfig(
-        request.clients,
-        request.characterCardId,
-      ),
-      _TtsPlaybackSource.config =>
-        await request.clients.preferencesTtsConfigManager.getTtsConfig(
-          id: request.ttsConfigId,
-        ),
-    };
+  /// Resolves one saved message profile or an explicitly requested settings preview voice.
+  Future<_ResolvedTtsVoice> _resolveVoice(_TtsPlaybackRequest request) async {
+    final _ResolvedTtsVoice voice;
+    switch (request.source) {
+      case _MessageTtsSource(
+        :final chatId,
+        :final messageTimestamp,
+        :final variantIndex,
+      ):
+        final saved = await request.clients.chatRuntimeHolderMain
+            .chatConfigurationForMessage(
+              chatId: chatId,
+              messageTimestamp: messageTimestamp,
+              variantIndex: variantIndex,
+            );
+        voice = _ResolvedTtsVoice(
+          ttsConfigId: saved.profile.ttsConfigId,
+          title: saved.profile.name,
+        );
+      case _ConfigTtsSource(:final ttsConfigId, :final title):
+        voice = _ResolvedTtsVoice(ttsConfigId: ttsConfigId, title: title);
+    }
+    if (voice.ttsConfigId.trim().isEmpty) {
+      throw StateError(
+        'The saved execution profile has no TTS voice configuration.',
+      );
+    }
+    return voice;
+  }
+
+  /// Selects the real playback backend using only the resolved configuration and host capability.
+  Future<bool> _usesHostSystemSpeech(
+    _TtsPlaybackRequest request,
+    _ResolvedTtsVoice voice,
+  ) async {
+    final config = await request.clients.preferencesTtsConfigManager
+        .getTtsConfig(id: voice.ttsConfigId);
     if (config.providerType != _systemTtsProviderType) {
       return false;
     }
@@ -416,38 +456,16 @@ class TtsPlaybackController extends ChangeNotifier {
     return true;
   }
 
-  /// Resolves the effective character TTS configuration.
-  Future<core_proxy.TtsConfig> _resolvedCharacterTtsConfig(
-    GeneratedCoreProxyClients clients,
-    String characterCardId,
-  ) async {
-    final card = await clients.preferencesCharacterCardManager.getCharacterCard(
-      id: characterCardId,
-    );
-    final ttsConfigId = card.ttsConfigId?.trim();
-    return ttsConfigId == null || ttsConfigId.isEmpty
-        ? await clients.preferencesTtsConfigManager.getCurrentTtsConfig()
-        : await clients.preferencesTtsConfigManager.getTtsConfig(
-            id: ttsConfigId,
-          );
-  }
-
   /// Synthesizes generated audio sources for one request.
   Future<List<_TtsPlaybackAudioSource>> _synthesize(
     _TtsPlaybackRequest request,
+    _ResolvedTtsVoice voice,
   ) async {
-    final result = switch (request.source) {
-      _TtsPlaybackSource.character => await request.clients.servicesTtsSynthesisService
-          .synthesizeForCharacter(
-            characterCardId: request.characterCardId,
-            text: request.text,
-          ),
-      _TtsPlaybackSource.config => await request.clients.servicesTtsSynthesisService
-          .synthesizeWithConfig(
-            ttsConfigId: request.ttsConfigId,
-            text: request.text,
-          ),
-    };
+    final result = await request.clients.servicesTtsSynthesisService
+        .synthesizeWithConfig(
+          ttsConfigId: voice.ttsConfigId,
+          text: request.text,
+        );
     final json = result.toJson();
     final audioPaths = _jsonStringList(json, 'audioPaths');
     final audioStoragePaths = _jsonStringList(json, 'audioStoragePaths');
@@ -464,25 +482,16 @@ class TtsPlaybackController extends ChangeNotifier {
   }
 
   /// Starts host system speech and returns its authoritative state.
-  Future<_TtsHostStatus> _speakHostSystem(_TtsPlaybackRequest request) async {
-    final result = switch (request.source) {
-      _TtsPlaybackSource.character => await request
-          .clients
-          .servicesTtsPlaybackService
-          .speakForCharacter(
-            characterCardId: request.characterCardId,
-            text: request.text,
-            interrupt: true,
-          ),
-      _TtsPlaybackSource.config => await request
-          .clients
-          .servicesTtsPlaybackService
-          .speakWithConfig(
-            ttsConfigId: request.ttsConfigId,
-            text: request.text,
-            interrupt: true,
-          ),
-    };
+  Future<_TtsHostStatus> _speakHostSystem(
+    _TtsPlaybackRequest request,
+    _ResolvedTtsVoice voice,
+  ) async {
+    final result = await request.clients.servicesTtsPlaybackService
+        .speakWithConfig(
+          ttsConfigId: voice.ttsConfigId,
+          text: request.text,
+          interrupt: true,
+        );
     return _TtsHostStatus.fromJson(result.toJson());
   }
 
@@ -534,9 +543,11 @@ class TtsPlaybackController extends ChangeNotifier {
     _TtsPlaybackAudioSource audioSource,
   ) async {
     _hostSpeechBridge = request.bridge;
+    _hostSpeechClients = request.clients;
     try {
-      final result = await request.clients.servicesTtsPlaybackService
-          .playAudio(path: audioSource.path);
+      final result = await request.clients.servicesTtsPlaybackService.playAudio(
+        path: audioSource.path,
+      );
       final start = _TtsAudioStart.fromJson(result.toJson());
       if (!start.started) {
         throw StateError(
@@ -556,6 +567,7 @@ class TtsPlaybackController extends ChangeNotifier {
     } finally {
       if (identical(_hostSpeechBridge, request.bridge)) {
         _hostSpeechBridge = null;
+        _hostSpeechClients = null;
       }
     }
   }
@@ -587,48 +599,24 @@ class TtsPlaybackController extends ChangeNotifier {
 }
 
 class _TtsPlaybackRequest {
-  /// Creates a character-backed playback request.
-  _TtsPlaybackRequest.character({
+  /// Captures one explicit voice source within the current cancellation generation.
+  _TtsPlaybackRequest({
     required this.bridge,
-    required this.characterCardId,
+    required this.source,
     required this.text,
-    required this.title,
     required this.generation,
   }) : clients = GeneratedCoreProxyClients(bridge),
-       source = _TtsPlaybackSource.character,
-       ttsConfigId = '',
-       _started = Completer<void>();
-
-  /// Creates a config-backed playback request.
-  _TtsPlaybackRequest.config({
-    required this.bridge,
-    required this.ttsConfigId,
-    required this.text,
-    required this.title,
-    required this.generation,
-  }) : clients = GeneratedCoreProxyClients(bridge),
-       source = _TtsPlaybackSource.config,
-       characterCardId = '',
        _started = Completer<void>();
 
   final OperitRuntimeBridge bridge;
   final GeneratedCoreProxyClients clients;
   final _TtsPlaybackSource source;
-  final String characterCardId;
-  final String ttsConfigId;
   final String text;
-  final String title;
   final int generation;
   final Completer<void> _started;
 
   /// Returns a future that completes when playback really starts.
   Future<void> get started => _started.future;
-
-  /// Returns the source identifier displayed by the player.
-  String get displayId => switch (source) {
-    _TtsPlaybackSource.character => characterCardId,
-    _TtsPlaybackSource.config => ttsConfigId,
-  };
 
   /// Completes the start future after successful playback startup.
   void completeStart() {
@@ -645,7 +633,40 @@ class _TtsPlaybackRequest {
   }
 }
 
-enum _TtsPlaybackSource { character, config }
+/// Restricts queued voice sources to a persisted message locator or an explicit preview.
+sealed class _TtsPlaybackSource {
+  /// Creates a typed voice source without nullable identity placeholders.
+  const _TtsPlaybackSource();
+}
+
+final class _MessageTtsSource extends _TtsPlaybackSource {
+  /// Captures the displayed transcript and selected historical message variant.
+  const _MessageTtsSource({
+    required this.chatId,
+    required this.messageTimestamp,
+    required this.variantIndex,
+  });
+
+  final String chatId;
+  final int messageTimestamp;
+  final int variantIndex;
+}
+
+final class _ConfigTtsSource extends _TtsPlaybackSource {
+  /// Keeps the existing explicit configuration preview separate from message identity.
+  const _ConfigTtsSource({required this.ttsConfigId, required this.title});
+
+  final String ttsConfigId;
+  final String title;
+}
+
+class _ResolvedTtsVoice {
+  /// Retains the single authoritative voice resolution used throughout playback.
+  const _ResolvedTtsVoice({required this.ttsConfigId, required this.title});
+
+  final String ttsConfigId;
+  final String title;
+}
 
 class _TtsPlaybackAudioSource {
   /// Creates a generated audio source descriptor.
@@ -712,5 +733,4 @@ List<String> _jsonStringList(Map<String, Object?> json, String key) {
 }
 
 /// Builds the synthetic path used for live host speech.
-String _hostSpeechPath(String characterCardId) => 'host-tts:$characterCardId';
-
+String _hostSpeechPath(String ttsConfigId) => 'host-tts:$ttsConfigId';

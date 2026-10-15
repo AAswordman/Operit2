@@ -1,6 +1,6 @@
 use operit_host_api::RuntimeStorageHost;
 use operit_providers::chat::llmprovider::CodexOAuth::CodexOAuthTokens;
-use operit_store::PreferencesDataStore::{stringPreferencesKey, CoreNodeSecretStore, Preferences};
+use operit_store::PreferencesDataStore::{stringPreferencesKey, CoreNodeSecretStore, Preferences, PreferencesDataStoreError};
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::OperitPaths;
 
@@ -16,14 +16,25 @@ impl CodexAuthPreferences {
             dataStore: CoreNodeSecretStore::newWithStorage(
                 defaultRuntimeStorageHost(),
                 OperitPaths::CODEX_AUTH_PREFERENCES_PATH,
-            ),
+            ).withSchema(2, |version, preferences| match version {
+                0 => Ok(()),
+                1 => {
+                    let key = stringPreferencesKey("tokens");
+                    if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                        let tokens: CodexOAuthTokens = serde_json::from_str(&encoded)?;
+                        preferences.set(&key, serde_json::to_value(tokens)?);
+                    }
+                    Ok(())
+                }
+                from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+            }),
         }
     }
 
     /// Replaces the saved Codex OAuth session.
     #[operit_route_macros::operit_core_internal]
     pub fn save(&self, tokens: &CodexOAuthTokens) -> Result<(), String> {
-        let encoded = serde_json::to_string(tokens).map_err(|error| error.to_string())?;
+        let encoded = serde_json::to_value(tokens).map_err(|error| error.to_string())?;
         self.dataStore
             .edit(|preferences| {
                 preferences.set(&stringPreferencesKey("tokens"), encoded.clone());
@@ -56,7 +67,7 @@ fn read_tokens(preferences: &Preferences) -> Result<Option<CodexOAuthTokens>, St
     let Some(encoded) = preferences.get(&stringPreferencesKey("tokens")) else {
         return Ok(None);
     };
-    serde_json::from_str(encoded)
+    serde_json::from_value(encoded.clone())
         .map(Some)
         .map_err(|error| error.to_string())
 }

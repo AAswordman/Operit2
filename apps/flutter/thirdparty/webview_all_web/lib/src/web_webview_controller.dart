@@ -643,7 +643,7 @@ class WebWebViewController extends PlatformWebViewController {
   }
 
   @override
-  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+  Future<Object?> runJavaScriptReturningResult(String javaScript) async {
     if (_javaScriptMode == JavaScriptMode.disabled) {
       throw StateError('JavaScript execution is disabled for this WebView.');
     }
@@ -653,12 +653,8 @@ class WebWebViewController extends PlatformWebViewController {
     return _dartObjectFromJavaScriptResult(result);
   }
 
-  Object _dartObjectFromJavaScriptResult(JSAny? result) {
-    if (result == null) {
-      throw ArgumentError(
-        'The JavaScript returned `null` or `undefined`, which is unsupported.',
-      );
-    }
+  Object? _dartObjectFromJavaScriptResult(JSAny? result) {
+    if (result == null) return null;
 
     final JSString? jsonResult;
     try {
@@ -670,18 +666,9 @@ class WebWebViewController extends PlatformWebViewController {
     }
 
     if (jsonResult == null) {
-      throw ArgumentError(
-        'The JavaScript returned `null` or `undefined`, which is unsupported.',
-      );
+      throw UnsupportedError('The JavaScript result is not JSON-compatible.');
     }
-
-    final Object? decoded = jsonDecode(jsonResult.toDart);
-    if (decoded == null) {
-      throw ArgumentError(
-        'The JavaScript returned `null` or `undefined`, which is unsupported.',
-      );
-    }
-    return decoded;
+    return jsonDecode(jsonResult.toDart);
   }
 
   void _handleWindowMessage(web.MessageEvent event) {

@@ -108,12 +108,15 @@ def main() -> int:
     if not args.skip_proxy_generation:
         generate_dart_proxy_artifacts()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
+    # Omit `--no-pub` on purpose: this build rewrites GeneratedPluginRegistrant.java
+    # for release mode, dropping dev-only plugins (integration_test) that
+    # `flutter pub get` leaves in. Gradle excludes dev-dependency modules from release
+    # builds, so a registrant written by pub get alone cannot resolve those classes.
     command = [
         flutter,
         "build",
         "apk",
         "--release",
-        "--no-pub",
         "--split-per-abi",
         "--target-platform",
         "android-arm64",

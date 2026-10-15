@@ -1,13 +1,14 @@
 #[path = "AIToolHandler.rs"]
 pub mod AIToolHandler;
-#[path = "AIToolHandlerJsToolsHost.rs"]
-mod AIToolHandlerJsToolsHost;
 
 #[path = "AIToolHook.rs"]
 pub mod AIToolHook;
 
 #[path = "ToolExecutionLimits.rs"]
 pub mod ToolExecutionLimits;
+
+#[path = "ToolInvocation.rs"]
+pub(crate) mod ToolInvocation;
 
 #[path = "PackageToolExecutor.rs"]
 pub mod PackageToolExecutor;
@@ -55,3 +56,6 @@ pub mod skill_runtime;
 
 #[path = "EdgePortTool.rs"]
 pub mod EdgePortTool;
+
+#[path = "DeviceTools.rs"]
+pub mod DeviceTools;

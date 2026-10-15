@@ -1170,6 +1170,22 @@ const images = await ctx.openFilePicker({
 
 该 API 通过 Flutter `file_selector` 在 Android、iOS、Linux、macOS、Windows、Web 和 OpenHarmony 使用各平台的文件选择器。不适用于该 `picker` 的选项会直接报错。结果提供平台文件路径或浏览器对象 URL。
 
+#### 文件保存
+
+`ctx.saveFile(options)` 将 UTF-8 文本交给宿主的跨平台文件保存服务，由用户在系统保存界面选择位置。
+
+```javascript
+const saved = await ctx.saveFile({
+    suggestedName: 'character.json',
+    content: characterJson,
+    mimeType: 'application/json',
+    extensions: ['json']
+});
+if (saved.cancelled) return;
+```
+
+`suggestedName` 是文件名，不能包含目录；`extensions` 不带点号。只有文件保存完成才会返回 `cancelled: false`。用户取消返回 `cancelled: true`、`path: null`，保存失败直接拒绝 Promise。插件不需要获取或写入目标 VFS 路径。
+
 兼容说明：
 
 - `ToolPkg.registerToolboxUiModule(...)` 仍然保留。

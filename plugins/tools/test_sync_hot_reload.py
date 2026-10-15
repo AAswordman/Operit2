@@ -101,5 +101,68 @@ class HotReloadTests(unittest.TestCase):
             )
 
 
+class ScriptPackedDependencyTests(unittest.TestCase):
+    """Checks dependency installation before script-managed package builds."""
+
+    # Creates a script-managed package with an optional dependency declaration.
+    def create_package(self, root, *, with_dependencies):
+        package = root / 'music_studio'
+        package.mkdir()
+        data = {'scripts': {'pack:toolpkg': 'node scripts/pack.mjs'}}
+        if with_dependencies:
+            data['devDependencies'] = {'typescript': '5.9.2'}
+        (package / 'package.json').write_text(json.dumps(data), encoding='utf-8')
+        plan = sync.SyncPlanItem('copy-script-toolpkg', package, 'music_studio.toolpkg')
+        return package, [plan]
+
+    # Verifies installation precedes packaging in both execution and dry-run modes.
+    def test_installs_locked_dependencies_before_pack(self):
+        for dry_run in (False, True):
+            with self.subTest(dry_run=dry_run), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                package, plans = self.create_package(root, with_dependencies=True)
+                with (
+                    patch.object(sync.shutil, 'which', return_value='corepack'),
+                    patch.object(sync, '_run_checked_command') as run,
+                ):
+                    sync._prebuild_plans(root, root, plans, dry_run=dry_run)
+                self.assertEqual([call.args[0] for call in run.call_args_list], [
+                    ['corepack', 'pnpm', 'install', '--frozen-lockfile'],
+                    ['corepack', 'pnpm', 'run', 'pack:toolpkg'],
+                ])
+                for call in run.call_args_list:
+                    self.assertEqual(call.args[1], package)
+                    self.assertEqual(call.kwargs, {'dry_run': dry_run})
+
+    # Verifies a failed dependency install stops the package build immediately.
+    def test_install_failure_stops_pack(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, plans = self.create_package(root, with_dependencies=True)
+            with (
+                patch.object(sync.shutil, 'which', return_value='corepack'),
+                patch.object(sync, '_run_checked_command',
+                             side_effect=RuntimeError('install failed')) as run,
+            ):
+                with self.assertRaisesRegex(RuntimeError, 'install failed'):
+                    sync._prebuild_plans(root, root, plans, dry_run=False)
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0],
+                             ['corepack', 'pnpm', 'install', '--frozen-lockfile'])
+
+    # Verifies packages without dependencies do not require a dependency lockfile.
+    def test_package_without_dependencies_runs_pack(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package, plans = self.create_package(root, with_dependencies=False)
+            with (
+                patch.object(sync.shutil, 'which', return_value='corepack'),
+                patch.object(sync, '_run_checked_command') as run,
+            ):
+                sync._prebuild_plans(root, root, plans, dry_run=False)
+            run.assert_called_once_with(
+                ['corepack', 'pnpm', 'run', 'pack:toolpkg'], package, dry_run=False)
+
+
 if __name__ == '__main__':
     unittest.main()

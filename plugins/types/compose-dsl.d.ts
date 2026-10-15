@@ -1,6 +1,7 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
 import type { ComposeMaterial3GeneratedUiFactoryRegistry } from "./compose-dsl.material3.generated";
+import type { ToolPkg } from "./toolpkg";
 
 /**
  * Options for deriving a theme color token with adjusted opacity.
@@ -20,7 +21,7 @@ export type ComposeCanvasBrushType = "VerticalGradient";
 /**
  * Completion mode returned by the primary-click handler.
  */
-export type ComposeModifierCombinedClickableOptionsOnClickOutput = void | Promise<void>;
+export type ComposeModifierCombinedClickableOptionsOnClickOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Completion mode returned by the long-click handler.
@@ -443,7 +444,7 @@ export type ComposeCommonPropsPadding = number | ComposePadding;
 /**
  * Completion mode returned by a row click handler.
  */
-export type RowPropsOnClickOutput = void | Promise<void>;
+export type RowPropsOnClickOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Label content accepted by a text field.
@@ -458,12 +459,12 @@ export type TextFieldPropsPlaceholder = string | ComposeChildren;
 /**
  * Completion mode returned by a button click handler.
  */
-export type ButtonPropsOnClickOutput = void | Promise<void>;
+export type ButtonPropsOnClickOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Completion mode returned by an icon-button click handler.
  */
-export type IconButtonPropsOnClickOutput = void | Promise<void>;
+export type IconButtonPropsOnClickOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Completion mode returned by a clickable surface.
@@ -2596,6 +2597,10 @@ export interface ComposeCommonProps {
    */
   onLoad?: () => ComposeCommonPropsOnLoadOutput;
   /**
+   * Runs after host inputs update in the same live execution context.
+   */
+  onInputsChanged?: () => ComposeCommonPropsOnLoadOutput;
+  /**
    * Content presented as the host screen's top-bar title.
    */
   topBarTitle?: ComposeChildren;
@@ -2760,9 +2765,58 @@ export interface FlowRowProps extends ComposeCommonProps {
 }
 
 /**
+ * Easing curve for implicit visual transitions.
+ */
+export type ComposeAnimationCurve = "linear" | "easeOutCubic" | "easeInOut" | "easeOut";
+
+/**
+ * Generic implicit transition options; animation frames are rendered by the host.
+ */
+export interface ComposeBoxAnimation {
+  /**
+   * Transition duration in milliseconds; zero applies changes immediately.
+   */
+  durationMillis?: number;
+  /**
+   * Easing curve, defaulting to linear.
+   */
+  curve?: ComposeAnimationCurve;
+}
+
+/**
+ * Visual overrides while the enclosing HoverRegion is hovered or its menu is open.
+ */
+export interface ComposeBoxHoverStyle {
+  /**
+   * Overrides the requested width.
+   */
+  width?: number;
+  /**
+   * Overrides the requested height.
+   */
+  height?: number;
+  /**
+   * Overrides the solid background paint.
+   */
+  backgroundColor?: ComposeColor;
+  /**
+   * Overrides background corner geometry.
+   */
+  backgroundShape?: ComposeShape;
+}
+
+/**
  * Properties for stacking child nodes in the same layout bounds.
  */
 export interface BoxProps extends ComposeCommonProps {
+  /**
+   * Optional host-rendered transitions for size, background paint and corner geometry.
+   */
+  animation?: ComposeBoxAnimation;
+  /**
+   * Partial visual overrides from the enclosing HoverRegion, independent of touch visibility.
+   */
+  hoverStyle?: ComposeBoxHoverStyle;
   /**
    * Child nodes drawn in stacking order.
    */
@@ -2828,6 +2882,10 @@ export interface TextProps extends ComposeCommonProps {
    */
   overflow?: ComposeTextOverflow;
   /**
+   * Horizontal alignment within the available text width.
+   */
+  textAlign?: string;
+  /**
    * Share of remaining main-axis space when placed in a row or column.
    */
   weight?: number;
@@ -2861,8 +2919,54 @@ export interface MarkdownProps extends ComposeCommonProps {
 
 /**
  * State, decoration, validation, and typography for an editable text field.
+ * Standard themed input frame for arbitrary plugin-owned content.
+ * Controlled horizontally swipeable pages.
+ */
+export interface HorizontalPagerProps extends ComposeCommonProps {
+  /**
+   * Selected zero-based page.
+   */
+  currentPage: number;
+  /**
+   * Receives a user-selected page.
+   */
+  onPageChanged: (arg0: number) => void;
+  /**
+   * Page content.
+   */
+  content?: ComposeChildren;
+}
+
+/**
+ * Standard themed input frame for arbitrary plugin-owned content.
+ */
+export interface InputDecoratorProps extends ComposeCommonProps {
+  /**
+   * Floating field label.
+   */
+  label: string;
+  /**
+   * Whether the field frame is enabled.
+   */
+  enabled?: boolean;
+  /**
+   * Arbitrary composed field content.
+   */
+  content?: ComposeChildren;
+}
+
+/**
+ * State, decoration, validation, and typography for an editable text field.
  */
 export interface TextFieldProps extends ComposeCommonProps {
+  /**
+   * Optional width constraint for suffix icon content.
+   */
+  suffixIconWidth?: number;
+  /**
+   * Optional height constraint for suffix icon content.
+   */
+  suffixIconHeight?: number;
   /**
    * Plain or composed label displayed with the field.
    */
@@ -2927,6 +3031,82 @@ export interface TextFieldProps extends ComposeCommonProps {
    * Typography and foreground overrides for the entered value.
    */
   style?: ComposeTextFieldStyle;
+}
+
+/**
+ * Completion of a generic interaction callback, including asynchronous plugin work.
+ */
+export type ComposeInteractionOutput = void | Promise<void>;
+
+/**
+ * Final coordinates and acceptance status of an arbitrary drag payload.
+ */
+export interface ComposeDragEndEvent {
+  data: ToolPkg.JsonValue;
+  dragType: string;
+  wasAccepted: boolean;
+  x: number;
+  y: number;
+  velocityX: number;
+  velocityY: number;
+}
+
+/**
+ * Native dragging of arbitrary JSON data; content and feedback remain composable.
+ */
+export interface DraggableProps extends ComposeCommonProps {
+  data: ToolPkg.JsonValue;
+  dragType?: string;
+  enabled?: boolean;
+  axis?: string;
+  longPress?: boolean;
+  delayMillis?: number;
+  maxSimultaneousDrags?: number;
+  feedback?: ComposeChildren;
+  childWhenDragging?: ComposeChildren;
+  content?: ComposeChildren;
+  onDragStarted?: (arg0: ToolPkg.JsonValue) => ComposeInteractionOutput;
+  onDragEnd?: (arg0: ComposeDragEndEvent) => ComposeInteractionOutput;
+}
+
+/**
+ * Native drop acceptance with optional declarative type/data filters, not business rules.
+ */
+export interface DragTargetProps extends ComposeCommonProps {
+  enabled?: boolean;
+  acceptedTypes?: string[];
+  acceptedData?: ToolPkg.JsonValue[];
+  /**
+   * Rejects matching payloads independently of the accepted type and data filters.
+   */
+  excludedData?: ToolPkg.JsonValue[];
+  hoverBackground?: ComposeColor;
+  hoverBorderColor?: ComposeColor;
+  shape?: ComposeShape;
+  content?: ComposeChildren;
+  onDrop?: (arg0: ToolPkg.JsonValue) => ComposeInteractionOutput;
+  onLeave?: (arg0: ToolPkg.JsonValue) => ComposeInteractionOutput;
+}
+
+/**
+ * Bounded horizontal swipe actions with arbitrary background slots and callbacks.
+ */
+export interface SwipeActionsProps extends ComposeCommonProps {
+  enabled?: boolean;
+  actionThreshold?: number;
+  startBackground?: ComposeChildren;
+  endBackground?: ComposeChildren;
+  content?: ComposeChildren;
+  onStartAction?: () => ComposeInteractionOutput;
+  onEndAction?: () => ComposeInteractionOutput;
+}
+
+/**
+ * Application Material 3 morphing polygon indicator, independent of business state.
+ */
+export interface LoadingIndicatorProps extends ComposeCommonProps {
+  size?: number;
+  color?: ComposeColor;
 }
 
 /**
@@ -3056,6 +3236,14 @@ export interface FloatingActionButtonProps extends ButtonProps {
  */
 export interface IconButtonProps extends ComposeCommonProps {
   /**
+   * Label shown on long press or pointer hover.
+   */
+  tooltip?: string;
+  /**
+   * Internal inset around the icon.
+   */
+  contentPadding?: ComposePadding;
+  /**
    * Arbitrary content rendered inside the icon-button bounds.
    */
   content?: ComposeChildren;
@@ -3172,9 +3360,85 @@ export interface IconProps extends ComposeCommonProps {
 }
 
 /**
+ * Fixed-extent item generation owned by one keyed list in a bounded viewport.
+ */
+export interface ComposeLazyItemOptions {
+  /**
+   * Stable list identity within the owning page.
+   */
+  key: string;
+  /**
+   * Total number of items, including items outside the current window.
+   */
+  itemCount: number;
+  /**
+   * Unscaled main-axis item extent, including its separator; Flutter applies the current text scale.
+   */
+  itemExtent: number;
+  /**
+   * Number of items materialized before Flutter reports its viewport.
+   */
+  initialItemCount: number;
+}
+
+/**
+ * Visible item interval with an exclusive last index.
+ */
+export interface ComposeLazyRange {
+  /**
+   * First materialized item index.
+   */
+  firstIndex: number;
+  /**
+   * Exclusive end of the materialized interval.
+   */
+  lastIndex: number;
+}
+
+/**
+ * Total extent and range action delivered through the existing node protocol.
+ */
+export interface ComposeLazyViewport {
+  /**
+   * Absolute index of the first delivered child.
+   */
+  firstIndex: number;
+  /**
+   * Total item count independent of the delivered child count.
+   */
+  itemCount: number;
+  /**
+   * Unscaled main-axis item extent; Flutter applies the current text scale.
+   */
+  itemExtent: number;
+  /**
+   * Requests the next materialized range through normal action dispatch.
+   */
+  onRangeChanged: (arg0: ComposeLazyRange) => void;
+}
+
+/**
+ * Windowed content accepted by the existing lazy column and row factories.
+ */
+export interface ComposeLazyItems {
+  /**
+   * Materialized nodes with stable item identities.
+   */
+  content: ComposeNode[];
+  /**
+   * Viewport metadata for the owning Flutter list.
+   */
+  viewport: ComposeLazyViewport;
+}
+
+/**
  * Vertically scrolling list whose child content is hosted by a lazy column.
  */
 export interface LazyColumnProps extends ComposeCommonProps {
+  /**
+   * Optional viewport protocol supplied by lazyItems for generated content.
+   */
+  viewport?: ComposeLazyViewport;
   /**
    * List content rendered in vertical order.
    */
@@ -3482,7 +3746,7 @@ export type ComposeNodeFactory<TProps = Record<string, unknown>> = (arg0?: TProp
 /**
  * Completion returned by dialog actions.
  */
-export type ComposeDialogActionOutput = void | Promise<void>;
+export type ComposeDialogActionOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Dialog text supplied as a literal or a node slot.
@@ -3493,6 +3757,10 @@ export type ComposeDialogText = string | ComposeChildren;
  * Modal dismissal and window layout policies.
  */
 export interface DialogProperties {
+  /**
+   * Expands a custom Dialog to the window without platform dialog margins.
+   */
+  fullscreen?: boolean;
   /**
    * Allows dismissal requests from the back button.
    */
@@ -3692,6 +3960,18 @@ export interface ComposeUiFactoryRegistry {
    */
   Box: ComposeNodeFactory<BoxProps>;
   /**
+   * Drags arbitrary serializable data using native gesture arbitration.
+   */
+  Draggable: ComposeNodeFactory<DraggableProps>;
+  /**
+   * Accepts arbitrary drag payloads without host business-model knowledge.
+   */
+  DragTarget: ComposeNodeFactory<DragTargetProps>;
+  /**
+   * Composes independent start/end swipe callbacks and background content.
+   */
+  SwipeActions: ComposeNodeFactory<SwipeActionsProps>;
+  /**
    * Creates an empty element that reserves layout space.
    */
   Spacer: ComposeNodeFactory<SpacerProps>;
@@ -3707,6 +3987,14 @@ export interface ComposeUiFactoryRegistry {
    * Creates a controlled editable text field.
    */
   TextField: ComposeNodeFactory<TextFieldProps>;
+  /**
+   * Creates a themed field frame around arbitrary content.
+   */
+  InputDecorator: ComposeNodeFactory<InputDecoratorProps>;
+  /**
+   * Creates controlled horizontally swipeable pages.
+   */
+  HorizontalPager: ComposeNodeFactory<HorizontalPagerProps>;
   /**
    * Creates a controlled binary switch.
    */
@@ -3747,6 +4035,7 @@ export interface ComposeUiFactoryRegistry {
    * Creates a circular progress indicator.
    */
   CircularProgressIndicator: ComposeNodeFactory<CircularProgressIndicatorProps>;
+  LoadingIndicator: ComposeNodeFactory<LoadingIndicatorProps>;
   /**
    * Creates the presentation slot for queued snackbars.
    */
@@ -3895,6 +4184,42 @@ export interface ComposeFilePickerResult {
 }
 
 /**
+ * UTF-8 content and metadata passed to the host file-save selector.
+ */
+export interface ComposeFileSaveOptions {
+  /**
+   * File name suggested in the save dialog, without directory components.
+   */
+  suggestedName: string;
+  /**
+   * Exact UTF-8 text to save after the user accepts the destination.
+   */
+  content: string;
+  /**
+   * Media type of the exported file.
+   */
+  mimeType: string;
+  /**
+   * File extensions accepted by the save dialog, without leading dots.
+   */
+  extensions: string[];
+}
+
+/**
+ * Outcome returned after the file is saved or the user cancels.
+ */
+export interface ComposeFileSaveResult {
+  /**
+   * Whether the user dismissed the selector without saving.
+   */
+  cancelled: boolean;
+  /**
+   * Destination reported by the host; null on cancellation.
+   */
+  path?: string | null;
+}
+
+/**
  * Discoverable navigation target exposed to a Compose DSL screen.
  */
 export interface ComposeRouteInfo {
@@ -3974,6 +4299,10 @@ export interface ComposeDslContext {
    */
   UI: ComposeDslContextUIIntersection;
   /**
+   * Builds the requested range using stable item keys and a fixed main-axis extent.
+   */
+  lazyItems(options: ComposeLazyItemOptions, itemBuilder: (arg0: number) => ComposeNode): ComposeLazyItems;
+  /**
    * Retains a keyed value across renders and returns a setter that schedules updates.
    */
   useState<T>(key: string, initialValue: T): [T, (arg0: T) => void];
@@ -4025,6 +4354,10 @@ export interface ComposeDslContext {
    * Opens the host file picker and resolves selected file metadata.
    */
   openFilePicker(options?: ComposeFilePickerOptions): Promise<ComposeFilePickerResult>;
+  /**
+   * Saves UTF-8 content to a user-selected destination through the host file selector.
+   */
+  saveFile(options: ComposeFileSaveOptions): Promise<ComposeFileSaveResult>;
   /**
    * Returns the registered runtime-module specification decoded as the requested type.
    */

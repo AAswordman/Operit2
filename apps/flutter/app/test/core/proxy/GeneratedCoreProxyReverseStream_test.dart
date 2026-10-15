@@ -15,6 +15,26 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 
 /// Verifies generated reverse-stream clients serialize structured item values.
 void main() {
+  test('concurrent compose submissions own distinct push streams', () async {
+    final bridge = _ConcurrentPushBridge();
+    final clients = GeneratedCoreProxyClients(bridge);
+
+    await Future.wait([
+      for (var index = 0; index < 1024; index++)
+        clients.servicesComposeDslSessionService.submit(
+          sessionId: 'session-$index',
+          commands: const Stream<ToolPkgComposeDslCommand>.empty(),
+        ),
+    ]);
+
+    expect(bridge.requests, hasLength(1024));
+    expect(
+      bridge.requests.map((request) => request.requestId).toSet(),
+      hasLength(1024),
+    );
+    expect(bridge.sinks.every((sink) => sink.closed), isTrue);
+  });
+
   test(
     'device space watch decodes membership and online changes together',
     () async {
@@ -124,6 +144,26 @@ void main() {
       expect(proxy.embeddedWatchOpenCount, 1);
     },
   );
+
+  test('embedded stream values retain slices of their source bytes', () async {
+    final proxy = _GeneratedFlowCoreProxy();
+    final bridge = ProxyCoreRuntimeBridge(coreProxy: proxy);
+    final bytes = encodeCoreLink(Uint8List.fromList([7, 9]));
+    proxy.embeddedValueBytes = bytes;
+    final values = await bridge
+        .openEmbeddedCoreStream<Uint8List>(
+          'binary-stream',
+          'core/test64',
+          'openCoreStream',
+          null,
+          (reader) => reader.readBytes(),
+        )
+        .toList();
+    expect(values.single, [7, 9]);
+    bytes[bytes.length - 1] = 42;
+    expect(values.single, [7, 42]);
+    expect(proxy.embeddedWatchOpenCount, 1);
+  });
 }
 
 /// Records the values a generated Core client submits to its Link bridge.
@@ -190,6 +230,28 @@ class _RecordingPushSink implements CorePushSink {
   @override
   Future<void> close() async {
     closed = true;
+  }
+}
+
+/// Enforces the shared runtime's duplicate-id rejection for concurrent streams.
+class _ConcurrentPushBridge extends _RecordingBridge {
+  final List<CorePushRequest> requests = [];
+  final List<_RecordingPushSink> sinks = [];
+  final Set<String> _openedIds = {};
+
+  /// Reserves each request id and gives every accepted stream its own sink.
+  @override
+  Future<CorePushSink> push(CorePushRequest request) async {
+    if (!_openedIds.add(request.requestId)) {
+      throw const CoreLinkError(
+        code: 'PUSH_ALREADY_EXISTS',
+        message: 'Link push stream already exists',
+      );
+    }
+    requests.add(request);
+    final sink = _RecordingPushSink();
+    sinks.add(sink);
+    return sink;
   }
 }
 
@@ -306,6 +368,9 @@ class _GeneratedFlowBridge extends OperitRuntimeBridge {
 /// Emits generated watch events through the production ProxyCoreRuntimeBridge path.
 class _GeneratedFlowCoreProxy extends CoreProxy {
   CoreWatchRequest? outerWatchRequest;
+  Uint8List embeddedValueBytes = encodeCoreLink(
+    _markdownStreamEventValue('hello'),
+  );
   var embeddedWatchOpenCount = 0;
 
   /// Rejects storage default reads because this test only exercises watch streams.
@@ -390,10 +455,14 @@ class _GeneratedFlowCoreProxy extends CoreProxy {
     }
     if (request.propertyName == 'openCoreStream') {
       embeddedWatchOpenCount += 1;
-      yield _rawGeneratedEvent(
-        request,
-        'Snapshot',
-        _markdownStreamEventValue('hello'),
+      yield CoreEvent.raw(
+        requestId: request.requestId,
+        target: request.target,
+        propertyName: request.propertyName,
+        kind: 'Snapshot',
+        valueBytes: embeddedValueBytes,
+        decodeValue: (_) =>
+            throw StateError('embedded values require typed decoding'),
       );
       yield _rawGeneratedEvent(request, 'Completed', null);
       return;
@@ -439,6 +508,7 @@ Map<String, Object?> _chatMessageValue({required Object? contentStream}) {
     'displayMode': 'NORMAL',
     'isFavorite': false,
     'contentStream': contentStream,
+    'pluginExtensions': <String, Object?>{},
   };
 }
 

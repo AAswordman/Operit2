@@ -39,6 +39,11 @@ pub trait CoreLinkClient {
 
 #[async_trait(?Send)]
 pub trait CoreLinkSharedClient {
+    /// Nominal capacity of a known constrained carrier, before framing/ACK overhead.
+    /// Unknown/network capacity is None; callers still handle runtime backpressure.
+    #[allow(non_snake_case)]
+    fn nominalBytesPerSecond(&self) -> Option<u32> { None }
+
     /// Executes a one-shot core method call through a shared client.
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse;
 
@@ -48,6 +53,13 @@ pub trait CoreLinkSharedClient {
 
     /// Opens a stream of events for a watched core path through a shared client.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError>;
+
+    /// Opens a caller-owned input stream through a shared client.
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError>;
 }
 
 #[async_trait(?Send)]

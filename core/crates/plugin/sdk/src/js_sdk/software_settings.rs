@@ -1,10 +1,8 @@
 //! Environment-variable access and core command execution exposed to plugins.
-use super::results::*;
-use super::{JsDate, JsFuture};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::sync::Arc;
-/// Reads and updates environment variables and executes core commands.
+use super::results::{EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData};
+use super::JsFuture;
+
+/// Manages environment variables and executes core commands.
 pub trait SoftwareSettingsHost: Send + Sync {
     ///
     ///Read current value of an environment variable.

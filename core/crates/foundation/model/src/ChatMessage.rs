@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::ChatMessageDisplayMode::ChatMessageDisplayMode;
@@ -13,6 +15,7 @@ pub struct ChatMessage {
     pub parts: Vec<MessagePart>,
     pub timestamp: i64,
     pub roleName: String,
+    pub pluginExtensions: BTreeMap<String, serde_json::Value>,
     pub selectedVariantIndex: i32,
     pub variantCount: i32,
     pub provider: String,
@@ -38,6 +41,7 @@ impl PartialEq for ChatMessage {
         self.sender == other.sender
             && self.parts == other.parts
             && self.timestamp == other.timestamp
+            && self.pluginExtensions == other.pluginExtensions
             && self.roleName == other.roleName
             && self.selectedVariantIndex == other.selectedVariantIndex
             && self.variantCount == other.variantCount
@@ -116,6 +120,7 @@ impl ChatMessage {
             parts,
             timestamp,
             roleName: String::new(),
+            pluginExtensions: BTreeMap::new(),
             selectedVariantIndex: 0,
             variantCount: 1,
             provider: String::new(),

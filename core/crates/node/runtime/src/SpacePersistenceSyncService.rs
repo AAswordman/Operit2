@@ -22,12 +22,62 @@ const SYNC_DOMAINS: [&str; 6] = [
     "preferences",
     "chat",
     "binding",
-    "objectbox",
     "runtime_file",
     "network_control",
+    "plugin_storage",
 ];
 const SPACE_SYNC_PREPARATION_DELAY_MS: u64 = 0;
 const SYNC_BLOB_CHUNK_BYTES: i64 = 64 * 1024;
+/// Delay before the first retry of a failed full synchronization pass with one peer.
+const PEER_FULL_SYNC_BACKOFF_BASE_MS: i64 = 2_000;
+/// Ceiling for the exponential retry delay of one peer's full synchronization pass.
+const PEER_FULL_SYNC_BACKOFF_MAX_MS: i64 = 60_000;
+
+/// Per-peer scheduling state behind the change-gated synchronization floor.
+///
+/// Every cycle probes each storage-granted member with the cheap `syncClock`
+/// RPC and runs the expensive exchanges (Space projection, control log,
+/// business replication, blobs) only when something actually changed for that
+/// peer: the remote clock moved, the local synchronized-state summary moved
+/// since the last completed pass, or a previous pass failed and its backoff
+/// elapsed. Space records advance the journal clock, so every snapshot
+/// ingredient is visible to the probe. Third-party control operations learned
+/// by projection advance neither clock; the local summary counts them, so the
+/// projecting device pushes relayed authority through its own next full pass.
+/// Device preference changes have a separate revision and wake the same scheduler
+/// without creating business operations.
+#[derive(Clone, Default)]
+struct PeerSyncGate {
+    /// Summarized remote clock observed at the last completed full pass.
+    lastRemoteClockSummary: Option<String>,
+    /// Local synchronized-state summary captured right after the last
+    /// completed pass (journal clock, projected operations and device preferences).
+    lastLocalStateSummary: Option<String>,
+    /// Probe clock from the most recent decision, promoted on pass completion.
+    probedClockSummary: Option<String>,
+    /// Consecutive failed full passes; drives the exponential retry delay.
+    consecutiveFailures: u32,
+    /// Earliest wall-clock time the next full pass may run after a failure.
+    nextFullSyncAllowedAt: i64,
+}
+
+impl PeerSyncGate {
+    fn backoffElapsed(&self, now: i64) -> bool {
+        if self.consecutiveFailures == 0 {
+            return true;
+        }
+        now >= self.nextFullSyncAllowedAt
+    }
+}
+
+/// Computes the exponential retry delay for the given consecutive failure count.
+fn peerFullSyncBackoffMs(consecutiveFailures: u32) -> i64 {
+    let doubling = consecutiveFailures.saturating_sub(1).min(5);
+    std::cmp::min(
+        PEER_FULL_SYNC_BACKOFF_BASE_MS.saturating_mul(1_i64 << doubling),
+        PEER_FULL_SYNC_BACKOFF_MAX_MS,
+    )
+}
 
 static SPACE_SYNC_SERVICES: OnceLock<Mutex<BTreeMap<String, Arc<SpacePersistenceSyncState>>>> =
     OnceLock::new();
@@ -43,6 +93,7 @@ struct SpacePersistenceSyncState {
     peerChangesStop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     synchronizationRequested: AtomicBool,
     workspaceScanStop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    peerGates: Mutex<BTreeMap<String, PeerSyncGate>>,
 }
 
 /// 通过 Router 与可达的 Space 成员同步持久化数据，不拥有配对、发现或传输。
@@ -77,6 +128,7 @@ impl SpacePersistenceSyncService {
                 peerChangesStop: Mutex::new(None),
                 synchronizationRequested: AtomicBool::new(false),
                 workspaceScanStop: Mutex::new(None),
+                peerGates: Mutex::new(BTreeMap::new()),
             }),
         }
     }
@@ -295,13 +347,31 @@ impl SpacePersistenceSyncService {
                 );
             }
         }
-        let mut errors = Vec::new();
+        let service = crate::RuntimeRemoteLinkService::RuntimeRemoteLinkService::newWithRouter(
+            (*self.state.localRuntime).clone(), self.state.nodeRouter.clone());
+        let mut errors = crate::NodeSpaceService::space_departure::synchronize(&service).await.err().into_iter().collect::<Vec<_>>();
+        let localStateSummary = self.localStateSummary().await?;
+        let mut cycleDecisions = BTreeMap::<String, bool>::new();
+        let membershipBeforeExchange = self.state.spaceStore.space()?.members.into_iter().collect::<BTreeSet<_>>();
         for peerNodeId in services.peers().outboundPeerNodeIds().map_err(|error| error.to_string())? {
             if !activePeers.contains(&peerNodeId) || control.nodeIsDisconnected(&peerNodeId)? {
                 continue;
             }
+            if !self
+                .peerPassRequired(&peerNodeId, &localStateSummary, &mut cycleDecisions)
+                .await
+            {
+                continue;
+            }
             if let Err(error) = self.exchangePairedDeviceSpaceProjection(&peerNodeId).await {
+                self.recordPeerPassFailed(&peerNodeId);
                 errors.push(format!("CoreNode {peerNodeId} Space projection exchange: {error}"));
+                continue;
+            }
+            // A paired peer outside the Space membership has no business
+            // replication pass; the projection exchange was its whole pass.
+            if !membershipBeforeExchange.contains(&peerNodeId) {
+                self.recordPeerPassCompleted(&peerNodeId).await;
             }
         }
         let space = self.state.spaceStore.space()?;
@@ -313,15 +383,24 @@ impl SpacePersistenceSyncService {
             if !reachable {
                 continue;
             }
+            if !self
+                .peerPassRequired(&targetNodeId, &localStateSummary, &mut cycleDecisions)
+                .await
+            {
+                continue;
+            }
             if let Err(error) = self
                 .synchronizeReachablePeer(targetNodeId.clone(), 512, false)
                 .await
             {
+                self.recordPeerPassFailed(&targetNodeId);
                 errors.push(format!(
                     "CoreNode {} reachable persistence sync: {error}",
                     targetNodeId
                 ));
+                continue;
             }
+            self.recordPeerPassCompleted(&targetNodeId).await;
         }
         if !errors.is_empty() {
             return Err(errors.join(" | "));
@@ -358,6 +437,32 @@ impl SpacePersistenceSyncService {
         let remote = crate::NodeSpaceService::decodeControlExchange(response.result)?;
         control.projectPeerControlOperations(&targetNodeId, &remote)?;
         self.applyRemovedMemberEffects(&remote)?;
+        // Small device-owned preferences are available to every admitted member;
+        // their clocks and payloads are separate from business replica clocks.
+        let preferenceStore = operit_store::DevicePreferencesStore::DevicePreferencesStore::new(self.state.localRuntime.runtimeStorageHost());
+        let preferenceScope = self.state.spaceStore.space()?.spaceId;
+        // Every member receives its own configuration. Storage providers also
+        // exchange the local device's configuration as a backup; lightweight
+        // endpoints must not accumulate other devices' preference files.
+        let mut preferenceNodes = vec![targetNodeId.clone()];
+        if self.storageReplicationAllowed(&targetNodeId)? {
+            preferenceNodes.push(self.state.nodeRouter.localNodeId());
+        }
+        for preferenceNodeId in preferenceNodes {
+            let preferences = preferenceStore.read(&preferenceScope, &preferenceNodeId)?;
+            let request = serviceCallRequest(&self.state.nodeRouter,
+                crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET, "exchangePreferences",
+                serde_json::to_value(preferences).map_err(|e| e.to_string())?)?;
+            let response = self.state.nodeRouter.callNode(targetNodeId.clone(), request).await;
+            let preferences: operit_store::DevicePreferencesStore::DevicePreferences = decodeCoreResponse(response.result.map_err(|e| e.to_string())?)?;
+            if preferences.spaceId != preferenceScope || preferences.nodeId != preferenceNodeId
+                || self.state.spaceStore.space()?.spaceId != preferenceScope
+                || !control.currentState()?.memberNodeIds.contains(&targetNodeId)
+                || control.nodeIsDisconnected(&targetNodeId)? {
+                return Err("Device preference response scope changed".into());
+            }
+            preferenceStore.merge(&preferences)?;
+        }
         // Admission is not a storage grant. No business RPC, blob transfer or
         // bootstrap reset may run unless both endpoints currently have it.
         if !self.storageReplicationAllowed(&targetNodeId)? { return Ok(()); }
@@ -412,6 +517,167 @@ impl SpacePersistenceSyncService {
             Ok(()) => Ok(true),
             Err(error) if error.code == "SPACE_STORAGE_PERMISSION_DENIED" => Ok(false),
             Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// Summarizes this device's synchronized state for the local-change
+    /// trigger: the replication journal clock (journal plus chat storage,
+    /// mirroring the application clock), projected operations and preferences.
+    /// Projected operations advance neither clock, so their count is what
+    /// makes this device push relayed authority to its peers. Read through
+    /// local stores directly: gating must never enter the application
+    /// backend, which non-storage peers are not permitted to reach.
+    async fn localStateSummary(&self) -> Result<String, String> {
+        let storageHost = self.state.localRuntime.runtimeStorageHost();
+        let mut clock = operit_store::SyncOperationStore::SyncOperationStore::new(
+            storageHost.clone(),
+            RUNTIME_SYNC_DIR_PATH.to_string(),
+        )
+        .localClock()
+        .map_err(|error| error.to_string())?;
+        // The chat storage belongs to the process default store root. A root
+        // that was never registered means this process holds no chat state
+        // at all, so an empty chat clock is the correct contribution; a real
+        // storage failure is logged but must not disable the gate.
+        if operit_util::RuntimeStoreRoot::default_runtime_store_root_config().is_some() {
+            match operit_store::sync::SqlChatSyncStore::SqlChatSyncStore::default() {
+                Ok(sqlStore) => match sqlStore.localClock() {
+                    Ok(sqlClock) => {
+                        for (deviceId, sequence) in sqlClock.sequences {
+                            if sequence > clock.sequenceFor(&deviceId) {
+                                clock.setSequence(deviceId, sequence);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        operit_util::AppLogger::AppLogger::w(
+                            "SpacePersistenceSyncService",
+                            &format!("chat sync clock unavailable for gate summary: {error}"),
+                        );
+                    }
+                },
+                Err(error) => {
+                    operit_util::AppLogger::AppLogger::w(
+                        "SpacePersistenceSyncService",
+                        &format!("chat sync storage unavailable for gate summary: {error}"),
+                    );
+                }
+            }
+        }
+        let control = NetworkControlStore::new(storageHost)?;
+        Ok(format!(
+            "{}#{}#{}",
+            summarizeSyncClock(
+                &serde_json::to_value(&clock).map_err(|error| error.to_string())?
+            ),
+            control.projectionEntryCount()?,
+            operit_store::DevicePreferencesStore::devicePreferencesMutationRevision()
+        ))
+    }
+
+    /// Decides once per cycle whether this cycle must run a full synchronization
+    /// pass with one peer, probing its clock when no cheaper signal decides.
+    async fn peerPassRequired(
+        &self,
+        targetNodeId: &str,
+        localStateSummary: &str,
+        cycleDecisions: &mut BTreeMap<String, bool>,
+    ) -> bool {
+        if let Some(decision) = cycleDecisions.get(targetNodeId) {
+            return *decision;
+        }
+        let gate = self
+            .state
+            .peerGates
+            .lock()
+            .map_err(|error| format!("peer sync gate lock poisoned: {error}"))
+            .and_then(|gates| {
+                gates
+                    .get(targetNodeId)
+                    .cloned()
+                    .ok_or_else(|| "peer sync gate absent".to_string())
+            })
+            .unwrap_or_default();
+        let decision = if !gate.backoffElapsed(currentTimeMillis()) {
+            false
+        } else if gate.consecutiveFailures > 0 {
+            // The previous failure may sit on this side (bootstrap reset,
+            // missing blob); retry the full pass now that the backoff elapsed.
+            true
+        } else if !self
+            .storageReplicationAllowed(targetNodeId)
+            .unwrap_or(false)
+        {
+            // Non-storage members never enter replication traffic: probing
+            // them would only draw a denial, so keep exchanging directly.
+            true
+        } else {
+            match self.probeRemoteClockSummary(targetNodeId).await {
+                Ok(summary) => {
+                    if let Ok(mut gates) = self.state.peerGates.lock() {
+                        gates
+                            .entry(targetNodeId.to_string())
+                            .or_default()
+                            .probedClockSummary = Some(summary.clone());
+                    }
+                    gate.lastRemoteClockSummary.as_deref() != Some(summary.as_str())
+                        || gate.lastLocalStateSummary.as_deref() != Some(localStateSummary)
+                }
+                // The clock is unobservable (the probe was lost): fall back to
+                // exchanging, as before.
+                Err(_) => true,
+            }
+        };
+        cycleDecisions.insert(targetNodeId.to_string(), decision);
+        decision
+    }
+
+    /// Reads one peer's synchronization clock through the cheap probe RPC and
+    /// returns its comparable summary.
+    async fn probeRemoteClockSummary(&self, targetNodeId: &str) -> Result<String, String> {
+        let clock: Value = callRemote(
+            &self.state.nodeRouter,
+            targetNodeId,
+            PeerSyncMethod::SyncClock,
+            Value::Null,
+        )
+        .await?;
+        Ok(summarizeSyncClock(&clock))
+    }
+
+    /// Records one completed full pass: the freshly probed clock and the
+    /// current local-state summary become the pass baseline.
+    async fn recordPeerPassCompleted(&self, targetNodeId: &str) {
+        let localStateSummary = self.localStateSummary().await.unwrap_or_default();
+        if let Ok(mut gates) = self.state.peerGates.lock() {
+            let gate = gates.entry(targetNodeId.to_string()).or_default();
+            if let Some(probed) = gate.probedClockSummary.take() {
+                gate.lastRemoteClockSummary = Some(probed);
+            }
+            gate.lastLocalStateSummary = Some(localStateSummary);
+            gate.consecutiveFailures = 0;
+            gate.nextFullSyncAllowedAt = 0;
+        }
+    }
+
+    /// Records one failed full pass and arms the exponential retry backoff.
+    fn recordPeerPassFailed(&self, targetNodeId: &str) {
+        if let Ok(mut gates) = self.state.peerGates.lock() {
+            let gate = gates.entry(targetNodeId.to_string()).or_default();
+            gate.consecutiveFailures = gate.consecutiveFailures.saturating_add(1);
+            gate.nextFullSyncAllowedAt =
+                currentTimeMillis() + peerFullSyncBackoffMs(gate.consecutiveFailures);
+        }
+    }
+
+    /// Test support: clears one peer's failure backoff so the retry path can
+    /// be exercised without waiting out the real delay.
+    #[cfg(test)]
+    pub(crate) fn testExpirePeerSyncBackoff(&self, targetNodeId: &str) {
+        if let Ok(mut gates) = self.state.peerGates.lock() {
+            if let Some(gate) = gates.get_mut(targetNodeId) {
+                gate.nextFullSyncAllowedAt = 0;
+            }
         }
     }
 
@@ -591,7 +857,7 @@ impl SpacePersistenceSyncService {
             (*self.state.localRuntime).clone(), self.state.nodeRouter.clone());
         service.observePeerSpaceSnapshot(peerNodeId, remote)?;
         self.applyRemovedMemberEffects(&snapshotControlOperations)?;
-        let local = service.peerSpaceSnapshot()?;
+        let local = crate::NodeSpaceService::peerSpaceSnapshotForPeer(&service, peerNodeId)?;
         let remoteSpace: CoreSpace = callRemoteService(
             &self.state.nodeRouter, peerNodeId,
             crate::RuntimeRemoteLinkService::NODE_SPACE_TARGET, "observeSpaceSnapshot",

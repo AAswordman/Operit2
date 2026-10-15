@@ -518,73 +518,6 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
     _reload();
   }
 
-  Future<void> _editModelSettings(
-    core_proxy.ProviderProfile provider,
-    core_proxy.ModelProfile model,
-  ) async {
-    final config = await widget.clients.preferencesModelConfigManager
-        .getResolvedModelConfig(providerId: provider.id, modelId: model.id);
-    if (!mounted) {
-      return;
-    }
-    final result = await _ModelSettingsEditorDialog.show(
-      context: context,
-      providerName: provider.name,
-      modelId: model.id,
-      initialCapabilities: config.capabilities,
-      initialBuiltinTools: config.builtinTools,
-      initialContext: config.context,
-      initialSummary: config.summary,
-      onTest: (capabilities) =>
-          _testModelConnection(provider, model, capabilities),
-    );
-    if (result == null || !mounted) {
-      return;
-    }
-    final _ModelSettingsChange changed;
-    switch (result) {
-      case _ModelSettingsDeleteRequested():
-        await _deleteModel(provider, model);
-        return;
-      case _ModelSettingsSaved(:final change):
-        changed = change;
-    }
-    if (changed.capabilities != config.capabilities) {
-      await widget.clients.preferencesModelConfigManager
-          .updateCapabilitiesForModel(
-            providerId: provider.id,
-            modelId: model.id,
-            capabilities: changed.capabilities,
-          );
-    }
-    if (changed.builtinTools != config.builtinTools) {
-      await widget.clients.preferencesModelConfigManager
-          .updateBuiltinToolsForModel(
-            providerId: provider.id,
-            modelId: model.id,
-            builtinTools: changed.builtinTools,
-          );
-    }
-    if (changed.context != config.context) {
-      await widget.clients.preferencesModelConfigManager.updateContextForModel(
-        providerId: provider.id,
-        modelId: model.id,
-        context: changed.context,
-      );
-    }
-    if (changed.summary != config.summary) {
-      await widget.clients.preferencesModelConfigManager.updateSummaryForModel(
-        providerId: provider.id,
-        modelId: model.id,
-        summary: changed.summary,
-      );
-    }
-    if (!mounted) {
-      return;
-    }
-    _reload();
-  }
-
   Future<core_proxy.ModelConnectionTestReport?> _testModelConnection(
     core_proxy.ProviderProfile provider,
     core_proxy.ModelProfile model,
@@ -1166,12 +1099,12 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                   suffixIcon: _isCodexProvider
                       ? const Icon(Icons.lock_outline, size: 20)
                       : (endpointOptions.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: l10n.settingsModelApiEndpoint,
-                              icon: const Icon(Icons.arrow_drop_down_rounded),
-                              onPressed: _showEndpointOptionsDialog,
-                            )),
+                            ? null
+                            : IconButton(
+                                tooltip: l10n.settingsModelApiEndpoint,
+                                icon: const Icon(Icons.arrow_drop_down_rounded),
+                                onPressed: _showEndpointOptionsDialog,
+                              )),
                 ),
                 if (_isCodexProvider)
                   _CodexLoginField(
@@ -4246,7 +4179,7 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
         providerId: provider.id,
         modelId: model.id,
       );
-      if (!mounted || report == null) {
+      if (!mounted) {
         return report;
       }
       final chatPassed = connectionTestSucceeded(
@@ -4459,14 +4392,6 @@ String? _formatContextLength(double? maxContextLength) {
     return '${millions.toStringAsFixed(1)}M';
   }
   return '${k.round()}K';
-}
-
-String _providerTypeDisplayName(AppLocalizations l10n, String providerTypeId) {
-  try {
-    return _providerTypeLocalName(l10n, providerTypeId);
-  } on UnsupportedError {
-    return providerTypeId;
-  }
 }
 
 class _ProviderModelList extends StatelessWidget {
@@ -4784,7 +4709,6 @@ class _ProviderModelTile extends StatelessWidget {
 
 class _ModelInlineSettingsView extends StatefulWidget {
   const _ModelInlineSettingsView({
-    super.key,
     required this.provider,
     required this.model,
     required this.clients,
@@ -5344,15 +5268,10 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
 }
 
 class _SettingsGroupCard extends StatelessWidget {
-  const _SettingsGroupCard({
-    required this.title,
-    required this.children,
-    this.trailing,
-  });
+  const _SettingsGroupCard({required this.title, required this.children});
 
   final String title;
   final List<Widget> children;
-  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -5379,7 +5298,6 @@ class _SettingsGroupCard extends StatelessWidget {
                   letterSpacing: 0.2,
                 ),
               ),
-              if (trailing != null) ...<Widget>[const Spacer(), trailing!],
             ],
           ),
         ),
@@ -5470,9 +5388,7 @@ class _CheckableCapabilityChip extends StatelessWidget {
         ? activeBorder
         : colorScheme.outlineVariant.withValues(alpha: isDark ? 0.35 : 0.5);
 
-    final textColor = checked
-        ? activeText
-        : colorScheme.onSurfaceVariant;
+    final textColor = checked ? activeText : colorScheme.onSurfaceVariant;
 
     return Tooltip(
       message: tooltip,
@@ -5621,7 +5537,6 @@ class _ModernNumberField extends StatelessWidget {
     this.hintText,
     this.errorText,
     this.onChanged,
-    this.enabled = true,
   });
 
   final TextEditingController controller;
@@ -5629,7 +5544,6 @@ class _ModernNumberField extends StatelessWidget {
   final String? hintText;
   final String? errorText;
   final ValueChanged<String>? onChanged;
-  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -5639,13 +5553,10 @@ class _ModernNumberField extends StatelessWidget {
 
     return TextField(
       controller: controller,
-      enabled: enabled,
       style: theme.textTheme.bodyMedium?.copyWith(
         fontWeight: FontWeight.w600,
         fontSize: 12.5,
-        color: enabled
-            ? colorScheme.onSurface
-            : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+        color: colorScheme.onSurface,
       ),
       keyboardType: TextInputType.number,
       onChanged: onChanged,
@@ -5654,21 +5565,13 @@ class _ModernNumberField extends StatelessWidget {
         hintText: hintText,
         errorText: errorText,
         filled: true,
-        fillColor: enabled
-            ? (isDark
-                  ? colorScheme.surfaceContainer
-                  : colorScheme.surfaceContainerLow)
-            : (isDark
-                  ? colorScheme.surfaceContainerLowest
-                  : colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.25,
-                    )),
+        fillColor: isDark
+            ? colorScheme.surfaceContainer
+            : colorScheme.surfaceContainerLow,
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         suffixText: suffix,
         suffixStyle: theme.textTheme.labelSmall?.copyWith(
-          color: enabled
-              ? colorScheme.onSurfaceVariant
-              : colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+          color: colorScheme.onSurfaceVariant,
           fontWeight: FontWeight.w600,
           fontSize: 10.5,
         ),
@@ -5796,7 +5699,6 @@ enum _CapsuleTint { neutral, primary }
 
 class _ModelCapabilityCapsules extends StatelessWidget {
   const _ModelCapabilityCapsules({
-    super.key,
     required this.capabilities,
     this.contextLengthLabel,
   });
@@ -5914,8 +5816,6 @@ class _CapabilityCapsule extends StatelessWidget {
     );
   }
 }
-
-typedef _ModelCapabilityIcons = _ModelCapabilityCapsules;
 
 class _FunctionMappingGroups extends StatefulWidget {
   const _FunctionMappingGroups({
@@ -6664,431 +6564,6 @@ class _FunctionModelOptionTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _ModelSettingsChange {
-  const _ModelSettingsChange({
-    required this.capabilities,
-    required this.builtinTools,
-    required this.context,
-    required this.summary,
-  });
-
-  final core_proxy.ModelCapabilities capabilities;
-  final List<core_proxy.ModelBuiltinTool> builtinTools;
-  final core_proxy.ModelContextSpec context;
-  final core_proxy.ModelSummarySettings summary;
-}
-
-sealed class _ModelSettingsEditorResult {
-  const _ModelSettingsEditorResult();
-}
-
-class _ModelSettingsSaved extends _ModelSettingsEditorResult {
-  const _ModelSettingsSaved(this.change);
-
-  final _ModelSettingsChange change;
-}
-
-class _ModelSettingsDeleteRequested extends _ModelSettingsEditorResult {
-  const _ModelSettingsDeleteRequested();
-}
-
-class _ModelSettingsEditorDialog extends StatefulWidget {
-  const _ModelSettingsEditorDialog({
-    required this.providerName,
-    required this.modelId,
-    required this.initialCapabilities,
-    required this.initialBuiltinTools,
-    required this.initialContext,
-    required this.initialSummary,
-    required this.onTest,
-  });
-
-  final String providerName;
-  final String modelId;
-  final core_proxy.ModelCapabilities initialCapabilities;
-  final List<core_proxy.ModelBuiltinTool> initialBuiltinTools;
-  final core_proxy.ModelContextSpec initialContext;
-  final core_proxy.ModelSummarySettings initialSummary;
-  final Future<core_proxy.ModelConnectionTestReport?> Function(
-    core_proxy.ModelCapabilities capabilities,
-  )
-  onTest;
-
-  static Future<_ModelSettingsEditorResult?> show({
-    required BuildContext context,
-    required String providerName,
-    required String modelId,
-    required core_proxy.ModelCapabilities initialCapabilities,
-    required List<core_proxy.ModelBuiltinTool> initialBuiltinTools,
-    required core_proxy.ModelContextSpec initialContext,
-    required core_proxy.ModelSummarySettings initialSummary,
-    required Future<core_proxy.ModelConnectionTestReport?> Function(
-      core_proxy.ModelCapabilities capabilities,
-    )
-    onTest,
-  }) {
-    return showDialog<_ModelSettingsEditorResult>(
-      context: context,
-      builder: (context) => _ModelSettingsEditorDialog(
-        providerName: providerName,
-        modelId: modelId,
-        initialCapabilities: initialCapabilities,
-        initialBuiltinTools: initialBuiltinTools,
-        initialContext: initialContext,
-        initialSummary: initialSummary,
-        onTest: onTest,
-      ),
-    );
-  }
-
-  @override
-  State<_ModelSettingsEditorDialog> createState() =>
-      _ModelSettingsEditorDialogState();
-}
-
-class _ModelSettingsEditorDialogState
-    extends State<_ModelSettingsEditorDialog> {
-  late bool _toolCall;
-  late bool _directImage;
-  late bool _directAudio;
-  late bool _directVideo;
-  late List<core_proxy.ModelBuiltinTool> _builtinTools;
-  late bool _enableSummary;
-  late bool _enableSummaryByMessageCount;
-  late final TextEditingController _maxContextLengthController;
-  late final TextEditingController _summaryThresholdController;
-  late final TextEditingController _summaryMessageCountController;
-  String? _maxContextLengthError;
-  bool _testingConnection = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final caps = widget.initialCapabilities;
-    _toolCall = caps.toolCall;
-    _directImage = caps.directImage;
-    _directAudio = caps.directAudio;
-    _directVideo = caps.directVideo;
-    _builtinTools = widget.initialBuiltinTools;
-    _enableSummary = widget.initialSummary.enableSummary;
-    _enableSummaryByMessageCount =
-        widget.initialSummary.enableSummaryByMessageCount;
-    final rawContext = widget.initialContext.maxContextLength;
-    final normalizedContext = rawContext >= 10000
-        ? (rawContext / 1024).roundToDouble()
-        : rawContext;
-    _maxContextLengthController = TextEditingController(
-      text: normalizedContext > 0
-          ? normalizedContext.toStringAsFixed(0)
-          : '200',
-    );
-    _summaryThresholdController = TextEditingController(
-      text: widget.initialSummary.summaryTokenThreshold.toString(),
-    );
-    _summaryMessageCountController = TextEditingController(
-      text: widget.initialSummary.summaryMessageCountThreshold.toString(),
-    );
-  }
-
-  @override
-  void dispose() {
-    _maxContextLengthController.dispose();
-    _summaryThresholdController.dispose();
-    _summaryMessageCountController.dispose();
-    super.dispose();
-  }
-
-  void _setBuiltinToolEnabled(int index, bool enabled) {
-    final current = _builtinTools[index];
-    final updated = core_proxy.ModelBuiltinTool(
-      toolType: current.toolType,
-      displayName: current.displayName,
-      enabled: enabled,
-      requestFormat: current.requestFormat,
-      exclusivity: current.exclusivity,
-      config: current.config,
-    );
-    setState(() {
-      _builtinTools = <core_proxy.ModelBuiltinTool>[
-        for (var i = 0; i < _builtinTools.length; i++)
-          i == index ? updated : _builtinTools[i],
-      ];
-      if (enabled &&
-          current.exclusivity ==
-              core_proxy.BuiltinToolExclusivity.exclusiveWithExternalTools) {
-        _toolCall = false;
-      }
-    });
-  }
-
-  core_proxy.ModelCapabilities _editorCapabilities() {
-    return core_proxy.ModelCapabilities(
-      directImage: _directImage,
-      directAudio: _directAudio,
-      directVideo: _directVideo,
-      toolCall: _toolCall,
-    );
-  }
-
-  Future<void> _runConnectionTest() async {
-    setState(() {
-      _testingConnection = true;
-    });
-    try {
-      final current = _editorCapabilities();
-      final report = await widget.onTest(current);
-      if (mounted &&
-          report != null &&
-          connectionTestSucceeded(
-            report,
-            core_proxy.ModelConnectionTestType.chat,
-          )) {
-        final next = capabilitiesFromConnectionTest(report, current);
-        setState(() {
-          _directImage = next.directImage;
-          _directAudio = next.directAudio;
-          _directVideo = next.directVideo;
-          _toolCall = next.toolCall;
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _testingConnection = false;
-        });
-      }
-    }
-  }
-
-  void _save() {
-    final maxContextLength = double.tryParse(
-      _maxContextLengthController.text.trim(),
-    );
-    if (maxContextLength == null || maxContextLength <= 0) {
-      setState(() {
-        _maxContextLengthError = AppLocalizations.of(
-          context,
-        )!.settingsModelMaxContextLengthInvalid;
-      });
-      return;
-    }
-    Navigator.of(context).pop(
-      _ModelSettingsSaved(
-        _ModelSettingsChange(
-          capabilities: core_proxy.ModelCapabilities(
-            directImage: _directImage,
-            directAudio: _directAudio,
-            directVideo: _directVideo,
-            toolCall: _toolCall,
-          ),
-          builtinTools: _builtinTools,
-          context: core_proxy.ModelContextSpec(
-            maxContextLength: maxContextLength,
-          ),
-          summary: core_proxy.ModelSummarySettings(
-            enableSummary: _enableSummary,
-            summaryTokenThreshold:
-                double.tryParse(_summaryThresholdController.text) ?? 0,
-            enableSummaryByMessageCount: _enableSummaryByMessageCount,
-            summaryMessageCountThreshold:
-                int.tryParse(_summaryMessageCountController.text) ?? 0,
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final textStyle = Theme.of(context).textTheme.bodyMedium;
-    return AlertDialog(
-      title: Text(l10n.settingsModelEditModelSettings),
-      contentPadding: EdgeInsets.zero,
-      content: SizedBox(
-        width: 520,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Text(
-                '${widget.providerName} \u00b7 ${widget.modelId}',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: _testingConnection ? null : _runConnectionTest,
-                  icon: _testingConnection
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: Center(child: M3LoadingIndicator(size: 18)),
-                        )
-                      : const Icon(Icons.wifi_find_outlined, size: 18),
-                  label: Text(l10n.settingsModelTestModel),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                l10n.settingsModelCapabilities,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 4),
-              _ModelSettingsSwitch(
-                title: l10n.settingsModelToolCall,
-                subtitle: l10n.settingsModelToolCallDescription,
-                value: _toolCall,
-                onChanged: (v) => setState(() => _toolCall = v),
-              ),
-              _ModelSettingsSwitch(
-                title: l10n.settingsModelDirectImage,
-                subtitle: l10n.settingsModelDirectImageDescription,
-                value: _directImage,
-                onChanged: (v) => setState(() => _directImage = v),
-              ),
-              _ModelSettingsSwitch(
-                title: l10n.settingsModelDirectAudio,
-                subtitle: l10n.settingsModelDirectAudioDescription,
-                value: _directAudio,
-                onChanged: (v) => setState(() => _directAudio = v),
-              ),
-              _ModelSettingsSwitch(
-                title: l10n.settingsModelDirectVideo,
-                subtitle: l10n.settingsModelDirectVideoDescription,
-                value: _directVideo,
-                onChanged: (v) => setState(() => _directVideo = v),
-              ),
-              if (_builtinTools.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 12),
-                Text(
-                  l10n.settingsModelBuiltinTools,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 4),
-                for (var index = 0; index < _builtinTools.length; index++)
-                  _ModelSettingsSwitch(
-                    title: _builtinTools[index].displayName,
-                    subtitle: _builtinToolSubtitle(l10n, _builtinTools[index]),
-                    value: _builtinTools[index].enabled,
-                    onChanged: (value) => _setBuiltinToolEnabled(index, value),
-                  ),
-              ],
-              const SizedBox(height: 12),
-              Text(
-                l10n.settingsModelContext,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _maxContextLengthController,
-                style: textStyle,
-                decoration: InputDecoration(
-                  labelText: l10n.settingsModelMaxContextLength,
-                  suffixText: 'K',
-                  errorText: _maxContextLengthError,
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (_) {
-                  setState(() => _maxContextLengthError = null);
-                },
-              ),
-              const SizedBox(height: 12),
-              Text(
-                l10n.settingsModelSummary,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 10),
-              _ModelSettingsSwitch(
-                title: l10n.enable,
-                subtitle: '',
-                value: _enableSummary,
-                onChanged: (v) => setState(() => _enableSummary = v),
-              ),
-              if (_enableSummary) ...<Widget>[
-                TextField(
-                  controller: _summaryThresholdController,
-                  style: textStyle,
-                  decoration: InputDecoration(
-                    labelText: l10n.settingsModelSummaryThreshold,
-                  ),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  visualDensity: VisualDensity.compact,
-                  title: Text(l10n.settingsModelSummaryByMessageCount),
-                  value: _enableSummaryByMessageCount,
-                  onChanged: (v) =>
-                      setState(() => _enableSummaryByMessageCount = v),
-                ),
-                if (_enableSummaryByMessageCount)
-                  TextField(
-                    controller: _summaryMessageCountController,
-                    style: textStyle,
-                    decoration: InputDecoration(
-                      labelText: l10n.settingsModelSummaryMessageCount,
-                    ),
-                    keyboardType: TextInputType.number,
-                  ),
-              ],
-            ],
-          ),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton.icon(
-          style: TextButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.error,
-          ),
-          onPressed: () =>
-              Navigator.of(context).pop(const _ModelSettingsDeleteRequested()),
-          icon: const Icon(Icons.delete_outline),
-          label: Text(l10n.delete),
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-        FilledButton(onPressed: _save, child: Text(l10n.save)),
-      ],
-    );
-  }
-}
-
-class _ModelSettingsSwitch extends StatelessWidget {
-  const _ModelSettingsSwitch({
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final String title;
-  final String subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      title: Text(title),
-      subtitle: subtitle.isNotEmpty ? Text(subtitle) : null,
-      value: value,
-      onChanged: onChanged,
     );
   }
 }

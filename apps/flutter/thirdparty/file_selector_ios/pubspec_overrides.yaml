@@ -1,0 +1,6 @@
+# Resolve vendored capabilities exactly as the application's dependency graph does.
+dependency_overrides:
+  file_selector_platform_interface:
+    path: ../file_selector_platform_interface
+  image_picker_ios:
+    path: ../image_picker_ios

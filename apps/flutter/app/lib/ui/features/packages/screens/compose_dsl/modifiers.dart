@@ -93,19 +93,10 @@ Widget _withModifier(
     context,
     current,
     props,
+    onAction,
     nodeType: nodeType,
     modifierScope: modifierScope,
   );
-  if (nodeType == 'Row') {
-    final actionId = _actionId(props['onClick']);
-    if (actionId != null) {
-      current = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => onAction(actionId),
-        child: current,
-      );
-    }
-  }
   for (final op in ops.reversed) {
     final name = _normalizeToken((op['name'] ?? '').toString());
     final args = op['args'] is List<Object?>
@@ -451,14 +442,54 @@ Widget _withModifier(
 Widget _withDirectModifierProps(
   BuildContext context,
   Widget child,
-  Map<String, Object?> props, {
+  Map<String, Object?> props,
+  Future<Object?> Function(String, [Object?]) onAction, {
   required String nodeType,
   required _ComposeDslModifierScope modifierScope,
 }) {
   Widget current = child;
-  final width = _number(props['width']);
-  final height = _number(props['height']);
-  if (width != null || height != null) {
+  // Box owns its visual transition so intermediate sizes are not clamped by
+  // an outer SizedBox. All geometry, colors and timing come from the plugin.
+  final boxVisuals =
+      nodeType == 'Box' &&
+      (props['animation'] is Map || props['hoverStyle'] is Map);
+  final visualProps = boxVisuals && _ComposeHoverScope.of(context)
+      ? <String, Object?>{...props, ..._stringMap(props['hoverStyle'])}
+      : props;
+  final width = _number(visualProps['width']);
+  final height = _number(visualProps['height']);
+  if (boxVisuals) {
+    final animation = _stringMap(props['animation']);
+    final durationMillis = _int(animation['durationMillis']) ?? 0;
+    final decoration = BoxDecoration(
+      color: _color(
+        context,
+        visualProps['backgroundColor'] ?? visualProps['background'],
+      ),
+      gradient: visualProps['backgroundBrush'] == null
+          ? null
+          : _backgroundGradient(
+              context,
+              _stringMap(visualProps['backgroundBrush']),
+            ),
+      borderRadius: _borderRadius(
+        visualProps['backgroundShape'] ?? visualProps['shape'],
+      ),
+    );
+    current = AnimatedContainer(
+      duration: Duration(milliseconds: durationMillis < 0 ? 0 : durationMillis),
+      curve: switch (_normalizeToken(_string(animation['curve']))) {
+        'easeoutcubic' => Curves.easeOutCubic,
+        'easeinout' => Curves.easeInOut,
+        'easeout' => Curves.easeOut,
+        _ => Curves.linear,
+      },
+      width: width,
+      height: height,
+      decoration: decoration,
+      child: current,
+    );
+  } else if (width != null || height != null) {
     current = SizedBox(width: width, height: height, child: current);
   }
   if (_bool(props['fillMaxSize'])) {
@@ -484,9 +515,26 @@ Widget _withDirectModifierProps(
   if (padding != null) {
     current = Padding(padding: padding, child: current);
   }
+  // Put row ink above its decoration and inside its full padded hit region.
+  // Wrapping a decorated row afterwards hides the splash behind the background.
+  if (nodeType == 'Row' && _actionId(props['onClick']) != null) {
+    final clipArgs =
+        _modifierOpByToken(props['modifier'], 'clip')?['args']
+            as List<Object?>?;
+    current = _ComposeGestureRegion(
+      kind: 'combinedclickable',
+      options: <String, Object?>{'onClick': props['onClick']},
+      borderRadius:
+          _borderRadius(props['backgroundShape'] ?? props['shape']) ??
+          _borderRadius(clipArgs?.firstOrNull) ??
+          BorderRadius.zero,
+      onAction: onAction,
+      child: current,
+    );
+  }
   final background = props['backgroundColor'] ?? props['background'];
   final brush = props['backgroundBrush'];
-  if (background != null || brush != null) {
+  if (!boxVisuals && (background != null || brush != null)) {
     current = DecoratedBox(
       decoration: BoxDecoration(
         color: brush == null ? _color(context, background) : null,

@@ -40,10 +40,15 @@ test('real C strip painter preserves exit, critical system UI, input and RAM bud
   const count=actions.length;ui._simulator_touch(100,50,1);call('set_scene',['number','number','number'],[1,2,150]);ui._simulator_touch(100,50,0);assert.equal(actions.length,count,'scene change cancels the original gesture');
   ui._simulator_touch(298,12,1);for(let i=0;i<30;i++)ui._operit_ui_pump(0);ui._simulator_touch(298,12,0);assert(actions.includes('edge_scene_exit'),'local animation must not cancel the protected exit tap');
   assert.equal(call('debug_tap','number',['string'],['scene_exit']),1);assert(actions.includes('edge_scene_exit'));
-  call('set_pairing_code',['string'],['123456']);assert.equal(screen().page,'Pairing');
-  const before=calls;for(let i=0;i<20;i++)ui._operit_ui_pump(0);assert.equal(calls,before,'pairing owns the screen');
-  call('set_pairing_code',['string'],['']);call('set_space_join_prompt',['string','number'],['批准空间申请',0]);assert.equal(screen().page,'Space');
-  call('set_space_join_prompt',['string','number'],['',0]);call('set_scene',['number','number','number'],[0,2,0]);assert.equal(screen().page,'Chat');
+  call('set_pairing_code',['string'],['123456']);assert.equal(screen().page,'edge_scene');
+  call('set_space_join_prompt',['string','number'],['批准空间申请',0]);assert.equal(screen().page,'edge_scene');
+  assert.equal(call('debug_tap','number',['string'],['scene_exit']),1);
+  call('set_scene',['number','number','number'],[0,2,0]);assert.equal(screen().page,'Chat');
+  for(const id of ['sidebar_toggle','sidebar_settings','settings_space','space_review'])
+    assert.equal(call('debug_tap','number',['string'],[id]),1);
+  assert.equal(screen().page,'Space');
+  call('set_pairing_code',['string'],['']);call('set_space_join_prompt',['string','number'],['',0]);
+  assert.equal(screen().page,'SpaceSettings');
   call('scene_painter',['number'],[0]);ui.removeFunction(painter);
 });
 test('Core demo uploads bounded chunks and retains original package hash', async () => {

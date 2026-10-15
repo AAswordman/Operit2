@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
@@ -1135,6 +1136,7 @@ class _WebviewState extends State<Webview> {
   final FocusNode _nativeFocus = FocusNode(debugLabel: 'Windows WebView');
 
   PointerDeviceKind _pointerKind = PointerDeviceKind.unknown;
+  double _panZoomScale = 1;
 
   MouseCursor _cursor = SystemMouseCursors.basic;
   bool? _captureEnabled;
@@ -1206,6 +1208,7 @@ class _WebviewState extends State<Webview> {
         : SizedBox.expand(key: _key, child: _buildInner());
   }
 
+  /// Builds the native surface and forwards pointer input through the host API.
   Widget _buildInner() {
     return Focus(
       focusNode: _nativeFocus,
@@ -1288,32 +1291,58 @@ class _WebviewState extends State<Webview> {
                       _controller._setCursorPos(ev.localPosition);
                     }
                   },
+
+                  /// Resolves wheel ownership before forwarding native scroll input.
                   onPointerSignal: (signal) {
                     if (signal is PointerScrollEvent) {
+                      GestureBinding.instance.pointerSignalResolver.register(
+                        signal,
+
+                        /// Claims the wheel for the WebView under the pointer.
+                        (resolved) {
+                          _controller._setCursorPos(signal.localPosition);
+                          _controller._setScrollDelta(
+                            -signal.scrollDelta.dx,
+                            -signal.scrollDelta.dy,
+                            controlKeyPressed:
+                                HardwareKeyboard.instance.isControlPressed,
+                          );
+                        },
+                      );
+                    }
+                  },
+
+                  /// Starts an incremental trackpad pan and scale sequence.
+                  onPointerPanZoomStart: (signal) {
+                    _panZoomScale = 1;
+                    _controller._setCursorPos(signal.localPosition);
+                  },
+
+                  /// Sends trackpad scaling as browser control-wheel input.
+                  onPointerPanZoomUpdate: (signal) {
+                    _controller._setCursorPos(signal.localPosition);
+                    final scaleDelta = signal.scale / _panZoomScale;
+                    _panZoomScale = signal.scale;
+                    if (scaleDelta != 1) {
                       _controller._setScrollDelta(
-                        -signal.scrollDelta.dx,
-                        -signal.scrollDelta.dy,
+                        0,
+                        100 * math.log(scaleDelta),
+                        controlKeyPressed: true,
+                      );
+                    }
+                    if (signal.panDelta != Offset.zero) {
+                      _controller._setScrollDelta(
+                        -signal.panDelta.dx,
+                        -signal.panDelta.dy,
                         controlKeyPressed:
                             HardwareKeyboard.instance.isControlPressed,
                       );
                     }
                   },
-                  onPointerPanZoomUpdate: (signal) {
-                    final controlKeyPressed =
-                        HardwareKeyboard.instance.isControlPressed;
-                    if (signal.panDelta.dx.abs() > signal.panDelta.dy.abs()) {
-                      _controller._setScrollDelta(
-                        -signal.panDelta.dx,
-                        0,
-                        controlKeyPressed: controlKeyPressed,
-                      );
-                    } else {
-                      _controller._setScrollDelta(
-                        0,
-                        signal.panDelta.dy,
-                        controlKeyPressed: controlKeyPressed,
-                      );
-                    }
+
+                  /// Resets the scale baseline when the trackpad gesture ends.
+                  onPointerPanZoomEnd: (signal) {
+                    _panZoomScale = 1;
                   },
                   child: MouseRegion(
                     cursor: _cursor,

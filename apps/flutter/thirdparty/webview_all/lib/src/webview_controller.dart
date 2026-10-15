@@ -271,28 +271,12 @@ class WebViewController {
   /// `undefined` both become Dart `null`. Strings are not decoded a second time.
   /// The Future completes with an error if execution or serialization fails.
   Future<Object?> runJavaScriptReturningResult(String javaScript) async {
-    // All native adapters can return a string, including when the script's
-    // actual result is null. Use one envelope for every platform so WebKit's
-    // non-null result restriction does not leak into the public API.
-    final result = await platform.runJavaScriptReturningResult('''
-(function() {
-  try {
-    const value = (0, eval)(${jsonEncode(javaScript)});
-    const encoded = JSON.stringify({ value: value === undefined ? null : value });
-    if (!Object.prototype.hasOwnProperty.call(JSON.parse(encoded), 'value')) {
-      throw new TypeError('The JavaScript result is not JSON-compatible.');
+    final result = await platform.runJavaScriptReturningResult(javaScript);
+    try {
+      return jsonDecode(jsonEncode(result));
+    } catch (error) {
+      throw StateError('The JavaScript result is not JSON-compatible: $error');
     }
-    return encoded;
-  } catch (error) {
-    return JSON.stringify({ error: String(error) });
-  }
-})()
-''');
-    final envelope = jsonDecode(result as String) as Map<String, dynamic>;
-    if (envelope.containsKey('error')) {
-      throw StateError(envelope['error'] as String);
-    }
-    return envelope['value'];
   }
 
   /// Adds a new JavaScript channel to the set of enabled channels.

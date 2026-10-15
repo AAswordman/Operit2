@@ -10,13 +10,156 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/main/components/CollapsedDrawerContent.dart';
+import 'package:operit2/ui/features/chat/viewmodel/ChatSelectionTransition.dart';
 import 'package:operit2/ui/main/components/DrawerContent.dart';
 import 'package:operit2/ui/main/components/NavigationDrawerAppearance.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
 
-/// Verifies independent previews preserve conversation context and group actions.
+/// Verifies independent previews preserve conversation context and workspace isolation.
 void main() {
+  testWidgets(
+    'chat activation submits Core work without waiting for another frame',
+    (tester) async {
+      final bridge = _DrawerBridge();
+      await _pumpDrawer(tester, bridge, [_history('fast', 0)]);
+      final row = tester.widget<ConversationDrawerItem>(
+        find.byType(ConversationDrawerItem),
+      );
+      row.onClick();
+      expect(
+        bridge.calls.where((call) => call.methodName == 'switchChat'),
+        hasLength(1),
+      );
+      ChatSelectionTransition.complete('fast-0');
+      await tester.pump();
+    },
+  );
+
+  testWidgets('brand header fits the narrow drawer beside the tab switch', (
+    tester,
+  ) async {
+    for (final scale in [1.0, 1.4]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: 195,
+                  child: SidebarInfoCard(
+                    brandName: 'Operit',
+                    appearance: const NavigationDrawerAppearance(
+                      containerColor: Colors.white,
+                      titleColor: Colors.black,
+                      statusAvailableColor: Colors.blue,
+                      itemColor: Colors.black87,
+                      buttonContainerColor: Colors.white70,
+                      selectedContainerColor: Colors.blue,
+                      selectedContentColor: Colors.white,
+                      dividerColor: Colors.black12,
+                      transparentSurfaceEnabled: false,
+                    ),
+                    trailing: const SizedBox(
+                      key: ValueKey('test-tab-switch'),
+                      width: 98,
+                      height: 23,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('test-tab-switch'))).width,
+        98,
+      );
+      expect(tester.getSize(find.text('Operit')).width, lessThanOrEqualTo(63));
+    }
+  });
+
+  testWidgets(
+    'workspace retains the legacy compact create bar and scrolling brand header',
+    (tester) async {
+      await _pumpDrawer(tester, _DrawerBridge(), _histories('A', 6));
+      final create = find.byKey(const ValueKey('workspace-create-chat'));
+      expect(tester.getSize(create).height, 34);
+      expect(
+        find.descendant(of: create, matching: find.byIcon(Icons.add_rounded)),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(of: create, matching: find.byType(FilledButton)),
+        findsNothing,
+      );
+      final scroll = find.byKey(
+        const PageStorageKey<String>('drawer-history-scroll'),
+      );
+      expect(
+        find.descendant(of: scroll, matching: find.byType(SidebarInfoCard)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: scroll,
+          matching: find.byKey(const ValueKey('chat-sidebar-segmented-switch')),
+        ),
+        findsOneWidget,
+      );
+      expect(find.ancestor(of: create, matching: scroll), findsOneWidget);
+      final material = tester.widget<Material>(
+        find.ancestor(of: create, matching: find.byType(Material)).first,
+      );
+      expect(material.shape, isA<StadiumBorder>());
+      expect(
+        material.color,
+        Theme.of(tester.element(create)).colorScheme.primaryContainer,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'workspace headers restore the legacy accent marker and row style',
+    (tester) async {
+      await _pumpDrawer(tester, _DrawerBridge(), _histories('A', 2));
+      final header = find.byKey(const ValueKey('workspace-header:workspace:A'));
+      final containers = tester.widgetList<Container>(
+        find.descendant(of: header, matching: find.byType(Container)),
+      );
+      expect(
+        containers.where(
+          (container) =>
+              container.constraints?.maxWidth == 3 &&
+              container.constraints?.maxHeight == 17,
+        ),
+        hasLength(1),
+      );
+      for (final item in tester.widgetList<ConversationDrawerItem>(
+        find.byType(ConversationDrawerItem),
+      )) {
+        expect(item.workspaceStyle, isTrue);
+        expect(item.nested, isTrue);
+      }
+      await tester.tap(find.byTooltip('搜索对话'));
+      await _pumpSidebar(tester);
+      expect(
+        find.ancestor(
+          of: find.byType(ConversationSearchField),
+          matching: find.byType(AnimatedSize),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('each group has an independent and reversible preview', (
     tester,
   ) async {
@@ -180,13 +323,12 @@ void main() {
   testWidgets('workspace grouping uses the same independent previews', (
     tester,
   ) async {
-    await _pumpDrawer(
-      tester,
-      _DrawerBridge(groupingMode: 'workspace'),
-      <core.ChatHistoryListItem>[..._histories('A', 6), ..._histories('B', 6)],
-    );
+    await _pumpDrawer(tester, _DrawerBridge(), <core.ChatHistoryListItem>[
+      ..._histories('A', 6),
+      ..._histories('B', 6),
+    ]);
     final button = find.byKey(
-      const ValueKey<String>('history-limit:group::workspace:unbound::A'),
+      const ValueKey<String>('history-limit:workspace:A'),
     );
     expect(find.text('展开更多 2'), findsNWidgets(2));
     await tester.tap(button);
@@ -199,93 +341,316 @@ void main() {
     expect(find.text('展开更多 2'), findsNWidgets(2));
   });
 
-  testWidgets('renaming a previewed group updates every hidden conversation', (
+  testWidgets(
+    'workspace group controls are native and folding performs no backend mutations',
+    (tester) async {
+      final bridge = _DrawerBridge();
+      await _pumpDrawer(tester, bridge, _histories('A', 6));
+      expect(find.text('A'), findsOneWidget);
+      expect(find.byTooltip('分组操作'), findsOneWidget);
+      expect(find.text('未分组'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('workspace-create-group')),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('A'));
+      await _pumpSidebar(tester);
+      expect(find.text('A-0'), findsNothing);
+      expect(
+        bridge.calls.where(
+          (call) =>
+              call.methodName == 'updateChatOrderAndGroup' ||
+              call.methodName == 'deleteChatHistory' ||
+              call.methodName == 'updateChatPinned',
+        ),
+        isEmpty,
+      );
+      await tester.tap(find.text('A'));
+      await _pumpSidebar(tester);
+    },
+  );
+
+  testWidgets(
+    'only chats without a binding share the unbound workspace header',
+    (tester) async {
+      final histories = [
+        for (final group in [
+          'pending-a',
+          'pending-b',
+          'unbound-a',
+          'unbound-b',
+        ])
+          core.ChatHistoryListItem.fromJson({
+            ..._history(group, 0).toJson(),
+            'workspaceId': switch (group) {
+              'unbound-a' || 'unbound-b' => null,
+              _ => group,
+            },
+            'workspaceName': null,
+          }),
+      ];
+      final bridge = _DrawerBridge();
+      await _pumpDrawer(tester, bridge, histories);
+      expect(find.text('未绑定工作区'), findsOneWidget);
+      expect(find.text('工作区缺失'), findsNWidgets(2));
+      expect(_visibleIds(tester), [
+        'pending-a-0',
+        'pending-b-0',
+        'unbound-a-0',
+        'unbound-b-0',
+      ]);
+
+      final hydrated = [
+        for (final history in histories)
+          core.ChatHistoryListItem.fromJson({
+            ...history.toJson(),
+            'workspaceName': switch (history.workspaceId) {
+              'pending-a' => 'Project A',
+              'pending-b' => 'Project B',
+              _ => null,
+            },
+          }),
+      ];
+      await _pumpDrawer(tester, bridge, hydrated);
+      expect(find.text('未绑定工作区'), findsOneWidget);
+      expect(find.text('工作区缺失'), findsNothing);
+      expect(find.text('Project A'), findsOneWidget);
+      expect(find.text('Project B'), findsOneWidget);
+      expect(_visibleIds(tester), [
+        'pending-a-0',
+        'pending-b-0',
+        'unbound-a-0',
+        'unbound-b-0',
+      ]);
+    },
+  );
+
+  for (final pointerKind in [
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+  ]) {
+    testWidgets(
+      'identical in-row swipes delete valid and missing workspaces with $pointerKind',
+      (tester) async {
+        final bridge = _DrawerBridge();
+        final histories = [
+          _history('valid', 0),
+          for (final id in ['missing-a', 'missing-b'])
+            core.ChatHistoryListItem.fromJson({
+              ..._history(id, 0).toJson(),
+              'workspaceName': null,
+            }),
+        ];
+        await _pumpDrawer(
+          tester,
+          bridge,
+          histories,
+          currentChatId: histories.first.id,
+        );
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(DrawerContent)),
+        )!;
+        for (final history in histories) {
+          final swipe = find.byKey(
+            ValueKey<String>('conversation-${history.id}'),
+          );
+          final bounds = tester.getRect(swipe);
+          final gesture = await tester.startGesture(
+            bounds.center,
+            kind: pointerKind,
+          );
+          for (var step = 1; step <= 10; step++) {
+            await gesture.moveTo(
+              bounds.center - Offset(bounds.width * step / 20, 0),
+            );
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          await gesture.up();
+          await _pumpSidebar(tester);
+          expect(
+            find.text(l10n.deleteConversationTitle),
+            findsOneWidget,
+            reason: history.id,
+          );
+          final previous = bridge.calls
+              .where((call) => call.methodName == 'deleteChatHistory')
+              .length;
+          await tester.tap(find.widgetWithText(TextButton, l10n.cancel));
+          await _pumpSidebar(tester);
+          expect(
+            bridge.calls
+                .where((call) => call.methodName == 'deleteChatHistory')
+                .length,
+            previous,
+          );
+          final row = tester.widget<ConversationDrawerItem>(
+            find.byKey(ValueKey('workspace-chat:${history.id}')),
+          );
+          row.onSwipeDelete();
+          await _pumpSidebar(tester);
+          await tester.tap(find.widgetWithText(TextButton, l10n.delete));
+          await _pumpSidebar(tester);
+          final calls = bridge.calls
+              .where((call) => call.methodName == 'deleteChatHistory')
+              .toList();
+          expect(calls, hasLength(previous + 1));
+          expect((calls.last.args as Map)['chatId'], history.id);
+          expect(tester.takeException(), isNull);
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'a missing workspace record does not block direct menu deletion',
+    (tester) async {
+      final bridge = _DrawerBridge();
+      final history = core.ChatHistoryListItem.fromJson({
+        ..._history('missing', 0).toJson(),
+        'workspaceName': null,
+      });
+      await _pumpDrawer(tester, bridge, [history], currentChatId: history.id);
+      expect(find.text('工作区缺失'), findsOneWidget);
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(DrawerContent)),
+      )!;
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ConversationDrawerItem),
+          matching: find.byTooltip('更多操作'),
+        ),
+      );
+      await _pumpSidebar(tester);
+      await tester.tap(find.text('删除'));
+      await _pumpSidebar(tester);
+      expect(find.text(l10n.deleteConversationTitle), findsNothing);
+      final calls = bridge.calls
+          .where((call) => call.methodName == 'deleteChatHistory')
+          .toList();
+      expect(calls, hasLength(1));
+      expect((calls.single.args as Map)['chatId'], history.id);
+      expect(
+        bridge.calls.where((call) => call.methodName == 'switchChat'),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('long-press delete does not ask for a second confirmation', (
     tester,
   ) async {
     final bridge = _DrawerBridge();
-    await _pumpDrawer(tester, bridge, _histories('A', 6));
-    await _openGroupMenu(tester, 'A');
-    await tester.tap(find.text('编辑名称'));
+    final history = _history('valid', 0);
+    await _pumpDrawer(tester, bridge, [history]);
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(DrawerContent)),
+    )!;
+    await tester.longPress(find.text(history.title));
     await _pumpSidebar(tester);
-    await tester.enterText(find.byType(TextField), 'Renamed');
-    final l10n = AppLocalizations.of(tester.element(find.byType(AlertDialog)))!;
-    await tester.tap(find.widgetWithText(FilledButton, l10n.save));
+    await tester.tap(find.text(l10n.delete));
     await _pumpSidebar(tester);
+    expect(find.text(l10n.deleteConversationTitle), findsNothing);
     final calls = bridge.calls
-        .where((call) => call.methodName == 'updateChatOrderAndGroup')
+        .where((call) => call.methodName == 'deleteChatHistory')
         .toList();
-    expect(calls, hasLength(6));
-    expect(
-      ((calls.last.args as Map)['reorderedHistories'] as List).map(
-        (item) => (item as Map)['group'],
-      ),
-      everyElement('Renamed'),
-    );
-    expect(find.text('Renamed'), findsOneWidget);
-    expect(find.text('A-5'), findsNothing);
-    expect(find.text('展开更多 2'), findsOneWidget);
+    expect(calls, hasLength(1));
+    expect((calls.single.args as Map)['chatId'], history.id);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('renaming an expanded group preserves its expansion', (
+  testWidgets(
+    'swipe confirmation and direct deletion preserve Core lock refusal',
+    (tester) async {
+      final bridge = _DrawerBridge(deleteAllowed: false);
+      final history = core.ChatHistoryListItem.fromJson({
+        ..._history('locked', 0).toJson(),
+        'locked': true,
+      });
+      await _pumpDrawer(tester, bridge, [history]);
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(DrawerContent)),
+      )!;
+      final row = tester.widget<ConversationDrawerItem>(
+        find.byType(ConversationDrawerItem),
+      );
+      row.onSwipeDelete();
+      await _pumpSidebar(tester);
+      expect(find.text(l10n.deleteConversationTitle), findsOneWidget);
+      expect(
+        bridge.calls.where((call) => call.methodName == 'deleteChatHistory'),
+        isEmpty,
+      );
+      await tester.tap(find.widgetWithText(TextButton, l10n.delete));
+      await _pumpSidebar(tester);
+      expect(find.text(l10n.chatLockedCannotDelete), findsOneWidget);
+      row.onDelete();
+      await _pumpSidebar(tester);
+      expect(find.text(l10n.deleteConversationTitle), findsNothing);
+      expect(find.text(l10n.chatLockedCannotDelete), findsOneWidget);
+      expect(
+        bridge.calls.where((call) => call.methodName == 'deleteChatHistory'),
+        hasLength(2),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a missing workspace record can be detached through the explicit chat',
+    (tester) async {
+      final bridge = _DrawerBridge();
+      final history = core.ChatHistoryListItem.fromJson({
+        ..._history('missing', 0).toJson(),
+        'workspaceName': null,
+      });
+      await _pumpDrawer(tester, bridge, [history]);
+      final row = tester.widget<ConversationDrawerItem>(
+        find.byType(ConversationDrawerItem),
+      );
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(DrawerContent)),
+      )!;
+      row.onLongPress();
+      await _pumpSidebar(tester);
+      await tester.tap(find.text(l10n.workspaceUnbindTitle));
+      await _pumpSidebar(tester);
+      expect(find.text(l10n.workspaceUnbindConfirmation), findsOneWidget);
+      await tester.tap(
+        find.widgetWithText(FilledButton, l10n.workspaceUnbindTitle),
+      );
+      await _pumpSidebar(tester);
+      final calls = bridge.calls
+          .where((call) => call.methodName == 'unbindChatFromWorkspace')
+          .toList();
+      expect(calls, hasLength(1));
+      expect((calls.single.args as Map)['chatId'], 'missing-0');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('renamed workspace metadata keeps preview keyed by identity', (
     tester,
   ) async {
     final bridge = _DrawerBridge();
     await _pumpDrawer(tester, bridge, _histories('A', 6));
     await tester.tap(_limitButton('A'));
     await _pumpSidebar(tester);
-    await _openGroupMenu(tester, 'A');
-    await tester.tap(find.text('编辑名称'));
-    await _pumpSidebar(tester);
-    await tester.enterText(find.byType(TextField), 'Expanded');
-    final l10n = AppLocalizations.of(tester.element(find.byType(AlertDialog)))!;
-    await tester.tap(find.widgetWithText(FilledButton, l10n.save));
-    await _pumpSidebar(tester);
+    final renamed = _histories('A', 6)
+        .map(
+          (history) => core.ChatHistoryListItem.fromJson({
+            ...history.toJson(),
+            'workspaceName': 'Renamed workspace',
+          }),
+        )
+        .toList();
+    await _pumpDrawer(tester, bridge, renamed);
+    expect(find.text('Renamed workspace'), findsOneWidget);
     expect(find.text('A-5'), findsOneWidget);
-    expect(find.text('收起'), findsOneWidget);
-    await tester.tap(_limitButton('Expanded'));
+    await tester.tap(_limitButton('A'));
     await _pumpSidebar(tester);
     expect(find.text('A-5'), findsNothing);
   });
-  testWidgets('group pinning updates hidden conversations too', (tester) async {
-    final bridge = _DrawerBridge();
-    await _pumpDrawer(tester, bridge, _histories('A', 6));
-    expect(find.text('A-5'), findsNothing);
-    await _openGroupMenu(tester, 'A');
-    await tester.tap(find.text('置顶'));
-    await _pumpSidebar(tester);
-    expect(
-      bridge.calls
-          .where((call) => call.methodName == 'updateChatPinned')
-          .map((call) => (call.args as Map)['chatId']),
-      <String>['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5'],
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets(
-    'group deletion uses the complete group rather than its preview',
-    (tester) async {
-      final bridge = _DrawerBridge();
-      await _pumpDrawer(tester, bridge, _histories('A', 6));
-      await _openGroupMenu(tester, 'A');
-      await tester.tap(find.text('删除'));
-      await _pumpSidebar(tester);
-      expect(find.text('确定要删除分组“A”及其中的 6 条对话吗？'), findsOneWidget);
-      final l10n = AppLocalizations.of(
-        tester.element(find.byType(AlertDialog)),
-      )!;
-      await tester.tap(find.widgetWithText(TextButton, l10n.delete));
-      await _pumpSidebar(tester);
-      expect(
-        bridge.calls
-            .where((call) => call.methodName == 'deleteChatHistory')
-            .map((call) => (call.args as Map)['chatId']),
-        <String>['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5'],
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
 }
 
 /// Mounts a tall drawer so all preview rows are materialized in the test viewport.
@@ -327,8 +692,7 @@ Future<void> _pumpDrawer(
           ),
           histories: histories,
           activeStreamingChatIds: streamingIds,
-          characterGroupNamesById: const {},
-          characterCardAvatarUrisByName: const {},
+
           currentChatId: currentChatId,
           errorMessage: null,
           loading: false,
@@ -348,26 +712,15 @@ Future<void> _pumpSidebar(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 300));
 }
 
-/// Finds the inline preview control for a named unbound conversation group.
-Finder _limitButton(String group) => find.byKey(
-  ValueKey<String>('history-limit:group::character:unbound::$group'),
-);
+/// Finds the inline preview control for a named workspace.
+Finder _limitButton(String group) =>
+    find.byKey(ValueKey<String>('history-limit:workspace:$group'));
 
 /// Reads rendered conversation IDs in their original sidebar order.
 List<String> _visibleIds(WidgetTester tester) => tester
     .widgetList<ConversationDrawerItem>(find.byType(ConversationDrawerItem))
     .map((item) => item.history.id)
     .toList();
-
-/// Reveals a group toolbar using the same hover gesture as a desktop user.
-Future<void> _openGroupMenu(WidgetTester tester, String group) async {
-  final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-  await mouse.addPointer(location: tester.getCenter(find.text(group)));
-  addTearDown(mouse.removePointer);
-  await _pumpSidebar(tester);
-  await tester.tap(find.byTooltip('分组操作'));
-  await _pumpSidebar(tester);
-}
 
 /// Creates ordered conversations for one named group.
 List<core.ChatHistoryListItem> _histories(String group, int count) =>
@@ -381,29 +734,27 @@ core.ChatHistoryListItem _history(
   int index, {
   bool pinned = false,
 }) => core.ChatHistoryListItem(
+  group: null,
   id: '$group-$index',
   title: '$group-$index',
   updatedAt: '2026-10-06T00:00:00Z',
-  group: group,
+
   displayOrder: index,
-  workspaceId: null,
-  workspaceName: null,
-  characterCardName: null,
-  characterGroupId: null,
+  workspaceId: group,
+  workspaceName: group,
+
   locked: false,
   pinned: pinned,
 );
 
 class _DrawerBridge extends OperitRuntimeBridge {
-  /// Configures the persisted grouping mode for the sidebar under test.
-  _DrawerBridge({this.groupingMode = 'character'});
+  /// Creates a workspace sidebar bridge without a selected plugin tab.
+  _DrawerBridge({this.deleteAllowed = true});
 
-  final String groupingMode;
+  final bool deleteAllowed;
 
   /// Exposes the committed preference snapshot used by reads and watches.
-  Map<String, String> get preferences => <String, String>{
-    'chat_history_grouping_mode': groupingMode,
-  };
+  Map<String, String> get preferences => <String, String>{};
   final List<CoreCallRequest> calls = <CoreCallRequest>[];
 
   /// Implements only preference reads and the group mutations exercised here.
@@ -412,8 +763,12 @@ class _DrawerBridge extends OperitRuntimeBridge {
     calls.add(request);
     final value = switch (request.methodName) {
       'getPreferences' => preferences,
-      'updateChatOrderAndGroup' || 'updateChatPinned' => null,
-      'deleteChatHistory' => true,
+      'getToolPkgNavigationEntries' || 'getToolPkgUiRoutes' => <Object?>[],
+      'updateChatOrderAndGroup' ||
+      'updateChatPinned' ||
+      'switchChat' ||
+      'unbindChatFromWorkspace' => null,
+      'deleteChatHistory' => deleteAllowed,
       _ => throw StateError('Unexpected Core call: ${request.methodName}'),
     };
     return encodeCoreLink(<Object?>[0, value]);

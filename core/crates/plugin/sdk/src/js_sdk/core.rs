@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
+
+/// Contains a JSON object with complete values preserved by the native JSON parser.
+pub type JsonObject = BTreeMap<String, serde_json::Value>;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 /// Stores a scalar or JSON value assigned to an arbitrary tool parameter.
@@ -30,6 +33,37 @@ pub struct ToolConfig {
     pub params: Option<ToolParams>,
     /// Receives intermediate values produced by a streaming tool.
     pub onIntermediateResult: Option<Arc<dyn Fn(JsAny) + Send + Sync>>,
+}
+/// Describes one parameter accepted by a public tool.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCatalogParameter {
+    pub name: String,
+    pub r#type: String,
+    pub description: String,
+    pub required: bool,
+    pub default: JsAny,
+}
+/// Describes a public builtin or plugin tool available on a device.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCatalogEntry {
+    pub name: String,
+    pub description: String,
+    pub parameters: Vec<ToolCatalogParameter>,
+    pub category: String,
+    pub source: String,
+    pub packageName: Option<String>,
+}
+/// Contains public tool names and schemas returned by device discovery.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCatalog {
+    pub tools: Vec<ToolCatalogEntry>,
+}
+/// Configures the lifetime of calls issued through Tools.device(nodeId).
+pub struct DeviceToolOptions {
+    /// Maximum duration including connection and permission checks; defaults to 120000 ms.
+    pub timeoutMs: Option<u64>,
+    /// Optional AbortSignal. Aborting closes the remote execution stream.
+    pub signal: Option<JsObject>,
 }
 /// Configures callbacks for a global tool call.
 pub struct ToolCallOptions<TIntermediate = JsAny> {

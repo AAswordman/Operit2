@@ -27,7 +27,6 @@ class _ComposeBox extends MultiChildRenderObjectWidget {
   ) {
     renderObject.nodes = nodes;
     renderObject.alignment = alignment;
-    renderObject.markNeedsLayout();
   }
 }
 
@@ -38,10 +37,54 @@ class _ComposeBoxRenderObject extends RenderBox
         ContainerRenderObjectMixin<RenderBox, _ComposeBoxParentData>,
         RenderBoxContainerDefaultsMixin<RenderBox, _ComposeBoxParentData> {
   /// Stores child layout and drawing metadata supplied by the renderer.
-  _ComposeBoxRenderObject(this.nodes, this.alignment);
+  _ComposeBoxRenderObject(List<_ComposeDslNode> nodes, Alignment alignment)
+    : _nodes = nodes,
+      _alignmentValue = alignment {
+    for (final node in _nodes) {
+      node.addListener(_nodeChanged);
+    }
+  }
 
-  List<_ComposeDslNode> nodes;
-  Alignment alignment;
+  List<_ComposeDslNode> _nodes;
+  List<RenderBox>? _paintChildren;
+
+  List<_ComposeDslNode> get nodes => _nodes;
+
+  /// Observes scoped child properties even when the parent node is unchanged.
+  set nodes(List<_ComposeDslNode> value) {
+    if (listEquals(_nodes, value)) return;
+    for (final node in _nodes) {
+      node.removeListener(_nodeChanged);
+    }
+    _nodes = value;
+    _paintChildren = null;
+    for (final node in _nodes) {
+      node.addListener(_nodeChanged);
+    }
+    markNeedsLayout();
+  }
+
+  void _nodeChanged() {
+    _paintChildren = null;
+    markNeedsLayout();
+    markNeedsPaint();
+  }
+
+  @override
+  void dispose() {
+    for (final node in _nodes) {
+      node.removeListener(_nodeChanged);
+    }
+    super.dispose();
+  }
+
+  Alignment _alignmentValue;
+  Alignment get alignment => _alignmentValue;
+  set alignment(Alignment value) {
+    if (_alignmentValue == value) return;
+    _alignmentValue = value;
+    markNeedsLayout();
+  }
 
   /// Allocates stacking offsets and sibling links for each child.
   @override
@@ -79,6 +122,7 @@ class _ComposeBoxRenderObject extends RenderBox
   /// Measures content first, then lays out overlays and resolves child offsets.
   @override
   void performLayout() {
+    _paintChildren = null;
     var measured = constraints.smallest;
     var child = firstChild;
     var index = 0;
@@ -118,27 +162,33 @@ class _ComposeBoxRenderObject extends RenderBox
   }
 
   /// Sorts paint order stably without changing layout or plugin child identity.
-  List<RenderBox> _paintOrder() {
+  List<RenderBox> _paintOrder() => _paintChildren ??= _computePaintOrder();
+
+  /// Reuses drawing order until child membership or scoped metadata changes.
+  List<RenderBox> _computePaintOrder() {
     final entries = <({RenderBox child, double z, int index})>[];
     var child = firstChild;
     var index = 0;
+    var ordered = true;
+    var previousZ = double.negativeInfinity;
     while (child != null) {
       final props = nodes[index].props;
       final args =
           _modifierOpByToken(props['modifier'], 'zindex')?['args']
               as List<Object?>?;
-      entries.add((
-        child: child,
-        z: _number(props['zIndex'] ?? args?.firstOrNull) ?? 0,
-        index: index,
-      ));
+      final z = _number(props['zIndex'] ?? args?.firstOrNull) ?? 0;
+      if (z < previousZ) ordered = false;
+      previousZ = z;
+      entries.add((child: child, z: z, index: index));
       child = childAfter(child);
       index++;
     }
-    entries.sort((a, b) {
-      final order = a.z.compareTo(b.z);
-      return order == 0 ? a.index.compareTo(b.index) : order;
-    });
+    if (!ordered) {
+      entries.sort((a, b) {
+        final order = a.z.compareTo(b.z);
+        return order == 0 ? a.index.compareTo(b.index) : order;
+      });
+    }
     return entries.map((entry) => entry.child).toList(growable: false);
   }
 

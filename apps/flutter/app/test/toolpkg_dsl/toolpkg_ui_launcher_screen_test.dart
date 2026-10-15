@@ -1,3 +1,5 @@
+import '../support/compose_session_fixture.dart';
+import 'package:operit2/core/application/PluginHotReload.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
@@ -25,6 +27,131 @@ import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(ClientLogger.initialize);
+
+  testWidgets('DSL resource requests start before the mounting frame ends', (
+    tester,
+  ) async {
+    final acquired = Completer<void>();
+    final script = Completer<String>();
+    final bridge = _ToolPkgDslTestBridge()
+      ..acquireCompletion = acquired
+      ..scriptCompletion = script;
+    late List<String> callsAtFrameEnd;
+    tester.binding.addPostFrameCallback((_) {
+      callsAtFrameEnd = bridge.calls.map((call) => call.methodName).toList();
+    });
+    await tester.pumpWidget(_screen(bridge));
+    expect(callsAtFrameEnd, contains('acquireToolPkgExecutionEngine'));
+    expect(callsAtFrameEnd, contains('getToolPkgComposeDslScript'));
+    expect(bridge._sessions, isEmpty);
+    acquired.complete();
+    script.complete('export default function render() {}');
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 0'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('DSL loading overlaps script reads with engine acquisition', (
+    tester,
+  ) async {
+    final acquired = Completer<void>();
+    final script = Completer<String>();
+    final bridge = _ToolPkgDslTestBridge()
+      ..acquireCompletion = acquired
+      ..scriptCompletion = script;
+    await tester.pumpWidget(_screen(bridge));
+    await tester.pump();
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'acquireToolPkgExecutionEngine',
+      ),
+      hasLength(1),
+    );
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'getToolPkgComposeDslScript',
+      ),
+      hasLength(1),
+    );
+    expect(bridge._sessions, isEmpty);
+    script.complete('export default function render() {}');
+    await tester.pump();
+    expect(bridge._sessions, isEmpty);
+    acquired.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 0'), findsOneWidget);
+    expect(
+      bridge.calls.where((call) => call.methodName == 'render'),
+      hasLength(1),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('DSL input updates reuse script and hot reload invalidates it', (
+    tester,
+  ) async {
+    final bridge = _ToolPkgDslTestBridge();
+    await tester.pumpWidget(_screen(bridge));
+    await tester.pumpAndSettle();
+    for (var index = 0; index < 6; index++) {
+      await tester.pumpWidget(
+        _screen(bridge, initialState: {'inputVersion': index}),
+      );
+      await tester.pumpAndSettle();
+    }
+    expect(
+      bridge.calls.where((call) => call.methodName == 'render'),
+      hasLength(7),
+    );
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'getToolPkgComposeDslScript',
+      ),
+      hasLength(1),
+    );
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'getToolPkgComposeDslScreenPath',
+      ),
+      hasLength(1),
+    );
+    expect(bridge._sessions, hasLength(1));
+    PluginHotReload.revision.value++;
+    await _pumpComposeReload(tester);
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'getToolPkgComposeDslScript',
+      ),
+      hasLength(2),
+    );
+    expect(bridge._sessions, hasLength(2));
+    expect(bridge._sessions.values.first.updates.isClosed, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'DSL parallel load waits for both operations before reporting failure',
+    (tester) async {
+      final acquired = Completer<void>();
+      final script = Completer<String>();
+      final bridge = _ToolPkgDslTestBridge()
+        ..acquireCompletion = acquired
+        ..scriptCompletion = script;
+      await tester.pumpWidget(_screen(bridge));
+      await tester.pump();
+      acquired.completeError(StateError('Diagnostic engine failure'));
+      await tester.pump();
+      expect(find.textContaining('Diagnostic engine failure'), findsNothing);
+      script.complete('export default function render() {}');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Diagnostic engine failure'), findsOneWidget);
+      expect(
+        bridge.calls.where((call) => call.methodName == 'render'),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('bubble rebuild retains the XML plugin engine and action state', (
     tester,
@@ -111,9 +238,7 @@ void main() {
     expect(tester.state(find.byType(ToolPkgUiLauncherScreen)), same(state));
     expect(find.text('Counter: 1'), findsOneWidget);
     expect(
-      bridge.calls.where(
-        (call) => call.methodName == 'executeToolPkgComposeDslScript',
-      ),
+      bridge.calls.where((call) => call.methodName == 'render'),
       hasLength(1),
     );
     expect(tester.takeException(), isNull);
@@ -153,9 +278,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Counter: 1'), findsOneWidget);
     expect(
-      bridge.calls.where(
-        (call) => call.methodName == 'executeToolPkgComposeDslScript',
-      ),
+      bridge.calls.where((call) => call.methodName == 'render'),
       hasLength(1),
     );
     await tester.pumpWidget(const SizedBox());
@@ -187,7 +310,7 @@ void main() {
         isEmpty,
       );
       final execute = bridge.calls.singleWhere(
-        (call) => call.methodName == 'executeToolPkgComposeDslScript',
+        (call) => call.methodName == 'render',
       );
       final args = execute.args as Map;
       final options = args['runtimeOptions'] as Map;
@@ -232,13 +355,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Counter: 1'), findsOneWidget);
     expect(tester.state(find.byType(ToolPkgUiLauncherScreen)), same(hostState));
-    final calls = bridge.calls.where(
-      (call) => call.methodName == 'executeToolPkgComposeDslScript',
-    );
+    final calls = bridge.calls.where((call) => call.methodName == 'render');
     final options = (calls.last.args as Map)['runtimeOptions'] as Map;
-    expect(options['state'], containsPair('xmlContent', '<demo>one'));
-    expect(options['state'], containsPair('count', 1));
-    expect(options['memo'], containsPair('source', 'xml'));
+    expect(
+      options['__operit_input_state'],
+      containsPair('xmlContent', '<demo>one'),
+    );
+    expect(options.containsKey('state'), isFalse);
+    expect(bridge._count, 1);
+    expect(options.containsKey('memo'), isFalse);
     await tester.pumpWidget(screen('<demo>two</demo>'));
     await tester.pump();
     bridge.renderCompletion = null;
@@ -246,7 +371,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Counter: 99'), findsNothing);
     final latest = (calls.last.args as Map)['runtimeOptions'] as Map;
-    expect(latest['state'], containsPair('xmlContent', '<demo>two</demo>'));
+    expect(
+      latest['__operit_input_state'],
+      containsPair('xmlContent', '<demo>two</demo>'),
+    );
     expect(
       bridge.calls.where(
         (call) => call.methodName == 'acquireToolPkgExecutionEngine',
@@ -381,14 +509,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Counter: 1'), findsOneWidget);
       expect(
-        bridge.calls.where(
-          (call) => call.methodName == 'executeToolPkgComposeDslScript',
-        ),
+        bridge.calls.where((call) => call.methodName == 'render'),
         hasLength(1),
       );
       final changes = bridge.calls.where(
         (call) =>
-            call.methodName == 'dispatchToolPkgComposeDslActionEvents' &&
+            call.methodName == 'action' &&
             (call.args as Map)['actionId'] == '__operit_theme_changed',
       );
       expect(changes, isNotEmpty);
@@ -523,6 +649,105 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  for (final size in <Size>[const Size(800, 600), const Size(390, 844)]) {
+    testWidgets('plugin-owned native dialog covers the window at $size', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final bridge = _ToolPkgDslTestBridge(
+        renderResult: (count) => jsonEncode({
+          'success': true,
+          'tree': _node(
+            'Dialog',
+            props: {
+              'key': 'character-presentation',
+              'closeOnDismissRequest': false,
+              'properties': {
+                'fullscreen': count > 0,
+                'usePlatformDefaultWidth': false,
+                'dismissOnClickOutside': false,
+              },
+            },
+            children: [
+              _node(
+                'Column',
+                props: {
+                  if (count > 0) 'fillMaxSize': true,
+                  if (count == 0) 'width': 760,
+                  if (count == 0) 'height': 820,
+                },
+                children: [
+                  _node(
+                    'Row',
+                    props: {'fillMaxWidth': true},
+                    children: [
+                      _node('Text', props: {'text': '角色卡预览', 'weight': 1}),
+                      _node(
+                        'TextButton',
+                        props: {
+                          'text': '全屏',
+                          'onClick': {'__actionId': 'increment'},
+                        },
+                      ),
+                    ],
+                  ),
+                  _node(
+                    'LazyColumn',
+                    props: {'weight': 1, 'fillMaxWidth': true},
+                    children: [
+                      for (var index = 0; index < 30; index++)
+                        _node(
+                          'Text',
+                          props: {
+                            'text': 'Native content $index',
+                            'height': 48,
+                          },
+                        ),
+                    ],
+                  ),
+                  _node(
+                    'TextButton',
+                    props: {
+                      'text': '关闭',
+                      'onClick': {'__actionId': 'close'},
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        }),
+      );
+      await tester.pumpWidget(
+        _screen(bridge, dialogTitle: '宿主角色卡', showLauncherChrome: false),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('宿主角色卡'), findsNothing);
+      expect(find.text('角色卡预览'), findsOneWidget);
+      expect(find.text('关闭'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('全屏'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      final bounds = tester.getRect(find.byType(Dialog));
+      expect(bounds.topLeft, Offset.zero);
+      expect(bounds.size, size);
+      expect(
+        tester.getRect(find.text('关闭')).bottom,
+        lessThanOrEqualTo(size.height),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
+  }
 
   testWidgets('keeps alert dialog open according to close policy', (
     tester,
@@ -845,8 +1070,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     expect((actionCall.args as Map<String, Object?>)['actionId'], 'expand');
   });
@@ -911,6 +1135,233 @@ void main() {
       'toolpkg:com.operit.sidebar_model_sites:ui:model_sites_viewer',
     ]);
   });
+
+  testWidgets('Flutter reassemble opens a fresh usable Compose session', (
+    tester,
+  ) async {
+    final bridge = _ToolPkgDslTestBridge();
+    await tester.pumpWidget(_screen(bridge));
+    await tester.pumpAndSettle();
+    expect(bridge._sessions.length, 1);
+    final reassemble = tester.binding.reassembleApplication();
+    await tester.pump();
+    await reassemble;
+    await _pumpComposeReload(tester);
+    expect(bridge._sessions.length, 2);
+    expect(bridge._sessions.values.first.updates.isClosed, isTrue);
+    expect(bridge._sessions.values.last.updates.isClosed, isFalse);
+    await tester.tap(find.text('Increment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 1'), findsOneWidget);
+    expect(find.textContaining('stream closed'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'reload invalidates a pending action before closing the old update stream',
+    (tester) async {
+      final results = <Object?>[];
+      final bridge = _ToolPkgDslTestBridge(holdActionCompletion: true);
+      await tester.pumpWidget(_screen(bridge, onActionResult: results.add));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Increment'));
+      await tester.pumpAndSettle();
+      final oldCompletion = bridge.actionCompletion!;
+      final reassemble = tester.binding.reassembleApplication();
+      await tester.pump();
+      await reassemble;
+      await _pumpComposeReload(tester);
+      expect(bridge._sessions.length, 2);
+      expect(find.textContaining('stream closed'), findsNothing);
+      oldCompletion.complete();
+      await tester.pumpAndSettle();
+      expect(results, isEmpty);
+      await tester.tap(find.text('Increment'));
+      await tester.pumpAndSettle();
+      bridge.actionCompletion!.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Counter: 2'), findsOneWidget);
+      expect(results, hasLength(1));
+      expect(find.textContaining('stream closed'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('consecutive package reloads retire the old session only once', (
+    tester,
+  ) async {
+    final bridge = _ToolPkgDslTestBridge();
+    await tester.pumpWidget(_screen(bridge));
+    await tester.pumpAndSettle();
+    PluginHotReload.revision.value++;
+    PluginHotReload.revision.value++;
+    await _pumpComposeReload(tester);
+    expect(bridge._sessions.length, 2);
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'releaseToolPkgExecutionEngine',
+      ),
+      hasLength(1),
+    );
+    expect(bridge._sessions.values.first.updates.isClosed, isTrue);
+    expect(bridge._sessions.values.last.updates.isClosed, isFalse);
+    await tester.tap(find.text('Increment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 1'), findsOneWidget);
+    expect(find.textContaining('stream closed'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reload retires a pending initial render before loading again', (
+    tester,
+  ) async {
+    final oldRender = Completer<String>();
+    final bridge = _ToolPkgDslTestBridge()..renderCompletion = oldRender;
+    await tester.pumpWidget(_screen(bridge));
+    await tester.pump();
+    expect(bridge._sessions.length, 1);
+    bridge.renderCompletion = null;
+    final reassemble = tester.binding.reassembleApplication();
+    await tester.pump();
+    await reassemble;
+    await _pumpComposeReload(tester);
+    expect(bridge._sessions.length, 2);
+    expect(find.text('Counter: 0'), findsOneWidget);
+    oldRender.complete(_counterRenderResult(99));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 99'), findsNothing);
+    await tester.tap(find.text('Increment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'reload during release waits and acquires only the latest session',
+    (tester) async {
+      final bridge = _ToolPkgDslTestBridge();
+      await tester.pumpWidget(_screen(bridge));
+      await tester.pumpAndSettle();
+      final release = Completer<void>();
+      bridge.releaseCompletion = release;
+      PluginHotReload.revision.value++;
+      await _pumpComposeReload(tester, settle: false);
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'releaseToolPkgExecutionEngine',
+        ),
+        hasLength(1),
+      );
+      PluginHotReload.revision.value++;
+      await _pumpComposeReload(tester, settle: false);
+      expect(bridge._sessions.length, 1);
+      bridge.releaseCompletion = null;
+      release.complete();
+      await _pumpComposeReload(tester);
+      expect(bridge._sessions.length, 2);
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'releaseToolPkgExecutionEngine',
+        ),
+        hasLength(1),
+      );
+      await tester.tap(find.text('Increment'));
+      await tester.pumpAndSettle();
+      expect(find.text('Counter: 1'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'leaving during reload releases once without opening a new session',
+    (tester) async {
+      final bridge = _ToolPkgDslTestBridge();
+      await tester.pumpWidget(_screen(bridge));
+      await tester.pumpAndSettle();
+      final release = Completer<void>();
+      bridge.releaseCompletion = release;
+      PluginHotReload.revision.value++;
+      await _pumpComposeReload(tester, settle: false);
+      await tester.pumpWidget(const SizedBox());
+      bridge.releaseCompletion = null;
+      release.complete();
+      await _pumpComposeReload(tester);
+      expect(bridge._sessions.length, 1);
+      expect(bridge._sessions.values.single.updates.isClosed, isTrue);
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'releaseToolPkgExecutionEngine',
+        ),
+        hasLength(1),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'early native attachment error is preserved and reload starts a usable session',
+    (tester) async {
+      final script = Completer<String>();
+      const nativeError = 'Compose session does not exist or has closed';
+      final bridge = _ToolPkgDslTestBridge(attachmentError: nativeError)
+        ..scriptCompletion = script;
+      await tester.pumpWidget(_screen(bridge));
+      await tester.pump();
+      await tester.pump();
+      script.complete('export default function render() {}');
+      await tester.pumpAndSettle();
+      expect(find.textContaining(nativeError), findsOneWidget);
+      expect(find.textContaining('update stream closed'), findsNothing);
+      expect(
+        bridge.calls.where((call) => call.methodName == 'render'),
+        isEmpty,
+        reason:
+            'Commands cannot be sent after the native attachment has already failed',
+      );
+      bridge.attachmentError = null;
+      bridge.scriptCompletion = null;
+      PluginHotReload.revision.value++;
+      await _pumpComposeReload(tester);
+      expect(find.textContaining(nativeError), findsNothing);
+      await tester.tap(find.text('Increment'));
+      await tester.pumpAndSettle();
+      expect(find.text('Counter: 1'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'premature action stream closure reports failure without publishing success',
+    (tester) async {
+      final results = <Object?>[];
+      final bridge = _ToolPkgDslTestBridge(closeBeforeActionComplete: true);
+      await tester.pumpWidget(
+        OperitTheme(
+          initialThemePreferenceSnapshot:
+              UserPreferencesManager.defaultThemePreferenceSnapshot,
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: Scaffold(
+            body: ToolPkgUiLauncherScreen(
+              clients: GeneratedCoreProxyClients(bridge),
+              plugin: _pluginRuntime(),
+              onActionResult: results.add,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Increment'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Compose session update stream closed'),
+        findsOneWidget,
+      );
+      expect(results, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('serializes rapid input and ignores delayed echoes', (
     tester,
@@ -1014,9 +1465,14 @@ void main() {
     expect(args['uiModuleId'], 'main');
 
     final renderCall = bridge.calls.singleWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslScript',
+      (request) => request.methodName == 'render',
     );
-    expect(renderCall.target, packageManagerId);
+    expect(
+      renderCall.target,
+      GeneratedCoreProxyClients(
+        bridge,
+      ).servicesComposeDslSessionService.objectId,
+    );
     final renderArgs = renderCall.args as Map<String, Object?>;
     expect(
       renderArgs['contextKey'],
@@ -1047,7 +1503,7 @@ void main() {
     expect(scriptArgs['uiModuleId'], 'toolbox');
 
     final renderCall = bridge.calls.singleWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslScript',
+      (request) => request.methodName == 'render',
     );
     final renderArgs = renderCall.args as Map<String, Object?>;
     final runtimeOptions = renderArgs['runtimeOptions'] as Map<String, Object?>;
@@ -1103,7 +1559,7 @@ void main() {
       isEmpty,
     );
     final renderCall = bridge.calls.singleWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslScript',
+      (request) => request.methodName == 'render',
     );
     final renderArgs = renderCall.args as Map<String, Object?>;
     expect(
@@ -1130,15 +1586,16 @@ void main() {
     expect(find.text('Counter: 1'), findsOneWidget);
 
     final actionCall = bridge.calls.singleWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'increment');
     expect(args['payload'], isNull);
     expect(
       actionCall.target,
-      GeneratedCoreProxyClients(bridge).application.packageManager().objectId,
+      GeneratedCoreProxyClients(
+        bridge,
+      ).servicesComposeDslSessionService.objectId,
     );
     expect(
       args['contextKey'],
@@ -1149,7 +1606,7 @@ void main() {
 
     final runtimeOptions = args['runtimeOptions'] as Map<String, Object?>;
     expect(runtimeOptions['routeInstanceId'], 'screen:demo_toolpkg:main');
-    expect(runtimeOptions['state'], <String, Object?>{'count': 0});
+    expect(runtimeOptions.containsKey('state'), isFalse);
     expect(
       runtimeOptions['moduleSpec'],
       containsPair('toolPkgId', 'demo_toolpkg'),
@@ -1189,8 +1646,7 @@ void main() {
 
     expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'toggle');
@@ -1271,8 +1727,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'alias_change');
@@ -1307,8 +1762,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final actionCall = bridge.calls.lastWhere(
-        (request) =>
-            request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+        (request) => request.methodName == 'action',
       );
       final args = actionCall.args as Map<String, Object?>;
       expect(args['actionId'], 'email_change');
@@ -1340,8 +1794,7 @@ void main() {
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
     var actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     var args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'switch_change');
@@ -1350,8 +1803,7 @@ void main() {
     await tester.tap(find.byType(Checkbox).first);
     await tester.pumpAndSettle();
     actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'checkbox_change');
@@ -1365,8 +1817,7 @@ void main() {
     await tester.tap(find.byWidgetPredicate((widget) => widget is Radio<bool>));
     await tester.pumpAndSettle();
     actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'radio_select');
@@ -1440,8 +1891,7 @@ void main() {
     await tester.tap(find.text('Undo'));
     await tester.pumpAndSettle();
     var actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     var args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'snackbar_undo');
@@ -1450,8 +1900,7 @@ void main() {
     await tester.tap(find.text('Dismiss'));
     await tester.pumpAndSettle();
     actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'snackbar_dismiss');
@@ -1473,8 +1922,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.singleWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'select_mode');
@@ -1500,8 +1948,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'canvas_size');
@@ -1551,8 +1998,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'dismiss_time_picker');
@@ -1639,8 +2085,7 @@ void main() {
     await tester.tap(find.text('Surface content'));
     await tester.pumpAndSettle();
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'surface_click');
@@ -1694,8 +2139,7 @@ void main() {
     await tester.tap(find.text('Slot Button'));
     await tester.pumpAndSettle();
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'slot_button');
@@ -1751,8 +2195,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'toggle_icon');
@@ -1800,7 +2243,7 @@ void main() {
       await tester.tap(buttonFinder);
       await tester.pumpAndSettle();
       final action = bridge.calls.lastWhere(
-        (call) => call.methodName == 'dispatchToolPkgComposeDslActionEvents',
+        (call) => call.methodName == 'action',
       );
       expect((action.args as Map<String, Object?>)['actionId'], 'delete');
     });
@@ -1893,8 +2336,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final barActionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final barArgs = barActionCall.args as Map<String, Object?>;
     expect(barArgs['actionId'], 'bar_inactive');
@@ -1904,8 +2346,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final drawerActionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final drawerArgs = drawerActionCall.args as Map<String, Object?>;
     expect(drawerArgs['actionId'], 'drawer_item');
@@ -1934,8 +2375,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'details_tab');
@@ -1971,8 +2411,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final filterActionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final filterArgs = filterActionCall.args as Map<String, Object?>;
     expect(filterArgs['actionId'], 'filter_chip');
@@ -1987,13 +2426,25 @@ void main() {
     await tester.pumpAndSettle();
 
     final dismissActionCall = bridge.calls.lastWhere(
-      (request) =>
-          request.methodName == 'dispatchToolPkgComposeDslActionEvents',
+      (request) => request.methodName == 'action',
     );
     final dismissArgs = dismissActionCall.args as Map<String, Object?>;
     expect(dismissArgs['actionId'], 'dismiss_input_chip');
     expect(dismissArgs['payload'], isNull);
   });
+}
+
+/// Flushes stream teardown, including Dart's cached cancellation future which
+/// can originate outside the widget test's fake-async zone.
+Future<void> _pumpComposeReload(
+  WidgetTester tester, {
+  bool settle = true,
+}) async {
+  for (var i = 0; i < 3; i++) {
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  }
+  if (settle) await tester.pumpAndSettle();
 }
 
 Widget _screen(
@@ -2002,6 +2453,10 @@ Widget _screen(
   String? initialRouteId,
   String? embeddedScreenPath,
   Map<String, Object?>? initialModuleSpec,
+  ValueChanged<Object?>? onActionResult,
+  String? dialogTitle,
+  bool showLauncherChrome = true,
+  Map<String, Object?> initialState = const {},
 }) {
   return MaterialApp(
     home: ToolPkgUiLauncherScreen(
@@ -2010,12 +2465,17 @@ Widget _screen(
       initialRouteId: initialRouteId,
       embeddedScreenPath: embeddedScreenPath,
       initialModuleSpec: initialModuleSpec,
+      initialState: initialState,
+      onActionResult: onActionResult,
+      dialogTitle: dialogTitle,
+      showLauncherChrome: showLauncherChrome,
     ),
   );
 }
 
 core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
+    chatLifecycleHooks: [],
     packageName: 'demo_toolpkg',
     displayName: core_proxy.LocalizedText(
       values: <String, String>{'default': 'Demo ToolPkg'},
@@ -2043,6 +2503,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
       core_proxy.ToolPkgUiModuleRuntime(
         id: 'main',
         runtime: 'compose_dsl',
+        screenExport: null,
         screen: 'ui/main.js',
         title: core_proxy.LocalizedText(
           values: <String, String>{'default': 'Main route'},
@@ -2055,6 +2516,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
         id: 'main',
         routeId: 'main',
         runtime: 'compose_dsl',
+        screenExport: null,
         screen: 'ui/main.js',
         title: core_proxy.LocalizedText(
           values: <String, String>{'default': 'Main route'},
@@ -2095,6 +2557,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
 
 core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
+    chatLifecycleHooks: [],
     packageName: 'module_only_toolpkg',
     displayName: core_proxy.LocalizedText(
       values: <String, String>{'default': 'Module ToolPkg'},
@@ -2122,6 +2585,7 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
       core_proxy.ToolPkgUiModuleRuntime(
         id: 'toolbox',
         runtime: 'compose_dsl',
+        screenExport: null,
         screen: 'ui/toolbox.js',
         title: core_proxy.LocalizedText(
           values: <String, String>{'default': 'Toolbox module'},
@@ -2164,6 +2628,7 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
 /// Creates a selected message whose tool and thinking parts must stay out of translation.
 core_proxy.ChatMessage _translationMessage(String sender) {
   return core_proxy.ChatMessage(
+    pluginExtensions: const {},
     sender: sender,
     parts: [
       for (final entry in [
@@ -2204,17 +2669,25 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   _ToolPkgDslTestBridge({
     String Function(int count)? renderResult,
     this.holdActionCompletion = false,
+    this.closeBeforeActionComplete = false,
+    this.attachmentError,
     this.onAction,
   }) : _renderResult = renderResult ?? _counterRenderResult;
 
   final List<CoreCallRequest> calls = <CoreCallRequest>[];
   final String Function(int count) _renderResult;
   final bool holdActionCompletion;
+  final bool closeBeforeActionComplete;
   final void Function(Map<String, Object?>)? onAction;
   Completer<void>? actionCompletion;
+  String? attachmentError;
+  Completer<void>? acquireCompletion;
+  Completer<String>? scriptCompletion;
   Completer<String>? renderCompletion;
+  Completer<void>? releaseCompletion;
   var _count = 0;
   var _checked = false;
+  final _sessions = <String, _DslFixtureSession>{};
 
   /// Encodes decoded test responses using the current native bridge envelope.
   @override
@@ -2247,7 +2720,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
       case 'getToolPkgContainerRuntime':
         return _pluginRuntime().toJson();
       case 'renderToolPkgDesktopWidget':
-        return jsonEncode({
+        return {
           'widget': const core_proxy.ToolPkgDesktopWidget(
             containerPackageName: 'demo_toolpkg',
             toolPkgId: 'demo_toolpkg',
@@ -2260,37 +2733,148 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
             icon: null,
             order: 0,
           ).toJson(),
-          'renderResult': {
-            'success': true,
-            'tree': _node('Text', props: {'text': 'Widget loaded'}),
-            'state': <String, Object?>{},
-            'memo': <String, Object?>{},
-          },
-        });
+          'renderUpdate': composeFixtureUpdate(
+            _node('Text', props: {'text': 'Widget loaded'}),
+            1,
+          ).toJson(),
+        };
+      case 'openComposeDslSession':
+        final id = 'dsl-fixture-${_sessions.length}';
+        _sessions[id] = _DslFixtureSession();
+        return id;
+      case 'close':
+        final id = (request.args as Map)['sessionId'] as String;
+        await _sessions[id]!.updates.close();
+        return null;
       case 'acquireToolPkgExecutionEngine':
+        final pending = acquireCompletion;
+        if (pending != null) await pending.future;
+        return null;
       case 'releaseToolPkgExecutionEngine':
+        final pending = releaseCompletion;
+        if (pending != null) await pending.future;
         return null;
       case 'getToolPkgComposeDslScript':
+        if (scriptCompletion != null) return await scriptCompletion!.future;
         return 'export default function render() {}';
       case 'readToolPkgTextResource':
         return 'export default function render() {}';
       case 'getToolPkgComposeDslScreenPath':
         final args = request.args as Map<String, Object?>;
         return args['uiModuleId'] == 'toolbox' ? 'ui/toolbox.js' : 'ui/main.js';
-      case 'executeToolPkgComposeDslScript':
-        final pendingRender = renderCompletion;
-        if (pendingRender != null) return pendingRender.future;
-        _count = 0;
-        _checked = false;
-        return _renderResult(_count);
     }
     throw StateError('unexpected core call: ${request.methodName}');
   }
 
-  /// Rejects push streams because this test bridge only models direct DSL calls.
+  /// Attaches the current generated reverse command stream to its fixture session.
   @override
   Future<CorePushSink> push(CorePushRequest request) async {
-    throw StateError('unexpected core push: ${request.methodName}');
+    if (request.methodName != 'submit')
+      throw StateError('unexpected push: ${request.methodName}');
+    return _DslCommandSink(
+      this,
+      _sessions[(request.args as Map)['sessionId']]!,
+    );
+  }
+
+  /// Executes a typed command and publishes updates using the actual session protocol.
+  Future<void> handle(_DslFixtureSession session, Object? raw) async {
+    final command = core_proxy.ToolPkgComposeDslCommand.fromJson(
+      Map<String, Object?>.from(raw as Map),
+    );
+    final options = command.runtimeOptions;
+    final args = <String, Object?>{
+      'contextKey': options['executionContextKey'],
+      'containerPackageName': options['packageName'],
+      'script': command.script,
+      'actionId': command.actionId,
+      'payload': command.payload,
+      'runtimeOptions': options,
+    };
+    calls.add(
+      CoreCallRequest(
+        requestId: command.requestId,
+        target: session.target,
+        methodName: command.operation,
+        args: args,
+      ),
+    );
+    try {
+      String encoded;
+      if (command.operation == 'render') {
+        final pending = renderCompletion;
+        if (pending != null)
+          encoded = await pending.future;
+        else
+          encoded = _renderResult(_count);
+      } else if (command.operation == 'action') {
+        onAction?.call(args);
+        if (command.actionId == 'increment') _count++;
+        if (command.actionId == 'toggle') _checked = command.payload as bool;
+        encoded = command.actionId == 'toggle'
+            ? _toggleRenderResult(_checked)
+            : _renderResult(_count);
+      } else {
+        throw StateError('Unexpected operation: ${command.operation}');
+      }
+      final result = jsonDecode(encoded) as Map<String, Object?>;
+      final tree = result['tree'] as Map<String, Object?>;
+
+      /// Publishes a flat commit and routes side effects only on the final response.
+      void emit(String phase) {
+        session.emit(
+          core_proxy.ToolPkgComposeDslEvent(
+            requestId: command.requestId,
+            phase: phase,
+            update: composeFixtureUpdate(
+              tree,
+              ++session.revision,
+              reset: session.revision == 1,
+            ),
+            actionResult: phase == 'final' ? result['actionResult'] : null,
+            navigationCommands:
+                phase == 'final' && result.containsKey('navigationCommands')
+                ? (result['navigationCommands'] as List).cast<Object?>()
+                : const [],
+            error: null,
+          ),
+        );
+      }
+
+      if (command.operation == 'action') {
+        emit('intermediate');
+        if (holdActionCompletion) {
+          actionCompletion = Completer<void>();
+          await actionCompletion!.future;
+        }
+      }
+      emit('final');
+      if (command.operation == 'action' && closeBeforeActionComplete) {
+        await session.updates.close();
+        return;
+      }
+    } catch (error) {
+      session.emit(
+        core_proxy.ToolPkgComposeDslEvent(
+          requestId: command.requestId,
+          phase: 'error',
+          update: null,
+          actionResult: null,
+          navigationCommands: const [],
+          error: '$error',
+        ),
+      );
+    }
+    session.emit(
+      core_proxy.ToolPkgComposeDslEvent(
+        requestId: command.requestId,
+        phase: 'complete',
+        update: null,
+        actionResult: null,
+        navigationCommands: const [],
+        error: null,
+      ),
+    );
   }
 
   /// Rejects embedded streams because this test models direct DSL watches.
@@ -2317,73 +2901,78 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     );
   }
 
-  /// Streams Compose DSL action results through the Core watch contract.
+  /// Exposes the sole typed downstream session stream through the existing Core watch protocol.
   @override
-  Stream<CoreEvent> watchStream(CoreWatchRequest request) async* {
-    if (request.propertyName != 'dispatchToolPkgComposeDslActionEvents') {
-      throw StateError('unexpected core watch: ${request.propertyName}');
+  Stream<CoreEvent> watchStream(CoreWatchRequest request) {
+    if (request.propertyName != 'updates')
+      throw StateError('unexpected watch: ${request.propertyName}');
+    final session = _sessions[(request.args as Map)['sessionId']]!;
+    session.target = request.target;
+    final error = attachmentError;
+    if (error != null) {
+      return Stream.value(
+        CoreEvent.raw(
+          requestId: request.requestId,
+          target: request.target,
+          propertyName: request.propertyName,
+          kind: 'Changed',
+          decodeValue: decodeCoreLink<Object?>,
+          valueBytes: encodeCoreLink(
+            core_proxy.ToolPkgComposeDslEvent(
+              requestId: '',
+              phase: 'sessionError',
+              update: null,
+              actionResult: null,
+              navigationCommands: const [],
+              error: error,
+            ).toJson(),
+          ),
+        ),
+      );
     }
-    calls.add(
-      CoreCallRequest(
+    return session.updates.stream.map(
+      (event) => CoreEvent.raw(
         requestId: request.requestId,
         target: request.target,
-        methodName: request.propertyName,
-        args: request.args,
+        propertyName: request.propertyName,
+        kind: 'Changed',
+        decodeValue: decodeCoreLink<Object?>,
+        valueBytes: encodeCoreLink(event.toJson()),
       ),
     );
-    final args = request.args as Map<String, Object?>;
-    final actionId = args['actionId'];
-    onAction?.call(args);
-    if (actionId == 'increment') {
-      _count += 1;
-    }
-    if (actionId == 'toggle') {
-      _checked = args['payload'] as bool;
-    }
-    final result = actionId == 'toggle'
-        ? _toggleRenderResult(_checked)
-        : _renderResult(_count);
-    final intermediateResult = jsonDecode(result) as Map<String, Object?>;
-    intermediateResult['navigationCommands'] = <Object?>[];
-    if (holdActionCompletion) {
-      actionCompletion = Completer<void>();
-    }
-    yield CoreEvent.raw(
-      requestId: request.requestId,
-      target: request.target,
-      propertyName: request.propertyName,
-      kind: 'Changed',
-      decodeValue: decodeCoreLink<Object?>,
-      valueBytes: encodeCoreLink(
-        jsonEncode(<String, Object?>{
-          'phase': 'intermediate',
-          'result': jsonEncode(intermediateResult),
-        }),
-      ),
-    );
-    if (actionCompletion != null) {
-      await actionCompletion!.future;
-    }
-    yield CoreEvent.raw(
-      requestId: request.requestId,
-      target: request.target,
-      propertyName: request.propertyName,
-      kind: 'Changed',
-      decodeValue: decodeCoreLink<Object?>,
-      valueBytes: encodeCoreLink(
-        jsonEncode(<String, Object?>{'phase': 'final', 'result': result}),
-      ),
-    );
-    yield CoreEvent.raw(
-      requestId: request.requestId,
-      target: request.target,
-      propertyName: request.propertyName,
-      kind: 'Completed',
-      decodeValue: decodeCoreLink<Object?>,
-      valueBytes: encodeCoreLink(
-        jsonEncode(<String, Object?>{'phase': 'complete'}),
-      ),
-    );
+  }
+}
+
+/// Holds typed stream ownership independently of a command's completion.
+class _DslFixtureSession {
+  final updates =
+      StreamController<core_proxy.ToolPkgComposeDslEvent>.broadcast();
+  String target = '';
+  int revision = 0;
+
+  /// Publishes only while the fixture session remains open.
+  void emit(core_proxy.ToolPkgComposeDslEvent event) {
+    if (!updates.isClosed) updates.add(event);
+  }
+}
+
+/// Implements only the current reverse stream sink for launcher regression tests.
+class _DslCommandSink implements CorePushSink {
+  /// Binds one sink to its live fixture session.
+  _DslCommandSink(this.bridge, this.session);
+  final _ToolPkgDslTestBridge bridge;
+  final _DslFixtureSession session;
+
+  /// Admits a typed command without waiting for its asynchronous action to finish.
+  @override
+  Future<void> add(Object? value) async {
+    unawaited(bridge.handle(session, value));
+  }
+
+  /// Ends updates when the launcher releases its reverse stream owner.
+  @override
+  Future<void> close() async {
+    if (!session.updates.isClosed) await session.updates.close();
   }
 }
 

@@ -1,19 +1,14 @@
-import type { EdgeEventHookEvent, EdgeEventAck } from '../../../../types/edge';
-import { command, onEdge } from './pet';
+import { command } from './pet';
 ToolPkg.ipc.on('edge.pet', command);
 export function registerToolPkg(): boolean { return true; }
-/** One generic listener; this plugin's action handlers consume display.scene events. */
-export function on_edge_event(event: EdgeEventHookEvent): Promise<EdgeEventAck> {
-    return onEdge(event.eventPayload);
-}
-/** Existing Core diagnostic exports: capability read only, no display lease. */
+/** Configuration editor diagnostics only; the device owns runtime behavior. */
 async function diagnostic(): Promise<{
     passed: boolean;
     message: string;
 }> {
-    const capabilities = await command({ operation: 'test' });
-    return { passed: capabilities.protocol === 1 && capabilities.events?.push === true,
-        message: 'Edge scene v1 and event delivery capabilities' };
+    const capabilities = await command({ operation: 'inspect' });
+    return { passed: capabilities.protocol === 1 && capabilities.input?.local === true,
+        message: 'Native scene v1 with device-local interaction' };
 }
 export function test_connection(): Promise<{
     passed: boolean;

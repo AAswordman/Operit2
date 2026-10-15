@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 /// Maps provider type IDs to their bundled brand logo assets.
 const Map<String, String> providerLogoAssets = <String, String>{
@@ -101,6 +102,35 @@ class ProviderLogo extends StatelessWidget {
   }
 }
 
+/// Renders an exact provider brand for message identity without substituting another avatar.
+class ProviderIdentityLogo extends StatelessWidget {
+  /// Creates a message logo using the configured provider's actual type identifier.
+  const ProviderIdentityLogo({
+    super.key,
+    required this.providerTypeId,
+    required this.size,
+  });
+
+  final String providerTypeId;
+  final double size;
+
+  /// Requires a declared logo and shares the settings renderer's brand color policy.
+  @override
+  Widget build(BuildContext context) {
+    final asset = providerLogoAssets[providerTypeId];
+    if (asset == null) {
+      throw StateError('Provider logo is not declared: $providerTypeId');
+    }
+    return Center(
+      child: _ProviderLogoAsset(
+        asset: asset,
+        providerTypeId: providerTypeId,
+        size: size * 0.75,
+      ),
+    );
+  }
+}
+
 class _ProviderLogoAsset extends StatelessWidget {
   const _ProviderLogoAsset({
     required this.asset,
@@ -151,18 +181,11 @@ class _ProviderLogoInitial extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final trimmedName = name.trim();
     final initial = trimmedName.isEmpty ? '?' : trimmedName.substring(0, 1);
-    return Text(
-      initial.toUpperCase(),
-      textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-        fontWeight: FontWeight.w700,
-        fontSize: size * 0.78,
-        height: 1,
-        color: colorScheme.onSurfaceVariant,
-      ),
+    return ThemeComposerProviderInitial(
+      initial: initial.toUpperCase(),
+      size: size,
     );
   }
 }

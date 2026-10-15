@@ -1,8 +1,5 @@
-//! Volatile UI state; all chat execution and persistence belongs to Space.
+//! Device chat UI: native direct execution, with optional remote Core sessions.
 #![allow(non_snake_case)]
-#[path = "edge_events.rs"]
-mod edge_events;
-pub use edge_events::startEdgeEvents;
 
 use operit_link::CoreLinkSharedClient;
 use operit_link::{
@@ -100,7 +97,6 @@ impl UiValue {
         self.encoded = encoded;
         Ok(())
     }
-    #[cfg(not(target_os = "espidf"))]
     fn update(&mut self, event: operit_link::CoreEvent) -> Result<(), String> {
         if event.kind != CoreEventKind::Delta { return self.replace(event.value); }
         let CoreValue::Map(fields) = event.value else { return Err("Expected incremental delta map".into()); };
@@ -163,6 +159,10 @@ struct ChatSession {
     client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     services: NodeServices,
     histories: Mutex<UiValue>,
+    conversationsTask: Mutex<Option<NodeUiTask>>,
+    conversationsRequested: AtomicBool,
+    conversationsLoading: AtomicBool,
+    conversationsError: Mutex<Option<String>>,
     tasks: Mutex<Vec<NodeUiTask>>,
     chatId: String,
     ready: AtomicBool,
@@ -204,6 +204,10 @@ pub struct SpaceChatRoute {
 impl SpaceChatRoute {
     pub fn reset(&mut self) { clear(); *self = Self::default(); }
     pub fn poll(&mut self, services: NodeServices) {
+        if crate::standalone_chat::active() {
+            if self.installed { clear(); self.installed = false; }
+            return;
+        }
         let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone();
         if self.installed {
             if let Some(session) = &session {
@@ -517,7 +521,6 @@ static SESSION: OnceLock<Mutex<Option<Arc<ChatSession>>>> = OnceLock::new();
 // Display capacity follows the physical renderer. Encoded protocol state still
 // retains all list positions so subsequent deltas are never rebased/truncated.
 const MAX_CHAT_MESSAGES: usize = 12;
-#[cfg(not(target_os = "espidf"))]
 const MAX_CONVERSATIONS: usize = 24;
 // Approximately three 320x240 chat viewports; all updates stay volatile.
 const MAX_CHAT_STRING_BYTES: usize = 640;
@@ -691,7 +694,6 @@ fn mapString<'a>(fields: &'a BTreeMap<String, CoreValue>, key: &str) -> &'a str 
     }
 }
 
-#[cfg(not(target_os = "espidf"))]
 fn simpleJson(value: Option<&CoreValue>) -> serde_json::Value {
     match value {
         Some(CoreValue::String(value)) => boundedText(value).into(),
@@ -729,6 +731,10 @@ fn installSession(
         retired: AtomicBool::new(false),
         needsReconnect: AtomicBool::new(false),
         histories: Mutex::new(UiValue::default()),
+        conversationsTask: Mutex::new(None),
+        conversationsRequested: AtomicBool::new(false),
+        conversationsLoading: AtomicBool::new(false),
+        conversationsError: Mutex::new(None),
         tasks: Mutex::new(Vec::new()),
         messages: Mutex::new(UiValue::default()),
         window, older: Mutex::new(None), windowHistory: Mutex::new(Vec::new()),
@@ -774,8 +780,6 @@ fn startSubscriptions(session: Arc<ChatSession>) {
     if PLUGINS_REQUESTED.load(Ordering::Acquire) { let _ = pluginsAction("edge_plugins_refresh"); }
     let mut pageChanges = session.window.subscribe();
     let owner = session.clone();
-    #[cfg(not(target_os = "espidf"))]
-    let historySession = session.clone();
     let stateSession = session.clone();
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
         let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
@@ -840,57 +844,6 @@ fn startSubscriptions(session: Arc<ChatSession>) {
         }
     });
     owner.addTask(task);
-    // The standalone device UI has no conversation shelf/selector. Do not
-    // subscribe to 24 unused history rows on ESP32; simulator owns that surface.
-    #[cfg(not(target_os = "espidf"))]
-    {
-    let task = spawnNodeUiSubscription(move |mut cancelled| async move {
-        let session = historySession;
-        let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
-        let result = openUiSubscription(&cancelled, session
-            .client
-            .watch(CoreWatchRequest::new(
-                operit_link::nextCoreRouteRequestId("routedChatListFlow"),
-                CORE_INTERNAL_TARGET,
-                "routedChatListFlow",
-                operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
-            )))
-            .await;
-        match result {
-            Ok(None) => return,
-            Ok(Some(mut stream)) => {
-                while let Some(event) = nextUiEvent(&mut stream, &mut cancelled).await {
-                    if event.kind == CoreEventKind::Completed {
-                        break;
-                    }
-                    let mut histories = session.histories.lock().unwrap();
-                    let result = histories.update(event).and_then(|()| {
-                        let mut rows = Vec::new();
-                        histories.forEachLast(MAX_CONVERSATIONS, |item| {
-                            if let serde_json::Value::Array(mut projected) = displayConversations(&CoreValue::List(vec![item])) {
-                                rows.append(&mut projected);
-                            }
-                        })?;
-                        let start = rows.len().saturating_sub(MAX_CONVERSATIONS);
-                        histories.display = serde_json::Value::Array(rows.split_off(start));
-                        Ok(())
-                    });
-                    if let Err(error) = result {
-                        *session.error.lock().unwrap() = Some(error);
-                        break;
-                    }
-                    UI_REVISION.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            Err(error) if isMissingSpaceRoute(&error) => {}
-            Err(error) => {
-                *session.error.lock().unwrap() = Some(format!("对话列表加载失败：{}", error));
-                UI_REVISION.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    });
-    owner.addTask(task);
-    }
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
         let session = stateSession;
         let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
@@ -967,6 +920,7 @@ pub fn needsReconnect() -> bool {
 /// Returns the live Space route state, rather than whether the pairing
 /// listener is enabled.
 pub fn isConnected() -> bool {
+    if crate::standalone_chat::active() { return true; }
     SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().as_ref()
         .is_some_and(|session| !session.subscriptionsClosed.load(Ordering::Acquire)
             && session.services.peers().spaceConnection().is_some())
@@ -974,7 +928,7 @@ pub fn isConnected() -> bool {
 
 /// Returns a monotonic version for display consumers that repaint on change.
 pub fn revision() -> u32 {
-    UI_REVISION.load(Ordering::Relaxed)
+    UI_REVISION.load(Ordering::Relaxed).wrapping_add(crate::standalone_chat::revision())
 }
 
 /// Drops the local chat route and display state. Pairing credentials are
@@ -988,6 +942,7 @@ pub fn clear() {
         .and_then(|mut session| session.take());
     if let Some(session) = session {
         session.retired.store(true, Ordering::Release);
+        if let Some(task) = session.conversationsTask.lock().unwrap().take() { task.abort(); }
         for task in std::mem::take(&mut *session.tasks.lock().unwrap()) {
             task.abort();
         }
@@ -1290,6 +1245,7 @@ fn pluginBatchCurrent(session: &Arc<ChatSession>, generation: u64, batchId: &str
 }
 
 pub fn snapshot() -> serde_json::Value {
+    if crate::standalone_chat::active() { return crate::standalone_chat::snapshot(); }
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -1308,6 +1264,8 @@ pub fn snapshot() -> serde_json::Value {
                 "connected": session.services.peers().spaceConnection().is_some(), "chatId": session.chatId,
                 "initializing": !session.ready.load(Ordering::Acquire),
                 "conversations": conversations,
+                "conversationsLoading": session.conversationsLoading.load(Ordering::Acquire),
+                "conversationsError": session.conversationsError.lock().unwrap().clone(),
                 "hasOlder": session.older.lock().unwrap().is_some(),
                 "hasNewer": !session.windowHistory.lock().unwrap().is_empty(),
                 "sending": session.sending.load(Ordering::Acquire),
@@ -1339,8 +1297,78 @@ fn activeConversation(value: &serde_json::Value) -> Option<&serde_json::Value> {
         .find(|chat| chat["id"] == value["chatId"])
 }
 
+/// Opens the optional metadata watch when this device browses conversations.
+/// List failures never reset the active chat or authenticated Space session.
+pub fn conversationsAction() -> Result<(), String> {
+    if crate::standalone_chat::active() { return Ok(()); }
+    // Also acknowledge a rejected browse on the native UI thread so its
+    // loading state can settle and the user can retry after initialization.
+    UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone().ok_or("设备尚未连接")?;
+    if session.services.peers().spaceConnection().is_none() { return Err("设备已离线".into()); }
+    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
+    if session.sending.load(Ordering::Acquire) { return Err("请等待消息发送完成".into()); }
+    if session.conversationsRequested.swap(true, Ordering::AcqRel) { return Ok(()); }
+    session.conversationsLoading.store(true, Ordering::Release);
+    *session.conversationsError.lock().unwrap() = None;
+    let owner = session.clone();
+    let task = spawnNodeUiSubscription(move |mut cancelled| async move {
+        let result = openUiSubscription(&cancelled, session.client.watch(CoreWatchRequest::new(
+            operit_link::nextCoreRouteRequestId("edge-chat-list"), CORE_INTERNAL_TARGET,
+            "routedChatListFlow", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
+        ))).await;
+        let error = match result {
+            Ok(None) => return,
+            Ok(Some(mut stream)) => {
+                let mut failure = None;
+                while let Some(event) = nextUiEvent(&mut stream, &mut cancelled).await {
+                    if event.kind == CoreEventKind::Completed { break; }
+                    if let Err(error) = updateConversations(&mut session.histories.lock().unwrap(), event) {
+                        failure = Some(error); break;
+                    }
+                    session.conversationsLoading.store(false, Ordering::Release);
+                    UI_REVISION.fetch_add(1, Ordering::Relaxed);
+                }
+                if *cancelled.borrow() { return; }
+                failure.unwrap_or_else(|| "对话列表连接已结束，请刷新".into())
+            }
+            Err(error) => format!("对话列表加载失败：{error}"),
+        };
+        *session.conversationsError.lock().unwrap() = Some(error);
+        session.conversationsLoading.store(false, Ordering::Release);
+        session.conversationsRequested.store(false, Ordering::Release);
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    });
+    // Retrying a failed optional watch replaces its handle rather than
+    // accumulating completed tasks in the lifetime of the active chat.
+    let mut active = owner.conversationsTask.lock().unwrap();
+    if owner.retired.load(Ordering::Acquire) { task.abort(); }
+    else if let Some(previous) = active.replace(task) { previous.abort(); }
+    Ok(())
+}
+fn conversationText(value: &str) -> String {
+    let mut end = value.len().min(192);while !value.is_char_boundary(end) { end -= 1; }
+    value[..end].to_string()
+}
+fn updateConversations(cache: &mut UiValue, event: operit_link::CoreEvent) -> Result<(), String> {
+    let mut next = UiValue { encoded: cache.encoded.clone(), display: serde_json::Value::Null };
+    next.update(event)?;
+    if next.encoded.len() > MAX_CONVERSATIONS { return Err("对话列表超过设备限制".into()); }
+    let mut rows = Vec::new();let mut invalidId = false;
+    next.forEachLast(MAX_CONVERSATIONS, |item| {
+        if let CoreValue::Map(fields) = &item {
+            let id = mapString(fields, "id");
+            if id.is_empty() || id.len() > 96 || id.contains('\0') { invalidId = true; return; }
+        } else { invalidId = true; return; }
+        if let serde_json::Value::Array(mut projected) = displayConversations(&CoreValue::List(vec![item])) { rows.append(&mut projected); }
+    })?;
+    if invalidId { return Err("对话标识超出设备限制".into()); }
+    next.display = serde_json::Value::Array(rows);*cache = next;Ok(())
+}
+
 /// Changes only this device's view; the full Core continues owning the chat.
 pub fn selectChat(id: &str) -> Result<(), String> {
+    if crate::standalone_chat::active() { return Ok(()); }
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -1356,6 +1384,9 @@ pub fn selectChat(id: &str) -> Result<(), String> {
     {
         return Err("设备已离线".into());
     }
+    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
+    if session.sending.load(Ordering::Acquire) { return Err("请等待消息发送完成".into()); }
+    if id == session.chatId { return Ok(()); }
     let exists = session.histories.lock().unwrap().display.as_array()
         .is_some_and(|items| items.iter().any(|item| item["id"] == id));
     if !exists {
@@ -1371,6 +1402,7 @@ pub fn selectChat(id: &str) -> Result<(), String> {
 
 /// Move between bounded display pages. Only tiny cursors survive page eviction.
 pub fn moveHistory(older: bool) -> Result<(), String> {
+    if crate::standalone_chat::active() { return Ok(()); }
     let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone().ok_or("设备尚未连接")?;
     let mut history = session.windowHistory.lock().unwrap();
     let cursor = if older {
@@ -1385,6 +1417,7 @@ pub fn moveHistory(older: bool) -> Result<(), String> {
 }
 
 pub fn newChat() -> Result<(), String> {
+    if crate::standalone_chat::active() { return crate::standalone_chat::newChat(); }
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -1445,6 +1478,7 @@ pub fn newChat() -> Result<(), String> {
 
 /// Returns a compact state label for the 320x240 task rail.
 pub fn taskStatus() -> String {
+    if crate::standalone_chat::active() { return crate::standalone_chat::status(); }
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -1578,7 +1612,6 @@ fn renderMessages(mut rows: serde_json::Value, streams: &BTreeMap<String, Stream
     rows
 }
 
-#[cfg(not(target_os = "espidf"))]
 fn displayConversations(value: &CoreValue) -> serde_json::Value {
     let CoreValue::List(items) = value else {
         return serde_json::json!([]);
@@ -1590,8 +1623,8 @@ fn displayConversations(value: &CoreValue) -> serde_json::Value {
             continue;
         };
         result.push(serde_json::json!({
-            "id": boundedText(mapString(fields, "id")),
-            "title": boundedText(mapString(fields, "title")),
+            "id": mapString(fields, "id"),
+            "title": conversationText(mapString(fields, "title")),
             "characterCardName": boundedText(mapString(fields, "characterCardName")),
             "group": simpleJson(fields.get("group")),
             "characterGroupId": simpleJson(fields.get("characterGroupId")),
@@ -1603,6 +1636,7 @@ fn displayConversations(value: &CoreValue) -> serde_json::Value {
 /// Uploads one already bounded image as binary Link data, then sends its Core-owned media link.
 #[cfg(not(target_os = "espidf"))]
 pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
+    if crate::standalone_chat::active() { return Err("本机直连聊天暂不支持图片".into()); }
     if bytes.is_empty()
         || bytes.len() > 512 * 1024
         || !matches!(mime.as_str(), "image/png" | "image/jpeg")
@@ -1633,7 +1667,7 @@ pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
             let args = operit_link::CoreValue::Map(std::collections::BTreeMap::from([
                 ("chatId".into(), CoreValue::String(session.chatId.clone())),
                 ("mimeType".into(), CoreValue::String(mime)),
-                ("imageBytes".into(), CoreValue::Bytes(bytes)),
+                ("imageBytes".into(), CoreValue::Bytes(bytes.into())),
             ]));
             let response = session
                 .client
@@ -1666,6 +1700,7 @@ pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
 
 /// Bridges a synchronous firmware callback to its existing Link runtime.
 pub fn send(text: String) -> Result<(), String> {
+    if crate::standalone_chat::active() { return crate::standalone_chat::send(text); }
     if text.trim().is_empty() {
         return Err("消息不能为空".into());
     }
@@ -1955,6 +1990,7 @@ mod tests {
 
 /// Acknowledge the remote send, not merely admission to the local queue.
 pub fn takeSendResult() -> Option<Result<(), String>> {
+    if crate::standalone_chat::active() { return crate::standalone_chat::takeResult(); }
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -2036,5 +2072,38 @@ mod plugin_card_tests {
         let text = rows[0]["text"].as_str().unwrap();
         assert!(text.len() <= MAX_CHAT_STRING_BYTES);
         assert_eq!(text.matches('\x1e').count(), text.matches('\x1f').count());
+    }
+}
+
+#[cfg(test)]
+mod conversation_tests {
+    use super::*;
+    fn event(kind: CoreEventKind, value: CoreValue) -> operit_link::CoreEvent {
+        operit_link::CoreEvent {requestId:None,target:CORE_INTERNAL_TARGET.into(),propertyName:"routedChatListFlow".into(),kind,value}
+    }
+    fn rows(ids: &[&str]) -> CoreValue {
+        operit_link::toCoreValue(serde_json::json!(ids.iter().map(|id|serde_json::json!({"id":id,"title":"中文标题".repeat(80)})).collect::<Vec<_>>())).unwrap()
+    }
+    #[test]
+    fn list_deltas_preserve_exact_ids_and_bound_metadata_without_losing_positions() {
+        let mut cache=UiValue::default();let mut previous=None;
+        for ids in [vec!["one","two","three"],vec!["three","one"],vec!["one"],vec![]] {
+            let (kind,value)=CoreValue::incrementalEvent(&mut previous,rows(&ids));
+            updateConversations(&mut cache,event(kind,value)).unwrap();
+            let display=cache.display.as_array().unwrap();assert_eq!(display.len(),ids.len());
+            for (row,id) in display.iter().zip(ids) {
+                assert_eq!(row["id"],id);let title=row["title"].as_str().unwrap();assert!(title.len()<=192);assert!(!title.contains('\u{fffd}'));
+            }
+        }
+    }
+    #[test]
+    fn oversized_lists_and_invalid_ids_leave_last_valid_page_intact() {
+        let mut cache=UiValue::default();updateConversations(&mut cache,event(CoreEventKind::Snapshot,rows(&["safe"]))).unwrap();
+        let encoded=cache.encoded.clone();let display=cache.display.clone();
+        let long="x".repeat(97);
+        for invalid in [rows(&[""]),rows(&[&long]),rows(&["bad\0id"]),rows(&vec!["safe";25])] {
+            assert!(updateConversations(&mut cache,event(CoreEventKind::Snapshot,invalid)).is_err());
+            assert_eq!(cache.encoded,encoded);assert_eq!(cache.display,display);
+        }
     }
 }

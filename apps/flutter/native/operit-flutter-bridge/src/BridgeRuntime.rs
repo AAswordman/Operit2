@@ -137,7 +137,7 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
             let response = match response {
                 Ok(response) => response,
                 Err(error) => {
-                    eprintln!("tool permission request failed: {error}");
+                    operit_util::AppLogger::AppLogger::e("OperitFlutterBridge", &format!("tool permission request failed: {error}"));
                     return PermissionRequestResult::DENY;
                 }
             };
@@ -146,7 +146,7 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
                 "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
                 other => {
-                    eprintln!("unknown tool permission response result: {other}");
+                    operit_util::AppLogger::AppLogger::e("OperitFlutterBridge", &format!("unknown tool permission response result: {other}"));
                     PermissionRequestResult::DENY
                 }
             }

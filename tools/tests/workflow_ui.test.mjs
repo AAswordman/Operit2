@@ -1,3 +1,5 @@
+import { readSdkScript, wrapComposeScript } from "../runtime/compose_scripts.mjs";
+import { composeStreamFixture } from './support/compose_stream_fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -7,10 +9,7 @@ const base = new URL('../../plugins/packages/buildin/workflow/dist/', import.met
 const bridgeRoot = new URL('../../core/crates/plugin/sdk/src/toolpkg/', import.meta.url);
 
 /** Extracts the production embedded JavaScript bridge. */
-function embedded(name) {
-  const source = readFileSync(new URL(name, bridgeRoot), 'utf8');
-  return source.slice(source.indexOf('r#"') + 3, source.lastIndexOf('"#'));
-}
+function embedded(name) { return readSdkScript(name); }
 
 /** Loads CommonJS modules into a shared isolated plugin context. */
 function loader(context) {
@@ -53,10 +52,10 @@ function runtime() {
   const load = loader(context);
   load(new URL('main.js', base));
   vm.runInContext(embedded('ToolPkgComposeDslBridge.rs'), context);
-  const wrapper = embedded('ToolPkgComposeDslRuntimeScript.rs')
-    .replaceAll('{{', '{').replaceAll('}}', '}').replace('{script}', '');
+  const wrapper = wrapComposeScript('');
   vm.runInContext(wrapper, context);
   context.module.exports = load(new URL('ui/screen.js', base));
+  composeStreamFixture(context).adapt();
   return { context, load, channels };
 }
 

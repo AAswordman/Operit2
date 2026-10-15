@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:flutter/gestures.dart';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:webview_all_windows/src/windows_native_composition.dart';
 import 'package:webview_all_windows/src/windows_webview_api.g.dart';
 import 'package:webview_all_windows/src/windows_webview_constants.dart';
 import 'package:webview_all_windows/src/windows_webview_types.dart'
@@ -102,6 +106,79 @@ void main() {
 
     expect(surfaceSizes, isEmpty);
     expect(captureEnabled, <bool>[false]);
+  });
+
+  /// Verifies wheel ownership, cursor positioning, and incremental trackpad zoom.
+  testWidgets('forwards wheel and trackpad pinch through the Windows host', (
+    WidgetTester tester,
+  ) async {
+    final calls = <String>[];
+    final cursors = <WindowsPointData>[];
+    final scrolls = <({WindowsPointData delta, bool control})>[];
+    _mockWindowsWebViewCreation(
+      /// Records the exact cursor delivered before each scroll operation.
+      onSetCursorPos: (position) {
+        calls.add('cursor');
+        cursors.add(position);
+      },
+
+      /// Records native wheel travel and its modifier without synthesizing events.
+      onSetScrollDelta: (delta, control) {
+        calls.add('scroll');
+        scrolls.add((delta: delta, control: control));
+      },
+    );
+    final controller = WindowsWebViewController(
+      const PlatformWebViewControllerCreationParams(),
+    );
+    final platformWidget = WindowsWebViewWidget(
+      WindowsWebViewWidgetCreationParams(
+        controller: controller,
+        layoutControlsSurfaceSize: false,
+      ),
+    );
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Builder(builder: platformWidget.build),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final position = tester.getCenter(find.byType(WindowsNativeComposition));
+    await tester.sendEventToBinding(
+      PointerScrollEvent(position: position, scrollDelta: const Offset(4, 80)),
+    );
+    await tester.pump();
+    expect(calls, <String>['cursor', 'scroll']);
+    expect(cursors.single.x, position.dx);
+    expect(cursors.single.y, position.dy);
+    expect(scrolls.single.delta.x, -4);
+    expect(scrolls.single.delta.y, -80);
+    expect(scrolls.single.control, isFalse);
+
+    scrolls.clear();
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.trackpad,
+    );
+    await gesture.panZoomStart(position);
+    await gesture.panZoomUpdate(position, scale: 1.5);
+    await gesture.panZoomUpdate(position, scale: 3);
+    await tester.pump();
+    expect(scrolls, hasLength(2));
+    expect(scrolls[0].control, isTrue);
+    expect(scrolls[0].delta.y, closeTo(100 * math.log(1.5), 0.000001));
+    expect(scrolls[1].delta.y, closeTo(100 * math.log(2), 0.000001));
+    await gesture.panZoomEnd();
+
+    scrolls.clear();
+    await gesture.panZoomStart(position);
+    await gesture.panZoomUpdate(position, pan: const Offset(3, 8));
+    await tester.pump();
+    expect(scrolls, hasLength(1));
+    expect(scrolls.single.delta.x, -3);
+    expect(scrolls.single.delta.y, -8);
+    expect(scrolls.single.control, isFalse);
+    await gesture.panZoomEnd();
   });
 
   test('rejects invalid generic cookies before native cookie calls', () async {
@@ -857,6 +934,7 @@ void main() {
   });
 }
 
+/// Installs explicit host responses for isolated WebView widget tests.
 void _mockWindowsWebViewCreation({
   void Function(WindowsLoadRequestData request)? onLoadRequest,
   void Function(String url)? onLoadUrl,
@@ -871,6 +949,8 @@ void _mockWindowsWebViewCreation({
   void Function(bool enabled)? onSetJavaScriptEnabled,
   void Function(bool enabled)? onSetZoomControlEnabled,
   void Function(WindowsSizeData size)? onSetSize,
+  void Function(WindowsPointData position)? onSetCursorPos,
+  void Function(WindowsPointData delta, bool control)? onSetScrollDelta,
   void Function(bool enabled)? onSetCaptureEnabled,
   void Function({
     required bool alert,
@@ -978,6 +1058,26 @@ void _mockWindowsWebViewCreation({
     onSetZoomControlEnabled?.call(args[1]! as bool);
     return _encodePigeonSuccess();
   });
+  messenger.setMockMessageHandler(
+    _hostApiChannel('setCursorPos'),
+
+    /// Accepts the exact surface-local cursor position from the widget.
+    (ByteData? message) async {
+      final args = _decodePigeonArgs(message);
+      onSetCursorPos?.call(args[1]! as WindowsPointData);
+      return _encodePigeonSuccess();
+    },
+  );
+  messenger.setMockMessageHandler(
+    _hostApiChannel('setScrollDelta'),
+
+    /// Accepts the native wheel delta and modifier forwarded by the widget.
+    (ByteData? message) async {
+      final args = _decodePigeonArgs(message);
+      onSetScrollDelta?.call(args[1]! as WindowsPointData, args[2]! as bool);
+      return _encodePigeonSuccess();
+    },
+  );
   messenger.setMockMessageHandler(_hostApiChannel('setSize'), (
     ByteData? message,
   ) async {
@@ -1048,6 +1148,8 @@ void _clearWindowsWebViewCreationMock() {
     null,
   );
   messenger.setMockMessageHandler(_hostApiChannel('setSize'), null);
+  messenger.setMockMessageHandler(_hostApiChannel('setCursorPos'), null);
+  messenger.setMockMessageHandler(_hostApiChannel('setScrollDelta'), null);
   messenger.setMockMessageHandler(
     _hostApiChannel('setJavaScriptDialogCallbacksEnabled'),
     null,

@@ -1,14 +1,12 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
-import 'package:liquid_glass_widgets/widgets/shared/glass_effect.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
@@ -21,6 +19,7 @@ import '../../../ChatLayoutMetrics.dart';
 import '../agent/AgentInputMenuPopup.dart';
 import '../agent/AgentModelSelectorPopup.dart';
 import '../common/ChatAttachmentImagePreview.dart';
+import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
@@ -36,8 +35,6 @@ class ClassicChatInputSection extends StatefulWidget {
     this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
-    required this.currentCharacterCardName,
-    required this.currentCharacterCardAvatarUri,
     required this.onSendMessage,
     required this.onQueueMessage,
     required this.onCancelMessage,
@@ -55,7 +52,7 @@ class ClassicChatInputSection extends StatefulWidget {
     this.onInsertAttachment,
     this.onAttachImage,
     this.onTakePhoto,
-    this.onAttachMemory,
+    this.onPluginAttachment,
     this.onAttachFile,
     this.onAttachFiles,
     this.onPasteImages,
@@ -73,8 +70,6 @@ class ClassicChatInputSection extends StatefulWidget {
   final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
-  final String? currentCharacterCardName;
-  final String? currentCharacterCardAvatarUri;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
   final VoidCallback onCancelMessage;
@@ -92,7 +87,7 @@ class ClassicChatInputSection extends StatefulWidget {
   final ValueChanged<AttachmentInfo>? onInsertAttachment;
   final VoidCallback? onAttachImage;
   final VoidCallback? onTakePhoto;
-  final VoidCallback? onAttachMemory;
+  final ChatAttachmentCompletion? onPluginAttachment;
   final VoidCallback? onAttachFile;
   final ValueChanged<List<String>>? onAttachFiles;
   final ValueChanged<List<PastedImageAttachmentPayload>>? onPasteImages;
@@ -113,6 +108,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   final GlobalKey _mentionPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
   OverlayEntry? _inputMenuPopupEntry;
+  int _inputMenuContextGeneration = 0;
   OverlayEntry? _mentionPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
   bool _draggingFiles = false;
@@ -129,10 +125,15 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     });
   }
 
-  /// Rebinds listeners when the input controller changes.
+  /// Rebinds input listeners and expires menu requests when their chat changes.
   @override
   void didUpdateWidget(covariant ClassicChatInputSection oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId ||
+        oldWidget.viewModel != widget.viewModel) {
+      _inputMenuContextGeneration++;
+      _dismissInputMenuPopup();
+    }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleInputChanged);
       widget.controller.addListener(_handleInputChanged);
@@ -240,6 +241,16 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   /// Shows the input settings popup above the classic settings strip.
   void _showInputMenuPopup() {
     final overlay = Overlay.of(context);
+    final viewModel = widget.viewModel;
+    final chatId = widget.currentChatId;
+    final generation = ++_inputMenuContextGeneration;
+
+    /// Keeps detached presentations owned by this exact live composer context.
+    bool isChatContextCurrent() =>
+        mounted &&
+        generation == _inputMenuContextGeneration &&
+        widget.viewModel == viewModel &&
+        widget.currentChatId == chatId;
     _inputMenuPopupEntry = OverlayEntry(
       builder: (context) {
         final placement = _popupPlacement(
@@ -255,11 +266,10 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
           maxHeight: placement.maxHeight,
           onDismiss: _dismissInputMenuPopup,
           child: AgentInputMenuPopup(
-            viewModel: widget.viewModel,
-            currentChatId: widget.currentChatId,
-            currentCharacterCardName: widget.currentCharacterCardName,
-            currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
+            viewModel: viewModel,
+            currentChatId: chatId,
             onDismiss: _dismissInputMenuPopup,
+            isChatContextCurrent: isChatContextCurrent,
             leadingChildren: <Widget>[
               AgentModelMenuSection(
                 viewModel: widget.viewModel,
@@ -291,10 +301,13 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
           width: placement.width,
           maxHeight: placement.maxHeight,
           onDismiss: _dismissAttachmentPopup,
-          child: _ClassicAttachmentPopupPanel(
+          child: ChatAttachmentMenuPopup(
+            clients: widget.viewModel.clients,
+            chatId: widget.currentChatId,
+            onDismiss: _dismissAttachmentPopup,
+            onAttachmentResult: widget.onPluginAttachment,
             onAttachImage: _runAttachmentAction(widget.onAttachImage),
             onTakePhoto: _runAttachmentAction(widget.onTakePhoto),
-            onAttachMemory: _runAttachmentAction(widget.onAttachMemory),
             onAttachFile: _runAttachmentAction(widget.onAttachFile),
             onAttachScreenContent: _runAttachmentAction(
               widget.onAttachScreenContent,
@@ -409,6 +422,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   /// Releases listeners, viewport observation, and open popup entries.
   @override
   void dispose() {
+    _inputMenuContextGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_handleInputChanged);
     _dismissInputMenuPopup();
@@ -420,18 +434,12 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   /// Builds the classic chat input section.
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     final snapshot = OperitTheme.of(context).themePreferenceSnapshot;
     final processing = widget.isLoading || widget.inputState.isProcessing;
     final hasDraftText = widget.controller.text.trim().isNotEmpty;
     final canSendMessage = hasDraftText || widget.attachments.isNotEmpty;
     final showCancelAction = processing && !hasDraftText;
     final showQueueAction = processing && hasDraftText;
-    final borderRadius = snapshot.chatInputFloating
-        ? BorderRadius.circular(22)
-        : BorderRadius.zero;
-    final surfaceShape = RoundedRectangleBorder(borderRadius: borderRadius);
     return Material(
       color: Colors.transparent,
       child: Align(
@@ -447,84 +455,75 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
             children: <Widget>[
               KeyedSubtree(
                 key: _mentionPopupTargetKey,
-                child: _ClassicInputSurface(
-                  color: colorScheme.surface,
+                child: ThemeComposerCard(
+                  inputStyle: ThemePreferenceDefaults.INPUT_STYLE_CLASSIC,
                   floating: snapshot.chatInputFloating,
-                  shape: surfaceShape,
-                  borderRadius: borderRadius,
                   transparentSurface: snapshot.transparentSurfaceEnabled,
-                  width: double.infinity,
-                  margin: snapshot.chatInputFloating
-                      ? const EdgeInsets.fromLTRB(8, 0, 8, 6)
-                      : EdgeInsets.zero,
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: snapshot.chatInputFloating ? 14 : 22,
-                      vertical: snapshot.chatInputFloating ? 6 : 8,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        if (widget.currentChatId != null)
-                          ChatComposerSlotHost(
-                            viewModel: widget.viewModel,
-                            chatId: widget.currentChatId!,
-                            isProcessing: processing,
-                            pendingQueueCount:
-                                widget.pendingQueueMessages.length,
-                          ),
-                        if (widget.pendingQueueMessages.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _ClassicPendingMessageQueuePanel(
-                              queuedMessages: widget.pendingQueueMessages,
-                              expanded: widget.isPendingQueueExpanded,
-                              onExpandedChange:
-                                  widget.onPendingQueueExpandedChange,
-                              onDeleteMessage:
-                                  widget.onDeletePendingQueueMessage,
-                              onEditMessage: widget.onEditPendingQueueMessage,
-                              onSendMessage: widget.onSendPendingQueueMessage,
-                            ),
-                          ),
-                        if (widget.attachments.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: _ClassicAttachmentStrip(
-                              attachments: widget.attachments,
-                              onRemoveAttachment: widget.onRemoveAttachment,
-                              onInsertAttachment: widget.onInsertAttachment,
-                            ),
-                          ),
-                        _ClassicInputBody(
-                          hintSuffix: widget.hintSuffix,
-                          controller: widget.controller,
-                          focusNode: widget.focusNode,
-                          inputState: widget.inputState,
-                          settingsKey: _inputMenuPopupTargetKey,
-                          attachmentKey: _attachmentPopupTargetKey,
-                          processing: processing,
-                          hasDraftText: hasDraftText,
-                          canSendMessage: canSendMessage,
-                          showCancelAction: showCancelAction,
-                          showQueueAction: showQueueAction,
-                          onSendMessage: widget.onSendMessage,
-                          onQueueMessage: widget.onQueueMessage,
-                          onCancelMessage: widget.onCancelMessage,
-                          isSpeechRecording: widget.isSpeechRecording,
-                          isSpeechTranscribing: widget.isSpeechTranscribing,
-                          onSpeechInput: widget.onSpeechInput,
-                          inputExpanded: _inputExpanded,
-                          onToggleInputExpansion: _toggleInputExpansion,
-                          onAttachFiles: widget.onAttachFiles,
-                          onPasteImages: widget.onPasteImages,
-                          draggingFiles: _draggingFiles,
-                          onDraggingFilesChanged: _setDraggingFiles,
-                          onSettings: _toggleInputMenuPopup,
-                          onAttach: _toggleAttachmentPopup,
+                  backgroundColor: snapshot.inputBackgroundColor != null
+                      ? Color(snapshot.inputBackgroundColor!)
+                      : null,
+                  roundedCorners: snapshot.inputRoundedCornersEnabled,
+                  imageStyle: buildThemeInputImageStyle(snapshot),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (widget.currentChatId != null)
+                        ChatComposerSlotHost(
+                          viewModel: widget.viewModel,
+                          chatId: widget.currentChatId!,
+                          isProcessing: processing,
+                          pendingQueueCount: widget.pendingQueueMessages.length,
                         ),
-                      ],
-                    ),
+                      if (widget.pendingQueueMessages.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _ClassicPendingMessageQueuePanel(
+                            queuedMessages: widget.pendingQueueMessages,
+                            expanded: widget.isPendingQueueExpanded,
+                            onExpandedChange:
+                                widget.onPendingQueueExpandedChange,
+                            onDeleteMessage: widget.onDeletePendingQueueMessage,
+                            onEditMessage: widget.onEditPendingQueueMessage,
+                            onSendMessage: widget.onSendPendingQueueMessage,
+                          ),
+                        ),
+                      if (widget.attachments.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: _ClassicAttachmentStrip(
+                            attachments: widget.attachments,
+                            onRemoveAttachment: widget.onRemoveAttachment,
+                            onInsertAttachment: widget.onInsertAttachment,
+                          ),
+                        ),
+                      _ClassicInputBody(
+                        hintSuffix: widget.hintSuffix,
+                        controller: widget.controller,
+                        focusNode: widget.focusNode,
+                        inputState: widget.inputState,
+                        settingsKey: _inputMenuPopupTargetKey,
+                        attachmentKey: _attachmentPopupTargetKey,
+                        processing: processing,
+                        hasDraftText: hasDraftText,
+                        canSendMessage: canSendMessage,
+                        showCancelAction: showCancelAction,
+                        showQueueAction: showQueueAction,
+                        onSendMessage: widget.onSendMessage,
+                        onQueueMessage: widget.onQueueMessage,
+                        onCancelMessage: widget.onCancelMessage,
+                        isSpeechRecording: widget.isSpeechRecording,
+                        isSpeechTranscribing: widget.isSpeechTranscribing,
+                        onSpeechInput: widget.onSpeechInput,
+                        inputExpanded: _inputExpanded,
+                        onToggleInputExpansion: _toggleInputExpansion,
+                        onAttachFiles: widget.onAttachFiles,
+                        onPasteImages: widget.onPasteImages,
+                        draggingFiles: _draggingFiles,
+                        onDraggingFilesChanged: _setDraggingFiles,
+                        onSettings: _toggleInputMenuPopup,
+                        onAttach: _toggleAttachmentPopup,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -597,199 +596,133 @@ class _ClassicInputBody extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
-    final outline = colorScheme.outline.withValues(
-      alpha: hasDraftText ? 0.68 : 0.42,
-    );
-    final inputBorder = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
-      borderSide: BorderSide(color: outline, width: 1),
-    );
-    final inputContent = AnimatedSize(
-      duration: const Duration(milliseconds: 340),
-      reverseDuration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOutCubicEmphasized,
-      alignment: Alignment.bottomCenter,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: <Widget>[
-          Expanded(
-            child: _ClassicDesktopEnterSendShortcuts(
-              controller: controller,
-              canSendMessage: canSendMessage,
-              onSendMessage: onSendMessage,
-              enabled: !inputExpanded,
-              child: ChatPastedImageHandler(
-                focusNode: focusNode,
-                enabled: !isSpeechRecording && !isSpeechTranscribing,
-                onPasteImages: onPasteImages,
-                child: Stack(
-                  children: <Widget>[
-                    TextField(
-                      key: const ValueKey<String>('chat.input'),
-                      controller: controller,
-                      focusNode: focusNode,
-                      minLines: inputExpanded ? 10 : 1,
-                      maxLines: inputExpanded ? 16 : 5,
-                      readOnly: isSpeechRecording || isSpeechTranscribing,
-                      textInputAction: TextInputAction.newline,
-                      contentInsertionConfiguration:
-                          chatPastedImageContentInsertionConfiguration(
-                            onPasteImages: onPasteImages,
-                          ),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        height: 20 / 14,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: '${l10n.askOperitHint}$hintSuffix',
-                        hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                        filled: true,
-                        fillColor: colorScheme.surface.withValues(alpha: 0.84),
-                        border: inputBorder,
-                        enabledBorder: inputBorder,
-                        focusedBorder: inputBorder.copyWith(
-                          borderSide: BorderSide(
-                            color: colorScheme.primary,
-                            width: 1.2,
-                          ),
-                        ),
-                        contentPadding: const EdgeInsets.fromLTRB(14, 9, 44, 9),
-                        prefixIconConstraints: const BoxConstraints(
-                          minWidth: 0,
-                          minHeight: 34,
-                        ),
-                        prefixIcon: _ClassicHorizontalVisibility(
-                          width: 34,
-                          height: 34,
-                          visible: !inputExpanded,
-                          alignment: AlignmentDirectional.centerStart,
-                          child: KeyedSubtree(
-                            key: settingsKey,
-                            child: _ClassicIconTapTarget(
-                              icon: Icons.tune_outlined,
-                              color: colorScheme.onSurfaceVariant,
-                              onTap: onSettings,
-                              size: 18,
-                              targetSize: 34,
-                              tooltip: l10n.settings,
-                            ),
-                          ),
-                        ),
-                      ),
-                      onSubmitted: (_) {
-                        if (!inputExpanded && canSendMessage) {
-                          onSendMessage();
-                        }
-                      },
-                    ),
-                    PositionedDirectional(
-                      top: 0,
-                      end: 4,
-                      child: _ClassicIconTapTarget(
-                        icon: inputExpanded
-                            ? Icons.fullscreen_exit
-                            : Icons.fullscreen,
-                        color: colorScheme.onSurfaceVariant,
-                        onTap: onToggleInputExpansion,
-                        size: 18,
-                        targetSize: 34,
-                        tooltip: inputExpanded
-                            ? l10n.collapseInput
-                            : l10n.expandInput,
-                      ),
-                    ),
-                  ],
-                ),
+    final inputContent = ThemeClassicComposerBody(
+      inputExpanded: inputExpanded,
+      editor: _ClassicDesktopEnterSendShortcuts(
+        controller: controller,
+        canSendMessage: canSendMessage,
+        onSendMessage: onSendMessage,
+        enabled: !inputExpanded,
+        child: ChatPastedImageHandler(
+          focusNode: focusNode,
+          enabled: !isSpeechRecording && !isSpeechTranscribing,
+          onPasteImages: onPasteImages,
+          child: ThemeClassicComposerTextEditor(
+            controller: controller,
+            focusNode: focusNode,
+            hintText: '${l10n.askOperitHint}$hintSuffix',
+            inputExpanded: inputExpanded,
+            readOnly: isSpeechRecording || isSpeechTranscribing,
+            hasDraftText: hasDraftText,
+            settings: KeyedSubtree(
+              key: settingsKey,
+              child: _ClassicIconTapTarget(
+                icon: Icons.tune_outlined,
+                color: colorScheme.onSurfaceVariant,
+                onTap: onSettings,
+                imageAsset: OperitTheme.of(context).themePreferenceSnapshot.inputSettingsAsset,
+                imageSize: OperitTheme.of(context).themePreferenceSnapshot.inputSettingsAssetSize,
+                size: 18,
+                targetSize: 34,
+                tooltip: l10n.settings,
               ),
             ),
-          ),
-          _ClassicHorizontalVisibility(
-            width: 86,
-            height: 36,
-            visible: !inputExpanded,
-            alignment: AlignmentDirectional.centerEnd,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const SizedBox(width: 8),
-                KeyedSubtree(
-                  key: attachmentKey,
-                  child: Material(
-                    color: colorScheme.surfaceContainerHighest,
-                    shape: const CircleBorder(),
-                    clipBehavior: Clip.antiAlias,
-                    child: _ClassicIconTapTarget(
-                      icon: Icons.add,
-                      color: colorScheme.onSurfaceVariant.withValues(
-                        alpha: 0.9,
-                      ),
-                      onTap: onAttach,
-                      size: 20,
-                      targetSize: 34,
-                      tooltip: l10n.addAttachment,
-                    ),
-                  ),
+            contentInsertionConfiguration:
+                chatPastedImageContentInsertionConfiguration(
+                  onPasteImages: onPasteImages,
                 ),
-                const SizedBox(width: 8),
-                _ClassicActionButton(
-                  key: const ValueKey<String>('chat.send'),
-                  processing: processing || isSpeechTranscribing,
-                  progress: isSpeechTranscribing
-                      ? null
-                      : _classicProgressFor(inputState),
-                  background: isSpeechRecording
-                      ? colorScheme.error
-                      : _classicActionBackground(
-                          colorScheme,
-                          showCancelAction: showCancelAction,
-                          showQueueAction: showQueueAction,
-                          canSend: canSendMessage,
-                        ),
-                  foreground: isSpeechRecording
-                      ? colorScheme.onError
-                      : _classicActionForeground(
-                          colorScheme,
-                          showCancelAction: showCancelAction,
-                          showQueueAction: showQueueAction,
-                          canSend: canSendMessage,
-                        ),
-                  icon: isSpeechRecording
-                      ? Icons.stop
-                      : isSpeechTranscribing
-                      ? Icons.graphic_eq
-                      : _classicActionIcon(
-                          showCancelAction: showCancelAction,
-                          showQueueAction: showQueueAction,
-                          canSend: canSendMessage,
-                        ),
-                  tooltip: isSpeechRecording
-                      ? '停止录音'
-                      : isSpeechTranscribing
-                      ? '正在识别'
-                      : showCancelAction
-                      ? l10n.cancel
-                      : showQueueAction
-                      ? l10n.chatQueueAddMessage
-                      : (canSendMessage ? l10n.send : ''),
-                  onPressed: isSpeechTranscribing
-                      ? null
-                      : () {
-                          if (showCancelAction) {
-                            onCancelMessage();
-                          } else if (showQueueAction) {
-                            onQueueMessage();
-                          } else if (canSendMessage) {
-                            onSendMessage();
-                          } else {
-                            onSpeechInput();
-                          }
-                        },
-                ),
-              ],
-            ),
+            onSubmitted: (_) {
+              if (!inputExpanded && canSendMessage) onSendMessage();
+            },
+            onToggleExpansion: onToggleInputExpansion,
+            expandTooltip: l10n.expandInput,
+            collapseTooltip: l10n.collapseInput,
           ),
-        ],
+        ),
+      ),
+      attachment: KeyedSubtree(
+        key: attachmentKey,
+        child: Material(
+          color: (OperitTheme.of(context).themePreferenceSnapshot.inputAttachmentAsset?.isNotEmpty ?? false)
+              ? Colors.transparent
+              : colorScheme.surfaceContainerHighest,
+          shape: (OperitTheme.of(context).themePreferenceSnapshot.inputAttachmentAsset?.isNotEmpty ?? false)
+              ? const RoundedRectangleBorder()
+              : const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: _ClassicIconTapTarget(
+            icon: Icons.add,
+            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.9),
+            onTap: onAttach,
+            imageAsset: OperitTheme.of(context).themePreferenceSnapshot.inputAttachmentAsset,
+            imageSize: OperitTheme.of(context).themePreferenceSnapshot.inputAttachmentAssetSize,
+            size: 20,
+            targetSize: 34,
+            tooltip: l10n.addAttachment,
+          ),
+        ),
+      ),
+      action: _ClassicActionButton(
+        key: const ValueKey<String>('chat.send'),
+        imageAsset: resolveThemeInputActionAsset(
+          OperitTheme.of(context).themePreferenceSnapshot,
+          isStop: isSpeechRecording || showCancelAction,
+          isSend: showQueueAction || canSendMessage,
+        ),
+        imageSize: resolveThemeInputActionAssetSize(
+          OperitTheme.of(context).themePreferenceSnapshot,
+          isStop: isSpeechRecording || showCancelAction,
+          isSend: showQueueAction || canSendMessage,
+        ),
+        processing: processing || isSpeechTranscribing,
+        progress: isSpeechTranscribing ? null : _classicProgressFor(inputState),
+        background: isSpeechRecording
+            ? colorScheme.error
+            : _classicActionBackground(
+                colorScheme,
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: canSendMessage,
+              ),
+        foreground: isSpeechRecording
+            ? colorScheme.onError
+            : _classicActionForeground(
+                colorScheme,
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: canSendMessage,
+              ),
+        icon: isSpeechRecording
+            ? Icons.stop
+            : isSpeechTranscribing
+            ? Icons.graphic_eq
+            : _classicActionIcon(
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: canSendMessage,
+              ),
+        tooltip: isSpeechRecording
+            ? '停止录音'
+            : isSpeechTranscribing
+            ? '正在识别'
+            : showCancelAction
+            ? l10n.cancel
+            : showQueueAction
+            ? l10n.chatQueueAddMessage
+            : (canSendMessage ? l10n.send : ''),
+        onPressed: isSpeechTranscribing
+            ? null
+            : () {
+                if (showCancelAction) {
+                  onCancelMessage();
+                } else if (showQueueAction) {
+                  onQueueMessage();
+                } else if (canSendMessage) {
+                  onSendMessage();
+                } else {
+                  onSpeechInput();
+                }
+              },
       ),
     );
     return DropTarget(
@@ -834,107 +767,6 @@ class _ClassicInputBody extends StatelessWidget {
   }
 }
 
-class _ClassicInputSurface extends StatelessWidget {
-  /// Creates a surface with inset content or an inset floating card.
-  const _ClassicInputSurface({
-    required this.color,
-    required this.floating,
-    required this.shape,
-    required this.borderRadius,
-    required this.transparentSurface,
-    required this.width,
-    required this.margin,
-    required this.child,
-  });
-
-  final Color color;
-  final bool floating;
-  final ShapeBorder shape;
-  final BorderRadius borderRadius;
-  final bool transparentSurface;
-  final double width;
-  final EdgeInsetsGeometry margin;
-  final Widget child;
-
-  /// Builds the classic input surface with opaque or glass styling.
-  @override
-  Widget build(BuildContext context) {
-    final effectiveColor = transparentSurface ? Colors.transparent : color;
-    final decorated = SizedBox(
-      width: width,
-      child: DecoratedBox(
-        key: const ValueKey<String>('chat.input.surface'),
-        decoration: ShapeDecoration(
-          color: effectiveColor,
-          shape: shape,
-          shadows: transparentSurface
-              ? const <BoxShadow>[]
-              : <BoxShadow>[
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.08),
-                    blurRadius: 14,
-                    offset: const Offset(0, -3),
-                  ),
-                ],
-        ),
-        child: SafeArea(
-          top: false,
-          left: false,
-          right: false,
-          bottom: !floating,
-          child: child,
-        ),
-      ),
-    );
-    final Widget surface;
-    if (transparentSurface) {
-      final settings = _classicInputGlassSettings(context);
-      surface = ClipPath(
-        clipper: ShapeBorderClipper(shape: shape),
-        child: Stack(
-          children: <Widget>[
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(
-                  sigmaX: settings.blur,
-                  sigmaY: settings.blur,
-                ),
-                child: const ColoredBox(color: Colors.transparent),
-              ),
-            ),
-            Positioned.fill(
-              child: GlassEffect(
-                quality: GlassQuality.standard,
-                shape: LiquidRoundedSuperellipse(
-                  borderRadius: borderRadius.topLeft.x,
-                ),
-                settings: settings,
-                interactionIntensity: 0.85,
-                ambientRim: 0.11,
-                baseAlphaMultiplier: 0.75,
-                edgeAlphaMultiplier: 0.75,
-                rimThickness: 1.48,
-                rimSmoothing: 8,
-                child: const SizedBox.expand(),
-              ),
-            ),
-            decorated,
-          ],
-        ),
-      );
-    } else {
-      surface = decorated;
-    }
-    return SafeArea(
-      top: false,
-      left: false,
-      right: false,
-      bottom: floating,
-      child: Padding(padding: margin, child: surface),
-    );
-  }
-}
-
 class _ClassicPopupShell extends StatelessWidget {
   const _ClassicPopupShell({
     required this.left,
@@ -959,7 +791,7 @@ class _ClassicPopupShell extends StatelessWidget {
       children: <Widget>[
         Positioned.fill(
           child: Listener(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
             onPointerDown: (_) => onDismiss(),
             child: const SizedBox.expand(),
           ),
@@ -994,161 +826,6 @@ class _ClassicPopupPlacement {
   final double bottom;
   final double width;
   final double maxHeight;
-}
-
-class _ClassicAttachmentPopupPanel extends StatelessWidget {
-  const _ClassicAttachmentPopupPanel({
-    required this.onAttachImage,
-    required this.onTakePhoto,
-    required this.onAttachMemory,
-    required this.onAttachFile,
-    required this.onAttachScreenContent,
-    required this.onAttachNotifications,
-    required this.onAttachLocation,
-    required this.onAttachPackage,
-  });
-
-  final VoidCallback? onAttachImage;
-  final VoidCallback? onTakePhoto;
-  final VoidCallback? onAttachMemory;
-  final VoidCallback? onAttachFile;
-  final VoidCallback? onAttachScreenContent;
-  final VoidCallback? onAttachNotifications;
-  final VoidCallback? onAttachLocation;
-  final VoidCallback onAttachPackage;
-
-  /// Builds the classic attachment action popup.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final l10n = AppLocalizations.of(context)!;
-    final items = <_ClassicAttachmentPanelItem>[
-      _ClassicAttachmentPanelItem(
-        icon: Icons.image,
-        label: l10n.attachmentPhoto,
-        onTap: onAttachImage,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.photo_camera,
-        label: l10n.attachmentCamera,
-        onTap: onTakePhoto,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.memory,
-        label: l10n.attachmentMemory,
-        onTap: onAttachMemory,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.description,
-        label: l10n.attachmentFile,
-        onTap: onAttachFile,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.screenshot_monitor,
-        label: l10n.attachmentScreenContent,
-        onTap: onAttachScreenContent,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.notifications,
-        label: l10n.attachmentNotifications,
-        onTap: onAttachNotifications,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.location_on,
-        label: l10n.attachmentLocation,
-        onTap: onAttachLocation,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.auto_awesome,
-        label: l10n.attachmentPackage,
-        onTap: onAttachPackage,
-      ),
-    ];
-    return Material(
-      color: colorScheme.surfaceContainer,
-      elevation: 4,
-      borderRadius: BorderRadius.circular(8),
-      clipBehavior: Clip.antiAlias,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            for (final item in items)
-              _ClassicAttachmentPanelItemButton(
-                item: item,
-                iconColor: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                textStyle: theme.textTheme.bodyMedium,
-                textColor: colorScheme.onSurface,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ClassicAttachmentPanelItem {
-  const _ClassicAttachmentPanelItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-}
-
-class _ClassicAttachmentPanelItemButton extends StatelessWidget {
-  const _ClassicAttachmentPanelItemButton({
-    required this.item,
-    required this.iconColor,
-    required this.textStyle,
-    required this.textColor,
-  });
-
-  final _ClassicAttachmentPanelItem item;
-  final Color iconColor;
-  final TextStyle? textStyle;
-  final Color textColor;
-
-  /// Builds one attachment popup action row.
-  @override
-  Widget build(BuildContext context) {
-    final enabled = item.onTap != null;
-    final disabledColor = Theme.of(context).disabledColor;
-    return InkWell(
-      onTap: item.onTap,
-      child: SizedBox(
-        height: 36,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: <Widget>[
-              Icon(
-                item.icon,
-                size: 16,
-                color: enabled ? iconColor : disabledColor,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  item.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textStyle?.copyWith(
-                    color: enabled ? textColor : disabledColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _ClassicAttachmentPackageSelectorDialog extends StatefulWidget {
@@ -1704,50 +1381,14 @@ class _ClassicQueueIconAction extends StatelessWidget {
   }
 }
 
-class _ClassicHorizontalVisibility extends StatelessWidget {
-  const _ClassicHorizontalVisibility({
-    required this.width,
-    required this.height,
-    required this.visible,
-    required this.alignment,
-    required this.child,
-  });
-
-  final double width;
-  final double height;
-  final bool visible;
-  final AlignmentGeometry alignment;
-  final Widget child;
-
-  /// Animates a fixed-width child into or out of the horizontal layout.
-  @override
-  Widget build(BuildContext context) {
-    return ClipRect(
-      child: AnimatedContainer(
-        width: visible ? width : 0,
-        height: height,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        alignment: alignment,
-        child: OverflowBox(
-          alignment: alignment,
-          minWidth: width,
-          maxWidth: width,
-          minHeight: height,
-          maxHeight: height,
-          child: child,
-        ),
-      ),
-    );
-  }
-}
-
 class _ClassicIconTapTarget extends StatelessWidget {
   const _ClassicIconTapTarget({
     required this.icon,
     required this.color,
     required this.onTap,
     required this.tooltip,
+    this.imageAsset,
+    this.imageSize,
     this.size = 20,
     this.targetSize = 36,
   });
@@ -1756,23 +1397,23 @@ class _ClassicIconTapTarget extends StatelessWidget {
   final Color color;
   final VoidCallback? onTap;
   final String tooltip;
+  final String? imageAsset;
+  final double? imageSize;
   final double size;
   final double targetSize;
 
   /// Builds a fixed-size icon tap target.
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkResponse(
-        onTap: onTap,
-        radius: 20,
-        child: SizedBox(
-          width: targetSize,
-          height: targetSize,
-          child: Icon(icon, size: size, color: color),
-        ),
-      ),
+    return ThemeComposerIconTarget(
+      icon: icon,
+      color: color,
+      onTap: onTap,
+      tooltip: tooltip,
+      imageAsset: imageAsset,
+      imageSize: imageSize,
+      size: size,
+      targetSize: targetSize,
     );
   }
 }
@@ -1787,6 +1428,8 @@ class _ClassicActionButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onPressed,
+    this.imageAsset,
+    this.imageSize,
   });
 
   final bool processing;
@@ -1796,47 +1439,26 @@ class _ClassicActionButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback? onPressed;
+  final String? imageAsset;
+  final double? imageSize;
 
   /// Builds the classic send, queue, or cancel button.
   @override
   Widget build(BuildContext context) {
-    final button = SizedBox(
-      width: 36,
-      height: 36,
-      child: Stack(
-        alignment: Alignment.center,
-        children: <Widget>[
-          Material(
-            color: background,
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: onPressed,
-              child: SizedBox(
-                width: 32,
-                height: 32,
-                child: Icon(icon, size: 17, color: foreground),
-              ),
-            ),
-          ),
-          if (processing)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CircularProgressIndicator(
-                  value: progress,
-                  strokeWidth: 2.4,
-                  color: foreground.withValues(alpha: 0.9),
-                  backgroundColor: foreground.withValues(alpha: 0.24),
-                ),
-              ),
-            ),
-        ],
-      ),
+    return ThemeComposerActionButton(
+      processing: processing,
+      progress: progress,
+      background: background,
+      foreground: foreground,
+      icon: icon,
+      tooltip: tooltip,
+      imageAsset: imageAsset,
+      imageSize: imageSize,
+      onPressed: onPressed,
+      buttonSize: 36,
+      contentSize: 32,
+      iconSize: 17,
     );
-    if (tooltip.isEmpty) {
-      return button;
-    }
-    return Tooltip(message: tooltip, child: button);
   }
 }
 
@@ -1903,24 +1525,6 @@ class _ClassicDesktopEnterSendShortcuts extends StatelessWidget {
       composing: TextRange.empty,
     );
   }
-}
-
-/// Builds the glass settings used by the classic transparent input surface.
-LiquidGlassSettings _classicInputGlassSettings(BuildContext context) {
-  final dark = Theme.of(context).brightness == Brightness.dark;
-  return LiquidGlassSettings(
-    glassColor: dark ? const Color(0x08FFFFFF) : const Color(0x07FFFFFF),
-    thickness: 80,
-    blur: 8,
-    chromaticAberration: 0.18,
-    lightIntensity: 0.42,
-    ambientStrength: 0.2,
-    refractiveIndex: 1.16,
-    saturation: 1.04,
-    glowIntensity: 0.17,
-    specularSharpness: GlassSpecularSharpness.soft,
-    standardOpacityMultiplier: 0.12,
-  );
 }
 
 /// Chooses an icon for the attachment MIME type.

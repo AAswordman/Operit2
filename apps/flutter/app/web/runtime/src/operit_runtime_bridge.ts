@@ -1756,8 +1756,19 @@ interface ModelInstallWorkerError {
     return key(runtimePrefix, path);
   }
 
+  /** Persists SQLite bytes while restoring the real foreign-key setting reset by sql.js export. */
   function saveSqliteDatabase(connection: SqliteConnection): void {
-    storageWrite(runtimePrefix, connection.path, connection.db.export());
+    const rows = querySqlite(connection.db, "PRAGMA foreign_keys", []);
+    if (rows.length !== 1 || rows[0].values.length !== 1) {
+      throw new Error("sqlite foreign_keys query did not return one value");
+    }
+    const foreignKeys = rows[0].values[0];
+    if (foreignKeys.kind !== "integer" || (foreignKeys.value !== "0" && foreignKeys.value !== "1")) {
+      throw new Error("sqlite foreign_keys query returned an invalid flag");
+    }
+    const bytes = connection.db.export();
+    connection.db.run(`PRAGMA foreign_keys = ${foreignKeys.value}`);
+    storageWrite(runtimePrefix, connection.path, bytes);
   }
 
   function sqliteConnection(id: string): SqliteConnection {
@@ -4176,11 +4187,13 @@ self.onmessage = (event) => {
         connection.db.exec(sql);
         saveSqliteDatabase(connection);
       },
+      /** Captures the actual affected-row count before export resets sql.js connection counters. */
       execute(id: string, sql: string, params: SqliteParameter[]): number {
         const connection = sqliteConnection(id);
         connection.db.run(sql, sqliteParams(params));
+        const changedRows = connection.db.getRowsModified();
         saveSqliteDatabase(connection);
-        return connection.db.getRowsModified();
+        return changedRows;
       },
       query(id: string, sql: string, params: SqliteParameter[]): SqliteQueryRow[] {
         return querySqlite(sqliteConnection(id).db, sql, params);
@@ -4216,10 +4229,30 @@ self.onmessage = (event) => {
           ? value.value
           : "0";
       },
+      /** Commits once, aborts a rejected COMMIT explicitly, and never hides persistence errors. */
       commitTransaction(id: string): void {
         const connection = sqliteTransaction(id);
-        connection.db.run("COMMIT");
+        try {
+          connection.db.run("COMMIT");
+        } catch (commitError) {
+          try {
+            connection.db.run("ROLLBACK");
+          } catch (rollbackError) {
+            throw new AggregateError(
+              [commitError, rollbackError],
+              `SQLite COMMIT failed: ${String(commitError)}; explicit ROLLBACK failed: ${String(rollbackError)}`,
+            );
+          }
+          sqliteTransactions.delete(id);
+          throw commitError;
+        }
+        sqliteTransactions.delete(id);
         saveSqliteDatabase(connection);
+      },
+      /** Aborts the exact live transaction without exporting or persisting its uncommitted changes. */
+      rollbackTransaction(id: string): void {
+        const connection = sqliteTransaction(id);
+        connection.db.run("ROLLBACK");
         sqliteTransactions.delete(id);
       },
     }),

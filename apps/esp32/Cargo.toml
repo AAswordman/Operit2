@@ -51,6 +51,7 @@ esp_idf_components = [
   "esp_netif",
   "esp_wifi",
   "esp_http_server",
+  "esp_http_client",
   "espressif__mdns",
   "ui_port",
 ]

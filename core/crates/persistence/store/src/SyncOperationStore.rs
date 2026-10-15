@@ -392,20 +392,83 @@ impl SyncOperationStore {
     /// Reuses the last identical state for one local entity when recovering a
     /// record publication. Transaction commands must never use this shortcut.
     #[allow(non_snake_case)]
-    pub fn appendLocalStateIfChanged(&self, originDeviceId: &str, mutation: NewSyncOperation) -> Result<SyncOperation, SyncOperationStoreError> {
+    pub fn appendLocalStateIfChanged(
+        &self,
+        originDeviceId: &str,
+        mutation: NewSyncOperation,
+    ) -> Result<SyncOperation, SyncOperationStoreError> {
         if mutation.semantics != SyncOperationSemantics::EntityState {
-            return Err(SyncOperationStoreError::Message("Idempotent state append requires EntityState semantics".into()));
+            return Err(SyncOperationStoreError::Message(
+                "Idempotent state append requires EntityState semantics".into(),
+            ));
         }
         let content = self.readOperationLog(originDeviceId)?;
         let mut latest = None;
         for line in content.lines().filter(|line| !line.trim().is_empty()) {
             let operation: SyncOperation = serde_json::from_str(line)?;
-            if operation.domain == mutation.domain && operation.entityType == mutation.entityType && operation.entityId == mutation.entityId {
+            if operation.domain == mutation.domain
+                && operation.entityType == mutation.entityType
+                && operation.entityId == mutation.entityId
+            {
                 latest = Some(self.decodeOperationPayload(operation)?);
             }
         }
         if let Some(operation) = latest {
-            if operation.operation == mutation.operation && operation.semantics == mutation.semantics && operation.payload == mutation.payload {
+            if operation.operation == mutation.operation
+                && operation.semantics == mutation.semantics
+                && operation.payload == mutation.payload
+            {
+                self.recoverAppendedOperation(&operation)?;
+                return Ok(operation);
+            }
+        }
+        self.appendLocalOperation(originDeviceId, mutation)
+    }
+
+    /// Reuses an identical final preference transaction when retrying journal publication.
+    /// Later edits to the same file make a transaction a new business event.
+    #[allow(non_snake_case)]
+    pub fn appendLocalPreferencesTransactionIfChanged(
+        &self,
+        originDeviceId: &str,
+        mutation: NewSyncOperation,
+    ) -> Result<SyncOperation, SyncOperationStoreError> {
+        if mutation.domain != "preferences"
+            || mutation.operation != "transaction"
+            || mutation.semantics != SyncOperationSemantics::Transaction
+        {
+            return Err(SyncOperationStoreError::Message(
+                "Preference transaction recovery requires an atomic preferences operation".into(),
+            ));
+        }
+        let path = mutation
+            .payload
+            .get("storagePath")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                SyncOperationStoreError::Message(
+                    "Preference transaction is missing its storage path".into(),
+                )
+            })?;
+        let content = self.readOperationLog(originDeviceId)?;
+        let mut latest = None;
+        for line in content.lines().filter(|line| !line.trim().is_empty()) {
+            let operation: SyncOperation = serde_json::from_str(line)?;
+            if operation.domain != "preferences" {
+                continue;
+            }
+            let decoded = self.decodeOperationPayload(operation)?;
+            if decoded.payload.get("storagePath").and_then(Value::as_str) == Some(path) {
+                latest = Some(decoded);
+            }
+        }
+        if let Some(operation) = latest {
+            if operation.entityType == mutation.entityType
+                && operation.entityId == mutation.entityId
+                && operation.operation == mutation.operation
+                && operation.semantics == mutation.semantics
+                && operation.payload == mutation.payload
+            {
                 self.recoverAppendedOperation(&operation)?;
                 return Ok(operation);
             }
@@ -416,7 +479,10 @@ impl SyncOperationStore {
     /// Completes metadata after an acknowledged log append but failed later
     /// writes. Never allocates a second sequence or appends a duplicate line.
     #[allow(non_snake_case)]
-    pub fn recoverAppendedOperation(&self, operation: &SyncOperation) -> Result<(), SyncOperationStoreError> {
+    pub fn recoverAppendedOperation(
+        &self,
+        operation: &SyncOperation,
+    ) -> Result<(), SyncOperationStoreError> {
         self.appendOperation(operation)?;
         self.registerDevice(&operation.originDeviceId)?;
         self.recordAppliedOperation(operation)?;
@@ -447,10 +513,9 @@ impl SyncOperationStore {
             }
         }
         let now = currentTimeMillis()?;
-        let mut hasher = DefaultHasher::new();
-        self.rootPath.hash(&mut hasher);
-        now.hash(&mut hasher);
-        let deviceId = format!("core-{now}-{:016x}", hasher.finish());
+        // Hosts commonly use the same relative sync root and may initialize
+        // within the same millisecond. Their operation origins must be unique.
+        let deviceId = format!("core-{now}-{}", uuid::Uuid::new_v4().simple());
         self.storageHost.writeBytes(&path, deviceId.as_bytes())?;
         localDeviceIdState.loaded = true;
         localDeviceIdState.value = Some(deviceId.clone());
@@ -537,7 +602,9 @@ impl SyncOperationStore {
                 self.storageHost
                     .appendBytes(&self.operationsPath(&originDeviceId), &content)?;
                 for (operation, offset, lineLength) in appendedOperations {
-                    if let Some(operations) = operationLog.domainOperations.get_mut(&operation.domain) {
+                    if let Some(operations) =
+                        operationLog.domainOperations.get_mut(&operation.domain)
+                    {
                         operations.push(operation.clone());
                     }
                     operationLog.operationIds.insert(operation.opId.clone());
@@ -600,11 +667,34 @@ impl SyncOperationStore {
         domains: &[String],
         limit: usize,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.operationsSinceWithExportPolicy(clock, domains, limit, true)
+    }
+
+    /// Reads local preference provenance without treating an export boundary as a conflict boundary.
+    pub fn preferenceHistory(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.operationsSinceWithExportPolicy(
+            &SyncClock::empty(),
+            &["preferences".to_owned()],
+            usize::MAX,
+            false,
+        )
+    }
+
+    /// Uses the shared journal cache for exports and internal deterministic state replay.
+    fn operationsSinceWithExportPolicy(
+        &self,
+        clock: &SyncClock,
+        domains: &[String],
+        limit: usize,
+        applyExportFloors: bool,
+    ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
         let domainSet = domains.iter().cloned().collect::<BTreeSet<_>>();
-        let exportFloors = {
+        let exportFloors = if applyExportFloors {
             let mut state = lockSyncState(&self.sharedState.exportFloors, "export floors")?;
             self.loadCachedJson(&mut state, &self.exportFloorsPath())?
                 .clone()
+        } else {
+            BTreeMap::new()
         };
         let mut out = Vec::new();
         for deviceId in self.devices()? {
@@ -613,12 +703,16 @@ impl SyncOperationStore {
                 let selected = {
                     let mut index = lockSyncState(&operationLog, "operation log")?;
                     self.loadOperationLogIndex(&deviceId, &mut index)?;
-                    let missing = domainSet.iter()
+                    let missing = domainSet
+                        .iter()
                         .filter(|domain| !index.domainOperations.contains_key(*domain))
-                        .cloned().collect::<BTreeSet<_>>();
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
                     if !missing.is_empty() {
                         let content = self.readOperationLog(&deviceId)?;
-                        let mut domains = missing.iter().map(|domain| (domain.clone(), Vec::new()))
+                        let mut domains = missing
+                            .iter()
+                            .map(|domain| (domain.clone(), Vec::new()))
                             .collect::<BTreeMap<_, _>>();
                         let mut skipped = 0usize;
                         for line in content.lines().filter(|line| !line.trim().is_empty()) {
@@ -632,17 +726,24 @@ impl SyncOperationStore {
                             }
                         }
                         if skipped > 0 {
-                            operit_util::AppLogger::AppLogger::w("SyncOperationStore", &format!(
+                            operit_util::AppLogger::AppLogger::w(
+                                "SyncOperationStore",
+                                &format!(
                                 "skipped {skipped} corrupt operation-log line(s) for {deviceId}"
-                            ));
+                            ),
+                            );
                         }
                         index.domainOperations.extend(domains);
                     }
-                    let minimumSequence = clock.sequenceFor(&deviceId)
+                    let minimumSequence = clock
+                        .sequenceFor(&deviceId)
                         .max(exportFloors.get(&deviceId).copied().unwrap_or(0));
-                    domainSet.iter().flat_map(|domain| index.domainOperations[domain].iter())
+                    domainSet
+                        .iter()
+                        .flat_map(|domain| index.domainOperations[domain].iter())
                         .filter(|operation| operation.sequence > minimumSequence)
-                        .cloned().collect::<Vec<_>>()
+                        .cloned()
+                        .collect::<Vec<_>>()
                 };
                 for operation in selected {
                     out.push(self.decodeOperationPayload(operation)?);
@@ -981,18 +1082,20 @@ impl SyncOperationStore {
                     Ok(operation) => operations.push(operation),
                     Err(error) => {
                         skipped += 1;
-                        operit_util::AppLogger::AppLogger::w("SyncOperationStore", &format!(
-                            "skipped undecodable sync operation payload: {error}"
-                        ));
+                        operit_util::AppLogger::AppLogger::w(
+                            "SyncOperationStore",
+                            &format!("skipped undecodable sync operation payload: {error}"),
+                        );
                     }
                 },
                 Err(_) => skipped += 1,
             }
         }
         if skipped > 0 {
-            operit_util::AppLogger::AppLogger::w("SyncOperationStore", &format!(
-                "skipped {skipped} corrupt operation-log line(s) during decode"
-            ));
+            operit_util::AppLogger::AppLogger::w(
+                "SyncOperationStore",
+                &format!("skipped {skipped} corrupt operation-log line(s) during decode"),
+            );
         }
         Ok(operations)
     }
@@ -1046,10 +1149,13 @@ impl SyncOperationStore {
             )
         })?;
         if !index.findings.is_empty() {
-            operit_util::AppLogger::AppLogger::w("SyncOperationStore", &format!(
-                "origin {deviceId} journal carries {} corrupt line(s); reads skip them",
-                index.findings.len()
-            ));
+            operit_util::AppLogger::AppLogger::w(
+                "SyncOperationStore",
+                &format!(
+                    "origin {deviceId} journal carries {} corrupt line(s); reads skip them",
+                    index.findings.len()
+                ),
+            );
         }
         index.loaded = true;
         Ok(())
@@ -1150,8 +1256,14 @@ impl SyncOperationStore {
     /// corruption. Diagnostics use this; it never fails on damaged content,
     /// only on host storage errors. Payload envelopes are not decrypted here.
     #[allow(non_snake_case)]
-    pub fn scanOperationLog(&self, deviceId: &str) -> Result<OperationLogScan, SyncOperationStoreError> {
-        let mut scan = OperationLogScan { deviceId: deviceId.to_string(), ..Default::default() };
+    pub fn scanOperationLog(
+        &self,
+        deviceId: &str,
+    ) -> Result<OperationLogScan, SyncOperationStoreError> {
+        let mut scan = OperationLogScan {
+            deviceId: deviceId.to_string(),
+            ..Default::default()
+        };
         let content = self.readOperationLog(deviceId)?;
         if content.is_empty() {
             return Ok(scan);
@@ -1425,7 +1537,8 @@ impl SyncOperationStore {
         }
         self.storageHost
             .writeBytes(&self.operationsPath(deviceId), kept.as_bytes())?;
-        self.storageHost.writeBytes(&sidecarPath, sidecar.as_bytes())?;
+        self.storageHost
+            .writeBytes(&sidecarPath, sidecar.as_bytes())?;
         index.domainOperations.clear();
         index.operationIds.clear();
         index.sequenceOffsets.clear();
@@ -1506,7 +1619,7 @@ fn storageSafeId(value: &str) -> String {
 /// Reports whether this decoded operation carries encrypted Space preferences.
 fn encryptedPreferenceSyncOperation(operation: &SyncOperation) -> bool {
     operation.domain == "preferences"
-        && operation.operation == "set"
+        && matches!(operation.operation.as_str(), "set" | "transaction")
         && operation.payload.get("encrypted").and_then(Value::as_bool) == Some(true)
 }
 

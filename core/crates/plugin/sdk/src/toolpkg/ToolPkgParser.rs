@@ -54,6 +54,9 @@ pub struct ToolPkgUiModuleRuntime {
     pub id: String,
     pub runtime: String,
     pub screen: String,
+    /// Identifies the exact exported function captured from a registered screen reference.
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
     pub keepAlive: bool,
@@ -66,6 +69,9 @@ pub struct ToolPkgUiRouteRuntime {
     pub routeId: String,
     pub runtime: String,
     pub screen: String,
+    /// Identifies the exact exported function captured from a registered screen reference.
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
     pub keepAlive: bool,
@@ -86,6 +92,8 @@ pub struct ToolPkgNavigationEntryRuntime {
     pub id: String,
     #[serde(rename = "routeId")]
     pub routeId: String,
+    /// Preserves optional plugin-owned route input as JSON without host interpretation.
+    pub params: Option<Value>,
     pub surface: String,
     pub title: LocalizedText,
     pub action: Option<ToolPkgNavigationActionHookRuntime>,
@@ -231,6 +239,9 @@ pub struct ToolPkgRegisteredUiModule {
     #[serde(default)]
     pub runtime: String,
     pub screen: String,
+    /// Identifies the exact exported function captured from a registered screen reference.
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     #[serde(default)]
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
@@ -246,6 +257,9 @@ pub struct ToolPkgRegisteredUiRoute {
     #[serde(default)]
     pub runtime: String,
     pub screen: String,
+    /// Identifies the exact exported function captured from a registered screen reference.
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     #[serde(default)]
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
@@ -272,6 +286,9 @@ pub struct ToolPkgRegisteredNavigationEntry {
     pub surface: String,
     #[serde(rename = "routeId", alias = "route", default)]
     pub routeId: Option<String>,
+    /// Retains the opaque JSON route input supplied by registerNavigationEntry.
+    #[serde(default)]
+    pub params: Option<Value>,
     #[serde(default)]
     pub action: Option<ToolPkgNavigationActionHookRuntime>,
     #[serde(default)]
@@ -445,6 +462,9 @@ pub struct ToolPkgMainRegistration {
     pub chatViewHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "chatMessageHooks", default)]
     pub chatMessageHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    /// Declares one lifecycle initializer for the package-owned conversation namespace.
+    #[serde(rename = "chatLifecycleHooks", default)]
+    pub chatLifecycleHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "chatMessageMenuItems", default)]
     pub chatMessageMenuItems: Vec<ToolPkgRegisteredChatMessageMenuItem>,
     #[serde(rename = "chatRuntimeHooks", default)]
@@ -511,6 +531,11 @@ pub struct ToolPkgContainerRuntime {
     pub author: Vec<String>,
     #[serde(rename = "mainEntry")]
     pub mainEntry: String,
+    /// Retains each declared theme template for capability consumers.
+    #[serde(default)]
+    pub themes: Vec<ToolPkgManifestTheme>,
+    #[serde(default)]
+    pub license: Option<String>,
     #[serde(rename = "sourceType")]
     pub sourceType: ToolPkgSourceType,
     #[serde(rename = "sourcePath")]
@@ -549,6 +574,9 @@ pub struct ToolPkgContainerRuntime {
     pub chatViewHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageHooks")]
     pub chatMessageHooks: Vec<ToolPkgFunctionHookRuntime>,
+    /// Retains the actual exported creation handler validated at package registration.
+    #[serde(rename = "chatLifecycleHooks")]
+    pub chatLifecycleHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageMenuItems")]
     pub chatMessageMenuItems: Vec<ToolPkgChatMessageMenuItemRuntime>,
     #[serde(rename = "chatRuntimeHooks")]
@@ -622,12 +650,18 @@ pub struct ToolPkgManifest {
     pub author: Vec<String>,
     #[serde(default)]
     pub logo: Option<String>,
+    /// References an agreement text distributed inside this ToolPkg archive.
+    #[serde(default)]
+    pub license: Option<String>,
     #[serde(rename = "enabled_by_default", default = "defaultEnabledByDefault")]
     pub enabledByDefault: bool,
     #[serde(rename = "market_only", default)]
     pub marketOnly: bool,
     #[serde(default)]
     pub subpackages: Vec<ToolPkgManifestSubpackage>,
+    /// Declares theme templates alongside the other ToolPkg capabilities.
+    #[serde(default)]
+    pub themes: Vec<ToolPkgManifestTheme>,
     #[serde(default)]
     pub resources: Vec<ToolPkgManifestResource>,
     #[serde(rename = "wasm_modules", alias = "wasmModules", default)]
@@ -665,6 +699,17 @@ pub struct ToolPkgManifestRequirement {
 pub struct ToolPkgManifestSubpackage {
     pub id: String,
     pub entry: String,
+}
+
+/// Describes one declarative theme contributed by a ToolPkg container.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolPkgManifestTheme {
+    pub id: String,
+    pub path: String,
+    pub preview: String,
+    #[serde(default)]
+    pub files: Vec<operit_plugin_theme::ManifestFile>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -737,6 +782,18 @@ pub struct ToolPkgParser;
 pub struct ToolPkgArchiveParser;
 
 impl ToolPkgArchiveParser {
+    /// Resolves ordinary ToolPkg metadata once and validates its declared theme templates.
+    #[allow(non_snake_case)]
+    pub fn readThemeTemplates(archiveBytes: &[u8]) -> Result<Vec<operit_plugin_theme::ValidatedThemeTemplate>, String> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(archiveBytes)).map_err(|error| error.to_string())?;
+        let index = Self::buildZipEntryIndex(&mut archive);
+        let preview = Self::readToolPkgManifestPreview(&mut archive, &index).ok_or("ToolPkg manifest is missing or invalid")?;
+        let text = Self::readZipEntryText(&mut archive, &index, &preview.entryName).ok_or("Cannot read ToolPkg manifest")?;
+        let value = parseToolPkgManifestValue(&text, &preview.entryName)?;
+        operit_plugin_theme::validate_declared_theme_templates(archiveBytes, &preview.entryName, text.as_bytes(), &value)
+            .map_err(|error| error.to_string())
+    }
+
     /// Parses and validates a ToolPkg container from an indexed archive source.
     #[allow(non_snake_case)]
     pub fn parseToolPkgFromIndexedEntries<
@@ -806,17 +863,43 @@ impl ToolPkgArchiveParser {
             }
             None => None,
         };
-        let normalizedMainEntry =
-            Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, &manifest.main)
-                .ok_or_else(|| "manifest.main is required".to_string())?;
-        if !entryIndex.containsEntry(&normalizedMainEntry) {
-            return Err(format!(
-                "Cannot find manifest.main entry '{}'",
-                manifest.main
-            ));
+        if let Some(license) = &manifest.license {
+            validateDeclaredPackagePath(license)?;
+            let entry = Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, license)
+                .ok_or_else(|| "manifest.license must reference a safe package path".to_string())?;
+            if !entryIndex.containsEntry(&entry) {
+                return Err(format!("Cannot find manifest.license entry '{license}'"));
+            }
         }
-        let mainScriptText = readEntryText(&normalizedMainEntry)
-            .ok_or_else(|| format!("Failed to read manifest.main entry '{}'", manifest.main))?;
+        let mut themeIds = BTreeSet::new();
+        for theme in &manifest.themes {
+            if theme.id.trim().is_empty() || theme.id.contains(':') || !themeIds.insert(theme.id.clone()) {
+                return Err("manifest.themes requires unique nonempty ids".to_string());
+            }
+            for path in [&theme.path, &theme.preview] {
+                validateDeclaredPackagePath(path)?;
+                let entry = Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, path)
+                    .ok_or_else(|| "Theme resources must use safe relative paths".to_string())?;
+                if !entryIndex.containsEntry(&entry) {
+                    return Err(format!("Cannot find theme resource '{path}'"));
+                }
+            }
+        }
+        let (normalizedMainEntry, mainScriptText) = if manifest.main.is_empty() {
+            if publicApi.is_some() || !manifest.subpackages.is_empty() {
+                return Err("Script APIs and subpackages require manifest.main".to_string());
+            }
+            (String::new(), None)
+        } else {
+            let entry = Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, &manifest.main)
+                .ok_or_else(|| "manifest.main must be a safe relative path".to_string())?;
+            if !entryIndex.containsEntry(&entry) {
+                return Err(format!("Cannot find manifest.main entry '{}'", manifest.main));
+            }
+            let source = readEntryText(&entry)
+                .ok_or_else(|| format!("Failed to read manifest.main entry '{}'", manifest.main))?;
+            (entry, Some(source))
+        };
 
         let mut subpackagePackages = Vec::new();
         let mut subpackageRuntimes = Vec::new();
@@ -1050,19 +1133,26 @@ impl ToolPkgArchiveParser {
         } else {
             localizedTextOf(&manifest.toolpkgId)
         };
-        let mainRegistration = match parseMainRegistration(
-            &mainScriptText,
-            &manifest.toolpkgId,
-            &normalizedMainEntry,
-            &apiVersionText,
-        ) {
-            ToolPkgMainRegistrationParseResult::Success { registration } => registration,
-            ToolPkgMainRegistrationParseResult::Failure { message } => {
-                return Err(format!(
-                    "Failed to parse main registration from '{}': {message}",
-                    manifest.main
-                ));
-            }
+        let mainRegistration = match mainScriptText {
+            None => {
+                let marketOrigin = manifest.extensionFields.get("market_origin")
+                    .map(|value| serde_json::from_value::<ToolPkgMarketOrigin>(value.clone()))
+                    .transpose().map_err(|error| error.to_string())?;
+                if let Some(origin) = &marketOrigin {
+                    if origin.toolpkgId != manifest.toolpkgId || origin.version != manifest.version || origin.author != manifest.author {
+                        return Err("Declarative ToolPkg market origin differs from its manifest".to_string());
+                    }
+                }
+                ToolPkgMainRegistration { marketOrigin, ..Default::default() }
+            },
+            Some(source) => match parseMainRegistration(
+                &source, &manifest.toolpkgId, &normalizedMainEntry, &apiVersionText,
+            ) {
+                ToolPkgMainRegistrationParseResult::Success { registration } => registration,
+                ToolPkgMainRegistrationParseResult::Failure { message } => {
+                    return Err(format!("Failed to parse main registration from '{}': {message}", manifest.main));
+                }
+            },
         };
 
         if !mainRegistration.publicApis.is_empty() && publicApi.is_none() {
@@ -1081,6 +1171,7 @@ impl ToolPkgArchiveParser {
                 routeId: buildToolPkgRouteId(&manifest.toolpkgId, &module.id),
                 runtime: module.runtime.clone(),
                 screen: module.screen.clone(),
+                screenExport: module.screenExport.clone(),
                 title: module.title.clone(),
                 keepAlive: module.keepAlive,
             });
@@ -1146,6 +1237,7 @@ impl ToolPkgArchiveParser {
                 id: id.clone(),
                 runtime: runtimeName.clone(),
                 screen: normalizedScreenPath.clone(),
+                screenExport: module.screenExport.clone(),
                 title: module.title.clone(),
                 keepAlive: module.keepAlive,
             });
@@ -1154,6 +1246,7 @@ impl ToolPkgArchiveParser {
                 routeId,
                 runtime: runtimeName,
                 screen: normalizedScreenPath,
+                screenExport: module.screenExport.clone(),
                 title: module.title.clone(),
                 keepAlive: module.keepAlive,
             });
@@ -1212,7 +1305,33 @@ impl ToolPkgArchiveParser {
         for (index, entry) in registeredNavigationEntries.iter().enumerate() {
             let id = entry.id.trim().to_string();
             let routeId = entry.routeId.clone().unwrap_or_default().trim().to_string();
-            let surface = entry.surface.trim().to_ascii_lowercase();
+            let surface = entry.surface.clone();
+            requireToolPkgNavigationSurface(&surface).map_err(|error| {
+                format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].surface {error}")
+            })?;
+            if surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS || surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU || surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS {
+                if entry.action.is_some() {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].action is unsupported for {surface}"));
+                }
+                if routeId.is_empty() {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is required for {surface}"));
+                }
+            }
+            if surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS || surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU || surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS {
+                if !routeId.starts_with(&format!("toolpkg:{}:ui:", manifest.toolpkgId)) {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must belong to this package for {surface}: {routeId}"));
+                }
+                let matching = uiRoutes.iter().filter(|route| route.routeId == routeId).collect::<Vec<_>>();
+                if matching.is_empty() {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route not found: {routeId}"));
+                }
+                if matching.len() != 1 {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is duplicated for {surface}: {routeId}"));
+                }
+                if matching[0].runtime != TOOLPKG_RUNTIME_COMPOSE_DSL {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must use compose_dsl for {surface}: {routeId}"));
+                }
+            }
             if id.is_empty() {
                 return Err(format!(
                     "{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].id is required"
@@ -1229,21 +1348,16 @@ impl ToolPkgArchiveParser {
             if !routeId.is_empty()
                 && !uiRoutes
                     .iter()
-                    .any(|route| route.routeId.eq_ignore_ascii_case(&routeId))
+                    .any(|route| route.routeId == routeId)
             {
                 return Err(format!(
                     "{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route not found: {routeId}"
                 ));
             }
-            if surface != TOOLPKG_NAV_SURFACE_TOOLBOX
-                && surface != TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS
-                && surface != TOOLPKG_NAV_SURFACE_APP_BAR
-            {
-                return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].surface is unsupported: {surface}"));
-            }
             navigationEntries.push(ToolPkgNavigationEntryRuntime {
                 id,
                 routeId,
+                params: entry.params.clone(),
                 surface,
                 title: entry.title.clone(),
                 action: entry.action.clone(),
@@ -1276,6 +1390,13 @@ impl ToolPkgArchiveParser {
         let chatViewHooks = validateFunctionHooks(
             &mainRegistration.chatViewHooks,
             TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK,
+        )?;
+        if mainRegistration.chatLifecycleHooks.len() > 1 {
+            return Err(format!("Duplicate chat lifecycle hook owner: {}", manifest.toolpkgId));
+        }
+        let chatLifecycleHooks = validateFunctionHooks(
+            &mainRegistration.chatLifecycleHooks,
+            TOOLPKG_REGISTRATION_CHAT_LIFECYCLE_HOOK,
         )?;
         let chatMessageHooks = validateFunctionHooks(
             &mainRegistration.chatMessageHooks,
@@ -1361,6 +1482,8 @@ impl ToolPkgArchiveParser {
             manifestExtensions,
             author: manifest.author.clone(),
             mainEntry: normalizedMainEntry,
+            themes: manifest.themes.clone(),
+            license: manifest.license.clone(),
             sourceType,
             sourcePath: sourcePath.to_string(),
             subpackages: subpackageRuntimes,
@@ -1380,6 +1503,7 @@ impl ToolPkgArchiveParser {
             chatInputHooks,
             chatViewHooks,
             chatMessageHooks,
+            chatLifecycleHooks,
             chatMessageMenuItems,
             chatRuntimeHooks,
             hostEventHooks,
@@ -2096,12 +2220,16 @@ fn normalizeRequirements(
     Ok(normalized)
 }
 
-/// Identifies the provider required by every admitted v1 compatibility contract.
+/// Identifies the workflow provider required by admitted v1 contracts.
 const V1_WORKFLOW_PREREQUISITE: &str = "com.operit.workflow";
-/// Identifies the first workflow plugin release exposing the compatibility API.
+/// Identifies the first workflow release exposing the compatibility API.
 const V1_WORKFLOW_MIN_VERSION: &str = "0.2.0";
+/// Identifies the role and memory provider required by admitted v1 contracts.
+const V1_CHARACTER_PREREQUISITE: &str = "com.operit.character_cards";
+/// Identifies the role provider release exposing the domain APIs used by v1.
+const V1_CHARACTER_MIN_VERSION: &str = "0.1.0";
 
-/// Adds the v1 compatibility prerequisite without changing the original manifest or relaxing explicit bounds.
+/// Adds explicit compatibility providers without relaxing authored version bounds.
 #[allow(non_snake_case)]
 fn applyCompatibilityRequirements(
     apiVersion: ToolPkgApiVersion,
@@ -2111,32 +2239,37 @@ fn applyCompatibilityRequirements(
     if apiVersion.major != 1 {
         return Ok(());
     }
-    if packageId.trim().eq_ignore_ascii_case(V1_WORKFLOW_PREREQUISITE) {
-        return Err("The workflow compatibility provider must not itself use the v1 contract".to_string());
-    }
-    let minimum = ToolPkgApiVersion::parse(V1_WORKFLOW_MIN_VERSION)?;
-    match requirements.iter_mut().find(|item| item.id.eq_ignore_ascii_case(V1_WORKFLOW_PREREQUISITE)) {
-        Some(requirement) => {
-            let effectiveMinimum = match requirement.minVersion.as_deref() {
-                Some(value) => ToolPkgApiVersion::parse(value)?.max(minimum),
-                None => minimum,
-            };
-            if let Some(maximum) = requirement.maxVersion.as_deref() {
-                if ToolPkgApiVersion::parse(maximum)? < effectiveMinimum {
-                    return Err(format!(
-                        "v1 workflow prerequisite version bounds conflict: >= {effectiveMinimum}, <= {maximum}"
-                    ));
-                }
-            }
-            requirement.id = V1_WORKFLOW_PREREQUISITE.to_string();
-            requirement.minVersion = Some(effectiveMinimum.to_string());
+    for (provider, minimumVersion) in [
+        (V1_WORKFLOW_PREREQUISITE, V1_WORKFLOW_MIN_VERSION),
+        (V1_CHARACTER_PREREQUISITE, V1_CHARACTER_MIN_VERSION),
+    ] {
+        if packageId.trim().eq_ignore_ascii_case(provider) {
+            return Err(format!("The compatibility provider {provider} must not itself use the v1 contract"));
         }
-        None => requirements.push(ToolPkgManifestRequirement {
-            id: V1_WORKFLOW_PREREQUISITE.to_string(),
-            description: "Required by the ToolPkg v1 compatibility contract".to_string(),
-            minVersion: Some(V1_WORKFLOW_MIN_VERSION.to_string()),
-            maxVersion: None,
-        }),
+        let minimum = ToolPkgApiVersion::parse(minimumVersion)?;
+        match requirements.iter_mut().find(|item| item.id.eq_ignore_ascii_case(provider)) {
+            Some(requirement) => {
+                let effectiveMinimum = match requirement.minVersion.as_deref() {
+                    Some(value) => ToolPkgApiVersion::parse(value)?.max(minimum),
+                    None => minimum,
+                };
+                if let Some(maximum) = requirement.maxVersion.as_deref() {
+                    if ToolPkgApiVersion::parse(maximum)? < effectiveMinimum {
+                        return Err(format!(
+                            "v1 compatibility prerequisite {provider} version bounds conflict: >= {effectiveMinimum}, <= {maximum}"
+                        ));
+                    }
+                }
+                requirement.id = provider.to_string();
+                requirement.minVersion = Some(effectiveMinimum.to_string());
+            }
+            None => requirements.push(ToolPkgManifestRequirement {
+                id: provider.to_string(),
+                description: "Required by the ToolPkg v1 compatibility contract".to_string(),
+                minVersion: Some(minimumVersion.to_string()),
+                maxVersion: None,
+            }),
+        }
     }
     Ok(())
 }
@@ -2258,6 +2391,7 @@ fn duplicateLabel(registryName: &str) -> &'static str {
         TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK => "chat input hook",
         TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK => "chat view hook",
         TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK => "chat message hook",
+        TOOLPKG_REGISTRATION_CHAT_LIFECYCLE_HOOK => "chat lifecycle hook",
         TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM => "chat message menu item",
         TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK => "chat runtime hook",
         TOOLPKG_REGISTRATION_HOST_EVENT_HOOK => "host event hook",
@@ -2354,17 +2488,30 @@ fn findManifestEntry(entryNames: &BTreeSet<String>) -> Option<String> {
         .cloned()
 }
 
+/// Rejects unsafe declared resource paths without rewriting the manifest spelling.
+#[allow(non_snake_case)]
+fn validateDeclaredPackagePath(path: &str) -> Result<(), String> {
+    if path.is_empty() || path != path.trim() || path.starts_with('/') || path.contains(['\\', ':']) ||
+        path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+        return Err(format!("Invalid ToolPkg resource reference '{path}'"));
+    }
+    Ok(())
+}
+
 #[allow(non_snake_case)]
 /// Parses one ToolPkg manifest and records its source entry path.
 fn parseToolPkgManifest(content: &str, manifestEntryName: &str) -> Result<ToolPkgManifest, String> {
-    let manifestJson = if manifestEntryName.to_ascii_lowercase().ends_with(".hjson") {
-        let value: Value =
-            json5::from_str(&normalizeHjsonLike(content)).map_err(|error| error.to_string())?;
-        serde_json::to_string(&value).map_err(|error| error.to_string())?
+    serde_json::from_value(parseToolPkgManifestValue(content, manifestEntryName)?).map_err(|error| error.to_string())
+}
+
+/// Parses the ordinary manifest syntax while retaining all declared extension fields.
+#[allow(non_snake_case)]
+pub fn parseToolPkgManifestValue(content: &str, manifestEntryName: &str) -> Result<Value, String> {
+    if manifestEntryName.to_ascii_lowercase().ends_with(".hjson") {
+        json5::from_str(&normalizeHjsonLike(content)).map_err(|error| error.to_string())
     } else {
-        content.to_string()
-    };
-    serde_json::from_str::<ToolPkgManifest>(&manifestJson).map_err(|error| error.to_string())
+        serde_json::from_str(content).map_err(|error| error.to_string())
+    }
 }
 
 #[allow(non_snake_case)]
@@ -2507,9 +2654,11 @@ mod api_compatibility_tests {
             if version == "2.0.0" {
                 assert!(requirements.is_empty());
             } else {
-                assert_eq!(requirements.len(), 1);
+                assert_eq!(requirements.len(), 2);
                 assert_eq!(requirements[0].id, V1_WORKFLOW_PREREQUISITE);
                 assert_eq!(requirements[0].minVersion.as_deref(), Some(V1_WORKFLOW_MIN_VERSION));
+                assert_eq!(requirements[1].id, V1_CHARACTER_PREREQUISITE);
+                assert_eq!(requirements[1].minVersion.as_deref(), Some(V1_CHARACTER_MIN_VERSION));
             }
         }
     }
@@ -2527,7 +2676,7 @@ mod api_compatibility_tests {
             }];
             applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
             applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
-            assert_eq!(requirements.len(), 1);
+            assert_eq!(requirements.len(), 2);
             assert_eq!(requirements[0].minVersion.as_deref(), Some(effective));
             assert_eq!(requirements[0].maxVersion.as_deref(), Some("0.4.0"));
             assert_eq!(requirements[0].description, "Author requirement");
@@ -2539,6 +2688,141 @@ mod api_compatibility_tests {
         }];
         assert!(applyCompatibilityRequirements(version, "consumer", &mut requirements).is_err());
         assert!(applyCompatibilityRequirements(version, V1_WORKFLOW_PREREQUISITE, &mut Vec::new()).is_err());
+    }
+
+    /// Preserves role-provider bounds, canonicalizes its identity, and rejects incompatible requirements.
+    #[test]
+    fn merges_v1_character_prerequisite_without_duplicates() {
+        let version = ToolPkgApiVersion::parse("1.0.0").unwrap();
+        for (declared, effective) in [(None, "0.1.0"), (Some("0.0.1"), "0.1.0"), (Some("0.3.0"), "0.3.0")] {
+            let mut requirements = vec![ToolPkgManifestRequirement {
+                id: "COM.OPERIT.CHARACTER_CARDS".to_string(),
+                description: "Author role requirement".to_string(),
+                minVersion: declared.map(str::to_string),
+                maxVersion: Some("0.4.0".to_string()),
+            }];
+            applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
+            applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
+            assert_eq!(requirements.len(), 2);
+            assert_eq!(requirements[0].id, V1_CHARACTER_PREREQUISITE);
+            assert_eq!(requirements[0].minVersion.as_deref(), Some(effective));
+            assert_eq!(requirements[0].maxVersion.as_deref(), Some("0.4.0"));
+            assert_eq!(requirements[0].description, "Author role requirement");
+        }
+        let mut requirements = vec![ToolPkgManifestRequirement {
+            id: V1_CHARACTER_PREREQUISITE.to_string(),
+            maxVersion: Some("0.0.1".to_string()),
+            ..Default::default()
+        }];
+        assert!(applyCompatibilityRequirements(version, "consumer", &mut requirements).is_err());
+        assert!(applyCompatibilityRequirements(version, V1_CHARACTER_PREREQUISITE, &mut Vec::new()).is_err());
+    }
+
+    /// Loads declarative theme and agreement references without invoking a JavaScript registration callback.
+    #[test]
+    fn loads_declarative_theme_and_agreement_without_main() {
+        let manifest = serde_json::json!({
+            "schema_version": 1, "toolpkg_id": "theme_fixture", "version": "1",
+            "license": "licenses/agreement.txt",
+            "themes": [{"id":"default", "path":"theme.json", "preview":"preview.png"}]
+        });
+        for missing in [None, Some("theme.json"), Some("preview.png"), Some("licenses/agreement.txt")] {
+            let mut entries = BTreeMap::from([
+                ("manifest.json".to_string(), manifest.to_string()),
+                ("theme.json".to_string(), "{}".to_string()),
+                ("preview.png".to_string(), "image".to_string()),
+                ("licenses/agreement.txt".to_string(), "Custom terms, not an SPDX enum".to_string()),
+            ]);
+            if let Some(missing) = missing { entries.remove(missing); }
+            let index = ToolPkgEntryIndex {
+                entryNames: entries.keys().cloned().collect(),
+                entryNamesByNormalizedLowercase: entries.keys().map(|name| (name.clone(), name.clone())).collect(),
+            };
+            let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+                &index, |name| entries.get(name).cloned(), |_| None,
+                ToolPkgSourceType::EXTERNAL, "theme_fixture.toolpkg", false,
+                |_, _| panic!("declarative theme has no scripts"),
+                |_, _, _, _| panic!("declarative theme must not execute registration"),
+                |_, _| panic!("declarative theme has no subpackages"),
+            );
+            match missing {
+                None => {
+                    let loaded = loaded.unwrap();
+                    assert!(loaded.containerRuntime.mainEntry.is_empty());
+                    assert!(loaded.containerPackage.tools.is_empty());
+                    assert_eq!(loaded.containerRuntime.version, "1");
+                    assert_eq!(loaded.containerRuntime.themes[0].id, "default");
+                    assert_eq!(loaded.containerRuntime.license.as_deref(), Some("licenses/agreement.txt"));
+                }
+                Some(_) => assert!(loaded.is_err()),
+            }
+        }
+    }
+
+    /// Allows ordinary declarative resources without inventing a theme-specific package class.
+    #[test]
+    fn loads_declared_resources_without_main_or_themes() {
+        let entries = BTreeMap::from([
+            ("manifest.json".to_string(), serde_json::json!({
+                "toolpkg_id": "resource_fixture", "resources": [{"key":"text", "path":"data.txt", "mime":"text/plain"}]
+            }).to_string()),
+            ("data.txt".to_string(), "Resource data".to_string()),
+        ]);
+        let index = ToolPkgEntryIndex {
+            entryNames: entries.keys().cloned().collect(),
+            entryNamesByNormalizedLowercase: entries.keys().map(|name| (name.clone(), name.clone())).collect(),
+        };
+        let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+            &index, |name| entries.get(name).cloned(), |_| None,
+            ToolPkgSourceType::EXTERNAL, "resource_fixture.toolpkg", false,
+            |_, _| panic!("no executable declarations"), |_, _, _, _| panic!("no main entry"),
+            |_, _| panic!("resource declarations must load"),
+        ).unwrap();
+        assert!(loaded.containerRuntime.mainEntry.is_empty());
+        assert!(loaded.containerRuntime.themes.is_empty());
+        assert_eq!(loaded.containerRuntime.resources[0].path, "data.txt");
+    }
+
+    /// Uses the shared HJSON manifest resolver for a mixed package with templates in a nested root.
+    #[test]
+    fn reads_theme_templates_through_the_ordinary_manifest_parser() {
+        use std::io::{Cursor, Read, Write};
+        let mut preview = Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(1280, 800, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut preview, image::ImageFormat::Png).unwrap();
+        let authored = operit_plugin_theme::export_toolpkg_from_theme(&operit_plugin_theme::ThemeExportDraft {
+            toolpkg_id: "org.operit.mixed".into(), version: "1".into(), display_name: "Mixed".into(),
+            author_name: "Creator".into(), theme_json: b"{}".to_vec(), preview_png: preview.into_inner(),
+            agreement_text: String::new(), description: None, assets: Vec::new(),
+        }).unwrap();
+        let mut input = zip::ZipArchive::new(Cursor::new(authored)).unwrap();
+        let mut output = Vec::new();
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut output));
+        for index in 0..input.len() {
+            let mut entry = input.by_index(index).unwrap();
+            let name = entry.name().to_string();
+            let mut bytes = Vec::new(); entry.read_to_end(&mut bytes).unwrap();
+            if name == "manifest.json" {
+                let mut manifest: Value = serde_json::from_slice(&bytes).unwrap();
+                manifest["main"] = Value::String("main.js".into());
+                manifest["display_name"] = serde_json::json!({"values":{"zh":"混合包","en":"Mixed"}});
+                writer.start_file("bundle/manifest.hjson", zip::write::SimpleFileOptions::default()).unwrap();
+                writer.write_all(manifest.to_string().as_bytes()).unwrap();
+            } else {
+                writer.start_file(format!("bundle/{name}"), zip::write::SimpleFileOptions::default()).unwrap();
+                writer.write_all(&bytes).unwrap();
+            }
+        }
+        writer.start_file("bundle/main.js", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(b"exports.registerToolPkg = function() {};").unwrap();
+        writer.start_file("resources/site/manifest.json", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(b"{\"name\":\"unrelated web resource\"}").unwrap();
+        writer.finish().unwrap();
+        let templates = ToolPkgArchiveParser::readThemeTemplates(&output).unwrap();
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].metadata().theme_id, "org.operit.mixed:default");
+        assert_eq!(templates[0].metadata().version, "1");
+        assert!(templates[0].file_bytes("main.js").is_none());
     }
 
     /// Keeps the existing current-contract default explicit and rejects undeclared future contracts.
@@ -2615,4 +2899,173 @@ mod public_api_tests {
         assert!(load_public_fixture(None, None, 1).is_err());
         assert!(load_public_fixture(Some("sdk/api.ts"), Some("export {}"), 2).is_err());
     }
+}
+
+
+#[cfg(test)]
+mod navigation_registration_tests {
+    use super::*;
+
+    /// Loads an indexed package through the real archive parser using declared registration metadata only.
+    fn load_navigation_entry(surface: &str, route: &str, params: Option<Value>, action: Option<ToolPkgNavigationActionHookRuntime>) -> Result<ToolPkgLoadResult, String> {
+        let manifest = serde_json::json!({ "toolpkg_id": "arbitrary_package", "api_version": "2.0.0", "main": "main.js" });
+        let sources = BTreeMap::from([
+            ("manifest.json".to_string(), manifest.to_string()),
+            ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
+            ("ui/picker.js".to_string(), "exports.screen = function() {};".to_string()),
+        ]);
+        let index = ToolPkgEntryIndex {
+            entryNames: sources.keys().cloned().collect(),
+            entryNamesByNormalizedLowercase: sources.keys().map(|name| (name.clone(), name.clone())).collect(),
+        };
+        let registration = ToolPkgMainRegistration {
+            uiRoutes: vec![ToolPkgRegisteredUiRoute {
+                id: "picker".to_string(), routeId: "toolpkg:arbitrary_package:ui:picker".to_string(),
+                runtime: "compose_dsl".to_string(), screen: "ui/picker.js".to_string(), ..Default::default()
+            }],
+            navigationEntries: vec![ToolPkgRegisteredNavigationEntry {
+                id: "custom-attachment".to_string(), surface: surface.to_string(), routeId: Some(route.to_string()),
+                params, action, icon: Some("attachment".to_string()), order: 9, ..Default::default()
+            }],
+            ..Default::default()
+        };
+        ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+            &index, |name| sources.get(name).cloned(), |_| None,
+            ToolPkgSourceType::EXTERNAL, "arbitrary_package.toolpkg", false,
+            |_, _| panic!("navigation unit input has no subpackages"),
+            |_, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
+            |name, message| panic!("unexpected package error {name}: {message}"),
+        )
+    }
+
+    /// Preserves the full registered attachment descriptor when validating the package's own route.
+    #[test]
+    fn retains_attachment_surface_and_opaque_params_in_runtime() {
+        let params = serde_json::json!({ "opaque": ["9223372036854775807", null, true, { "nested": 2.5 }] });
+        let loaded = load_navigation_entry("chat_attachments", "toolpkg:arbitrary_package:ui:picker", Some(params.clone()), None).unwrap();
+        let entry = &loaded.containerRuntime.navigationEntries[0];
+        assert_eq!(entry.surface, "chat_attachments");
+        assert_eq!(entry.routeId, "toolpkg:arbitrary_package:ui:picker");
+        assert_eq!(entry.params.as_ref(), Some(&params));
+        assert_eq!(entry.icon.as_deref(), Some("attachment"));
+        assert_eq!(entry.order, 9);
+    }
+
+    /// Rejects missing, foreign, and differently cased routes rather than allowing another package's UI.
+    #[test]
+    fn rejects_unregistered_or_foreign_attachment_routes() {
+        for route in ["toolpkg:other_package:ui:picker", "toolpkg:arbitrary_package:ui:missing", "toolpkg:arbitrary_package:ui:PICKER"] {
+            let error = load_navigation_entry("chat_attachments", route, None, None).unwrap_err();
+            assert_eq!(error, format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route not found: {route}"));
+        }
+        assert_eq!(load_navigation_entry("chat_attachments", "", None, None).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route is required for chat_attachments"));
+    }
+
+    /// Rejects case and whitespace variants through the archive loader as well as the registration parser.
+    #[test]
+    fn archive_requires_exact_navigation_surface() {
+        for surface in ["CHAT_ATTACHMENTS", " chat_attachments", "chat_attachments ", "attachments"] {
+            assert_eq!(load_navigation_entry(surface, "toolpkg:arbitrary_package:ui:picker", None, None).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].surface is unsupported: {surface}"));
+        }
+    }
+
+    /// Rejects attachment actions in archive validation while retaining valid toolbox route-and-action entries.
+    #[test]
+    fn archive_rejects_attachment_actions_without_restricting_toolbox_actions() {
+        let action = ToolPkgNavigationActionHookRuntime { function: "existingAction".to_string(), functionSource: None };
+        let route = "toolpkg:arbitrary_package:ui:picker";
+        let error = load_navigation_entry("chat_attachments", route, None, Some(action.clone())).unwrap_err();
+        assert_eq!(error, format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].action is unsupported for chat_attachments"));
+        let loaded = load_navigation_entry("toolbox", route, None, Some(action)).unwrap();
+        assert_eq!(loaded.containerRuntime.navigationEntries[0].action.as_ref().unwrap().function, "existingAction");
+    }
+
+    /// Runs sidebar metadata through the real archive validation with explicit route inputs and no host or UI implementation.
+    fn load_sidebar_navigation(routes: Vec<ToolPkgRegisteredUiRoute>, entry: ToolPkgRegisteredNavigationEntry) -> Result<ToolPkgLoadResult, String> {
+        let manifest = serde_json::json!({ "toolpkg_id": "arbitrary_package", "api_version": "2.0.0", "main": "main.js" });
+        let sources = BTreeMap::from([
+            ("manifest.json".to_string(), manifest.to_string()),
+            ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
+            ("ui/panel.js".to_string(), "exports.screen = function() {};".to_string()),
+        ]);
+        let index = ToolPkgEntryIndex {
+            entryNames: sources.keys().cloned().collect(),
+            entryNamesByNormalizedLowercase: sources.keys().map(|name| (name.clone(), name.clone())).collect(),
+        };
+        let registration = ToolPkgMainRegistration { uiRoutes: routes, navigationEntries: vec![entry], ..Default::default() };
+        ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+            &index, |name| sources.get(name).cloned(), |_| None,
+            ToolPkgSourceType::EXTERNAL, "arbitrary_package.toolpkg", false,
+            |_, _| panic!("sidebar archive input declares no subpackages"),
+            |_, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
+            |name, message| panic!("unexpected package error {name}: {message}"),
+        )
+    }
+
+    /// Supplies one actual Compose route and sidebar descriptor while keeping all plugin params opaque.
+    fn sidebar_archive_input() -> (ToolPkgRegisteredUiRoute, ToolPkgRegisteredNavigationEntry) {
+        let route = ToolPkgRegisteredUiRoute {
+            id: "panel".to_string(), routeId: "toolpkg:arbitrary_package:ui:panel".to_string(),
+            runtime: TOOLPKG_RUNTIME_COMPOSE_DSL.to_string(), screen: "ui/panel.js".to_string(), ..Default::default()
+        };
+        let entry = ToolPkgRegisteredNavigationEntry {
+            id: "panel-tab".to_string(), surface: TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS.to_string(), routeId: Some(route.routeId.clone()),
+            params: Some(serde_json::json!({ "opaque": ["9223372036854775807", null, true] })), icon: Some("Dashboard".to_string()), order: 27,
+            ..Default::default()
+        };
+        (route, entry)
+    }
+
+    /// Preserves the registered route, icon, order and opaque params in the actual archive runtime model.
+    #[test]
+    fn sidebar_archive_retains_owned_route_and_params() {
+        let (route, entry) = sidebar_archive_input();
+        let loaded = load_sidebar_navigation(vec![route], entry.clone()).unwrap();
+        let retained = &loaded.containerRuntime.navigationEntries[0];
+        assert_eq!(retained.surface, "chat_sidebar_tabs");
+        assert_eq!(retained.routeId, "toolpkg:arbitrary_package:ui:panel");
+        assert_eq!(retained.params, entry.params); assert_eq!(retained.icon, entry.icon); assert_eq!(retained.order, entry.order);
+        assert!(retained.action.is_none());
+    }
+
+    /// Rejects explicit foreign owners, missing route registrations and sidebar callbacks at archive validation.
+    #[test]
+    fn sidebar_archive_rejects_foreign_missing_and_action_routes() {
+        let (route, entry) = sidebar_archive_input();
+        for (requested, expected) in [
+            ("toolpkg:foreign:ui:panel", "route must belong to this package for chat_sidebar_tabs: toolpkg:foreign:ui:panel"),
+            ("toolpkg:arbitrary_package:ui:missing", "route not found: toolpkg:arbitrary_package:ui:missing"),
+        ] {
+            let mut invalid = entry.clone(); invalid.routeId = Some(requested.to_string());
+            assert_eq!(load_sidebar_navigation(vec![route.clone()], invalid).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].{expected}"));
+        }
+        let mut action = entry; action.action = Some(ToolPkgNavigationActionHookRuntime { function: "callback".to_string(), functionSource: None });
+        assert_eq!(load_sidebar_navigation(vec![route], action).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].action is unsupported for chat_sidebar_tabs"));
+    }
+
+    /// Requires a unique Compose route even when archive metadata bypasses main-script parsing.
+    #[test]
+    fn sidebar_archive_rejects_duplicate_and_unsupported_runtime_routes() {
+        let (route, entry) = sidebar_archive_input();
+        assert_eq!(load_sidebar_navigation(vec![route.clone(), route.clone()], entry.clone()).unwrap_err(), "Duplicate toolpkg ui route id: panel");
+        let mut invalid = route; invalid.runtime = "unsupported".to_string();
+        assert_eq!(load_sidebar_navigation(vec![invalid], entry).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route must use compose_dsl for chat_sidebar_tabs: toolpkg:arbitrary_package:ui:panel"));
+    }
+
+    /// Applies the same owned Compose-route contract to the generic menu section slot.
+    #[test]
+    fn input_menu_sections_archive_requires_one_owned_compose_route_without_actions() {
+        let (route, mut entry) = sidebar_archive_input();
+        entry.surface = TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS.to_string();
+        assert!(load_sidebar_navigation(vec![route.clone()], entry.clone()).is_ok());
+        let mut invalid = entry.clone();
+        invalid.routeId = Some("toolpkg:foreign:ui:panel".to_string());
+        assert!(load_sidebar_navigation(vec![route.clone()], invalid).unwrap_err().contains("route must belong to this package for chat_input_menu_sections"));
+        let mut invalid = entry.clone();
+        invalid.action = Some(ToolPkgNavigationActionHookRuntime { function: "action".to_string(), functionSource: None });
+        assert!(load_sidebar_navigation(vec![route.clone()], invalid).unwrap_err().contains("action is unsupported for chat_input_menu_sections"));
+        let mut invalid = route.clone(); invalid.runtime = "web".to_string();
+        assert!(load_sidebar_navigation(vec![invalid], entry).unwrap_err().contains("route must use compose_dsl for chat_input_menu_sections"));
+    }
+
 }

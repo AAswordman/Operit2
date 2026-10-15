@@ -199,8 +199,9 @@ fn scope_move_syncs_real_files_and_settings_without_embedded_bundles() {
         .unwrap());
 }
 
+/// Resolves concurrent writes by choosing one complete settings entity.
 #[test]
-fn concurrent_settings_merge_without_republishing_installation() {
+fn concurrent_settings_choose_one_complete_record_without_republishing_installation() {
     let a = host();
     let b = host();
     let store_a = skill(&a);
@@ -224,11 +225,13 @@ fn concurrent_settings_merge_without_republishing_installation() {
         .all(|op| op.domain == "preferences"));
     transfer(&a, &b, &ops_a).unwrap();
     transfer(&b, &a, &ops_b).unwrap();
-    for store in [&store_a, &store_b] {
-        let settings = store.record("skill", "demo").unwrap().settings;
-        assert_eq!(settings["visible"], false);
-        assert_eq!(settings["label"], "new label");
-    }
+    let settings_a = store_a.record("skill", "demo").unwrap().settings;
+    let settings_b = store_b.record("skill", "demo").unwrap().settings;
+    assert_eq!(settings_a, settings_b);
+    assert!(
+        settings_a == json!({"visible": false, "label": "original"})
+            || settings_a == json!({"visible": true, "label": "new label"})
+    );
 }
 
 #[test]
@@ -427,7 +430,12 @@ fn legacy_layout_migration_preserves_files_visibility_and_mcp_without_sharing_se
         source.clone(),
         operit_util::RuntimeStorageLayout::SKILL_VISIBILITY_PREFERENCES_PATH,
     )
-    .edit(|prefs| prefs.set(&stringPreferencesKey("skill_visible_old"), "false".into()))
+    .edit(|prefs| {
+        prefs.set(
+            &stringPreferencesKey("skill_visible_old"),
+            "false".to_owned(),
+        )
+    })
     .unwrap();
     let before = clock(&source);
     store.migrateLegacyLayout().unwrap();
@@ -560,11 +568,18 @@ fn package_config_changes_do_not_republish_archive_or_installation_record() {
 
 /// Registers one package fixture with explicit container membership.
 fn register_package_owner(store: &ExtensionStore, id: &str, members: &[&str]) {
-    store.registerDevice("package", id, &format!("{id}.toolpkg"), json!({
-        "members": members, "enabledNames": [], "disabledNames": [],
-        "subpackageStates": {}, "order": 0, "builtin": false,
-        "installationId": "00000000000000000000000000000000"
-    })).unwrap();
+    store
+        .registerDevice(
+            "package",
+            id,
+            &format!("{id}.toolpkg"),
+            json!({
+                "members": members, "enabledNames": [], "disabledNames": [],
+                "subpackageStates": {}, "order": 0, "builtin": false,
+                "installationId": "00000000000000000000000000000000"
+            }),
+        )
+        .unwrap();
 }
 
 /// Resolves ownership directly from persisted records without a runtime package manager.
@@ -574,8 +589,10 @@ fn package_owner_resolves_container_and_subpackage() {
     register_package_owner(&store, "demo", &["demo", "demo.tools"]);
     assert_eq!(store.packageOwner("demo").unwrap().id, "demo");
     assert_eq!(store.packageOwner(" demo.tools ").unwrap().id, "demo");
-    assert_eq!(store.packageOwner("missing").unwrap_err(),
-        "Extension is not registered: package:missing");
+    assert_eq!(
+        store.packageOwner("missing").unwrap_err(),
+        "Extension is not registered: package:missing"
+    );
 }
 
 /// Rejects ambiguous membership instead of selecting an arbitrary container.
@@ -584,11 +601,15 @@ fn package_owner_rejects_conflicting_membership() {
     let store = ExtensionStore::new(host());
     register_package_owner(&store, "first", &["first", "shared"]);
     register_package_owner(&store, "second", &["second", "shared"]);
-    assert_eq!(store.packageOwner("shared").unwrap_err(),
-        "Extension ownership conflict: package:shared");
+    assert_eq!(
+        store.packageOwner("shared").unwrap_err(),
+        "Extension ownership conflict: package:shared"
+    );
     register_package_owner(&store, "shared", &["shared"]);
-    assert_eq!(store.packageOwner("shared").unwrap_err(),
-        "Extension ownership conflict: package:shared");
+    assert_eq!(
+        store.packageOwner("shared").unwrap_err(),
+        "Extension ownership conflict: package:shared"
+    );
 }
 
 /// Reads the committed scope after an installation moves without retaining runtime state.
@@ -596,7 +617,12 @@ fn package_owner_rejects_conflicting_membership() {
 fn package_owner_tracks_scope_moves() {
     let storage = host();
     let store = ExtensionStore::new(storage.clone());
-    storage.writeBytes("runtime/extensions/device/packages/demo.toolpkg", b"archive").unwrap();
+    storage
+        .writeBytes(
+            "runtime/extensions/device/packages/demo.toolpkg",
+            b"archive",
+        )
+        .unwrap();
     register_package_owner(&store, "demo", &["demo", "demo.tools"]);
     assert_eq!(store.packageOwner("demo.tools").unwrap().scope, "device");
     store.moveScope("package", "demo", "space").unwrap();
@@ -608,10 +634,14 @@ fn package_owner_tracks_scope_moves() {
 fn configuration_paths_exist_before_package_registration() {
     let store = ExtensionStore::new(host());
     assert!(store.records("package").unwrap().is_empty());
-    assert_eq!(ExtensionStore::configPathForScope("first_import", "device").unwrap(),
-        "runtime/extensions/device/plugins/configs/first_import");
-    assert_eq!(ExtensionStore::configPathForScope("first_import", "space").unwrap(),
-        "runtime/extensions/space/plugins/configs/first_import");
+    assert_eq!(
+        ExtensionStore::configPathForScope("first_import", "device").unwrap(),
+        "runtime/extensions/device/plugins/configs/first_import"
+    );
+    assert_eq!(
+        ExtensionStore::configPathForScope("first_import", "space").unwrap(),
+        "runtime/extensions/space/plugins/configs/first_import"
+    );
     assert!(store.records("package").unwrap().is_empty());
     assert!(ExtensionStore::configPathForScope("first_import", "invalid_scope").is_err());
     assert!(ExtensionStore::configPathForScope("", "device").is_err());
@@ -624,4 +654,93 @@ fn configuration_path_does_not_change_after_registration() {
     let path = ExtensionStore::configPathForScope("first_import", "device").unwrap();
     register_package_owner(&store, "first_import", &["first_import"]);
     assert_eq!(store.configPath("first_import").unwrap(), path);
+}
+
+/// Verifies retiring managed code preserves configuration and business data and requires archival first.
+#[test]
+fn retired_device_package_keeps_data_and_requires_archived_source() {
+    let host = Arc::new(MemoryStorage::default());
+    let store = ExtensionStore::new(host.clone());
+    let source = "runtime/extensions/device/packages/daily_life.js";
+    host.writeBytes(source, b"legacy-bundled-code").unwrap();
+    store.registerDevice("package", "daily_life", "daily_life.js", json!({
+        "builtin": false, "installationId": "00000000000000000000000000000001", "members": ["daily_life"], "enabledNames": ["daily_life"],
+        "disabledNames": [], "order": 0, "subpackageStates": {}
+    })).unwrap();
+    let config = format!(
+        "{}/reminders.json",
+        ExtensionStore::configPathForScope("daily_life", "device").unwrap()
+    );
+    let data = format!(
+        "{}/memory.db",
+        ExtensionStore::dataPathForScope("daily_life", "device").unwrap()
+    );
+    host.writeBytes(&config, b"configuration").unwrap();
+    host.writeBytes(&data, b"business-data").unwrap();
+    assert!(store
+        .retireDevicePackageSource("daily_life", "daily_life.js")
+        .is_err());
+    assert!(store
+        .retireDevicePackageSource("daily_life", "other.js")
+        .is_err());
+    host.delete(source, false).unwrap();
+    store
+        .retireDevicePackageSource("daily_life", "daily_life.js")
+        .unwrap();
+    assert!(store.record("package", "daily_life").is_err());
+    assert_eq!(host.readBytes(&config).unwrap(), b"configuration");
+    assert_eq!(host.readBytes(&data).unwrap(), b"business-data");
+}
+
+/// Migrates the legacy package-manager strings before importing extension settings.
+#[test]
+fn legacy_package_preferences_migrate_to_native_json_before_registration() {
+    let storage = host();
+    let path = operit_util::RuntimeStorageLayout::PACKAGE_MANAGER_PREFERENCES_PATH;
+    storage.writeBytes(path, &serde_json::to_vec(&json!({
+        "imported_packages": "[\"demo\",\"demo.tools\",\"other\"]",
+        "disabled_packages": "[\"demo.disabled\",\"other.disabled\"]",
+        "toolpkg_order": "[\"other\",\"demo\"]",
+        "toolpkg_subpackage_states": "{\"demo.tools\":true,\"demo.disabled\":false,\"other.tools\":true}",
+        "unrelated": "preserve me"
+    })).unwrap()).unwrap();
+    let store = ExtensionStore::new(storage.clone());
+    register_package_owner(&store, "demo", &["demo", "demo.tools", "demo.disabled"]);
+    let record = store.record("package", "demo").unwrap();
+    assert_eq!(record.settings["enabledNames"], json!(["demo", "demo.tools"]));
+    assert_eq!(record.settings["disabledNames"], json!(["demo.disabled"]));
+    assert_eq!(record.settings["order"], json!(1));
+    assert_eq!(record.settings["subpackageStates"], json!({"demo.tools": true, "demo.disabled": false}));
+    let prefs = PreferencesDataStore::newWithStorage(storage.clone(), path).data().unwrap();
+    assert_eq!(prefs.getTyped::<Vec<String>>(&stringPreferencesKey("imported_packages")).unwrap().unwrap(), vec!["demo", "demo.tools", "other"]);
+    assert_eq!(prefs.getTyped::<BTreeMap<String, bool>>(&stringPreferencesKey("toolpkg_subpackage_states")).unwrap().unwrap()["demo.disabled"], false);
+    assert_eq!(prefs.getTyped::<String>(&stringPreferencesKey("unrelated")).unwrap().unwrap(), "preserve me");
+    let migrated = storage.readBytes(path).unwrap();
+    register_package_owner(&store, "other", &["other", "other.tools", "other.disabled"]);
+    assert_eq!(storage.readBytes(path).unwrap(), migrated);
+    assert_eq!(store.record("package", "other").unwrap().settings["enabledNames"], json!(["other"]));
+}
+
+/// Rejects malformed legacy package state without registering a partial installation.
+#[test]
+fn malformed_legacy_package_preferences_do_not_register_or_overwrite_data() {
+    for (key, encoded) in [
+        ("imported_packages", "["),
+        ("disabled_packages", "[1]"),
+        ("toolpkg_order", "{}"),
+        ("toolpkg_subpackage_states", "{\"demo\":1}"),
+    ] {
+        let storage = host();
+        let path = operit_util::RuntimeStorageLayout::PACKAGE_MANAGER_PREFERENCES_PATH;
+        let original = serde_json::to_vec(&json!({key: encoded})).unwrap();
+        storage.writeBytes(path, &original).unwrap();
+        let store = ExtensionStore::new(storage.clone());
+        assert!(store.registerDevice("package", "demo", "demo.toolpkg", json!({
+            "members": ["demo"], "enabledNames": [], "disabledNames": [],
+            "subpackageStates": {}, "order": 0, "builtin": false,
+            "installationId": "00000000000000000000000000000000"
+        })).is_err());
+        assert!(store.records("package").unwrap().is_empty());
+        assert_eq!(storage.readBytes(path).unwrap(), original);
+    }
 }

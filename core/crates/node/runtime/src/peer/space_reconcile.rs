@@ -94,8 +94,7 @@ pub struct SharedSpaceReconciliation {
 }
 
 fn paired(service: &dyn NodeSpaceContext, peer: &str) -> Result<(), String> {
-    if !service.peers()?.pairedPeers().map_err(|e| e.to_string())?
-        .iter().any(|p| p.nodeId == peer) {
+    if !service.peers()?.hasPairing(peer, crate::NodeServices::PairingDirection::Either).map_err(|e| e.to_string())? {
         return Err("Reconciliation requires a current pairing with the peer".into());
     }
     Ok(())

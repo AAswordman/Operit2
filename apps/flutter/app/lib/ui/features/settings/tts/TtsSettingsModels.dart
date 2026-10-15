@@ -3,15 +3,14 @@
 part of 'TtsSettingsPanel.dart';
 
 class _TtsSectionData {
+  /// Contains only independent TTS configurations and the actual provider catalog.
   const _TtsSectionData({
     required this.configs,
     required this.providerCatalogEntries,
-    required this.characterBoundConfigIds,
   });
 
-  final List<core_proxy.TtsConfig> configs;
+  final List<core_proxy.CoreOperitModelTtsConfigTtsConfig> configs;
   final List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries;
-  final Set<String> characterBoundConfigIds;
 }
 
 class _SttSectionData {
@@ -37,7 +36,7 @@ class _TtsProviderGroup {
   final String key;
   final String title;
   final String providerType;
-  final List<core_proxy.TtsConfig> configs;
+  final List<core_proxy.CoreOperitModelTtsConfigTtsConfig> configs;
 }
 
 class _TtsProviderTypes {
@@ -97,7 +96,7 @@ bool _ttsProviderCatalogUsesPlaceholder(
       );
 }
 
-bool _ttsConfigUsesPlaceholder(core_proxy.TtsConfig config, String name) {
+bool _ttsConfigUsesPlaceholder(core_proxy.CoreOperitModelTtsConfigTtsConfig config, String name) {
   return _templateHasPlaceholder(config.endpoint, name) ||
       _templateHasPlaceholder(config.requestBody, name) ||
       config.headers.any(
@@ -115,11 +114,11 @@ bool _templateHasPlaceholder(String template, String name) {
   return false;
 }
 
-List<_TtsProviderGroup> _ttsProviderGroups(List<core_proxy.TtsConfig> configs) {
-  final byKey = <String, List<core_proxy.TtsConfig>>{};
+List<_TtsProviderGroup> _ttsProviderGroups(List<core_proxy.CoreOperitModelTtsConfigTtsConfig> configs) {
+  final byKey = <String, List<core_proxy.CoreOperitModelTtsConfigTtsConfig>>{};
   for (final config in configs) {
     final key = _ttsProviderGroupKey(config);
-    byKey.putIfAbsent(key, () => <core_proxy.TtsConfig>[]).add(config);
+    byKey.putIfAbsent(key, () => <core_proxy.CoreOperitModelTtsConfigTtsConfig>[]).add(config);
   }
   final groups = <_TtsProviderGroup>[];
   for (final entry in byKey.entries) {
@@ -140,17 +139,17 @@ List<_TtsProviderGroup> _ttsProviderGroups(List<core_proxy.TtsConfig> configs) {
   return groups;
 }
 
-String _ttsProviderGroupKey(core_proxy.TtsConfig config) {
+String _ttsProviderGroupKey(core_proxy.CoreOperitModelTtsConfigTtsConfig config) {
   return '${config.providerType}\u001F${config.endpoint}\u001F${config.name}';
 }
 
-int _compareTtsConfig(core_proxy.TtsConfig left, core_proxy.TtsConfig right) {
+int _compareTtsConfig(core_proxy.CoreOperitModelTtsConfigTtsConfig left, core_proxy.CoreOperitModelTtsConfigTtsConfig right) {
   return _ttsConfigModelVoiceText(
     left,
   ).toLowerCase().compareTo(_ttsConfigModelVoiceText(right).toLowerCase());
 }
 
-String _ttsConfigProviderTypeText(core_proxy.TtsConfig config) {
+String _ttsConfigProviderTypeText(core_proxy.CoreOperitModelTtsConfigTtsConfig config) {
   final endpoint = config.endpoint.trim();
   if (endpoint.isEmpty) {
     return config.providerType;
@@ -158,7 +157,7 @@ String _ttsConfigProviderTypeText(core_proxy.TtsConfig config) {
   return '${config.providerType} · $endpoint';
 }
 
-String _ttsConfigModelVoiceText(core_proxy.TtsConfig config) {
+String _ttsConfigModelVoiceText(core_proxy.CoreOperitModelTtsConfigTtsConfig config) {
   final model = config.model.trim();
   final voice = config.voice.trim();
   if (model.isEmpty && voice.isEmpty) {
@@ -173,18 +172,15 @@ String _ttsConfigModelVoiceText(core_proxy.TtsConfig config) {
   return '$model · $voice';
 }
 
+/// Protects the independent current configuration without reverse actor-usage lookup.
 String? _ttsConfigDeleteBlockedReason(
-  core_proxy.TtsConfig config,
+  core_proxy.CoreOperitModelTtsConfigTtsConfig config,
   String currentConfigId,
-  Set<String> characterBoundConfigIds,
   AppLocalizations l10n,
 ) {
   final id = config.id.trim();
   if (id == currentConfigId.trim()) {
     return l10n.settingsTtsCurrentConfigCannotDelete;
-  }
-  if (characterBoundConfigIds.contains(id)) {
-    return l10n.settingsTtsConfigUsedByCharacter;
   }
   return null;
 }
@@ -193,16 +189,10 @@ String? _ttsConfigDeleteBlockedReason(
 String? _ttsProviderGroupDeleteBlockedReason(
   _TtsProviderGroup group,
   String currentConfigId,
-  Set<String> characterBoundConfigIds,
   AppLocalizations l10n,
 ) {
   for (final config in group.configs) {
-    final reason = _ttsConfigDeleteBlockedReason(
-      config,
-      currentConfigId,
-      characterBoundConfigIds,
-      l10n,
-    );
+    final reason = _ttsConfigDeleteBlockedReason(config, currentConfigId, l10n);
     if (reason != null) {
       return reason;
     }

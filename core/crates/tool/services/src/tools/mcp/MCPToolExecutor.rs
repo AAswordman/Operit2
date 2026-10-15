@@ -362,7 +362,7 @@ impl AsyncToolExecutor for MCPToolExecutor {
         })
     }
 
-    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool) -> ToolInvocationFuture<'a> {
+    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
         Box::pin(async move { vec![self.invoke(tool).await] })
     }
 }

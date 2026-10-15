@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
+    as core_proxy;
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 
-/// Verifies callback values survive both action parsing paths without re-decoding.
+/// Verifies callback values survive both typed action events without re-decoding.
 void main() {
   final cases = <String, Object?>{
     'JSON success string': '{"success":true}',
@@ -31,7 +33,7 @@ void main() {
 
   for (final entry in cases.entries) {
     for (final phase in ['intermediate', 'final']) {
-      test('$phase preserves ${entry.key} in both parsing paths', () {
+      test('$phase preserves ${entry.key} in the typed session event', () {
         final parsed = parseComposeDslActionEventForTest(
           _event(entry.value, phase: phase, includeTree: true),
         );
@@ -68,48 +70,49 @@ void main() {
     }
   });
 
-  test(
-    'decodes nested transport envelopes without decoding callback content',
-    () {
-      const response = '{"success":true}';
-      final event = jsonDecode(_event(response)) as Map<String, Object?>;
-      event['result'] = jsonEncode(event['result']);
-      final parsed = parseComposeDslActionEventForTest(jsonEncode(event));
-      expect(parsed.actionResult, response);
-      expect(parsed.renderedActionResult, response);
-    },
-  );
-
   test('outer action errors are still propagated', () {
     expect(
       () => parseComposeDslActionEventForTest(
-        jsonEncode({
-          'phase': 'final',
-          'result': jsonEncode({'success': false, 'message': 'action failed'}),
-        }),
+        core_proxy.ToolPkgComposeDslEvent(
+          requestId: 'test',
+          phase: 'error',
+          update: null,
+          actionResult: null,
+          navigationCommands: const [],
+          error: 'action failed',
+        ),
       ),
       throwsA(predicate((error) => error.toString().contains('action failed'))),
     );
   });
 }
 
-/// Encodes the real Core watch envelope with an optional rendered tree.
-String _event(
+/// Supplies a structured action envelope without a UI-tree text codec.
+core_proxy.ToolPkgComposeDslEvent _event(
   Object? actionResult, {
   String phase = 'final',
   bool includeTree = true,
-}) => jsonEncode({
-  'phase': phase,
-  'result': jsonEncode({
-    'success': true,
-    if (includeTree)
-      'tree': {
-        'type': 'Text',
-        'props': {'text': 'Guardian'},
-        'children': <Object?>[],
-      },
-    'state': <String, Object?>{},
-    'memo': <String, Object?>{},
-    'actionResult': actionResult,
-  }),
-});
+}) => core_proxy.ToolPkgComposeDslEvent(
+  requestId: 'test',
+  phase: phase,
+  actionResult: actionResult,
+  error: null,
+  navigationCommands: const [],
+  update: includeTree
+      ? core_proxy.ToolPkgComposeDslNodeUpdate(
+          reset: true,
+          revision: 1,
+          rootId: 'root',
+          removed: const [],
+          upserts: [
+            core_proxy.ToolPkgComposeDslNodeRecord(
+              id: 'root',
+              nodeType: 'Text',
+              props: const {'text': 'Guardian'},
+              children: const [],
+              slots: const {},
+            ),
+          ],
+        )
+      : null,
+);

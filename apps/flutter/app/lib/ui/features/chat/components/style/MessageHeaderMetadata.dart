@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../data/preferences/UserPreferencesManager.dart';
+import '../../../../common/ChatMessageIdentity.dart';
 import '../../viewmodel/ChatViewModel.dart';
 
 /// Returns the primary header title for a cursor-style AI message.
@@ -15,10 +16,26 @@ String cursorAiPrimaryTitle(
   ThemePreferenceSnapshot snapshot, {
   AppLocalizations? l10n,
 }) {
+  if (message.roleName.isEmpty ||
+      readChatMessageIdentity(message)?.usesProviderLogo == true) {
+    return message.modelName;
+  }
   if (snapshot.showRoleName && message.roleName.isNotEmpty) {
     return message.roleName;
   }
   return l10n?.chatMessageResponse ?? 'Response';
+}
+
+/// Returns the participant name or the actual model identity for bubble messages.
+String bubbleAiPrimaryTitle(
+  ChatUiMessage message,
+  ThemePreferenceSnapshot snapshot,
+) {
+  if (message.roleName.isEmpty ||
+      readChatMessageIdentity(message)?.usesProviderLogo == true) {
+    return message.modelName;
+  }
+  return snapshot.showRoleName ? message.roleName : '';
 }
 
 /// Returns the compact model and provider label when enabled in preferences.
@@ -26,7 +43,11 @@ String formatModelProviderLabel(
   ChatUiMessage message,
   ThemePreferenceSnapshot snapshot,
 ) {
-  final showModel = snapshot.showModelName && message.modelName.isNotEmpty;
+  final modelIsPrimary =
+      message.roleName.isEmpty ||
+      readChatMessageIdentity(message)?.usesProviderLogo == true;
+  final showModel =
+      !modelIsPrimary && snapshot.showModelName && message.modelName.isNotEmpty;
   final showProvider =
       snapshot.showModelProvider && message.provider.isNotEmpty;
   if (showModel && showProvider) {
@@ -177,10 +198,7 @@ String formatDurationSeconds(int durationMs) {
 }
 
 /// Formats the message timestamp relative to the current date to avoid truncation.
-String formatSmartMessageTimestamp(
-  ChatUiMessage message, {
-  DateTime? now,
-}) {
+String formatSmartMessageTimestamp(ChatUiMessage message, {DateTime? now}) {
   final rawTimestamp = message.completedAt > 0
       ? message.completedAt
       : message.timestamp;
@@ -261,9 +279,7 @@ String formatMessageMetadataTooltip(
       final timeStr =
           '${dateTime.year}-${twoDigits(dateTime.month)}-${twoDigits(dateTime.day)} '
           '${twoDigits(dateTime.hour)}:${twoDigits(dateTime.minute)}:${twoDigits(dateTime.second)}';
-      lines.add(
-        l10n?.chatMessageTimeTooltip(timeStr) ?? 'Time: $timeStr',
-      );
+      lines.add(l10n?.chatMessageTimeTooltip(timeStr) ?? 'Time: $timeStr');
     }
   }
   return lines.join('\n');
@@ -474,8 +490,7 @@ class _MouseFollowingTooltipState extends State<MouseFollowingTooltip> {
         if (pos == null) {
           return const SizedBox.shrink();
         }
-        final overlayBox =
-            overlay.context.findRenderObject() as RenderBox?;
+        final overlayBox = overlay.context.findRenderObject() as RenderBox?;
         final localPos = overlayBox != null && overlayBox.hasSize
             ? overlayBox.globalToLocal(pos)
             : pos;

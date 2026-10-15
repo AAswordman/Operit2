@@ -1,9 +1,27 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
+
+use super::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry;
+use super::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge;
+use super::ToolPkgChatComposerSlotBridge::ToolPkgChatComposerSlotBridge;
+use super::ToolPkgChatInputHookBridge::ToolPkgChatInputHookBridge;
+use super::ToolPkgChatMessageHookBridge::ToolPkgChatMessageHookBridge;
+use super::ToolPkgChatRuntimeHookBridge::ToolPkgChatRuntimeHookBridge;
+use super::ToolPkgChatViewHookBridge::ToolPkgChatViewHookBridge;
+use super::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use super::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
+use super::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge;
+use super::ToolPkgManifestExtensionBridge::ToolPkgManifestExtensionBridge;
+use super::ToolPkgMessageProcessingBridge::ToolPkgMessageProcessingBridge;
+use super::ToolPkgPromptHookBridge::ToolPkgPromptHookBridge;
+use super::ToolPkgSummaryHookBridge::ToolPkgSummaryHookBridge;
+use super::ToolPkgToolLifecycleBridge::ToolPkgToolLifecycleBridge;
+use super::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge;
 use crate::plugins::PluginRegistry::OperitPlugin;
 
+/// Owns bridge entry points and the single listener for active package registrations.
 pub struct ToolPkgCommonBridgePlugin {
     runtime: ToolPkgBridgeRuntime,
 }
@@ -16,80 +34,54 @@ impl ToolPkgCommonBridgePlugin {
 }
 
 impl OperitPlugin for ToolPkgCommonBridgePlugin {
+    /// Returns the identity of the shared ToolPkg bridge plugin.
     fn id(&self) -> &str {
         "builtin.toolpkg.common-bridge"
     }
 
+    /// Registers bridge entry points before subscribing to the active package catalog.
     fn register(&self) {
         static INSTALLED: AtomicBool = AtomicBool::new(false);
         if INSTALLED.swap(true, Ordering::SeqCst) {
             return;
         }
-        crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgManifestExtensionBridge::ToolPkgManifestExtensionBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgMessageProcessingBridge::ToolPkgMessageProcessingBridge::register(self.runtime.clone());
-        crate::plugins::toolpkg::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgPromptHookBridge::ToolPkgPromptHookBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgSummaryHookBridge::ToolPkgSummaryHookBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgToolLifecycleBridge::ToolPkgToolLifecycleBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgChatInputHookBridge::ToolPkgChatInputHookBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgChatViewHookBridge::ToolPkgChatViewHookBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgChatMessageHookBridge::ToolPkgChatMessageHookBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgChatRuntimeHookBridge::ToolPkgChatRuntimeHookBridge::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge::register(self.runtime.clone());
-        crate::plugins::toolpkg::ToolPkgChatComposerSlotBridge::ToolPkgChatComposerSlotBridge::register(self.runtime.clone());
-        crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::register(
-            self.runtime.clone(),
-        );
-        crate::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge::register(
-            self.runtime.clone(),
-        );
+        ToolPkgMessageProcessingBridge::register(self.runtime.clone());
+        ToolPkgXmlRenderBridge::register(self.runtime.clone());
+        ToolPkgPromptHookBridge::register(self.runtime.clone());
+        ToolPkgSummaryHookBridge::register(self.runtime.clone());
+        ToolPkgToolLifecycleBridge::register(self.runtime.clone());
+        ToolPkgChatInputHookBridge::register(self.runtime.clone());
+        ToolPkgChatViewHookBridge::register(self.runtime.clone());
+        ToolPkgChatMessageHookBridge::register(self.runtime.clone());
+        ToolPkgChatRuntimeHookBridge::register(self.runtime.clone());
+        ToolPkgInputMenuToggleBridge::register(self.runtime.clone());
         let manager = self.runtime.package_manager();
         let runtime = self.runtime.clone();
         manager.addToolPkgRuntimeChangeListener(Arc::new(move |activeContainers| {
-            syncToolPkgRegistrations(&runtime, activeContainers);
+            syncToolPkgRegistrations(&runtime, &activeContainers);
         }));
     }
 }
 
+/// Applies one committed catalog to every bridge without copying its runtime models.
 #[allow(non_snake_case)]
 fn syncToolPkgRegistrations(
     runtime: &ToolPkgBridgeRuntime,
-    activeContainers: Vec<operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime>,
+    activeContainers: &[ToolPkgContainerRuntime],
 ) {
-    crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge::syncAndReplayToolPkgRegistrations(runtime, activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgManifestExtensionBridge::ToolPkgManifestExtensionBridge::syncAndDispatch(runtime, activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgMessageProcessingBridge::ToolPkgMessageProcessingBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgPromptHookBridge::ToolPkgPromptHookBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgSummaryHookBridge::ToolPkgSummaryHookBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgToolLifecycleBridge::ToolPkgToolLifecycleBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgChatInputHookBridge::ToolPkgChatInputHookBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgChatViewHookBridge::ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(runtime, activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgChatMessageHookBridge::ToolPkgChatMessageHookBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgChatRuntimeHookBridge::ToolPkgChatRuntimeHookBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgChatComposerSlotBridge::ToolPkgChatComposerSlotBridge::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::syncToolPkgRegistrations(activeContainers.clone());
-    crate::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge::syncToolPkgRegistrations(runtime, activeContainers);
+    ToolPkgAppLifecycleHookBridge::syncAndReplayToolPkgRegistrations(runtime, activeContainers);
+    ToolPkgManifestExtensionBridge::syncAndDispatch(runtime, activeContainers);
+    ToolPkgMessageProcessingBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgXmlRenderBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgPromptHookBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgSummaryHookBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgToolLifecycleBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgChatInputHookBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(runtime, activeContainers);
+    ToolPkgChatMessageHookBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgChatRuntimeHookBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgInputMenuToggleBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgChatComposerSlotBridge::syncToolPkgRegistrations(activeContainers);
+    ToolPkgAiProviderRegistry::syncToolPkgRegistrations(activeContainers);
+    ToolPkgHostEventHookBridge::syncToolPkgRegistrations(runtime, activeContainers);
 }

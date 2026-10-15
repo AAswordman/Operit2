@@ -7,7 +7,6 @@ import android.util.Log
 import android.view.Display
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
-import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -136,19 +135,23 @@ class MainActivity : FlutterActivity() {
     /** Parses and records the notification activation embedded in one launch intent. */
     private fun recordNotificationActivation(intent: Intent?) {
         val encodedActivation = intent?.getStringExtra(NOTIFICATION_ACTIVATION_EXTRA) ?: return
-        val json = JSONObject(encodedActivation)
-        val type = json.getString("type")
-        val activation =
-            when (type) {
-                "open_application" -> mapOf("type" to type)
-                "open_chat" -> mapOf("type" to type, "chatId" to json.getString("chatId"))
-                else -> throw IllegalArgumentException("unsupported notification activation type: $type")
+        when (
+            val decoded = NotificationActivationCodec.decode(encodedActivation) { message, error ->
+                Log.w(TAG, message, error)
             }
-        if (notificationActivationReceiverReady && ::runtimeRouter.isInitialized) {
-            runtimeRouter.emitNotificationActivation(activation)
-            return
+        ) {
+            is NotificationActivationDecode.Accepted -> {
+                if (notificationActivationReceiverReady && ::runtimeRouter.isInitialized) {
+                    runtimeRouter.emitNotificationActivation(decoded.activation)
+                    return
+                }
+                pendingNotificationActivation = decoded.activation
+            }
+            is NotificationActivationDecode.Rejected ->
+                // The activation is discarded (WARN already logged by the codec);
+                // the launch itself still proceeds.
+                Unit
         }
-        pendingNotificationActivation = activation
     }
 
     private fun requestHighestRefreshRate() {

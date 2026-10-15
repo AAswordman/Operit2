@@ -7,7 +7,6 @@ pub struct Esp32FirmwareConfig {
     pub wifiPassword: String,
     pub httpPort: u16,
     pub edgePort: u16,
-    pub edgeToken: String,
 }
 
 impl Esp32FirmwareConfig {
@@ -20,7 +19,6 @@ impl Esp32FirmwareConfig {
                 .to_string(),
             httpPort: 80,
             edgePort: 8765,
-            edgeToken: option_env!("OPERIT_EDGE_TOKEN").unwrap_or("").to_string(),
         }
     }
 
@@ -51,11 +49,6 @@ impl Esp32FirmwareConfig {
             } else {
                 settings.wifiPassword.clone()
             },
-            edgeToken: if settings.edgeToken.trim().is_empty() {
-                build.edgeToken
-            } else {
-                settings.edgeToken.clone()
-            },
             httpPort: build.httpPort,
             edgePort: build.edgePort,
         }
@@ -81,7 +74,6 @@ mod tests {
             wifiPassword: String::new(),
             httpPort: 80,
             edgePort: 8765,
-            edgeToken: String::new(),
         };
         assert!(!config.hasWifi());
 

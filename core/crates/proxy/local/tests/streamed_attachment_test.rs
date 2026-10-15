@@ -11,7 +11,7 @@ use operit_host_native_common::{
     NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost, NativeRuntimeStorageHost,
     PosixFileSystemHost,
 };
-use operit_link::{CorePushRequest, toCoreValue};
+use operit_link::{CoreLinkSharedClient, CorePushRequest, toCoreValue};
 use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::services::AttachmentTransferManager::AttachmentTransferManager;
@@ -43,10 +43,11 @@ impl RuntimeStorageWriteSession for FailingSession {
     }
 }
 
-/// Covers the generated reverse stream and real Host writer without allocating the full APK.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn streamed_attachments_publish_only_complete_bounded_uploads() {
-    let root = std::env::temp_dir().join(format!(
+/// Isolates application singletons so every database handle closes before directory cleanup.
+#[test]
+fn streamed_attachments_publish_only_complete_bounded_uploads() {
+    let temporaryRoot = std::env::temp_dir().canonicalize().unwrap();
+    let root = temporaryRoot.join(format!(
         "operit-attachment-stream-{}-{}",
         std::process::id(),
         SystemTime::now()
@@ -54,6 +55,30 @@ async fn streamed_attachments_publish_only_complete_bounded_uploads() {
             .unwrap()
             .as_nanos()
     ));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "streamed_attachment_worker", "--ignored", "--nocapture"])
+        .env("OPERIT_STREAMED_ATTACHMENT_TEST_ROOT", &root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "upload worker failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let resolvedRoot = root.canonicalize().unwrap();
+    assert_eq!(resolvedRoot.parent(), Some(temporaryRoot.as_path()));
+    std::fs::remove_dir_all(resolvedRoot).unwrap();
+}
+
+/// Exercises the shared input stream and real Host writer inside the parent-owned test process.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Executed by the parent test with an explicitly owned storage directory"]
+async fn streamed_attachment_worker() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("OPERIT_STREAMED_ATTACHMENT_TEST_ROOT")
+            .expect("upload worker requires its parent-owned storage directory"),
+    );
     let storage = Arc::new(NativeRuntimeStorageHost::new(
         root.join("runtime"),
         root.join("workspaces"),
@@ -85,7 +110,8 @@ async fn streamed_attachments_publish_only_complete_bounded_uploads() {
             .unwrap(),
         );
     assert!(proxy.isReverseStreamRequest(&request));
-    let mut stream = proxy.openPushLocal(request).unwrap();
+    let client: &dyn CoreLinkSharedClient = &proxy;
+    let mut stream = client.openPush(request).await.unwrap();
     tokio::time::timeout(Duration::from_secs(120), async {
         let mut sent = 0usize;
         let mut index = 0usize;
@@ -118,6 +144,7 @@ async fn streamed_attachments_publish_only_complete_bounded_uploads() {
         file.read_exact(&mut buffer).unwrap();
         assert_eq!(buffer, [(index % 251) as u8; 31]);
     }
+    drop(file);
     transfer
         .discardAttachmentUpload(id, "大文件.apk".into())
         .unwrap();
@@ -227,5 +254,5 @@ async fn streamed_attachments_publish_only_complete_bounded_uploads() {
             .count(),
         0
     );
-    std::fs::remove_dir_all(root).unwrap();
+    // The parent removes the directory after this process releases all application singletons.
 }

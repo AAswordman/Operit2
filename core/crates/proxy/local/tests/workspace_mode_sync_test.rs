@@ -205,7 +205,7 @@ async fn workspace_modes_follow_creation_reload_unbind_and_rebind() {
             let manager = snapshot();
             ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(
                 &bridge,
-                manager.getEnabledToolPkgContainerRuntimes(),
+                &manager.getEnabledToolPkgContainerRuntimes(),
             );
             assert_workspace_state(&manager, &chat_id, true).await;
             enable_modes(&manager, &chat_id).await;

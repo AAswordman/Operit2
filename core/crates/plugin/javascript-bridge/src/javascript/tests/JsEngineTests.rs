@@ -30,6 +30,110 @@ use std::sync::OnceLock;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
+/// Retains real streamed records solely to support existing tree-oriented assertions.
+#[derive(Default)]
+struct AssertionGraph {
+    nodes: BTreeMap<String, Value>,
+    root: Option<String>,
+    revision: u64,
+}
+
+impl AssertionGraph {
+    /// Applies the real stream protocol before projecting an assertion tree.
+    fn accept(&mut self, response: &Value) {
+        assert!(response.get("tree").is_none() && response.get("state").is_none() && response.get("memo").is_none());
+        if let Some(update) = response.get("update") {
+            if update["reset"] == true { self.nodes.clear(); }
+            else { assert_eq!(update["revision"].as_u64().unwrap(), self.revision + 1); }
+            self.revision = update["revision"].as_u64().unwrap();
+            for node in update["upserts"].as_array().unwrap() { self.nodes.insert(node["id"].as_str().unwrap().into(), node.clone()); }
+            for id in update["removed"].as_array().unwrap() { self.nodes.remove(id.as_str().unwrap()); }
+            self.root = Some(update["rootId"].as_str().unwrap().into());
+        }
+    }
+
+    /// Expands node identifiers only inside test assertions, outside the production transport.
+    fn tree(&self, id: &str) -> Value {
+        let node = &self.nodes[id];
+        let children: Vec<Value> = node["children"].as_array().unwrap().iter().map(|id| self.tree(id.as_str().unwrap())).collect();
+        let slots: BTreeMap<String, Vec<Value>> = node["slots"].as_object().unwrap().iter().map(|(name, ids)| (name.clone(), ids.as_array().unwrap().iter().map(|id| self.tree(id.as_str().unwrap())).collect())).collect();
+        serde_json::json!({"type": node["nodeType"], "props": node["props"], "children": children, "slots": slots})
+    }
+
+    /// Adds a test tree only to responses that actually contain a composition update.
+    fn project(&self, mut response: Value) -> Value {
+        if response.get("update").is_some() { response["tree"] = self.tree(self.root.as_deref().unwrap()); }
+        response
+    }
+}
+
+/// Resolves a test-owned retained graph for the concrete native engine handle.
+fn assertionGraph(engine: &super::JsEngine) -> Arc<Mutex<AssertionGraph>> {
+    static GRAPHS: OnceLock<Mutex<BTreeMap<u64, Arc<Mutex<AssertionGraph>>>>> = OnceLock::new();
+    GRAPHS.get_or_init(|| Mutex::new(BTreeMap::new())).lock().unwrap()
+        .entry(engine.worker.stateHandle.id).or_default().clone()
+}
+
+impl super::JsEngine {
+    /// Renders through the sole production stream API and projects its response for assertions.
+    fn renderForAssertions(&self, script: &str, options: &BTreeMap<String, Value>, env: &BTreeMap<String, String>, resources: Arc<BTreeMap<String, String>>) -> operit_plugin_sdk::javascript::JsExecutionFuture<operit_plugin_sdk::execution_result::JsExecutionResult<Option<Value>>> {
+        self.assertionCommand(Some(script.into()), None, None, options.clone(), env.clone(), Some(resources), None)
+    }
+
+    /// Adapts owned test arguments without introducing another production execution path.
+    fn renderForAssertionsAsync(&self, script: String, options: BTreeMap<String, Value>, env: BTreeMap<String, String>, resources: Arc<BTreeMap<String, String>>) -> operit_plugin_sdk::javascript::JsExecutionFuture<operit_plugin_sdk::execution_result::JsExecutionResult<Option<Value>>> {
+        self.assertionCommand(Some(script), None, None, options, env, Some(resources), None)
+    }
+
+    /// Dispatches through the sole production action stream and projects the response for assertions.
+    fn actionForAssertions(&self, id: &str, payload: Option<Value>, options: &BTreeMap<String, Value>, env: &BTreeMap<String, String>, intermediate: Option<Arc<dyn Fn(Value) + Send + Sync>>) -> operit_plugin_sdk::javascript::JsExecutionFuture<operit_plugin_sdk::execution_result::JsExecutionResult<Option<Value>>> {
+        self.assertionCommand(None, Some(id.into()), payload, options.clone(), env.clone(), None, intermediate)
+    }
+
+    /// Adapts owned action test arguments to the same assertion capture.
+    fn actionForAssertionsAsync(&self, id: String, payload: Option<Value>, options: BTreeMap<String, Value>, env: BTreeMap<String, String>, intermediate: Option<Arc<dyn Fn(Value) + Send + Sync>>) -> operit_plugin_sdk::javascript::JsExecutionFuture<operit_plugin_sdk::execution_result::JsExecutionResult<Option<Value>>> {
+        self.assertionCommand(None, Some(id), payload, options, env, None, intermediate)
+    }
+
+    /// Captures real synchronous stream responses and inspects JS storage only when a test asks for it.
+    fn assertionCommand(&self, script: Option<String>, id: Option<String>, payload: Option<Value>, mut options: BTreeMap<String, Value>, env: BTreeMap<String, String>, resources: Option<Arc<BTreeMap<String, String>>>, intermediate: Option<Arc<dyn Fn(Value) + Send + Sync>>) -> operit_plugin_sdk::javascript::JsExecutionFuture<operit_plugin_sdk::execution_result::JsExecutionResult<Option<Value>>> {
+        let engine = self.clone();
+        let retained_only = options.remove("__test_retained_response") == Some(Value::Bool(true));
+        let graph = assertionGraph(self);
+        let final_response = Arc::new(Mutex::new(None));
+        let capture = final_response.clone();
+        let sink = Arc::new(move |envelope: Value| {
+            let response = envelope["response"].clone();
+            let mut graph = graph.lock().unwrap();
+            graph.accept(&response);
+            let projected = if retained_only { response } else { graph.project(response) };
+            match envelope["phase"].as_str().unwrap() {
+                "final" => *capture.lock().unwrap() = Some(projected),
+                "intermediate" => if let Some(callback) = &intermediate { callback(projected); },
+                phase => panic!("Unexpected response phase: {phase}"),
+            }
+        });
+        Box::pin(async move {
+            let result = match script {
+                Some(script) => engine.execute_compose_dsl_script_stream_async(script, options.clone(), env.clone(), resources.unwrap(), sink).await?,
+                None => engine.dispatch_compose_dsl_action_stream_async(id.unwrap(), payload, options.clone(), env.clone(), sink).await?,
+            };
+            assert_eq!(result, Some(Value::Null));
+            let mut response = final_response.lock().unwrap().take().expect("Command must publish a final response");
+            if !retained_only {
+                let storage = engine.execute_script_function(
+                    "exports.inspectComposeStorage = function() { const bundle = globalThis.__operit_compose_bundle; return { state: bundle.stateStore, memo: bundle.memoStore }; };",
+                    "inspectComposeStorage", &options, &env, None, true, 60, None,
+                ).await?.unwrap();
+                let storage: Value = serde_json::from_str(&storage).unwrap();
+                response["state"] = storage["state"].clone();
+                response["memo"] = storage["memo"].clone();
+            }
+            Ok(Some(response))
+        })
+    }
+}
+
 /// Returns the native JavaScript Host shared by this test process.
 #[allow(non_snake_case)]
 fn testJavaScriptRuntimeHost() -> Arc<NativeHostJavaScriptRuntimeHost> {
@@ -47,7 +151,7 @@ fn testJavaScriptRuntimeHost() -> Arc<NativeHostJavaScriptRuntimeHost> {
 fn newTestJsEngine(executionHost: Arc<dyn JsExecutionHost>) -> super::JsEngine {
     testJavaScriptRuntimeHost();
     register_test_runtime_storage("js-engine-tests");
-    super::JsEngine::new(executionHost)
+    super::JsEngine::new(executionHost).expect("test engine must initialize")
 }
 
 /// Creates a package-bound UI engine for asynchronous cross-runtime IPC tests.
@@ -65,7 +169,7 @@ fn newTestIpcEngine(executionHost: Arc<dyn JsExecutionHost>) -> super::JsEngine 
                 resources: BTreeMap::new(),
             }),
         },
-    )
+    ).expect("test engine must initialize")
 }
 
 /// Returns the repository root above core/crates/plugin/javascript-bridge.
@@ -82,7 +186,7 @@ fn testRepositoryRoot() -> &'static Path {
 fn newTestToolPkgRegistrationEngine() -> super::JsEngine {
     testJavaScriptRuntimeHost();
     register_test_runtime_storage("js-engine-tests");
-    super::JsEngine::new_toolpkg_registration_engine()
+    super::JsEngine::new_toolpkg_registration_engine().expect("test engine must initialize")
 }
 
 /// Creates one directly accessible JavaScript state through the concrete native Host.
@@ -97,19 +201,22 @@ pub(super) fn newTestJsEngineState(
         .expect("test JavaScript state must initialize")
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct TestPluginConfigExecutionHost {
+    storage: Option<StorageTestFixture>,
     gatedToolCalls: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<JsToolCallResult>>>>,
     edgePortCalls: Arc<Mutex<Vec<Value>>>,
     gatedToolStarted: Arc<tokio::sync::Notify>,
-    toolPkgTextResourceReads: AtomicUsize,
-    registrationConfigReads: AtomicUsize,
-    packageManagerLock: Mutex<()>,
-    environment: Mutex<BTreeMap<String, String>>,
+    toolPkgTextResourceReads: Arc<AtomicUsize>,
+    registrationConfigReads: Arc<AtomicUsize>,
+    toolPkgContextBindings: Arc<AtomicUsize>,
+    packageManagerLock: Arc<Mutex<()>>,
+    environment: Arc<Mutex<BTreeMap<String, String>>>,
+    toolCatalogError: Arc<Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     toolPkgIpcThreadName: Arc<Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
-    toolPkgIpcTarget: Mutex<Option<(super::JsEngine, String)>>,
+    toolPkgIpcTarget: Arc<Mutex<Option<(super::JsEngine, String)>>>,
 }
 
 /// Resolves ToolPkg modules from a fixed test resource map.
@@ -129,11 +236,28 @@ impl ToolPkgTextResourceHost for StaticToolPkgTextResourceHost {
     }
 }
 
-crate::impl_rejecting_js_tools_host!(TestPluginConfigExecutionHost);
-
 impl JsExecutionHost for TestPluginConfigExecutionHost {
+        /// Captures this fixture's shared state through the same native invocation boundary.
+        fn capture_tool_invocation_host(&self) -> Arc<dyn JsExecutionHost> { Arc::new(self.clone()) }
+
+
+
+    /// Retains shared host fixtures while accepting only concrete engine-owned package contexts.
+    fn for_toolpkg_execution_context(
+        &self,
+        context: &ToolPkgExecutionContext,
+    ) -> Result<Arc<dyn JsExecutionHost>, String> {
+        self.toolPkgContextBindings.fetch_add(1, Ordering::SeqCst);
+        if context.container_package_name.trim().is_empty() || context.context_key.trim().is_empty()
+        {
+            return Err("Invalid test execution context".to_string());
+        }
+        Ok(Arc::new(self.clone()))
+    }
+
     /// Returns an empty catalog for tests that do not install runtime tools.
     fn get_tool_catalog(&self) -> Result<Value, String> {
+        if let Some(error) = self.toolCatalogError.lock().unwrap().clone() { return Err(error); }
         Ok(serde_json::json!({ "tools": [] }))
     }
 
@@ -142,13 +266,31 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         &self,
         request: JsToolCallRequest,
     ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsToolCallResult> {
+        if request.tool_name == "storage_request" {
+            let decoded = request.parameters.get("request").cloned()
+                .ok_or_else(|| "Missing storage request".to_string())
+                .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()));
+            let operation = match decoded {
+                Ok(request) => storageTestRequest(self, request),
+                Err(error) => return Box::pin(async move { JsToolCallResult {
+                    success: false, data: JsToolCallResultData::Value(Value::Null), error: Some(error),
+                } }),
+            };
+            return Box::pin(async move { match operation.await {
+                Ok(value) => JsToolCallResult { success: true, data: JsToolCallResultData::Value(value), error: None },
+                Err(error) => JsToolCallResult { success: false, data: JsToolCallResultData::Value(Value::Null), error: Some(error.to_string()) },
+            } });
+        }
         let gatedToolCalls = self.gatedToolCalls.clone();
         let gatedToolStarted = self.gatedToolStarted.clone();
         let edgePortCalls = self.edgePortCalls.clone();
         Box::pin(async move {
+            if request.device.as_ref().is_some_and(|device| device.action != operit_plugin_sdk::javascript::JsDeviceToolAction::Port) {
+                return JsToolCallResult {success:true, data:JsToolCallResultData::Value(serde_json::to_value(request).unwrap()), error:None};
+            }
             if matches!(request.tool_name.as_str(),"edge_execute"|"io_execute") {
-                edgePortCalls.lock().unwrap().push(serde_json::json!({"tool":request.tool_name,"params":request.parameters}));
-                let node = request.parameters["node_id"].as_str().unwrap_or("");
+                edgePortCalls.lock().unwrap().push(serde_json::json!({"tool":request.tool_name,"params":request.parameters,"device":request.device}));
+                let node = request.device.as_ref().map(|device| device.node_id.as_str()).unwrap_or("");
                 return if node == "unauthorized" {
                     JsToolCallResult {success:false,data:JsToolCallResultData::Value(Value::Null),error:Some("Edge node access denied".into())}
                 } else {
@@ -286,6 +428,28 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         ))
     }
 
+    /// Returns actual Host-visible local data without acquiring the package manager lock.
+    fn plugin_local_data_dir(&self, owner_id: &str) -> Result<String, String> {
+        let path = operit_store::ExtensionStore::ExtensionStore::localDataPath(owner_id)?;
+        Ok(format!("/app/data/{}", path.strip_prefix("runtime/").ok_or("invalid local data path")?))
+    }
+
+    /// Creates registration-local paths independently of the selected installation scope.
+    fn registration_plugin_local_data_dir(&self, owner_id: &str) -> Result<String, String> {
+        self.plugin_local_data_dir(owner_id)
+    }
+
+    /// Returns shared data independently of the installed package scope.
+    fn plugin_space_data_dir(&self, owner_id: &str) -> Result<String, String> {
+        let path = operit_store::ExtensionStore::ExtensionStore::spaceDataPath(owner_id)?;
+        Ok(format!("/app/data/{}", path.strip_prefix("runtime/").ok_or("invalid shared data path")?))
+    }
+
+    /// Creates registration-shared paths without consulting installed state.
+    fn registration_plugin_space_data_dir(&self, owner_id: &str) -> Result<String, String> {
+        self.plugin_space_data_dir(owner_id)
+    }
+
     /// Records direct ToolPkg text resource reads rejected by this test host.
     fn read_toolpkg_text_resource(
         &self,
@@ -327,6 +491,11 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         _payload: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         panic!("Compose DSL file picking is not part of the plugin config test")
+    }
+
+    /// Rejects unexpected Compose DSL file-save requests.
+    fn save_compose_file(&self, _payload: &serde_json::Value) -> Result<serde_json::Value, String> {
+        panic!("Compose DSL file saving is not part of the plugin config test")
     }
 
     /// Rejects unexpected package state access.
@@ -622,40 +791,57 @@ async fn tool_catalog_bridge_returns_structured_response() {
     engine.destroy();
 }
 
-/// Verifies JavaScript timers race independently from pending Host tool work.
+/// Verifies JavaScript timers finish before explicitly released Host tool work.
 #[tokio::test(flavor = "current_thread")]
 async fn javascript_timer_can_win_race_against_async_tool_call() {
     ensure_test_runtime_root();
-    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
     let params = testParams();
-    let started = Instant::now();
-    let output = engine
-        .execute_script_function(
-            r#"
-                exports.race = async function() {
-                    var toolResult = toolCall("sleep", { duration_ms: 150 })
-                        .then(function() { return "tool"; });
-                    var timeoutResult = new Promise(function(resolve) {
-                        setTimeout(function() { resolve("timeout"); }, 20);
-                    });
-                    return Promise.race([toolResult, timeoutResult]);
-                };
-            "#,
-            "race",
-            &params,
-            &BTreeMap::new(),
-            None,
-            true,
-            2,
-            None,
+    let (sender, mut progress) = tokio::sync::mpsc::unbounded_channel();
+    let (output, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(
+            engine.execute_script_function(
+                r#"
+                    exports.race = async function() {
+                        var toolResult = toolCall("gate", {}).then(function() {
+                            sendIntermediateResult({ completed: "tool" });
+                            return "tool";
+                        });
+                        var timeoutResult = new Promise(function(resolve) {
+                            setTimeout(function() { resolve("timeout"); }, 20);
+                        });
+                        return Promise.race([toolResult, timeoutResult]);
+                    };
+                "#,
+                "race",
+                &params,
+                &BTreeMap::new(),
+                Some(Arc::new(move |value| { sender.send(value).unwrap(); })),
+                true,
+                2,
+                None,
+            ),
+            host.gatedToolStarted.notified(),
         )
-        .await
-        .expect("JavaScript timer must complete while the Host tool is pending");
+    })
+    .await
+    .expect("JavaScript timer must finish while the Host tool remains suspended");
 
-    assert_eq!(output.as_deref(), Some("\"timeout\""));
-    assert!(
-        started.elapsed() < Duration::from_millis(100),
-        "timer completion must not wait for tool execution"
+    assert_eq!(
+        output.expect("JavaScript timer must complete").as_deref(),
+        Some("\"timeout\""),
+    );
+    assert_eq!(host.gatedToolCalls.lock().unwrap().len(), 1);
+    assert!(progress.try_recv().is_err(), "Host tool must remain suspended");
+    finishGatedTool(&host);
+    let completion = tokio::time::timeout(Duration::from_secs(2), progress.recv())
+        .await
+        .expect("released Host tool must resume its JavaScript continuation")
+        .expect("Host tool completion must be delivered");
+    assert_eq!(
+        serde_json::from_str::<Value>(&completion).unwrap(),
+        serde_json::json!({ "completed": "tool" }),
     );
     engine.destroy();
 }
@@ -692,7 +878,7 @@ fn clearing_timer_from_another_call_releases_timer_owner_reference() {
     let result = state
         .evalJavaScriptString(
             r#"(function() {
-                globalThis.__operitNativeScheduleJavaScriptTimer = function() {};
+                globalThis.__operitNativeScheduleJavaScriptTimer = function() { return new Promise(function() {}); };
                 var owner = __operitRegisterCallSession('timer-owner', {});
                 globalThis.__operitCurrentCallId = 'timer-owner';
                 var timerId = setInterval(function() {}, 60000);
@@ -1113,8 +1299,8 @@ fn toolpkg_ipc_local_call_returns_handler_result() {
     );
 
     assert_eq!(
-        expect_js_output(output, "ToolPkg IPC local call"),
-        "{\"value\":42,\"channel\":\"test.local\",\"runtime\":\"main\"}"
+        serde_json::from_str::<Value>(&expect_js_output(output, "ToolPkg IPC local call")).unwrap(),
+        serde_json::json!({"value":42,"channel":"test.local","runtime":"main"})
     );
 }
 
@@ -1257,7 +1443,7 @@ fn workflowIpcFixture() -> (
             api_version: "2.0.0".to_string(),
             text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources }),
         },
-    );
+    ).expect("test engine must initialize");
     *host.toolPkgIpcTarget.lock().unwrap() = Some((engine.clone(), main));
     let mut params = testParams();
     for (key, value) in [
@@ -1377,8 +1563,8 @@ async fn pending_call_releases_state_and_preserves_call_context() {
         None, true, 2, None,
     ).await;
     assert_eq!(
-        expect_js_output(output, "interleaved second call"),
-        r#"{"owner":"second","firstFinished":false}"#
+        serde_json::from_str::<Value>(&expect_js_output(output, "interleaved second call")).unwrap(),
+        serde_json::json!({"owner":"second","firstFinished":false})
     );
     assert_eq!(
         expect_js_output(first.await.unwrap(), "interleaved first call"),
@@ -1611,7 +1797,7 @@ async fn compose_dsl_default_export_can_capture_later_lexical_constants() {
 
     let raw = expect_js_output(
         engine
-            .execute_compose_dsl_script(
+            .renderForAssertions(
                 script,
                 &params,
                 &BTreeMap::new(),
@@ -1620,7 +1806,7 @@ async fn compose_dsl_default_export_can_capture_later_lexical_constants() {
             .await,
         "compose lexical initialization render result",
     );
-    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let parsed = raw.clone();
 
     assert_eq!(parsed["tree"]["props"]["fontSize"], 13);
     assert_eq!(parsed["tree"]["props"]["hintFontSize"], 11);
@@ -1666,11 +1852,11 @@ async fn compose_dsl_resource_snapshot_avoids_host_reentry_for_render_and_action
 
     let raw = expect_js_output(
         engine
-            .execute_compose_dsl_script(script, &params, &BTreeMap::new(), textResources)
+            .renderForAssertions(script, &params, &BTreeMap::new(), textResources)
             .await,
         "compose resource snapshot render result",
     );
-    let rendered = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let rendered = raw.clone();
     assert_eq!(rendered["tree"]["props"]["label"], "resource-snapshot");
     let actionId = rendered["tree"]["props"]["onClick"]["__actionId"]
         .as_str()
@@ -1678,11 +1864,11 @@ async fn compose_dsl_resource_snapshot_avoids_host_reentry_for_render_and_action
 
     let actionRaw = expect_js_output(
         engine
-            .execute_compose_dsl_action(actionId, None, &params, &BTreeMap::new(), None)
+            .actionForAssertions(actionId, None, &params, &BTreeMap::new(), None)
             .await,
         "compose resource snapshot action result",
     );
-    let action = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    let action = actionRaw.clone();
     assert_eq!(action["actionResult"], "resource-snapshot");
     assert_eq!(
         executionHost
@@ -1719,7 +1905,7 @@ async fn compose_dsl_action_uses_rendered_runtime() {
     );
     let raw = expect_js_output(
         engine
-            .execute_compose_dsl_script(
+            .renderForAssertions(
                 script,
                 &params,
                 &BTreeMap::new(),
@@ -1728,18 +1914,18 @@ async fn compose_dsl_action_uses_rendered_runtime() {
             .await,
         "compose render result",
     );
-    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let parsed = raw.clone();
     let actionId = parsed["tree"]["props"]["onClick"]["__actionId"]
         .as_str()
         .expect("action id");
 
     let actionRaw = expect_js_output(
         engine
-            .execute_compose_dsl_action(actionId, None, &params, &BTreeMap::new(), None)
+            .actionForAssertions(actionId, None, &params, &BTreeMap::new(), None)
             .await,
         "compose action result",
     );
-    let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    let actionParsed = actionRaw.clone();
     assert_eq!(actionParsed["actionResult"], 1);
 }
 
@@ -1768,7 +1954,7 @@ async fn compose_dsl_action_updates_runtime_options_state_store() {
     );
     let raw = expect_js_output(
         engine
-            .execute_compose_dsl_script(
+            .renderForAssertions(
                 script,
                 &params,
                 &BTreeMap::new(),
@@ -1777,7 +1963,7 @@ async fn compose_dsl_action_updates_runtime_options_state_store() {
             .await,
         "compose render result",
     );
-    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let parsed = raw.clone();
     let actionId = parsed["tree"]["props"]["onCheckedChange"]["__actionId"]
         .as_str()
         .expect("action id")
@@ -1787,7 +1973,7 @@ async fn compose_dsl_action_updates_runtime_options_state_store() {
 
     let actionRaw = expect_js_output(
         engine
-            .execute_compose_dsl_action(
+            .actionForAssertions(
                 &actionId,
                 Some(Value::Bool(true)),
                 &params,
@@ -1797,7 +1983,7 @@ async fn compose_dsl_action_updates_runtime_options_state_store() {
             .await,
         "compose action result",
     );
-    let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    let actionParsed = actionRaw.clone();
 
     assert_eq!(actionParsed["state"]["enabled"], true);
     assert_eq!(actionParsed["tree"]["props"]["checked"], true);
@@ -1831,7 +2017,7 @@ async fn compose_dsl_async_toggle_action_renders_settled_state() {
     );
     let raw = expect_js_output(
         engine
-            .execute_compose_dsl_script(
+            .renderForAssertions(
                 script,
                 &params,
                 &BTreeMap::new(),
@@ -1840,7 +2026,7 @@ async fn compose_dsl_async_toggle_action_renders_settled_state() {
             .await,
         "compose async toggle render result",
     );
-    let rendered = serde_json::from_str::<Value>(&raw).expect("compose async toggle render json");
+    let rendered = raw.clone();
     let actionId = rendered["tree"]["props"]["onCheckedChange"]["__actionId"]
         .as_str()
         .expect("async toggle action id")
@@ -1850,7 +2036,7 @@ async fn compose_dsl_async_toggle_action_renders_settled_state() {
 
     let actionRaw = expect_js_output(
         engine
-            .execute_compose_dsl_action(
+            .actionForAssertions(
                 &actionId,
                 Some(Value::Bool(true)),
                 &params,
@@ -1861,7 +2047,7 @@ async fn compose_dsl_async_toggle_action_renders_settled_state() {
         "compose async toggle action result",
     );
     let action =
-        serde_json::from_str::<Value>(&actionRaw).expect("compose async toggle action json");
+        actionRaw.clone();
 
     assert_eq!(action["state"]["enabled"], true);
     assert_eq!(action["tree"]["props"]["checked"], true);
@@ -1893,7 +2079,7 @@ async fn compose_dsl_action_can_access_bootstrap_globals() {
     );
     let raw = expect_js_output(
         engine
-            .execute_compose_dsl_script(
+            .renderForAssertions(
                 script,
                 &params,
                 &BTreeMap::new(),
@@ -1902,18 +2088,18 @@ async fn compose_dsl_action_can_access_bootstrap_globals() {
             .await,
         "compose render result",
     );
-    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let parsed = raw.clone();
     let actionId = parsed["tree"]["props"]["onLoad"]["__actionId"]
         .as_str()
         .expect("action id");
 
     let actionRaw = expect_js_output(
         engine
-            .execute_compose_dsl_action(actionId, None, &params, &BTreeMap::new(), None)
+            .actionForAssertions(actionId, None, &params, &BTreeMap::new(), None)
             .await,
         "compose action result",
     );
-    let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    let actionParsed = actionRaw.clone();
 
     assert_eq!(actionParsed["actionResult"]["readResource"], "function");
     assert_eq!(actionParsed["actionResult"]["icon"], "SportsEsports");
@@ -2193,7 +2379,7 @@ fn toolpkg_ipc_main_request_uses_bound_resource_host() {
                 )]),
             }),
         },
-    );
+    ).expect("test engine must initialize");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -2254,7 +2440,7 @@ fn render_planask_through_async_compose_host() {
     let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let raw = expect_js_output(
-        runtime.block_on(engine.execute_compose_dsl_script_async(
+        runtime.block_on(engine.renderForAssertionsAsync(
             script,
             params.clone(),
             BTreeMap::new(),
@@ -2262,7 +2448,7 @@ fn render_planask_through_async_compose_host() {
         )),
         "planask async render",
     );
-    let result: Value = serde_json::from_str(&raw).unwrap();
+    let result: Value = raw.clone();
     assert!(
         result["tree"].is_object(),
         "Unexpected render result: {raw}"
@@ -2276,7 +2462,7 @@ fn render_planask_through_async_compose_host() {
     let intermediate = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured = intermediate.clone();
     let raw = expect_js_output(
-        runtime.block_on(engine.dispatch_compose_dsl_action_result_async(
+        runtime.block_on(engine.actionForAssertionsAsync(
             action,
             None,
             params,
@@ -2285,7 +2471,7 @@ fn render_planask_through_async_compose_host() {
         )),
         "planask onLoad",
     );
-    let result: Value = serde_json::from_str(&raw).unwrap();
+    let result: Value = raw.clone();
     assert!(
         result["tree"].is_object(),
         "Unexpected action result: {raw}"
@@ -2296,7 +2482,7 @@ fn render_planask_through_async_compose_host() {
         "onLoad must deliver intermediate renders"
     );
     for raw in intermediate.iter() {
-        let result: Value = serde_json::from_str(raw).unwrap();
+        let result: Value = raw.clone();
         assert!(
             result["tree"].is_object(),
             "Unexpected intermediate result: {raw}"
@@ -2329,7 +2515,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
     let runtime = tokio::runtime::Runtime::new().expect("JavaScript async test runtime must start");
     let params = testParams();
     let renderedRaw = expect_js_output(
-        runtime.block_on(engine.execute_compose_dsl_script_async(
+        runtime.block_on(engine.renderForAssertionsAsync(
             script.to_string(),
             params.clone(),
             BTreeMap::new(),
@@ -2337,7 +2523,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
         )),
         "Compose timer initial render",
     );
-    let rendered: Value = serde_json::from_str(&renderedRaw).expect("initial render JSON");
+    let rendered: Value = renderedRaw.clone();
     let actionId = rendered["tree"]["props"]["onLoad"]["__actionId"]
         .as_str()
         .expect("Compose onLoad action id")
@@ -2345,10 +2531,10 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
     let mut actionParams = params;
     actionParams.insert("state".to_string(), rendered["state"].clone());
     actionParams.insert("memo".to_string(), rendered["memo"].clone());
-    let intermediate = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let intermediate = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let intermediateForCallback = intermediate.clone();
     let finalRaw = expect_js_output(
-        runtime.block_on(engine.dispatch_compose_dsl_action_result_async(
+        runtime.block_on(engine.actionForAssertionsAsync(
             actionId,
             None,
             actionParams,
@@ -2362,7 +2548,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
         )),
         "Compose timer action",
     );
-    let finalResult: Value = serde_json::from_str(&finalRaw).expect("final action JSON");
+    let finalResult: Value = finalRaw.clone();
     assert_eq!(finalResult["state"]["count"], 0);
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -2371,10 +2557,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
             .expect("Compose timer intermediate mutex poisoned")
             .iter()
             .any(|raw| {
-                serde_json::from_str::<Value>(raw)
-                    .ok()
-                    .and_then(|value| value["state"]["count"].as_i64())
-                    == Some(1)
+                raw["tree"]["children"][0]["props"]["text"].as_str() == Some("1")
             })
         {
             break;
@@ -2413,10 +2596,10 @@ async fn render_message_insert_compose_dsl_screen() {
     );
     let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
     let output = engine
-        .execute_compose_dsl_script(&script, &params, &BTreeMap::new(), Arc::new(textResources))
+        .renderForAssertions(&script, &params, &BTreeMap::new(), Arc::new(textResources))
         .await;
     let raw = expect_js_output(output, "message_insert compose render");
-    let rendered = serde_json::from_str::<Value>(&raw).expect("message_insert compose render JSON");
+    let rendered = raw.clone();
     assert!(rendered["tree"].is_object());
     engine.destroy();
 }
@@ -2456,11 +2639,11 @@ async fn message_insert_compose_master_switch_updates_before_async_persistence()
     let resources = Arc::new(textResources);
     let renderedRaw = expect_js_output(
         engine
-            .execute_compose_dsl_script(&script, &params, &BTreeMap::new(), resources)
+            .renderForAssertions(&script, &params, &BTreeMap::new(), resources)
             .await,
         "message_insert compose render",
     );
-    let rendered = serde_json::from_str::<Value>(&renderedRaw).expect("rendered JSON");
+    let rendered = renderedRaw.clone();
     let actionId = find_switch_action_for_text(&rendered["tree"], "额外信息注入")
         .expect("master switch action id");
     let mut actionParams = params.clone();
@@ -2468,7 +2651,7 @@ async fn message_insert_compose_master_switch_updates_before_async_persistence()
     actionParams.insert("memo".to_string(), rendered["memo"].clone());
     let actionRaw = expect_js_output(
         engine
-            .execute_compose_dsl_action(
+            .actionForAssertions(
                 &actionId,
                 Some(Value::Bool(true)),
                 &actionParams,
@@ -2478,7 +2661,7 @@ async fn message_insert_compose_master_switch_updates_before_async_persistence()
             .await,
         "message_insert master toggle action",
     );
-    let action = serde_json::from_str::<Value>(&actionRaw).expect("action JSON");
+    let action = actionRaw.clone();
     assert_eq!(action["state"]["masterEnabled"], true);
     assert_eq!(find_switch_checked_for_text(&action["tree"]), Some(true));
     engine.destroy();
@@ -2703,6 +2886,7 @@ fn registration_mode_blocks_resource_and_wasm_calls() {
             }
             ToolPkg.registerNavigationEntry({
                 id: 'registration-capability-check',
+                surface: 'toolbox',
                 resourceError: resourceError,
                 wasmError: wasmError
             });
@@ -2747,10 +2931,16 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
         );
         let script = r#"
             const directory = ToolPkg.getConfigDir();
+            const localDirectory = ToolPkg.getLocalDataDir();
+            const sharedDirectory = ToolPkg.getSpaceDataDir();
             exports.registerToolPkg = function() {
                 ToolPkg.registerNavigationEntry({
                     id: 'config-check',
+                    surface: 'toolbox',
                     directory: directory,
+                    localDirectory: localDirectory,
+                    sharedDirectory: sharedDirectory,
+                    localAgain: ToolPkg.getLocalDataDir(),
                     aliasDirectory: ToolPkg.getConfigDir('named_alias')
                 });
                 return true;
@@ -2765,6 +2955,9 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
             scope.as_str()
         );
         assert_eq!(entry["directory"], root);
+        assert_eq!(entry["localDirectory"], "/app/data/plugin_data/device/first_import");
+        assert_eq!(entry["localAgain"], entry["localDirectory"]);
+        assert_eq!(entry["sharedDirectory"], "/app/data/plugin_data/space/first_import");
         assert_eq!(
             entry["aliasDirectory"],
             format!("{root}/namespaces/named_alias")
@@ -2810,6 +3003,25 @@ async fn registration_config_context_does_not_leak_into_runtime_execution() {
         "/app/data/extensions/device/plugins/configs/first_import"
     );
     assert_eq!(host.registrationConfigReads.load(Ordering::Relaxed), 1);
+}
+
+/// Keeps both data paths identical during registration and runtime independently of installation scope.
+#[tokio::test(flavor = "current_thread")]
+async fn local_data_directory_is_stable_across_registration_and_runtime() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let mut params = testParams();
+    params.insert("toolPkgId".into(), Value::String("first_import".into()));
+    params.insert("__operit_registration_config_scope".into(), Value::String("space".into()));
+    engine.execute_toolpkg_main_registration_function(
+        "const local = ToolPkg.getLocalDataDir(); exports.registerToolPkg = function() { return true; };",
+        "registerToolPkg", &params,
+    ).expect("local data is available before installation");
+    let output = engine.execute_script_function(
+        "exports.local_data = function() { return {local:ToolPkg.getLocalDataDir(),shared:ToolPkg.getSpaceDataDir()}; };",
+        "local_data", &params, &BTreeMap::new(), None, true, 2, None,
+    ).await.expect("local runtime directory").expect("local directory output");
+    assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!({"local":"/app/data/plugin_data/device/first_import","shared":"/app/data/plugin_data/space/first_import"}));
 }
 
 /// Rejects an unspecified registration scope instead of choosing an arbitrary storage location.
@@ -3024,8 +3236,9 @@ async fn completion_retains_detached_promise_context_until_host_event() {
         "toolPkgId".to_string(),
         Value::String("workflow".to_string()),
     );
-    let output = engine.execute_script_function(
-        r#"exports.main = function() {
+    let output = engine
+        .execute_script_function(
+            r#"exports.main = function() {
             globalThis.detachedRuns = 0;
             toolCall('gate', {}).then(function() {
                 globalThis.detachedRuns++;
@@ -3037,10 +3250,18 @@ async fn completion_retains_detached_promise_context_until_host_event() {
                 });
             });
             return 'primary';
-        };"#, "main", &params,
-        &BTreeMap::from([("CALL_OWNER".to_string(), "original".to_string())]),
-        Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, 2, None,
-    ).await;
+        };"#,
+            "main",
+            &params,
+            &BTreeMap::from([("CALL_OWNER".to_string(), "original".to_string())]),
+            Some(Arc::new(move |value| {
+                sender.send(value).unwrap();
+            })),
+            true,
+            2,
+            None,
+        )
+        .await;
     assert_eq!(
         expect_js_output(output, "primary completion"),
         "\"primary\""
@@ -3197,20 +3418,18 @@ async fn promise_jobs_restore_execution_host_for_native_calls() {
 
 /// Exercises real QuickJS bootstrap and generated positional-to-tool bindings.
 #[tokio::test(flavor = "current_thread")]
-async fn edge_io_sdk_aliases_forward_node_interface_args_and_reject_failures() {
+async fn device_tools_hardware_uses_selected_node_and_rejects_failures() {
     let host=Arc::new(TestPluginConfigExecutionHost::default());
     let engine=newTestJsEngine(host.clone());
     let output=engine.execute_script_function(r#"
         exports.ports = async function() {
             if (tools !== Tools) throw Error('different Tools object');
-            if (typeof Tools.Edge !== 'function' || typeof Tools.Io !== 'function') throw Error('static classes missing');
+            if (Tools.Edge !== undefined || Tools.Io !== undefined) throw Error('old global hardware APIs remain');
             if (Tools.edge !== undefined || Tools.io !== undefined) throw Error('noncanonical namespace');
-            try { new Tools.Edge(); throw Error('Edge must not be instantiated'); }
-            catch(error) { if (!String(error).includes('static class')) throw error; }
-            const edge=await Tools.Edge.execute('edge-one',{pluginId:'device.status',action:'read'},{text:'ping'});
-            const io=await Tools.Io.execute('edge-two',{port:'gpio',operation:'read'},{pin:2});
+            const edge=await Tools.device('edge-one').Edge.execute({target:'edge.status',method:'read'},{text:'ping'});
+            const io=await Tools.device('edge-two').Io.execute({port:'gpio',operation:'read'},{pin:2});
             let failure='';
-            try { await Tools.Edge.execute('unauthorized',{pluginId:'device.status',action:'read'}); }
+            try { await Tools.device('unauthorized').Edge.execute({target:'edge.status',method:'read'}); }
             catch(error) { failure=String(error.message || error); }
             return {edge:edge.nodeId,io:io.nodeId,failure};
         };
@@ -3219,9 +3438,11 @@ async fn edge_io_sdk_aliases_forward_node_interface_args_and_reject_failures() {
     assert_eq!(result,serde_json::json!({"edge":"edge-one","io":"edge-two","failure":"Edge node access denied"}));
     let calls=host.edgePortCalls.lock().unwrap();
     assert_eq!(calls.len(),3);
-    assert_eq!(calls[0],serde_json::json!({"tool":"edge_execute","params":{"node_id":"edge-one","interface_info":{"pluginId":"device.status","action":"read"},"args":{"text":"ping"}}}));
-    assert_eq!(calls[1],serde_json::json!({"tool":"io_execute","params":{"node_id":"edge-two","interface_info":{"port":"gpio","operation":"read"},"args":{"pin":2}}}));
-    assert!(calls[2]["params"].get("args").is_none()||calls[2]["params"]["args"].is_null());
+    assert_eq!(calls[0]["params"], serde_json::json!({"interface_info":{"target":"edge.status","method":"read"},"args":{"text":"ping"}}));
+    assert_eq!(calls[0]["device"]["nodeId"], "edge-one");
+    assert_eq!(calls[1]["params"], serde_json::json!({"interface_info":{"port":"gpio","operation":"read"},"args":{"pin":2}}));
+    assert_eq!(calls[1]["device"]["nodeId"], "edge-two");
+    assert_eq!(calls[2]["params"]["args"], serde_json::json!({}));
     drop(calls);engine.destroy();
 }
 
@@ -3234,10 +3455,10 @@ async fn structured_tool_calls_preserve_values_and_avoid_json_text() {
                 var savedStringify = JSON.stringify, savedParse = JSON.parse;
                 var parameters = {
                     text: '\"\n\u2028中'.repeat(16384),
-                    integer: 7, large: 1e16, date: new Date('2020-01-01T00:00:00Z'),
-                    nested: {x:true, omit:undefined}, array: [undefined, , NaN, 2],
-                    boxed: new Boolean(false), ['__proto__']: {polluted:true},
-                    custom: {toJSON:function(key){return {key:key};}}
+                    integer: 7, large: 1e16, date: '2020-01-01T00:00:00.000Z',
+                    nested: {x:true}, array: [null, null, null, 2],
+                    boxed: false, ['__proto__']: {polluted:true},
+                    custom: {key: "custom"}
                 };
                 JSON.stringify = function(value) {
                     if(value && value.text===parameters.text) throw new Error('Tool request serialized as text');
@@ -3275,6 +3496,7 @@ async fn structured_tool_calls_preserve_values_and_avoid_json_text() {
     engine.destroy();
 }
 
+/// Rejects unsupported JSON values without preventing subsequent valid or binary calls.
 #[tokio::test(flavor = "current_thread")]
 async fn structured_tool_calls_recover_from_invalid_parameters_and_preserve_binary_results() {
     let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
@@ -3282,7 +3504,10 @@ async fn structured_tool_calls_recover_from_invalid_parameters_and_preserve_bina
         .execute_script_function(
             r#"exports.main = async function() {
             var failures=[]; var cycle={};cycle.self=cycle;
-            for (var p of [cycle,{big:1n},[],{get x(){throw new Error('getter');}}]) {
+            for (var p of [cycle,{big:1n},[],{get x(){throw new Error('getter');}},
+                {date:new Date()},{boxed:new Boolean(false)},{omit:undefined},
+                {array:[undefined]},{array:[,]},{number:NaN},{number:Infinity},
+                {custom:{toJSON:function(){return {};}}}]) {
                 try {await toolCall('echo',p);failures.push(false);}catch(e){failures.push(true);}
             }
             return {failures:failures, good:(await toolCall('echo',{x:42})).x,
@@ -3301,7 +3526,7 @@ async fn structured_tool_calls_recover_from_invalid_parameters_and_preserve_bina
         serde_json::from_str(&expect_js_output(result, "invalid parameters recovery")).unwrap();
     assert_eq!(
         output,
-        serde_json::json!({"failures":[true,true,true,true],"good":42,"binary":"AQID"})
+        serde_json::json!({"failures":[true,true,true,true,true,true,true,true,true,true,true,true],"good":42,"binary":"AQID"})
     );
     engine.destroy();
 }
@@ -3380,4 +3605,806 @@ async fn bridge_roundtrip_benchmark() {
         );
         engine.destroy();
     }
+}
+
+/// Creates an actual immutable SDK execution context without authenticating any owner through JavaScript data.
+fn chatExtensionFixtureContext(owner: &str) -> ToolPkgExecutionContext {
+    ToolPkgExecutionContext {
+        context_key: format!("toolpkg_main:{owner}"),
+        container_package_name: owner.to_string(),
+        api_version: "2.0.0".to_string(),
+        text_resource_host: Arc::new(StaticToolPkgTextResourceHost {
+            resources: BTreeMap::new(),
+        }),
+    }
+}
+
+/// Keeps two real engine context identities isolated when tool parameters attempt to forge a namespace.
+#[test]
+fn chat_extension_owner_ignores_forged_tool_parameters() {
+    let contextA = chatExtensionFixtureContext("org.example.owner-a");
+    let contextB = chatExtensionFixtureContext("org.example.owner-b");
+    let request = JsToolCallRequest {
+        tool_type: "Chat".to_string(),
+        tool_name: "writeExtension".to_string(),
+        device: None,
+        parameters: BTreeMap::from([
+            (
+                "owner".to_string(),
+                Value::String(contextB.container_package_name.clone()),
+            ),
+            (
+                "namespace".to_string(),
+                Value::String(contextB.container_package_name.clone()),
+            ),
+            (
+                "pluginId".to_string(),
+                Value::String(contextB.container_package_name.clone()),
+            ),
+        ]),
+    };
+    assert_eq!(
+        { contextA.validate().unwrap(); contextA.container_package_name.as_str() },
+        "org.example.owner-a"
+    );
+    assert_eq!(
+        { contextB.validate().unwrap(); contextB.container_package_name.as_str() },
+        "org.example.owner-b"
+    );
+    assert_ne!(
+        { contextA.validate().unwrap(); contextA.container_package_name.as_str() },
+        request.parameters["owner"].as_str().unwrap()
+    );
+}
+
+/// Rejects missing native execution identity even when JavaScript can supply a nonempty owner string.
+#[test]
+fn chat_extension_owner_requires_real_execution_context() {
+    let mut context = chatExtensionFixtureContext("org.example.owner-a");
+    context.context_key.clear();
+    assert!(context.validate().is_err());
+    let context = chatExtensionFixtureContext(" ");
+    assert!(context.validate().is_err());
+}
+
+/// Lowered async functions subscribing to one retained service Promise keep distinct call owners.
+#[tokio::test(flavor = "current_thread")]
+async fn shared_initialization_promise_preserves_each_waiting_call_context() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let first_engine = engine.clone();
+    let first = tokio::spawn(first_engine.execute_script_function(
+        r#"exports.initialize = function() {
+            const owner = globalThis.__operitCurrentCallId;
+            globalThis.sharedInitialization = toolCall('gate', {});
+            return globalThis.sharedInitialization.then(function() {
+                if (globalThis.__operitCurrentCallId !== owner) throw new Error('Shared Promise resumed under a different execution call');
+                return getEnv('CALL_OWNER');
+            });
+        };"#,
+        "initialize", &testParams(),
+        &BTreeMap::from([("CALL_OWNER".to_string(), "initializer".to_string())]),
+        None, true, 2, None,
+    ));
+    host.gatedToolStarted.notified().await;
+    let (sender, mut started) = tokio::sync::mpsc::unbounded_channel();
+    let second_engine = engine.clone();
+    let second = tokio::spawn(second_engine.execute_script_function(
+        r#"exports.useService = function() {
+            const owner = globalThis.__operitCurrentCallId;
+            sendIntermediateResult('awaiting-initialization');
+            return globalThis.sharedInitialization.then(function() { return Promise.resolve().then(function() {
+                if (globalThis.__operitCurrentCallId !== owner) throw new Error('Shared Promise resumed under a different execution call');
+                return getEnv('CALL_OWNER');
+            }); });
+        };"#,
+        "useService", &testParams(),
+        &BTreeMap::from([("CALL_OWNER".to_string(), "consumer".to_string())]),
+        Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, 2, None,
+    ));
+    started.recv().await.expect("consumer must await initialization before its completion");
+    finishGatedTool(&host);
+    assert_eq!(expect_js_output(first.await.unwrap(), "shared initialization owner"), "\"initializer\"");
+    assert_eq!(expect_js_output(second.await.unwrap(), "shared initialization consumer"), "\"consumer\"");
+    assert_eq!(executionSessionCounts(&engine).await, (0, 0));
+    engine.destroy();
+}
+
+/// Holds explicitly installed real Host storage for the native JavaScript integration test.
+#[derive(Clone)]
+struct StorageTestFixture {
+    host: Arc<operit_host_native_storage::NativeRuntimeStorageHost>,
+    session: operit_store::PluginStorage::PluginStorageSession,
+}
+
+/// Routes only the explicitly installed storage fixture through its authenticated session.
+#[allow(non_snake_case)]
+fn storageTestRequest(host: &TestPluginConfigExecutionHost, request: operit_plugin_sdk::js_sdk::storage::StorageRequest) -> operit_plugin_sdk::js_sdk::JsFuture<Value> {
+    let fixture = host.storage.clone();
+    Box::pin(async move {
+        let fixture = fixture.ok_or_else(|| operit_plugin_sdk::js_sdk::JsHostError::new("Storage fixture is not installed"))?;
+        let response = fixture.session.request(fixture.host.clone(), fixture.host, request, "native-js-test")
+            .map_err(|error| operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string()))?;
+        serde_json::to_value(operit_plugin_sdk::js_sdk::results::ToolResultData::StorageRequestResultData(response.into()))
+            .map_err(|error| operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string()))
+    })
+}
+
+/// Exercises the production JS callback and actual SQLite engine with JSON text codecs disabled.
+#[tokio::test(flavor = "current_thread")]
+async fn storage_structured_promise_roundtrips_real_sqlite_and_record_proxies() {
+    let root = std::env::temp_dir().join(format!("operit-js-storage-{}",uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let host=Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(root.join("runtime"),root.join("workspaces")));
+    let config=operit_store::ExtensionStore::ExtensionStore::localDataPath("storage_test").unwrap();
+    let fixture=StorageTestFixture {host,session:Default::default()};
+    let execution=TestPluginConfigExecutionHost {storage:Some(fixture),..Default::default()};
+    let engine=newTestJsEngine(Arc::new(execution));
+    let script=r#"
+        exports.storage_roundtrip=async function(params) {
+            /** Blocks text codecs only while the storage boundary owns the synchronous call. */
+            function withoutTextCodecs(action) {
+                const stringify=JSON.stringify,parse=JSON.parse;
+                JSON.stringify=function(){throw new Error('Storage unexpectedly encoded JSON text');};
+                JSON.parse=function(){throw new Error('Storage unexpectedly decoded JSON text');};
+                try {return action();} finally {JSON.stringify=stringify;JSON.parse=parse;}
+            }
+            const originalRequest=__operitStorageRequest;
+            /** Verifies request conversion remains structured while unrelated engine bookkeeping runs normally. */
+            __operitStorageRequest=function(request){return withoutTextCodecs(()=>originalRequest(request));};
+            const native=__operitNativeCallToolStructured;
+            /** Requires a real host-owned Promise, rather than a JS callback identity. */
+            __operitNativeCallToolStructured=function(scope,type,name,parameters,callId) {
+                const promise=withoutTextCodecs(()=>native(scope,type,name,parameters,callId));
+                if (!promise || typeof promise.then !== 'function') throw new Error('Storage requires a host Promise');
+                return promise;
+            };
+            const objects=await Tools.Storage.objects.open({path:params.config+'/objects.sqlite'});
+            const records=objects.collection('cards');
+            await records.put('one',{nested:{count:1}},{expectedVersion:null});
+            const editor=await records.edit('one');editor.value.nested.count=2;await editor.flush();
+            const stored=await records.get('one');
+            const sql=await Tools.Storage.sqlite.open({path:params.config+'/sql.sqlite'});
+            await sql.defineTable({name:'records',primaryKey:'id',columns:[{name:'id',affinity:'text',nullable:false},{name:'count',affinity:'integer',nullable:false},{name:'bytes',affinity:'blob',nullable:false}]});
+            await sql.execute('INSERT INTO records VALUES(?,?,?)',['one',9223372036854775807n,new Uint8Array([0,255])]);
+            const rows=await sql.query('SELECT count,bytes FROM records');
+            const keys=await Tools.Storage.dataStore.open({path:params.config+'/keys.sqlite'});
+            await keys.commit({set:{nullable:null,a:1},expectedVersions:{a:null}});
+            let conflict=false;
+            try { await keys.commit({set:{a:2,b:3},expectedVersions:{b:'wrong'}}); }
+            catch(error) {conflict=error.message.startsWith('Storage version conflict:');}
+            const a=await keys.get('a');const b=await keys.get('b');const nullable=await keys.get('nullable');
+            await objects.close();await sql.close();await keys.close();
+            return {count:stored.value.nested.count,int64:String(rows[0].count),bytes:Array.from(rows[0].bytes),conflict,a:a.value,b,nullable:nullable.value};
+        };
+    "#;
+    let mut params=testParams();params.insert("config".into(),Value::String(config));
+    let output=engine.execute_script_function(script,"storage_roundtrip",&params,&BTreeMap::new(),None,true,10,None).await;
+    let output=expect_js_output(output,"real structured storage bridge");
+    let value:Value=serde_json::from_str(&output).unwrap();
+    assert_eq!(value,serde_json::json!({"count":2,"int64":"9223372036854775807","bytes":[0,255],"conflict":true,"a":1,"b":null,"nullable":null}));
+    engine.destroy(); drop(engine);
+    assert_eq!(root.parent().unwrap(),std::env::temp_dir());std::fs::remove_dir_all(root).unwrap();
+}
+
+/// Exercises JS-owned state through the native QuickJS structured callback and real script reloads.
+#[tokio::test(flavor = "current_thread")]
+async fn compose_dsl_retained_state_stays_in_native_js_session() {
+    let engine = newTestToolPkgRegistrationEngine();
+    let script = r#"
+        exports.default = function(ctx) {
+            const [count, setCount] = ctx.useState('count', 0);
+            const [label] = ctx.useState('label', 'initial');
+            const ref = ctx.useRef('owned', { value: 1 });
+            const memo = ctx.useMemo('owned', () => ({ value: 7 }), []);
+            if (!globalThis.savedRef) globalThis.savedRef = ref;
+            const secret = ctx.useRef('never-export', {});
+            Object.defineProperty(secret.current, 'poison', {
+                configurable: true, enumerable: true,
+                get: function() { throw Error('memo must not cross the Host'); }
+            });
+            return ctx.UI.Text({ text: label + ':' + count,
+                onClick: async function() {
+                    await Promise.resolve();
+                    ref.current.value++;
+                    setCount(count + 1);
+                    return { sameRef: ref === globalThis.savedRef, ref: ref.current.value, memo: memo.value, count: count + 1 };
+                }
+            });
+        };
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "__test_retained_response".into(),
+        Value::Bool(true),
+    );
+    params.insert(
+        "executionContextKey".into(),
+        Value::String("retained-state-test".into()),
+    );
+    let resources = Arc::new(BTreeMap::new());
+    let first = expect_js_output(
+        engine
+            .renderForAssertions(script, &params, &BTreeMap::new(), resources.clone())
+            .await,
+        "initial retained render",
+    );
+    assert!(first.get("state").is_none() && first.get("memo").is_none());
+    let action = first["update"]["upserts"][0]["props"]["onClick"]["__actionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let captured = events.clone();
+    let changed = expect_js_output(
+        engine
+            .actionForAssertions(
+                &action,
+                None,
+                &params,
+                &BTreeMap::new(),
+                Some(Arc::new(move |value| {
+                    captured.lock().unwrap().push(value);
+                })),
+            )
+            .await,
+        "retained async action",
+    );
+    assert_eq!(changed["actionResult"]["sameRef"], true);
+    assert_eq!(changed["actionResult"]["ref"], 2);
+    assert!(changed.get("state").is_none() && changed.get("memo").is_none());
+    for event in events.lock().unwrap().iter() {
+        assert!(event.get("state").is_none() && event.get("memo").is_none());
+    }
+    let reloaded = expect_js_output(
+        engine
+            .renderForAssertions(script, &params, &BTreeMap::new(), resources.clone())
+            .await,
+        "same-context reload",
+    );
+    assert_eq!(reloaded["update"]["reset"], false);
+    let next = expect_js_output(
+        engine
+            .actionForAssertions(&action, None, &params, &BTreeMap::new(), None)
+            .await,
+        "action after reload",
+    );
+    assert_eq!(next["actionResult"]["sameRef"], true);
+    assert_eq!(next["actionResult"]["ref"], 3);
+    assert_eq!(next["actionResult"]["count"], 2);
+    params.insert("__operit_update_inputs".into(), Value::Bool(true));
+    params.insert(
+        "__operit_input_state".into(),
+        serde_json::json!({"label": "host"}),
+    );
+    let input = expect_js_output(
+        engine
+            .renderForAssertions(script, &params, &BTreeMap::new(), resources)
+            .await,
+        "host input update",
+    );
+    assert!(input["update"]["upserts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| node["props"]["text"] == "host:2"));
+    assert!(input.get("state").is_none() && input.get("memo").is_none());
+
+    // Release the Host worker exactly as the package manager releases its final page lease.
+    engine.destroy();
+    assert!(engine
+        .actionForAssertions(&action, None, &params, &BTreeMap::new(), None)
+        .await
+        .is_err());
+    drop(engine);
+    let reopened = newTestToolPkgRegistrationEngine();
+    params.remove("__operit_update_inputs");
+    params.remove("__operit_input_state");
+    let fresh = expect_js_output(
+        reopened
+            .renderForAssertions(
+                script,
+                &params,
+                &BTreeMap::new(),
+                Arc::new(BTreeMap::new()),
+            )
+            .await,
+        "reopened retained page",
+    );
+    assert_eq!(fresh["update"]["reset"], true);
+    assert_eq!(fresh["update"]["revision"], 1);
+    assert!(fresh["update"]["upserts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| node["props"]["text"] == "initial:0"));
+    let fresh_action = fresh["update"]["upserts"][0]["props"]["onClick"]["__actionId"]
+        .as_str()
+        .unwrap();
+    let fresh_result = expect_js_output(
+        reopened
+            .actionForAssertions(fresh_action, None, &params, &BTreeMap::new(), None)
+            .await,
+        "action in reopened page",
+    );
+    assert_eq!(fresh_result["actionResult"]["ref"], 2);
+    assert_eq!(fresh_result["actionResult"]["count"], 1);
+    assert!(fresh_result.get("state").is_none() && fresh_result.get("memo").is_none());
+    reopened.destroy();
+}
+
+/// Keeps WebView interface callbacks alive across native retained commits and explicit replacements.
+#[tokio::test(flavor = "current_thread")]
+async fn compose_dsl_webview_interface_actions_survive_retained_commits() {
+    let engine = newTestToolPkgRegistrationEngine();
+    let script = r#"
+        __operitNativeComposeWebViewControllerCommand = function(command) {
+            globalThis.lastWebViewCommand = command;
+            return {success: true, data: null};
+        };
+        exports.default = function(ctx) {
+            const [ready, setReady] = ctx.useState('ready', false);
+            const controller = ctx.createWebViewController('character-memory-web');
+            return ctx.UI.Box({onLoad: function() {
+                controller.addJavascriptInterface('CharacterMemoryHost', {currentTheme: () => 'dark'});
+                const id = globalThis.lastWebViewCommand.payload.object.currentTheme.__actionId;
+                setReady(true);
+                return id;
+            }}, ready ? ctx.UI.WebView({controller, url:'https://characters.operit.local/'}) : ctx.UI.Text({text:'loading'}));
+        };
+    "#;
+    let mut params = testParams();
+    params.insert("__test_retained_response".into(), Value::Bool(true));
+    params.insert("executionContextKey".into(), Value::String("webview-actions".into()));
+    let first = expect_js_output(engine.renderForAssertions(script, &params, &BTreeMap::new(), Arc::new(BTreeMap::new())).await, "WebView initial render");
+    let on_load = first["update"]["upserts"].as_array().unwrap().iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap();
+    let loaded = expect_js_output(engine.actionForAssertions(on_load, None, &params, &BTreeMap::new(), None).await, "WebView initialization");
+    let id = loaded["actionResult"].as_str().unwrap();
+    for _ in 0..5 {
+        let result = expect_js_output(engine.actionForAssertions(id, None, &params, &BTreeMap::new(), None).await, "WebView currentTheme after retained commit");
+        assert_eq!(result["actionResult"], "dark");
+        assert!(result.get("state").is_none() && result.get("memo").is_none());
+    }
+    engine.destroy();
+}
+
+/// Exercises the bundled character-card onLoad and its retained WebView callback on native QuickJS.
+#[tokio::test(flavor = "current_thread")]
+async fn compose_dsl_character_card_webview_interface_survives_native_commits() {
+    let engine = newTestToolPkgRegistrationEngine();
+    let source = std::fs::read_to_string(testRepositoryRoot().join("plugins/packages/buildin/character_cards/dist/ui/main/index.ui.js")).unwrap();
+    let script = format!(r#"
+        __operitNativeComposeWebViewControllerCommand = function(command) {{
+            globalThis.characterWebViewCommand = command;
+            return {{success: true, data: null}};
+        }};
+        ToolPkg.readResource = async function() {{return '/fixture/character-memory.html';}};
+        ToolPkg.ipc.on('character-memory.request', function(request, metadata) {{
+            if (request.action !== 'snapshot' || metadata.currentRuntime !== 'main')
+                throw Error('Unexpected character snapshot request');
+            return {{cards: []}};
+        }});
+        {source}
+    "#);
+    let mut params = testParams();
+    params.insert("__test_retained_response".into(), Value::Bool(true));
+    params.insert("executionContextKey".into(), Value::String("character-webview-actions".into()));
+    params.insert("theme".into(), serde_json::json!({"brightness":"dark", "colors":{"primary":"#ff102030"}}));
+    let first = expect_js_output(engine.renderForAssertions(&script, &params, &BTreeMap::new(), Arc::new(BTreeMap::new())).await, "character initial render");
+    let on_load = first["update"]["upserts"].as_array().unwrap().iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap();
+    expect_js_output(engine.actionForAssertions(on_load, None, &params, &BTreeMap::new(), None).await, "character onLoad");
+    let raw = engine.execute_script_function(
+        "exports.inspect = function() {return globalThis.characterWebViewCommand.payload.object.loadScreen.__actionId;};",
+        "inspect", &params, &BTreeMap::new(), None, true, 5, None
+    ).await.unwrap().unwrap();
+    let id: String = serde_json::from_str(&raw).unwrap();
+    for _ in 0..5 {
+        let result = expect_js_output(engine.actionForAssertions(&id, Some(serde_json::json!([])), &params, &BTreeMap::new(), None).await, "character loadScreen");
+        assert_eq!(result["actionResult"]["theme"]["brightness"], "dark");
+        assert_eq!(result["actionResult"]["snapshot"], serde_json::json!({"cards": []}));
+        assert_eq!(result["actionResult"]["screen"]["input"]["mode"], "manage");
+        assert!(result.get("state").is_none() && result.get("memo").is_none());
+    }
+    engine.destroy();
+}
+
+
+/// Preserves retained revision order when an asynchronous action overlaps a same-context render.
+#[tokio::test(flavor = "current_thread")]
+async fn compose_dsl_reload_drains_intermediate_revisions_before_final() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let source = r#"
+        exports.default = function(ctx) {
+            const [count, setCount] = ctx.useState('count', 0);
+            return ctx.UI.Column({onLoad: async function() {
+                await toolCall('gate', {});
+                setCount(count + 1);
+                return 'done';
+            }}, [ctx.UI.Text({text: String(count)})]);
+        };
+    "#;
+    let mut params = testParams();
+    params.insert("__test_retained_response".into(), Value::Bool(true));
+    params.insert("executionContextKey".into(), Value::String("revision-order".into()));
+    let initial = expect_js_output(engine.renderForAssertionsAsync(source.into(), params.clone(), BTreeMap::new(), Arc::new(BTreeMap::new())).await, "initial revision");
+    let action_id = initial["update"]["upserts"].as_array().unwrap().iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap().to_owned();
+    let delivered = Arc::new(Mutex::new(vec![initial["update"]["revision"].as_u64().unwrap()]));
+    let captured = delivered.clone();
+    let action = engine.actionForAssertionsAsync(action_id, None, params.clone(), BTreeMap::new(), Some(Arc::new(move |value| {
+        captured.lock().unwrap().push(value["update"]["revision"].as_u64().unwrap());
+    })));
+    tokio::pin!(action);
+    tokio::select! {
+        _ = host.gatedToolStarted.notified() => {},
+        result = &mut action => panic!("gated action completed before release: {result:?}"),
+    }
+    let reloaded = expect_js_output(engine.renderForAssertionsAsync(source.into(), params, BTreeMap::new(), Arc::new(BTreeMap::new())).await, "same-context render");
+    delivered.lock().unwrap().push(reloaded["update"]["revision"].as_u64().unwrap());
+    finishGatedTool(&host);
+    let final_response = expect_js_output(action.await, "action final revision");
+    assert_eq!(final_response["actionResult"], "done");
+    delivered.lock().unwrap().push(final_response["update"]["revision"].as_u64().unwrap());
+    let revisions = delivered.lock().unwrap().clone();
+    assert!(revisions.len() >= 4, "both action intermediates and final updates must be exercised: {revisions:?}");
+    assert_eq!(revisions, (1..=revisions.len() as u64).collect::<Vec<_>>());
+    engine.destroy();
+}
+
+/// Package authentication runs once and remains shared by the worker and runtime state.
+#[test]
+fn toolpkg_engine_binds_its_execution_host_once() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestIpcEngine(host.clone());
+    assert_eq!(host.toolPkgContextBindings.load(Ordering::SeqCst), 1);
+    engine.destroy();
+}
+
+/// Prepared engines authenticate once and their preinstalled IPC callback uses the newly bound owner.
+#[tokio::test(flavor = "current_thread")]
+async fn prepared_engine_binds_once_and_uses_bound_ipc_host() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let prepared = super::PreparedJsEngine::new().unwrap();
+    assert_eq!(host.toolPkgContextBindings.load(Ordering::SeqCst), 0);
+    let engine = prepared.bind(host.clone(), ToolPkgExecutionContext {
+        context_key: "prepared-ipc-test".into(), container_package_name: "test.package".into(),
+        api_version: "2.0.0".into(),
+        text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: BTreeMap::new() }),
+    }).await.unwrap();
+    assert_eq!(host.toolPkgContextBindings.load(Ordering::SeqCst), 1);
+    let mut params = testParams();
+    params.insert("__operit_ui_package_name".into(), Value::String("test.package".into()));
+    params.insert("__operit_execution_context_key".into(), Value::String("prepared-ipc-test".into()));
+    params.insert("__operit_toolpkg_runtime_kind".into(), Value::String("ui".into()));
+    let output = expect_js_output(engine.execute_script_function(
+        "exports.probe = async function() { return await ToolPkg.ipc.call('test.async', {value:41}, {targetRuntime:'main'}); };",
+        "probe", &params, &BTreeMap::new(), None, false, 60, None,
+    ).await, "prepared engine IPC");
+    assert_eq!(serde_json::from_str::<Value>(&output).unwrap()["value"], 42);
+    engine.destroy();
+}
+
+/// Consecutive acquisitions consume replenished pristine runtimes rather than a previous page's globals.
+#[tokio::test(flavor = "current_thread")]
+async fn prepared_provider_replenishes_without_reusing_page_state() {
+    use operit_plugin_sdk::javascript::JsExecutionProvider as _;
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let provider = crate::javascript::JsExecutionProvider::QuickJsExecutionProvider::new();
+    for index in 0..5 {
+        let engine = provider.acquire_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
+            context_key: format!("prepared-page-{index}"), container_package_name: "test.package".into(),
+            api_version: "2.0.0".into(),
+            text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: BTreeMap::new() }),
+        }).await.unwrap();
+        let output = expect_js_output(engine.execute_script_function(
+            "exports.probe = function() { globalThis.pageCounter = (globalThis.pageCounter || 0) + 1; return {counter:globalThis.pageCounter}; };",
+            "probe", &testParams(), &BTreeMap::new(), None, false, 60,
+        ).await, "fresh prepared page");
+        assert_eq!(serde_json::from_str::<Value>(&output).unwrap()["counter"], 1);
+        engine.destroy();
+    }
+    assert_eq!(host.toolPkgContextBindings.load(Ordering::SeqCst), 5);
+}
+
+/// An invalid package identity destroys its claimed runtime without consuming a context binding.
+#[tokio::test(flavor = "current_thread")]
+async fn prepared_engine_rejects_invalid_owner_and_destroys_runtime() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let prepared = super::PreparedJsEngine::new().unwrap();
+    let alive = prepared.engine.as_ref().unwrap().worker.alive.clone();
+    let result = prepared.bind(host.clone(), ToolPkgExecutionContext {
+        context_key: String::new(), container_package_name: "test.package".into(),
+        api_version: "2.0.0".into(),
+        text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: BTreeMap::new() }),
+    }).await;
+    assert!(result.is_err());
+    assert!(!alive.load(Ordering::Acquire));
+    assert_eq!(host.toolPkgContextBindings.load(Ordering::SeqCst), 0);
+}
+
+/// Dropping an unused prepared engine destroys its Host state instead of retaining an idle worker.
+#[test]
+fn unclaimed_prepared_engine_destroys_runtime() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let prepared = super::PreparedJsEngine::new().unwrap();
+    let alive = prepared.engine.as_ref().unwrap().worker.alive.clone();
+    drop(prepared);
+    assert!(!alive.load(Ordering::Acquire));
+}
+
+/// Preserves catalog errors from explicit discovery and keeps the same Host worker usable.
+#[test]
+fn catalog_initialization_failure_returns_error_without_killing_host_worker() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let reason = "A ToolPkg package with name 'com.operit.daily_life' is already registered";
+    *host.toolCatalogError.lock().unwrap() = Some(reason.into());
+    let create = || super::JsEngine::new_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
+        context_key: "duplicate-catalog-test".into(), container_package_name: "test.package".into(),
+        api_version: "2.0.0".into(), text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: BTreeMap::new() }),
+    });
+    let engine = create().expect("Catalog discovery must remain explicit");
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let script = "exports.read = function() { return getToolCatalog(); };";
+    let error = runtime.block_on(engine.execute_script_function(
+        script, "read", &BTreeMap::new(), &BTreeMap::new(), None, false, 60, None,
+    )).expect_err("Catalog errors must reject discovery");
+    assert_eq!(error.kind, JsExecutionErrorKind::Runtime);
+    assert!(error.message.contains(reason), "{}", error.message);
+    *host.toolCatalogError.lock().unwrap() = None;
+    let output = expect_js_output(runtime.block_on(engine.execute_script_function(
+        script, "read", &BTreeMap::new(), &BTreeMap::new(), None, false, 60, None,
+    )), "engine after catalog repair");
+    assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!({"tools": []}));
+    engine.destroy();
+}
+
+/// A registration's explicit failed result must not be mistaken for a successful capture.
+#[test]
+fn registration_failure_result_survives_the_ordinary_text_adapter() {
+    ensure_test_runtime_root();
+    let mut state = newTestJsEngineState(None);
+    let result = state.execute_toolpkg_main_registration_function_on_current_thread(
+        "exports.registerToolPkg = function() { return {success:false,message:'exact registration failure'}; };",
+        "registerToolPkg", &testParams(), None,
+    );
+    assert_eq!(result.expect_err("failed registration must not publish a capture").message, "exact registration failure");
+}
+
+/// Provides trusted parser bytes explicitly for SDK-only tests without an application host.
+fn testComposeParserSourceProvider() -> String {
+    format!("function() {{ return {}; }}", serde_json::to_string(
+        operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::readComposeDslParserSource()).unwrap())
+}
+
+/// Exercises the real SDK bootstrap in QuickJS, not a Node-only approximation of laziness.
+#[test]
+fn native_compose_compiler_defers_parser_until_first_source_compilation() {
+    let mut runtime = testJavaScriptRuntimeHost().createHostJavaScriptRuntime().unwrap();
+    runtime.evaluateHostJavaScriptVoid("observe-parser", r#"
+        globalThis.parserInitializations = 0;
+        var originalFunction = Function;
+        globalThis.Function = function(...args) { parserInitializations++; return originalFunction(...args); };
+    "#).unwrap();
+    runtime.evaluateHostJavaScriptVoid("compose-bootstrap",
+        &operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::buildComposeDslCompilerDefinition(&testComposeParserSourceProvider())).unwrap();
+    let result = runtime.evaluateHostJavaScriptString("probe-lazy-parser", r#"JSON.stringify((function() {
+        var startup = parserInitializations;
+        var artifact = '// @operit-compose-artifact 1\nexports.default = ctx => ctx.UI.Text({text:"artifact"});';
+        OperitComposeCompiler.prepare(artifact, 'artifact');
+        var afterArtifact = parserInitializations;
+        OperitComposeCompiler.prepare('exports.default = ctx => ctx.UI.Text({text:"source"});', 'first');
+        var afterSource = parserInitializations;
+        try { OperitComposeCompiler.prepare('function {', 'bad'); } catch (_) {}
+        OperitComposeCompiler.prepare('exports.default = ctx => ctx.UI.Text({text:"changed"});', 'second');
+        return [startup, afterArtifact, afterSource, parserInitializations];
+    })())"#).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&result).unwrap(), serde_json::json!([0, 0, 1, 1]));
+}
+
+/// Keeps interrupted parser initialization terminal without exposing partial exports.
+#[test]
+fn native_compose_parser_rejects_after_interrupted_initialization() {
+    let mut runtime = testJavaScriptRuntimeHost().createHostJavaScriptRuntime().unwrap();
+    let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let signal = armed.clone();
+    runtime.registerHostJavaScriptJsonFunction("__armParserInterrupt", Arc::new(move |_| {
+        signal.store(true, Ordering::SeqCst);
+        Ok(Value::Null)
+    })).unwrap();
+    let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sdk/src/toolpkg");
+    let parser = format!(r#"
+        globalThis.parserAttempts = (globalThis.parserAttempts || 0) + 1;
+        if (globalThis.parserAttempts == 1) {{
+            exports.parse = function() {{ throw Error('Partial parser published'); }};
+            __armParserInterrupt();
+            while (true) {{}}
+        }}
+        {}
+    "#, std::fs::read_to_string(sdk.join("vendor/acorn.js")).unwrap());
+    let loader = std::fs::read_to_string(sdk.join("compose/Parser.js")).unwrap()
+        .replace("__OPERIT_COMPOSE_PARSER_SOURCE__", &format!("function() {{ return {}; }}", serde_json::to_string(&parser).unwrap()));
+    runtime.evaluateHostJavaScriptVoid("lazy-parser", &loader).unwrap();
+    runtime.setHostJavaScriptInterruptHandler(Some(Arc::new(move || armed.load(Ordering::SeqCst)))).unwrap();
+    assert!(runtime.evaluateHostJavaScriptVoid("interrupted-parse", "__operitAcorn.parse('let value = 1;', {ecmaVersion:2022});").is_err());
+    runtime.setHostJavaScriptInterruptHandler(None).unwrap();
+    assert!(runtime.evaluateHostJavaScriptVoid("rejected-parse", "__operitAcorn.parse('let value = 1;', {ecmaVersion:2022});").is_err());
+    assert_eq!(runtime.evaluateHostJavaScriptString("one-parser-attempt", "String(parserAttempts)").unwrap(), "1");
+    assert_eq!(runtime.evaluateHostJavaScriptString("no-parser-global-leak", "[typeof exports, typeof module, typeof acorn].join(',')").unwrap(), "undefined,undefined,undefined");
+}
+
+/// Validates deferred grouped exports in the actual host-owned QuickJS engine.
+#[test]
+fn native_bootstrap_libraries_preserve_globals_and_initialize_once() {
+    let mut state = newTestJsEngineState(None);
+    let output = state.evalJavaScriptString(r#"
+        var libraryReads = [];
+        var originalLibrarySource = __operitNativeReadBootstrapLibrary;
+        __operitNativeReadBootstrapLibrary = function(name) {
+            libraryReads.push(name);
+            return originalLibrarySource(name);
+        };
+        var initial = Object.getOwnPropertyDescriptor(globalThis, 'UINode');
+        var first = UINode;
+        var again = UINode;
+        var types = [typeof Android, typeof PackageManager, typeof DeviceController,
+            typeof OkHttp, typeof OkHttpClient, typeof CryptoJS, typeof Jimp, typeof pako];
+        JSON.stringify({lazy: typeof initial.get === 'function', same: first === again,
+            reads: libraryReads, types: types});
+    "#).unwrap();
+    let output: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output["lazy"], true);
+    assert_eq!(output["same"], true);
+    assert_eq!(output["reads"], serde_json::json!([
+        "assets/js/UINode.js", "assets/js/AndroidUtils.js", "assets/js/OkHttp3.js",
+        "assets/js/CryptoJS.js", "assets/js/Jimp.js", "assets/js/pako.js"
+    ]));
+    assert_eq!(output["types"], serde_json::json!([
+        "function", "function", "function", "object", "function", "object", "object", "object"
+    ]));
+}
+
+/// Compares initialization policies in fresh native contexts without business queries or Flutter.
+#[test]
+#[ignore = "Run explicitly to measure native bootstrap bytecode reuse"]
+fn native_bootstrap_bytecode_probe() {
+    use crate::javascript::JsLibraries::{buildEagerLibraryProbeSource, buildLazyLibraryBootstrapScript};
+    use operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::buildComposeDslContextBridgeDefinition;
+    let host = NativeHostJavaScriptRuntimeHost::new();
+    let source = crate::javascript::JsLibraries::buildRuntimeBootstrapScript();
+    let eager_libraries = buildEagerLibraryProbeSource();
+    let host_context = buildComposeDslContextBridgeDefinition();
+    assert_eq!(source.matches(&host_context).count(), 1);
+    // Use identical current SDK modules, changing only the eager initialization policy.
+    let eager = source.replace(&buildLazyLibraryBootstrapScript(), &eager_libraries);
+    let mut eager_samples = Vec::new();
+    let mut source_samples = Vec::new();
+    let mut bytecode_samples = Vec::new();
+    for index in 0..22 {
+        for (name, script, samples) in [
+            ("eager-source", eager.as_str(), &mut eager_samples),
+            ("deferred-source", source, &mut source_samples),
+            ("shared-bytecode", source, &mut bytecode_samples),
+        ] {
+            let mut runtime = host.createHostJavaScriptRuntime().unwrap();
+            let start = Instant::now();
+            if name == "shared-bytecode" { runtime.evaluateHostJavaScriptBootstrap(source).unwrap(); }
+            else { runtime.evaluateHostJavaScriptVoid("operit.bootstrap.js", script).unwrap(); }
+            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+            if index >= 2 { samples.push(elapsed); }
+            if index == 0 && name == "shared-bytecode" {
+                eprintln!("native_bootstrap_bytecode_probe firstCompileAndExecuteMs={elapsed:.3}");
+            }
+        }
+    }
+    for (name, bytes, mut samples) in [
+        ("eager-source", eager.len(), eager_samples),
+        ("deferred-source", source.len(), source_samples),
+        ("shared-bytecode", source.len(), bytecode_samples),
+    ] {
+        samples.sort_by(f64::total_cmp);
+        eprintln!("native_bootstrap_bytecode_probe mode={name} sourceBytes={bytes} samples={} p50Ms={:.3} p95Ms={:.3}",
+            samples.len(), samples[9], samples[18]);
+    }
+}
+
+
+/// Compares only compiler ownership in otherwise identical fresh production page engines.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "Set OPERIT_DSL_PROBE_SCRIPT to measure an explicit script without reading user state"]
+async fn native_compose_page_load_probe() {
+    let path = std::env::var("OPERIT_DSL_PROBE_SCRIPT").expect("Explicit DSL probe script required");
+    let source = std::fs::read_to_string(path).unwrap();
+    let isolated_compiler = operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::buildComposeDslCompilerDefinition(&testComposeParserSourceProvider());
+    let mut samples = Vec::new();
+    for index in 0..14 {
+        for mode in ["page-compiler", "shared-compiler"] {
+            testJavaScriptRuntimeHost();
+            let bootstrap = Instant::now();
+            let engine = super::JsEngine::new_toolpkg_registration_engine().unwrap();
+            let bootstrap_ms = bootstrap.elapsed().as_secs_f64() * 1000.0;
+            let setup = format!("exports.install = function() {{ {} return true; }};", if mode == "page-compiler" {
+                format!("{isolated_compiler}\n__operitNativePrepareComposeModule = function(source, identity) {{ return OperitComposeCompiler.prepare(source, identity); }};")
+            } else { String::new() });
+            let options = BTreeMap::from([
+                ("executionContextKey".into(), Value::String("compiler-comparison".into())),
+                ("__operit_package_lang".into(), Value::String("en".into())),
+                ("theme".into(), serde_json::json!({"brightness":"dark", "colors":{"primary":"#ff102030"}})),
+            ]);
+            engine.execute_script_function(&setup, "install", &options, &BTreeMap::new(), None, false, 60, None).await.unwrap();
+            let updates = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let sink = updates.clone();
+            let started = Instant::now();
+            let result = engine.execute_compose_dsl_script_stream_async(
+                source.clone(), options, BTreeMap::new(), Arc::new(BTreeMap::new()),
+                Arc::new(move |value| sink.lock().unwrap().push(value)),
+            ).await.unwrap();
+            let render_ms = started.elapsed().as_secs_f64() * 1000.0;
+            assert_eq!(result, Some(Value::Null));
+            let nodes: usize = updates.lock().unwrap().iter().filter_map(|event| event["response"]["update"]["upserts"].as_array()).map(Vec::len).sum();
+            assert!(nodes > 0, "Page must publish a real retained tree");
+            samples.push(serde_json::json!({"mode":mode,"sample":index,"sourceBytes":source.len(),"bootstrapMs":bootstrap_ms,"renderMs":render_ms,"nodes":nodes}));
+            engine.destroy();
+        }
+    }
+    eprintln!("dsl_compiler_comparison {}", serde_json::to_string(&samples).unwrap());
+}
+
+/// Verifies shared lowering never shares page state, closures or globals between engines.
+#[tokio::test(flavor = "current_thread")]
+async fn compose_shared_compilation_keeps_page_heaps_independent() {
+    let first = newTestToolPkgRegistrationEngine();
+    let second = newTestToolPkgRegistrationEngine();
+    let source = r#"exports.default = function(ctx) {
+        const [count, setCount] = ctx.useState('count', 0);
+        return ctx.UI.Button({label: String(count), onClick: function() { setCount(count + 1); }});
+    };"#;
+    let options = testParams();
+    let one = first.renderForAssertions(source, &options, &BTreeMap::new(), Arc::new(BTreeMap::new())).await.unwrap().unwrap();
+    let two = second.renderForAssertions(source, &options, &BTreeMap::new(), Arc::new(BTreeMap::new())).await.unwrap().unwrap();
+    assert_eq!(one["tree"]["props"]["label"], "0");
+    assert_eq!(two["tree"]["props"]["label"], "0");
+    let action = one["tree"]["props"]["onClick"]["__actionId"].as_str().unwrap();
+    let changed = first.actionForAssertions(action, None, &options, &BTreeMap::new(), None).await.unwrap().unwrap();
+    assert_eq!(changed["tree"]["props"]["label"], "1");
+    let action = two["tree"]["props"]["onClick"]["__actionId"].as_str().unwrap();
+    let independent = second.actionForAssertions(action, None, &options, &BTreeMap::new(), None).await.unwrap().unwrap();
+    assert_eq!(independent["tree"]["props"]["label"], "1");
+    first.destroy(); second.destroy();
+}
+
+/// Uses the real generated namespaces and native bridge, including overload dispatch.
+#[tokio::test(flavor = "current_thread")]
+async fn device_tools_cross_native_bridge_without_leaking_target_into_parameters() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let mut params = testParams();
+    params.insert("__operit_toolpkg_api_version".into(), Value::String("2.0.0".into()));
+    let output = engine.execute_script_function(
+        r#"exports.run = async function() {
+            return await Promise.all([
+                Tools.device('desktop').Files.read('/desktop.txt'),
+                Tools.device('phone').Files.read({path:'/phone.txt'}),
+                Tools.device('desktop').call('example:echo', {value:'{\"literal\":true}'}),
+                Tools.device('phone').catalog()
+            ]);
+        };"#, "run", &params, &BTreeMap::new(), None, true, 5, None,
+    ).await.unwrap().unwrap();
+    let values: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(values[0]["device"]["nodeId"], "desktop");
+    assert_eq!(values[1]["device"]["nodeId"], "phone");
+    assert_eq!(values[0]["parameters"], serde_json::json!({"path":"/desktop.txt"}));
+    assert_eq!(values[1]["parameters"], serde_json::json!({"path":"/phone.txt"}));
+    assert_eq!(values[2]["tool_name"], "example:echo");
+    assert_eq!(values[2]["parameters"]["value"], "{\"literal\":true}");
+    assert_eq!(values[3]["device"]["action"], "catalog");
+    engine.destroy();
 }

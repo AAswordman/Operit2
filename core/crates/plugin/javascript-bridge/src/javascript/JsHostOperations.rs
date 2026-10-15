@@ -38,6 +38,7 @@ pub fn parseToolCallValue(
         tool_type: toolType.trim().to_string(),
         tool_name: normalizedToolName.to_string(),
         parameters: object.into_iter().collect(),
+        device: None,
     })
 }
 

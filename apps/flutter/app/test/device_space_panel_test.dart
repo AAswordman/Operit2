@@ -15,8 +15,6 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 
 const List<String> _userCapabilities = <String>[
   'network.devices.view',
-  'network.user',
-  'chat.read',
   'network.relay',
   'runtime.execute',
 ];
@@ -70,7 +68,7 @@ Map<String, Object?> _topology({
         relayHops: 1,
         relayPath: <String>['relay'],
         identityName: 'Relay',
-        capabilities: <String>['network.relay'],
+        capabilities: <String>['network.devices.view', 'network.relay'],
       ),
       _member(deviceId: 'relay', deviceName: 'relay-linux'),
     ],
@@ -112,6 +110,7 @@ class DeviceSpacePanelBridge extends OperitRuntimeBridge {
 
   Map<String, Object?> topology;
   Map<String, Object?> control;
+  List<Map<String, Object?>> audit = <Map<String, Object?>>[];
   List<Map<String, Object?>> paired = <Map<String, Object?>>[];
   Map<String, String> statuses = <String, String>{};
   final List<String> calls = <String>[];
@@ -138,7 +137,7 @@ class DeviceSpacePanelBridge extends OperitRuntimeBridge {
       case 'deviceSpaceControl':
         return encodeCoreLink([0, control]);
       case 'deviceSpaceControlAudit':
-        return encodeCoreLink([0, <Object?>[]]);
+        return encodeCoreLink([0, audit]);
       case 'outgoingDeviceSpaceJoins':
       case 'incomingDeviceSpaceJoins':
         return encodeCoreLink([0, <Object?>[]]);
@@ -239,17 +238,39 @@ void main() {
   /// Mounts only the identity and permission panel.
   Future<void> mountNetworkPanel(
     WidgetTester tester,
-    DeviceSpacePanelBridge bridge,
-  ) async {
+    DeviceSpacePanelBridge bridge, {
+    double width = 800,
+    double textScale = 1,
+    Brightness brightness = Brightness.light,
+  }) async {
+    tester.view.physicalSize = Size(width, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.blue,
+            brightness: brightness,
+          ),
+        ),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
         locale: const Locale('zh'),
         supportedLocales: AppLocalizations.supportedLocales,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         home: Scaffold(
-          body: NetworkControlPanel(
-            clients: GeneratedCoreProxyClients(bridge),
-            onChanged: () async {},
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(14),
+            child: NetworkControlPanel(
+              clients: GeneratedCoreProxyClients(bridge),
+              onChanged: () async {},
+            ),
           ),
         ),
       ),
@@ -309,12 +330,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('当前身份: 中继节点'), findsOneWidget);
-    expect(find.text('当前能力: 中继网络流量'), findsOneWidget);
+    expect(find.text('可用权限: 查看设备与当前身份、中继网络流量'), findsOneWidget);
     expect(find.text('设备 ID: tablet'), findsOneWidget);
-    expect(
-      find.textContaining('在线 · 经中继 1 跳'),
-      findsWidgets,
-    );
+    expect(find.textContaining('在线 · 经中继 1 跳'), findsWidgets);
     expect(find.textContaining('路径: 本机 → relay-linux'), findsWidgets);
     expect(tester.takeException(), isNull);
     await unmount(tester, bridge);
@@ -349,75 +367,54 @@ void main() {
     await unmount(tester, bridge);
   });
 
-  testWidgets('a quarantined member only offers the lift-isolation command', (
-    tester,
-  ) async {
-    final bridge = DeviceSpacePanelBridge(
-      topology: _topology(
-        selfCapabilities: _administratorCapabilities,
-        selfIdentityName: 'Administrator',
-      ),
-      control: _control(disconnectedNodeIds: <String>['tablet']),
-    );
-    await mountPanel(tester, bridge);
-    expect(find.text('中继节点'), findsOneWidget);
-    final menus = find.byIcon(Icons.more_vert_outlined);
-    expect(menus, findsWidgets);
-    await tester.tap(menus.first);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.widgetWithText(MenuItemButton, '解除隔离设备'), findsOneWidget);
-    expect(find.widgetWithText(MenuItemButton, '隔离设备'), findsNothing);
-    // The direct-link entry stays hidden while the policy quarantines the
-    // member: lifting the isolation comes first.
-    expect(find.widgetWithText(MenuItemButton, '建立直连'), findsNothing);
-    expect(find.widgetWithText(MenuItemButton, '移除设备'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await unmount(tester, bridge);
-  });
-
-  testWidgets('tapping the direct-link entry opens the focused pairing dialog', (
-    tester,
-  ) async {
-    final bridge = DeviceSpacePanelBridge(
-      topology: _topology(),
-      control: _control(),
-    );
-    await mountPanel(tester, bridge);
-    final menus = find.byIcon(Icons.more_vert_outlined);
-    await tester.tap(menus.first);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.widgetWithText(MenuItemButton, '建立直连'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(
-      find.text('该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。'),
-      findsOneWidget,
-    );
-    expect(find.text('暂未发现附近设备'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await unmount(tester, bridge);
-  });
+  testWidgets(
+    'tapping the direct-link entry opens the focused pairing dialog',
+    (tester) async {
+      final bridge = DeviceSpacePanelBridge(
+        topology: _topology(),
+        control: _control(),
+      );
+      await mountPanel(tester, bridge);
+      final menus = find.byIcon(Icons.more_vert_outlined);
+      await tester.tap(menus.first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.widgetWithText(MenuItemButton, '建立直连'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.text('该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。'),
+        findsOneWidget,
+      );
+      expect(find.text('暂未发现附近设备'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await unmount(tester, bridge);
+    },
+  );
 
   testWidgets('paired Space members keep the managed device commands', (
     tester,
   ) async {
-    final bridge = DeviceSpacePanelBridge(
-      topology: _topology(
-        selfCapabilities: _administratorCapabilities,
-        selfIdentityName: 'Administrator',
-      ),
-      control: _control(),
-    )..paired = <Map<String, Object?>>[
-      <String, Object?>{
-        'deviceId': 'tablet',
-        'deviceInfo': <String, Object?>{'platform': 'android', 'model': 'elish'},
-        'inbound': true,
-        'outbound': true,
-      },
-    ]
-    ..statuses = <String, String>{'tablet': 'Online'};
+    final bridge =
+        DeviceSpacePanelBridge(
+            topology: _topology(
+              selfCapabilities: _administratorCapabilities,
+              selfIdentityName: 'Administrator',
+            ),
+            control: _control(),
+          )
+          ..paired = <Map<String, Object?>>[
+            <String, Object?>{
+              'deviceId': 'tablet',
+              'deviceInfo': <String, Object?>{
+                'platform': 'android',
+                'model': 'elish',
+              },
+              'inbound': true,
+              'outbound': true,
+            },
+          ]
+          ..statuses = <String, String>{'tablet': 'Online'};
     await mountPanel(tester, bridge);
     expect(find.text('android-elish'), findsOneWidget);
     expect(find.textContaining('空间成员 · 已直连'), findsOneWidget);
@@ -436,41 +433,44 @@ void main() {
     await unmount(tester, bridge);
   });
 
-  testWidgets('paired devices outside the Space keep local pairing actions only', (
-    tester,
-  ) async {
-    final bridge = DeviceSpacePanelBridge(
-      topology: _topology(
-        selfCapabilities: _administratorCapabilities,
-        selfIdentityName: 'Administrator',
-      ),
-      control: _control(),
-    )..paired = <Map<String, Object?>>[
-      <String, Object?>{
-        'deviceId': 'stranger',
-        'deviceInfo': <String, Object?>{
-          'platform': 'android',
-          'model': 'stranger',
-        },
-        'inbound': true,
-        'outbound': true,
-      },
-    ]
-    ..statuses = <String, String>{'stranger': 'Online'};
-    await mountPanel(tester, bridge);
-    expect(find.text('android-stranger'), findsOneWidget);
-    expect(find.textContaining('已配对'), findsWidgets);
-    final menus = find.byIcon(Icons.more_vert_outlined);
-    await tester.tap(menus.first);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.widgetWithText(MenuItemButton, '解除配对'), findsOneWidget);
-    expect(find.widgetWithText(MenuItemButton, '加入设备空间'), findsOneWidget);
-    expect(find.widgetWithText(MenuItemButton, '隔离设备'), findsNothing);
-    expect(find.widgetWithText(MenuItemButton, '移除设备'), findsNothing);
-    expect(tester.takeException(), isNull);
-    await unmount(tester, bridge);
-  });
+  testWidgets(
+    'paired devices outside the Space keep local pairing actions only',
+    (tester) async {
+      final bridge =
+          DeviceSpacePanelBridge(
+              topology: _topology(
+                selfCapabilities: _administratorCapabilities,
+                selfIdentityName: 'Administrator',
+              ),
+              control: _control(),
+            )
+            ..paired = <Map<String, Object?>>[
+              <String, Object?>{
+                'deviceId': 'stranger',
+                'deviceInfo': <String, Object?>{
+                  'platform': 'android',
+                  'model': 'stranger',
+                },
+                'inbound': true,
+                'outbound': true,
+              },
+            ]
+            ..statuses = <String, String>{'stranger': 'Online'};
+      await mountPanel(tester, bridge);
+      expect(find.text('android-stranger'), findsOneWidget);
+      expect(find.textContaining('已配对'), findsWidgets);
+      final menus = find.byIcon(Icons.more_vert_outlined);
+      await tester.tap(menus.first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.widgetWithText(MenuItemButton, '解除配对'), findsOneWidget);
+      expect(find.widgetWithText(MenuItemButton, '加入设备空间'), findsOneWidget);
+      expect(find.widgetWithText(MenuItemButton, '断开设备'), findsNothing);
+      expect(find.widgetWithText(MenuItemButton, '移除设备'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await unmount(tester, bridge);
+    },
+  );
 
   testWidgets('the identity panel never repeats the device list', (
     tester,
@@ -498,27 +498,31 @@ void main() {
       control: _control(),
     );
     await mountNetworkPanel(tester, bridge);
-    expect(find.text('当前身份: 管理员'), findsOneWidget);
-    expect(find.text('当前能力: 全部权限'), findsWidgets);
-    // Identity assignment is a per-device command: it lives in each device
-    // row's menu, never as a device picker on this card.
+    expect(find.text('本机身份'), findsOneWidget);
+    expect(find.text('管理员'), findsOneWidget);
+    expect(find.text('全部权限'), findsOneWidget);
     expect(find.text('设置设备身份'), findsNothing);
     // Both long lists start collapsed and only advertise their size.
-    expect(find.text('身份定义'), findsOneWidget);
-    expect(find.text('共 2 个身份'), findsOneWidget);
-    expect(find.text('添加角色'), findsOneWidget);
-    expect(find.text('管理员'), findsNothing);
-    expect(find.text('审计'), findsOneWidget);
-    expect(find.text('共 0 条记录'), findsOneWidget);
-    expect(find.text('暂无控制命令记录'), findsNothing);
-    await tester.tap(find.text('身份定义'));
+    expect(find.text('身份权限'), findsOneWidget);
+    expect(find.text('2 个身份'), findsOneWidget);
+    expect(find.text('新建身份'), findsOneWidget);
+    expect(find.byKey(const ValueKey('space-role-admin')), findsNothing);
+    expect(find.text('操作记录'), findsOneWidget);
+    expect(find.text('0 条记录'), findsOneWidget);
+    expect(find.text('暂无操作记录，身份和设备的变更会显示在这里'), findsNothing);
+    await tester.tap(find.text('身份权限'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('管理员'), findsOneWidget);
-    await tester.tap(find.text('审计'));
+    expect(find.text('管理员'), findsNWidgets(2));
+    expect(find.byType(Card), findsNothing);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('space-role-admin'))).height,
+      lessThan(64),
+    );
+    await tester.tap(find.text('操作记录'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('暂无控制命令记录'), findsOneWidget);
+    expect(find.text('暂无操作记录，身份和设备的变更会显示在这里'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await unmount(tester, bridge);
   });
@@ -531,16 +535,189 @@ void main() {
       control: _control(),
     );
     await mountNetworkPanel(tester, bridge);
-    expect(find.text('当前身份: 普通用户'), findsOneWidget);
-    expect(
-      find.text('当前能力: 查看设备与当前身份、使用网络、读取聊天记录、中继网络流量、执行任务'),
-      findsOneWidget,
-    );
-    expect(find.text('身份定义'), findsNothing);
-    expect(find.text('添加角色'), findsNothing);
+    expect(find.text('本机身份'), findsOneWidget);
+    expect(find.text('普通用户'), findsOneWidget);
+    for (final label in <String>[
+      '查看设备与当前身份',
+      '中继网络流量',
+      '承载 Core 执行',
+    ]) {
+      expect(find.text(label), findsOneWidget);
+    }
+    expect(find.text('身份权限'), findsNothing);
+    expect(find.text('新建身份'), findsNothing);
     expect(find.text('设置设备身份'), findsNothing);
-    expect(find.text('审计'), findsNothing);
+    expect(find.text('操作记录'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await unmount(tester, bridge);
+  });
+
+  testWidgets(
+    'audit shows readable results newest-first with details on demand',
+    (tester) async {
+      final bridge =
+          DeviceSpacePanelBridge(
+              topology: _topology(
+                selfCapabilities: _administratorCapabilities,
+                selfIdentityName: 'Administrator',
+              ),
+              control: _control(),
+            )
+            ..audit = <Map<String, Object?>>[
+              _auditRecord(
+                'older',
+                'Define role Reader',
+                accepted: true,
+                time: 1000,
+              ),
+              _auditRecord(
+                'newer',
+                'Set identity Edge on android-tablet',
+                accepted: false,
+                time: 2000,
+              ),
+            ];
+      await mountNetworkPanel(tester, bridge);
+      expect(find.text('已执行'), findsNothing);
+      await tester.tap(find.text('操作记录'));
+      await tester.pumpAndSettle();
+      expect(find.text('已执行'), findsOneWidget);
+      expect(find.text('已拒绝'), findsOneWidget);
+      expect(find.text('android-tablet · 边缘节点'), findsOneWidget);
+      expect(find.text('Set identity Edge on android-tablet'), findsNothing);
+      expect(
+        find.textContaining('issuer lacks required capability'),
+        findsNothing,
+      );
+      expect(find.textContaining('已撤销'), findsNothing);
+      expect(find.byType(Card), findsNothing);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('space-audit-newer'))).dy,
+        lessThan(
+          tester.getTopLeft(find.byKey(const ValueKey('space-audit-older'))).dy,
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('space-audit-newer')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('操作设备: this-linux'), findsOneWidget);
+      expect(
+        find.textContaining('issuer lacks required capability'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await unmount(tester, bridge);
+    },
+  );
+
+  testWidgets('long audit history has its own bounded scroll area', (
+    tester,
+  ) async {
+    final bridge =
+        DeviceSpacePanelBridge(
+            topology: _topology(
+              selfCapabilities: _administratorCapabilities,
+              selfIdentityName: 'Administrator',
+            ),
+            control: _control(),
+          )
+          ..audit = List.generate(
+            30,
+            (index) => _auditRecord(
+              '$index',
+              'Disconnect device tablet-$index',
+              time: index * 1000,
+            ),
+          );
+    await mountNetworkPanel(tester, bridge);
+    await tester.tap(find.text('操作记录'));
+    await tester.pumpAndSettle();
+    final history = find.descendant(
+      of: find.byType(NetworkControlPanel),
+      matching: find.byType(ListView),
+    );
+    expect(history, findsOneWidget);
+    expect(tester.getSize(history).height, lessThanOrEqualTo(320));
+    expect(find.text('tablet-29'), findsOneWidget);
+    await tester.drag(history, const Offset(0, -4000));
+    await tester.pumpAndSettle();
+    expect(find.text('tablet-0'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await unmount(tester, bridge);
+  });
+
+  for (final brightness in Brightness.values) {
+    testWidgets(
+      'expanded sections fit narrow screens and large text in ${brightness.name} mode',
+      (tester) async {
+        final bridge =
+            DeviceSpacePanelBridge(
+                topology: _topology(
+                  selfCapabilities: _administratorCapabilities,
+                  selfIdentityName: 'Administrator',
+                ),
+                control: _control(),
+              )
+              ..audit = <Map<String, Object?>>[
+                _auditRecord(
+                  'one',
+                  'Set identity Edge on tablet-with-a-long-name',
+                ),
+              ];
+        await mountNetworkPanel(
+          tester,
+          bridge,
+          width: 360,
+          textScale: 1.5,
+          brightness: brightness,
+        );
+        await tester.tap(find.text('身份权限'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('操作记录'));
+        await tester.tap(find.text('操作记录'));
+        await tester.pumpAndSettle();
+        expect(find.text('已执行'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await unmount(tester, bridge);
+      },
+    );
+  }
+
+  testWidgets('new identity action does not toggle the identity list', (
+    tester,
+  ) async {
+    final bridge = DeviceSpacePanelBridge(
+      topology: _topology(
+        selfCapabilities: _administratorCapabilities,
+        selfIdentityName: 'Administrator',
+      ),
+      control: _control(),
+    );
+    await mountNetworkPanel(tester, bridge);
+    await tester.tap(find.text('新建身份'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.byKey(const ValueKey('space-role-admin')), findsNothing);
     expect(tester.takeException(), isNull);
     await unmount(tester, bridge);
   });
 }
+
+/// Builds one wire-format history record with a meaningful rejection reason.
+Map<String, Object?> _auditRecord(
+  String id,
+  String summary, {
+  bool accepted = true,
+  int time = 1791676800000,
+}) => <String, Object?>{
+  'commandId': id,
+  'spaceId': 'space',
+  'issuerNodeId': 'self',
+  'originNodeId': 'self',
+  'accepted': accepted,
+  'reason': accepted
+      ? 'accepted'
+      : 'issuer lacks required capability network.identity.assign',
+  'summary': summary,
+  'recordedAt': time,
+};

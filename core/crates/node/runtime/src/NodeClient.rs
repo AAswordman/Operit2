@@ -22,4 +22,12 @@ impl CoreLinkSharedClient for NodeClient {
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         self.router.watchNode(self.nodeId.clone(), request).await
     }
+
+    /// Opens one input stream on the explicitly addressed CoreNode.
+    async fn openPush(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
+        self.router.openPushNode(self.nodeId.clone(), request).await
+    }
 }

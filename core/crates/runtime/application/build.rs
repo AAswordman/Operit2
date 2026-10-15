@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 const MANIFEST_FILENAMES: &[&str] = &["manifest.hjson", "manifest.json"];
 const SKILL_FILENAMES: &[&str] = &["SKILL.md", "skill.md"];
@@ -81,11 +82,7 @@ fn main() {
     push_plugin_asset_struct(&mut code);
     code.push_str("pub static BUILTIN_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
     for asset in &assets {
-        code.push_str(&format!(
-            "    PluginAsset {{ name: {:?}, bytes: include_bytes!({:?}) }},\n",
-            asset.name,
-            asset.path.to_string_lossy()
-        ));
+        push_plugin_asset(&mut code, asset);
     }
     code.push_str("];\n");
     code.push_str("\n");
@@ -95,11 +92,7 @@ fn main() {
     );
     code.push_str("pub static BUNDLED_EXTERNAL_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
     for asset in &external_assets {
-        code.push_str(&format!(
-            "    PluginAsset {{ name: {:?}, bytes: include_bytes!({:?}) }},\n",
-            asset.name,
-            asset.path.to_string_lossy()
-        ));
+        push_plugin_asset(&mut code, asset);
     }
     code.push_str("];\n");
     fs::write(generated, code).expect("write builtin plugin asset list");
@@ -108,11 +101,23 @@ fn main() {
     generate_bundled_external_skill_assets(&manifest_dir, &out_dir);
 }
 
+/// Embeds each immutable package fingerprint alongside its exact compiled bytes.
+fn push_plugin_asset(code: &mut String, asset: &BuildinAsset) {
+    let bytes = fs::read(&asset.path).expect("read packaged plugin asset");
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    code.push_str(&format!(
+        "    PluginAsset {{ name: {:?}, bytes: include_bytes!({:?}), sha256: {:?} }},\n",
+        asset.name, asset.path.to_string_lossy(), sha256,
+    ));
+}
+
+/// Declares the compiled package metadata shared by both asset collections.
 fn push_plugin_asset_struct(code: &mut String) {
     code.push_str("#[derive(Clone, Copy)]\n");
     code.push_str("pub struct PluginAsset {\n");
     code.push_str("    pub name: &'static str,\n");
     code.push_str("    pub bytes: &'static [u8],\n");
+    code.push_str("    pub sha256: &'static str,\n");
     code.push_str("}\n\n");
 }
 

@@ -1,22 +1,25 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../data/preferences/UserPreferencesManager.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../features/chat/components/NewChatIntro.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../layout/SidebarDockController.dart';
 import '../layout/NavigationLayoutMetrics.dart';
 import '../screens/ScreenRouteRegistry.dart';
-import 'ConversationSwipeActions.dart';
+import '../../common/components/SwipeActions.dart';
 import 'NavigationDrawerAppearance.dart';
 
 class CollapsedDrawerContent extends StatelessWidget {
+  /// Receives the real nullable chat source without decoding plugin configuration.
   const CollapsedDrawerContent({
     super.key,
     required this.navigationEntries,
@@ -25,6 +28,7 @@ class CollapsedDrawerContent extends StatelessWidget {
     required this.appearance,
     required this.onNavigationEntrySelected,
     required this.onConversationActivated,
+    required this.currentChatId,
     this.bridge = const ProxyCoreRuntimeBridge(),
   });
 
@@ -34,48 +38,33 @@ class CollapsedDrawerContent extends StatelessWidget {
   final NavigationDrawerAppearance appearance;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
   final VoidCallback onConversationActivated;
+  final String? currentChatId;
   final OperitRuntimeBridge bridge;
   static const double _topBarHeight = 64;
   static const EdgeInsets _collapsedItemPadding = EdgeInsets.symmetric(
     vertical: 2,
   );
 
-  /// Reads the persisted sidebar mode used to decide workspace inheritance.
-  Future<bool> _shouldInheritWorkspaceFromCurrent() async {
-    final mode = await UserPreferencesManager(
-      clients: GeneratedCoreProxyClients(bridge),
-    ).loadChatHistoryGroupingMode();
-    return switch (mode) {
-      null => false,
-      UserPreferencesManager.CHAT_HISTORY_GROUPING_CHARACTER => false,
-      UserPreferencesManager.CHAT_HISTORY_GROUPING_WORKSPACE => true,
-      _ => throw FormatException(
-        'Unsupported persisted sidebar grouping mode: $mode',
-      ),
-    };
-  }
-
-  /// Creates a conversation using the active sidebar grouping mode.
-  Future<void> _createConversation() async {
-    // Arm before creating so the intro overlay sees the flag when the new
-    // chat id arrives.
+  /// Creates through the generic hook without reading any role or grouping preference.
+  Future<void> _createConversation(BuildContext context) async {
+    final sourceChatId = currentChatId;
     newChatIntroArmed.value = true;
     try {
-      final inheritGroupFromCurrent =
-          await _shouldInheritWorkspaceFromCurrent();
       await GeneratedCoreProxyClients(
         bridge,
       ).chatRuntimeHolderMain.createNewChat(
-        characterCardName: null,
-        group: null,
-        inheritGroupFromCurrent: inheritGroupFromCurrent,
         setAsCurrentChat: true,
-        characterGroupId: null,
+        sourceChatId: sourceChatId,
+        input: null,
       );
       onConversationActivated();
-    } catch (_) {
+    } catch (error) {
       newChatIntroArmed.value = false;
-      rethrow;
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -141,7 +130,7 @@ class CollapsedDrawerContent extends StatelessWidget {
                     selected: false,
                     appearance: appearance,
                     icon: Icons.add_comment_outlined,
-                    onClick: _createConversation,
+                    onClick: () => unawaited(_createConversation(context)),
                   ),
                 ),
               ),
@@ -239,25 +228,10 @@ class SidebarInfoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsetsDirectional.fromSTEB(20, 4, 14, 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: <Widget>[
-          Text(
-            brandName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              letterSpacing: 0,
-              color: appearance.titleColor,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          if (trailing != null) ...<Widget>[
-            const Spacer(),
-            trailing!,
-          ],
-        ],
-      ),
+    return ThemeSidebarInfoCard(
+      brandName: brandName,
+      appearance: appearance,
+      trailing: trailing,
     );
   }
 }
@@ -338,34 +312,13 @@ class HistoryRail extends StatelessWidget {
   /// Builds the vertical rail for nested history rows.
   @override
   Widget build(BuildContext context) {
-    final baseColor = appearance.dividerColor.withValues(alpha: 0.45);
-    final activeColor = selected
-        ? appearance.statusAvailableColor
-        : appearance.titleColor.withValues(alpha: 0.55);
-    final showIndicator = selected || hovered;
-    return SizedBox(
-      width: width,
+    return ThemeHistoryRail(
       height: height,
-      child: Stack(
-        alignment: Alignment.center,
-        children: <Widget>[
-          Container(
-            width: thickness,
-            height: height,
-            color: baseColor,
-          ),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeOutCubic,
-            width: showIndicator ? 2.0 : thickness,
-            height: showIndicator ? (selected ? 16.0 : 10.0) : 0.0,
-            decoration: BoxDecoration(
-              color: showIndicator ? activeColor : Colors.transparent,
-              borderRadius: BorderRadius.circular(1.5),
-            ),
-          ),
-        ],
-      ),
+      appearance: appearance,
+      width: width,
+      thickness: thickness,
+      selected: selected,
+      hovered: hovered,
     );
   }
 }
@@ -373,7 +326,7 @@ class HistoryRail extends StatelessWidget {
 enum _ConversationQuickAction { rename, togglePinned, toggleLocked, delete }
 
 class ConversationDrawerItem extends StatefulWidget {
-  /// Creates one conversation row for the navigation drawer.
+  /// Creates a conversation row with separate menu and confirmed swipe deletions.
   const ConversationDrawerItem({
     super.key,
     required this.history,
@@ -386,6 +339,7 @@ class ConversationDrawerItem extends StatefulWidget {
     required this.onTogglePinned,
     required this.onToggleLocked,
     required this.onDelete,
+    required this.onSwipeDelete,
     required this.onLongPress,
     required this.onMoveTo,
     required this.canAcceptDrop,
@@ -405,6 +359,9 @@ class ConversationDrawerItem extends StatefulWidget {
   final VoidCallback onTogglePinned;
   final VoidCallback onToggleLocked;
   final VoidCallback onDelete;
+
+  /// Requests confirmation for a conversation deletion initiated by a swipe.
+  final VoidCallback onSwipeDelete;
   final VoidCallback onLongPress;
   final ValueChanged<core_proxy.ChatHistoryListItem> onMoveTo;
   final bool Function(core_proxy.ChatHistoryListItem) canAcceptDrop;
@@ -451,9 +408,6 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
     _marqueeController.dispose();
     super.dispose();
   }
-  static const double _endPadding = 12;
-  static const double _runningIndicatorSize = 20;
-  static const double _runningIndicatorStrokeWidth = 2.5;
 
   bool _hovered = false;
   bool _menuOpen = false;
@@ -465,252 +419,117 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
     final appearance = widget.appearance;
     final history = widget.history;
     final active = _hovered || _menuOpen;
-    final itemShape = BorderRadius.circular(8);
     final windowSize = MediaQuery.sizeOf(context);
     final platform = Theme.of(context).platform;
     final touchPlatform =
         platform == TargetPlatform.android || platform == TargetPlatform.iOS;
     final showActions = active || selected || touchPlatform;
 
-    final rowHeight = workspaceStyle ? 30.0 : 34.0;
-    final verticalGap = workspaceStyle ? 1.0 : 1.5;
-    final titleColor = selected
-        ? appearance.selectedContentColor
-        : active
-        ? appearance.titleColor.withValues(alpha: 0.94)
-        : appearance.itemColor.withValues(alpha: 0.80);
-    final containerColor = selected
-        ? appearance.selectedContainerColor.withValues(
-            alpha: workspaceStyle ? 0.50 : 0.62,
-          )
-        : active
-        ? appearance.itemColor.withValues(alpha: 0.07)
-        : Colors.transparent;
-    final runningIndicatorSize = workspaceStyle ? 16.0 : _runningIndicatorSize;
-    final runningIndicatorStrokeWidth = workspaceStyle
-        ? 2.0
-        : _runningIndicatorStrokeWidth;
-
     return DragTarget<core_proxy.ChatHistoryListItem>(
       onWillAcceptWithDetails: (details) =>
           details.data.id != history.id && widget.canAcceptDrop(details.data),
       onAcceptWithDetails: (details) => widget.onMoveTo(details.data),
       builder: (context, candidateData, rejectedData) {
-        final dragHovering = candidateData.isNotEmpty;
         return MouseRegion(
           onEnter: (_) => setState(() => _hovered = true),
           onExit: (_) => setState(() => _hovered = false),
-          child: Padding(
-            padding: EdgeInsetsDirectional.only(
-              start: widget.nested ? (workspaceStyle ? 51 : 56) : 12,
-              end: _endPadding,
-            ),
-            child: SizedBox(
-              height: rowHeight,
-              child: Row(
-                children: <Widget>[
-                  if (widget.nested) ...<Widget>[
-                    HistoryRail(
-                      height: rowHeight,
-                      appearance: appearance,
-                      width: workspaceStyle ? 16 : 20,
-                      thickness: 1,
-                      selected: selected,
-                      hovered: active,
-                    ),
-                    const SizedBox(width: 2),
-                  ],
-                  Expanded(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(vertical: verticalGap),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: itemShape,
-                          border: dragHovering
-                              ? Border.all(
-                                  color: appearance.statusAvailableColor
-                                      .withValues(alpha: 0.55),
-                                )
-                              : selected
-                              ? Border.all(
-                                  color: appearance.selectedContentColor
-                                      .withValues(alpha: 0.08),
-                                )
-                              : null,
-                        ),
-                        child: ConversationSwipeActions(
-                          key: ValueKey<String>('conversation-${history.id}'),
-                          onRename: widget.onRename,
-                          onDelete: widget.onDelete,
-                          background: _SwipeActionBackground(
-                            alignment: AlignmentDirectional.centerStart,
-                            color: Theme.of(context).colorScheme.primary,
-                            icon: Icons.edit,
-                            label: '重命名',
-                          ),
-                          secondaryBackground: _SwipeActionBackground(
-                            alignment: AlignmentDirectional.centerEnd,
-                            color: Theme.of(context).colorScheme.error,
-                            icon: Icons.delete,
-                            label: '删除',
-                          ),
-                          child: Material(
-                            color: containerColor,
-                            borderRadius: itemShape,
-                            child: InkWell(
-                              borderRadius: itemShape,
-                              onTap: widget.onClick,
-                              onLongPress: widget.onLongPress,
-                              child: Padding(
-                                padding: EdgeInsetsDirectional.fromSTEB(
-                                  workspaceStyle ? 4.0 : 6.0,
-                                  0,
-                                  workspaceStyle ? 4.0 : 5.0,
-                                  0,
-                                ),
-                                child: Row(
-                                  children: <Widget>[
-                                    Draggable<core_proxy.ChatHistoryListItem>(
-                                      data: history,
-                                      dragAnchorStrategy:
-                                          pointerDragAnchorStrategy,
-                                      onDragEnd: (details) {
-                                        if (details.wasAccepted) {
-                                          return;
-                                        }
-                                        final offset = details.offset;
-                                        final outsideWindow =
-                                            offset.dx < 0 ||
-                                            offset.dy < 0 ||
-                                            offset.dx > windowSize.width ||
-                                            offset.dy > windowSize.height;
-                                        if (widget.canDetach && outsideWindow) {
-                                          widget.onDetach();
-                                        }
-                                      },
-                                      feedback: Material(
-                                        color: Colors.transparent,
-                                        child: ConstrainedBox(
-                                          constraints: const BoxConstraints(
-                                            maxWidth: 280,
-                                          ),
-                                          child: _DraggingConversationItem(
-                                            history: history,
-                                            title: widget.title,
-                                            appearance: appearance,
-                                          ),
-                                        ),
-                                      ),
-                                      childWhenDragging: Opacity(
-                                        opacity: 0.35,
-                                        child: _ConversationStatusHandle(
-                                          isRunning: widget.isRunning,
-                                          animation: _marqueeController,
-                                          selected: selected,
-                                          hovered: active,
-                                          appearance: appearance,
-                                          compact: workspaceStyle,
-                                        ),
-                                      ),
-                                      child: AnimatedOpacity(
-                                        duration: const Duration(
-                                          milliseconds: 140,
-                                        ),
-                                        opacity: widget.isRunning
-                                            ? 1.0
-                                            : (active
-                                                ? 0.72
-                                                : (selected ? 0.36 : 0.0)),
-                                        child: _ConversationStatusHandle(
-                                          isRunning: widget.isRunning,
-                                          animation: _marqueeController,
-                                          selected: selected,
-                                          hovered: active,
-                                          appearance: appearance,
-                                          compact: workspaceStyle,
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(width: workspaceStyle ? 4 : 5),
-                                    Expanded(
-                                      child: Text(
-                                        widget.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
-                                              fontSize: workspaceStyle
-                                                  ? 12.0
-                                                  : 13.0,
-                                              letterSpacing: -0.1,
-                                              color: titleColor,
-                                              fontWeight: selected
-                                                  ? FontWeight.w600
-                                                  : FontWeight.w400,
-                                            ),
-                                      ),
-                                    ),
-
-                                    if (history.pinned) ...<Widget>[
-                                      const SizedBox(width: 5),
-                                      Icon(
-                                        Icons.push_pin_rounded,
-                                        size: 12,
-                                        color: titleColor.withValues(
-                                          alpha: 0.60,
-                                        ),
-                                      ),
-                                    ],
-                                    if (history.locked) ...<Widget>[
-                                      const SizedBox(width: 5),
-                                      Icon(
-                                        Icons.lock_rounded,
-                                        size: 12,
-                                        color: titleColor.withValues(
-                                          alpha: 0.60,
-                                        ),
-                                      ),
-                                    ],
-                                    const SizedBox(width: 2),
-                                    AnimatedOpacity(
-                                      duration: const Duration(
-                                        milliseconds: 140,
-                                      ),
-                                      opacity: showActions ? 1.0 : 0.0,
-                                      child: IgnorePointer(
-                                        ignoring: !showActions,
-                                        child: _ConversationMoreMenuButton(
-                                          history: history,
-                                          selected: selected,
-                                          appearance: appearance,
-                                          compact: workspaceStyle,
-                                          onRename: widget.onRename,
-                                          onTogglePinned:
-                                              widget.onTogglePinned,
-                                          onToggleLocked:
-                                              widget.onToggleLocked,
-                                          onDelete: widget.onDelete,
-                                          onMenuOpenChanged: (open) {
-                                            if (mounted) {
-                                              setState(() => _menuOpen = open);
-                                            }
-                                          },
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+          child: ThemeConversationRow(
+            title: widget.title,
+            selected: selected,
+            active: active,
+            appearance: appearance,
+            workspaceStyle: workspaceStyle,
+            nested: widget.nested,
+            pinned: history.pinned,
+            locked: history.locked,
+            dragHovering: candidateData.isNotEmpty,
+            showActions: showActions,
+            onTap: widget.onClick,
+            onLongPress: widget.onLongPress,
+            surfaceWrapper: (surface) => SwipeActions(
+              key: ValueKey<String>('conversation-${history.id}'),
+              onStartAction: widget.onRename,
+              onEndAction: widget.onSwipeDelete,
+              background: _SwipeActionBackground(
+                alignment: AlignmentDirectional.centerStart,
+                color: Theme.of(context).colorScheme.primary,
+                icon: Icons.edit,
+                label: '重命名',
               ),
+              secondaryBackground: _SwipeActionBackground(
+                alignment: AlignmentDirectional.centerEnd,
+                color: Theme.of(context).colorScheme.error,
+                icon: Icons.delete,
+                label: '删除',
+              ),
+              child: surface,
+            ),
+            leading: Draggable<core_proxy.ChatHistoryListItem>(
+              data: history,
+              dragAnchorStrategy: pointerDragAnchorStrategy,
+              onDragEnd: (details) {
+                if (details.wasAccepted) return;
+                final offset = details.offset;
+                final outsideWindow =
+                    offset.dx < 0 ||
+                    offset.dy < 0 ||
+                    offset.dx > windowSize.width ||
+                    offset.dy > windowSize.height;
+                if (widget.canDetach && outsideWindow) widget.onDetach();
+              },
+              feedback: Material(
+                color: Colors.transparent,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 280),
+                  child: _DraggingConversationItem(
+                    history: history,
+                    title: widget.title,
+                    appearance: appearance,
+                  ),
+                ),
+              ),
+              childWhenDragging: Opacity(
+                opacity: 0.35,
+                child: _ConversationStatusHandle(
+                  isRunning: widget.isRunning,
+                  animation: _marqueeController,
+                  selected: selected,
+                  hovered: active,
+                  appearance: appearance,
+                  compact: workspaceStyle,
+                ),
+              ),
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 140),
+                opacity: widget.isRunning
+                    ? 1.0
+                    : active
+                    ? 0.72
+                    : selected
+                    ? 0.36
+                    : 0.0,
+                child: _ConversationStatusHandle(
+                  isRunning: widget.isRunning,
+                  animation: _marqueeController,
+                  selected: selected,
+                  hovered: active,
+                  appearance: appearance,
+                  compact: workspaceStyle,
+                ),
+              ),
+            ),
+            action: _ConversationMoreMenuButton(
+              history: history,
+              selected: selected,
+              appearance: appearance,
+              compact: workspaceStyle,
+              onRename: widget.onRename,
+              onTogglePinned: widget.onTogglePinned,
+              onToggleLocked: widget.onToggleLocked,
+              onDelete: widget.onDelete,
+              onMenuOpenChanged: (open) {
+                if (mounted) setState(() => _menuOpen = open);
+              },
             ),
           ),
         );
@@ -718,6 +537,7 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
     );
   }
 }
+
 class PluginNavigationDrawerItem extends StatelessWidget {
   const PluginNavigationDrawerItem({
     super.key,
@@ -915,60 +735,16 @@ class BottomSidebarAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shape = BorderRadius.circular(8);
-    final backgroundColor = selected
-        ? appearance.selectedContainerColor.withValues(alpha: 0.65)
-        : appearance.buttonContainerColor.withValues(alpha: 0.55);
-    final borderColor = selected
-        ? appearance.selectedContentColor.withValues(alpha: 0.12)
-        : appearance.dividerColor.withValues(alpha: 0.35);
-    final contentColor = selected
-        ? appearance.selectedContentColor
-        : appearance.itemColor.withValues(alpha: 0.88);
-
-    return SizedBox(
-      height: 34,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: shape,
-          border: Border.all(color: borderColor, width: 1),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: shape,
-          child: InkWell(
-            borderRadius: shape,
-            onTap: onClick,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  Icon(icon, size: 16, color: contentColor),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                        color: contentColor,
-                        letterSpacing: -0.1,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+    return ThemeBottomSidebarAction(
+      icon: icon,
+      label: label,
+      appearance: appearance,
+      onClick: onClick,
+      selected: selected,
     );
   }
 }
+
 class _ConversationMoreMenuButton extends StatelessWidget {
   const _ConversationMoreMenuButton({
     required this.history,
@@ -1029,7 +805,6 @@ class _ConversationMoreMenuButton extends StatelessWidget {
         (selected ? appearance.selectedContentColor : appearance.itemColor)
             .withValues(alpha: 0.78);
     final side = compact ? 20.0 : 24.0;
-    final iconSize = compact ? 14.0 : 16.0;
     final itemIconColor = colorScheme.onSurfaceVariant.withValues(alpha: 0.85);
     final itemTextColor = colorScheme.onSurface.withValues(alpha: 0.92);
     final dangerColor = colorScheme.error.withValues(alpha: 0.90);
@@ -1059,8 +834,10 @@ class _ConversationMoreMenuButton extends StatelessWidget {
         menuPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         onOpened: () => onMenuOpenChanged?.call(true),
         onCanceled: () => onMenuOpenChanged?.call(false),
-        child: Center(
-          child: Icon(Icons.more_horiz_rounded, size: iconSize, color: color),
+        child: ThemeHistoryMoreGlyph(
+          color: color,
+          side: side,
+          compact: compact,
         ),
         onSelected: (action) {
           onMenuOpenChanged?.call(false);
@@ -1094,9 +871,7 @@ class _ConversationMoreMenuButton extends StatelessWidget {
           ),
           _menuItem(
             value: _ConversationQuickAction.toggleLocked,
-            icon: history.locked
-                ? Icons.lock_open_rounded
-                : Icons.lock_rounded,
+            icon: history.locked ? Icons.lock_open_rounded : Icons.lock_rounded,
             label: history.locked ? '解锁' : '锁定',
             iconColor: itemIconColor,
             textColor: itemTextColor,
@@ -1116,8 +891,8 @@ class _ConversationMoreMenuButton extends StatelessWidget {
 }
 
 class _ConversationStatusHandle extends StatelessWidget {
+  /// Creates the existing generic activity handle without an unused widget key.
   const _ConversationStatusHandle({
-    super.key,
     required this.isRunning,
     required this.selected,
     required this.hovered,
@@ -1135,106 +910,14 @@ class _ConversationStatusHandle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final width = compact ? 8.5 : 10.0;
-    final height = compact ? 12.0 : 13.5;
-    final restingColor = selected
-        ? appearance.selectedContentColor.withValues(alpha: 0.70)
-        : appearance.itemColor.withValues(alpha: hovered ? 0.65 : 0.30);
-    final activeColor = appearance.statusAvailableColor;
-
-    return Tooltip(
-      message: isRunning ? '正在运行' : '拖动对话',
-      child: SizedBox(
-        key: isRunning
-            ? const ValueKey<String>('conversation-running-indicator')
-            : null,
-        width: width,
-        height: height,
-        child: isRunning && animation != null
-            ? AnimatedBuilder(
-                animation: animation!,
-                builder: (context, _) {
-                  return CustomPaint(
-                    size: Size(width, height),
-                    painter: _MarqueeDotsPainter(
-                      progress: animation!.value,
-                      activeColor: activeColor,
-                      dimColor: restingColor.withValues(alpha: 0.18),
-                    ),
-                  );
-                },
-              )
-            : CustomPaint(
-                size: Size(width, height),
-                painter: _StaticDotsPainter(color: restingColor),
-              ),
-      ),
+    return ThemeConversationStatusHandle(
+      isRunning: isRunning,
+      selected: selected,
+      hovered: hovered,
+      appearance: appearance,
+      animation: animation,
+      compact: compact,
     );
-  }
-}
-
-class _MarqueeDotsPainter extends CustomPainter {
-  const _MarqueeDotsPainter({
-    required this.progress,
-    required this.activeColor,
-    required this.dimColor,
-  });
-
-  final double progress;
-  final Color activeColor;
-  final Color dimColor;
-
-  // 6 dots in 2 columns, 3 rows:
-  // Counter-clockwise sequence:
-  // 0: Top-Left -> 1: Mid-Left -> 2: Bottom-Left -> 3: Bottom-Right -> 4: Mid-Right -> 5: Top-Right
-  static const List<Offset> _positions = <Offset>[
-    Offset(0.25, 0.18), // 0: Top-Left
-    Offset(0.25, 0.50), // 1: Mid-Left
-    Offset(0.25, 0.82), // 2: Bottom-Left
-    Offset(0.75, 0.82), // 3: Bottom-Right
-    Offset(0.75, 0.50), // 4: Mid-Right
-    Offset(0.75, 0.18), // 5: Top-Right
-  ];
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final activePos = progress * 6.0;
-    final baseDotRadius = size.width * 0.115;
-
-    for (var i = 0; i < 6; i++) {
-      var dist = (activePos - i) % 6.0;
-      if (dist < 0) {
-        dist += 6.0;
-      }
-      final intensity = dist < 3.2 ? (1.0 - (dist / 3.2)) : 0.0;
-      final color = intensity > 0
-          ? Color.lerp(dimColor, activeColor, intensity)!
-          : dimColor;
-      final radius = baseDotRadius * (1.0 + intensity * 0.25);
-      final center = Offset(
-        size.width * _positions[i].dx,
-        size.height * _positions[i].dy,
-      );
-
-      if (intensity > 0.82) {
-        final glowPaint = Paint()
-          ..color = activeColor.withValues(alpha: 0.35 * intensity)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.4);
-        canvas.drawCircle(center, radius * 1.35, glowPaint);
-      }
-
-      final dotPaint = Paint()
-        ..color = color
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(center, radius, dotPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _MarqueeDotsPainter oldDelegate) {
-    return oldDelegate.progress != progress ||
-        oldDelegate.activeColor != activeColor ||
-        oldDelegate.dimColor != dimColor;
   }
 }
 
@@ -1273,6 +956,7 @@ class _StaticDotsPainter extends CustomPainter {
     return oldDelegate.color != color;
   }
 }
+
 class _DraggingConversationItem extends StatelessWidget {
   const _DraggingConversationItem({
     required this.history,
@@ -1388,6 +1072,7 @@ class _SwipeActionBackground extends StatelessWidget {
 }
 
 class _RoundDrawerButton extends StatelessWidget {
+  /// Creates a compact action that also supports the existing inactive drag preview.
   const _RoundDrawerButton({
     required this.selected,
     required this.appearance,
@@ -1398,7 +1083,7 @@ class _RoundDrawerButton extends StatelessWidget {
   final bool selected;
   final NavigationDrawerAppearance appearance;
   final IconData icon;
-  final VoidCallback onClick;
+  final VoidCallback? onClick;
 
   /// Builds the compact plugin drag source and reorder drop target.
   @override
@@ -1441,7 +1126,7 @@ class _DockedPluginRoundButton extends StatelessWidget {
   final int insertionIndex;
   final bool selected;
   final NavigationDrawerAppearance appearance;
-  final VoidCallback onClick;
+  final VoidCallback? onClick;
 
   @override
   Widget build(BuildContext context) {

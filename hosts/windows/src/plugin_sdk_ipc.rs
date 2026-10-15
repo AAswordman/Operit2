@@ -35,6 +35,7 @@ const PIPE_READY_TIMEOUT_MS: u32 = 30_000;
 
 /// Windows named-pipe Plugin SDK IPC carrier.
 pub struct WindowsPluginSdkIpcHost {
+    instance: String,
     inner: Arc<Mutex<WindowsInner>>,
     nextSession: Arc<AtomicU64>,
 }
@@ -56,7 +57,13 @@ fn joinPipeThread(thread: JoinHandle<()>) -> HostResult<()> {
 impl WindowsPluginSdkIpcHost {
     /// Creates a Windows named-pipe Plugin SDK IPC carrier.
     pub fn new() -> Self {
+        Self::withInstance(&std::env::var("OPERIT_PLUGIN_SDK_INSTANCE").unwrap_or_default())
+    }
+
+    /// Gives each application profile its own named-pipe address.
+    pub fn withInstance(instance: &str) -> Self {
         Self {
+            instance: instance.to_owned(),
             inner: Arc::new(Mutex::new(WindowsInner {
                 listenerStop: None,
                 listenerThread: None,
@@ -69,8 +76,12 @@ impl WindowsPluginSdkIpcHost {
 
     /// Maps the logical endpoint name to the Windows named-pipe path.
     #[allow(non_snake_case)]
-    fn pipeName(endpoint: &PluginSdkIpcEndpoint) -> String {
-        format!(r"\\.\pipe\{}", endpoint.name.replace('.', "_"))
+    fn pipeName(&self, endpoint: &PluginSdkIpcEndpoint) -> String {
+        let name = operit_host_native_plugin_sdk_ipc::pluginSdkIpcInstanceName(
+            &endpoint.name,
+            &self.instance,
+        );
+        format!(r"\\.\pipe\{}", name.replace('.', "_"))
     }
 
     /// Encodes a Windows path as a null-terminated UTF-16 buffer.
@@ -153,6 +164,15 @@ impl Default for WindowsPluginSdkIpcHost {
 impl PluginSdkIpcHost for WindowsPluginSdkIpcHost {
     /// Starts Operit through the registered operit2 URI protocol and waits for the named pipe.
     fn activate(&self, endpoint: PluginSdkIpcEndpoint) -> HostResult<()> {
+        let pipeName = Self::wide(&self.pipeName(&endpoint));
+        if unsafe { WaitNamedPipeW(pipeName.as_ptr(), 0) } != 0 {
+            return Ok(());
+        }
+        if !self.instance.is_empty() {
+            return Err(HostError::new(
+                "Start the selected Plugin SDK instance before connecting",
+            ));
+        }
         let verb = Self::wide("open");
         let uri = Self::wide(ACTIVATION_URI);
         let result = unsafe {
@@ -171,7 +191,6 @@ impl PluginSdkIpcHost for WindowsPluginSdkIpcHost {
                 result as isize
             )));
         }
-        let pipeName = Self::wide(&Self::pipeName(&endpoint));
         let deadline = std::time::Instant::now()
             + std::time::Duration::from_millis(PIPE_READY_TIMEOUT_MS as u64);
         loop {
@@ -200,7 +219,7 @@ impl PluginSdkIpcHost for WindowsPluginSdkIpcHost {
         endpoint: PluginSdkIpcEndpoint,
         callbacks: PluginSdkIpcSessionCallbacks,
     ) -> HostResult<()> {
-        let pipeName = Self::pipeName(&endpoint);
+        let pipeName = self.pipeName(&endpoint);
         let stop = Arc::new(AtomicBool::new(false));
         {
             let mut inner = self.lock()?;
@@ -211,6 +230,7 @@ impl PluginSdkIpcHost for WindowsPluginSdkIpcHost {
         }
         let host = self.inner.clone();
         let nextSession = self.nextSession.clone();
+        let instance = self.instance.clone();
         let thread = std::thread::Builder::new()
             .name("operit-plugin-sdk-ipc-pipe-listen".to_string())
             .spawn(move || {
@@ -237,7 +257,10 @@ impl PluginSdkIpcHost for WindowsPluginSdkIpcHost {
                     };
                     if let Err(error) = pipe_io::accept(&file, &stop) {
                         if !stop.load(Ordering::SeqCst) {
-                            eprintln!("Plugin SDK pipe accept failed: {error}");
+                            operit_host_api::logHostError(
+                                "WindowsPluginSdkIpc",
+                                &format!("Plugin SDK pipe accept failed: {error}"),
+                            );
                         }
                         break;
                     }
@@ -245,11 +268,15 @@ impl PluginSdkIpcHost for WindowsPluginSdkIpcHost {
                         break;
                     }
                     let carrier = WindowsPluginSdkIpcHost {
+                        instance: instance.clone(),
                         inner: host.clone(),
                         nextSession: nextSession.clone(),
                     };
                     if let Err(error) = carrier.attachFile(file, callbacks.clone(), true) {
-                        eprintln!("Plugin SDK pipe accept failed: {error}");
+                        operit_host_api::logHostError(
+                            "WindowsPluginSdkIpc",
+                            &format!("Plugin SDK pipe accept failed: {error}"),
+                        );
                     }
                 }
             })
@@ -265,7 +292,7 @@ impl PluginSdkIpcHost for WindowsPluginSdkIpcHost {
         callbacks: PluginSdkIpcSessionCallbacks,
     ) -> HostResult<PluginSdkIpcSessionId> {
         self.activate(endpoint.clone())?;
-        let pipeName = Self::pipeName(&endpoint);
+        let pipeName = self.pipeName(&endpoint);
         let wide = Self::wide(&pipeName);
         let handle = unsafe {
             CreateFileW(
@@ -356,7 +383,8 @@ mod tests {
         let endpoint = PluginSdkIpcEndpoint {
             name: format!("operit-sdk-test-{}", std::process::id()),
         };
-        let server = WindowsPluginSdkIpcHost::new();
+        let instance = format!("test-{}", std::process::id());
+        let server = WindowsPluginSdkIpcHost::withInstance(&instance);
         let (tx, rx) = mpsc::channel();
         server
             .startListener(
@@ -370,7 +398,7 @@ mod tests {
                 ),
             )
             .unwrap();
-        let path = WindowsPluginSdkIpcHost::wide(&WindowsPluginSdkIpcHost::pipeName(&endpoint));
+        let path = WindowsPluginSdkIpcHost::wide(&server.pipeName(&endpoint));
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while unsafe { WaitNamedPipeW(path.as_ptr(), 100) } == 0 {
             assert!(
@@ -383,9 +411,12 @@ mod tests {
             .read(true)
             .write(true)
             .custom_flags(FILE_FLAG_OVERLAPPED)
-            .open(WindowsPluginSdkIpcHost::pipeName(&endpoint))
+            .open(server.pipeName(&endpoint))
             .unwrap();
-        let client = WindowsPluginSdkIpcHost::new();
+        let client = WindowsPluginSdkIpcHost::withInstance(&instance);
+        let other = WindowsPluginSdkIpcHost::withInstance(&format!("{instance}-other"));
+        assert_ne!(server.pipeName(&endpoint), other.pipeName(&endpoint));
+        assert!(other.activate(endpoint.clone()).is_err());
         let (closed_tx, closed_rx) = mpsc::channel();
         let id = client
             .attachFile(

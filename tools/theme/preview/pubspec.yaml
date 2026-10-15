@@ -1,0 +1,23 @@
+name: operit_theme_studio_preview
+description: Flutter preview application for the Operit Theme Studio authoring tool.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  crypto: ^3.0.6
+  flutter:
+    sdk: flutter
+  operit_ui:
+    path: ../../../apps/flutter/packages/operit_ui
+  web: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

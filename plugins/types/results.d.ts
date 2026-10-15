@@ -1,9 +1,24 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
+import type { Catalog } from "./catalog";
+import type { Chat } from "./chat";
+import type { JsonObject } from "./core";
+import type { Models } from "./models";
+import type { StorageChangeEntry, StorageKeyValueEntry, StorageSqlExecutionResult, StorageSqlRow, StorageValueEntry } from "./storage.generated";
+import type { Theme } from "./theme";
+import type { Tts } from "./tts";
+
+/**
+ * Preserves an arbitrary JSON result without interpreting strings or discarding null values.
+ */
+export interface JsonResultData {
+  value: unknown;
+}
+
 /**
  * Contains every concrete payload returned by the built-in tool runtime.
  */
-export type ToolResultData = EdgePortResultData | BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | MemoryQueryResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatCallResultData | ChatMessagesResultData | CharacterCardListResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData | MemoryLinkResultData | MemoryLinkQueryResultData;
+export type ToolResultData = JsonResultData | EdgePortResultData | BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | ModelsListSummariesResultData | TtsSynthesizeResultData | SttTranscribeResultData | TtsListConfigsResultData | TtsGetCurrentConfigIdResultData | TtsSetCurrentConfigIdResultData | ThemeListConfigsResultData | ThemeApplyConfigResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | StorageRequestResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatSendMessageResultData | ChatObservationResultData | ChatCancelResultData | ChatReadExtensionResultData | ChatWriteExtensionResultData | ChatDeleteExtensionResultData | ChatCallResultData | ChatMessagesResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | CatalogReadToolSourcesResultData | FindFilesResultData | GrepResultData;
 
 /**
  * Captures the UI node and Android surface reached when an automation run finishes.
@@ -227,6 +242,94 @@ export interface EnvironmentVariableWriteResultData {
 }
 
 /**
+ * Returns the complete configured model summaries.
+ */
+export interface ModelsListSummariesResultData {
+  models: Models.Summary[];
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * One encoded audio segment, in synthesis order.
+ */
+export interface TtsAudioSegment {
+  audio: number[];
+  contentType: string;
+}
+
+export interface TtsSynthesizeResultData {
+  segments: TtsAudioSegment[];
+  toString(): string;
+}
+
+export interface SttTranscribeResultData {
+  text: string;
+  toString(): string;
+}
+
+/**
+ * Returns the complete configured speech records.
+ */
+export interface TtsListConfigsResultData {
+  configs: Tts.Config[];
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the current application speech configuration identity.
+ */
+export interface TtsGetCurrentConfigIdResultData {
+  configId: string;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the committed application speech configuration identity.
+ */
+export interface TtsSetCurrentConfigIdResultData {
+  configId: string;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the complete named appearance configurations.
+ */
+export interface ThemeListConfigsResultData {
+  configs: Theme.Config[];
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the actual named appearance record committed by the tool.
+ */
+export interface ThemeApplyConfigResultData {
+  id: string;
+  name: string;
+  snapshot: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
  * Wraps an integer value returned by a built-in tool.
  */
 export interface IntResultData {
@@ -371,6 +474,11 @@ export interface FileApplyResultData {
    */
   toString(): string;
 }
+
+/**
+ * Returns the concrete result fields of the selected Storage tool operation.
+ */
+export type StorageRequestResultData = { op: "open"; handle: string; path: string; } | { op: "close"; } | { op: "query"; rows: StorageSqlRow[]; } | { op: "execute"; results: StorageSqlExecutionResult[]; } | { op: "transaction"; results: StorageSqlExecutionResult[]; } | { op: "define_table"; changed: boolean; } | { op: "get"; entry: StorageValueEntry | null; } | { op: "list"; entries: StorageKeyValueEntry[]; } | { op: "commit"; version: string; } | { op: "changes"; entries: StorageChangeEntry[]; };
 
 /**
  * Contains an HTTP response status, headers, cookies, media type, and decoded or Base64 body.
@@ -581,46 +689,6 @@ export interface DeviceInfoResultData {
 }
 
 /**
- * Describes one stored memory together with ownership, provenance, tags, and chunk metadata.
- */
-export interface MemoryInfo {
-  ownerKey: string;
-  title: string;
-  content: string;
-  source: string;
-  tags: string[];
-  createdAt: string;
-  chunkInfo?: string | null;
-  chunkIndices?: number[] | null;
-}
-
-/**
- * Contains matched memories and snapshot metadata used to suppress previously returned matches.
- */
-export interface MemoryQueryResultData {
-  /**
-   * Queried memories
-   */
-  memories: MemoryInfo[];
-  /**
-   * Snapshot id for de-duplicated follow-up or parallel queries; may be auto-generated or caller-specified
-   */
-  snapshotId?: string | null;
-  /**
-   * Whether this call created a new snapshot, including when a caller-specified id was created on first use
-   */
-  snapshotCreated?: boolean;
-  /**
-   * Number of matched memories excluded because they were already seen in the snapshot
-   */
-  excludedBySnapshotCount?: number;
-  /**
-   * Formats snapshot de-duplication metadata followed by the matched memory records.
-   */
-  toString(): string;
-}
-
-/**
  * Reports whether the chat service connected and when the connection was established.
  */
 export interface ChatServiceStartResultData {
@@ -649,7 +717,7 @@ export interface ChatCreationResultData {
 }
 
 /**
- * Summarizes a chat, its activity, token use, current status, and bound character card.
+ * Summarizes a workspace conversation's activity, token use, and current status.
  */
 export interface ChatInfo {
   /**
@@ -684,10 +752,6 @@ export interface ChatInfo {
    * Total output tokens used
    */
   outputTokens: number;
-  /**
-   * Bound character card name (if any)
-   */
-  characterCardName?: string | null;
 }
 
 /**
@@ -707,7 +771,7 @@ export interface ChatListResultData {
    */
   chats: ChatInfo[];
   /**
-   * Formats chat summaries, marks the current chat, and includes token and card metadata.
+   * Formats workspace conversation summaries, current status, and token statistics.
    */
   toString(): string;
 }
@@ -815,7 +879,31 @@ export interface ChatDeleteResultData {
 }
 
 /**
- * Records a sent chat message and its optional final AI reply.
+ * Identifies the terminal state of the actual originating generation rather than a hook decision.
+ */
+export type MessageSendStatus = "completed" | "cancelled";
+
+/**
+ * Locates one exact assistant revision committed by the originating generation.
+ */
+export interface ChatCommittedMessage {
+  /**
+   * Identifies the real persisted message record, never a wall-clock receipt timestamp.
+   */
+  messageTimestamp: number;
+  /**
+   * Identifies the exact persisted revision; zero is the base message.
+   */
+  variantIndex: number;
+}
+
+/**
+ * Distinguishes real persistence, nonpersistent output and input ownership decisions without inventing locators.
+ */
+export type MessageSendOutcome = { type: "committed"; status: MessageSendStatus; userMessageTimestamp?: number; assistant?: ChatCommittedMessage; } | { type: "not_persisted"; status: MessageSendStatus; } | { type: "blocked"; message?: string; } | { type: "consumed"; metadata: Record<string, unknown>; };
+
+/**
+ * Records only the originating send's terminal result and exact commit receipts.
  */
 export interface MessageSendResultData {
   /**
@@ -839,7 +927,95 @@ export interface MessageSendResultData {
    */
   sentAt: number;
   /**
+   * Reports actual persistence or input ownership without looking up unrelated recent messages.
+   */
+  outcome: MessageSendOutcome;
+  /**
    * Formats bounded previews of the sent message and optional AI reply.
+   */
+  toString(): string;
+}
+
+/**
+ * Records the authenticated Chat tool's actual originating send and committed outcome.
+ */
+export interface ChatSendMessageResultData {
+  /**
+   * The ID of the chat the message was sent to
+   */
+  chatId: string;
+  /**
+   * The message content that was sent
+   */
+  message: string;
+  /**
+   * Final AI response content when available
+   */
+  aiResponse?: string | null;
+  /**
+   * Reply receive timestamp when available
+   */
+  receivedAt?: number | null;
+  /**
+   * Sent timestamp
+   */
+  sentAt: number;
+  /**
+   * Reports actual persistence or input ownership without looking up unrelated recent messages.
+   */
+  outcome: MessageSendOutcome;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes the concrete resource result for an observation operation.
+ */
+export type ChatObservationResultData = { op: "open"; handle: string; } | { op: "next"; event: Chat.SendEvent | null; } | { op: "close"; };
+
+/**
+ * Reports cancellation of the calling owner's active Chat execution.
+ */
+export interface ChatCancelResultData {
+  chatId: string;
+  cancelRequested: boolean;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns an owner-scoped Chat extension or its explicit absence.
+ */
+export interface ChatReadExtensionResultData {
+  extension: JsonObject | null;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the exact owner-scoped Chat extension that was persisted.
+ */
+export interface ChatWriteExtensionResultData {
+  extension: JsonObject;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports whether an owner-scoped Chat extension was removed.
+ */
+export interface ChatDeleteExtensionResultData {
+  deleted: boolean;
+  /**
+   * Formats the concrete tool fields for the common text result path.
    */
   toString(): string;
 }
@@ -897,13 +1073,20 @@ export interface ChatCallTurnData {
 }
 
 /**
- * Describes one chat message together with its role, provider, model, and timestamp.
+ * Describes one chat message's protocol sender, content, provider, model, and timestamp.
  */
 export interface ChatMessageInfo {
   sender: string;
   content: string;
   timestamp: number;
-  roleName: string;
+  /**
+   * Identifies the exact selected persisted revision; zero selects the base message.
+   */
+  variantIndex: number;
+  /**
+   * Reports the genuine number of persisted message revisions.
+   */
+  variantCount: number;
   provider: string;
   modelName: string;
 }
@@ -924,30 +1107,6 @@ export interface ChatMessagesResultData {
    * Contains the inclusive last message index for a range query.
    */
   end?: number;
-}
-
-/**
- * Describes a character card, including its default status and lifecycle timestamps.
- */
-export interface CharacterCardInfo {
-  id: string;
-  name: string;
-  description: string;
-  isDefault: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-
-/**
- * Contains the character cards available to the chat service.
- */
-export interface CharacterCardListResultData {
-  totalCount: number;
-  cards: CharacterCardInfo[];
-  /**
-   * Formats character card metadata and marks the default card.
-   */
-  toString(): string;
 }
 
 /**
@@ -1454,6 +1613,20 @@ export interface LinkData {
 }
 
 /**
+ * Returns the actual registered built-in, package, skill and MCP tool sources.
+ */
+export interface CatalogReadToolSourcesResultData {
+  builtinTools: Catalog.ToolSource[];
+  packages: Catalog.ToolSource[];
+  skills: Catalog.ToolSource[];
+  mcpServers: Catalog.ToolSource[];
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
  * Contains file paths matching a pattern beneath a requested search path.
  */
 export interface FindFilesResultData {
@@ -1494,66 +1667,6 @@ export interface GrepResultData {
   filesSearched: number;
   /**
    * Formats search statistics and bounded, line-aware match context grouped by file.
-   */
-  toString(): string;
-}
-
-/**
- * Describes a newly created weighted relationship between two memories.
- */
-export interface MemoryLinkResultData {
-  /**
-   * The title of the source memory
-   */
-  sourceTitle: string;
-  /**
-   * The title of the target memory
-   */
-  targetTitle: string;
-  /**
-   * The type of link (e.g., "related", "causes", "explains", "part_of")
-   */
-  linkType: string;
-  /**
-   * The strength of the link (0.0-1.0)
-   */
-  weight: number;
-  /**
-   * Optional description of the link
-   */
-  description: string;
-  /**
-   * Formats the source, target, relationship type, and strength of the created memory link.
-   */
-  toString(): string;
-}
-
-/**
- * Describes a weighted relationship between two stored memories.
- */
-export interface LinkInfo {
-  linkId: number;
-  sourceTitle: string;
-  targetTitle: string;
-  linkType: string;
-  weight: number;
-  description: string;
-}
-
-/**
- * Contains the weighted memory relationships returned by a link query.
- */
-export interface MemoryLinkQueryResultData {
-  /**
-   * Number of links returned
-   */
-  totalCount: number;
-  /**
-   * Queried links
-   */
-  links: LinkInfo[];
-  /**
-   * Formats each queried memory link with identifiers, relationship metadata, and description.
    */
   toString(): string;
 }

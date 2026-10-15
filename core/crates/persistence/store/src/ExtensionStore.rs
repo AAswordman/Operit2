@@ -135,6 +135,7 @@ impl ExtensionStore {
         Ok(())
     }
 
+    /// Imports legacy visibility and package state through their declared storage schemas.
     fn initialSettings(&self, kind: &str, id: &str, mut settings: Value) -> Result<Value, String> {
         use operit_util::RuntimeStorageLayout::{
             PACKAGE_MANAGER_PREFERENCES_PATH, SKILL_VISIBILITY_PREFERENCES_PATH,
@@ -147,9 +148,34 @@ impl ExtensionStore {
         if !self.storage.exists(path).map_err(|e| e.to_string())? {
             return Ok(settings);
         }
-        let prefs = PreferencesDataStore::newWithStorage(self.storage.clone(), path)
-            .data()
-            .map_err(|e| e.to_string())?;
+        let store = PreferencesDataStore::newWithStorage(self.storage.clone(), path);
+        let store = if kind == "package" {
+            store.withSchema(2, |version, preferences| match version {
+                0 => Ok(()),
+                1 => {
+                    for name in ["imported_packages", "disabled_packages", "toolpkg_order"] {
+                        let key = stringPreferencesKey(name);
+                        if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                            let names: Vec<String> = serde_json::from_str(&encoded)?;
+                            preferences.set(&key, serde_json::to_value(names)?);
+                        }
+                    }
+                    let key = stringPreferencesKey("toolpkg_subpackage_states");
+                    if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                        let states: BTreeMap<String, bool> = serde_json::from_str(&encoded)?;
+                        preferences.set(&key, serde_json::to_value(states)?);
+                    }
+                    Ok(())
+                }
+                from => Err(crate::PreferencesDataStore::PreferencesDataStoreError::MissingMigration {
+                    from,
+                    to: from + 1,
+                }),
+            })
+        } else {
+            store
+        };
+        let prefs = store.data().map_err(|e| e.to_string())?;
         if kind == "skill" {
             let hash = format!("{:x}", Sha256::digest(id.trim().as_bytes()));
             let legacy: String = id
@@ -181,7 +207,7 @@ impl ExtensionStore {
             ] {
                 if let Some(value) = prefs.get(&stringPreferencesKey(old)) {
                     let values: Vec<String> =
-                        serde_json::from_str(value).map_err(|e| e.to_string())?;
+                        serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
                     settings[new] = serde_json::json!(values
                         .into_iter()
                         .filter(|name| members.contains(name))
@@ -189,14 +215,14 @@ impl ExtensionStore {
                 }
             }
             if let Some(value) = prefs.get(&stringPreferencesKey("toolpkg_order")) {
-                let order: Vec<String> = serde_json::from_str(value).map_err(|e| e.to_string())?;
+                let order: Vec<String> = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
                 if let Some(index) = order.iter().position(|name| name == id) {
                     settings["order"] = serde_json::json!(index);
                 }
             }
             if let Some(value) = prefs.get(&stringPreferencesKey("toolpkg_subpackage_states")) {
                 let states: BTreeMap<String, bool> =
-                    serde_json::from_str(value).map_err(|e| e.to_string())?;
+                    serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
                 settings["subpackageStates"] = serde_json::json!(states
                     .into_iter()
                     .filter(|(name, _)| members.contains(name))
@@ -262,7 +288,7 @@ impl ExtensionStore {
                         .map_err(|e| e.to_string())?
                         .get(&stringPreferencesKey("settings"))
                     {
-                        record.settings = serde_json::from_str(value).map_err(|e| e.to_string())?;
+                        record.settings = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
                     }
                     self.validate(&record)?;
                     records.push(record);
@@ -335,6 +361,22 @@ impl ExtensionStore {
         self.write(&record)
     }
 
+    /// Retires an archived device package source without deleting its configuration or data.
+    pub fn retireDevicePackageSource(&self, id: &str, sourceName: &str) -> Result<(), String> {
+        let record = self.record("package", id)?;
+        if record.scope != "device" || record.sourceName != sourceName {
+            return Err(format!("Package retirement ownership mismatch: {id}/{sourceName}"));
+        }
+        let source = format!("{}/{}", Self::root("package", "device")?, sourceName);
+        if self.storage.exists(&source).map_err(|error| error.to_string())? {
+            return Err(format!("Package source must be archived before retirement: {sourceName}"));
+        }
+        self.storage.delete(&recordPath("package", id, "device")?, false)
+            .map_err(|error| error.to_string())?;
+        notifyCatalogChanged();
+        Ok(())
+    }
+
     /// Writes configuration in its owner scope and keeps portable file bytes unchanged.
     pub fn setSettings(&self, kind: &str, id: &str, settings: Value) -> Result<(), String> {
         let mut record = self.record(kind, id)?;
@@ -371,6 +413,7 @@ impl ExtensionStore {
                 );
             }
             self.validate(&source)?;
+            self.requireFileOnlyScopeMove(&source)?;
             source
         } else {
             let mut source = self.record(kind, id)?;
@@ -396,6 +439,7 @@ impl ExtensionStore {
                     ));
                 }
             }
+            self.requireFileOnlyScopeMove(&source)?;
             source.files = self.snapshot(&source)?;
             self.storage
                 .writeBytes(
@@ -462,26 +506,55 @@ impl ExtensionStore {
         Ok(format!("runtime/extensions/{scope}/plugins/configs/{name}"))
     }
 
+    /// Resolves persistent plugin data from its explicit data scope rather than installation metadata.
+    pub fn dataPathForScope(id: &str, scope: &str) -> Result<String, String> {
+        validateScope(scope)?;
+        let name = operit_util::OperitPaths::pluginConfigDirName(id)?;
+        Ok(format!("runtime/plugin_data/{scope}/{name}"))
+    }
+
+    /// Resolves stable device-local plugin data independently of its installation scope.
+    pub fn localDataPath(id: &str) -> Result<String, String> {
+        Self::dataPathForScope(id, "device")
+    }
+
+    /// Resolves stable shared plugin data independently of its installation scope.
+    pub fn spaceDataPath(id: &str) -> Result<String, String> {
+        Self::dataPathForScope(id, "space")
+    }
+
     /// Resolves the current scope-owned plugin config path using the existing stable directory naming rule.
     pub fn configPath(&self, id: &str) -> Result<String, String> {
         self.configRoot(&self.record("package", id)?)
     }
 
-    /// Settings use the existing field-wise preference synchronization; installation bytes do not.
+    /// Synchronizes one complete settings value independently from installation bytes.
     fn settingsStore(&self, record: &ExtensionRecord) -> Result<PreferencesDataStore, String> {
         let path = recordPath(&record.kind, &record.id, &record.scope)?
             .replace("/records/", "/settings/")
             .replace(".json", ".preferences.json");
-        Ok(if record.scope == "space" {
+        let store = if record.scope == "space" {
             PreferencesDataStore::newWithStorage(self.storage.clone(), path)
         } else {
             (*CoreNodeStateStore::newWithStorage(self.storage.clone(), path)).clone()
-        }
-        .withStructuredJsonSync())
+        };
+        Ok(store.withSchema(2, |version, preferences| match version {
+            0 => Ok(()),
+            1 => {
+                let key = stringPreferencesKey("settings");
+                if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                    let settings: Value = serde_json::from_str(&encoded)?;
+                    preferences.set(&key, settings);
+                }
+                Ok(())
+            }
+            from => Err(crate::PreferencesDataStore::PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        }))
     }
 
+    /// Writes complete plugin or MCP settings as one synchronization entity.
     fn writeSettings(&self, record: &ExtensionRecord) -> Result<(), String> {
-        let value = serde_json::to_string(&record.settings).map_err(|e| e.to_string())?;
+        let value = serde_json::to_value(&record.settings).map_err(|e| e.to_string())?;
         self.settingsStore(record)?
             .edit(|preferences| {
                 preferences.set(&stringPreferencesKey("settings"), value);
@@ -629,8 +702,21 @@ impl ExtensionStore {
         for root in self.ownedPaths(record)? {
             self.collectFiles(&root, &mut paths)?;
         }
+        let mut databaseFiles = std::collections::BTreeSet::new();
+        for path in &paths {
+            if crate::PluginStorage::ownsFile(self.storage.clone(), path).map_err(|e|e.to_string())? {
+                databaseFiles.insert(path.clone());
+            }
+        }
+        for path in &databaseFiles {
+            if let Some(database) = path.strip_suffix(".operit-storage.json") {
+                crate::PluginStorage::unregisterDatabase(crate::RuntimeStorageHost::defaultRuntimeSqliteHost(), database).map_err(|e|e.to_string())?;
+            }
+        }
         for path in paths {
-            if record.scope == "space" {
+            if databaseFiles.contains(&path) {
+                if self.storage.exists(&path).map_err(|e| e.to_string())? { self.storage.delete(&path, false).map_err(|e|e.to_string())?; }
+            } else if record.scope == "space" {
                 RuntimeFileSyncStore::new(self.storage.clone(), RUNTIME_SYNC_DIR_PATH)
                     .delete(&path)?;
             } else if self.storage.exists(&path).map_err(|e| e.to_string())? {
@@ -687,6 +773,7 @@ impl ExtensionStore {
         }
         if record.kind == "package" {
             paths.push(self.configRoot(record)?);
+            paths.push(self.configRoot(record)?.replacen("/plugins/configs/", "/plugins/data/", 1));
         }
         Ok(paths)
     }
@@ -694,6 +781,16 @@ impl ExtensionStore {
     /// Resolves one package configuration root without changing its stable plugin directory name.
     fn configRoot(&self, record: &ExtensionRecord) -> Result<String, String> {
         Self::configPathForScope(&record.id, &record.scope)
+    }
+
+    /// Rejects scope relocation before mutation when a plugin owns transactional databases.
+    fn requireFileOnlyScopeMove(&self, record: &ExtensionRecord) -> Result<(), String> {
+        let mut paths = std::collections::BTreeSet::new();
+        for root in self.ownedPaths(record)? { self.collectFiles(&root, &mut paths)?; }
+        for path in paths {
+            if crate::PluginStorage::ownsFile(self.storage.clone(), &path).map_err(|e|e.to_string())? { return Err("Plugin scope moves require an explicit database relocation transaction".into()); }
+        }
+        Ok(())
     }
 
     /// Captures the full portable content tree and existing configuration during a scope move.
@@ -719,6 +816,7 @@ impl ExtensionStore {
         }
         if record.kind == "package" {
             self.snapshotTree(&self.configRoot(record)?, "config", &mut files)?;
+            self.snapshotTree(&self.configRoot(record)?.replacen("/plugins/configs/", "/plugins/data/", 1), "data", &mut files)?;
         }
         Ok(files)
     }
@@ -739,6 +837,7 @@ impl ExtensionStore {
                 .strip_prefix(&format!("{root}/"))
                 .ok_or("Storage entry escaped its requested root")?;
             validateSegment(name)?;
+            if crate::PluginStorage::ownsFile(self.storage.clone(), &entry.path).map_err(|e|e.to_string())? { continue; }
             let relative = format!("{prefix}/{name}");
             if entry.isDirectory {
                 self.snapshotTree(&entry.path, &relative, files)?;
@@ -780,6 +879,9 @@ impl ExtensionStore {
                     "{}/{tail}",
                     Self::root(&record.kind, &record.scope)?
                 ))
+            }
+            "data" if record.kind == "package" => {
+                Ok(format!("{}/{tail}", self.configRoot(record)?.replacen("/plugins/configs/", "/plugins/data/", 1)))
             }
             "config" if record.kind == "package" => {
                 Ok(format!("{}/{tail}", self.configRoot(record)?))

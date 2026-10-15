@@ -629,15 +629,8 @@ class WebKitWebViewController extends PlatformWebViewController {
   }
 
   @override
-  Future<Object> runJavaScriptReturningResult(String javaScript) async {
-    final Object? result = await _webView.evaluateJavaScript(javaScript);
-    if (result == null) {
-      throw ArgumentError(
-        'Result of JavaScript execution returned a `null` value. '
-        'Use `runJavascript` when expecting a null return value.',
-      );
-    }
-    return result;
+  Future<Object?> runJavaScriptReturningResult(String javaScript) {
+    return _webView.evaluateJavaScript(javaScript);
   }
 
   @override
@@ -662,7 +655,7 @@ class WebKitWebViewController extends PlatformWebViewController {
   @override
   Future<Offset> getScrollPosition() async {
     if (defaultTargetPlatform == TargetPlatform.macOS) {
-      final Object result = await runJavaScriptReturningResult(
+      final Object? result = await runJavaScriptReturningResult(
         'JSON.stringify([window.scrollX || window.pageXOffset || 0, '
         'window.scrollY || window.pageYOffset || 0]);',
       );

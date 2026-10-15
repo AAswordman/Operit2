@@ -111,7 +111,7 @@ runtime/application        -> operit-runtime-application
 node/edge-contract         -> operit-edge-contract
 node/edge                  -> operit-node-edge
 node/router                -> operit-core-node
-access/peer-link           -> operit-peer-link
+node/peer-link           -> operit-peer-link
 proxy/codegen              -> operit-proxy-scan
 proxy/local                -> operit-proxy-local
 proxy/edge                 -> operit-proxy-edge
@@ -1415,7 +1415,7 @@ proxy/local
 - Runtime 本地能力适配。
 - RuntimeStorageHost。
 - Tool/runtime callback contract。
-- Handoff、push 和 local execution capability。
+- Call、Watch、Push 和 local execution capability。
 
 创建输入：
 
@@ -1494,7 +1494,7 @@ SyncConfig
 ~~~text
 persistence/sync
 persistence/node
-access/peer-link
+node/peer-link
 foundation/link
 foundation/model
 ~~~
@@ -1600,42 +1600,36 @@ foundation/host-api
 foundation/model
 ~~~
 
-### 10.5 access/peer-link/Cargo.toml
+### 10.5 node/peer-link/Cargo.toml
 
-对应当前 CoreNodePeerLink 和 carrier 部分。
+对应当前 `operit-peer-link` transport crate。
 
 职责：
 
-- PeerFrame。
-- PeerConnection。
-- PeerLink registration。
-- HTTP/WebSocket carrier。
+- 标准 Link Call、Watch、Push 消息承载。
+- PeerConnection 和 PeerListener。
+- PeerLink connect/listen。
+- HTTP、WebSocket、TCP、Serial、Bluetooth 的 Host I/O 适配。
+- 共用 framing 和 MessagePack 编解码。
 
 创建输入：
 
 ~~~text
-Auth service
-Identity handle
-TransportConfig
-NodeTransportReceiver
+HostManager
+PeerEndpoint
+PeerTransport
+maxMessageBytes
 ~~~
 
-直接依赖：
+直接依赖的架构模块：
 
 ~~~text
 foundation/link
 foundation/host-api
-access/auth
-access/identity
 ~~~
 
-禁止依赖：
-
-~~~text
-runtime/chat
-proxy/local
-provider/llm
-~~~
+配对、认证、Space 授权和连接管理由 `node/runtime` 持有。
+Transport 不依赖业务 runtime、应用 Proxy 或 Provider。
 
 ### 10.6 access/server/Cargo.toml
 
@@ -1663,7 +1657,7 @@ ServerConfig
 ~~~text
 access/pairing
 access/auth
-access/peer-link
+node/peer-link
 foundation/host-api
 foundation/link
 ~~~
@@ -1769,7 +1763,7 @@ runtime/contracts
 node/router
 node/space-runtime
 access/server
-access/peer-link
+node/peer-link
 ~~~
 
 ### 11.3 proxy/edge/Cargo.toml
@@ -1909,7 +1903,7 @@ CoreApplication::start
   -> access/identity
   -> access/auth
   -> access/pairing
-  -> access/peer-link
+  -> node/peer-link
   -> node/local-runtime
   -> node/space-runtime
   -> node/router
@@ -1931,7 +1925,7 @@ provider/llm         -X-> node/router
 tool/builtin         -X-> node/router
 persistence/*        -X-> runtime/*
 foundation/*         -X-> runtime/*
-access/peer-link     -X-> runtime/chat
+node/peer-link     -X-> runtime/chat
 node/router          -X-> Flutter
 node/router          -X-> CLI
 ~~~
@@ -1949,7 +1943,7 @@ provider/chat      -> node/route-macros 仅用于宏展开
 tool/builtin       -> node/route-macros 仅用于宏展开
 ~~~
 
-这不是运行时依赖。业务 crate 不因此直接依赖 node/router、access/peer-link 或 proxy/local。宏展开后的 wrapper 通过 foundation/link 的 CoreRouteRuntime contract 进入 NodeRuntime。
+这不是运行时依赖。业务 crate 不因此直接依赖 node/router、node/peer-link 或 proxy/local。宏展开后的 wrapper 通过 foundation/link 的 CoreRouteRuntime contract 进入 NodeRuntime。
 
 ## 16. 迁移顺序
 
@@ -1957,7 +1951,7 @@ tool/builtin       -> node/route-macros 仅用于宏展开
 2. 抽出 foundation/contracts 和 runtime/contracts。
 3. 把 proxy/codegen 从 proxy/local 分离。
 4. 把 node/router、node/space-runtime、node/space-sync 从 core-server 分离。
-5. 把 access/peer-link、access/server、access/pairing 从 link-access 分离。
+5. 把 node/peer-link、access/server、access/pairing 从 link-access 分离。
 6. 建立 application/core，统一创建和关闭所有服务。
 7. 迁移 Flutter 和 CLI，使其只依赖 application/core。
 8. 再拆 Provider、Tool、Plugin、Runtime、Persistence 的二级 crate。
@@ -2060,7 +2054,7 @@ members = [
     "crates/access/auth",
     "crates/access/pairing",
     "crates/access/discovery",
-    "crates/access/peer-link",
+    "crates/node/peer-link",
     "crates/access/server",
     "crates/access/web",
     "crates/proxy/codegen",

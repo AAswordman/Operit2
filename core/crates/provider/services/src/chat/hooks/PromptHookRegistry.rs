@@ -129,6 +129,10 @@ pub trait SystemPromptComposeHook: Send + Sync {
     }
 }
 
+/// Carries a tool-policy mutation or its original failure without permitting unfiltered execution.
+pub type ToolPromptHookFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<PromptHookMutation>, String>> + Send + 'a>>;
+
 /// Hook invoked while composing the tool prompt.
 pub trait ToolPromptComposeHook: Send + Sync {
     /// Returns the unique hook identifier.
@@ -139,9 +143,9 @@ pub trait ToolPromptComposeHook: Send + Sync {
         None
     }
 
-    /// Adapts an immediate hook result to the asynchronous dispatcher.
-    fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> PromptHookFuture<'a> {
-        Box::pin(std::future::ready(self.on_event(context)))
+    /// Preserves explicit tool-policy failure across the asynchronous dispatcher.
+    fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> ToolPromptHookFuture<'a> {
+        Box::pin(std::future::ready(Ok(self.on_event(context))))
     }
 }
 
@@ -398,13 +402,16 @@ impl PromptHookRegistry {
     /// Dispatches tool-prompt compose hooks in registration order.
     pub async fn dispatchToolPromptComposeHooks(
         initial_context: PromptHookContext,
-    ) -> PromptHookContext {
-        dispatch(
-            initial_context,
-            TOOL_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
-            |hook, context| hook.on_event_async(context),
-        )
-        .await
+    ) -> Result<PromptHookContext, String> {
+        let snapshot = TOOL_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new()))
+            .lock().map_err(|error| error.to_string())?.clone();
+        let mut current = initial_context;
+        for hook in snapshot {
+            if let Some(mutation) = hook.on_event_async(&current).await? {
+                current = apply_mutation(current, mutation);
+            }
+        }
+        Ok(current)
     }
 
     #[allow(non_snake_case)]

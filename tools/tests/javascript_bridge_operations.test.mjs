@@ -1,4 +1,7 @@
+import { compileComposeModule } from "../../plugins/tools/compile_compose_module.mjs";
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { productionBootstrap, bootstrapLibrarySource } from './fixtures/production_bootstrap.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -17,42 +20,6 @@ function embedded(path) {
   return text.slice(start, text.indexOf('"#', start));
 }
 
-/** Expands the actual production bootstrap with its embedded libraries and SDK bridge. */
-function bootstrap() {
-  const text = source(bridge + 'JsLibraries.rs');
-  const begin = text.indexOf('pub fn buildRuntimeBootstrapScript()');
-  const start = text.indexOf('r#"', begin) + 3;
-  const end = text.indexOf('"#,', start);
-  const replacements = [
-    source(bridge + 'JsInitRuntime.script.js'),
-    '"/runtime/clean-on-exit"',
-    JSON.stringify(embedded(sdk + 'JsExecutionScriptBuilder.rs')),
-    embedded(bridge + 'JsJavaBridge.rs'),
-    embedded(sdk + 'toolpkg/ToolPkgComposeDslBridge.rs'),
-    embedded(sdk + 'toolpkg/ToolPkgApiRuntimeScript.rs'),
-    embedded(sdk + 'toolpkg/ToolPkgRegistrationBridge.rs').replace('__OPERIT_TOOLPKG_REGISTRATION_ONLY__', 'false'),
-    '', '', // These tests exercise host operations, not generated Tools or external libraries.
-    source(bridge + 'PluginConfig.script.js'),
-    source(bridge + 'RuntimeContext.script.js'),
-    source(bridge + 'CryptoJS.script.js'),
-    source(bridge + 'Jimp.script.js'),
-    source(bridge + 'UINode.script.js'),
-    source(bridge + 'AndroidUtils.script.js'),
-    source(bridge + 'OkHttp3.script.js'),
-    source(bridge + 'pako.script.js'),
-    source(sdk + 'JsExecutionRuntimeBridge.script.js'),
-  ];
-  let position = 0;
-  const result = text.slice(start, end).replace(/\{\{|\}\}|\{\}/g, token => {
-    if (token === '{{') return '{';
-    if (token === '}}') return '}';
-    assert.ok(position < replacements.length, 'Unexpected bootstrap placeholder');
-    return replacements[position++];
-  });
-  assert.equal(position, replacements.length);
-  return result;
-}
-
 /** Installs the production Web host value registry under every required engine binding. */
 function runtime(operations = {}) {
   const calls = [];
@@ -63,6 +30,10 @@ function runtime(operations = {}) {
   vm.runInContext(source('hosts/web/src/javascript_promises.js'), context);
   const registry = context.__operitHostPromiseRegistry;
   const builtins = {
+    /** Reads the exact trusted library requested by its production accessor. */
+    __operitNativeReadBootstrapLibrary: bootstrapLibrarySource,
+    __operitNativePrepareComposeModule: compileComposeModule,
+    __operitNativeHashText(value) { return createHash("sha256").update(value).digest("hex"); },
     /** Records plugin logs as structured host requests. */
     __operitNativeLog() { return null; },
     /** Records execution diagnostics without changing test output. */
@@ -101,7 +72,7 @@ function runtime(operations = {}) {
   }
   context.__operitNativeCancelJavaScriptPromises = registry.syncBinding(builtins.__operitNativeCancelJavaScriptPromises);
   context.__operitNativeScheduleJavaScriptTimer = registry.binding((id, delay) => timers.set(id, delay));
-  vm.runInContext(bootstrap(), context, { filename: 'production-bootstrap.js' });
+  vm.runInContext(productionBootstrap(), context, { filename: 'production-bootstrap.js' });
   /** Opens a real execution session for direct public library calls. */
   function openCall(id = 'owner') {
     context.__operitRegisterCallSession(id, {
@@ -143,7 +114,7 @@ test('crypto and deflate use direct structured values without error-string guess
   vm.runInContext('JSON.parse = JSON.stringify = function() { throw Error("JSON transport used"); };', context);
   assert.equal(vm.runInContext('CryptoJS.MD5("input").toString()', context), '{"nativeError":"literal data"}');
   assert.equal(vm.runInContext('pako.inflate("encoded", {to:"string"})', context), '{"nativeError":"decompressed text"}');
-  assert.equal(calls.length, 2);
+  assert.equal(calls.filter(call => call.name !== '__operitNativeReadBootstrapLibrary').length, 2);
   const failed = runtime({
     /** Rejects invalid cryptographic input instead of returning an empty plaintext. */
     __operitNativeCrypto() { throw new Error('invalid AES key'); },
@@ -171,7 +142,7 @@ test('Jimp uses an owned host Promise and releases exactly the original executio
   await assert.rejects(image.crop(0, 0, 10, 10), /image operation rejected/);
   await flush();
   assert.equal(context.__operitGetCallState('owner').pendingReferences, 0);
-  assert.equal(calls[1].args[1][0], 'image-handle');
+  assert.equal(calls.filter(call => call.name === '__operitNativeImageProcessing')[1].args[1][0], 'image-handle');
   assert.equal(Object.keys(context).some(key => /^_jimp_|^__operit_compose_webview_/.test(key)), false);
 });
 
@@ -258,7 +229,17 @@ test('Compose WebView and file picker have no callback-ID or JSON-text bridge', 
     },
     /** Returns the file-picker's ordinary structured data contract. */
     __operitNativeComposeFilePickerCommand(payload) {
-      assert.equal(payload.executionContextKey, 'ui-owner'); return {cancelled: false, files: [{path:'/picked/value'}]};
+      assert.equal(payload.executionContextKey, 'ui-owner');
+      assert.equal(payload.routeInstanceId, 'route');
+      assert.deepEqual(JSON.parse(JSON.stringify(payload.options)), {picker: 'document', allowedMimeTypes: ['image/png']});
+      return {cancelled: false, files: [{path:'/picked/value'}]};
+    },
+    /** Receives UTF-8 exports as structured data through the same scoped host Promise ABI. */
+    __operitNativeComposeFileSaveCommand(payload) {
+      assert.equal(payload.executionContextKey, 'ui-owner');
+      assert.equal(payload.routeInstanceId, 'route');
+      assert.deepEqual(JSON.parse(JSON.stringify(payload.options)), { suggestedName: '角色.json', content: '{"name":"角色"}', mimeType: 'application/json', extensions: ['json'] });
+      return { cancelled: false, path: '/selected/角色.json' };
     },
   });
   openCall();
@@ -267,7 +248,8 @@ test('Compose WebView and file picker have no callback-ID or JSON-text bridge', 
   vm.runInContext('JSON.parse = JSON.stringify = function() { throw Error("JSON transport used"); };', context);
   assert.equal(web.getState(), '{"literal":true}');
   assert.equal(await web.evaluateJavascript('1'), '{"literal":true}');
-  assert.equal((await compose.openFilePicker({picker:'document'})).files[0].path, '/picked/value');
+  assert.equal((await compose.openFilePicker({picker: 'document', allowedMimeTypes: ['image/png']})).files[0].path, '/picked/value');
+  assert.equal((await compose.saveFile({ suggestedName: '角色.json', content: '{"name":"角色"}', mimeType: 'application/json', extensions: ['json'] })).path, '/selected/角色.json');
   await flush();
   assert.equal(context.__operitGetCallState('owner').pendingReferences, 0);
   assert.equal(Object.keys(context).some(key => /^__operit_compose_webview_/.test(key)), false);
@@ -363,4 +345,19 @@ test('module reads preserve empty source and propagate the original resource-own
   await flush();
   assert.equal(failed.outputs.size, 0);
   assert.match(failed.failures.get('failed-modules').message, /resource owner read denied/);
+});
+
+/** Ensures compiled artifacts never cross the compiler boundary and page globals contain no parser. */
+test('page bootstrap owns no compiler and precompiled factories bypass shared lowering', () => {
+  const { context } = runtime({
+    /** Rejects any unintended compiler request from an artifact factory. */
+    __operitNativePrepareComposeModule() { throw Error('Artifact attempted source lowering'); },
+  });
+  assert.equal(vm.runInContext('typeof __operitAcorn + ":" + typeof OperitComposeCompiler', context), 'undefined:undefined');
+  const source = '// @operit-compose-artifact 1\nexports.run = function() { return 7; };';
+  const factory = context.__operitGetFactory('main', 'pkg:artifact', source, true);
+  const module = { exports: {} };
+  factory(module, module.exports, () => { throw Error('Unexpected require'); }, {});
+  assert.equal(module.exports.run(), 7);
+  assert.throws(() => context.__operitGetFactory('main', 'pkg:bad', '// @operit-compose-artifact 999\n', true), /Unsupported Compose artifact/);
 });

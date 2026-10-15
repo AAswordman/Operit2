@@ -194,7 +194,7 @@ impl MessagePartDao {
 }
 
 /// Converts one SQLite row into a typed message part entity.
-fn mapMessagePartEntity(row: &SqliteRow) -> Result<MessagePartEntity, SqliteStoreError> {
+pub(crate) fn mapMessagePartEntity(row: &SqliteRow) -> Result<MessagePartEntity, SqliteStoreError> {
     let attributesJson: String = row.get("attributesJson")?;
     let kind: String = row.get("kind")?;
     Ok(MessagePartEntity {
@@ -214,7 +214,7 @@ fn mapMessagePartEntity(row: &SqliteRow) -> Result<MessagePartEntity, SqliteStor
 }
 
 /// Serializes a message part entity for one INSERT statement.
-fn partParams(
+pub(crate) fn partParams(
     part: &MessagePartEntity,
 ) -> Result<Vec<operit_host_api::SqliteValue>, SqliteStoreError> {
     let attributesJson = serde_json::to_string(&part.attributes).map_err(|error| {

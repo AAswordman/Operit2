@@ -1,3 +1,6 @@
+mod secrets;
+pub use secrets::NativeFileSecretStore;
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -519,7 +522,11 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
             // A dangling link is still an occupied destination, never a new writable file.
             return match fs::symlink_metadata(resolved) {
                 Ok(_) => Ok(true),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                // A former descendant also ceases to exist when its parent
+                // directory has been replaced by a regular file.
+                Err(error) if matches!(error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => Ok(false),
                 Err(error) => Err(error.into()),
             };
         }
@@ -773,7 +780,10 @@ impl RuntimeSqliteConnection for RusqliteRuntimeConnection {
     fn beginTransaction(&mut self) -> HostResult<Box<dyn RuntimeSqliteTransaction + '_>> {
         let transaction = self
             .connection
-            .transaction()
+            // Reserve the writer before reading. Deferred read-then-write
+            // transactions can deadlock with another plugin connection and
+            // return SQLITE_BUSY immediately instead of using the busy timeout.
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| HostError::new(error.to_string()))?;
         Ok(Box::new(RusqliteRuntimeTransaction { transaction }))
     }
@@ -802,6 +812,13 @@ impl RuntimeSqliteTransaction for RusqliteRuntimeTransaction<'_> {
     fn commit(self: Box<Self>) -> HostResult<()> {
         self.transaction
             .commit()
+            .map_err(|error| HostError::new(error.to_string()))
+    }
+
+    /// Aborts the exact native host transaction and propagates SQLite rollback errors.
+    fn rollback(self: Box<Self>) -> HostResult<()> {
+        self.transaction
+            .rollback()
             .map_err(|error| HostError::new(error.to_string()))
     }
 }
@@ -889,6 +906,51 @@ mod tests {
     use operit_host_api::{ArchiveStagingHost, RuntimeStorageHost, RuntimeStorageWriteHost};
 
     use super::{NativeArchiveStagingHost, NativeRuntimeStorageHost};
+
+    /// Transactions reserve their writer before reads so independent plugin
+    /// connections cannot deadlock while upgrading a read lock to a write lock.
+    #[test]
+    fn sqlite_transactions_reserve_the_writer_before_reading() {
+        use operit_host_api::RuntimeSqliteHost;
+        let root =
+            std::env::temp_dir().join(format!("operit-sqlite-lock-{}", uuid::Uuid::new_v4()));
+        let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
+        let mut first = host
+            .openSqliteDatabase("runtime/plugins/shared.db")
+            .unwrap();
+        let mut second = host
+            .openSqliteDatabase("runtime/plugins/shared.db")
+            .unwrap();
+        first
+            .executeBatch("CREATE TABLE data(value INTEGER)")
+            .unwrap();
+        second.executeBatch("PRAGMA busy_timeout = 0").unwrap();
+        let mut transaction = first.beginTransaction().unwrap();
+        transaction.query("SELECT * FROM data", vec![]).unwrap();
+        assert!(
+            second.beginTransaction().is_err(),
+            "a second writer must contend before reading"
+        );
+        transaction
+            .execute("INSERT INTO data VALUES(1)", vec![])
+            .unwrap();
+        transaction.commit().unwrap();
+        let mut transaction = second.beginTransaction().unwrap();
+        assert_eq!(
+            transaction
+                .query("SELECT * FROM data", vec![])
+                .unwrap()
+                .len(),
+            1
+        );
+        transaction
+            .execute("INSERT INTO data VALUES(2)", vec![])
+            .unwrap();
+        transaction.commit().unwrap();
+        drop(first);
+        drop(second);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     /// Verifies that snapshot outputs grow, accept ZIP header updates, and expose sealed files.
     #[test]

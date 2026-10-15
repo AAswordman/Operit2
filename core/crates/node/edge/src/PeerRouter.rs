@@ -125,7 +125,7 @@ impl PeerRouter for EdgePeerRouter {
         request: RoutedCoreRequest<operit_link::CorePushRequest>,
     ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
         self.check(&request)?;
-        Err(CoreLinkError::methodNotFound("edge.push"))
+        self.node()?.openPush(request.payload).await
     }
     fn spaceChannelScope(&self, peerNodeId: &str) -> Result<Option<String>, CoreLinkError> {
         match self.space.get() {

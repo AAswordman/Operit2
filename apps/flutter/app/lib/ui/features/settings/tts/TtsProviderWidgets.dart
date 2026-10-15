@@ -92,8 +92,8 @@ class _TtsProviderManager extends StatelessWidget {
   final ValueChanged<String> onToggleProviderExpanded;
   final void Function(_TtsProviderGroup group) onAddVoice;
   final void Function(_TtsProviderGroup group) onEditProvider;
-  final void Function(core_proxy.TtsConfig config) onEditConfig;
-  final Future<void> Function(core_proxy.TtsConfig config) onTestConfig;
+  final void Function(core_proxy.CoreOperitModelTtsConfigTtsConfig config) onEditConfig;
+  final Future<void> Function(core_proxy.CoreOperitModelTtsConfigTtsConfig config) onTestConfig;
   final Future<void> Function(String id) onSetCurrent;
 
   @override
@@ -142,8 +142,8 @@ class _TtsProviderGroupTile extends StatelessWidget {
   final VoidCallback onToggleExpanded;
   final VoidCallback onAddVoice;
   final VoidCallback onEditProvider;
-  final void Function(core_proxy.TtsConfig config) onEditConfig;
-  final Future<void> Function(core_proxy.TtsConfig config) onTestConfig;
+  final void Function(core_proxy.CoreOperitModelTtsConfigTtsConfig config) onEditConfig;
+  final Future<void> Function(core_proxy.CoreOperitModelTtsConfigTtsConfig config) onTestConfig;
   final Future<void> Function(String id) onSetCurrent;
 
   @override
@@ -275,11 +275,11 @@ class _TtsVoiceList extends StatelessWidget {
     required this.onSetCurrent,
   });
 
-  final List<core_proxy.TtsConfig> configs;
+  final List<core_proxy.CoreOperitModelTtsConfigTtsConfig> configs;
   final String currentConfigId;
   final String? testingConfigId;
-  final void Function(core_proxy.TtsConfig config) onEditConfig;
-  final Future<void> Function(core_proxy.TtsConfig config) onTestConfig;
+  final void Function(core_proxy.CoreOperitModelTtsConfigTtsConfig config) onEditConfig;
+  final Future<void> Function(core_proxy.CoreOperitModelTtsConfigTtsConfig config) onTestConfig;
   final Future<void> Function(String id) onSetCurrent;
 
   @override
@@ -315,7 +315,7 @@ class _TtsVoiceTile extends StatelessWidget {
     required this.onTest,
   });
 
-  final core_proxy.TtsConfig config;
+  final core_proxy.CoreOperitModelTtsConfigTtsConfig config;
   final bool current;
   final bool testing;
   final VoidCallback onSetCurrent;
@@ -396,7 +396,7 @@ class _TtsVoiceTile extends StatelessWidget {
 class _TtsVoiceMeta extends StatelessWidget {
   const _TtsVoiceMeta({required this.config});
 
-  final core_proxy.TtsConfig config;
+  final core_proxy.CoreOperitModelTtsConfigTtsConfig config;
 
   @override
   Widget build(BuildContext context) {

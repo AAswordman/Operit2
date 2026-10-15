@@ -18,6 +18,12 @@ the parent runtime wires concrete behavior together.
   package parsing and management, fixed JavaScript tool APIs, Compose DSL,
   ToolPkg archive parsing/loading, full-package queries, hook dispatch, and
   JavaScript execution contracts implemented by a host.
+- `operit-plugin-theme`: runtime-independent theme v1 schemas, versioned
+  defaults, strict JSON/semantic checks, and package file integrity checks.
+  It depends only on public ecosystem crates and performs no I/O, Host calls,
+  runtime startup, plugin execution, persistence, or theme application. Archive,
+  media and trust validation must complete before a fully validated package is
+  exposed; contract-only checks do not confer installation or rendering safety.
 - `operit-tools`: the tool system, including built-in tools, ToolPkg, MCP,
   skill packages, permission-aware tool registration, package lifecycle
   management, tool execution metadata, and tool-specific runtime support
@@ -66,6 +72,9 @@ Current practical edges:
 - `operit-store` depends on `operit-model`, `operit-util`, and
   `operit-host-api`.
 - `operit-plugin-sdk` depends only on public ecosystem crates.
+- `operit-plugin-theme` depends only on public ecosystem crates. Runtime and
+  future browser/audit adapters may consume it, never the reverse. Store owns
+  theme library records; runtime will compose installation and node selection.
 - `operit-tools` depends on `operit-plugin-sdk`, `operit-store`,
   `operit-model`, `operit-util`, and `operit-host-api`.
 - `operit-local-models` depends on `operit-host-api`, `operit-util`, and public

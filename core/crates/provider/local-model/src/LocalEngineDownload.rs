@@ -854,6 +854,25 @@ mod tests {
         }
     }
 
+    impl operit_host_api::HttpStreamHost for RejectingHttpHost {
+        /// Rejects HTTP byte streams because embedded engine installation must remain offline.
+        fn openHttpByteStream(
+            &self,
+            _streamId: String,
+            _request: HttpRequestData,
+            _onOpened: operit_host_api::HttpStreamOpenedCallback,
+            _onChunk: operit_host_api::HttpStreamChunkCallback,
+            _onClosed: operit_host_api::HttpStreamClosedCallback,
+        ) -> HostResult<()> {
+            panic!("embedded engine installation called openHttpByteStream")
+        }
+
+        /// Rejects stream closure because no stream can be opened offline.
+        fn closeHttpByteStream(&self, _streamId: &str) -> HostResult<()> {
+            panic!("embedded engine installation called closeHttpByteStream")
+        }
+    }
+
     /// Verifies embedded engine lifecycle operations only update the registry.
     #[test]
     fn embeddedEngineLifecycleDoesNotDownloadRuntimeFiles() {

@@ -229,7 +229,7 @@ fn policy_cache_observes_remote_revocation_and_matches_fresh_replay() {
     writer.setIdentity(NetworkControlIdentityAssignment {
         nodeId: "peer".into(), roleId: "user".into(),
     }).unwrap();
-    assert!(reader.nodeHasCapability("peer", "chat.read", None).unwrap());
+    assert!(reader.nodeHasCapability("peer", "runtime.execute", None).unwrap());
     assert!(!reader.nodeIsDisconnected("peer").unwrap());
     writer.clearIdentity("peer".into()).unwrap();
     // Clearing resets to the default user identity: a member never becomes
@@ -243,7 +243,7 @@ fn policy_cache_observes_remote_revocation_and_matches_fresh_replay() {
             .map(String::as_str),
         Some("user")
     );
-    assert!(reader.nodeHasCapability("peer", "chat.read", None).unwrap());
+    assert!(reader.nodeHasCapability("peer", "runtime.execute", None).unwrap());
     writer.disconnectNode("peer".into()).unwrap();
     assert!(reader.nodeIsDisconnected("peer").unwrap());
     assert_eq!(reader.currentState().unwrap(), writer.currentState().unwrap());
@@ -261,11 +261,11 @@ fn clearing_identity_resets_to_default_user() {
     let store = NetworkControlStore::new(storage.clone()).unwrap();
     store.bootstrapCurrentSpace().unwrap();
     store.admitMember("peer".into()).unwrap();
-    // The relay role has no chat.read, so the reset below is observable.
+    // The relay role has no runtime.execute, so the reset below is observable.
     store.setIdentity(NetworkControlIdentityAssignment {
         nodeId: "peer".into(), roleId: "relay".into(),
     }).unwrap();
-    assert!(!store.nodeHasCapability("peer", "chat.read", None).unwrap());
+    assert!(!store.nodeHasCapability("peer", "runtime.execute", None).unwrap());
     store.clearIdentity("peer".into()).unwrap();
     let state = store.currentState().unwrap();
     assert_eq!(
@@ -273,10 +273,203 @@ fn clearing_identity_resets_to_default_user() {
         Some("user")
     );
     assert!(state.memberNodeIds.contains("peer"));
-    assert!(store.nodeHasCapability("peer", "chat.read", None).unwrap());
+    assert!(store.nodeHasCapability("peer", "runtime.execute", None).unwrap());
     // Replaying the same log into a fresh instance converges identically.
     let replay = NetworkControlStore::new(storage).unwrap();
     assert_eq!(replay.currentState().unwrap(), state);
+}
+
+/// One generic admission persists mixed identities and remains stable across review retries and replay.
+#[test]
+fn space_admission_preserves_identity_map_through_retry_and_replay() {
+    use crate::NetworkControlStore::{NetworkControlCommand, NetworkControlCommandRecord, NetworkControlRole, NetworkControlStore};
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = NetworkControlStore::new(storage.clone()).unwrap();
+    let bootstrap = store.bootstrapCurrentSpace().unwrap();
+    let admin = bootstrap.memberNodeIds.iter().next().unwrap().clone();
+    store.defineRole(NetworkControlRole {
+        roleId: "display".into(), displayName: "Display".into(),
+        capabilities: BTreeSet::from(["network.devices.view".into()]),
+    }).unwrap();
+    let identities = BTreeMap::from([
+        ("phone".into(), "user".into()),
+        ("esp".into(), "edge".into()),
+        ("bridge".into(), "relay".into()),
+        ("screen".into(), "display".into()),
+        // Overlap with the destination must preserve its existing administrator.
+        (admin.clone(), "user".into()),
+    ]);
+    let operation = store.admitSpaceForReview("source-space".into(), identities.clone(), "mixed").unwrap();
+    let record: NetworkControlCommandRecord = serde_json::from_value(operation.payload.clone()).unwrap();
+    assert_eq!(record.command, NetworkControlCommand::AdmitSpace {
+        sourceSpaceId: "source-space".into(), identities: identities.clone(),
+    });
+    let encoded = &operation.payload["command"]["admit_space"];
+    assert_eq!(encoded["identities"], serde_json::to_value(&identities).unwrap());
+    assert!(encoded.get("nodeIds").is_none());
+    assert!(encoded.get("edgeNodeIds").is_none());
+    let operations = store.currentSpaceOperations().unwrap();
+    assert_eq!(store.admitSpaceForReview("source-space".into(), identities.clone(), "mixed").unwrap(), operation);
+    let mut changed = identities.clone();
+    changed.insert("esp".into(), "relay".into());
+    assert!(store.admitSpaceForReview("source-space".into(), changed, "mixed").is_err());
+    assert_eq!(store.currentSpaceOperations().unwrap(), operations);
+    let state = store.currentState().unwrap();
+    for (node, identity) in &identities {
+        assert!(state.memberNodeIds.contains(node));
+        assert_eq!(state.deviceIdentityIds[node], if node == &admin { "admin" } else { identity });
+    }
+    assert_eq!(store.validateSpacePolicy(&state.spaceId, &operations).unwrap(), state);
+    store.validateSpaceAdmission(&state.spaceId, "source-space", &identities.keys().cloned().collect(), &operations).unwrap();
+    assert_eq!(NetworkControlStore::new(storage).unwrap().currentState().unwrap(), state);
+}
+
+/// Upgrade an existing join-only reviewer's log, then persist a new admission and reopen both.
+#[test]
+fn legacy_space_admission_survives_upgrade_without_rewriting_history() {
+    use crate::NetworkControlStore::{NetworkControlCommandRecord, NetworkControlIdentityAssignment, NetworkControlRole, NetworkControlStore};
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = NetworkControlStore::new(storage.clone()).unwrap();
+    let space = store.bootstrapCurrentSpace().unwrap();
+    store.admitMember("zz-reviewer".into()).unwrap();
+    store.defineRole(NetworkControlRole {
+        roleId: "reviewer".into(), displayName: "Reviewer".into(),
+        capabilities: BTreeSet::from(["network.members.join".into(), "network.approval".into()]),
+    }).unwrap();
+    let mut legacy = store.setIdentity(NetworkControlIdentityAssignment {
+        nodeId: "zz-reviewer".into(), roleId: "reviewer".into(),
+    }).unwrap();
+    legacy.opId = "zz-reviewer:1".into();
+    legacy.originDeviceId = "zz-reviewer".into();
+    legacy.sequence = 1;
+    legacy.entityId = "old-admission".into();
+    legacy.payload = json!({
+        "commandId": legacy.entityId, "spaceId": space.spaceId, "issuerNodeId": "zz-reviewer",
+        "command": {"admit_space": {"sourceSpaceId": "old-space", "nodeIds": ["old-phone"]}},
+    });
+    // Exercise the peer projection boundary with the reviewer's original join-only authority.
+    store.projectPeerControlOperations("zz-reviewer", &[legacy.clone()]).unwrap();
+    drop(store);
+    // Persist the exact pre-upgrade wire record, including its immutable operation ID and payload.
+    let journal = SyncOperationStore::new(storage.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
+    journal.appendUnobservedOperation(&legacy).unwrap();
+    let upgraded = NetworkControlStore::new(storage.clone()).unwrap();
+    assert_eq!(upgraded.currentState().unwrap().deviceIdentityIds["old-phone"], "user");
+    let operations = upgraded.currentSpaceOperations().unwrap();
+    upgraded.validateSpaceAdmission(&space.spaceId, "old-space", &BTreeSet::from(["old-phone".into()]), &operations).unwrap();
+    // The same reviewer must not bypass the new identity-assignment checks by using the new format.
+    let mut unauthorized = legacy.clone();
+    unauthorized.opId = "zz-reviewer:2".into();
+    unauthorized.sequence = 2;
+    unauthorized.entityId = "new-unauthorized".into();
+    unauthorized.payload["commandId"] = json!(unauthorized.entityId);
+    unauthorized.payload["command"]["admit_space"] = json!({
+        "sourceSpaceId": "new-space", "identities": {"unauthorized-phone": "user"},
+    });
+    let mut policy = operations.clone();
+    policy.push(unauthorized);
+    assert!(!upgraded.validateSpacePolicy(&space.spaceId, &policy).unwrap().memberNodeIds.contains("unauthorized-phone"));
+    let new = upgraded.admitSpace("new-space".into(), BTreeMap::from([("new-esp".into(), "edge".into())])).unwrap();
+    assert!(new.payload["command"]["admit_space"].get("nodeIds").is_none());
+    let state = upgraded.currentState().unwrap();
+    assert_eq!(state.deviceIdentityIds["new-esp"], "edge");
+    drop(upgraded);
+    let reopened = NetworkControlStore::new(storage).unwrap();
+    assert_eq!(reopened.currentState().unwrap(), state);
+    let operations = reopened.currentSpaceOperations().unwrap();
+    assert_eq!(operations.iter().find(|op| op.opId == legacy.opId), Some(&legacy));
+    // Mixed or malformed formats must not activate the legacy authorization path.
+    for malformed in [
+        json!({"sourceSpaceId":"old-space", "nodeIds":["old-phone"], "identities":{"old-phone":"admin"}}),
+        json!({"sourceSpaceId":"old-space", "nodeIds":{"old-phone":"admin"}}),
+        json!({"sourceSpaceId":"old-space", "identities":["old-phone"]}),
+    ] {
+        let mut record = legacy.payload.clone();
+        record["command"]["admit_space"] = malformed;
+        assert!(serde_json::from_value::<NetworkControlCommandRecord>(record).is_err());
+    }
+}
+
+/// Invalid assignments must not persist an operation or partially admit a valid prefix.
+#[test]
+fn space_admission_rejects_invalid_identity_maps_without_writes() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = NetworkControlStore::new(storage.clone()).unwrap();
+    store.bootstrapCurrentSpace().unwrap();
+    let before = store.currentState().unwrap();
+    let operations = store.currentSpaceOperations().unwrap();
+    let writes = storage.writeCount();
+    for identity in ["unknown", ""] {
+        assert!(store.admitSpace("source-space".into(), BTreeMap::from([
+            ("a-valid".into(), "edge".into()), ("z-invalid".into(), identity.into()),
+        ])).is_err());
+    }
+    assert!(store.admitSpace("source-space".into(), BTreeMap::new()).is_err());
+    assert!(store.admitSpace("source-space".into(), BTreeMap::from([
+        ("".into(), "edge".into()),
+    ])).is_err());
+    assert_eq!(store.currentState().unwrap(), before);
+    assert_eq!(store.currentSpaceOperations().unwrap(), operations);
+    assert_eq!(storage.writeCount(), writes);
+}
+
+/// A reviewer cannot use the admission map to grant capabilities it does not hold.
+#[test]
+fn space_admission_requires_identity_assignment_authority() {
+    use crate::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlRole, NetworkControlStore};
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = NetworkControlStore::new(storage.clone()).unwrap();
+    let bootstrap = store.bootstrapCurrentSpace().unwrap();
+    let local = bootstrap.memberNodeIds.iter().next().unwrap().clone();
+    store.admitMember("backup-admin".into()).unwrap();
+    store.setIdentity(NetworkControlIdentityAssignment { nodeId: "backup-admin".into(), roleId: "admin".into() }).unwrap();
+    store.defineRole(NetworkControlRole {
+        roleId: "reviewer".into(), displayName: "Reviewer".into(),
+        capabilities: BTreeSet::from([
+            "network.members.join".into(), "network.identity.assign".into(),
+            "network.devices.view".into(), "network.approval".into(),
+        ]),
+    }).unwrap();
+    store.setIdentity(NetworkControlIdentityAssignment { nodeId: local, roleId: "reviewer".into() }).unwrap();
+    let before = store.currentState().unwrap();
+    let operations = store.currentSpaceOperations().unwrap();
+    let writes = storage.writeCount();
+    assert!(store.admitSpace("source-space".into(), BTreeMap::from([
+        ("new-admin".into(), "admin".into()),
+    ])).unwrap_err().contains("lacks capability"));
+    assert_eq!(store.currentState().unwrap(), before);
+    assert_eq!(store.currentSpaceOperations().unwrap(), operations);
+    assert_eq!(storage.writeCount(), writes);
+}
+
+/// Built-in identities describe node capabilities; removed roles cannot be assigned.
+#[test]
+fn builtin_identities_expose_only_current_node_capabilities() {
+    use crate::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlRole, NetworkControlStore};
+    let store = NetworkControlStore::new(Arc::new(MemoryStorageHost::default())).unwrap();
+    store.bootstrapCurrentSpace().unwrap();
+    store.admitMember("peer".into()).unwrap();
+    let state = store.currentState().unwrap();
+    assert_eq!(state.roles.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["admin", "edge", "relay", "user"]);
+    for (identity, relay, execute) in [("relay", true, false), ("edge", false, true), ("user", true, true)] {
+        store.setIdentity(NetworkControlIdentityAssignment { nodeId: "peer".into(), roleId: identity.into() }).unwrap();
+        assert!(store.nodeHasCapability("peer", "network.devices.view", None).unwrap());
+        assert_eq!(store.nodeHasCapability("peer", "network.relay", None).unwrap(), relay);
+        assert_eq!(store.nodeHasCapability("peer", "runtime.execute", None).unwrap(), execute);
+        assert!(!store.nodeHasCapability("peer", "storage.provide", None).unwrap());
+        assert!(!store.nodeHasCapability("peer", "network.audit.read", None).unwrap());
+    }
+    for identity in ["auditor", "runner", "storage"] {
+        assert!(store.setIdentity(NetworkControlIdentityAssignment { nodeId: "peer".into(), roleId: identity.into() }).is_err());
+    }
+    for capability in ["chat.read", "chat.write"] {
+        assert!(store.defineRole(NetworkControlRole { roleId: "retired-chat-role".into(),
+            displayName: "Retired chat role".into(),
+            capabilities: BTreeSet::from([capability.into()]),
+        }).is_err());
+    }
 }
 
 /// Measures warm policy queries without rereading or decoding unrelated chat history.
@@ -989,4 +1182,35 @@ fn quarantine_moves_damaged_lines_to_a_reversible_sidecar() {
     // Quarantining offsets that no longer match any line is a no-op.
     let empty = store.quarantineOperationLines("device-a", &[999_999]).unwrap();
     assert!(empty.is_empty());
+}
+
+/// Independent devices sharing a relative sync root must never deduplicate
+/// each other's operations, including when they initialize in the same tick.
+#[test]
+fn sync_origins_are_unique_and_remain_stable_after_reopening() {
+    let mut identities = BTreeSet::new();
+    for _ in 0..32 {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = SyncOperationStore::new(host.clone(), "runtime/sync");
+        let identity = store.localDeviceId().unwrap();
+        assert!(
+            identities.insert(identity.clone()),
+            "two devices share an operation origin"
+        );
+        assert_eq!(
+            SyncOperationStore::new(Arc::new((*host).clone()), "runtime/sync")
+                .localDeviceId()
+                .unwrap(),
+            identity
+        );
+    }
+    let host = Arc::new(MemoryStorageHost::default());
+    host.writeBytes("runtime/sync/local_device_id", b"existing-origin")
+        .unwrap();
+    assert_eq!(
+        SyncOperationStore::new(host, "runtime/sync")
+            .localDeviceId()
+            .unwrap(),
+        "existing-origin"
+    );
 }

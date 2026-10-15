@@ -36,8 +36,8 @@ port used by Flutter for a connected phone). Keep the authenticated URL private.
 
 ## Edge hardware ports
 
-See [Core 插件调用 Edge 硬件端口](docs/edge-ports.md) for the initial `Tools.Edge.execute` /
-`Tools.Io.execute` APIs, bounded payloads, authorization and the GPIO-only scope.
-Serial streaming/session support is not implemented yet.
+See [Core 插件调用 Edge 硬件端口](docs/edge-ports.md) for the initial `Tools.device(nodeId).Edge.execute` /
+`Tools.device(nodeId).Io.execute` APIs, bounded payloads, authorization and the GPIO-only scope.
+The generic duplex facade over Stream / ReverseStream is described in [edge-plugin-guide.md](docs/edge-plugin-guide.md).
 
-Generic Edge-to-Core action events and the `on_edge_event` listener are documented in [edge-events.md](docs/edge-events.md).
+Device-local input ownership is described in [edge-events.md](docs/edge-events.md).

@@ -1,6 +1,7 @@
 use super::build_rust_codegen_utils::*;
 use super::build_rust_dispatch_codegen::{
     render_core_proxy_dispatch, render_object_call_dispatch, render_object_path_matchers,
+    render_owned_call_dispatch,
     render_object_sync_call_dispatch, render_object_watch_async_dispatch,
     render_object_watch_dispatch, render_object_watch_snapshot_async_dispatch,
     render_object_watch_snapshot_dispatch, render_object_watch_transition_dispatch,
@@ -49,6 +50,7 @@ pub(crate) fn render_generated(
     for object in objects {
         if object.has_async_call_dispatch() {
             output.push_str(&render_object_call_dispatch(object, error_types));
+            output.push_str(&render_owned_call_dispatch(object, error_types));
             output.push('\n');
         }
         if object.has_sync_call_dispatch() {
@@ -361,7 +363,7 @@ mod reverse_stream_target_tests {
                 methods: vec![SourceMethod {
                     name: method.into(), sdk_exposed: false,
                     args: vec![SourceArg { name: "chunks".into(), ty: "ReverseStream<Vec<u8>>".into() }],
-                    rust_return_type: "Result<(), String>".into(), is_async: true,
+                    rust_return_type: "Result<(), String>".into(), is_async: true, returns_owned_future: false,
                     cfg_attrs: vec![], doc_lines: vec![],
                     protocol: MethodProtocol::ReverseStream(ReverseStreamProtocol {
                         argument_name: "chunks".into(), item_type: "Vec<u8>".into(),

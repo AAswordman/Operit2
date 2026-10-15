@@ -1,22 +1,28 @@
 # operit-link
 
-`operit-link` defines the Core value, request, response, event and stream types
-used by the local bridge and by Space peer frames. It does not expose a network
-server or application-to-Core remote entrypoint.
+`operit-link` defines the Core values, requests, responses, events and streams
+used by local clients and authenticated node communication. It does not expose
+a network server or own pairing, credentials, Space authorization or sockets.
 
 ## Protocol
 
-The protocol consists of these semantic messages:
+The standard wire contract has exactly three operation families:
 
-- `CoreCallRequest` / `CoreCallResponse`
-- `CoreWatchRequest`
-- `CoreEvent` / `CoreEventStream`
-- `CorePushRequest` / `CorePushItem`
+- `CoreLinkRequest::Call` / `CoreLinkResponse::Call`
+- `CoreLinkRequest::Watch` / `CoreLinkResponse::Watch`
+- `CoreLinkRequest::Push` / `CoreLinkResponse::Push`
 
-`call` is a client-to-Core request/response operation. `watch` is a
-Core-to-client stream. `push` is the directional counterpart of `watch`: the
-client opens a logical input stream, sends ordered argument values, and closes
-the stream without creating one request/response operation per item.
+Call executes one request/response operation. Watch includes snapshot, open,
+event delivery and close. Push includes open, ordered input values and close.
+Their lifecycle messages do not add operation families.
+
+`CoreLinkSession<C: CoreLinkClient>` dispatches these requests and owns one
+admitted connection's watches and pushes. Authentication and authorization
+must be established by its caller before dispatch.
+
+`CoreLinkClient` and `CoreLinkSharedClient` both expose `call`, `watchSnapshot`,
+`watch` and `openPush`. Shared clients open caller-owned input sessions without
+requiring mutable ownership or cloning the client.
 
 Every message is encoded with MessagePack through `encodeLink` and
 `decodeLink`. There is no codec negotiation, JSON transport, CBOR transport,
@@ -28,16 +34,25 @@ values as MessagePack `bin` data. Runtime conversion uses `toCoreValue` and
 
 ## Carriers
 
-The local Flutter and WASM bridges carry MessagePack values directly to the
-generated local dispatch surface. There is no generic HTTP or WebSocket
-application-to-Core dispatcher in this crate.
+The local Flutter and WASM bridges carry MessagePack values to generated local
+dispatch. This crate does not implement an HTTP or WebSocket application server.
 
-Space transport belongs to `node/peer-link` (`operit-peer-link`); node runtime
-owns pairing and session admission. The transport places the standard Link
-request types inside authenticated `PeerFrame` messages exchanged by
-`CoreNodeRouter` instances. Watch subscriptions use `subscriptionId`; Push
-streams use `pushId` and a monotonically increasing `sequence`. Each id remains
-ordered for the lifetime of its PeerLink.
+Node transport belongs to `node/peer-link` (`operit-peer-link`). HTTP,
+WebSocket, TCP, serial and Bluetooth carry `PeerMessage::Request(CoreLinkRequest)`
+or `PeerMessage::Response(CoreLinkResponse)`. Its untagged serialization preserves
+the standard Link envelope. All carriers share MessagePack framing; serial adds
+its OPS1/CRC byte framing.
+
+Node runtime owns pairing, session encryption, connection reuse and correlation.
+Pairing uses standard Calls. An encrypted session carries an encoded standard
+Link message as binary arguments of a `$peer.session/data` Call; runtime decrypts
+it before the authorized `CoreLinkSession` executes its original operation.
+
+For routed calls, watches and push opens, node runtime puts
+`RoutedCoreRequest<T>` in the standard request's arguments. The routed payload
+preserves the original request and arguments. `PeerRouter` receives the decoded
+route and delegates to Core or Edge execution. Watch lifecycle messages use
+`CoreRequestId`; Push uses `pushId` and ordered `sequence` values.
 
 ## Benchmarks
 
@@ -48,7 +63,7 @@ benchmark-only and are not exported by the product protocol.
 `protocol_codec_bench.rs` measures the final Link codec for small calls and
 native binary browser frame payloads.
 
-## Stable targets (breaking protocol change)
+## Stable targets
 
 Calls, watches, pushes, events and embedded stream descriptors carry a string
 `target`, not an object-pool index. Generated Proxy and SDK targets are
@@ -59,6 +74,9 @@ MessagePack remains the only encoding; binary payloads remain native `bin` value
 
 The stream resource manager remains internal. Its protocol target is
 `$core.stream.open`; the annotation wrapper target is `$core.internal`.
-Neither uses a numeric sentinel. Request/subscription/push IDs identify sessions,
-not API endpoints. Peer access protocol version is now 4. Old numeric SDK/Link
-messages are rejected; no legacy map or protocol downgrade is provided.
+Neither uses a numeric sentinel. Request, watch and push IDs identify operations
+or streams, not API endpoints. Current peer authentication uses the node runtime's
+`PAIRING_SERVICE_VERSION = 1`. Targets use their declared string addresses.
+
+See [the architecture document](../../../../docs/link-access-architecture.md)
+for the runtime boundaries and remaining cleanup items.

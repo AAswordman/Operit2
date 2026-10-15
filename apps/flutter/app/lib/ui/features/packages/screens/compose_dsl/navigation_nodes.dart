@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders navigation nodes for Compose DSL nodes.
-extension _ComposeNavigationNodes on _ComposeDslRenderer {
+extension _ComposeNavigationNodes on _ComposeDslRendererState {
   /// Builds navigation bar for the Compose DSL renderer.
   Widget _navigationBar(BuildContext context) {
     final items = _navigationContentNodes()
@@ -308,6 +308,44 @@ extension _ComposeNavigationNodes on _ComposeDslRenderer {
   /// Builds tab row for the Compose DSL renderer.
   Widget _tabRow(BuildContext context, String type) {
     final contentColor = _color(context, node.props['contentColor']);
+    final tabNodes = _slotNodes('tabs');
+    if (!_hasSlot('indicator') && !_hasSlot('divider') && tabNodes.isNotEmpty) {
+      return _ComposeNativeTabRow(
+        selectedIndex: (_int(node.props['selectedTabIndex']) ?? 0).clamp(
+          0,
+          tabNodes.length - 1,
+        ),
+        scrollable: type.contains('Scrollable'),
+        color: _color(context, node.props['containerColor']),
+        contentColor: contentColor,
+        onSelected: (index) {
+          final tab = tabNodes[index];
+          if (tab.props['enabled'] != false)
+            _invokeAction(tab.props['onClick']);
+        },
+        tabs: [
+          for (var index = 0; index < tabNodes.length; index++)
+            Tab(
+              child: Builder(
+                builder: (context) {
+                  final tab = tabNodes[index];
+                  final labels =
+                      tab.slots['text'] ?? tab.slots['content'] ?? tab.children;
+                  return labels.isEmpty
+                      ? Text(_string(tab.props['text']))
+                      : Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: _buildNodeWidgets(
+                            labels,
+                            pathPrefix: '$nodePath:tabs/$index:label',
+                          ),
+                        );
+                },
+              ),
+            ),
+        ],
+      );
+    }
     final tabWidgets = _slotChildren('tabs');
     Widget tabs = Row(mainAxisSize: MainAxisSize.min, children: tabWidgets);
     if (type.contains('Scrollable')) {

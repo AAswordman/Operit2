@@ -13,6 +13,7 @@ members = [
     "crates/plugin/sdk-ipc-bridge",
     "crates/plugin/codegen",
     "crates/plugin/javascript-bridge",
+    "crates/plugin/theme",
     "crates/runtime/application",
     "crates/node/route-macros",
     "crates/node/runtime",
@@ -44,10 +45,12 @@ getrandom = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "blocking", "multipart", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 sha2 = "0.10"
 base64 = "0.22"
 regex = "1"
 json5 = "0.4"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rquickjs = "0.12.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
 thiserror = "1"
@@ -60,3 +63,36 @@ bzip2-rs = "0.1.2"
 tar = "0.4"
 lmdb = { package = "lmdb-rkv", version = "0.14" }
 wasmi = { version = "2.0.0-beta.7", default-features = false, features = ["stable", "std", "validate", "auto-dispatch"] }
+
+[profile.dev.package.operit-plugin-theme]
+opt-level = 2
+
+[profile.dev.package.image]
+opt-level = 2
+
+[profile.dev.package.png]
+opt-level = 2
+
+[profile.dev.package.zune-jpeg]
+opt-level = 2
+
+[profile.dev.package.flate2]
+opt-level = 2
+
+[profile.dev.package.miniz_oxide]
+opt-level = 2
+
+[profile.dev.package.crc32fast]
+opt-level = 2
+
+[profile.dev.package.sha2]
+opt-level = 2
+
+[profile.dev.package.ttf-parser]
+opt-level = 2
+
+[profile.dev.package.zip]
+opt-level = 2
+
+[profile.dev.package.roxmltree]
+opt-level = 2

@@ -59,15 +59,11 @@ impl ToolPkgXmlRenderBridge {
     /// Registers XML render hooks for one application runtime.
     pub fn register(runtime: ToolPkgBridgeRuntime) {
         XML_RENDER_RUNTIME.get_or_init(|| runtime.clone());
-        let manager = runtime.package_manager();
-        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
-            ToolPkgXmlRenderBridge::syncToolPkgRegistrations(activeContainers);
-        }));
     }
 
     /// Synchronizes active XML render hook registrations from enabled ToolPkg containers.
     #[allow(non_snake_case)]
-    pub fn syncToolPkgRegistrations(activeContainers: Vec<ToolPkgContainerRuntime>) {
+    pub fn syncToolPkgRegistrations(activeContainers: &[ToolPkgContainerRuntime]) {
         let mut hooks = activeContainers
             .iter()
             .flat_map(|container| {

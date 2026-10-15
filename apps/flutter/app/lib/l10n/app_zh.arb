@@ -14,7 +14,6 @@
   "addAttachment": "添加附件",
   "attachmentPhoto": "照片",
   "attachmentCamera": "拍照",
-  "attachmentMemory": "记忆",
   "attachmentFile": "文件",
   "attachmentScreenContent": "屏幕内容",
   "attachmentNotifications": "当前通知",
@@ -28,7 +27,6 @@
   "attachmentPackageKindSkill": "技能",
   "attachmentPackageKindMcp": "MCP",
   "attachmentCameraUnavailable": "当前 Flutter 端没有相机采集能力",
-  "attachmentMemoryUnavailable": "当前 Flutter 端没有记忆文件夹选择器",
   "clearSearch": "清空搜索",
   "chatPendingQueueTitle": "待发送消息（{count}）",
   "@chatPendingQueueTitle": {
@@ -49,16 +47,6 @@
   "connectingAiService": "正在连接 AI 服务...",
   "receivingAiResponse": "正在接收 AI 响应...",
   "receivingToolResultAiResponse": "正在接收工具执行后的 AI 响应...",
-  "roleResponsePlannerPlanning": "正在规划群组发言顺序...",
-  "roleResponsePlannerMemberReplying": "正在生成「{memberName}」的回复...",
-  "@roleResponsePlannerMemberReplying": {
-    "placeholders": {
-      "memberName": {
-        "type": "String"
-      }
-    }
-  },
-  "roleResponsePlannerFailed": "群组规划失败",
   "summarizingMemories": "正在总结记忆...",
   "summaryGenerating": "正在生成总结...",
   "chatCompressingHistory": "正在压缩历史记录...",
@@ -115,8 +103,6 @@
   "toolApprovalDeny": "拒绝",
   "toolApprovalAllowOnce": "允许本次",
   "toolApprovalAlwaysAllow": "本次会话中始终允许",
-  "createGroupTitle": "新建分组",
-  "groupNameLabel": "群组名称",
   "renameConversationTitle": "编辑标题",
   "newTitleLabel": "新标题",
   "deleteConversationTitle": "确认删除对话",
@@ -459,12 +445,6 @@
   "settingsCategoryLocalModelsTitle": "本地模型",
   "settingsCategoryLocalModelsSubtitle": "下载、引擎、STT / TTS",
   "settingsCategoryLocalModelsDescription": "管理按需安装的本地模型和推理引擎。",
-  "settingsCategoryCharactersTitle": "角色",
-  "settingsCategoryCharactersSubtitle": "角色卡、群组、绑定",
-  "settingsCategoryCharactersDescription": "管理角色卡、群组、当前激活角色和角色级模型/记忆/工具绑定。",
-  "settingsCategoryMemoryTitle": "记忆",
-  "settingsCategoryMemorySubtitle": "记忆图谱、共享记忆库、用户资料",
-  "settingsCategoryMemoryDescription": "管理角色与共享记忆库、记忆图谱可视化、用户资料与自动更新策略。",
   "settingsCategoryToolsTitle": "工具与权限",
   "settingsCategoryToolsSubtitle": "AI 能力、系统授权、扩展",
   "settingsCategoryToolsDescription": "设置 AI 的只读、读写或完整权限，并查看当前设备的系统授权状态。",
@@ -473,13 +453,13 @@
   "settingsCategoryWorkspaceDescription": "管理默认工作区、终端会话、浏览器模式、脚本和网页自动化。",
   "settingsCategoryGlobalBehaviorTitle": "全局行为设置",
   "settingsCategoryGlobalBehaviorSubtitle": "输入处理与交互",
-  "settingsCategoryGlobalBehaviorDescription": "设置不随角色卡变化的输入与交互行为。",
+  "settingsCategoryGlobalBehaviorDescription": "设置应用全局的输入与交互行为。",
   "settingsCategoryAppearanceTitle": "外观与交互",
   "settingsCategoryAppearanceSubtitle": "主题、气泡与交互",
   "settingsCategoryAppearanceDescription": "调整全局主题、背景壁纸、聊天气泡样式与信息流交互。",
   "settingsCategoryDataTitle": "数据与备份",
   "settingsCategoryDataSubtitle": "备份、恢复、统计",
-  "settingsCategoryDataDescription": "备份聊天、角色和模型配置，恢复备份内容，并查看数据统计。",
+  "settingsCategoryDataDescription": "备份聊天、插件数据和模型配置，恢复备份内容，并查看数据统计。",
   "settingsCategoryAccessLinksTitle": "设备空间",
   "settingsCategoryAccessLinksSubtitle": "连接、同步、协同",
   "settingsCategoryAccessLinksDescription": "管理当前设备空间，连接设备并同步数据和路由。",
@@ -498,7 +478,7 @@
       }
     }
   },
-  "settingsComingSoon": "这个区域会继续接入现有 runtime 能力。当前优先完成模型、角色和工具设置。",
+  "settingsComingSoon": "这个区域会继续接入现有 runtime 能力。当前优先完成模型和工具设置。",
   "settingsAdvanced": "高级设置",
   "settingsActive": "当前",
   "settingsActivate": "设为当前",
@@ -603,7 +583,6 @@
     }
   },
   "settingsTtsCurrentConfigCannotDelete": "当前正在使用的 TTS 配置不能删除",
-  "settingsTtsConfigUsedByCharacter": "该 TTS 配置正在被角色卡使用，不能删除",
   "settingsModelChatAutoGlmWarning": "禁止使用 AutoGLM 作为对话主模型。对话模型和 UI 控制模型是分离的，请选择其他大模型。",
   "settingsModelFunctionChat": "聊天",
   "settingsModelFunctionChatDescription": "主对话回复使用的模型。",
@@ -903,172 +882,6 @@
   "settingsModelTestItemAudio": "音频",
   "settingsModelTestItemVideo": "视频",
   "settingsModelTestItemUnknown": "未知项",
-  "settingsCharactersCreateCard": "新建角色卡",
-  "settingsCharactersEditCard": "编辑角色卡",
-  "settingsCharactersCardName": "角色名称",
-  "settingsCharactersCreateGroup": "新建群组",
-  "settingsCharactersEditGroup": "编辑群组",
-  "settingsCharactersGroupName": "群组名称",
-  "settingsCharactersDescription": "描述",
-  "settingsCharactersCharacterSetting": "角色设定",
-  "settingsCharactersOpeningStatement": "开场白",
-  "settingsCharactersOtherContentChat": "聊天附加内容",
-  "settingsCharactersOtherContentVoice": "语音附加内容",
-  "settingsCharactersAdvancedPrompt": "高级自定义 Prompt",
-  "settingsCharactersMarks": "备注",
-  "settingsCharactersTags": "标签",
-  "settingsCharactersNoTags": "当前没有可选标签。可在标签管理中创建后绑定到角色卡。",
-  "settingsCharactersImport": "导入",
-  "settingsCharactersExport": "导出",
-  "settingsCharactersImportJson": "导入 JSON",
-  "settingsCharactersExportJson": "导出 JSON",
-  "settingsCharactersImportTavernJson": "导入 Tavern JSON",
-  "settingsCharactersExportTavernJson": "导出 Tavern JSON",
-  "settingsCharactersImportCardJson": "导入角色卡 JSON",
-  "settingsCharactersImportCardJsonDone": "已导入角色卡。",
-  "settingsCharactersImportTavernJsonDone": "已导入 Tavern 角色卡。",
-  "settingsCharactersImportGroupJson": "导入群组 JSON",
-  "settingsCharactersImportGroupJsonDone": "已导入群组。",
-  "settingsCharactersImportJsonError": "导入 JSON 失败：{error}",
-  "@settingsCharactersImportJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersImportTavernJsonError": "导入 Tavern JSON 失败：{error}",
-  "@settingsCharactersImportTavernJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersExportJsonError": "导出 JSON 失败：{error}",
-  "@settingsCharactersExportJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersExportTavernJsonError": "导出 Tavern JSON 失败：{error}",
-  "@settingsCharactersExportTavernJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersTagsSection": "标签",
-  "settingsCharactersManageTags": "管理标签",
-  "settingsCharactersCreateTag": "新建标签",
-  "settingsCharactersEditTag": "编辑标签",
-  "settingsCharactersDeleteTag": "删除标签",
-  "settingsCharactersDeleteTagMessage": "确定删除“{name}”吗？",
-  "@settingsCharactersDeleteTagMessage": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersTagName": "标签名称",
-  "settingsCharactersTagDescription": "标签描述",
-  "settingsCharactersTagPromptContent": "Prompt 内容",
-  "settingsCharactersChatModelBindingMode": "聊天模型绑定模式",
-  "settingsCharactersChatModelConfigId": "聊天模型配置 ID",
-  "settingsCharactersChatModelIndex": "聊天模型序号",
-  "settingsCharactersToolAccess": "工具权限模式",
-  "settingsCharactersChatModelFollowGlobal": "跟随全局模型",
-  "settingsCharactersChatModelFixedConfig": "固定模型配置",
-  "settingsCharactersChatModelConfig": "模型配置",
-  "settingsCharactersToolAccessFollowGlobal": "跟随全局工具权限",
-  "settingsCharactersToolAccessCustom": "自定义角色工具权限",
-  "settingsCharactersToolAccessEmpty": "已启用，但未选择任何工具",
-  "settingsCharactersToolAccessSummaryCounts": "内置 {builtinCount} · 工具包 {packageCount} · 技能 {skillCount} · MCP {mcpCount}",
-  "@settingsCharactersToolAccessSummaryCounts": {
-    "placeholders": {
-      "builtinCount": {
-        "type": "int"
-      },
-      "packageCount": {
-        "type": "int"
-      },
-      "skillCount": {
-        "type": "int"
-      },
-      "mcpCount": {
-        "type": "int"
-      }
-    }
-  },
-  "settingsCharactersToolAccessConfigure": "配置工具白名单",
-  "settingsCharactersToolAccessTitle": "自定义允许使用的工具",
-  "settingsCharactersToolAccessTabBuiltin": "内建工具",
-  "settingsCharactersToolAccessTabPackage": "包",
-  "settingsCharactersToolAccessTabSkill": "Skill",
-  "settingsCharactersToolAccessTabMcp": "MCP",
-  "settingsCharactersToolAccessSearchPlaceholder": "搜索名称、描述或标识",
-  "settingsCharactersToolAccessEmptySearch": "未找到匹配的工具",
-  "settingsCharactersToolAccessRequiresUsePackage": "选择工具包、技能或 MCP 时，需要同时允许内置工具 use_package。",
-  "settingsCharactersToolAccessEmptyBuiltin": "当前没有可配置的内建工具",
-  "settingsCharactersToolAccessEmptyPackages": "当前没有全局可用的包",
-  "settingsCharactersToolAccessEmptySkills": "当前没有对 AI 可见的 Skill",
-  "settingsCharactersToolAccessEmptyMcp": "当前没有已启用的 MCP 服务器",
-  "settingsCharactersBuiltinTools": "允许的内置工具",
-  "settingsCharactersAllowedPackages": "允许的工具包",
-  "settingsCharactersAllowedSkills": "允许的技能",
-  "settingsCharactersAllowedMcpServers": "允许的 MCP 服务",
-  "settingsCharactersGroupMembersTitle": "组内角色",
-    "settingsCharactersOpenMemoryGraph": "查看记忆图谱",
-    "settingsCharactersMemoryGraphTitle": "{profileName} 的记忆图谱",
-    "@settingsCharactersMemoryGraphTitle": {
-      "placeholders": {
-        "profileName": {
-          "type": "String"
-        }
-      }
-    },
-    "settingsCharactersMemoryGraphEmpty": "当前记忆库还没有节点",
-    "settingsCharactersMemoryGraphStats": "{nodes} 个节点 · {edges} 条关系",
-    "@settingsCharactersMemoryGraphStats": {
-      "placeholders": {
-        "nodes": {
-          "type": "int"
-        },
-        "edges": {
-          "type": "int"
-        }
-      }
-    },
-    "settingsCharactersMemoryGraphLink": "记忆关系",
-    "settingsCharactersEditUserMarkdown": "编辑用户资料",
-  "settingsCharactersUserMarkdownTitle": "{profileName} 的用户资料",
-  "@settingsCharactersUserMarkdownTitle": {
-    "placeholders": {
-      "profileName": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersUserMarkdownSaved": "用户资料已保存",
-  "settingsCharactersUserMarkdownContent": "用户资料内容",
-  "settingsCharactersMemoryAutoUpdate": "自动更新记忆库",
-  "settingsCharactersMemoryAutoUpdateDescription": "允许 AI 从对话中整理信息并写入记忆库。",
-  "settingsCharactersPreferenceDescription": "向模型提供用户资料",
-  "settingsCharactersPreferenceDescriptionSubtitle": "聊天时把当前用户资料写入提示词。",
-  "settingsCharactersCardsSection": "角色卡",
-  "settingsCharactersGroupsSection": "群组",
-  "settingsCharactersGroupMembers": "{count} 个成员",
-  "@settingsCharactersGroupMembers": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
   "settingsToolsPermissionMode": "AI 能力模式",
   "settingsToolsAsk": "询问",
   "settingsToolsExtensions": "扩展管理",
@@ -1300,17 +1113,17 @@
   "settingsRuntimeRemoteDescription": "已直接配对的设备。配对负责建立连接，加入设备空间后才会共享数据和路由。",
   "settingsRuntimePairRemote": "连接另一台设备",
   "settingsRuntimeDiscoveredEdges": "ESP32 设备",
-  "settingsRuntimeEdgeEndpointTokenRequired": "Edge 地址和 Token 不能为空",
   "settingsRuntimeEdgeEndpointRequired": "Edge 地址不能为空",
   "settingsRuntimePairingCodeRequired": "请输入配对码",
   "settingsRuntimeNoPairedRemote": "还没有已连接的设备。",
   "settingsRuntimeConnectionInitiatedByOtherDevice": "连接由对方设备发起",
-  "settingsRuntimePairToken": "连接 Token",
-  "settingsRuntimePairTokenHint": "跨网配对时必填；同网段设备可留空",
   "settingsRuntimePairCode": "配对码",
   "settingsRuntimeStartPairing": "开始连接",
   "settingsRuntimeFinishPairing": "完成连接",
   "settingsRuntimeBaseUrl": "设备地址",
+  "settingsRuntimeTcpAddressHint": "host:端口，例如 192.168.1.10:37195",
+  "settingsRuntimeTransportAuto": "自动（推荐）",
+  "settingsRuntimeTransportAutoHint": "输入 IP:端口，自动识别 HTTP/WebSocket/TCP 协议",
   "settingsRuntimeConnectionFailed": "设备连接失败：{error}",
   "@settingsRuntimeConnectionFailed": {
     "placeholders": {
@@ -1346,7 +1159,7 @@
   "settingsRuntimeDeviceInCurrentSpace": "已在当前设备空间",
   "settingsRuntimeDiscoverSpaces": "发现设备空间",
   "settingsRuntimeDiscoverSpacesDescription": "附近设备会按设备空间归并；展开设备空间后，可以选择其中一台设备直接连接。",
-  "settingsRuntimeWebPairDescription": "输入其他设备的地址和配对令牌，让此浏览器作为主动配对方连接。",
+  "settingsRuntimeWebPairDescription": "输入其他设备的地址并确认配对码，让此浏览器作为主动配对方连接。",
   "settingsRuntimeDiscoveredSpaceSummary": "共 {memberCount} 台设备 · 附近可连接 {nearbyCount} 台",
   "@settingsRuntimeDiscoveredSpaceSummary": {
     "placeholders": {
@@ -1448,20 +1261,6 @@
   },
   "settingsAppearanceThemeSection": "主题",
   "settingsAppearanceThemeMode": "当前模式",
-  "settingsAppearanceThemeTarget": "主题保存目标",
-  "settingsAppearanceThemeTargetGlobal": "全局",
-  "settingsAppearanceThemeTargetCharacter": "当前角色：{name}",
-  "@settingsAppearanceThemeTargetCharacter": {
-    "placeholders": {
-      "name": {}
-    }
-  },
-  "settingsAppearanceThemeTargetGroup": "当前群组：{name}",
-  "@settingsAppearanceThemeTargetGroup": {
-    "placeholders": {
-      "name": {}
-    }
-  },
   "settingsAppearanceThemeSystem": "跟随系统",
   "settingsAppearanceThemeLight": "浅色",
   "settingsAppearanceThemeDark": "深色",
@@ -1505,6 +1304,7 @@
   "settingsAppearanceClearCustomFont": "清除自定义字体",
   "settingsAppearanceFontSerif": "衬线",
   "settingsAppearanceFontMonospace": "等宽",
+  "settingsAppearanceInterfaceScale": "界面缩放",
   "settingsAppearanceFontScale": "字体大小",
   "settingsAppearanceAvatarSection": "头像",
   "settingsAppearanceUserAvatar": "用户头像",
@@ -1573,7 +1373,7 @@
   "settingsAppearanceShowAvatars": "显示消息头像",
   "settingsAppearanceMessageDisplaySection": "消息显示",
   "settingsAppearanceShowThinkingProcess": "显示思考过程",
-  "settingsAppearanceShowRoleName": "显示角色名",
+  "settingsAppearanceShowRoleName": "显示自定义回复者名称",
   "settingsAppearanceShowUserName": "显示用户名",
   "settingsAppearanceShowModelName": "显示模型名",
   "settingsAppearanceShowModelProvider": "显示模型供应商",
@@ -1694,7 +1494,6 @@
   "settingsDataDetailedStatsSourceToolResult": "工具结果续写",
   "settingsDataDetailedStatsSourceSummary": "摘要生成",
   "settingsDataDetailedStatsSourceTitleGeneration": "标题生成",
-  "settingsDataDetailedStatsSourceMemory": "记忆分析",
   "settingsDataDetailedStatsTotalRequests": "总请求数",
   "settingsDataDetailedStatsCachedInput": "缓存输入",
   "settingsDataDetailedStatsActiveDays": "活跃天数",
@@ -1777,10 +1576,6 @@
   "settingsDataBackupSection": "备份与恢复",
   "settingsDataChatHistoriesBackup": "聊天数据",
   "settingsDataChatHistoriesBackupDescription": "备份全部聊天和消息；恢复时按聊天 ID 更新或新增。",
-  "settingsDataCharacterCardsBackup": "角色卡数据",
-  "settingsDataCharacterCardsBackupDescription": "备份全部角色卡和已引用标签；恢复时按原 ID 更新或新增。",
-  "settingsDataCharacterGroupsBackup": "群组数据",
-  "settingsDataCharacterGroupsBackupDescription": "备份全部群组；恢复时保留组内角色引用和顺序。",
   "settingsDataModelConfigsBackup": "模型配置",
   "settingsDataModelConfigsBackupDescription": "备份全部模型配置，包含模型参数和 API Key 池。",
   "settingsDataBackupCount": "当前 {count} 项",
@@ -1826,7 +1621,7 @@
   "settingsDataSnapshotBackupTitle": "完整快照",
   "settingsDataExportRawSnapshot": "导出快照",
   "settingsDataImportRawSnapshot": "恢复快照",
-  "settingsDataExportRawSnapshotDescription": "把聊天、角色、模型设置和本地文件打包成一个备份文件。恢复时会用备份里的数据覆盖当前数据。",
+  "settingsDataExportRawSnapshotDescription": "把聊天、插件数据、模型设置和本地文件打包成一个备份文件。恢复时会用备份里的数据覆盖当前数据。",
   "settingsDataSnapshotBytes": "快照大小：{bytes} 字节",
   "@settingsDataSnapshotBytes": {
     "placeholders": {
@@ -1911,23 +1706,38 @@
   "settingsDataAdvancedBackupOptions": "高级选项",
   "settingsDataAdvancedBackupOptionsDescription": "单项 JSON 导出与恢复",
   "settingsRuntimeNetworkControl": "网络控制",
-  "settingsRuntimeNetworkControlDescription": "角色、身份、设备权限与审计",
+  "settingsRuntimeNetworkControlDescription": "管理设备身份与权限，查看操作记录",
   "settingsRuntimeIdentitiesAndPermissions": "身份与权限",
   "settingsRuntimeControlInitialize": "初始化控制",
   "settingsRuntimeControlRoles": "角色",
-  "settingsRuntimeControlAudit": "审计",
-  "settingsRuntimeControlAddRole": "添加角色",
+  "settingsRuntimeControlIdentities": "身份",
+  "settingsRuntimeControlAuditAccepted": "已执行",
+  "settingsRuntimeControlAuditRejected": "已拒绝",
+  "settingsRuntimeControlAuditIssuer": "操作设备",
+  "settingsRuntimeControlAuditDetails": "技术详情",
+  "settingsRuntimeControlAuditBootstrap": "初始化空间权限",
+  "settingsRuntimeControlAuditAdmit": "接纳设备",
+  "settingsRuntimeControlAuditMerge": "合并设备空间",
+  "settingsRuntimeControlAuditPolicy": "更新权限策略",
+  "settingsRuntimeControlAudit": "操作记录",
+  "settingsRuntimeControlAddRole": "新建身份",
   "settingsRuntimeControlGrantRole": "授予角色",
   "settingsRuntimeControlAddIdentity": "添加身份",
   "settingsRuntimeControlBindDevice": "绑定设备",
-  "settingsRuntimeControlRoleName": "角色名称",
-  "settingsRuntimeControlCapabilities": "这个角色可以做什么",
+  "settingsRuntimeControlRoleName": "身份名称",
+  "settingsRuntimeControlCapabilities": "允许这个身份执行的操作",
   "settingsRuntimeControlManagedDevices": "这个角色可以管理哪些设备（不选表示全部）",
   "settingsRuntimeControlIdentityName": "身份名称",
   "settingsRuntimeControlDeviceId": "设备 ID",
-  "settingsRuntimeControlNoAudit": "暂无控制命令记录",
-  "settingsRuntimeControlAuditCount": "共 {count} 条记录",
-  "@settingsRuntimeControlAuditCount": {"placeholders": {"count": {"type": "int"}}},
+  "settingsRuntimeControlNoAudit": "暂无操作记录，身份和设备的变更会显示在这里",
+  "settingsRuntimeControlAuditCount": "{count} 条记录",
+  "@settingsRuntimeControlAuditCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsRuntimeControlNoBindings": "暂无设备绑定",
   "settingsRuntimeControlGranted": "已授予",
   "settingsRuntimeControlRevoked": "已撤销",
@@ -1938,16 +1748,23 @@
   "settingsRuntimeControlAdmitDevice": "解除隔离设备",
   "settingsRuntimeControlAllDevices": "全部设备",
   "settingsRuntimeControlManages": "可管理",
+  "settingsRuntimeControlLocalIdentity": "本机身份",
   "settingsRuntimeControlCurrentIdentity": "当前身份",
-  "settingsRuntimeControlCurrentCapabilities": "当前能力",
+  "settingsRuntimeControlCurrentCapabilities": "可用权限",
   "settingsRuntimeControlManageIdentities": "管理身份",
   "settingsRuntimeControlAssignIdentity": "设置设备身份",
   "settingsRuntimeControlClearIdentity": "重置为默认身份",
   "settingsRuntimeControlDeviceAdmitted": "已解除隔离，等待设备重连",
   "settingsRuntimeControlIdentityResetDone": "身份已重置为默认用户",
-  "settingsRuntimeControlIdentityDefinitions": "身份定义",
-  "settingsRuntimeControlIdentityCount": "共 {count} 个身份",
-  "@settingsRuntimeControlIdentityCount": {"placeholders": {"count": {"type": "int"}}},
+  "settingsRuntimeControlIdentityDefinitions": "身份权限",
+  "settingsRuntimeControlIdentityCount": "{count} 个身份",
+  "@settingsRuntimeControlIdentityCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsRuntimeControlIdentityAssignment": "身份分配",
   "settingsRuntimeControlNoIdentity": "未设置身份",
   "settingsRuntimeControlOnline": "在线",
@@ -1955,10 +1772,8 @@
   "settingsRuntimeControlCapabilityAll": "全部权限",
   "settingsRuntimeControlCapabilityAuditRead": "查看审计记录",
   "settingsRuntimeControlCapabilityNetworkRelay": "中继网络流量",
-  "settingsRuntimeControlCapabilityStorageProvide": "提供存储空间",
-  "settingsRuntimeControlCapabilityRuntimeExecute": "执行任务",
-  "settingsRuntimeControlCapabilityNetworkUser": "使用网络",
-  "settingsRuntimeControlCapabilityChatRead": "读取聊天记录",
+  "settingsRuntimeControlCapabilityStorageProvide": "保存共享数据副本",
+  "settingsRuntimeControlCapabilityRuntimeExecute": "承载 Core 执行",
   "settingsRuntimeControlCapabilityViewDevices": "查看设备与当前身份",
   "settingsRuntimeControlCapabilityApproval": "审批授权",
   "chatRoutePermissionDenied": "权限不足：目标设备 {targetNodeId} 没有 {capability} 权限。",
@@ -1969,10 +1784,8 @@
     }
   },
   "settingsRuntimeControlRoleAdministrator": "管理员",
-  "settingsRuntimeControlRoleAuditor": "审计员",
   "settingsRuntimeControlRoleRelay": "中继节点",
-  "settingsRuntimeControlRoleStorage": "存储节点",
-  "settingsRuntimeControlRoleRunner": "执行节点",
+  "settingsRuntimeControlRoleEdge": "边缘节点",
   "settingsRuntimeControlRoleUser": "普通用户",
   "pluginLoadingTitle": "正在加载",
   "pluginLoadingSkip": "跳过",
@@ -2105,7 +1918,7 @@
       }
     }
   },
-  "chatMessageRole": "角色: {roleName}",
+  "chatMessageRole": "回复者: {roleName}",
   "@chatMessageRole": {
     "placeholders": {
       "roleName": {
@@ -2193,22 +2006,20 @@
       }
     }
   },
-
-  "settingsPeerToken": "连接 token",
-  "settingsPeerTokenHelp": "远程连接必须使用这个 token。",
-  "settingsPeerCopyToken": "复制 token",
-  "settingsPeerRefreshToken": "刷新 token",
-  "settingsPeerTokenCopied": "连接 token 已复制。",
-  "settingsPeerTokenRequired": "请输入或刷新连接 token。",
   "settingsPeerPortModeHelp": "固定模式使用填写的 IP 和端口，适用于内网穿透和端口映射。固定端口被占用时会报错，不会改变监听地址。",
   "settingsPeerPortMode": "端口分配方式",
   "settingsPeerPortModeFixed": "固定 IP 和端口",
   "settingsPeerPortModeAutomatic": "自动分配端口",
-
   "settingsPeerAdvanced": "高级选项",
   "settingsPeerDiscoveryUnavailable": "当前 Host 不支持在局域网广播监听服务。支持的协议仍可通过地址直接连接。",
   "settingsPeerTransportUnavailable": "当前 Host 不支持 {transport} 监听。",
-  "@settingsPeerTransportUnavailable": {"placeholders": {"transport": {"type": "String"}}},
+  "@settingsPeerTransportUnavailable": {
+    "placeholders": {
+      "transport": {
+        "type": "String"
+      }
+    }
+  },
   "settingsPeerTransportHelp": "暴露方式（可多选）。HTTP 和 WebSocket 可共用端口；TCP 暂不能与它们共用端口。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。",
   "settingsPeerBindAddress": "监听 IP 地址",
   "settingsPeerBindAddressHelp": "例如 0.0.0.0，允许局域网访问；也支持 IPv6 地址。",
@@ -2279,14 +2090,26 @@
   "deviceSpacePairedOnly": "已配对",
   "deviceSpaceDirectLink": "直连",
   "deviceSpaceRelayHops": "经中继 {hops} 跳",
-  "@deviceSpaceRelayHops": {"placeholders": {"hops": {"type": "int"}}},
+  "@deviceSpaceRelayHops": {
+    "placeholders": {
+      "hops": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceRelayPath": "路径",
   "deviceSpaceLocalDevice": "本机",
   "deviceSpaceManageDevice": "管理设备",
   "deviceSpaceConnectDirect": "建立直连",
   "deviceSpaceConnectDirectHint": "该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。",
   "deviceSpaceDirectLinkEstablished": "已建立直连：{device}",
-  "@deviceSpaceDirectLinkEstablished": {"placeholders": {"device": {"type": "String"}}},
+  "@deviceSpaceDirectLinkEstablished": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
   "deviceSpaceUnpair": "解除配对",
   "deviceSpaceMore": "更多设备操作",
   "deviceSpaceConnectionSettings": "连接设置",
@@ -2301,5 +2124,67 @@
   "workspaceUndo": "撤销",
   "workspaceRedo": "重做",
   "workspaceInsertSymbol": "插入 {symbol}",
-  "@workspaceInsertSymbol": {"placeholders": {"symbol": {"type": "String"}}}
+  "@workspaceInsertSymbol": {
+    "placeholders": {
+      "symbol": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfig": "主题配置",
+  "settingsAppearanceThemeConfigCustom": "未绑定的外观",
+  "settingsAppearanceThemeConfigCreate": "新建主题配置",
+  "settingsAppearanceThemeConfigRename": "重命名主题配置",
+  "settingsAppearanceThemeConfigDelete": "删除当前未启用的主题配置",
+  "settingsAppearanceThemeConfigName": "主题名称",
+  "settingsAppearanceThemeConfigNameRequired": "请输入主题名称",
+  "settingsAppearanceThemeConfigCustomHint": "点击 + 创建和管理独立的主题配置。",
+  "settingsAppearanceThemeConfigEditingHint": "修改外观会自动保存到当前主题配置。",
+  "settingsAppearanceThemeConfigFailed": "主题操作失败：{detail}",
+  "@settingsAppearanceThemeConfigFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeControlEditRole": "编辑角色",
+  "settingsRuntimeControlDeleteRole": "删除角色",
+  "settingsRuntimeControlDeleteRoleTitle": "删除角色 {roleName}？",
+  "@settingsRuntimeControlDeleteRoleTitle": {
+    "placeholders": {
+      "roleName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeControlDeleteRoleMessage": "持有该角色的设备将回退为默认的普通用户身份。",
+  "settingsAppearanceThemeConfigSource": "创建来源",
+  "settingsAppearanceThemeConfigFromDefaults": "默认外观",
+  "settingsAppearanceThemeConfigFromCurrent": "当前外观",
+  "settingsAppearanceThemeConfigInherit": "继承：{name}",
+  "@settingsAppearanceThemeConfigInherit": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfigFromTemplate": "模板：{name}",
+  "@settingsAppearanceThemeConfigFromTemplate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfigDefaultsHint": "从软件默认样式开始",
+  "settingsAppearanceThemeConfigCurrentHint": "复制现在的外观设置",
+  "settingsAppearanceThemeConfigSavedSources": "继承已有配置",
+  "settingsAppearanceThemeConfigPluginSources": "从插件模板新建",
+  "settingsAppearanceThemeConfigSourceHint": "模板来自已安装的插件。新建后可独立编辑，并沿用外观配置同步。",
+  "settingsAppearanceLoadFailed": "无法加载外观设置",
+  "settingsAppearanceRepairHint": "已保存的外观没有被替换。修复资源后可以重试，也可以主动重置外观。重置会保留头像和已保存的配置，并切换到自定义外观。",
+  "settingsAppearanceRetry": "重试",
+  "settingsAppearanceResetAfterError": "重置外观"
 }

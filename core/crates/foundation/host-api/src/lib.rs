@@ -3,11 +3,14 @@
 pub mod AtomicCounter;
 pub mod FileSystemResource;
 pub mod HostManager;
+pub mod PluginStorage;
 pub mod HttpServer;
 pub mod PluginSdkIpc;
 pub mod Tcp;
 pub mod TerminalWorkingDirectory;
 pub mod TimeUtils;
+pub mod JavaScriptBootstrap;
+pub use JavaScriptBootstrap::HostJavaScriptBootstrap;
 pub use Tcp::{TcpConnection, TcpHost, TcpListener};
 pub mod SerialPort;
 pub use SerialPort::{SerialPortConnection, SerialPortHost};
@@ -1247,12 +1250,56 @@ impl ComposeDslFilePickerRequest {
     }
 }
 
+/// A UTF-8 export saved to a destination selected by the host user.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComposeDslFileSaveOptions {
+    pub suggestedName: String,
+    pub content: String,
+    pub mimeType: String,
+    pub extensions: Vec<String>,
+}
+
+/// A file-save request scoped to the originating Compose execution context.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComposeDslFileSaveRequest {
+    pub routeInstanceId: String,
+    pub executionContextKey: String,
+    pub options: ComposeDslFileSaveOptions,
+}
+
+impl ComposeDslFileSaveRequest {
+    /// Validates the structured export without accepting a caller-supplied output path.
+    pub fn fromValue(payload: Value) -> HostResult<Self> {
+        let request: Self = serde_json::from_value(payload)
+            .map_err(|error| HostError::new(format!("Compose DSL file save request decode failed: {error}")))?;
+        if request.executionContextKey.trim().is_empty() {
+            return Err(HostError::new("Compose DSL file save executionContextKey is required"));
+        }
+        let name = &request.options.suggestedName;
+        if name.trim().is_empty() || name.chars().any(|value| matches!(value, '/' | '\\' | '\0')) {
+            return Err(HostError::new("Compose DSL file save requires a file name without a path"));
+        }
+        if request.options.mimeType.trim().is_empty() {
+            return Err(HostError::new("Compose DSL file save mimeType is required"));
+        }
+        if request.options.extensions.iter().any(|extension| extension.is_empty() || !extension.chars().all(|value| value.is_ascii_alphanumeric())) {
+            return Err(HostError::new("Compose DSL file save extensions must be nonempty alphanumeric tokens"));
+        }
+        Ok(request)
+    }
+}
+
 pub trait ComposeDslWebViewHost: Send + Sync {
     /// Executes one imperative WebView controller command for a Compose DSL screen.
     fn handleControllerCommand(&self, payload: &Value) -> HostResult<Value>;
 
     /// Opens one validated Compose DSL file picker through the platform owner.
     fn openFilePicker(&self, request: ComposeDslFilePickerRequest) -> HostResult<Value>;
+
+    /// Saves an export using a destination selected by the platform owner.
+    fn saveFile(&self, request: ComposeDslFileSaveRequest) -> HostResult<Value>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1880,6 +1927,8 @@ pub trait RuntimeSqliteTransaction {
     fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>>;
     fn lastInsertRowId(&self) -> HostResult<i64>;
     fn commit(self: Box<Self>) -> HostResult<()>;
+    /// Aborts this transaction explicitly and reports any rollback failure.
+    fn rollback(self: Box<Self>) -> HostResult<()>;
 }
 
 pub trait RuntimeSqliteHost: Send + Sync {
@@ -1956,6 +2005,9 @@ pub type HostJavaScriptInterruptHandler = Arc<dyn Fn() -> bool + Send + Sync + '
 
 /// Owns one concrete JavaScript runtime created by the active platform host.
 pub trait HostJavaScriptRuntime {
+    /// Executes shared trusted bootstrap bytecode in this runtime's independent global scope.
+    fn evaluateHostJavaScriptBootstrap(&mut self, source: &'static str) -> HostResult<()>;
+
     /// Evaluates one script without reading its return value.
     fn evaluateHostJavaScriptVoid(&mut self, scriptName: &str, script: &str) -> HostResult<()>;
 

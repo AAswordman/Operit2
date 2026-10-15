@@ -21,6 +21,6 @@ export async function nth_prime(params: { index: number }) {
 Build the JS entry, WASM module, and ToolPkg archive:
 
 ```bash
-npm install
-npm run pack:toolpkg
+corepack pnpm install --frozen-lockfile
+corepack pnpm run pack:toolpkg
 ```

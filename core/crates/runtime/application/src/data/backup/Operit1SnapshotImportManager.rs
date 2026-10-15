@@ -17,10 +17,9 @@ use operit_util::AppLogger::AppLogger;
 use operit_util::RuntimeStorageLayout::{
     ANDROID_PERMISSION_PREFERENCES_PATH, API_PREFERENCES_PATH,
     CUSTOM_EMOJI_SETTINGS_PREFERENCES_PATH, DATABASE_BACKUP_SETTINGS_PREFERENCES_PATH,
-    DATA_MEMORY_SHARED_DIR_PATH, DISPLAY_PREFERENCES_PATH, GITHUB_AUTH_PREFERENCES_PATH,
-    OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH, OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH,
-    OPERIT1_SNAPSHOT_SQLITE_INSPECTION_SHM_PATH, OPERIT1_SNAPSHOT_SQLITE_INSPECTION_WAL_PATH,
-    PERSONA_CARD_CHAT_HISTORY_PREFERENCES_PATH, RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR_PATH,
+    DISPLAY_PREFERENCES_PATH, GITHUB_AUTH_PREFERENCES_PATH,
+    OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH, OPERIT1_SNAPSHOT_SQLITE_INSPECTION_SHM_PATH,
+    OPERIT1_SNAPSHOT_SQLITE_INSPECTION_WAL_PATH, RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR_PATH,
     RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH, UI_PREFERENCES_PATH, USER_PREFERENCES_PATH,
     WAIFU_SETTINGS_PREFERENCES_PATH, WAKE_WORD_PREFERENCES_PATH, WORKSPACE_DIR_PATH,
 };
@@ -34,29 +33,24 @@ use crate::data::backup::Operit1RoomSchemaMigration::{
     prepareOperit1RoomImport, Operit1ToOperit2ChatArchiveBridge,
 };
 use crate::data::backup::Operit1SnapshotArchive::{
-    isDataStoreEntry as isArchiveDataStoreEntry, validateRelativePath, Operit1PreferenceValue,
-    Operit1SnapshotArchive, Operit1SnapshotEntry,
+    validateRelativePath, Operit1PreferenceValue, Operit1SnapshotArchive, Operit1SnapshotEntry,
 };
 use crate::data::backup::Operit1ThinkingMigration::convert_thinking_configurations;
 
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
-use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use crate::data::preferences::ModelConfigManager::ModelConfigManager;
-use crate::data::preferences::SharedMemoryStoreManager::SharedMemoryStoreManager;
-use crate::data::preferences::TtsConfigManager::TtsConfigManager;
-use operit_model::ApiKeyInfo::{ApiKeyAvailabilityStatus, ApiKeyInfo};
-use operit_model::CharacterCard::{
+use super::CharacterPluginLegacyData::sanitizeMemoryOwnerId;
+use super::CharacterPluginLegacyData::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
     CharacterCardToolAccessConfig,
 };
-use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use super::CharacterPluginLegacyData::{CharacterGroupCard, GroupMemberConfig};
+use super::CharacterPluginLegacyData::{PromptTag, TagType};
+use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::data::preferences::TtsConfigManager::TtsConfigManager;
+use operit_model::ApiKeyInfo::{ApiKeyAvailabilityStatus, ApiKeyInfo};
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use operit_model::FunctionType::FunctionType;
-use operit_model::MemoryExportModel::{
-    ImportStrategy, MemoryExportData, SerializableLink, SerializableMemory,
-};
 use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::ModelCatalog::ModelCatalog;
@@ -69,15 +63,12 @@ use operit_model::OperitChatArchive::{
     OperitArchivedChat, OperitArchivedMessage, OperitArchivedMessageVariant, OperitChatArchive,
     ARCHIVE_TYPE, CURRENT_FORMAT_VERSION,
 };
-use operit_model::PromptTag::{PromptTag, TagType};
 use operit_model::StandardModelParameters::StandardModelParameters;
 use operit_model::TtsConfig::{
     TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep, TtsProviderType,
 };
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
-use operit_store::repository::MemoryRepository::MemoryRepository;
 use operit_store::repository::UsageStatisticsStore::{TokenStatsModel, UsageStatisticsStore};
-use operit_util::OperitPaths::{sanitizeMemoryOwnerId, sharedMemoryOwnerKey};
 
 const FORMAT_VERSION: i32 = 1;
 const ENTRY_MANIFEST: &str = "manifest.json";
@@ -103,6 +94,8 @@ const KEY_ACTIVE_MEMORY_SPACE_ID: &str = "active_memory_space_id";
 const KEY_MEMORY_SPACE_LIST: &str = "memory_space_list";
 const KEY_MEMORY_SPACE_PREFIX: &str = "memory_space_";
 const OPERIT1_DEFAULT_PROFILE_ID: &str = "default";
+// This identifier belongs only to the preserved legacy source decoder, never the imported chat target.
+const OPERIT1_SOURCE_DEFAULT_CHARACTER_CARD_ID: &str = "default_character";
 const OPERIT1_SHARED_MEMORY_STORE_ID_PREFIX: &str = "operit1-profile-";
 const ARCHIVE_ENTRY_COPY_BUFFER_BYTES: usize = 256 * 1024;
 const OPERIT1_PROGRESS_REPORT_INTERVAL_MS: i64 = 250;
@@ -132,6 +125,7 @@ pub struct Operit1SnapshotPreview {
     pub messageCount: i32,
     pub importedFileCount: i32,
     pub importedExternalFileCount: i32,
+    /// Reports domains actually detected in the source, including legacy domains that restoration never adopts.
     pub detectedDomains: Vec<String>,
 }
 
@@ -154,7 +148,9 @@ pub struct Operit1SnapshotImportResult {
     pub importedMessages: i32,
     pub importedTokenUsageRecords: i32,
     pub importedTokenStatsModels: i32,
+    /// Counts actual memory records adopted by the character plugin.
     pub importedMemories: i32,
+    /// Counts adopted memory links, not the number of links present in the source snapshot.
     pub importedMemoryLinks: i32,
     pub importedFiles: i32,
     pub importedExternalFiles: i32,
@@ -199,11 +195,10 @@ impl Operit1SnapshotImportProgress {
             stage: "completed".to_string(),
             title: "导入完成".to_string(),
             detail: format!(
-                "已迁移 {} 个聊天、{} 条消息、{} 条统计记录、{} 条记忆和 {} 个资源文件。",
+                "已迁移 {} 个聊天、{} 条消息、{} 条统计记录和 {} 个资源文件。角色卡和记忆已导入插件。",
                 result.importedChats,
                 result.importedMessages,
                 result.importedTokenUsageRecords,
-                result.importedMemories,
                 result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles
             ),
             progress: 1.0,
@@ -361,7 +356,6 @@ impl Operit1SnapshotImportManager {
     ) -> Result<Operit1SnapshotPreview, String> {
         let result = (|| {
             let parsed = ParsedOperit1Snapshot::fromSource(source)?;
-            validateOperit1MemorySpaces(&parsed)?;
             let databaseCounts = self.databaseCounts(&parsed)?;
             parsed.preview(databaseCounts)
         })();
@@ -397,7 +391,7 @@ impl Operit1SnapshotImportManager {
             Ok(imported) => AppLogger::i(
                 "Operit1SnapshotImport",
                 &format!(
-                    "full snapshot import completed chats={} messages={} memories={} files={}",
+                    "full snapshot import completed chats={} messages={} adoptedMemories={} files={}; character and memory records adopted by plugin storage",
                     imported.importedChats,
                     imported.importedMessages,
                     imported.importedMemories,
@@ -426,7 +420,6 @@ impl Operit1SnapshotImportManager {
             0.08,
         ));
         let parsed = ParsedOperit1Snapshot::fromSource(source)?;
-        validateOperit1MemorySpaces(&parsed)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "model_config",
             "迁移模型配置",
@@ -443,12 +436,11 @@ impl Operit1SnapshotImportManager {
         let fileImportPlan = SnapshotFileImportPlan::new();
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
-            "迁移角色和语音",
-            "正在写入角色卡、提示词、角色组和 TTS 配置。",
+            "迁移语音配置",
+            "正在写入 TTS 配置；角色卡、提示词、角色组和记忆写入插件存储。",
             0.36,
         ));
-        self.importStructuredPreferences(&parsed, &fileImportPlan)?;
-        self.importUserMarkdownPreferences(&parsed)?;
+        self.importSpeechPreferences(&parsed)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "preferences",
             "迁移偏好设置",
@@ -458,29 +450,22 @@ impl Operit1SnapshotImportManager {
         let (importedDatastoreFiles, importedDatastoreKeys) =
             self.importDataStorePreferences(&parsed, &fileImportPlan)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
+            "files",
+            "迁移资源文件",
+            "正在复制工作区、附件和外部资源。",
+            0.60,
+        ));
+        let fileImportResult = self.importSnapshotFiles(&parsed)?;
+        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "chats",
             "迁移聊天记录",
             "正在导入历史会话和消息。",
             0.64,
         ));
-        let (importedChats, importedMessages) =
+        let (importedChats, importedMessages, importedMemories, importedMemoryLinks) =
             self.importChatDatabase(&parsed, &fileImportPlan)?;
         let (importedTokenUsageRecords, importedTokenStatsModels) =
             self.importTokenStatistics(&parsed)?;
-        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
-            "memory",
-            "迁移记忆库",
-            "正在转换 Operit1 记忆和关联关系。",
-            0.78,
-        ));
-        let (importedMemories, importedMemoryLinks) = self.importObjectBoxMemoryStore(&parsed)?;
-        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
-            "files",
-            "迁移资源文件",
-            "正在复制工作区、附件和外部资源。",
-            0.90,
-        ));
-        let fileImportResult = self.importSnapshotFiles(&parsed)?;
         let result = Operit1SnapshotImportResult {
             modelConfig,
             importedDatastoreFiles,
@@ -500,75 +485,12 @@ impl Operit1SnapshotImportManager {
         Ok(result)
     }
 
+    /// Adopts speech configuration only; legacy character, group, tag and memory records remain source data.
     #[allow(non_snake_case)]
-    fn importStructuredPreferences(
-        &self,
-        parsed: &ParsedOperit1Snapshot,
-        fileImportPlan: &SnapshotFileImportPlan,
-    ) -> Result<(), String> {
-        let paths = self.paths.clone();
-        let promptTags = buildOperit2PromptTags(parsed)?;
-        if !promptTags.is_empty()
-            || parsed
-                .archive
-                .datastorePreferences
-                .contains_key(ENTRY_CHARACTER_CARDS)
-        {
-            let cards = buildOperit2CharacterCards(parsed, fileImportPlan)?;
-            let backup = serde_json::json!({
-                "characterCards": cards,
-                "promptTags": promptTags,
-            });
-            CharacterCardManager::new(paths.clone())
-                .importAllCharacterCardsFromBackupContent(
-                    &serde_json::to_string(&backup).map_err(|error| error.to_string())?,
-                )
-                .map_err(|error| format!("导入 Operit1 角色卡失败：{error}"))?;
-        }
-
-        let groups = buildOperit2CharacterGroups(parsed)?;
-        if !groups.is_empty() {
-            let backup = serde_json::json!({
-                "characterGroups": groups,
-            });
-            CharacterGroupCardManager::new(paths.clone())
-                .importAllCharacterGroupsFromBackupContent(
-                    &serde_json::to_string(&backup).map_err(|error| error.to_string())?,
-                )
-                .map_err(|error| format!("导入 Operit1 角色组失败：{error}"))?;
-        }
-
+    fn importSpeechPreferences(&self, parsed: &ParsedOperit1Snapshot) -> Result<(), String> {
         if let Some(config) = buildOperit2TtsConfig(parsed)? {
-            let manager = TtsConfigManager::new(paths);
+            let manager = TtsConfigManager::new(self.paths.clone());
             importOperit1TtsConfig(&manager, config)?;
-        }
-        Ok(())
-    }
-
-    #[allow(non_snake_case)]
-    /// Imports every current memory space and copies its Markdown document verbatim.
-    fn importUserMarkdownPreferences(&self, parsed: &ParsedOperit1Snapshot) -> Result<(), String> {
-        let spaces = buildOperit1MemorySpaces(parsed)?;
-        let manager = SharedMemoryStoreManager::new(self.paths.clone());
-        for (profileId, space) in spaces {
-            let storeId = operit1SharedMemoryStoreId(&profileId);
-            manager
-                .createSharedMemoryStoreWithId(
-                    storeId.clone(),
-                    format!("Operit1 记忆库 - {}", space.name.trim()),
-                )
-                .map_err(|error| format!("创建 Operit1 共享记忆库失败：{error}"))?;
-            let path = format!(
-                "{}/{}/USER.md",
-                DATA_MEMORY_SHARED_DIR_PATH.trim_end_matches('/'),
-                sanitizeMemoryOwnerId(&storeId)
-            );
-            writeArchiveEntryToStorage(
-                self.storageWriteHost.as_ref(),
-                parsed,
-                &operit1UserMarkdownEntry(&profileId),
-                &path,
-            )?;
         }
         Ok(())
     }
@@ -689,7 +611,17 @@ impl Operit1SnapshotImportManager {
         let mappings = datastorePreferenceMappings(&paths);
         let mappedFileCount = mappings
             .iter()
-            .filter(|(entryName, _)| parsed.archive.datastorePreferences.contains_key(*entryName))
+            .filter(|(entryName, _)| {
+                parsed
+                    .archive
+                    .datastorePreferences
+                    .get(*entryName)
+                    .is_some_and(|preferences| {
+                        preferences
+                            .keys()
+                            .any(|key| !isOperit1UnadoptedPreferenceKey(key))
+                    })
+            })
             .count();
         let mut fileCount = 0;
         let mut keyCount = 0;
@@ -697,20 +629,53 @@ impl Operit1SnapshotImportManager {
             let Some(preferences) = parsed.archive.datastorePreferences.get(&entryName) else {
                 continue;
             };
-            let encodedPreferences = preferences
+            let encodedPreferences = adoptedOperit1PreferenceEntries(preferences, fileImportPlan)?;
+            if encodedPreferences.is_empty() {
+                continue;
+            }
+            let mut adopted = operit_store::PreferencesDataStore::emptyPreferences();
+            for (key, value) in &encodedPreferences {
+                adopted.set(&stringPreferencesKey(key), value.clone());
+            }
+            let store = match entryName.as_str() {
+                "payload/files/datastore/user_preferences.preferences_pb" => {
+                    use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
+                    UserPreferencesManager::migratePreferences(1, &mut adopted)
+                        .map_err(|error| error.to_string())?;
+                    UserPreferencesManager::store(self.storageHost.clone())
+                }
+                "payload/files/datastore/api_settings.preferences_pb" => {
+                    use crate::data::preferences::ApiPreferences::ApiPreferences;
+                    ApiPreferences::migratePreferences(1, &mut adopted)
+                        .map_err(|error| error.to_string())?;
+                    ApiPreferences::store(self.storageHost.clone())
+                }
+                "payload/files/datastore/github_auth_preferences.preferences_pb" => {
+                    use crate::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
+                    GitHubAuthPreferences::migratePreferences(1, &mut adopted)
+                        .map_err(|error| error.to_string())?;
+                    (*GitHubAuthPreferences::store(self.storageHost.clone())).clone()
+                }
+                _ => PreferencesDataStore::new(filePath),
+            };
+            for (key, value) in preferences
                 .iter()
-                .map(|(key, value)| value.toTargetPreferenceEntry(key, fileImportPlan))
-                .collect::<Result<Vec<_>, _>>()?;
-            let store = PreferencesDataStore::new(filePath);
+                .filter(|(key, _)| !isOperit1UnadoptedPreferenceKey(key))
+            {
+                if !matches!(value, Operit1PreferenceValue::String(_)) {
+                    let (key, value) = value.toTargetNativePreferenceEntry(key, fileImportPlan)?;
+                    adopted.set(&stringPreferencesKey(&key), value);
+                }
+            }
             store
                 .edit(|target| {
-                    for (key, value) in &encodedPreferences {
+                    for (key, value) in adopted.iterEntries() {
                         target.set(&stringPreferencesKey(key), value.clone());
                     }
                 })
                 .map_err(|error| error.to_string())?;
             fileCount += 1;
-            keyCount += preferences.len() as i32;
+            keyCount += encodedPreferences.len() as i32;
             publishOperit1SnapshotCountedProgress(
                 "preferences",
                 "迁移偏好设置",
@@ -743,7 +708,7 @@ impl Operit1SnapshotImportManager {
         &self,
         parsed: &ParsedOperit1Snapshot,
         fileImportPlan: &SnapshotFileImportPlan,
-    ) -> Result<(i32, i32), String> {
+    ) -> Result<(i32, i32, i32, i32), String> {
         self.withStagedOperit1ChatDatabase(parsed, |connection, archiveBridge| {
             let (totalChatCount, totalMessageCount) = operit1ChatDatabaseCounts(connection)?;
             let mut parsedMessageCount = 0usize;
@@ -766,12 +731,14 @@ impl Operit1SnapshotImportManager {
                     );
                 }
             };
-            let archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
+            let mut archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
                 archiveBridge,
                 connection,
                 fileImportPlan,
                 &mut onMessageParsed,
             )?;
+            let (memoryCount, linkCount) = self.importCharactersAndMemory(parsed, fileImportPlan, &archive)?;
+            resolveOperit1ArchiveBindings(&mut archive, self.sqliteHost.clone(), self.storageHost.clone())?;
             let chatCount = archive.chats.len() as i32;
             let messageCount = archive
                 .chats
@@ -807,6 +774,7 @@ impl Operit1SnapshotImportManager {
                     }
                 })
                 .map_err(|error| error.to_string())?;
+            crate::data::backup::CharacterPluginMigration::migrateLegacyCharacters(self.paths.clone())?;
             if chatCount == 0 {
                 publishOperit1SnapshotCountedProgress(
                     "chats",
@@ -818,7 +786,7 @@ impl Operit1SnapshotImportManager {
                     0,
                 );
             }
-            Ok((chatCount, messageCount))
+            Ok((chatCount, messageCount, memoryCount, linkCount))
         })
     }
 
@@ -826,7 +794,7 @@ impl Operit1SnapshotImportManager {
     /// Imports the OP1 v21 token ledger and pricing identities without deriving usage from chats.
     fn importTokenStatistics(&self, parsed: &ParsedOperit1Snapshot) -> Result<(i32, i32), String> {
         self.withStagedOperit1ChatDatabase(parsed, |connection, bridge| {
-            if bridge != Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27 {
+            if bridge != Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV28 {
                 return Ok((0, 0));
             }
             let usageRows = connection
@@ -970,77 +938,6 @@ impl Operit1SnapshotImportManager {
         })
     }
 
-    #[allow(non_snake_case)]
-    /// Imports every Operit1 ObjectBox memory profile and reports each completed profile.
-    fn importObjectBoxMemoryStore(
-        &self,
-        parsed: &ParsedOperit1Snapshot,
-    ) -> Result<(i32, i32), String> {
-        let result = (|| {
-            let profiles = collectOperit1ObjectBoxProfileIds(parsed)?;
-            let profileCount = profiles.len();
-            let mut totalMemoryCount = 0;
-            let mut totalLinkCount = 0;
-            for (profileIndex, profileId) in profiles.into_iter().enumerate() {
-                let entry = operit1ObjectBoxEntryForProfile(&profileId);
-                let entryLength = parsed
-                    .archive
-                    .entries
-                    .get(&entry)
-                    .ok_or_else(|| format!("Operit1 记忆库条目不存在：{entry}"))?
-                    .uncompressedSize;
-                let exportData = self.withStagedArchiveEntry(
-                    parsed,
-                    &entry,
-                    OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH,
-                    || {
-                        buildMemoryExportDataFromOperit1ObjectBox(
-                            self.storageHost.as_ref(),
-                            OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH,
-                            entryLength,
-                        )
-                    },
-                )?;
-                totalMemoryCount += exportData.memories.len() as i32;
-                totalLinkCount += exportData.links.len() as i32;
-                let storeId = operit1SharedMemoryStoreId(&profileId);
-                let ownerKey = sharedMemoryOwnerKey(&storeId)?;
-                let repository = MemoryRepository::new(ownerKey);
-                let json = serde_json::to_string(&exportData).map_err(|error| error.to_string())?;
-                repository
-                    .importMemoriesFromJson(json, ImportStrategy::UPDATE)
-                    .map_err(|error| format!("导入 Operit1 记忆库失败：{error}"))?;
-                publishOperit1SnapshotCountedProgress(
-                    "memory",
-                    "迁移记忆库",
-                    format!(
-                        "已迁移 {}/{profileCount} 个记忆库，累计 {} 条记忆和 {} 条关联。",
-                        profileIndex + 1,
-                        totalMemoryCount,
-                        totalLinkCount,
-                    ),
-                    0.78,
-                    0.90,
-                    profileIndex + 1,
-                    profileCount,
-                );
-            }
-            if profileCount == 0 {
-                publishOperit1SnapshotCountedProgress(
-                    "memory",
-                    "迁移记忆库",
-                    "快照没有可迁移的记忆库。".to_string(),
-                    0.78,
-                    0.90,
-                    0,
-                    0,
-                );
-            }
-            Ok((totalMemoryCount, totalLinkCount))
-        })();
-        result
-    }
-
     /// Stages one snapshot entry for an operation and removes it after that operation completes.
     fn withStagedArchiveEntry<T>(
         &self,
@@ -1128,3 +1025,9 @@ include!("operit1/Operit1CharacterCards.rs");
 include!("operit1/Operit1ChatMigration.rs");
 include!("operit1/Operit1MemoryStorage.rs");
 include!("operit1/Operit1Parsing.rs");
+
+#[cfg(test)]
+#[path = "operit1/Operit1SnapshotImportTests.rs"]
+mod snapshot_import_tests;
+
+include!("operit1/Operit1CharacterPluginMigration.rs");

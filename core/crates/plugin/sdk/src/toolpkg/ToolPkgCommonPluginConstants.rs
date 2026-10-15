@@ -18,6 +18,8 @@ pub const TOOLPKG_EVENT_INPUT_MENU_TOGGLE: &str = "toolpkg_input_menu_toggle";
 pub const TOOLPKG_EVENT_CHAT_INPUT: &str = "toolpkg_chat_input";
 pub const TOOLPKG_EVENT_CHAT_VIEW: &str = "toolpkg_chat_view";
 pub const TOOLPKG_EVENT_CHAT_MESSAGE: &str = "toolpkg_chat_message";
+/// Routes the awaited generic conversation creation lifecycle envelope.
+pub const TOOLPKG_EVENT_CHAT_LIFECYCLE: &str = "toolpkg_chat_lifecycle";
 pub const TOOLPKG_EVENT_CHAT_MESSAGE_MENU_ITEM: &str = "toolpkg_chat_message_menu_item";
 pub const TOOLPKG_EVENT_CHAT_RUNTIME: &str = "toolpkg_chat_runtime";
 pub const TOOLPKG_EVENT_NAVIGATION_ENTRY_ACTION: &str = "toolpkg_navigation_entry_action";
@@ -31,7 +33,6 @@ pub const TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE: &str = "toolpkg_tool_prompt_compose
 pub const TOOLPKG_EVENT_PROMPT_FINALIZE: &str = "toolpkg_prompt_finalize";
 pub const TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE: &str = "toolpkg_prompt_estimate_finalize";
 pub const TOOLPKG_EVENT_SUMMARY_GENERATE: &str = "toolpkg_summary_generate";
-pub const TOOLPKG_EVENT_EDGE_EVENT: &str = "toolpkg_edge_event";
 pub const TOOLPKG_EVENT_CORE_COMMAND: &str = "toolpkg_core_command";
 pub const TOOLPKG_EVENT_AI_PROVIDER_LIST_MODELS: &str = "toolpkg_ai_provider_list_models";
 pub const TOOLPKG_EVENT_AI_PROVIDER_SEND_MESSAGE: &str = "toolpkg_ai_provider_send_message";
@@ -53,6 +54,8 @@ pub const TOOLPKG_REGISTRATION_INPUT_MENU_TOGGLE_PLUGIN: &str =
 pub const TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK: &str = "registerToolPkgChatInputHook";
 pub const TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK: &str = "registerToolPkgChatViewHook";
 pub const TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK: &str = "registerToolPkgChatMessageHook";
+/// Names capture of the single registered conversation creation handler.
+pub const TOOLPKG_REGISTRATION_CHAT_LIFECYCLE_HOOK: &str = "registerToolPkgChatLifecycleHook";
 pub const TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM: &str = "registerToolPkgChatMessageMenuItem";
 pub const TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK: &str = "registerToolPkgChatRuntimeHook";
 pub const TOOLPKG_REGISTRATION_HOST_EVENT_HOOK: &str = "registerToolPkgHostEventHook";
@@ -76,6 +79,30 @@ pub const TOOLPKG_REGISTRATION_MANIFEST_EXTENSION: &str = "registerManifestExten
 pub const TOOLPKG_NAV_SURFACE_TOOLBOX: &str = "toolbox";
 pub const TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS: &str = "main_sidebar_plugins";
 pub const TOOLPKG_NAV_SURFACE_APP_BAR: &str = "app_bar";
+/// Names the existing navigation registry surface rendered in the chat attachment menu.
+pub const TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS: &str = "chat_attachments";
+/// Names real plugin-owned UI routes embedded as tabs beside the built-in workspace tab.
+pub const TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS: &str = "chat_sidebar_tabs";
+/// Names plugin-owned Compose DSL rows embedded above the native chat input statistics.
+pub const TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU: &str = "chat_input_menu";
+
+/// Names plugin-owned Compose DSL sections below chat statistics and above native controls.
+pub const TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS: &str = "chat_input_menu_sections";
+
+/// Requires an exact supported navigation surface without case folding or whitespace repair.
+#[allow(non_snake_case)]
+pub(crate) fn requireToolPkgNavigationSurface(surface: &str) -> Result<(), String> {
+    match surface {
+        TOOLPKG_NAV_SURFACE_TOOLBOX
+        | TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS
+        | TOOLPKG_NAV_SURFACE_APP_BAR
+        | TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS
+        | TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS
+        | TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU
+        | TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS => Ok(()),
+        _ => Err(format!("is unsupported: {surface}")),
+    }
+}
 
 pub const TOOLPKG_CHAT_COMPOSER_SLOT_ABOVE_INPUT: &str = "above_input";
 

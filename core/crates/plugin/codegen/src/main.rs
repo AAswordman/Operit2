@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use operit_plugin_sdk_codegen::{check_declaration_tree, generate_declaration_tree};
+use operit_plugin_sdk_codegen::{check_declaration_tree, generate_declaration_tree, generate_js_tools_runtime};
 
 /// Runs declaration generation or consistency checking for the Rust plugin SDK.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,6 +14,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match command.to_string_lossy().as_ref() {
+        "generate-runtime" => {
+            generate_js_tools_runtime(&source_root, &source_root.join("js_sdk/runtime_bindings.rs"), &declaration_root)?;
+        }
         "generate" => {
             generate_declaration_tree(&source_root, &declaration_root)?;
         }

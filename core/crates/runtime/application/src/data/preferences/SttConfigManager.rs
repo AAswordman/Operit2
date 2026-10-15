@@ -22,10 +22,12 @@ pub struct SttConfigManager {
 }
 
 impl SttConfigManager {
+    const PREFERENCES_VERSION: u32 = 2;
     /// Creates an STT configuration manager backed by explicit runtime paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::newEncrypted(paths.stt_configs_preferences_path()),
+            dataStore: PreferencesDataStore::newEncrypted(paths.stt_configs_preferences_path())
+                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
             paths,
         }
     }
@@ -76,13 +78,16 @@ impl SttConfigManager {
     /// Reads the selected STT configuration id when a selection exists.
     pub fn getSelectedSttConfigId(&self) -> Result<Option<String>, String> {
         let preferences = self.dataStore.data().map_err(|error| error.to_string())?;
-        let Some(id) = preferences.get(&Self::currentConfigIdKey()) else {
+        let Some(id) = preferences
+            .getTyped::<String>(&Self::currentConfigIdKey())
+            .map_err(|error| error.to_string())?
+        else {
             return Ok(None);
         };
         if id.trim().is_empty() {
             return Err("selected STT config id is empty".to_string());
         }
-        self.getSttConfig(id)?;
+        self.getSttConfig(&id)?;
         Ok(Some(id.to_string()))
     }
 
@@ -119,9 +124,6 @@ impl SttConfigManager {
         self.validateLocalModelSelection(&config)?;
         self.dataStore
             .try_edit_result(|preferences| -> Result<(), PreferencesDataStoreError> {
-                let mut ids = readConfigList(preferences)?;
-                ids.push(config.id.clone());
-                writeConfigList(preferences, &ids)?;
                 writeConfig(preferences, &config)?;
                 Ok(())
             })
@@ -152,13 +154,10 @@ impl SttConfigManager {
         self.getSttConfig(id)?;
         self.dataStore
             .try_edit_result(|preferences| -> Result<(), PreferencesDataStoreError> {
-                let mut ids = readConfigList(preferences)?;
-                ids.retain(|current| current != id);
-                writeConfigList(preferences, &ids)?;
                 preferences.remove(&configKey(id));
                 if preferences
-                    .get(&Self::currentConfigIdKey())
-                    .map(String::as_str)
+                    .getTyped::<String>(&Self::currentConfigIdKey())?
+                    .as_deref()
                     == Some(id)
                 {
                     preferences.remove(&Self::currentConfigIdKey());
@@ -167,6 +166,43 @@ impl SttConfigManager {
             })
             .map_err(|error| error.to_string())?;
         Ok(true)
+    }
+
+    /// Initializes schema bookkeeping and migrates encoded STT records in version one.
+    fn migratePreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => Ok(()),
+            1 => {
+                let records = preferences
+                    .iterEntries()
+                    .filter_map(|(key, value)| {
+                        key.strip_prefix("stt_config_")?.strip_suffix("_json")?;
+                        Some((key.to_owned(), value.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (key, value) in records {
+                    let encoded = serde_json::from_value::<String>(value)?;
+                    let record: serde_json::Value = serde_json::from_str(&encoded)?;
+                    let config: SttConfig = serde_json::from_value(record.clone())?;
+                    let id = key
+                        .strip_prefix("stt_config_")
+                        .and_then(|id| id.strip_suffix("_json"))
+                        .expect("configuration record key selected by this migration");
+                    if config.id != id {
+                        return Err(PreferencesDataStoreError::Message(format!(
+                            "Configuration record identity mismatch: {key}"
+                        )));
+                    }
+                    preferences.set(&stringPreferencesKey(&key), record);
+                }
+                preferences.remove(&Self::configListKey());
+                Ok(())
+            }
+            from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        }
     }
 
     /// Returns every built-in STT provider catalog entry.
@@ -311,24 +347,30 @@ fn configKey(id: &str) -> operit_store::PreferencesDataStore::PreferencesKey {
     stringPreferencesKey(&format!("stt_config_{}_json", id.trim()))
 }
 
-/// Reads the ordered STT configuration id list.
+/// Derives STT membership from complete records and validates their identities.
 fn readConfigList(preferences: &Preferences) -> Result<Vec<String>, PreferencesDataStoreError> {
-    match preferences.get(&SttConfigManager::configListKey()) {
-        Some(encoded) => serde_json::from_str(encoded).map_err(Into::into),
-        None => Ok(Vec::new()),
+    let mut configs = Vec::new();
+    for (key, value) in preferences.iterEntries() {
+        let Some(id) = key
+            .strip_prefix("stt_config_")
+            .and_then(|id| id.strip_suffix("_json"))
+        else {
+            continue;
+        };
+        let config: SttConfig = serde_json::from_value(value.clone())?;
+        if config.id != id {
+            return Err(PreferencesDataStoreError::Message(format!(
+                "STT record identity mismatch: {key}"
+            )));
+        }
+        configs.push(config);
     }
-}
-
-/// Writes the ordered STT configuration id list.
-fn writeConfigList(
-    preferences: &mut Preferences,
-    ids: &[String],
-) -> Result<(), PreferencesDataStoreError> {
-    preferences.set(
-        &SttConfigManager::configListKey(),
-        serde_json::to_string(ids)?,
-    );
-    Ok(())
+    configs.sort_by(|left, right| {
+        left.createdAt
+            .cmp(&right.createdAt)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(configs.into_iter().map(|config| config.id).collect())
 }
 
 /// Reads one existing STT configuration from preferences.
@@ -340,7 +382,7 @@ fn readExistingConfig(
     let encoded = preferences
         .get(&configKey(id))
         .ok_or_else(|| PreferencesDataStoreError::Message(format!("STT config not found: {id}")))?;
-    serde_json::from_str(encoded).map_err(Into::into)
+    serde_json::from_value(encoded.clone()).map_err(Into::into)
 }
 
 /// Writes one STT configuration to preferences.
@@ -348,6 +390,6 @@ fn writeConfig(
     preferences: &mut Preferences,
     config: &SttConfig,
 ) -> Result<(), PreferencesDataStoreError> {
-    preferences.set(&configKey(&config.id), serde_json::to_string(config)?);
+    preferences.set(&configKey(&config.id), serde_json::to_value(config)?);
     Ok(())
 }

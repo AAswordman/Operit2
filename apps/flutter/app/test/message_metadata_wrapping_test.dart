@@ -35,6 +35,7 @@ void main() {
             20,
           ).millisecondsSinceEpoch;
           final message = ChatMessage(
+            pluginExtensions: const {},
             sender: 'ai',
             parts: const [],
             timestamp: timestamp,

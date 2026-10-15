@@ -1,12 +1,11 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
-import '../../../../../common/CharacterAvatar.dart';
+import '../../../../../common/ChatAvatarImage.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
@@ -24,12 +23,14 @@ class AiMessageComposable extends StatefulWidget {
     required this.message,
     required this.useBubbleStyle,
     this.avatarImagePath,
+    this.onIdentityTap,
     this.splitMarkdownContent,
   });
 
   final ChatUiMessage message;
   final bool useBubbleStyle;
   final String? avatarImagePath;
+  final VoidCallback? onIdentityTap;
   final MarkdownContentSplitter? splitMarkdownContent;
 
   @override
@@ -204,70 +205,72 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 2),
           child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          if (widget.useBubbleStyle &&
-              themePreferenceSnapshot.bubbleShowAvatar) ...<Widget>[
-            _MessageAvatar(
-              imagePath: widget.avatarImagePath,
-              backgroundColor: aiBubbleColor,
-              square:
-                  themePreferenceSnapshot.avatarShape ==
-                  UserPreferencesManager.AVATAR_SHAPE_SQUARE,
-              cornerRadius: themePreferenceSnapshot.avatarCornerRadius,
-            ),
-            const SizedBox(width: 8),
-          ],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: useCardStyle
-                      ? BubbleSurface(
-                          color: aiBubbleColor,
-                          borderRadius: bubbleBorderRadius,
-                          imageStyle: aiBubbleImageStyle,
-                          transparentSurface:
-                              themePreferenceSnapshot.transparentSurfaceEnabled,
-                          child: Padding(
-                            padding: contentPadding,
-                            child: messageBody,
-                          ),
-                        )
-                      : Padding(
-                          padding: EdgeInsets.only(
-                            left:
-                                (themePreferenceSnapshot
-                                            .bubbleAiContentPaddingLeft -
-                                        12)
-                                    .clamp(0, double.infinity)
-                                    .toDouble(),
-                            right:
-                                (themePreferenceSnapshot
-                                            .bubbleAiContentPaddingRight -
-                                        12)
-                                    .clamp(0, double.infinity)
-                                    .toDouble(),
-                          ),
-                          child: messageBody,
-                        ),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              if (widget.useBubbleStyle &&
+                  themePreferenceSnapshot.bubbleShowAvatar) ...<Widget>[
+                _MessageAvatar(
+                  imagePath: widget.avatarImagePath,
+                  onTap: widget.onIdentityTap,
+                  backgroundColor: aiBubbleColor,
+                  square:
+                      themePreferenceSnapshot.avatarShape ==
+                      UserPreferencesManager.AVATAR_SHAPE_SQUARE,
+                  cornerRadius: themePreferenceSnapshot.avatarCornerRadius,
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                  child: _CursorAiMessageHeader(
-                    message: widget.message,
-                    snapshot: themePreferenceSnapshot,
-                    l10n: l10n,
-                    externalActive: _isMessageHovered || _isMessageTouched,
-                  ),
-                ),
+                const SizedBox(width: 8),
               ],
-            ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: useCardStyle
+                          ? BubbleSurface(
+                              color: aiBubbleColor,
+                              borderRadius: bubbleBorderRadius,
+                              imageStyle: aiBubbleImageStyle,
+                              transparentSurface: themePreferenceSnapshot
+                                  .transparentSurfaceEnabled,
+                              child: Padding(
+                                padding: contentPadding,
+                                child: messageBody,
+                              ),
+                            )
+                          : Padding(
+                              padding: EdgeInsets.only(
+                                left:
+                                    (themePreferenceSnapshot
+                                                .bubbleAiContentPaddingLeft -
+                                            12)
+                                        .clamp(0, double.infinity)
+                                        .toDouble(),
+                                right:
+                                    (themePreferenceSnapshot
+                                                .bubbleAiContentPaddingRight -
+                                            12)
+                                        .clamp(0, double.infinity)
+                                        .toDouble(),
+                              ),
+                              child: messageBody,
+                            ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                      child: _CursorAiMessageHeader(
+                        message: widget.message,
+                        onTap: widget.onIdentityTap,
+                        snapshot: themePreferenceSnapshot,
+                        l10n: l10n,
+                        externalActive: _isMessageHovered || _isMessageTouched,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
         ),
       ),
     );
@@ -284,18 +287,20 @@ Color? _optionalColor(int? value) {
 }
 
 class _MessageAvatar extends StatelessWidget {
-  /// Creates a cursor-style AI avatar from an imported theme asset.
+  /// Creates a cursor-style responder avatar from its saved display identity.
   const _MessageAvatar({
     required this.imagePath,
     required this.backgroundColor,
     required this.square,
     required this.cornerRadius,
+    this.onTap,
   });
 
   final String? imagePath;
   final Color backgroundColor;
   final bool square;
   final double cornerRadius;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -310,7 +315,10 @@ class _MessageAvatar extends StatelessWidget {
           borderRadius: square ? BorderRadius.circular(cornerRadius) : null,
         ),
         clipBehavior: Clip.antiAlias,
-        child: CharacterAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
+        child: GestureDetector(
+          onTap: onTap,
+          child: ChatAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
+        ),
       ),
     );
   }
@@ -322,12 +330,14 @@ class _CursorAiMessageHeader extends StatelessWidget {
     required this.snapshot,
     this.l10n,
     this.externalActive = false,
+    this.onTap,
   });
 
   final ChatUiMessage message;
   final ThemePreferenceSnapshot snapshot;
   final AppLocalizations? l10n;
   final bool externalActive;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -336,7 +346,11 @@ class _CursorAiMessageHeader extends StatelessWidget {
     final primaryTitle = cursorAiPrimaryTitle(message, snapshot, l10n: l10n);
     final modelLabel = formatModelProviderLabel(message, snapshot);
     final statsText = formatMessageStatsText(message, snapshot, l10n: l10n);
-    final tooltipText = formatMessageMetadataTooltip(message, snapshot, l10n: l10n);
+    final tooltipText = formatMessageMetadataTooltip(
+      message,
+      snapshot,
+      l10n: l10n,
+    );
 
     final headerRow = LayoutBuilder(
       builder: (context, constraints) {
@@ -351,12 +365,15 @@ class _CursorAiMessageHeader extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
                   Flexible(
-                    child: Text(
-                      primaryTitle,
-                      softWrap: true,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onSurface.withValues(alpha: 0.85),
+                    child: InkWell(
+                      onTap: onTap,
+                      child: Text(
+                        primaryTitle,
+                        softWrap: true,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.onSurface.withValues(alpha: 0.85),
+                        ),
                       ),
                     ),
                   ),
@@ -377,7 +394,9 @@ class _CursorAiMessageHeader extends StatelessWidget {
                           softWrap: true,
                           style: theme.textTheme.labelSmall?.copyWith(
                             fontSize: 10,
-                            color: colorScheme.onSurface.withValues(alpha: 0.72),
+                            color: colorScheme.onSurface.withValues(
+                              alpha: 0.72,
+                            ),
                           ),
                         ),
                       ),

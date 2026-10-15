@@ -1330,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "operit-local-models"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "bzip2-rs",
  "operit-host-api",
@@ -1344,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "operit-util"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "chrono",
  "flate2",

@@ -1,14 +1,16 @@
 @TestOn('browser')
 library;
 
+import 'dart:convert';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webview_all/webview_all.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
-@JS('eval')
-external JSAny? _evaluate(JSString script);
+@JS('JSON.stringify')
+external JSString? _stringify(JSAny? value);
 
 void main() {
   late WebViewController controller;
@@ -58,6 +60,36 @@ void main() {
     );
   });
 
+  test('save completion executes when page eval is blocked', () async {
+    final originalEval = globalContext.getProperty<JSFunction>('eval'.toJS);
+    void blockEval(JSAny? script) {
+      throw StateError('Content Security Policy blocks eval');
+    }
+
+    final blockedEval = blockEval.toJS;
+    await controller.runJavaScriptReturningResult(
+      "window.__entityClosed = null; "
+      "window.addEventListener('character-entity-closed', function(event) { "
+      "window.__entityClosed = event.detail; }, {once: true});",
+    );
+    globalContext.setProperty('eval'.toJS, blockedEval);
+    try {
+      expect(
+        await controller.runJavaScriptReturningResult(
+          "window.dispatchEvent(new CustomEvent('character-entity-closed', "
+          "{detail: {operation: 'saved', id: 'group-1'}}));",
+        ),
+        true,
+      );
+      expect(
+        await controller.runJavaScriptReturningResult('window.__entityClosed'),
+        {'operation': 'saved', 'id': 'group-1'},
+      );
+    } finally {
+      globalContext.setProperty('eval'.toJS, originalEval);
+    }
+  });
+
   test('execution and serialization errors remain failures', () async {
     for (final script in [
       'throw new Error("test failure")',
@@ -75,16 +107,25 @@ void main() {
   });
 }
 
-/// Executes the actual transport script and enforces native adapters' non-null
-/// result contract, rather than substituting a precomputed return value.
+/// Captures the native evaluator independently of page-owned eval and returns
+/// decoded results as the native WebView adapters do.
 class _ScriptPlatform extends PlatformWebViewController {
   _ScriptPlatform()
-    : super.implementation(const PlatformWebViewControllerCreationParams());
+    : _nativeEvaluate = globalContext.getProperty<JSFunction>('eval'.toJS),
+      super.implementation(const PlatformWebViewControllerCreationParams());
+
+  final JSFunction _nativeEvaluate;
 
   @override
-  Future<Object> runJavaScriptReturningResult(String javaScript) async {
-    final result = _evaluate(javaScript.toJS);
-    if (result == null) throw ArgumentError('Native result must not be null');
-    return (result as JSString).toDart;
+  Future<Object?> runJavaScriptReturningResult(String javaScript) async {
+    try {
+      final result = _nativeEvaluate.callAsFunction(null, javaScript.toJS);
+      if (result == null) return null;
+      final encoded = _stringify(result);
+      if (encoded == null) throw StateError('Unsupported JavaScript result');
+      return jsonDecode(encoded.toDart);
+    } catch (error) {
+      throw StateError(error.toString());
+    }
   }
 }

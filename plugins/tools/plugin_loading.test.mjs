@@ -46,7 +46,7 @@ test("registration preserves top-level config access and named directories", asy
       __operitGetCallState = function() { return registrationState; };
       const directory = ToolPkg.getConfigDir();
       exports.registerToolPkg = function() {
-        ToolPkg.registerNavigationEntry({id: 'config-test', directory, alias: ToolPkg.getConfigDir('alias')});
+        ToolPkg.registerNavigationEntry({id: 'config-test', surface: 'toolbox', directory, alias: ToolPkg.getConfigDir('alias')});
         return true;
       };
     `, context);

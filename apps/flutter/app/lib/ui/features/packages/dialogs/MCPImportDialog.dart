@@ -240,14 +240,16 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     final servers = document['mcpServers'] as Map<String, dynamic>;
     if (servers.isEmpty) throw const FormatException('MCP 配置为空');
     for (final definition in servers.values) {
-      if (definition is! Map<String, dynamic>)
+      if (definition is! Map<String, dynamic>) {
         throw const FormatException('MCP 服务必须是对象');
+      }
       final command = definition['command'];
       final url = definition['url'];
       final local = command is String && command.trim().isNotEmpty;
       final remote = url is String && url.trim().isNotEmpty;
-      if (local == remote)
+      if (local == remote) {
         throw const FormatException('MCP 服务必须且只能指定 command 或 url');
+      }
     }
     final hasLocal = servers.values.any(
       (definition) =>
@@ -274,10 +276,11 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     try {
       scope = await _chooseConfigScope(jsonConfig);
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
       return;
     }
     if (scope == null) return;
@@ -295,10 +298,11 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     try {
       scope = await _chooseConfigScope(jsonConfig);
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
       return;
     }
     if (scope == null) return;

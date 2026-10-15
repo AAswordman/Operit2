@@ -1,6 +1,11 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
 /**
+ * Contains a JSON object with complete values preserved by the native JSON parser.
+ */
+export type JsonObject = Record<string, unknown>;
+
+/**
  * Stores a scalar or JSON value assigned to an arbitrary tool parameter.
  */
 export type ToolParamsAdditionalValue = string | number | boolean | unknown;
@@ -32,6 +37,50 @@ export interface ToolConfig {
    * Receives intermediate values produced by a streaming tool.
    */
   onIntermediateResult?: (arg0: any) => void;
+}
+
+/**
+ * Describes one parameter accepted by a public tool.
+ */
+export interface ToolCatalogParameter {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+  default: any;
+}
+
+/**
+ * Describes a public builtin or plugin tool available on a device.
+ */
+export interface ToolCatalogEntry {
+  name: string;
+  description: string;
+  parameters: ToolCatalogParameter[];
+  category: string;
+  source: string;
+  packageName?: string;
+}
+
+/**
+ * Contains public tool names and schemas returned by device discovery.
+ */
+export interface ToolCatalog {
+  tools: ToolCatalogEntry[];
+}
+
+/**
+ * Configures the lifetime of calls issued through Tools.device(nodeId).
+ */
+export interface DeviceToolOptions {
+  /**
+   * Maximum duration including connection and permission checks; defaults to 120000 ms.
+   */
+  timeoutMs?: number;
+  /**
+   * Optional AbortSignal. Aborting closes the remote execution stream.
+   */
+  signal?: object;
 }
 
 /**

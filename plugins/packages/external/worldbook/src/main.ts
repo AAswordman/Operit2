@@ -6,8 +6,6 @@ import {
   type WorldBookVariableRenderContext
 } from "./shared/worldbook_variables.js";
 
-declare function getCallerCardId(): string | undefined;
-
 const WORLDBOOK_ROUTE = "toolpkg:com.operit.worldbook:ui:worldbook_manager";
 
 interface WorldBookEntry {
@@ -27,10 +25,6 @@ interface WorldBookEntry {
   character_card_id?: string;
 }
 
-interface CharacterCardSummary {
-  id?: string;
-  name?: string;
-}
 
 function matchesEntry(entry: WorldBookEntry, text: string): boolean {
   if (!entry.keywords || entry.keywords.length === 0) {
@@ -167,43 +161,19 @@ function matchesCharacterCard(entry: WorldBookEntry, callerCardId: string): bool
   return !!callerCardId && callerCardId === targetCardId;
 }
 
+/** Uses the actual selected execution participant, never an inferred active role or chat title. */
 async function resolveCurrentCharacterCardId(
   event: ToolPkg.SystemPromptComposeHookEvent | ToolPkg.PromptFinalizeHookEvent
 ): Promise<string> {
-  try {
-    const directCardId = typeof getCallerCardId === "function" ? getCallerCardId() : undefined;
-    if (directCardId && String(directCardId).trim()) {
-      return String(directCardId).trim();
-    }
-  } catch (_error) {
-    // Ignore direct getter failure and fall back to chat lookup.
+  const context = event.eventPayload.metadata?.executionContext;
+  if (context === undefined || context.participantId === null) return "";
+  if (context.chatId !== (event.eventPayload.chatId ?? null)) {
+    throw new Error("Worldbook execution context does not match the prompt chat");
   }
-
-  try {
-    const chatId = event?.eventPayload?.chatId;
-    if (!chatId) {
-      return "";
-    }
-
-    const chatResult = await Tools.Chat.findChat({
-      query: String(chatId),
-      match: "exact",
-      index: 0
-    });
-    const cardName = String(chatResult?.chat?.characterCardName || "").trim();
-    if (!cardName) {
-      return "";
-    }
-
-    const cardResult = await Tools.Chat.listCharacterCards();
-    const cards = Array.isArray(cardResult?.cards)
-      ? (cardResult.cards as CharacterCardSummary[])
-      : [];
-    const matchedCard = cards.find((card) => String(card?.name || "").trim() === cardName);
-    return matchedCard?.id ? String(matchedCard.id).trim() : "";
-  } catch (_error) {
-    return "";
+  if (typeof context.participantId !== "string" || context.participantId.trim() === "") {
+    throw new Error("Worldbook execution participant must be nonblank");
   }
+  return context.participantId;
 }
 
 async function readEnabledEntries(): Promise<WorldBookEntry[]> {

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -110,16 +112,19 @@ class PlatformWebView {
   }
 
   /// Evaluates the specified JavaScript string.
-  Future<Object?> evaluateJavaScript(String javaScriptString) {
+  Future<Object?> evaluateJavaScript(String javaScriptString) async {
     final WKWebView webView = nativeWebView;
+    final Object? result;
     switch (webView) {
       case UIViewWKWebView():
-        return webView.evaluateJavaScript(javaScriptString);
+        result = await webView.evaluateJavaScript(javaScriptString);
       case NSViewWKWebView():
-        return webView.evaluateJavaScript(javaScriptString);
+        result = await webView.evaluateJavaScript(javaScriptString);
+      default:
+        throw UnimplementedError('${webView.runtimeType} is not supported.');
     }
-
-    throw UnimplementedError('${webView.runtimeType} is not supported.');
+    final envelope = jsonDecode(result as String) as Map<String, dynamic>;
+    return envelope['value'];
   }
 
   /// The custom user agent string.

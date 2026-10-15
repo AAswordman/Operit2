@@ -37,9 +37,7 @@ pub struct PrepareConversationHistoryRequest {
     pub workspace_folders: Vec<String>,
     pub prompt_function_type: String,
     pub custom_system_prompt_template: Option<String>,
-    pub role_card_id: Option<String>,
-    pub enable_group_orchestration_hint: bool,
-    pub group_participant_names_text: Option<String>,
+    pub participant_id: Option<String>,
     pub proxy_sender_name: Option<String>,
     pub has_image_recognition: bool,
     pub has_audio_recognition: bool,
@@ -49,11 +47,9 @@ pub struct PrepareConversationHistoryRequest {
     pub use_tool_call_api: bool,
     pub chat_model_has_direct_image: bool,
     pub tool_exposure_mode: ToolExposureMode,
-    pub active_prompt_metadata: BTreeMap<String, String>,
+    pub prompt_metadata: BTreeMap<String, String>,
     pub user_preferences_text: String,
     pub intro_prompt: String,
-    pub waifu_rules_text: String,
-    pub avatar_mood_rules_text: String,
     pub disable_user_preference_description: bool,
     pub ai_name: String,
 }
@@ -87,7 +83,7 @@ pub trait SystemPromptComposer: Send + Sync {
         &'a self,
         request: &'a PrepareConversationHistoryRequest,
         use_english: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>>;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>;
 }
 
 /// Converts stored chat turns into provider-facing conversation history.
@@ -109,7 +105,7 @@ impl ConversationService {
         history_hooks: &dyn PromptHistoryHookDispatcher,
         system_prompt_composer: &dyn SystemPromptComposer,
         use_english: bool,
-    ) -> Vec<PromptTurn> {
+    ) -> Result<Vec<PromptTurn>, String> {
         let before_context = history_hooks
             .dispatch_prompt_history_hooks(HistoryHookContext {
                 stage: "before_prepare_history".to_string(),
@@ -131,11 +127,9 @@ impl ConversationService {
         {
             let system_prompt = system_prompt_composer
                 .get_system_prompt_with_custom_prompts(&request, use_english)
-                .await;
+                .await?;
             let final_system_prompt = build_final_system_prompt(
-                &request.avatar_mood_rules_text,
                 &system_prompt,
-                &request.waifu_rules_text,
                 &request.user_preferences_text,
                 request.disable_user_preference_description,
             );
@@ -171,7 +165,7 @@ impl ConversationService {
                 ..before_context
             })
             .await;
-        after_context.prepared_history
+        Ok(after_context.prepared_history)
     }
 
     /// Splits mixed text and XML-like assistant output into ordered tag segments.
@@ -733,7 +727,7 @@ fn extract_xml_tag_body_case_insensitive<'a>(content: &'a str, tag_name: &str) -
 fn build_prepare_history_metadata(
     request: &PrepareConversationHistoryRequest,
 ) -> BTreeMap<String, String> {
-    let mut metadata = request.active_prompt_metadata.clone();
+    let mut metadata = request.prompt_metadata.clone();
     insert_option(
         &mut metadata,
         "workspacePath",
@@ -748,15 +742,6 @@ fn build_prepare_history_metadata(
         &mut metadata,
         "customSystemPromptTemplate",
         request.custom_system_prompt_template.as_ref(),
-    );
-    metadata.insert(
-        "enableGroupOrchestrationHint".to_string(),
-        request.enable_group_orchestration_hint.to_string(),
-    );
-    insert_option(
-        &mut metadata,
-        "groupParticipantNamesText",
-        request.group_participant_names_text.as_ref(),
     );
     insert_option(
         &mut metadata,
@@ -913,17 +898,14 @@ fn sanitizeConversationTitle(raw_title: &str) -> String {
         .to_string()
 }
 
+/// Combines the generic system prompt with the explicitly supplied user profile.
 fn build_final_system_prompt(
-    avatar_mood_rules_text: &str,
     system_prompt: &str,
-    waifu_rules_text: &str,
     preferences_text: &str,
     disable_user_preference_description: bool,
 ) -> String {
     let mut final_prompt = String::new();
-    final_prompt.push_str(avatar_mood_rules_text);
     final_prompt.push_str(system_prompt);
-    final_prompt.push_str(waifu_rules_text);
     if !disable_user_preference_description && !preferences_text.is_empty() {
         final_prompt.push_str("\n\nUSER.md:\n");
         final_prompt.push_str(preferences_text);

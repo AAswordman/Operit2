@@ -6,6 +6,9 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/chat/components/style/MessageHeaderMetadata.dart';
 import 'package:operit2/ui/features/chat/components/style/ThemedChatMessage.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'package:operit2/ui/common/ChatAvatarImage.dart';
+import 'package:operit2/ui/common/ChatMessageIdentity.dart';
+import 'package:operit2/ui/features/settings/model/ProviderLogo.dart';
 
 /// Exercises model/provider switches in production message renderers, not samples.
 void main() {
@@ -95,6 +98,43 @@ void main() {
   });
 
   for (final style in ['cursor', 'bubble', 'bubble-wide']) {
+    testWidgets(
+      '$style: model-only replies preserve avatar visibility and show the model name',
+      (tester) async {
+        final model = _message(
+          role: '',
+          extensions: const {
+            'host.chat.identity': {
+              'title': 'org/model:latest',
+              'avatarUri': 'provider-logo:OPENAI',
+            },
+          },
+        );
+        final snapshot = ThemePreferenceSnapshot.fromJson({
+          ..._snapshot(style, false, false).toJson(),
+          'bubbleShowAvatar': true,
+        });
+        await _pumpMessage(tester, model, snapshot);
+        await tester.pumpAndSettle();
+        expect(find.textContaining(model.modelName), findsOneWidget);
+        if (style == 'cursor') {
+          expect(find.byType(ProviderIdentityLogo), findsNothing);
+          expect(find.byType(ChatAvatarImage), findsNothing);
+        } else {
+          final logo = tester.widget<ProviderIdentityLogo>(
+            find.byType(ProviderIdentityLogo),
+          );
+          expect(logo.providerTypeId, 'OPENAI');
+        }
+        expect(
+          readChatMessageIdentity(model)!.avatarUri,
+          'provider-logo:OPENAI',
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
     testWidgets('$style: user messages do not show assistant metadata', (
       tester,
     ) async {
@@ -112,6 +152,7 @@ void main() {
   }
 }
 
+/// Creates preferences for one production renderer and metadata combination.
 ThemePreferenceSnapshot _snapshot(String style, bool model, bool provider) {
   return ThemePreferenceSnapshot.fromJson({
     ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
@@ -126,15 +167,19 @@ ThemePreferenceSnapshot _snapshot(String style, bool model, bool provider) {
   });
 }
 
+/// Creates an explicit message identity independently of the active provider preferences.
 ChatMessage _message({
   String sender = 'ai',
   String model = 'org/model:latest',
   String provider = '我的代理: OpenAI',
+  String role = 'Operit',
+  Map<String, Object?> extensions = const {},
 }) => ChatMessage(
+  pluginExtensions: extensions,
   sender: sender,
   parts: const [],
   timestamp: 1,
-  roleName: 'Operit',
+  roleName: role,
   selectedVariantIndex: 0,
   variantCount: 1,
   provider: provider,
@@ -151,6 +196,7 @@ ChatMessage _message({
   contentStream: null,
 );
 
+/// Mounts the production message renderer under a real theme and localized app.
 Future<void> _pumpMessage(
   WidgetTester tester,
   ChatMessage message,

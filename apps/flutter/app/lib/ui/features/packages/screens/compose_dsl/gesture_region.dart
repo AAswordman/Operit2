@@ -10,6 +10,7 @@ class _ComposeGestureRegion extends StatefulWidget {
     required this.options,
     required this.onAction,
     required this.child,
+    this.borderRadius = BorderRadius.zero,
   });
 
   final String kind;
@@ -18,6 +19,7 @@ class _ComposeGestureRegion extends StatefulWidget {
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String, [Object?]) onAction;
   final Widget child;
+  final BorderRadius borderRadius;
 
   /// Creates persistent gesture delta tracking.
   @override
@@ -117,14 +119,23 @@ class _ComposeGestureRegionState extends State<_ComposeGestureRegion> {
           ),
         );
       case 'combinedclickable':
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _has('onClick') ? () => _emit('onClick') : null,
-          onDoubleTap: _has('onDoubleClick')
-              ? () => _emit('onDoubleClick')
-              : null,
-          onLongPress: _has('onLongClick') ? () => _emit('onLongClick') : null,
-          child: widget.child,
+        // Own the ink surface so feedback moves with the row during a swipe,
+        // rather than being painted on a distant ancestor Material.
+        return Material(
+          type: MaterialType.transparency,
+          borderRadius: widget.borderRadius,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            borderRadius: widget.borderRadius,
+            onTap: _has('onClick') ? () => _emit('onClick') : null,
+            onDoubleTap: _has('onDoubleClick')
+                ? () => _emit('onDoubleClick')
+                : null,
+            onLongPress: _has('onLongClick')
+                ? () => _emit('onLongClick')
+                : null,
+            child: widget.child,
+          ),
         );
       case 'tapgestures':
         return GestureDetector(

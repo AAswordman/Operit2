@@ -8,7 +8,6 @@ use std::path::PathBuf;
 #[derive(Clone, Debug)]
 pub struct PbSbc01H3Config {
     pub bindAddress: Option<String>,
-    pub token: Option<String>,
     pub runtimeRoot: PathBuf,
     pub workspaceRoot: PathBuf,
     pub stateRoot: PathBuf,
@@ -22,7 +21,6 @@ impl PbSbc01H3Config {
     {
         let dataRoot = defaultDataRoot()?;
         let mut bindAddress = None;
-        let mut token = None;
         let mut runtimeRoot = dataRoot.join("runtime");
         let mut workspaceRoot = dataRoot.join("workspace");
         let mut stateRoot = dataRoot.join("state");
@@ -31,7 +29,6 @@ impl PbSbc01H3Config {
         while let Some(arg) = iterator.next() {
             match arg.as_str() {
                 "--bind" => bindAddress = Some(readArgValue(&mut iterator, "--bind")?),
-                "--token" => token = Some(readArgValue(&mut iterator, "--token")?),
                 "--runtime-root" => {
                     runtimeRoot = PathBuf::from(readArgValue(&mut iterator, "--runtime-root")?)
                 }
@@ -48,7 +45,6 @@ impl PbSbc01H3Config {
 
         Ok(Self {
             bindAddress,
-            token,
             runtimeRoot,
             workspaceRoot,
             stateRoot,
@@ -80,7 +76,7 @@ fn defaultDataRoot() -> Result<PathBuf, String> {
 /// Returns concise command usage for the PB_SBC01_H3 controller.
 fn usage() -> String {
     [
-        "usage: operit-pb-sbc01-h3 [--token <token>] [--bind <address:port>]",
+        "usage: operit-pb-sbc01-h3 [--bind <address:port>]",
         "       [--runtime-root <path>] [--workspace-root <path>] [--state-root <path>]",
     ]
     .join("\n")

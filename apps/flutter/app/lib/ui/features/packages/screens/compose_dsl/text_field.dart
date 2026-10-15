@@ -28,6 +28,7 @@ class _ComposeTextField extends StatefulWidget {
     required this.supportingText,
     required this.helperText,
     required this.border,
+    this.suffixIconConstraints,
     required this.onChanged,
   });
 
@@ -53,7 +54,8 @@ class _ComposeTextField extends StatefulWidget {
   final Widget? suffix;
   final Widget? supportingText;
   final String? helperText;
-  final InputBorder border;
+  final InputBorder? border;
+  final BoxConstraints? suffixIconConstraints;
 
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String) onChanged;
@@ -174,6 +176,7 @@ class _ComposeTextFieldState extends State<_ComposeTextField> {
         errorText: widget.isError ? '' : null,
         prefixIcon: widget.prefixIcon,
         suffixIcon: widget.suffixIcon,
+        suffixIconConstraints: widget.suffixIconConstraints,
         prefix: widget.prefix,
         suffix: widget.suffix,
         helperText: widget.helperText,

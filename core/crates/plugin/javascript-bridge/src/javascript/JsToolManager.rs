@@ -8,7 +8,7 @@ use serde_json::Value;
 use operit_plugin_sdk::execution_result::{JsExecutionError, JsExecutionResult};
 use operit_plugin_sdk::javascript::{
     JsExecutionCompletion, JsExecutionEngine, JsPackageExecutor, JsPackageRuntime,
-    JsPackageToolCallRequest, JsPackageToolCallResult,
+    JsPackageToolCallRequest, JsPackageToolCallResult, JsPackageToolSelection,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgManager::ToolPkgExecutionEngineFactory;
 
@@ -17,6 +17,7 @@ use operit_plugin_sdk::toolpkg::ToolPkgManager::ToolPkgExecutionEngineFactory;
 pub struct JsToolManager {
     packageRuntime: Arc<dyn JsPackageRuntime>,
     enginePool: Arc<Mutex<Vec<Arc<dyn JsExecutionEngine>>>>,
+    executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     enginePermits: Arc<Semaphore>,
 }
 
@@ -49,12 +50,10 @@ impl JsToolManager {
         packageRuntime: Arc<dyn JsPackageRuntime>,
         executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     ) -> Self {
-        let engines = (0..MAX_CONCURRENT_ENGINES)
-            .map(|_| executionEngineFactory.createExecutionEngine())
-            .collect::<Vec<_>>();
         Self {
             packageRuntime,
-            enginePool: Arc::new(Mutex::new(engines)),
+            enginePool: Arc::new(Mutex::new(Vec::new())),
+            executionEngineFactory,
             enginePermits: Arc::new(Semaphore::new(MAX_CONCURRENT_ENGINES)),
         }
     }
@@ -63,20 +62,24 @@ impl JsToolManager {
     #[allow(non_snake_case)]
     async fn withEngine<T>(
         &self,
-        block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<T>,
-    ) -> T {
+        block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<JsExecutionResult<T>>,
+    ) -> JsExecutionResult<T> {
         let permit = self
             .enginePermits
             .clone()
             .acquire_owned()
             .await
             .expect("JsToolManager engine semaphore must remain open");
-        let engine = self
+        let idleEngine = self
             .enginePool
             .lock()
             .expect("JsToolManager engine pool mutex poisoned")
-            .pop()
-            .expect("an acquired engine permit must own a pool entry");
+            .pop();
+        let engine = match idleEngine {
+            Some(engine) => engine,
+            None => self.executionEngineFactory.createExecutionEngine()
+                .map_err(JsExecutionError::initialization)?,
+        };
         let lease = JsEngineLease {
             engine,
             pool: self.enginePool.clone(),
@@ -89,15 +92,15 @@ impl JsToolManager {
     #[allow(non_snake_case)]
     async fn withExecutionEngineForPackage<T>(
         &self,
-        packageName: &str,
-        block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<T>,
-    ) -> T {
-        let toolPkgRuntime = self.packageRuntime.resolve_toolpkg_subpackage(packageName);
-        if let Some(runtime) = toolPkgRuntime {
+        selection: &JsPackageToolSelection,
+        block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<JsExecutionResult<T>>,
+    ) -> JsExecutionResult<T> {
+        if let Some(runtime) = selection.toolpkg_runtime.as_ref() {
             let contextKey = format!("toolpkg_main:{}", runtime.containerPackageName);
             let engine = self
                 .packageRuntime
-                .toolpkg_execution_engine(&contextKey, &runtime.containerPackageName);
+                .toolpkg_execution_engine(&contextKey, &runtime.containerPackageName)
+                .map_err(JsExecutionError::initialization)?;
             return block(engine).await;
         }
         self.withEngine(block).await
@@ -131,6 +134,7 @@ impl JsToolManager {
     fn buildRuntimeParams(
         &self,
         packageName: &str,
+        selection: &JsPackageToolSelection,
         params: BTreeMap<String, Value>,
     ) -> Result<BTreeMap<String, Value>, String> {
         let mut runtimeParams = params;
@@ -139,14 +143,18 @@ impl JsToolManager {
             "__operit_package_lang".to_string(),
             Value::String(packageLanguage),
         );
-        if let Some(stateId) = self.packageRuntime.active_package_state_id(packageName) {
-            runtimeParams.insert("__operit_package_state".to_string(), Value::String(stateId));
+        if let Some(stateId) = selection.active_state_id.as_ref() {
+            runtimeParams.insert(
+                "__operit_package_state".to_string(),
+                Value::String(stateId.clone()),
+            );
         }
 
         for key in [
             "__operit_package_caller_name",
             "__operit_package_chat_id",
-            "__operit_package_caller_card_id",
+            "__operit_package_caller_participant_id",
+            "__operit_package_caller_owner",
         ] {
             let value = runtimeParams
                 .get(key)
@@ -173,7 +181,7 @@ impl JsToolManager {
             Value::String("sandbox".to_string()),
         );
 
-        if let Some(runtime) = self.packageRuntime.resolve_toolpkg_subpackage(packageName) {
+        if let Some(runtime) = selection.toolpkg_runtime.as_ref() {
             runtimeParams.insert(
                 "__operit_execution_context_key".to_string(),
                 Value::String(format!("toolpkg_main:{}", runtime.containerPackageName)),
@@ -192,11 +200,11 @@ impl JsToolManager {
             );
             runtimeParams.insert(
                 "__operit_ui_package_name".to_string(),
-                Value::String(runtime.containerPackageName),
+                Value::String(runtime.containerPackageName.clone()),
             );
             runtimeParams.insert(
                 "__operit_script_screen".to_string(),
-                Value::String(runtime.entryPath),
+                Value::String(runtime.entryPath.clone()),
             );
         } else {
             runtimeParams.remove("__operit_toolpkg_subpackage_id");
@@ -213,25 +221,17 @@ impl JsToolManager {
         &self,
         request: &JsPackageToolCallRequest,
         packageName: &str,
-        functionName: &str,
+        selection: &JsPackageToolSelection,
     ) -> Result<BTreeMap<String, Value>, ToolParameterConversionException> {
-        let packageTools = self.packageRuntime.package(packageName);
-        let toolDefinition = packageTools
-            .as_ref()
-            .and_then(|package| package.tools.iter().find(|item| item.name == functionName));
-
-        let missingRequiredParameters = toolDefinition
-            .map(|definition| {
-                definition
-                    .parameters
-                    .iter()
-                    .filter(|parameter| {
-                        parameter.required && !request.parameters.contains_key(&parameter.name)
-                    })
-                    .map(|parameter| parameter.name.clone())
-                    .collect::<Vec<_>>()
+        let definition = &selection.definition;
+        let missingRequiredParameters = definition
+            .parameters
+            .iter()
+            .filter(|parameter| {
+                parameter.required && !request.parameters.contains_key(&parameter.name)
             })
-            .unwrap_or_default();
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
 
         if !missingRequiredParameters.is_empty() {
             return Err(ToolParameterConversionException {
@@ -244,15 +244,31 @@ impl JsToolManager {
 
         let mut converted = BTreeMap::new();
         for (parameterName, rawValue) in &request.parameters {
-            let parameterType = toolDefinition
-                .and_then(|definition| {
-                    definition
-                        .parameters
-                        .iter()
-                        .find(|item| item.name == *parameterName)
-                })
-                .map(|item| item.parameter_type.to_ascii_lowercase())
-                .unwrap_or_else(|| "string".to_string());
+            let parameterType = match definition
+                .parameters
+                .iter()
+                .find(|item| item.name == *parameterName)
+            {
+                Some(parameter) => parameter.parameter_type.as_str(),
+                None if matches!(
+                    parameterName.as_str(),
+                    "__operit_package_caller_name"
+                        | "__operit_package_chat_id"
+                        | "__operit_package_caller_participant_id"
+                        | "__operit_package_caller_owner"
+                ) =>
+                {
+                    "string"
+                }
+                None => {
+                    return Err(ToolParameterConversionException {
+                        message: format!(
+                            "Unknown tool parameter: {}:{parameterName}",
+                            request.tool_name
+                        ),
+                    })
+                }
+            };
             let value = self.convertToolParameterValue(
                 &request.tool_name,
                 parameterName,
@@ -262,7 +278,7 @@ impl JsToolManager {
             converted.insert(parameterName.clone(), value);
         }
 
-        self.buildRuntimeParams(packageName, converted)
+        self.buildRuntimeParams(packageName, selection, converted)
             .map_err(|message| ToolParameterConversionException { message })
     }
 
@@ -343,26 +359,20 @@ impl JsToolManager {
                 "Invalid tool name format: {toolName}. Expected format: packageName.functionName"
             )));
         };
-        let script = self
+        let selection = self
             .packageRuntime
-            .package(&packageName)
-            .and_then(|package| package.tools.first().map(|tool| tool.script.clone()));
-        let Some(script) = script else {
-            return Err(JsExecutionError::invalid_request(format!(
-                "Package not found: {packageName}"
-            )));
+            .select_tool(&packageName, &functionName)
+            .map_err(JsExecutionError::invalid_request)?;
+        let request = JsPackageToolCallRequest {
+            tool_name: format!("{packageName}:{functionName}"),
+            parameters: params,
         };
-        let params = params
-            .into_iter()
-            .map(|(key, value)| (key, Value::String(value)))
-            .collect::<BTreeMap<_, _>>();
-        let runtimeParams = match self.buildRuntimeParams(&packageName, params) {
-            Ok(runtimeParams) => runtimeParams,
-            Err(error) => return Err(JsExecutionError::runtime(error)),
-        };
-        self.withExecutionEngineForPackage(&packageName, |engine| {
+        let runtimeParams = self
+            .convertToolParameters(&request, &packageName, &selection)
+            .map_err(|error| JsExecutionError::invalid_request(error.message))?;
+        self.withExecutionEngineForPackage(&selection, |engine| {
             engine.execute_script_function(
-                &script,
+                &selection.definition.script,
                 &functionName,
                 &runtimeParams,
                 &BTreeMap::new(),
@@ -378,7 +388,6 @@ impl JsToolManager {
     /// Executes a JavaScript package tool through the SDK execution contract.
     pub async fn executeScript(
         &self,
-        script: &str,
         request: &JsPackageToolCallRequest,
     ) -> JsPackageToolCallResult {
         let Some((packageName, functionName)) = Self::parsePackageToolName(&request.tool_name)
@@ -389,15 +398,19 @@ impl JsToolManager {
             );
         };
 
-        let runtimeParams = match self.convertToolParameters(request, &packageName, &functionName) {
+        let selection = match self.packageRuntime.select_tool(&packageName, &functionName) {
+            Ok(selection) => selection,
+            Err(error) => return Self::failure(&request.tool_name, error),
+        };
+        let runtimeParams = match self.convertToolParameters(request, &packageName, &selection) {
             Ok(value) => value,
             Err(error) => return Self::failure(&request.tool_name, error.message),
         };
 
         let result = self
-            .withExecutionEngineForPackage(&packageName, |engine| {
+            .withExecutionEngineForPackage(&selection, |engine| {
                 engine.execute_script_function(
-                    script,
+                    &selection.definition.script,
                     &functionName,
                     &runtimeParams,
                     &BTreeMap::new(),
@@ -421,13 +434,11 @@ impl JsPackageExecutor for JsToolManager {
     /// Executes one package tool through this manager's bound runtime context.
     fn execute_package_tool(
         &self,
-        script: &str,
         request: &JsPackageToolCallRequest,
     ) -> JsExecutionCompletion<JsPackageToolCallResult> {
         let manager = self.clone();
-        let script = script.to_string();
         let request = request.clone();
-        Box::pin(async move { manager.executeScript(&script, &request).await })
+        Box::pin(async move { manager.executeScript(&request).await })
     }
 }
 
@@ -441,7 +452,7 @@ mod tests {
         GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult,
     };
     use operit_plugin_sdk::javascript::{
-        JsExecutionEngine, JsExecutionHost, JsPackageRuntime, JsToolCallRequest, JsToolCallResult,
+        JsExecutionEngine, JsExecutionHost, JsPackageRuntime, JsPackageToolSelection, JsToolCallRequest, JsToolCallResult,
         JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
         JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgConfigScope,
         ToolPkgExecutionContext,
@@ -466,9 +477,25 @@ mod tests {
     #[derive(Clone, Copy)]
     struct TestJsExecutionHost;
 
-    crate::impl_rejecting_js_tools_host!(TestJsExecutionHost);
-
     impl JsExecutionHost for TestJsExecutionHost {
+        /// Captures this fixture's shared state through the same native invocation boundary.
+        fn capture_tool_invocation_host(&self) -> Arc<dyn JsExecutionHost> { Arc::new(self.clone()) }
+
+
+
+        /// Retains the explicit manager test host when an engine supplies a real package context.
+        fn for_toolpkg_execution_context(
+            &self,
+            context: &operit_plugin_sdk::javascript::ToolPkgExecutionContext,
+        ) -> Result<Arc<dyn JsExecutionHost>, String> {
+            if context.container_package_name.trim().is_empty()
+                || context.context_key.trim().is_empty()
+            {
+                return Err("Invalid manager test execution context".to_string());
+            }
+            Ok(Arc::new(*self))
+        }
+
         /// Returns an empty catalog for tests that do not install runtime tools.
         fn get_tool_catalog(&self) -> Result<Value, String> {
             Ok(serde_json::json!({ "tools": [] }))
@@ -530,6 +557,26 @@ mod tests {
             Err("Plugin configuration is not part of this test".to_string())
         }
 
+        /// Rejects local data access in manager fixtures that do not provide storage.
+        fn plugin_local_data_dir(&self, _owner_id: &str) -> Result<String, String> {
+            Err("Local plugin data is not part of this test".to_string())
+        }
+
+        /// Rejects registration-local data access in manager fixtures that do not provide storage.
+        fn registration_plugin_local_data_dir(&self, _owner_id: &str) -> Result<String, String> {
+            Err("Local plugin data is not part of this test".to_string())
+        }
+
+        /// Rejects shared data access in manager fixtures without installed storage.
+        fn plugin_space_data_dir(&self, _owner_id: &str) -> Result<String, String> {
+            Err("Shared plugin data is not part of this test".to_string())
+        }
+
+        /// Rejects registration-shared data access in manager fixtures without installed storage.
+        fn registration_plugin_space_data_dir(&self, _owner_id: &str) -> Result<String, String> {
+            Err("Shared plugin data is not part of this test".to_string())
+        }
+
         /// Rejects ToolPkg text resource access in manager tests.
         fn read_toolpkg_text_resource(
             &self,
@@ -569,6 +616,11 @@ mod tests {
             _payload: &serde_json::Value,
         ) -> Result<serde_json::Value, String> {
             Err("Compose DSL file picking is not part of this test".to_string())
+        }
+
+        /// Rejects Compose DSL file-save requests in manager tests.
+        fn save_compose_file(&self, _payload: &serde_json::Value) -> Result<serde_json::Value, String> {
+            Err("Compose DSL file saving is not part of this test".to_string())
         }
 
         /// Reports no imported packages in manager tests.
@@ -626,8 +678,8 @@ mod tests {
     impl ToolPkgExecutionEngineFactory for TestExecutionEngineFactory {
         /// Creates a generic isolated JavaScript engine for manager tests.
         #[allow(non_snake_case)]
-        fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
-            Arc::new(JsEngine::new(Arc::new(TestJsExecutionHost)))
+        fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            JsEngine::new(Arc::new(TestJsExecutionHost)).map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>).map_err(|error| error.to_string())
         }
 
         /// Creates a ToolPkg JavaScript engine with its bound package context.
@@ -635,11 +687,20 @@ mod tests {
         fn createToolPkgExecutionEngine(
             &self,
             context: ToolPkgExecutionContext,
-        ) -> Arc<dyn JsExecutionEngine> {
-            Arc::new(JsEngine::new_toolpkg_execution_engine(
+        ) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            JsEngine::new_toolpkg_execution_engine(
                 Arc::new(TestJsExecutionHost),
                 context,
-            ))
+            ).map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>).map_err(|error| error.to_string())
+        }
+
+        /// Completes the asynchronous factory contract with this consumer's explicit engine implementation.
+        #[allow(non_snake_case)]
+        fn acquireToolPkgExecutionEngine(
+            &self, context: ToolPkgExecutionContext,
+        ) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<Arc<dyn JsExecutionEngine>, String>> {
+            let result = self.createToolPkgExecutionEngine(context);
+            Box::pin(async move { result })
         }
     }
 
@@ -1169,7 +1230,7 @@ mod tests {
     fn load_downloaded_toolpkg(downloaded_bytes: Vec<u8>) -> ToolPkgLoadResult {
         let source_path = "/marketplace/downloaded/market_flow_toolpkg.toolpkg";
         let host = DownloadedToolPkgFileSystemHost::new(source_path, downloaded_bytes);
-        let registration_engine = JsEngine::new(Arc::new(TestJsExecutionHost));
+        let registration_engine = JsEngine::new(Arc::new(TestJsExecutionHost)).expect("registration fixture must initialize");
         let load_errors = Mutex::new(Vec::<String>::new());
         let load_result = ToolPkgLoader::loadToolPkgFromExternalFile(
             &host,
@@ -1251,32 +1312,29 @@ mod tests {
             Ok("en".to_string())
         }
 
-        /// Returns one package definition from the SDK package manager.
-        fn package(&self, package_name: &str) -> Option<ToolPackage> {
-            self.package_manager
-                .lock()
-                .expect("test package manager mutex poisoned")
-                .package(package_name)
-        }
-
-        /// Returns the selected package state from the SDK package manager.
-        fn active_package_state_id(&self, package_name: &str) -> Option<String> {
-            self.package_manager
-                .lock()
-                .expect("test package manager mutex poisoned")
-                .activePackageStateId(package_name)
-        }
-
-        /// Resolves one ToolPkg subpackage from the SDK package manager.
-        fn resolve_toolpkg_subpackage(
+        /// Selects a real test declaration and its SDK runtime metadata under one registry lock.
+        fn select_tool(
             &self,
             package_name: &str,
-        ) -> Option<ToolPkgSubpackageRuntime> {
-            self.package_manager
+            function_name: &str,
+        ) -> Result<JsPackageToolSelection, String> {
+            let manager = self
+                .package_manager
                 .lock()
-                .expect("test package manager mutex poisoned")
-                .toolPkgManager()
-                .resolveToolPkgSubpackageRuntimeInternal(package_name)
+                .map_err(|error| error.to_string())?;
+            let package = manager
+                .package(package_name)
+                .ok_or_else(|| format!("Package not registered: {package_name}"))?;
+            Ok(JsPackageToolSelection {
+                definition: operit_plugin_sdk::javascript::select_registered_package_tool(
+                    package,
+                    function_name,
+                )?,
+                active_state_id: manager.activePackageStateId(package_name),
+                toolpkg_runtime: manager
+                    .toolPkgManager()
+                    .resolveToolPkgSubpackageRuntimeInternal(package_name),
+            })
         }
 
         /// Returns the shared execution engine for one explicitly owned ToolPkg context.
@@ -1284,7 +1342,7 @@ mod tests {
             &self,
             context_key: &str,
             container_package_name: &str,
-        ) -> Arc<dyn JsExecutionEngine> {
+        ) -> Result<Arc<dyn JsExecutionEngine>, String> {
             self.package_manager
                 .lock()
                 .expect("test package manager mutex poisoned")
@@ -1486,7 +1544,7 @@ mod tests {
         "#;
         let (manager, package_runtime) = toolpkg_manager(script);
         let engine =
-            package_runtime.toolpkg_execution_engine("toolpkg_main:test_toolpkg", "test_toolpkg");
+            package_runtime.toolpkg_execution_engine("toolpkg_main:test_toolpkg", "test_toolpkg").expect("fixture engine must initialize");
         let seed_script = r#"
             exports.seed = function(_params) {
                 globalThis.__toolpkg_engine_marker = "same-engine";

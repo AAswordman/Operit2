@@ -10,7 +10,15 @@ AI 优先的 external 插件。TypeScript + 自包含 HTML/WebView；音频由�
 
 ## 安装与开发
 
-在此目录执行：
+构建需要 LLVM 的 `clang` 和 `wasm-ld`，两者必须位于 PATH 中。DSP 构建脚本统一通过 PATH 调用工具。Windows 安装 LLVM 后，将其 `bin` 目录加入用户 PATH，并重新打开终端。例如本机安装目录为 `C:\Program Files\LLVM\bin`：
+
+```powershell
+$env:Path = "C:\Program Files\LLVM\bin;$env:Path"
+clang --version
+wasm-ld --version
+```
+
+`sync_plugin_packages.py` 会在打包前使用 Corepack/pnpm 安装锁文件指定的依赖。手动开发时，在此目录执行：
 
 ```sh
 npm ci

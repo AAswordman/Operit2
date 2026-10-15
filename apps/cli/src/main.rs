@@ -21,7 +21,7 @@ pub(crate) use bootstrap::{
     create_cli_core_application_without_space_sync,
 };
 pub(crate) use chat_runtime::{
-    build_attachment_info, guess_mime_type, initialize_shell_chat, parse_shell_args, ChatSendArgs,
+    build_attachment_info, guess_mime_type, parse_shell_args, ChatSendArgs,
     ShellArgs,
 };
 

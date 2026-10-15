@@ -35,8 +35,7 @@ impl EnvPreferences {
         let fromPrefs = self
             .dataStore
             .data()?
-            .get(&stringPreferencesKey(name))
-            .cloned();
+            .getTyped::<String>(&stringPreferencesKey(name))?;
         if fromPrefs.as_ref().is_some_and(|value| !value.is_empty()) {
             return Ok(fromPrefs);
         }
@@ -73,6 +72,9 @@ impl EnvPreferences {
             .dataStore
             .data()?
             .entries()
+            .into_iter()
+            .map(|(key, value)| Ok((key, serde_json::from_value::<String>(value)?)))
+            .collect::<Result<Vec<_>, PreferencesDataStoreError>>()?
             .into_iter()
             .filter(|(key, value)| !key.trim().is_empty() && !value.is_empty())
             .collect())

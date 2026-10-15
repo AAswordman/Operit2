@@ -344,27 +344,15 @@ class LinuxWebViewController extends PlatformWebViewController {
   }
 
   @override
-  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+  Future<Object?> runJavaScriptReturningResult(String javaScript) async {
     final Object? result = await _invoke<Object>(
       'runJavaScriptReturningResult',
       <String, Object?>{'script': javaScript},
     );
 
-    if (result == null) {
-      throw ArgumentError(
-        'The JavaScript returned `null` or `undefined`, which is unsupported.',
-      );
-    }
-
     if (result case final Map<Object?, Object?> map
         when map['__json__'] is String) {
-      final Object? decoded = jsonDecode(map['__json__']! as String);
-      if (decoded == null) {
-        throw ArgumentError(
-          'The JavaScript returned `null` or `undefined`, which is unsupported.',
-        );
-      }
-      return decoded;
+      return jsonDecode(map['__json__']! as String);
     }
 
     return result;

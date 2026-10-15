@@ -3,17 +3,17 @@
 import type { EdgePortResultData } from "./results";
 
 /**
- * Identifies one firmware-registered Edge plugin action, not a Core RPC target.
+ * Identifies one native service endpoint on the selected Edge device.
  */
 export interface EdgeInterfaceInfo {
   /**
-   * Stable Edge native plugin ID, as declared by the firmware.
+   * Native device service target in the edge namespace.
    */
-  pluginId: string;
+  target: string;
   /**
-   * Action explicitly declared by that native plugin.
+   * Native service method handled by the device application.
    */
-  action: string;
+  method: string;
 }
 
 /**
@@ -31,121 +31,71 @@ export interface IoInterfaceInfo {
 }
 
 /**
- * Calls only firmware-declared native plugin actions on an explicit node.
+ * Calls native device services on an explicit node.
  */
-export class Edge {
-  private constructor();
+export interface DeviceEdge {
   /**
-   * Executes a declared action through authenticated node routing without adding application-level retries.
+   * Executes a native service method through authenticated node routing without adding application-level retries.
    */
-  static execute(nodeId: string, interfaceInfo: EdgeInterfaceInfo, args?: any): Promise<EdgePortResultData>;
+  execute(interfaceInfo: EdgeInterfaceInfo, args?: any): Promise<EdgePortResultData>;
 }
 
 /**
  * Executes hardware I/O through authenticated node routing, not the host's local serial port.
  */
-export class Io {
-  private constructor();
+export interface DeviceIo {
   /**
    * Executes one supported port operation. Missing ports reject instead of pretending success.
    */
-  static execute(nodeId: string, interfaceInfo: IoInterfaceInfo, args?: any): Promise<EdgePortResultData>;
+  execute(interfaceInfo: IoInterfaceInfo, args?: any): Promise<EdgePortResultData>;
 }
 
 /**
- * One received device action. The action identifies business meaning, not a callable method.
+ * Opens the two directions of one native protocol with the same session arguments.
  */
-export interface EdgeActionEvent {
+export interface DeviceTransportEndpoint {
+  target: string;
   /**
-   * Monotonic producer sequence, safe as a JavaScript integer.
+   * ReverseStream method, carried by Push.
    */
-  seq: number;
+  method: string;
   /**
-   * Examples: target.tap, gpio.changed, sensor.sample, serial.message.
+   * Stream property, carried by Watch.
    */
-  action: string;
-  /**
-   * Producer-defined JSON object; validated by that action's handler.
-   */
-  data: object;
+  property: string;
+  args?: any;
 }
 
 /**
- * Generic bounded event batch shared by all device event producers.
+ * Carries the original Watch event kind and its vendor-defined value.
  */
-export interface EdgeEventBatch {
+export interface DeviceTransportEvent {
+  kind: string;
   /**
-   * Protocol version, currently 1.
+   * Structured values may contain Uint8Array byte payloads at any depth.
    */
-  v: number;
-  /**
-   * Firmware service that produced this batch.
-   */
-  source: string;
-  /**
-   * Producer stream identity; renewed after reset/re-subscription.
-   */
-  stream: string;
-  /**
-   * Up to four ordered action events.
-   */
-  events: EdgeActionEvent[];
-  /**
-   * Last sequence in this batch; acknowledge only after persistence.
-   */
-  next: number;
-  /**
-   * Last irrecoverably lost sequence; gaps are explicit.
-   */
-  lostBefore: number;
+  value: any;
 }
 
 /**
- * Core attaches routing context to a generic Edge event batch.
+ * Represents a duplex channel; its receive direction is also an async iterable.
  */
-export interface EdgeEventPayload {
+export interface DeviceTransportChannel extends AsyncIterable<DeviceTransportEvent> {
+  send(value: any): Promise<void>;
   /**
-   * Existing authorized chat Binding, never implicitly created.
+   * Completes ReverseStream input while keeping Stream output readable.
    */
-  chatId: string;
+  finish(): Promise<void>;
   /**
-   * Device identity authenticated against the route origin.
+   * Closes both directions and wakes pending I/O.
    */
-  nodeId: string;
-  /**
-   * Device-independent action envelope.
-   */
-  batch: EdgeEventBatch;
+  close(): Promise<void>;
 }
 
 /**
- * Argument of the fixed on_edge_event export in the existing ToolPkg main runtime.
+ * Transports structured values and bytes without interpreting their business meaning.
  */
-export interface EdgeEventHookEvent {
-  /**
-   * Dedicated generic event discriminator: edge_event.
-   */
-  event: string;
-  /**
-   * Repeats the event discriminator.
-   */
-  eventName: string;
-  /**
-   * Trusted route context and bounded device events.
-   */
-  eventPayload: EdgeEventPayload;
-}
-
-/**
- * Return after applying/persisting this batch; never acknowledge merely on reception.
- */
-export interface EdgeEventAck {
-  /**
-   * False rejects this receiver/source/stream or unhandled action.
-   */
-  accepted: boolean;
-  /**
-   * Required for acceptance; must equal the delivered batch next.
-   */
-  next?: number;
+export interface DeviceTransport {
+  call(target: string, method: string, args?: any): Promise<any>;
+  open(endpoint: DeviceTransportEndpoint): Promise<DeviceTransportChannel>;
 }

@@ -749,15 +749,9 @@ class WindowsWebViewController extends PlatformWebViewController {
   }
 
   @override
-  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+  Future<Object?> runJavaScriptReturningResult(String javaScript) async {
     await _ensureInitialized();
-    final dynamic result = await _webviewController.executeScript(javaScript);
-    if (result == null) {
-      throw ArgumentError(
-        'The JavaScript returned `null` or `undefined`, which is unsupported.',
-      );
-    }
-    return result as Object;
+    return _webviewController.executeScript(javaScript);
   }
 
   /// Registers a WebView2 document-created script and retains its native handle.

@@ -309,28 +309,22 @@ class WebViewProxyAPIDelegate: PigeonApiDelegateWKWebView, PigeonApiDelegateUIVi
     completion: @escaping (Result<Any?, Error>) -> Void
   ) {
     pigeonInstance.evaluateJavaScript(javaScriptString) { result, error in
-      if error == nil {
-        if let optionalResult = result as Any?? {
-          switch optionalResult {
-          case .none:
-            completion(.success(nil))
-          case .some(let value):
-            if value is String || value is NSNumber {
-              completion(.success(value))
-            } else {
-              let className = String(describing: value)
-              debugPrint(
-                "Return type of evaluateJavaScript is not directly supported: \(className). Returned description of value."
-              )
-              completion(.success((value as AnyObject).description))
-            }
-          }
-        }
-      } else {
-        let error = PigeonError(
+      if let error = error {
+        completion(.failure(PigeonError(
           code: "FWFEvaluateJavaScriptError", message: "Failed evaluating JavaScript.",
-          details: error! as NSError)
-        completion(.failure(error))
+          details: error as NSError)))
+        return
+      }
+      // Encode the native result so nested arrays, objects and nulls do not
+      // enter Pigeon's proxy-instance codec or get converted to descriptions.
+      do {
+        let data = try JSONSerialization.data(withJSONObject: ["value": result ?? NSNull()])
+        completion(.success(String(decoding: data, as: UTF8.self)))
+      } catch {
+        completion(.failure(PigeonError(
+          code: "FWFUnsupportedJavaScriptResult",
+          message: "The JavaScript result is not JSON-compatible.",
+          details: error.localizedDescription)))
       }
     }
   }

@@ -23,7 +23,29 @@ Widget buildComposeDslLayoutForTest({
   );
 }
 
-class _ComposeDslRenderer extends StatelessWidget {
+/// Applies the production retained store and renderer for isolated first-frame measurements.
+@visibleForTesting
+Widget buildRetainedComposeDslLayoutForTest({
+  required core_proxy.ToolPkgComposeDslNodeUpdate update,
+  required ComposeDslWebViewHostContext hostContext,
+  required void Function(VoidCallback dispose) registerDispose,
+  void Function(void Function(core_proxy.ToolPkgComposeDslNodeUpdate) apply)?
+  registerApply,
+}) {
+  final store = _ComposeDslNodeStore();
+  store.apply(update);
+  registerDispose(store.dispose);
+  registerApply?.call(store.apply);
+  return _ComposeDslRenderer(
+    node: store.root,
+    onAction: hostContext.dispatchAction,
+    onTextInput: (id, text) async => null,
+    webViewHostContext: hostContext,
+    splitMarkdownContent: (_) async => [],
+  );
+}
+
+class _ComposeDslRenderer extends StatefulWidget {
   /// Creates the compose dsl renderer instance.
   const _ComposeDslRenderer({
     super.key,
@@ -35,12 +57,15 @@ class _ComposeDslRenderer extends StatelessWidget {
     this.nodePath = 'root',
     this.modifierScope = _ComposeDslModifierScope.normal,
     this.embedDialog = false,
+    this.dispatchOnLoad = true,
+    this.onLoadHandledByHost = false,
   });
 
   final _ComposeDslNode node;
 
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
+
   /// Dispatches text edits through the page-wide ordered text queue.
   final Future<Object?> Function(String actionId, String text) onTextInput;
   final ComposeDslWebViewHostContext webViewHostContext;
@@ -48,26 +73,132 @@ class _ComposeDslRenderer extends StatelessWidget {
   final String nodePath;
   final _ComposeDslModifierScope modifierScope;
   final bool embedDialog;
+  final bool dispatchOnLoad;
+  final bool onLoadHandledByHost;
+
+  /// Creates the state that subscribes to nodes observed by this renderer.
+  @override
+  State<_ComposeDslRenderer> createState() => _ComposeDslRendererState();
+}
+
+class _ComposeDslRendererState extends State<_ComposeDslRenderer> {
+  final Set<_ComposeDslNode> _dependencies = {};
+  bool _hasDispatchedOnLoad = false;
+  bool _onLoadScheduled = false;
+
+  /// Reads the current node handle owned by this widget.
+  _ComposeDslNode get node => widget.node;
+
+  /// Reads the current action dispatcher without subscribing to a parent renderer.
+  Future<Object?> Function(String actionId, [Object? payload]) get onAction =>
+      widget.onAction;
+
+  /// Reads the current ordered text dispatcher.
+  Future<Object?> Function(String actionId, String text) get onTextInput =>
+      widget.onTextInput;
+
+  /// Reads the existing WebView execution context.
+  ComposeDslWebViewHostContext get webViewHostContext =>
+      widget.webViewHostContext;
+
+  /// Reads the existing Markdown splitter.
+  MarkdownContentSplitter get splitMarkdownContent =>
+      widget.splitMarkdownContent;
+
+  /// Uses the retained identity for node-owned resources and positional snapshot paths otherwise.
+  String get nodePath => widget.node.id ?? widget.nodePath;
+
+  /// Reads the parent's modifier scope.
+  _ComposeDslModifierScope get modifierScope => widget.modifierScope;
+
+  /// Reads the owning dialog's embedding policy.
+  bool get embedDialog => widget.embedDialog;
+
+  /// Requests a rebuild only after an observed node changes.
+  void _invalidate() {
+    if (mounted) setState(() {});
+  }
+
+  /// Captures reads from immediate and deferred node builders.
+  Widget _trackBuild(Widget Function() build) {
+    // Dialog routes and deferred layout builders can run after a retained commit
+    // removes their source. Do not rebuild or resubscribe a retired node.
+    if (!mounted || widget.node.isDisposed) return const SizedBox.shrink();
+    final reads = <_ComposeDslNode>{};
+    try {
+      return _ComposeDslReadScope.track(reads, build);
+    } finally {
+      for (final dependency in reads) {
+        if (!dependency.isDisposed && _dependencies.add(dependency)) {
+          dependency.addListener(_invalidate);
+        }
+      }
+    }
+  }
+
+  /// Removes subscriptions from the preceding build before recording current reads.
+  void _clearDependencies() {
+    for (final dependency in _dependencies) {
+      dependency.removeListener(_invalidate);
+    }
+    _dependencies.clear();
+  }
+
+  /// Releases every observed-node subscription on unmount.
+  @override
+  void dispose() {
+    _clearDependencies();
+    super.dispose();
+  }
 
   /// Builds the widget for the current DSL state.
   @override
   Widget build(BuildContext context) {
-    return _guardNodeBuild(
-      () => _withModifier(
+    _clearDependencies();
+    return _guardNodeBuild(() {
+      final content = _withModifier(
         context,
         _buildNode(context),
         node.props,
         onAction,
         nodeType: node.type,
         modifierScope: modifierScope,
-      ),
-    );
+      );
+      _dispatchOnLoad();
+      return content;
+    });
+  }
+
+  /// Loads each mounted child once; the screen host owns the root's load and timing.
+  void _dispatchOnLoad() {
+    if (!widget.dispatchOnLoad ||
+        widget.onLoadHandledByHost ||
+        _hasDispatchedOnLoad ||
+        _onLoadScheduled ||
+        _actionId(node.props['onLoad']) == null) {
+      return;
+    }
+    _onLoadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _onLoadScheduled = false;
+      if (!mounted ||
+          node.isDisposed ||
+          !widget.dispatchOnLoad ||
+          widget.onLoadHandledByHost ||
+          _hasDispatchedOnLoad) {
+        return;
+      }
+      final actionId = _actionId(node.props['onLoad']);
+      if (actionId == null) return;
+      _hasDispatchedOnLoad = true;
+      unawaited(onAction(actionId));
+    });
   }
 
   /// Contains invalid plugin nodes without installing a global Flutter error handler.
   Widget _guardNodeBuild(Widget Function() buildNode) {
     try {
-      return buildNode();
+      return _trackBuild(buildNode);
     } catch (error, stackTrace) {
       ClientLogger.e(
         'event=compose_node_render_failed '
@@ -86,6 +217,137 @@ class _ComposeDslRenderer extends StatelessWidget {
   Widget _buildNode(BuildContext context) {
     final type = node.type;
     switch (type) {
+      case 'GradientRule':
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                _color(context, node.props['startColor']) ?? Colors.transparent,
+                _color(context, node.props['endColor']) ?? Colors.transparent,
+              ],
+            ),
+          ),
+          child: const SizedBox.expand(),
+        );
+      case 'ActivityDots':
+        return _ComposeActivityDots(props: node.props);
+      case 'Draggable':
+        return _ComposeDraggable(
+          props: node.props,
+          onAction: onAction,
+          feedback: _optionalSlot('feedback'),
+          childWhenDragging: _optionalSlot('childWhenDragging'),
+          child: _decoratorChild(),
+        );
+      case 'DragTarget':
+        return _ComposeDragTarget(
+          props: node.props,
+          onAction: onAction,
+          child: _decoratorChild(),
+        );
+      case 'SwipeActions':
+        final startId = _actionId(node.props['onStartAction']);
+        final endId = _actionId(node.props['onEndAction']);
+        return SwipeActions(
+          actionThreshold: (_number(node.props['actionThreshold']) ?? 0.5)
+              .clamp(0.05, 1),
+          enabled: _enabled(),
+          onStartAction: startId == null
+              ? null
+              : () => unawaited(onAction(startId)),
+          onEndAction: endId == null ? null : () => unawaited(onAction(endId)),
+          background:
+              _optionalSlot('startBackground') ?? const SizedBox.shrink(),
+          secondaryBackground:
+              _optionalSlot('endBackground') ?? const SizedBox.shrink(),
+          child: _decoratorChild(),
+        );
+      case 'PopupMenu':
+        final scheme = Theme.of(context).colorScheme;
+        final items = (node.props['items'] as List<Object?>? ?? [])
+            .map(_stringMap)
+            .toList();
+        return PopupMenuButton<int>(
+          tooltip: _string(node.props['tooltip']),
+          enabled: node.props['enabled'] != false,
+          padding: EdgeInsets.zero,
+          borderRadius: BorderRadius.circular(6),
+          color: Color.alphaBlend(
+            scheme.surfaceContainerHighest.withValues(alpha: 0.75),
+            scheme.surface,
+          ),
+          elevation: 6,
+          shadowColor: Colors.black.withValues(alpha: 0.45),
+          offset: const Offset(0, 4),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: 0.4),
+            ),
+          ),
+          constraints: BoxConstraints(
+            minWidth: _number(node.props['menuMinWidth']) ?? 118,
+            maxWidth: _number(node.props['menuMaxWidth']) ?? 150,
+          ),
+          menuPadding: const EdgeInsets.all(4),
+          onOpened: () => _ComposeHoverScope.menuOpenChanged(context, true),
+          onCanceled: () => _ComposeHoverScope.menuOpenChanged(context, false),
+          onSelected: (index) {
+            _ComposeHoverScope.menuOpenChanged(context, false);
+            final id = _actionId(node.props['onSelected']);
+            if (id != null) unawaited(onAction(id, index));
+          },
+          itemBuilder: (context) => [
+            for (var index = 0; index < items.length; index++) ...[
+              if (items[index]['dividerBefore'] == true)
+                const PopupMenuDivider(height: 8),
+              PopupMenuItem<int>(
+                value: index,
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _iconData(_string(items[index]['icon'])),
+                      size: 14.5,
+                      color: items[index]['danger'] == true
+                          ? scheme.error.withValues(alpha: 0.9)
+                          : scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                    ),
+                    const SizedBox(width: 9),
+                    Flexible(
+                      child: Text(
+                        _string(items[index]['label']),
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: -0.1,
+                          color: items[index]['danger'] == true
+                              ? scheme.error.withValues(alpha: 0.9)
+                              : scheme.onSurface.withValues(alpha: 0.92),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+          child: Center(child: _decoratorChild()),
+        );
+      case 'HoverRegion':
+        return _ComposeHoverRegion(
+          color: _color(context, node.props['hoverBackground']),
+          radius: _borderRadius(node.props['shape']) ?? BorderRadius.zero,
+          child: _decoratorChild(),
+        );
+      case 'HoverOnly':
+        return _ComposeHoverOnly(
+          alwaysVisible: _bool(node.props['alwaysVisible']),
+          child: _decoratorChild(),
+        );
       case 'Column':
         return _ComposeFlex(
           direction: Axis.vertical,
@@ -183,6 +445,14 @@ class _ComposeDslRenderer extends StatelessWidget {
       case 'BasicText':
         return Text(
           _string(node.props['text']),
+          textAlign: switch (_string(node.props['textAlign'])) {
+            'end' => TextAlign.end,
+            'center' => TextAlign.center,
+            'right' => TextAlign.right,
+            'left' => TextAlign.left,
+            'justify' => TextAlign.justify,
+            _ => TextAlign.start,
+          },
           maxLines: _int(node.props['maxLines']),
           overflow: _string(node.props['overflow']) == 'ellipsis'
               ? TextOverflow.ellipsis
@@ -210,6 +480,23 @@ class _ComposeDslRenderer extends StatelessWidget {
       case 'FilledTonalIconToggleButton':
       case 'OutlinedIconToggleButton':
         return _iconButton(context, type);
+      case 'HorizontalPager':
+        return _ComposePager(
+          currentPage: _int(node.props['currentPage']) ?? 0,
+          onPageChanged: (page) =>
+              _invokeAction(node.props['onPageChanged'], page),
+          children: _slotChildren('content', useChildren: true),
+        );
+      case 'InputDecorator':
+        return InputDecorator(
+          decoration: InputDecoration(
+            labelText: _string(node.props['label']),
+            enabled: _enabled(),
+          ),
+          child: _hasSlot('content')
+              ? _slotInline('content')
+              : _decoratorChild(),
+        );
       case 'TextField':
       case 'OutlinedTextField':
         return _textField(context, type);
@@ -239,6 +526,11 @@ class _ComposeDslRenderer extends StatelessWidget {
           value: progress?.clamp(0, 1).toDouble(),
           color: _color(context, node.props['color']),
           backgroundColor: _color(context, node.props['trackColor']),
+        );
+      case 'LoadingIndicator':
+        return M3LoadingIndicator(
+          size: _number(node.props['size']) ?? 36,
+          color: _color(context, node.props['color']),
         );
       case 'CircularProgressIndicator':
         return CircularProgressIndicator(

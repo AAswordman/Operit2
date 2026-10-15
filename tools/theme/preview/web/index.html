@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Operit2 theme rendering feasibility probe">
+  <title>Operit2 Theme Preview Probe</title>
+</head>
+<body>
+  <script type="module">
+    import './theme_contract_client.js';
+    // Trusted preview glue. Transfer the actual Flutter PNG bytes instead of
+    // turning them into a JSON number array or a data URL.
+    globalThis.operitThemePostCapture = (port, header, pngBytes) => {
+      port.postMessage({ ...header, pngBytes }, [pngBytes.buffer]);
+    };
+    const bootstrap = document.createElement('script');
+    bootstrap.src = 'flutter_bootstrap.js';
+    document.body.appendChild(bootstrap);
+  </script>
+</body>
+</html>

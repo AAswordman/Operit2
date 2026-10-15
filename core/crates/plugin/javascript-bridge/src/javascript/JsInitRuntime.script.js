@@ -149,6 +149,32 @@
         return true;
     }
 
+    // Explicit Promise continuations (including lowered async functions) belong to
+    // their subscribing call, not to the call which happens to resolve a shared Promise.
+    var originalThen = Promise.prototype.then;
+    Promise.prototype.then = function(onFulfilled, onRejected) {
+        var ownerCallId = normalizeCallId(root.__operitCurrentCallId);
+        if (!getCallState(ownerCallId)) {
+            return originalThen.call(this, onFulfilled, onRejected);
+        }
+        function bindContinuation(handler) {
+            if (typeof handler !== 'function') return handler;
+            return function(value) {
+                var previousCallId = root.__operitCurrentCallId;
+                var previousRuntime = root.__operit_call_runtime_ref;
+                // Never borrow another session if the originating call was cancelled.
+                root.__operitCurrentCallId = ownerCallId;
+                root.__operit_call_runtime_ref = (getCallState(ownerCallId) || {}).callRuntime;
+                try { return handler(value); }
+                finally {
+                    root.__operitCurrentCallId = previousCallId;
+                    root.__operit_call_runtime_ref = previousRuntime;
+                }
+            };
+        }
+        return originalThen.call(this, bindContinuation(onFulfilled), bindContinuation(onRejected));
+    };
+
     /** Activates one detached call before its queued JavaScript jobs are resumed. */
     function prepareDetachedCall(callId) {
         var state = getCallState(callId);

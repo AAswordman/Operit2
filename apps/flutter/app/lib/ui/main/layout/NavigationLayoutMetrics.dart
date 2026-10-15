@@ -1,8 +1,9 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/widgets.dart';
+import 'package:operit_ui/operit_ui.dart';
 
-const double navigationTabletBreakpoint = 600;
+const double navigationTabletBreakpoint = themeTabletBreakpoint;
 
 bool useTabletLayoutForWidth(double width) {
   return width >= navigationTabletBreakpoint;

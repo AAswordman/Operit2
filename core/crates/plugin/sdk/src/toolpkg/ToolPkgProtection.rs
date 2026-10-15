@@ -322,6 +322,26 @@ pub fn toolPkgArchiveContainsProtectedEntries(bytes: &[u8]) -> Result<bool, Stri
     Ok(false)
 }
 
+/// Verifies marketplace protection for declared executable entries of an ordinary ToolPkg.
+#[allow(non_snake_case)]
+pub fn validateMarketToolPkgArchive(bytes: &[u8]) -> Result<(), String> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
+    let index = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+    let preview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &index)
+        .ok_or("ToolPkg manifest is missing or invalid")?;
+    let base = preview.entryName.rsplit_once('/').map(|(base, _)| base).unwrap_or("");
+    let mut executable = preview.manifest.subpackages.iter().map(|entry| entry.entry.as_str()).collect::<Vec<_>>();
+    if !preview.manifest.main.is_empty() { executable.push(&preview.manifest.main); }
+    for raw_path in executable {
+        let path = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(base, raw_path)
+            .ok_or("Invalid ToolPkg executable path")?;
+        let header = ToolPkgArchiveParser::readZipEntryPrefix(&mut archive, &index, &path, MARKET_ONLY_PROTECTION_HEADER_SIZE)
+            .ok_or_else(|| format!("Cannot read ToolPkg executable '{path}'"))?;
+        if !isProtectedEntry(&header) { return Err(format!("Market ToolPkg executable '{path}' is not protected")); }
+    }
+    Ok(())
+}
+
 #[allow(non_snake_case)]
 /// Creates a random client installation identifier used to bind local market package seals.
 pub fn createMarketInstallationId() -> [u8; MARKET_INSTALLATION_ID_SIZE] {
@@ -522,6 +542,9 @@ fn readToolPkgExecutableEntries(archiveBytes: &[u8]) -> Result<Vec<(String, Stri
     let manifestPreview =
         ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
             .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
+    if manifestPreview.manifest.main.is_empty() {
+        return Err("ToolPkg does not declare a JavaScript entry point".to_string());
+    }
     let manifestBasePath = manifestPreview
         .entryName
         .rsplit_once('/')
@@ -837,6 +860,9 @@ fn minifyToolPkgArchiveWithMarketOrigin(
     let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
     let mPreview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
         .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
+    if mPreview.manifest.main.is_empty() {
+        return injectToolPkgMarketOrigin(sourceBytes, marketOrigin);
+    }
     let manifestBasePath = mPreview
         .entryName
         .rsplit_once('/')
@@ -873,6 +899,26 @@ fn minifyToolPkgArchiveWithMarketOrigin(
             &resource.path,
         ) {
             resourceEntryRoots.insert(root);
+        }
+    }
+    if let Some(license) = &mPreview.manifest.license {
+        let path = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(&manifestBasePath, license)
+            .ok_or("Invalid ToolPkg agreement reference")?;
+        resourceEntryRoots.insert(path);
+    }
+    for theme in &mPreview.manifest.themes {
+        for path in [&theme.path, &theme.preview] {
+            resourceEntryRoots.insert(ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(&manifestBasePath, path)
+                .ok_or("Invalid theme template reference")?);
+        }
+        let definition = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(&manifestBasePath, &theme.path)
+            .ok_or("Invalid theme template definition path")?;
+        let base = definition.rsplit_once('/').map(|(base, _)| base).unwrap_or("");
+        for resource in &theme.files {
+            let path = resource.path.as_str();
+            if matches!(path, "theme.json" | "preview.png") { continue; }
+            resourceEntryRoots.insert(ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(base, path)
+                .ok_or("Invalid theme template resource path")?);
         }
     }
     for module in &mPreview.manifest.wasmModules {
@@ -953,6 +999,31 @@ fn injectToolPkgMarketOrigin(
     let manifestPreview =
         ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
             .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
+    if manifestPreview.manifest.main.is_empty() {
+        let text = ToolPkgArchiveParser::readZipEntryText(&mut archive, &entryIndex, &manifestPreview.entryName)
+            .ok_or("Cannot read declarative ToolPkg manifest")?;
+        let mut manifest = crate::toolpkg::ToolPkgParser::parseToolPkgManifestValue(&text, &manifestPreview.entryName)?;
+        manifest["market_origin"] = serde_json::to_value(marketOrigin).map_err(|error| error.to_string())?;
+        let replacement = serde_json::to_vec(&manifest).map_err(|error| error.to_string())?;
+        let mut output = Vec::new();
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut output));
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+            let name = entry.name().to_string();
+            let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            if entry.is_dir() {
+                writer.add_directory(&name, options).map_err(|error| error.to_string())?;
+                continue;
+            }
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+            writer.start_file(&name, options).map_err(|error| error.to_string())?;
+            let content = if name == manifestPreview.entryName { replacement.as_slice() } else { bytes.as_slice() };
+            writer.write_all(content).map_err(|error| error.to_string())?;
+        }
+        writer.finish().map_err(|error| error.to_string())?;
+        return Ok(output);
+    }
     let manifestBasePath = manifestPreview
         .entryName
         .rsplit_once('/')
@@ -1826,6 +1897,54 @@ exports.generate = function generateUuid(value) {
             .read_to_string(&mut minifiedMain)
             .expect("main entry should be text");
         assert!(minifiedMain.contains(&expectedInvocation));
+    }
+
+    /// Preserves every declared template and the package agreement while processing executable capabilities.
+    #[test]
+    fn toolpkg_minification_preserves_theme_references_and_agreement() {
+        let manifest = serde_json::json!({
+            "toolpkg_id":"mixed_fixture", "version":"1", "main":"main.js", "license":"terms.txt",
+            "themes":[{"id":"night", "path":"templates/night/visual.json", "preview":"cover/night.png",
+                "files":[{"path":"assets/images/background.png", "mediaType":"image/png", "bytes":4, "sha256":"a".repeat(64)}]}],
+        });
+        let mut source = Vec::new();
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut source));
+        for (path, bytes) in [
+            ("manifest.json", manifest.to_string().into_bytes()),
+            ("main.js", b"exports.registerToolPkg = function() {};".to_vec()),
+            ("templates/night/visual.json", b"{}".to_vec()), ("cover/night.png", b"png".to_vec()),
+            ("templates/night/assets/images/background.png", b"data".to_vec()), ("terms.txt", b"Custom terms".to_vec()),
+        ] {
+            writer.start_file(path, SimpleFileOptions::default()).unwrap();
+            writer.write_all(&bytes).unwrap();
+        }
+        writer.finish().unwrap();
+        let output = protectArtifactNamedBytes(&source, "mixed_fixture.toolpkg", true).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(output)).unwrap();
+        for path in ["main.js", "templates/night/visual.json", "cover/night.png", "templates/night/assets/images/background.png", "terms.txt"] {
+            assert!(archive.by_name(path).is_ok(), "{path}");
+        }
+    }
+
+    /// Applies ordinary manifest provenance to a declaration-only ToolPkg, independent of its capability kind.
+    #[test]
+    fn declarative_toolpkg_publication_preserves_hjson_resources() {
+        let mut source = Vec::new();
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut source));
+        writer.start_file("manifest.hjson", SimpleFileOptions::default()).unwrap();
+        writer.write_all(b"{toolpkg_id:'resource_fixture',version:'1',resources:[{key:'data',path:'data.txt'}]}").unwrap();
+        writer.add_directory("data/", SimpleFileOptions::default()).unwrap();
+        writer.start_file("data.txt", SimpleFileOptions::default()).unwrap();
+        writer.write_all(b"Resource bytes").unwrap();
+        writer.finish().unwrap();
+        let output = protectArtifactNamedBytes(&source, "resource_fixture.toolpkg", true).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(output)).unwrap();
+        let mut text = String::new();
+        archive.by_name("manifest.hjson").unwrap().read_to_string(&mut text).unwrap();
+        let value = crate::toolpkg::ToolPkgParser::parseToolPkgManifestValue(&text, "manifest.hjson").unwrap();
+        assert_eq!(value["market_origin"]["toolpkgId"], "resource_fixture");
+        assert!(archive.by_name("data.txt").is_ok());
+        assert!(archive.by_name("data/").unwrap().is_dir());
     }
 
     #[test]

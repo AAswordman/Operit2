@@ -343,7 +343,8 @@ fn preferences_schema_runs_sequential_migrations_atomically() {
             }
             1 => {
                 let first = preferences
-                    .get(&stringPreferencesKey("first"))
+                    .getTyped::<String>(&stringPreferencesKey("first"))
+                    .unwrap()
                     .expect("version-one data");
                 preferences.set(&stringPreferencesKey("second"), format!("{first}-migrated"));
                 Ok(())
@@ -354,15 +355,15 @@ fn preferences_schema_runs_sequential_migrations_atomically() {
     let preferences = store.data().expect("schema migration");
     assert_eq!(
         preferences.get(&stringPreferencesKey("first")),
-        Some(&"created".to_string())
+        Some(&json!("created"))
     );
     assert_eq!(
         preferences.get(&stringPreferencesKey("second")),
-        Some(&"created-migrated".to_string())
+        Some(&json!("created-migrated"))
     );
     assert_eq!(
         preferences.get(&stringPreferencesKey(PREFERENCES_SCHEMA_VERSION_KEY_NAME)),
-        Some(&"2".to_string())
+        Some(&json!(2))
     );
     store.data().expect("current schema read");
     assert_eq!(host.writeCount(), 1);
@@ -509,14 +510,14 @@ fn preference_stores_isolate_shared_paths_by_storage_host() {
             .data()
             .expect("first host preferences read")
             .get(&stringPreferencesKey("access_token")),
-        Some(&"first-host-token".to_string())
+        Some(&json!("first-host-token"))
     );
     assert_eq!(
         secondStore
             .data()
             .expect("second host preferences read")
             .get(&stringPreferencesKey("access_token")),
-        Some(&"second-host-token".to_string())
+        Some(&json!("second-host-token"))
     );
 }
 
@@ -556,15 +557,15 @@ fn encrypted_store_round_trips_without_plaintext_file() {
     let roundTrip = store.data().expect("decrypted store");
     assert_eq!(
         roundTrip.get(&stringPreferencesKey("access_token")),
-        Some(&"secret-token".to_string())
+        Some(&json!("secret-token"))
     );
     assert_eq!(
         roundTrip.get(&stringPreferencesKey("token_type")),
-        Some(&"bearer".to_string())
+        Some(&json!("bearer"))
     );
     assert_eq!(
         roundTrip.get(&stringPreferencesKey("user_info")),
-        Some(&"{\"login\":\"codex\"}".to_string())
+        Some(&json!("{\"login\":\"codex\"}"))
     );
 }
 
@@ -673,14 +674,18 @@ fn encrypted_space_store_records_key_operations_without_plaintext_log() {
     let operations = SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH)
         .operationsSince(&SyncClock::empty(), &["preferences".to_string()], 10)
         .expect("decoded operations");
-    assert_eq!(operations.len(), 2);
-    let apiKeyOperation = operations
+    assert_eq!(operations.len(), 1);
+    let transaction = &operations[0];
+    assert_eq!(transaction.operation, "transaction");
+    let apiKeyEntry = transaction.payload["entries"]
+        .as_array()
+        .unwrap()
         .iter()
-        .find(|operation| operation.payload["key"] == "api_key")
-        .expect("API key operation");
-    assert_eq!(apiKeyOperation.operation, "set");
-    assert_eq!(apiKeyOperation.payload["value"], "sk-model-secret");
-    assert_eq!(apiKeyOperation.payload["encrypted"], true);
+        .find(|entry| entry["key"] == "api_key")
+        .unwrap();
+    assert_eq!(apiKeyEntry["operation"], "set");
+    assert_eq!(apiKeyEntry["value"], "sk-model-secret");
+    assert_eq!(transaction.payload["encrypted"], true);
 }
 
 #[test]
@@ -724,153 +729,69 @@ fn synchronized_preference_keys_merge_independently() {
     let preferences = targetStore.data().expect("merged target preferences");
     assert_eq!(
         preferences.get(&stringPreferencesKey("theme")),
-        Some(&"dark".to_string())
+        Some(&json!("dark"))
     );
     assert_eq!(
         preferences.get(&stringPreferencesKey("language")),
-        Some(&"zh-CN".to_string())
+        Some(&json!("zh-CN"))
     );
 }
 
 #[test]
-/// Verifies structured JSON sync sends leaf values and merges concurrent provider edits.
-fn structured_json_preferences_merge_provider_fields_and_model_items() {
+/// Verifies complete entity synchronization preserves nulls and concurrent distinct records.
+fn whole_json_preferences_sync_independent_records() {
     let firstHost = Arc::new(MemoryStorageHost::default());
     let secondHost = Arc::new(MemoryStorageHost::default());
     let targetHost = Arc::new(MemoryStorageHost::default());
-    let storagePath = format!("{CONFIG_PREFERENCES_DIR_PATH}/structured_merge.preferences.json");
-    let providerKey = stringPreferencesKey("provider_test");
-    let baselineProvider = json!({
-        "id": "provider-test",
-        "name": "Provider",
-        "endpoint": "https://old.example.com",
-        "apiKey": "sk-old",
-        "optionalConfig": {"enabled": true},
-        "models": [
-            {
-                "id": "model-a",
-                "parameters": [
-                    {
-                        "id": "temperature",
-                        "currentValue": 0.2,
-                        "description": "x".repeat(2048)
-                    }
-                ]
-            }
-        ]
-    });
-    let baselineEncoded = serde_json::to_string(&baselineProvider).expect("baseline provider JSON");
-
-    let firstStore = PreferencesDataStore::newWithStorage(firstHost.clone(), storagePath.clone())
-        .withStructuredJsonSync();
-    let secondStore = PreferencesDataStore::newWithStorage(secondHost.clone(), storagePath.clone())
-        .withStructuredJsonSync();
-    let targetStore = PreferencesDataStore::newSpaceWithResolvedPath(
-        targetHost.clone(),
-        std::path::PathBuf::from("D:/runtime/physical-structured-merge.preferences.json"),
-        storagePath.clone(),
-        false,
-    )
-    .withStructuredJsonSync();
-    for store in [&firstStore, &secondStore, &targetStore] {
-        store
-            .edit(|preferences| preferences.set(&providerKey, baselineEncoded.clone()))
-            .expect("baseline provider write");
-    }
-    let firstClock = SyncOperationStore::new(firstHost.clone(), RUNTIME_SYNC_DIR_PATH)
-        .localClock()
-        .expect("first baseline clock");
-    let secondClock = SyncOperationStore::new(secondHost.clone(), RUNTIME_SYNC_DIR_PATH)
-        .localClock()
-        .expect("second baseline clock");
-
+    let path = format!("{CONFIG_PREFERENCES_DIR_PATH}/whole_record_sync.preferences.json");
+    let firstStore = PreferencesDataStore::newWithStorage(firstHost.clone(), path.clone());
+    let secondStore = PreferencesDataStore::newWithStorage(secondHost.clone(), path.clone());
+    let targetStore = PreferencesDataStore::newWithStorage(targetHost.clone(), path);
+    let first = json!({"id":"A", "name":"First", "models":[{"id":"m", "optional":null}]});
+    let second = json!({"id":"B", "name":"Second", "models":[]});
     firstStore
         .edit(|preferences| {
-            let mut provider: Value = serde_json::from_str(
-                preferences
-                    .get(&providerKey)
-                    .expect("first provider preference"),
-            )
-            .expect("first provider JSON");
-            provider["apiKey"] = json!("sk-new");
-            provider["optionalConfig"] = Value::Null;
-            provider["models"][0]["parameters"][0]["currentValue"] = json!(0.7);
-            preferences.set(
-                &providerKey,
-                serde_json::to_string(&provider).expect("updated first provider JSON"),
-            );
+            preferences.set(&stringPreferencesKey("provider_A"), first.clone());
         })
-        .expect("first structured edit");
+        .unwrap();
     secondStore
         .edit(|preferences| {
-            let mut provider: Value = serde_json::from_str(
-                preferences
-                    .get(&providerKey)
-                    .expect("second provider preference"),
-            )
-            .expect("second provider JSON");
-            provider["endpoint"] = json!("https://new.example.com");
-            preferences.set(
-                &providerKey,
-                serde_json::to_string(&provider).expect("updated second provider JSON"),
-            );
+            preferences.set(&stringPreferencesKey("provider_B"), second.clone());
+            preferences.set(&stringPreferencesKey("nullable"), Value::Null);
         })
-        .expect("second structured edit");
-
+        .unwrap();
     let mut operations = SyncOperationStore::new(firstHost, RUNTIME_SYNC_DIR_PATH)
-        .operationsSince(&firstClock, &["preferences".to_string()], 10)
-        .expect("first structured operations");
+        .operationsSince(&SyncClock::empty(), &["preferences".to_owned()], 512)
+        .unwrap();
     operations.extend(
         SyncOperationStore::new(secondHost, RUNTIME_SYNC_DIR_PATH)
-            .operationsSince(&secondClock, &["preferences".to_string()], 10)
-            .expect("second structured operations"),
+            .operationsSince(&SyncClock::empty(), &["preferences".to_owned()], 512)
+            .unwrap(),
     );
-    assert_eq!(operations.len(), 4);
-    let apiKeyOperation = operations
-        .iter()
-        .find(|operation| operation.payload["jsonMutation"]["value"] == "sk-new")
-        .expect("API key leaf operation");
-    assert!(
-        serde_json::to_vec(&apiKeyOperation.payload)
-            .expect("API key operation payload")
-            .len()
-            < baselineEncoded.len()
-    );
-
-    targetStore.data().expect("loaded target preferences");
-    let changeVersionBeforeSync = *targetStore
-        .changeSignal
-        .version
-        .lock()
-        .expect("change version mutex");
-    let writesBeforeSync = targetHost.writeCount();
+    assert_eq!(operations.len(), 2);
+    for operation in &operations {
+        assert!(operation.payload.get("jsonMutation").is_none());
+        assert!(operation.payload.get("jsonPath").is_none());
+    }
     let entries = operations
         .iter()
         .map(PreferencesSyncedEntry::fromOperation)
         .collect::<Result<Vec<_>, _>>()
-        .expect("decoded structured preference operations");
-    PreferencesDataStore::applySyncedEntriesWithStorage(targetHost.clone(), &entries)
-        .expect("structured preference operation application");
-    assert_eq!(targetHost.writeCount(), writesBeforeSync + 1);
+        .unwrap();
+    PreferencesDataStore::applySyncedEntriesWithStorage(targetHost, &entries).unwrap();
+    let preferences = targetStore.data().unwrap();
     assert_eq!(
-        *targetStore
-            .changeSignal
-            .version
-            .lock()
-            .expect("change version mutex"),
-        changeVersionBeforeSync + 1
+        preferences.get(&stringPreferencesKey("provider_A")),
+        Some(&first)
     );
-    let preferences = targetStore.data().expect("merged structured preferences");
-    let provider: Value = serde_json::from_str(
-        preferences
-            .get(&providerKey)
-            .expect("merged provider preference"),
-    )
-    .expect("merged provider JSON");
-    assert_eq!(provider["apiKey"], "sk-new");
-    assert_eq!(provider["endpoint"], "https://new.example.com");
-    assert_eq!(provider["optionalConfig"], Value::Null);
-    assert_eq!(provider["models"][0]["parameters"][0]["currentValue"], 0.7);
+    assert_eq!(
+        preferences.get(&stringPreferencesKey("provider_B")),
+        Some(&second)
+    );
+    assert_eq!(
+        preferences.get(&stringPreferencesKey("nullable")),
+        Some(&Value::Null)
+    );
 }
 
 #[test]
@@ -898,11 +819,11 @@ fn stores_with_same_path_share_latest_in_memory_preferences() {
     let preferences = first.data().expect("preferences");
     assert_eq!(
         preferences.get(&stringPreferencesKey("api_key")),
-        Some(&"sk-test".to_string())
+        Some(&json!("sk-test"))
     );
     assert_eq!(
         preferences.get(&stringPreferencesKey("provider_list")),
-        Some(&"[\"DEEPSEEK\"]".to_string())
+        Some(&json!("[\"DEEPSEEK\"]"))
     );
 }
 
@@ -975,14 +896,14 @@ fn reads_do_not_wait_for_an_in_progress_preferences_write() {
         .expect("data result");
     assert_eq!(
         preferences.get(&stringPreferencesKey("theme")),
-        Some(&"light".to_string())
+        Some(&json!("light"))
     );
     assert_eq!(
         store
             .data()
             .expect("updated preferences read")
             .get(&stringPreferencesKey("theme")),
-        Some(&"dark".to_string())
+        Some(&json!("dark"))
     );
 }
 
@@ -1054,7 +975,9 @@ fn state_in_releases_observation_on_last_state_drop() {
     drop(retained);
     assert!(observationCancelled.isCancelled());
     // A late notification from the old source is harmless.
-    for callback in callbacks.lock().unwrap().iter() { callback(); }
+    for callback in callbacks.lock().unwrap().iter() {
+        callback();
+    }
 }
 
 #[test]
@@ -1069,16 +992,14 @@ fn structured_model_sync_after_editing_and_deleting_unused_model() {
         "models": [{"id": "deepseek-v4-flash", "capabilitiesOverride": {"toolCall": true}}]
     });
     let sourceStore =
-        PreferencesDataStore::newWithStorage(sourceHost.clone(), MODEL_CONFIGS_PREFERENCES_PATH)
-            .withStructuredJsonSync();
+        PreferencesDataStore::newWithStorage(sourceHost.clone(), MODEL_CONFIGS_PREFERENCES_PATH);
     let targetStore =
-        PreferencesDataStore::newWithStorage(targetHost.clone(), MODEL_CONFIGS_PREFERENCES_PATH)
-            .withStructuredJsonSync();
+        PreferencesDataStore::newWithStorage(targetHost.clone(), MODEL_CONFIGS_PREFERENCES_PATH);
     // Managers create their baseline in a local, non-exported schema migration.
     for store in [&sourceStore, &targetStore] {
         store
             .migrate(|preferences| {
-                preferences.set(&providerKey, baseline.to_string());
+                preferences.set(&providerKey, baseline.clone());
                 Ok::<(), PreferencesDataStoreError>(())
             })
             .expect("initialize local defaults");
@@ -1086,7 +1007,7 @@ fn structured_model_sync_after_editing_and_deleting_unused_model() {
     let write = |provider: &Value| {
         sourceStore
             .edit(|preferences| {
-                preferences.set(&providerKey, provider.to_string());
+                preferences.set(&providerKey, provider.clone());
             })
             .expect("edit source provider");
     };
@@ -1115,7 +1036,7 @@ fn structured_model_sync_after_editing_and_deleting_unused_model() {
     PreferencesDataStore::applySyncedEntriesWithStorage(targetHost, &entries)
         .expect("new device must receive the configured model");
     let preferences = targetStore.data().expect("synced provider");
-    let actual: Value = serde_json::from_str(preferences.get(&providerKey).unwrap()).unwrap();
+    let actual = preferences.get(&providerKey).unwrap().clone();
     assert_eq!(actual, provider);
 }
 
@@ -1131,8 +1052,7 @@ fn preference_sync_batch_validation_keeps_chat_binding_when_model_file_fails() {
         FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
     );
     let sourceModels =
-        PreferencesDataStore::newWithStorage(sourceHost.clone(), MODEL_CONFIGS_PREFERENCES_PATH)
-            .withStructuredJsonSync();
+        PreferencesDataStore::newWithStorage(sourceHost.clone(), MODEL_CONFIGS_PREFERENCES_PATH);
     let targetBindings = PreferencesDataStore::newWithStorage(
         targetHost.clone(),
         FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
@@ -1142,7 +1062,7 @@ fn preference_sync_batch_validation_keeps_chat_binding_when_model_file_fails() {
     let newBinding = json!({"CHAT": {"providerId": "DEEPSEEK", "modelId": "deepseek-flash"}});
     targetBindings
         .migrate(|preferences| {
-            preferences.set(&bindingKey, originalBinding.to_string());
+            preferences.set(&bindingKey, originalBinding.clone());
             Ok::<(), PreferencesDataStoreError>(())
         })
         .unwrap();
@@ -1157,14 +1077,14 @@ fn preference_sync_batch_validation_keeps_chat_binding_when_model_file_fails() {
         .unwrap();
     sourceBindings
         .edit(|preferences| {
-            preferences.set(&bindingKey, newBinding.to_string());
+            preferences.set(&bindingKey, newBinding.clone());
         })
         .unwrap();
     sourceModels
         .edit(|preferences| {
             preferences.set(
                 &providerKey,
-                json!({"id": "DEEPSEEK", "models": [{"id": "deepseek-flash"}]}).to_string(),
+                json!({"id": "DEEPSEEK", "models": [{"id": "deepseek-flash"}]}),
             );
         })
         .unwrap();
@@ -1176,17 +1096,18 @@ fn preference_sync_batch_validation_keeps_chat_binding_when_model_file_fails() {
         .map(PreferencesSyncedEntry::fromOperation)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
+    targetHost
+        .writeBytes(MODEL_CONFIGS_PREFERENCES_PATH, b"{")
+        .unwrap();
     let writesBefore = targetHost.writeCount();
     let error =
         PreferencesDataStore::applySyncedPreferencesWithStorage(targetHost.clone(), &entries)
-            .expect_err("a model delta without its baseline cannot be applied");
-    assert!(error
-        .to_string()
-        .contains("structured preference entry is missing"));
+            .expect_err("a malformed model preference file cannot be applied");
+    assert!(matches!(error, PreferencesDataStoreError::Json(_)));
     assert_eq!(targetHost.writeCount(), writesBefore);
     assert_eq!(
         targetBindings.data().unwrap().get(&bindingKey),
-        Some(&originalBinding.to_string())
+        Some(&originalBinding)
     );
 }
 
@@ -1215,10 +1136,10 @@ fn preference_sync_batch_publishes_models_before_binding_observers_run() {
     let binding = json!({"CHAT": {"providerId": "DEEPSEEK", "modelId": "deepseek-flash"}});
     let provider = json!({"id": "DEEPSEEK", "models": [{"id": "deepseek-flash"}]});
     sourceBindings
-        .edit(|preferences| preferences.set(&bindingKey, binding.to_string()))
+        .edit(|preferences| preferences.set(&bindingKey, binding.clone()))
         .unwrap();
     sourceModels
-        .edit(|preferences| preferences.set(&providerKey, provider.to_string()))
+        .edit(|preferences| preferences.set(&providerKey, provider.clone()))
         .unwrap();
     let observed = Arc::new(Mutex::new(Vec::new()));
     let observedForSubscription = observed.clone();
@@ -1247,12 +1168,12 @@ fn preference_sync_batch_publishes_models_before_binding_observers_run() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     PreferencesDataStore::applySyncedPreferencesWithStorage(targetHost, &entries).unwrap();
-    assert_eq!(*observed.lock().unwrap(), vec![Some(provider.to_string())]);
+    assert_eq!(*observed.lock().unwrap(), vec![Some(provider.clone())]);
 }
 
 /// Executes preference observation immediately so a test can verify that no
 /// callback sees a partially published multi-file synchronization batch.
-struct ImmediatePreferenceObserverScheduler;
+pub(super) struct ImmediatePreferenceObserverScheduler;
 
 impl operit_host_api::HostRuntimeTaskSchedulerHost for ImmediatePreferenceObserverScheduler {
     fn monotonicTimeMillis(&self) -> operit_host_api::HostResult<u64> {
@@ -1312,15 +1233,15 @@ impl operit_host_api::HostRuntimeTaskSchedulerHost for ImmediatePreferenceObserv
     }
 }
 
-
-
 fn synchronizedPreferenceSet(path: &str, encrypted: bool) -> PreferencesSyncedEntry {
     PreferencesSyncedEntry {
         storagePath: path.to_string(),
         encrypted,
+        schemaVersion: None,
+        formatVersion: 2,
         mutation: super::PreferencesSyncedMutation::SetEntry {
             key: "setting".to_string(),
-            value: "synced-value".to_string(),
+            value: json!("synced-value"),
         },
     }
 }
@@ -1329,7 +1250,10 @@ fn synchronizedPreferenceSet(path: &str, encrypted: bool) -> PreferencesSyncedEn
 fn preference_sync_replay_skips_unchanged_files_and_notifications() {
     let host = Arc::new(MemoryStorageHost::default());
     let store = PreferencesDataStore::newWithStorage(host.clone(), MODEL_CONFIGS_PREFERENCES_PATH);
-    let entries = [synchronizedPreferenceSet(MODEL_CONFIGS_PREFERENCES_PATH, false)];
+    let entries = [synchronizedPreferenceSet(
+        MODEL_CONFIGS_PREFERENCES_PATH,
+        false,
+    )];
     PreferencesDataStore::applySyncedPreferencesWithStorage(host.clone(), &entries).unwrap();
     let writes = host.writeCount();
     let version = *store.changeSignal.version.lock().unwrap();
@@ -1360,7 +1284,10 @@ fn node_local_delete_clears_shared_snapshot_and_recreates_identical_records() {
     let first = super::CoreNodeStateStore::newWithStorage(host.clone(), path);
     let second = super::CoreNodeStateStore::newWithStorage(host.clone(), path);
     let mut snapshot = super::emptyPreferences();
-    snapshot.set(&stringPreferencesKey("record"), "unchanged-profile".to_string());
+    snapshot.set(
+        &stringPreferencesKey("record"),
+        "unchanged-profile".to_string(),
+    );
     first.replaceRecoverably(snapshot.clone()).unwrap();
     assert_eq!(second.data().unwrap(), snapshot);
     first.delete().unwrap();
@@ -1370,4 +1297,290 @@ fn node_local_delete_clears_shared_snapshot_and_recreates_identical_records() {
     assert!(host.exists(path).unwrap());
     assert_eq!(first.data().unwrap(), snapshot);
     assert!(!host.exists("runtime/sync/operations").unwrap());
+}
+
+/// Builds a native complete-entry operation without relying on a local journal.
+fn nativePreferenceOperation(
+    path: &str,
+    entries: Vec<(&str, Value)>,
+    sequence: i64,
+) -> crate::SyncOperationStore::SyncOperation {
+    use crate::SyncOperationStore::{SyncOperation, SyncOperationSemantics};
+    let transaction = entries.len() > 1;
+    let mut keys = entries.iter().map(|(key, _)| *key).collect::<Vec<_>>();
+    keys.sort();
+    let (entityId, payload) = if transaction {
+        (
+            serde_json::to_string(&(path, keys)).unwrap(),
+            json!({
+                "storagePath":path, "encrypted":false, "formatVersion":2,
+                "entries":entries.into_iter().map(|(key, value)| json!({"key":key,"operation":"set","value":value})).collect::<Vec<_>>()
+            }),
+        )
+    } else {
+        (
+            super::preferenceMutationEntityId(path, entries[0].0, &[]).unwrap(),
+            json!({
+                "storagePath":path, "encrypted":false, "formatVersion":2, "key":entries[0].0,"value":entries[0].1
+            }),
+        )
+    };
+    SyncOperation {
+        opId: format!("test:{sequence}"),
+        originDeviceId: "test".into(),
+        sequence,
+        domain: "preferences".into(),
+        entityType: "test".into(),
+        entityId,
+        operation: if transaction { "transaction" } else { "set" }.into(),
+        semantics: if transaction {
+            SyncOperationSemantics::Transaction
+        } else {
+            SyncOperationSemantics::EntityState
+        },
+        payload,
+        createdAt: sequence,
+        schemaVersion: 1,
+    }
+}
+
+/// Replays overlapping edits in either arrival order without losing the transaction's other record.
+#[test]
+fn preference_transactions_converge_when_an_overlapping_edit_arrives_first() {
+    let path = "runtime/config/preferences/transaction-order.preferences.json";
+    let first = nativePreferenceOperation(
+        path,
+        vec![("A", json!({"name":"old"})), ("B", json!({"name":"keep"}))],
+        1,
+    );
+    let later = nativePreferenceOperation(path, vec![("A", json!({"name":"new"}))], 2);
+    let forward = Arc::new(MemoryStorageHost::default());
+    let reverse = Arc::new(MemoryStorageHost::default());
+    PreferencesDataStore::applySyncedOperationsWithStorage(forward.clone(), &[], &[first.clone()])
+        .unwrap();
+    PreferencesDataStore::applySyncedOperationsWithStorage(
+        forward.clone(),
+        &[first.clone()],
+        &[later.clone()],
+    )
+    .unwrap();
+    PreferencesDataStore::applySyncedOperationsWithStorage(reverse.clone(), &[], &[later.clone()])
+        .unwrap();
+    PreferencesDataStore::applySyncedOperationsWithStorage(reverse.clone(), &[later], &[first])
+        .unwrap();
+    let result = PreferencesDataStore::newNodeLocalWithStorage(forward, path, false)
+        .data()
+        .unwrap();
+    assert_eq!(
+        result,
+        PreferencesDataStore::newNodeLocalWithStorage(reverse, path, false)
+            .data()
+            .unwrap()
+    );
+    assert_eq!(
+        result.get(&stringPreferencesKey("A")),
+        Some(&json!({"name":"new"}))
+    );
+    assert_eq!(
+        result.get(&stringPreferencesKey("B")),
+        Some(&json!({"name":"keep"}))
+    );
+}
+
+/// Rejects a duplicate business key before reading or publishing any preference file.
+#[test]
+fn preference_transaction_validation_rejects_the_entire_batch() {
+    let path = "runtime/config/preferences/invalid-transaction.preferences.json";
+    let host = Arc::new(MemoryStorageHost::default());
+    let valid = nativePreferenceOperation(path, vec![("first", json!(true))], 1);
+    let mut invalid = nativePreferenceOperation(path, vec![("A", json!(1)), ("B", json!(2))], 2);
+    invalid.payload["entries"][1]["key"] = json!("A");
+    assert!(PreferencesDataStore::applySyncedOperationsWithStorage(
+        host.clone(),
+        &[],
+        &[valid, invalid]
+    )
+    .is_err());
+    assert_eq!(host.writeCount(), 0);
+    assert_eq!(host.readCount(), 0);
+}
+
+/// Keeps schema metadata inside a complete migration payload so a new peer does not rerun legacy conversion.
+#[test]
+fn preference_migration_sync_initializes_the_receiving_schema() {
+    let path = "runtime/config/preferences/schema-sync.preferences.json";
+    let source = Arc::new(MemoryStorageHost::default());
+    source.writeBytes(path, &serde_json::to_vec(&json!({
+        PREFERENCES_SCHEMA_VERSION_KEY_NAME:"1", "A":"{\"name\":\"legacy\"}", "obsolete_list":"[\"A\"]"
+    })).unwrap()).unwrap();
+    let sourceStore =
+        PreferencesDataStore::newWithStorage(source.clone(), path).withSchema(2, |version, p| {
+            match version {
+                0 => Ok(()),
+                1 => {
+                    let key = stringPreferencesKey("A");
+                    let value: Value = serde_json::from_str(&p.getTyped::<String>(&key)?.unwrap())?;
+                    p.set(&key, value);
+                    p.remove(&stringPreferencesKey("obsolete_list"));
+                    Ok(())
+                }
+                from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+            }
+        });
+    sourceStore.data().unwrap();
+    let operations = SyncOperationStore::new(source, RUNTIME_SYNC_DIR_PATH)
+        .operationsSince(&SyncClock::empty(), &["preferences".into()], 100)
+        .unwrap();
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].payload["schemaVersion"], 2);
+    assert!(operations[0].payload["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|entry| entry["key"] != PREFERENCES_SCHEMA_VERSION_KEY_NAME));
+    let target = Arc::new(MemoryStorageHost::default());
+    PreferencesDataStore::applySyncedOperationsWithStorage(target.clone(), &[], &operations)
+        .unwrap();
+    let targetStore = PreferencesDataStore::newWithStorage(target, path).withSchema(2, |_, _| {
+        panic!("native synchronized schema must not execute a legacy migration")
+    });
+    assert_eq!(targetStore.schemaVersion().unwrap(), 2);
+    assert_eq!(
+        targetStore.data().unwrap().get(&stringPreferencesKey("A")),
+        Some(&json!({"name":"legacy"}))
+    );
+}
+
+/// A migration supersedes historical encoded values even if a stale operation arrives after it.
+#[test]
+fn preference_migration_replay_supersedes_legacy_encoded_root_values() {
+    let path = "runtime/config/preferences/legacy-replay.preferences.json";
+    let mut old = nativePreferenceOperation(path, vec![("A", json!("{\"name\":\"old\"}"))], 1);
+    old.payload.as_object_mut().unwrap().remove("formatVersion");
+    let native = nativePreferenceOperation(path, vec![("A", json!({"name":"native"}))], 2);
+    let host = Arc::new(MemoryStorageHost::default());
+    PreferencesDataStore::applySyncedOperationsWithStorage(host.clone(), &[], &[native.clone()])
+        .unwrap();
+    PreferencesDataStore::applySyncedOperationsWithStorage(host.clone(), &[native], &[old])
+        .unwrap();
+    assert_eq!(
+        PreferencesDataStore::newNodeLocalWithStorage(host, path, false)
+            .data()
+            .unwrap()
+            .get(&stringPreferencesKey("A")),
+        Some(&json!({"name":"native"}))
+    );
+}
+
+/// Retiring one key from an immutable transaction preserves its other business records.
+#[test]
+fn preference_transaction_owner_retirement_preserves_active_entries() {
+    let path = "runtime/config/preferences/owner-retirement.preferences.json";
+    let operation = nativePreferenceOperation(
+        path,
+        vec![("retired", json!(true)), ("active", json!({"name":"keep"}))],
+        1,
+    );
+    let original = operation.clone();
+    let host = Arc::new(MemoryStorageHost::default());
+    PreferencesDataStore::applySyncedOperationsWithStorageAndFilter(
+        host.clone(),
+        &[],
+        &[operation.clone()],
+        |_, key| key != "retired",
+    )
+    .unwrap();
+    let snapshot = PreferencesDataStore::newNodeLocalWithStorage(host, path, false)
+        .data()
+        .unwrap();
+    assert!(!snapshot.contains(&stringPreferencesKey("retired")));
+    assert_eq!(
+        snapshot.get(&stringPreferencesKey("active")),
+        Some(&json!({"name":"keep"}))
+    );
+    assert_eq!(original, operation);
+}
+
+/// Internal conflict history retains local provenance even after the Space export boundary advances.
+#[test]
+fn preference_replay_history_is_independent_of_the_export_floor() {
+    let path = "runtime/config/preferences/export-floor.preferences.json";
+    let host = Arc::new(MemoryStorageHost::default());
+    let data = PreferencesDataStore::newWithStorage(host.clone(), path);
+    data.edit(|p| {
+        p.set(&stringPreferencesKey("A"), json!({"name":"local"}));
+        p.set(&stringPreferencesKey("B"), json!({"name":"keep"}));
+    })
+    .unwrap();
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let history = journal.preferenceHistory().unwrap();
+    journal.markLocalOperationsUnexportable().unwrap();
+    assert!(journal
+        .operationsSince(&SyncClock::empty(), &["preferences".into()], 100)
+        .unwrap()
+        .is_empty());
+    assert_eq!(journal.preferenceHistory().unwrap(), history);
+    let remote = nativePreferenceOperation(path, vec![("A", json!({"name":"remote-old"}))], 1);
+    PreferencesDataStore::applySyncedOperationsWithStorage(host, &history, &[remote]).unwrap();
+    assert_eq!(
+        data.data().unwrap().get(&stringPreferencesKey("A")),
+        Some(&json!({"name":"local"}))
+    );
+}
+
+/// A stale legacy writer must not replace native values in an already migrated file.
+#[test]
+fn preference_sync_rejects_legacy_payloads_on_a_migrated_owner() {
+    let path = "runtime/config/preferences/stale-owner.preferences.json";
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, false)
+        .withSchema(2, |_, _| Ok(()));
+    store
+        .edit(|p| p.set(&stringPreferencesKey("A"), json!({"name":"native"})))
+        .unwrap();
+    let before = host.writeCount();
+    let mut old = nativePreferenceOperation(path, vec![("A", json!("encoded"))], 1);
+    old.payload.as_object_mut().unwrap().remove("formatVersion");
+    assert!(
+        PreferencesDataStore::applySyncedOperationsWithStorage(host.clone(), &[], &[old]).is_err()
+    );
+    assert_eq!(host.writeCount(), before);
+    assert_eq!(
+        store.data().unwrap().get(&stringPreferencesKey("A")),
+        Some(&json!({"name":"native"}))
+    );
+}
+
+/// Replaying a complete newer schema snapshot never executes older native schema operations on the current file.
+#[test]
+fn preference_replay_supersedes_older_native_schema_history() {
+    let path = "runtime/config/preferences/native-version-replay.preferences.json";
+    let host = Arc::new(MemoryStorageHost::default());
+    let mut old = nativePreferenceOperation(
+        path,
+        vec![("A", json!({"name":"old"})), ("B", json!(true))],
+        1,
+    );
+    old.payload["schemaVersion"] = json!(2);
+    let mut new = nativePreferenceOperation(
+        path,
+        vec![("A", json!({"name":"new"})), ("B", json!(false))],
+        2,
+    );
+    new.payload["schemaVersion"] = json!(4);
+    PreferencesDataStore::applySyncedOperationsWithStorage(host.clone(), &[], &[new.clone()])
+        .unwrap();
+    PreferencesDataStore::applySyncedOperationsWithStorage(host.clone(), &[new], &[old]).unwrap();
+    let result = PreferencesDataStore::newNodeLocalWithStorage(host, path, false)
+        .data()
+        .unwrap();
+    assert_eq!(
+        result.get(&stringPreferencesKey(PREFERENCES_SCHEMA_VERSION_KEY_NAME)),
+        Some(&json!(4))
+    );
+    assert_eq!(
+        result.get(&stringPreferencesKey("A")),
+        Some(&json!({"name":"new"}))
+    );
+    assert_eq!(result.get(&stringPreferencesKey("B")), Some(&json!(false)));
 }

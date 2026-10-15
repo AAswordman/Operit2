@@ -15,7 +15,7 @@ pub(super) struct Node {
     #[serde(default)]
     pub children: Vec<Node>,
     #[serde(default)]
-    pub slots: Map<String, Value>,
+    pub slots: std::collections::BTreeMap<String, Vec<Node>>,
 }
 
 #[derive(Clone, Debug)]

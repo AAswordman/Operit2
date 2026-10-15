@@ -106,13 +106,6 @@ pub fn discover_devices(timeout_ms: u64) -> Result<Vec<DiscoveredDevice>, String
                     .ok_or_else(|| format!("mDNS service missing model: {}", info.get_fullname()))?
                     .val_str()
                     .to_string();
-                let token_hash = props
-                    .get("tokenHash")
-                    .ok_or_else(|| {
-                        format!("mDNS service missing tokenHash: {}", info.get_fullname())
-                    })?
-                    .val_str()
-                    .to_string();
                 let version = props
                     .get("version")
                     .ok_or_else(|| {
@@ -130,7 +123,6 @@ pub fn discover_devices(timeout_ms: u64) -> Result<Vec<DiscoveredDevice>, String
                     base_url,
                     hostname: info.get_hostname().to_string(),
                     port: info.get_port(),
-                    token_hash,
                     version,
                 };
                 match devices.get_mut(&full_name) {
@@ -179,6 +171,5 @@ pub struct DiscoveredDevice {
     pub base_url: String,
     pub hostname: String,
     pub port: u16,
-    pub token_hash: String,
     pub version: String,
 }

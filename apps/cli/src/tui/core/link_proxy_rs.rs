@@ -113,6 +113,12 @@ pub(super) fn tui_core(client: Arc<LocalCoreProxy>) -> TuiCore {
 }
 
 impl TuiCore {
+    /// Gives a persistent session command future its own generated proxy over the same local Core.
+    pub(super) fn composeCommandProxy(&mut self) -> GeneratedCoreProxy<SharedLocalCore> {
+        let client = self.proxy.application().generatedClientMut().0.clone();
+        GeneratedCoreProxy::new(SharedLocalCore(client))
+    }
+
     /// Decodes an ordered StateFlow event without treating embedded stream events as state.
     #[allow(non_snake_case)]
     pub(super) fn decodeStateFlowEvent<T: DeserializeOwned>(
@@ -655,8 +661,6 @@ mod tests {
         let initial = ChatState {
             currentChatId: "handoff-chat".to_string(),
             currentChatTitle: "stable chat title ".repeat(100),
-            currentCharacterCardName: None,
-            currentCharacterCardAvatarUri: None,
             currentWorkspacePath: Some("/workspace/b".to_string()),
             isLoading: true,
             inputProcessingState: InputProcessingState::Connecting {
@@ -721,8 +725,6 @@ mod tests {
         let mut state = ChatState {
             currentChatId: "handoff-chat".to_string(),
             currentChatTitle: "title".to_string(),
-            currentCharacterCardName: None,
-            currentCharacterCardAvatarUri: None,
             currentWorkspacePath: None,
             isLoading: false,
             inputProcessingState: InputProcessingState::Completed,
@@ -1198,7 +1200,7 @@ mod tests {
     fn tui_route_permission_error_keeps_structured_diagnostics() {
         let error = CoreLinkError::withDetails(
             "ROUTE_PERMISSION_DENIED",
-            "Space route chatMessagesFlow requires capability chat.read on caller tui-client",
+            "Space route switch_core target tui-client lacks runtime.execute",
             CoreValue::Map(BTreeMap::from([
                 (
                     "subject".to_string(),
@@ -1206,7 +1208,7 @@ mod tests {
                 ),
                 (
                     "requiredCapability".to_string(),
-                    CoreValue::String("chat.read".to_string()),
+                    CoreValue::String("runtime.execute".to_string()),
                 ),
                 (
                     "callerNodeId".to_string(),
@@ -1218,7 +1220,7 @@ mod tests {
         assert!(error.isRoutePermissionDenied());
         assert!(message.contains("ROUTE_PERMISSION_DENIED"));
         assert!(message.contains("caller"));
-        assert!(message.contains("chat.read"));
+        assert!(message.contains("runtime.execute"));
         assert!(message.contains("tui-client"));
     }
 

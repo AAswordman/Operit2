@@ -36,7 +36,8 @@ class ChatArea extends StatefulWidget {
     required this.errorMessage,
     required this.scrollController,
     required this.currentChatId,
-    required this.currentCharacterCardAvatarUri,
+    required this.identityAvatarUri,
+    this.onIdentityTap,
     required this.clients,
     required this.packageManager,
     required this.autoScrollToBottomListenable,
@@ -75,7 +76,8 @@ class ChatArea extends StatefulWidget {
   final String? errorMessage;
   final ScrollController scrollController;
   final String? currentChatId;
-  final String? currentCharacterCardAvatarUri;
+  final String? identityAvatarUri;
+  final VoidCallback? onIdentityTap;
   final GeneratedCoreProxyClients clients;
   final GeneratedApplicationPackageManagerCoreProxy packageManager;
   final ValueListenable<bool> autoScrollToBottomListenable;
@@ -137,7 +139,10 @@ class _ChatAreaState extends State<ChatArea>
     0,
   );
   double _scrollViewportDimension = 0;
-  final Stopwatch _bottomFollowClock = Stopwatch();
+
+  /// Uses the scheduler timeline shared by layout, animation and test frames.
+  int get _bottomFollowNowMicroseconds =>
+      SchedulerBinding.instance.currentSystemFrameTimeStamp.inMicroseconds;
   final Queue<_BottomGrowthSample> _bottomGrowthSamples =
       Queue<_BottomGrowthSample>();
   late final Ticker _bottomFollowTicker;
@@ -160,7 +165,6 @@ class _ChatAreaState extends State<ChatArea>
       shouldAlignBottom: _shouldAlignBottomDuringLayout,
       shouldInitiallyAlignBottom: _ownsBottomScroll,
     );
-    _bottomFollowClock.start();
     _bottomFollowTicker = createTicker(_tickBottomFollow);
   }
 
@@ -499,8 +503,7 @@ class _ChatAreaState extends State<ChatArea>
     _clearPendingMessageJump();
     _activeUserScrollPointers.add(event.pointer);
     if (_bottomFollowTicker.isActive) {
-      _bottomFollowLastFrameMicroseconds =
-          _bottomFollowClock.elapsedMicroseconds;
+      _bottomFollowLastFrameMicroseconds = _bottomFollowNowMicroseconds;
     }
   }
 
@@ -509,14 +512,12 @@ class _ChatAreaState extends State<ChatArea>
     _activeUserScrollPointers.remove(event.pointer);
     if (_activeUserScrollPointers.isNotEmpty) {
       if (_bottomFollowTicker.isActive) {
-        _bottomFollowLastFrameMicroseconds =
-            _bottomFollowClock.elapsedMicroseconds;
+        _bottomFollowLastFrameMicroseconds = _bottomFollowNowMicroseconds;
       }
       return;
     }
     if (_bottomFollowTicker.isActive) {
-      _bottomFollowLastFrameMicroseconds =
-          _bottomFollowClock.elapsedMicroseconds;
+      _bottomFollowLastFrameMicroseconds = _bottomFollowNowMicroseconds;
       return;
     }
     if (!widget.autoScrollToBottomListenable.value) {
@@ -589,7 +590,7 @@ class _ChatAreaState extends State<ChatArea>
 
   /// Records measured live growth and starts the frame-driven bottom follower.
   void _scheduleBottomFollow(double heightDelta) {
-    final nowMicroseconds = _bottomFollowClock.elapsedMicroseconds;
+    final nowMicroseconds = _bottomFollowNowMicroseconds;
     if (!mounted ||
         !_shouldRunBottomFollow() ||
         !widget.autoScrollToBottomListenable.value ||
@@ -615,7 +616,7 @@ class _ChatAreaState extends State<ChatArea>
 
   /// Advances the scroll position from recent output growth and baseline error.
   void _tickBottomFollow(Duration elapsed) {
-    final nowMicroseconds = _bottomFollowClock.elapsedMicroseconds;
+    final nowMicroseconds = _bottomFollowNowMicroseconds;
     if (!mounted ||
         !_shouldRunBottomFollow() ||
         !widget.autoScrollToBottomListenable.value ||
@@ -711,7 +712,7 @@ class _ChatAreaState extends State<ChatArea>
         !widget.scrollController.hasClients) {
       return;
     }
-    final nowMicroseconds = _bottomFollowClock.elapsedMicroseconds;
+    final nowMicroseconds = _bottomFollowNowMicroseconds;
     _bottomFollowCompleting = true;
     if (!_bottomFollowTicker.isActive) {
       _bottomFollowLastFrameMicroseconds = nowMicroseconds;
@@ -954,7 +955,6 @@ class _ChatAreaState extends State<ChatArea>
     _viewportResizeTimer?.cancel();
     _layoutScrollController.dispose();
     _bottomFollowTicker.dispose();
-    _bottomFollowClock.stop();
     _bottomGrowthSamples.clear();
     _messageAnchorsNotifier.dispose();
     _viewportHeightNotifier.dispose();
@@ -986,8 +986,9 @@ class _ChatAreaState extends State<ChatArea>
         cached.selected == selected &&
         cached.selectionMode == selectionMode &&
         cached.isStreaming == isStreaming &&
-        cached.currentCharacterCardAvatarUri ==
-            widget.currentCharacterCardAvatarUri &&
+        cached.onIdentityTap == widget.onIdentityTap &&
+        cached.chatId == widget.currentChatId &&
+        cached.identityAvatarUri == widget.identityAvatarUri &&
         cached.themePreferenceSnapshot == themePreferenceSnapshot &&
         cached.messageThemeColors == messageThemeColors &&
         _sameMessageForRender(cached.message, message);
@@ -1000,10 +1001,11 @@ class _ChatAreaState extends State<ChatArea>
       colorScheme: colorScheme,
       key: ValueKey<String>(_messageWidgetKey(message)),
       message: message,
-      currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
+      onIdentityTap: widget.onIdentityTap,
       splitMarkdownContent: widget.splitMarkdownContent,
       onDeleteMessage: widget.onDeleteMessage,
       onEditSummary: widget.onSelectMessageToEdit,
+      enableDialogs: !selectionMode,
     );
     final messageContent = _SelectableMessageFrame(
       selected: selected,
@@ -1057,9 +1059,11 @@ class _ChatAreaState extends State<ChatArea>
       selected: selected,
       selectionMode: selectionMode,
       isStreaming: isStreaming,
-      currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
+      identityAvatarUri: widget.identityAvatarUri,
+      onIdentityTap: widget.onIdentityTap,
       themePreferenceSnapshot: themePreferenceSnapshot,
       messageThemeColors: messageThemeColors,
+      chatId: widget.currentChatId,
       widget: row,
     );
     return row;
@@ -1388,9 +1392,11 @@ class _CachedMessageRow {
     required this.selected,
     required this.selectionMode,
     required this.isStreaming,
-    required this.currentCharacterCardAvatarUri,
+    required this.identityAvatarUri,
+    this.onIdentityTap,
     required this.themePreferenceSnapshot,
     required this.messageThemeColors,
+    required this.chatId,
     required this.widget,
   });
 
@@ -1399,9 +1405,11 @@ class _CachedMessageRow {
   final bool selected;
   final bool selectionMode;
   final bool isStreaming;
-  final String? currentCharacterCardAvatarUri;
+  final String? identityAvatarUri;
+  final VoidCallback? onIdentityTap;
   final ThemePreferenceSnapshot themePreferenceSnapshot;
   final ChatMessageThemeColors messageThemeColors;
+  final String? chatId;
   final Widget widget;
 }
 

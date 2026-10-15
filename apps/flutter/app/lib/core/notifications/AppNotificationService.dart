@@ -71,6 +71,7 @@ class AppNotificationService with WidgetsBindingObserver {
       case RuntimeHostInteractionKind.webVisit:
       case RuntimeHostInteractionKind.composeWebViewController:
       case RuntimeHostInteractionKind.composeFilePicker:
+      case RuntimeHostInteractionKind.composeFileSave:
       case RuntimeHostInteractionKind.systemCaptureScreenshot:
       case RuntimeHostInteractionKind.systemLanguageCode:
       case RuntimeHostInteractionKind.systemRecognizeText:

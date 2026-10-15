@@ -18,30 +18,21 @@ impl ToolPkgChatComposerSlotBridge {
         Self { runtime }
     }
 
-    /// Registers refresh handling for active ToolPkg container changes.
-    pub fn register(runtime: ToolPkgBridgeRuntime) {
-        let manager = runtime.package_manager();
-        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|active_containers| {
-            Self::syncToolPkgRegistrations(active_containers);
-        }));
-    }
-
     /// Rebuilds the host-owned slot composition from enabled ToolPkg containers.
     #[allow(non_snake_case)]
-    pub fn syncToolPkgRegistrations(active_containers: Vec<ToolPkgContainerRuntime>) {
+    pub fn syncToolPkgRegistrations(active_containers: &[ToolPkgContainerRuntime]) {
         let mut contributions = active_containers
-            .into_iter()
+            .iter()
             .flat_map(|container| {
-                let container_runtime = container.clone();
                 container
                     .chatComposerSlots
-                    .into_iter()
+                    .iter()
                     .map(move |contribution| ToolPkgChatComposerSlot {
-                        containerRuntime: container_runtime.clone(),
+                        containerRuntime: container.clone(),
                         containerPackageName: container.packageName.clone(),
-                        contributionId: contribution.id,
-                        slot: contribution.slot,
-                        screen: contribution.screen,
+                        contributionId: contribution.id.clone(),
+                        slot: contribution.slot.clone(),
+                        screen: contribution.screen.clone(),
                         order: contribution.order,
                         keepAlive: contribution.keepAlive,
                     })

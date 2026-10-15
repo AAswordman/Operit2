@@ -94,12 +94,6 @@ String _toolProgressStatusText(
 
 /// Maps internal processing message keys to localized text.
 String _inputProcessingMessageText(AppLocalizations l10n, String key) {
-  const memberReplyingPrefix = 'role_response_planner_member_replying|';
-  if (key.startsWith(memberReplyingPrefix)) {
-    return l10n.roleResponsePlannerMemberReplying(
-      key.substring(memberReplyingPrefix.length),
-    );
-  }
   return switch (key) {
     '' => '',
     'enhanced_processing_input' => l10n.processingInput,
@@ -107,8 +101,6 @@ String _inputProcessingMessageText(AppLocalizations l10n, String key) {
     'enhanced_connecting_service' => l10n.connectingAiService,
     'enhanced_receiving_response' => l10n.receivingAiResponse,
     'enhanced_receiving_tool_result' => l10n.receivingToolResultAiResponse,
-    'role_response_planner_planning' => l10n.roleResponsePlannerPlanning,
-    'role_response_planner_failed' => l10n.roleResponsePlannerFailed,
     'message_processing' => l10n.processingMessage,
     'message_summarizing' => l10n.summarizingMemories,
     'chat_summarizing_generating' => l10n.summaryGenerating,

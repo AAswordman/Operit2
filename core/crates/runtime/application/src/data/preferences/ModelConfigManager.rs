@@ -80,7 +80,7 @@ pub struct ModelConfigManager {
 }
 
 impl ModelConfigManager {
-    const PREFERENCES_VERSION: u32 = 3;
+    const PREFERENCES_VERSION: u32 = 4;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
     pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
@@ -96,7 +96,6 @@ impl ModelConfigManager {
             operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH,
         );
         let modelConfigDataStore = PreferencesDataStore::newEncrypted(path)
-            .withStructuredJsonSync()
             .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences);
         Self {
             runtimeRoot: root_dir,
@@ -197,10 +196,7 @@ impl ModelConfigManager {
         let provider = ProviderProfile::new(providerId.clone(), name, providerType, endpoint);
         self.modelConfigDataStore.try_edit_result(|preferences| {
             Self::assertProviderNameUniqueInPreferences(preferences, &provider.name, None)?;
-            let mut providerIds = Self::readProviderList(preferences)?;
-            providerIds.push(providerId.clone());
             Self::writeProvider(preferences, &provider)?;
-            Self::writeProviderList(preferences, &providerIds)?;
             Ok::<(), ModelConfigError>(())
         })?;
         Ok(providerId)
@@ -242,12 +238,7 @@ impl ModelConfigManager {
             return Err(ModelConfigError::ProviderNotFound(provider.id));
         }
         self.modelConfigDataStore.try_edit_result(|preferences| {
-            let mut providerIds = Self::readProviderList(preferences)?;
-            if !providerIds.iter().any(|id| id == Self::DEFAULT_PROVIDER_ID) {
-                providerIds.insert(0, Self::DEFAULT_PROVIDER_ID.to_string());
-            }
             Self::writeProvider(preferences, &provider)?;
-            Self::writeProviderList(preferences, &providerIds)?;
             Ok::<(), ModelConfigError>(())
         })?;
         Ok(provider)
@@ -258,10 +249,7 @@ impl ModelConfigManager {
         let providerKey = self.providerKey(providerId);
         self.modelConfigDataStore.try_edit_result(|preferences| {
             self.assertProviderExistsInPreferences(preferences, providerId)?;
-            let mut providerIds = Self::readProviderList(preferences)?;
-            providerIds.retain(|id| id != providerId);
             preferences.remove(&providerKey);
-            Self::writeProviderList(preferences, &providerIds)?;
             Ok::<(), ModelConfigError>(())
         })?;
         Ok(())
@@ -633,7 +621,7 @@ impl ModelConfigManager {
 
         self.modelConfigDataStore
             .try_edit_result(|preferences| {
-                let mut providerIds = Self::readProviderList(preferences)?;
+                let providerIds = Self::readProviderList(preferences)?;
                 let currentProviderIds = providerIds.iter().cloned().collect::<HashSet<_>>();
                 for currentProviderId in &providerIds {
                     if importedProviderIds.contains(currentProviderId.as_str()) {
@@ -654,13 +642,11 @@ impl ModelConfigManager {
                     if currentProviderIds.contains(&provider.id) {
                         updatedCount += 1;
                     } else {
-                        providerIds.push(provider.id.clone());
                         newCount += 1;
                     }
                     let provider = Self::providerWithProviderOwnedThinkingRules(provider.clone())?;
                     Self::writeProvider(preferences, &provider)?;
                 }
-                Self::writeProviderList(preferences, &providerIds)?;
 
                 Ok(ModelConfigImportResult {
                     new: newCount,
@@ -781,16 +767,29 @@ impl ModelConfigManager {
         model
     }
 
-    /// Reads provider ids from the preferences object.
+    /// Derives provider membership from complete records and validates their identities.
     fn readProviderList(
         preferences: &Preferences,
     ) -> Result<Vec<String>, PreferencesDataStoreError> {
-        match preferences.get(&Self::PROVIDER_LIST_KEY()) {
-            Some(providerList) if !providerList.is_empty() => {
-                Ok(serde_json::from_str(providerList)?)
+        let mut providers = Vec::new();
+        for (key, value) in preferences.iterEntries() {
+            let Some(id) = key.strip_prefix("provider_") else {
+                continue;
+            };
+            let provider: ProviderProfile = serde_json::from_value(value.clone())?;
+            if provider.id != id {
+                return Err(PreferencesDataStoreError::Message(format!(
+                    "Provider record identity mismatch: {key}"
+                )));
             }
-            _ => Ok(Vec::new()),
+            providers.push(provider);
         }
+        providers.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(providers.into_iter().map(|provider| provider.id).collect())
     }
 
     /// Migrates model preferences one schema version at a time.
@@ -800,41 +799,79 @@ impl ModelConfigManager {
     ) -> Result<(), PreferencesDataStoreError> {
         match version {
             0 => {
-                let mut providerIds = Self::readProviderList(preferences)?;
+                let mut providerIds = preferences
+                    .getTyped::<String>(&Self::PROVIDER_LIST_KEY())?
+                    .map(|encoded| serde_json::from_str::<Vec<String>>(&encoded))
+                    .transpose()?
+                    .unwrap_or_default();
                 if providerIds.is_empty() {
                     let provider = default_deepseek_provider();
-                    Self::writeProvider(preferences, &provider)?;
+                    preferences.set(
+                        &stringPreferencesKey(&format!("provider_{}", provider.id)),
+                        serde_json::to_string(&provider)?,
+                    );
                     providerIds.push(provider.id);
                 }
-                let localProvider = local_model_provider();
-                if !providerIds.iter().any(|id| id == &localProvider.id) {
-                    Self::writeProvider(preferences, &localProvider)?;
-                    providerIds.push(localProvider.id);
+                let provider = local_model_provider();
+                if !providerIds.iter().any(|id| id == &provider.id) {
+                    preferences.set(
+                        &stringPreferencesKey(&format!("provider_{}", provider.id)),
+                        serde_json::to_string(&provider)?,
+                    );
+                    providerIds.push(provider.id);
                 }
-                Self::writeProviderList(preferences, &providerIds)
+                preferences.set(
+                    &Self::PROVIDER_LIST_KEY(),
+                    serde_json::to_string(&providerIds)?,
+                );
+                Ok(())
             }
             1 => Ok(()),
-            2 => Self::normalizeProviderThinkingPreferences(preferences),
+            2 => {
+                let providerIds = preferences
+                    .getTyped::<String>(&Self::PROVIDER_LIST_KEY())?
+                    .map(|encoded| serde_json::from_str::<Vec<String>>(&encoded))
+                    .transpose()?
+                    .unwrap_or_default();
+                for id in providerIds {
+                    let key = stringPreferencesKey(&format!("provider_{id}"));
+                    let Some(encoded) = preferences.getTyped::<String>(&key)? else {
+                        continue;
+                    };
+                    let provider: ProviderProfile = serde_json::from_str(&encoded)?;
+                    let provider = Self::providerWithProviderOwnedThinkingRules(provider)
+                        .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
+                    preferences.set(&key, serde_json::to_string(&provider)?);
+                }
+                Ok(())
+            }
+            3 => {
+                let records = preferences
+                    .iterEntries()
+                    .filter_map(|(key, value)| {
+                        key.strip_prefix("provider_")?;
+                        (key != "provider_list").then(|| (key.to_owned(), value.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (key, value) in records {
+                    let encoded = serde_json::from_value::<String>(value)?;
+                    let record: serde_json::Value = serde_json::from_str(&encoded)?;
+                    let provider: ProviderProfile = serde_json::from_value(record.clone())?;
+                    let id = key
+                        .strip_prefix("provider_")
+                        .expect("provider record prefix");
+                    if provider.id != id {
+                        return Err(PreferencesDataStoreError::Message(format!(
+                            "Provider record identity mismatch: {key}"
+                        )));
+                    }
+                    preferences.set(&stringPreferencesKey(&key), record);
+                }
+                preferences.remove(&Self::PROVIDER_LIST_KEY());
+                Ok(())
+            }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }
-    }
-
-    /// Removes catalog-only provider selectors from stored provider thinking rules.
-    fn normalizeProviderThinkingPreferences(
-        preferences: &mut Preferences,
-    ) -> Result<(), PreferencesDataStoreError> {
-        let providerIds = Self::readProviderList(preferences)?;
-        for providerId in providerIds {
-            let providerKey = stringPreferencesKey(&format!("provider_{providerId}"));
-            let Some(providerJson) = preferences.get(&providerKey) else {
-                continue;
-            };
-            let provider: ProviderProfile = serde_json::from_str(providerJson)?;
-            let provider = Self::providerWithProviderOwnedThinkingRules(provider)
-                .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
-            Self::writeProvider(preferences, &provider)?;
-        }
-        Ok(())
     }
 
     /// Loads and decodes one provider profile from preferences.
@@ -847,21 +884,13 @@ impl ModelConfigManager {
         let providerJson = preferences
             .get(&providerKey)
             .ok_or_else(|| ModelConfigError::ProviderNotFound(providerId.to_string()))?;
-        Ok(serde_json::from_str(providerJson)?)
+        Ok(serde_json::from_value(providerJson.clone())?)
     }
 
     /// Saves one provider profile to preferences.
     fn saveProviderToDataStore(&self, provider: &ProviderProfile) -> Result<(), ModelConfigError> {
         self.modelConfigDataStore.try_edit_result(|preferences| {
             Self::writeProvider(preferences, provider)?;
-            Ok::<(), ModelConfigError>(())
-        })
-    }
-
-    /// Saves provider order to preferences.
-    fn saveProviderList(&self, providerIds: Vec<String>) -> Result<(), ModelConfigError> {
-        self.modelConfigDataStore.try_edit_result(|preferences| {
-            Self::writeProviderList(preferences, &providerIds)?;
             Ok::<(), ModelConfigError>(())
         })
     }
@@ -921,6 +950,7 @@ impl ModelConfigManager {
         }
     }
 
+    /// Reads a complete native JSON provider record from the current snapshot.
     fn readProviderFromPreferences(
         &self,
         preferences: &Preferences,
@@ -930,19 +960,21 @@ impl ModelConfigManager {
         let providerJson = preferences
             .get(&providerKey)
             .ok_or_else(|| ModelConfigError::ProviderNotFound(providerId.to_string()))?;
-        Ok(serde_json::from_str(providerJson)?)
+        Ok(serde_json::from_value(providerJson.clone())?)
     }
 
+    /// Writes the complete provider as the synchronized preference value.
     fn writeProvider(
         preferences: &mut Preferences,
         provider: &ProviderProfile,
     ) -> Result<(), PreferencesDataStoreError> {
         let providerKey = stringPreferencesKey(&format!("provider_{}", provider.id));
-        let encodedProvider = serde_json::to_string(provider)?;
+        let encodedProvider = serde_json::to_value(provider)?;
         preferences.set(&providerKey, encodedProvider);
         Ok(())
     }
 
+    /// Checks provider name uniqueness against all stored records.
     fn assertProviderNameUniqueInPreferences(
         preferences: &Preferences,
         name: &str,
@@ -958,7 +990,7 @@ impl ModelConfigManager {
             let Some(providerJson) = preferences.get(&providerKey) else {
                 continue;
             };
-            let provider: ProviderProfile = serde_json::from_str(providerJson)?;
+            let provider: ProviderProfile = serde_json::from_value(providerJson.clone())?;
             if provider.name.trim() == normalizedName {
                 return Err(ModelConfigError::ProviderNameAlreadyExists(
                     normalizedName.to_string(),
@@ -967,15 +999,6 @@ impl ModelConfigManager {
         }
         Ok(())
     }
-    fn writeProviderList(
-        preferences: &mut Preferences,
-        providerIds: &[String],
-    ) -> Result<(), PreferencesDataStoreError> {
-        let encoded = serde_json::to_string(providerIds)?;
-        preferences.set(&Self::PROVIDER_LIST_KEY(), encoded);
-        Ok(())
-    }
-
     fn findAvailableProviderModel(
         &self,
         provider: &ProviderProfile,
@@ -1166,6 +1189,61 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    /// Starts a persisted version-three file at its appended migration and preserves unindexed providers.
+    #[test]
+    fn schema_three_migration_does_not_execute_initialization() {
+        use operit_model::ModelConfigData::ProviderProfile;
+        use operit_store::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore};
+        let root = unique_test_root("schema_three_native_json");
+        let host: Arc<dyn RuntimeStorageHost> =
+            Arc::new(TestRuntimeStorageHost { root: root.clone() });
+        let path = "runtime/config/model-schema-three.preferences.json";
+        let first = ProviderProfile::new(
+            "first".into(),
+            "First".into(),
+            ApiProviderType::OPENAI,
+            "https://example.test".into(),
+        );
+        let second = ProviderProfile::new(
+            "unindexed".into(),
+            "Unindexed".into(),
+            ApiProviderType::OPENAI,
+            "https://example.test".into(),
+        );
+        let legacy = serde_json::json!({
+            "__operit_preferences_schema_version": "3",
+            "provider_list": "[\"first\"]",
+            "provider_first": serde_json::to_string(&first).unwrap(),
+            "provider_unindexed": serde_json::to_string(&second).unwrap()
+        });
+        host.writeBytes(path, &serde_json::to_vec(&legacy).unwrap())
+            .unwrap();
+        let store = CoreNodeStateStore::newWithStorage(host, path).withSchema(
+            ModelConfigManager::PREFERENCES_VERSION,
+            |version, preferences| {
+                assert_eq!(
+                    version, 3,
+                    "an existing file must not execute initialization"
+                );
+                ModelConfigManager::migratePreferences(version, preferences)
+            },
+        );
+        let migrated = store.data().unwrap();
+        assert_eq!(
+            ModelConfigManager::readProviderList(&migrated).unwrap(),
+            vec!["first", "unindexed"]
+        );
+        assert!(migrated
+            .get(&stringPreferencesKey("provider_first"))
+            .unwrap()
+            .is_object());
+        assert!(migrated
+            .get(&stringPreferencesKey("provider_list"))
+            .is_none());
+        assert_eq!(store.schemaVersion().unwrap(), 4);
+        assert_eq!(store.data().unwrap(), migrated);
+    }
+
     #[test]
     fn default_ids_are_model_ids() {
         assert_eq!(
@@ -1212,7 +1290,9 @@ mod tests {
         assert!(provider.endpoint.is_empty());
         let ids = manager.getProviderIds().expect("provider ids");
         assert!(ids.contains(&provider_id));
-        assert!(ids.iter().any(|id| id == ApiProviderType::LOCAL_MODEL.name()));
+        assert!(ids
+            .iter()
+            .any(|id| id == ApiProviderType::LOCAL_MODEL.name()));
 
         fs::remove_dir_all(root).expect("remove model config test root");
     }

@@ -1,11 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-const compiler = process.env.WASM_CC || ['/opt/homebrew/opt/llvm/bin/clang','/usr/lib/llvm-18/bin/clang','clang'].find(p => p === 'clang' || existsSync(p));
 await mkdir('resources/dsp', {recursive:true});
-execFileSync(compiler, ['--target=wasm32','-O3','-nostdlib','-fno-builtin','-c','dsp/studio.c','-o','resources/dsp/studio.o'], {stdio:'inherit'});
-execFileSync(process.env.WASM_LD || (existsSync('/opt/homebrew/bin/wasm-ld') ? '/opt/homebrew/bin/wasm-ld' : 'wasm-ld'), ['--no-entry','--export-memory','--initial-memory=50331648','--max-memory=50331648','-z','stack-size=65536','resources/dsp/studio.o','-o','resources/dsp/studio.wasm'], {stdio:'inherit'});
+execFileSync('clang', ['--target=wasm32','-O3','-nostdlib','-fno-builtin','-c','dsp/studio.c','-o','resources/dsp/studio.o'], {stdio:'inherit'});
+execFileSync('wasm-ld', ['--no-entry','--export-memory','--initial-memory=50331648','--max-memory=50331648','-z','stack-size=65536','resources/dsp/studio.o','-o','resources/dsp/studio.wasm'], {stdio:'inherit'});
 await unlink('resources/dsp/studio.o');
 const bytes=await readFile('resources/dsp/studio.wasm');
 const module=await WebAssembly.compile(bytes); if(WebAssembly.Module.imports(module).length) throw Error('DSP must not import host functions');

@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
@@ -13,7 +13,6 @@ import 'package:operit2/ui/features/settings/runtime/PeerListenerSettings.dart';
 class TestBridge extends OperitRuntimeBridge {
   Map<String, Object?>? config = {
     'bindAddress': '0.0.0.0:37195',
-    'token': 'runtime-owned-token',
     'transports': ['http', 'webSocket'],
     'discoveryEnabled': true,
     'portMode': 'fixed',
@@ -39,11 +38,6 @@ class TestBridge extends OperitRuntimeBridge {
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     calls.add(request.methodName);
     switch (request.methodName) {
-      case 'refreshLocalPairingToken':
-        if (failSave) throw StateError('Cannot save listener configuration');
-        config!['token'] = 'runtime-rotated-token-${calls.length}';
-        writes.add(Map<String, Object?>.from(config!));
-        return encodeCoreLink([0, config!['token']]);
       case 'listenerCapabilities':
         if (failCapabilities) {
           throw StateError('Cannot read listener capabilities');
@@ -93,7 +87,7 @@ class TestBridge extends OperitRuntimeBridge {
       throw UnimplementedError();
 }
 
-/// Verifies listener defaults, credentials, and explicit network binding.
+/// Verifies listener defaults and explicit network binding.
 void main() {
   /// Opens the localized connection settings dialog through a real route.
   Future<void> mount(
@@ -155,7 +149,10 @@ void main() {
     expect(tester.widget<Switch>(find.byType(Switch)).value, true);
     expect(find.text('Save'), findsOneWidget);
     expect(find.text('OK'), findsNothing);
-    expect(find.text('runtime-owned-token'), findsOneWidget);
+    expect(find.text('Connection token'), findsNothing);
+    expect(find.byTooltip('Refresh token'), findsNothing);
+    expect(find.byTooltip('Copy token'), findsNothing);
+    expect(bridge.config!.containsKey('token'), isFalse);
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
     expect(
@@ -272,19 +269,6 @@ void main() {
     expect(find.byType(PeerListenerSettingsDialog), findsNothing);
   });
 
-  testWidgets('token refresh updates the remote connection credential', (
-    tester,
-  ) async {
-    final bridge = TestBridge();
-    await mount(tester, bridge);
-    await tester.tap(find.byTooltip('Refresh token'));
-    await tester.pumpAndSettle();
-    final original = bridge.config!['token'];
-    await tester.tap(find.byTooltip('Refresh token'));
-    await tester.pumpAndSettle();
-    expect(bridge.config!['token'], isNot(original));
-    expect((bridge.config!['token'] as String).length, greaterThan(20));
-  });
   testWidgets('HTTP and WS multi-select saves both; TCP conflict is explicit', (
     tester,
   ) async {
@@ -375,7 +359,6 @@ void main() {
   ) async {
     final bridge = TestBridge()..failStart = true;
     await mount(tester, bridge);
-    final original = bridge.config!['token'];
     final writesBefore = bridge.writes.length;
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
@@ -383,19 +366,15 @@ void main() {
     expect(bridge.config!['transports'], ['http', 'webSocket']);
     expect(bridge.config!['discoveryEnabled'], true);
     expect(bridge.config!['portMode'], 'fixed');
-    expect(bridge.config!['token'], original);
     expect(bridge.writes.length, writesBefore + 1);
     expect(bridge.calls.where((call) => call == 'startListening').length, 1);
     expect(find.textContaining('unsupported transport'), findsOneWidget);
     expect(find.text('Listener settings applied.'), findsNothing);
   });
-  testWidgets('saved fixed configuration and credentials are preserved', (
-    tester,
-  ) async {
+  testWidgets('saved fixed configuration is preserved', (tester) async {
     final bridge = TestBridge()
       ..config = {
         'bindAddress': '127.0.0.1:48123',
-        'token': 'existing-remote-token',
         'transports': ['http', 'webSocket'],
         'discoveryEnabled': false,
         'portMode': 'fixed',
@@ -403,7 +382,6 @@ void main() {
       };
     await mount(tester, bridge);
     expect(bridge.writes, isEmpty);
-    expect(find.text('existing-remote-token'), findsOneWidget);
     expect(tester.widget<Switch>(find.byType(Switch)).value, false);
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
@@ -423,47 +401,9 @@ void main() {
     );
     await save(tester);
     expect(bridge.config!['bindAddress'], '127.0.0.1:48123');
-    expect(bridge.config!['token'], 'existing-remote-token');
+    expect(bridge.config!.containsKey('token'), isFalse);
     expect(bridge.config!['portMode'], 'fixed');
     expect(bridge.config!['discoveryEnabled'], false);
-  });
-  testWidgets('copy token uses the credential stored by the listener', (
-    tester,
-  ) async {
-    final bridge = TestBridge();
-    String? copied;
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-          if (call.method == 'Clipboard.setData') {
-            copied = (call.arguments as Map)['text'] as String;
-          }
-          return null;
-        });
-    addTearDown(() {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, null);
-    });
-    await mount(tester, bridge);
-    await tester.tap(find.byTooltip('Copy token'));
-    await tester.pumpAndSettle();
-    expect(copied, bridge.config!['token']);
-    expect(find.text('Connection token copied.'), findsOneWidget);
-  });
-  testWidgets('failed token save keeps the displayed credential unchanged', (
-    tester,
-  ) async {
-    final bridge = TestBridge();
-    await mount(tester, bridge);
-    final original = bridge.config!['token'] as String;
-    bridge.failSave = true;
-    await tester.tap(find.byTooltip('Refresh token'));
-    await tester.pumpAndSettle();
-    expect(bridge.config!['token'], original);
-    expect(find.text(original), findsOneWidget);
-    expect(
-      find.textContaining('Cannot save listener configuration'),
-      findsOneWidget,
-    );
   });
   testWidgets(
     'configuration read errors never initialize replacement defaults',
@@ -492,29 +432,6 @@ void main() {
       );
     },
   );
-  testWidgets('token rotation does not save pending listener form changes', (
-    tester,
-  ) async {
-    final bridge = TestBridge();
-    await mount(tester, bridge);
-    await tester.tap(find.text('Advanced options'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilterChip, 'WebSocket'));
-    await tester.tap(find.byTooltip('Refresh token'));
-    await tester.pumpAndSettle();
-    expect(bridge.config!['transports'], ['http', 'webSocket']);
-    expect(bridge.calls, [
-      'localHostConfig',
-      'listenerCapabilities',
-      'refreshLocalPairingToken',
-    ]);
-    expect(
-      tester
-          .widget<FilterChip>(find.widgetWithText(FilterChip, 'WebSocket'))
-          .selected,
-      false,
-    );
-  });
 
   /// Allows TCP independently while disabling every unsupported inbound protocol.
   testWidgets(
@@ -588,16 +505,13 @@ void main() {
     expect(find.text('Listener settings applied.'), findsOneWidget);
   });
 
-  /// Keeps credentials usable when the Host exposes no inbound transports.
-  testWidgets('client-only Host keeps credentials but opens no listeners', (
+  /// Preserves listener preferences when the Host exposes no inbound transports.
+  testWidgets('client-only Host preserves settings but opens no listeners', (
     tester,
   ) async {
     final bridge = TestBridge()
       ..capabilities = {'transports': [], 'discoveryAdvertisement': false};
     await mount(tester, bridge);
-    await tester.tap(find.byTooltip('Refresh token'));
-    await tester.pumpAndSettle();
-    expect(bridge.config!['token'], startsWith('runtime-rotated-token-'));
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
     for (final chip in tester.widgetList<FilterChip>(find.byType(FilterChip))) {

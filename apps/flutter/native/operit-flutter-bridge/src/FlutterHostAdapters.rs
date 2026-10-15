@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerBrowserAutomation, requestOwnerBrowserSession, requestOwnerComposeFilePicker,
-    requestOwnerComposeWebViewController, requestOwnerWebVisit,
+    requestOwnerComposeFileSave, requestOwnerComposeWebViewController, requestOwnerWebVisit,
     RuntimeHostInteractionBrowserAutomationPayload, RuntimeHostInteractionBrowserSessionPayload,
     RuntimeHostInteractionComposeFilePickerPayload,
+    RuntimeHostInteractionComposeFileSavePayload,
     RuntimeHostInteractionComposeWebViewControllerPayload, RuntimeHostInteractionWebVisitHeader,
     RuntimeHostInteractionWebVisitPayload,
 };
@@ -428,6 +429,22 @@ impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
             operit_host_api::HostError::new(format!(
                 "Invalid Compose file-picker owner response: {error}"
             ))
+        })
+    }
+    /// Saves UTF-8 content through the same Flutter owner as file selection.
+    fn saveFile(
+        &self,
+        request: operit_host_api::ComposeDslFileSaveRequest,
+    ) -> operit_host_api::HostResult<serde_json::Value> {
+        let requestJson = serde_json::to_string(&request).map_err(|error| {
+            HostError::new(format!("Compose DSL file save request encode failed: {error}"))
+        })?;
+        let response = requestOwnerComposeFileSave(
+            RuntimeHostInteractionComposeFileSavePayload { requestJson },
+            Duration::from_secs(600),
+        ).map_err(HostError::new)?;
+        serde_json::from_str(&response.resultJson).map_err(|error| {
+            HostError::new(format!("Invalid Compose file-save owner response: {error}"))
         })
     }
 }

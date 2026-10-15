@@ -8,3 +8,6 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 operit-link = { path = "../../foundation/link" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

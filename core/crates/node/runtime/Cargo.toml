@@ -44,4 +44,4 @@ operit-model = { path = "../../foundation/model" }
 operit-rslink-runtime = { path = "../../rslink/runtime" }
 rusqlite.workspace = true
 
-operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", features = ["tcp", "http"] }
+operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", features = ["tcp", "http", "scheduler"] }

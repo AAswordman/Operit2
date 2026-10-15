@@ -5,7 +5,7 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../../util/ChatMarkupRegex.dart';
-import '../../../../../common/CharacterAvatar.dart';
+import '../../../../../common/ChatAvatarImage.dart';
 import '../../../../../theme/OperitTheme.dart';
 import '../../../../../theme/OperitThemeAssets.dart';
 import '../../attachments/AttachmentViewerDialog.dart';
@@ -76,9 +76,7 @@ class _BubbleUserMessageComposableState
       isUser: true,
     );
     final effectiveBubbleImageStyle =
-        isHiddenPlaceholder || widget.transparentSurface
-        ? null
-        : widget.bubbleImageStyle;
+        isHiddenPlaceholder ? null : widget.bubbleImageStyle;
     final bubbleShape = widget.bubbleRoundedCornersEnabled
         ? const BorderRadius.all(Radius.circular(16))
         : BorderRadius.zero;
@@ -603,7 +601,7 @@ class _MessageAvatar extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: isProxySender
-          ? CharacterAvatarImage(avatarUri: avatarImagePath, fit: BoxFit.cover)
+          ? ChatAvatarImage(avatarUri: avatarImagePath, fit: BoxFit.cover)
           : avatarImagePath != null && avatarImagePath.isNotEmpty
           ? ThemeAssetImage(storagePath: avatarImagePath, fit: BoxFit.cover)
           : Icon(icon, color: tint, size: 22),
@@ -671,7 +669,7 @@ class _AttachmentMatch {
 
 /// Extracts message decorations and trims the remaining display text.
 MessageParseResult parseMessageContent(String content) {
-  var cleanedContent = content.replaceAll(ChatMarkupRegex.memoryTag, '').trim();
+  var cleanedContent = content.trim();
 
   final proxySenderMatch = ChatMarkupRegex.proxySenderTag.firstMatch(
     cleanedContent,
@@ -696,7 +694,8 @@ MessageParseResult parseMessageContent(String content) {
           mediaLink.type == 'file')
         AttachmentData(
           id: mediaLink.id,
-          filename: mediaLink.fileName ??
+          filename:
+              mediaLink.fileName ??
               (mediaLink.type == 'audio' ? 'Audio' : 'Video'),
           type: switch (mediaLink.type) {
             'audio' => 'audio/*',

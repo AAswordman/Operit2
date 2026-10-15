@@ -29,6 +29,33 @@ abstract final class ApplicationZoom {
   }
 }
 
+/// Shares the effective interface zoom and its existing persistence callback.
+class ApplicationZoomScope extends InheritedWidget {
+  const ApplicationZoomScope({
+    super.key,
+    required this.zoom,
+    required this.onZoomChanged,
+    required super.child,
+  });
+
+  final double zoom;
+  final ValueChanged<double> onZoomChanged;
+
+  /// Observes zoom so controls also reflect application keyboard shortcuts.
+  static ApplicationZoomScope of(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<ApplicationZoomScope>();
+    if (scope == null) {
+      throw StateError('ApplicationZoom scope not found');
+    }
+    return scope;
+  }
+
+  @override
+  bool updateShouldNotify(ApplicationZoomScope oldWidget) =>
+      zoom != oldWidget.zoom || onZoomChanged != oldWidget.onZoomChanged;
+}
+
 /// Marks a subtree whose own zoom shortcuts must keep their key events.
 class ApplicationZoomExclusion extends StatelessWidget {
   /// Creates a zoom shortcut exclusion scope.
@@ -127,21 +154,25 @@ class _ApplicationZoomHostState extends State<ApplicationZoomHost> {
     final mediaQuery = MediaQuery.of(context);
     final zoom = widget.zoom;
     final zoomedSize = mediaQuery.size / zoom;
-    return MediaQuery(
-      data: mediaQuery.copyWith(
-        size: zoomedSize,
-        padding: mediaQuery.padding / zoom,
-        viewPadding: mediaQuery.viewPadding / zoom,
-        viewInsets: mediaQuery.viewInsets / zoom,
-        systemGestureInsets: mediaQuery.systemGestureInsets / zoom,
-      ),
-      child: FittedBox(
-        fit: BoxFit.fill,
-        alignment: Alignment.topLeft,
-        child: SizedBox(
-          width: zoomedSize.width,
-          height: zoomedSize.height,
-          child: WebViewScaleScope(scale: zoom, child: widget.child),
+    return ApplicationZoomScope(
+      zoom: zoom,
+      onZoomChanged: widget.onZoomChanged,
+      child: MediaQuery(
+        data: mediaQuery.copyWith(
+          size: zoomedSize,
+          padding: mediaQuery.padding / zoom,
+          viewPadding: mediaQuery.viewPadding / zoom,
+          viewInsets: mediaQuery.viewInsets / zoom,
+          systemGestureInsets: mediaQuery.systemGestureInsets / zoom,
+        ),
+        child: FittedBox(
+          fit: BoxFit.fill,
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: zoomedSize.width,
+            height: zoomedSize.height,
+            child: WebViewScaleScope(scale: zoom, child: widget.child),
+          ),
         ),
       ),
     );

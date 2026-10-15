@@ -43,13 +43,15 @@ impl Parse for CoreRouteArguments {
             }
         }
         let binding = binding.ok_or_else(|| input.error("missing `binding = argument`"))?;
-        let permission = permission.ok_or_else(|| input.error("missing `permission = \"scope:capability\"`"))?;
-        validate_permission(&permission)?;
+        if let Some(permission) = &permission {
+            validate_permission(permission)?;
+        }
         if let Some(capability) = create_binding {
-            if capability.value().trim().is_empty() || !permission.value().starts_with("caller:") {
-                return Err(Error::new(capability.span(), "binding creation requires a target capability and caller permission"));
+            if capability.value().trim().is_empty() {
+                return Err(Error::new(capability.span(), "binding creation requires a target capability"));
             }
         }
+        let permission = permission.unwrap_or_else(|| LitStr::new("", binding.span()));
         Ok(Self {
             binding,
             permission,

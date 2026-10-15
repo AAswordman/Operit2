@@ -13,6 +13,7 @@ exports.setExtraInfoInjectionEnabled = setExtraInfoInjectionEnabled;
 exports.containsExtraInfoAttachment = containsExtraInfoAttachment;
 exports.appendExtraInfoToMessage = appendExtraInfoToMessage;
 exports.buildExtraInfoAttachmentTags = buildExtraInfoAttachmentTags;
+const api_1 = require("./dependencies/character_cards/api");
 const SETTINGS_CONFIG_NAME = "settings";
 const COMBINED_ATTACHMENT_FILE_NAME_PREFIX = "Time:";
 const COMBINED_ATTACHMENT_ID_PREFIX = "message_insert_extra_bundle_";
@@ -870,14 +871,18 @@ function buildMemorySnapshotId(chatId) {
     if (!normalized) {
         return "";
     }
-    return normalized.slice(0, 6);
+    return normalized;
 }
-function resolveMemoryCallerCardId(activePrompt) {
-    if (!activePrompt || activePrompt.type !== "character_card") {
-        return undefined;
+/** Requires the selected participant without interpreting its plugin-owned identity. */
+function resolveMemoryCallerParticipantId(executionContext) {
+    if (executionContext == null || executionContext.participantId === null) {
+        throw new Error("Memory injection requires a selected execution participant");
     }
-    const callerCardId = String(activePrompt.id || "").trim();
-    return callerCardId || undefined;
+    const participantId = executionContext.participantId.trim();
+    if (!participantId) {
+        throw new Error("Memory injection execution participant must not be blank");
+    }
+    return participantId;
 }
 function stripMessageForMemorySearch(messageText) {
     return String(messageText || "")
@@ -894,12 +899,13 @@ function stripMessageForMemorySearch(messageText) {
 function buildMemorySearchQuery(messageText) {
     return stripMessageForMemorySearch(messageText);
 }
-async function buildMemoryContent(messageText, chatId, activePrompt) {
+/** Queries the character plugin for memories owned by the selected participant. */
+async function buildMemoryContent(messageText, chatId, executionContext) {
     const text = resolveExtraInfoI18n();
     const settings = await loadSettings();
     const reuseSnapshot = !settings.allowRepeatedMemorySearch;
     const snapshotId = reuseSnapshot ? buildMemorySnapshotId(chatId) : "";
-    const callerCardId = resolveMemoryCallerCardId(activePrompt);
+    const participantId = resolveMemoryCallerParticipantId(executionContext);
     if (reuseSnapshot && !snapshotId) {
         throw new Error(text.memorySnapshotUnavailable);
     }
@@ -914,38 +920,40 @@ async function buildMemoryContent(messageText, chatId, activePrompt) {
         lines.push(`${text.memoryResultCountLabel}: 0`, text.memoryEmpty);
         return lines.join("\n");
     }
-    const result = await toolCall("query_memory", {
+    const result = await api_1.characterCards.memory.query({
+        participantId,
         query: searchQuery,
         limit: settings.memoryLimit,
-        ...(reuseSnapshot ? { snapshot_id: snapshotId } : {}),
-        ...(callerCardId ? { caller_card_id: callerCardId } : {}),
+        snapshotId: reuseSnapshot ? snapshotId : null,
     });
-    const memories = Array.isArray(result?.memories) ? result.memories : [];
+    const memories = result.memories;
     lines.push(`${text.memoryResultCountLabel}: ${memories.length}`);
     if (!memories.length) {
         lines.push(text.memoryEmpty);
         return lines.join("\n");
     }
+    /** Formats complete typed matches returned by the prerequisite memory API. */
     memories.forEach((memory, index) => {
-        const tags = Array.isArray(memory?.tags)
-            ? memory.tags.map((item) => collapseInlineWhitespace(item, 40)).filter(Boolean)
-            : [];
-        lines.push(`#${index + 1}`, `${text.memoryTitleLabel}: ${collapseInlineWhitespace(memory?.title, 80)}`, `${text.memoryContentLabel}: ${collapseInlineWhitespace(memory?.content, 220)}`, `${text.memorySourceLabel}: ${collapseInlineWhitespace(memory?.source, 60)}`, `${text.memoryCreatedAtLabel}: ${collapseInlineWhitespace(memory?.createdAt, 40)}`);
+        const tags = memory.tags.map(
+        /** Formats tag names from the typed public memory match. */
+        item => collapseInlineWhitespace(item, 40));
+        lines.push(`#${index + 1}`, `${text.memoryTitleLabel}: ${collapseInlineWhitespace(memory.title, 80)}`, `${text.memoryContentLabel}: ${collapseInlineWhitespace(memory.content, 220)}`, `${text.memorySourceLabel}: ${collapseInlineWhitespace(memory.source, 60)}`, `${text.memoryCreatedAtLabel}: ${collapseInlineWhitespace(memory.createdAt, 40)}`);
         if (tags.length) {
             lines.push(`${text.memoryTagsLabel}: ${tags.join(", ")}`);
         }
-        if (String(memory?.chunkInfo || "").trim()) {
+        if (memory.chunkInfo !== null) {
             lines.push(`${text.memoryChunkInfoLabel}: ${collapseInlineWhitespace(memory.chunkInfo, 80)}`);
         }
     });
     return lines.join("\n");
 }
-async function appendExtraInfoToMessage(messageText, chatId, activePrompt) {
+/** Appends enabled attachments while retaining the exact prompt execution context. */
+async function appendExtraInfoToMessage(messageText, chatId, executionContext) {
     if (!stripMessageForMemorySearch(messageText)) {
         logExtraInfoInjectionInfo("append.skipped", "reason=empty_message");
         return null;
     }
-    const tags = await buildExtraInfoAttachmentTags(messageText, chatId, activePrompt);
+    const tags = await buildExtraInfoAttachmentTags(messageText, chatId, executionContext);
     if (!tags.length) {
         logExtraInfoInjectionInfo("append.skipped", "reason=no_attachment_tags");
         return null;
@@ -954,7 +962,8 @@ async function appendExtraInfoToMessage(messageText, chatId, activePrompt) {
     logExtraInfoInjectionInfo("append.completed", `attachment_count=${tags.length} result_length=${result.length}`);
     return result;
 }
-async function buildExtraInfoAttachmentTags(messageText, chatId, activePrompt) {
+/** Builds enabled attachment content within the configured injection deadline. */
+async function buildExtraInfoAttachmentTags(messageText, chatId, executionContext) {
     const settings = await loadSettings();
     if (!settings.masterEnabled || containsExtraInfoAttachment(messageText)) {
         logExtraInfoInjectionInfo("attachment_build.skipped", settings.masterEnabled ? "reason=attachment_already_present" : "reason=master_disabled");
@@ -989,7 +998,7 @@ async function buildExtraInfoAttachmentTags(messageText, chatId, activePrompt) {
         contentTasks.push(buildOptionalContent("notifications", resolveExtraInfoI18n().attachmentNotificationsTitle, buildNotificationsContent, deadlineAt));
     }
     if (settings.injectMemory) {
-        contentTasks.push(buildOptionalContent("memory", resolveExtraInfoI18n().attachmentMemoryTitle, () => buildMemoryContent(messageText, chatId, activePrompt), deadlineAt));
+        contentTasks.push(buildOptionalContent("memory", resolveExtraInfoI18n().attachmentMemoryTitle, () => buildMemoryContent(messageText, chatId, executionContext), deadlineAt));
     }
     const contentBlocks = await Promise.all(contentTasks);
     if (!contentBlocks.length) {

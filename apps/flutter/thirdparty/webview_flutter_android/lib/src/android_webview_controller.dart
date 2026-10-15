@@ -632,20 +632,9 @@ class AndroidWebViewController extends PlatformWebViewController {
 
   /// Decodes the JSON text returned by Android WebView into its JavaScript value.
   @override
-  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+  Future<Object?> runJavaScriptReturningResult(String javaScript) async {
     final String? result = await _webView.evaluateJavascript(javaScript);
-    if (result == null) {
-      throw ArgumentError(
-        'The JavaScript returned `null` or `undefined`, which is unsupported.',
-      );
-    }
-    final Object? decoded = jsonDecode(result);
-    if (decoded == null) {
-      throw ArgumentError(
-        'The JavaScript returned `null` or `undefined`, which is unsupported.',
-      );
-    }
-    return decoded;
+    return result == null ? null : jsonDecode(result);
   }
 
   @override

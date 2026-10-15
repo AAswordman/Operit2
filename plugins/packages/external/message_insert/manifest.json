@@ -2,6 +2,10 @@
   "schema_version": 1,
   "toolpkg_id": "com.operit.message_insert_bundle",
   "version": "0.3.0",
+  "api_version": "2.0.0",
+  "requires": [
+    { "id": "com.operit.character_cards", "min_version": "0.1.0" }
+  ],
   "main": "dist/main.js",
   "display_name": {
     "zh": "额外信息注入",

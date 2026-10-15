@@ -1,7 +1,5 @@
 // ignore_for_file: file_names
 
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -101,18 +99,18 @@ class SidebarDockPreferences {
   }
 
   /// Decodes one layout snapshot using the same schema as startup reads.
-  SidebarDockLayout? _decodeLayout(String? encoded) {
+  SidebarDockLayout? _decodeLayout(Object? encoded) {
     if (encoded == null) {
       return null;
     }
-    return SidebarDockLayout.fromJson(jsonDecode(encoded));
+    return SidebarDockLayout.fromJson(encoded);
   }
 
   /// Saves one sidebar layout through the shared Core preference store.
   Future<void> save(SidebarDockLayout layout) {
     return _clients.preferencesPreferenceStorageManager.setPreferences(
       fileName: _fileName,
-      values: <String, String>{_layoutKey: jsonEncode(layout.toJson())},
+      values: <String, Object?>{_layoutKey: layout.toJson()},
     );
   }
 }

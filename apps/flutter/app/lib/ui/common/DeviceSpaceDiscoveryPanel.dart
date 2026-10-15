@@ -266,13 +266,11 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       if (peer == null) {
         result = await _RemotePairDialog.show(context, clients: widget.clients);
       } else {
-        // LAN 候选不携带 token；免 token 准入由 runtime/Host 实际来源判断。
         final pending = await widget.clients.server.runtimeRemoteLinkService
             .startPairing(
               address: peer.address,
               nodeId: peer.nodeId,
               transport: peerEndpointTransport(peer.address),
-              token: null,
             );
         if (!mounted) {
           await widget.clients.server.runtimeRemoteLinkService.cancelPairing(
@@ -626,9 +624,10 @@ class _RemotePairDialog extends StatefulWidget {
 
 class _RemotePairDialogState extends State<_RemotePairDialog> {
   final TextEditingController _baseUrlController = TextEditingController();
-  final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
-  generated.PeerTransport _transport = generated.PeerTransport.http;
+  // Null leaves the carrier open: the core classifies the endpoint from one
+  // throwaway probe connection, so a bare `ip:port` input is enough.
+  generated.PeerTransport? _transport;
   generated.PendingPairing? _pairing;
   bool _busy = false;
   String? _error;
@@ -637,21 +636,14 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
   @override
   void dispose() {
     _baseUrlController.dispose();
-    _tokenController.dispose();
     _codeController.dispose();
     super.dispose();
   }
 
-  /// Starts manual pairing from an explicit address.
-  ///
-  /// The token stays optional: the receiving core decides by the actual
-  /// source address whether one is required, so same-LAN addresses pair
-  /// without it and remote addresses fail with the core's token-required
-  /// error until the user fills the field in.
+  /// Starts manual pairing from an explicit address using code confirmation.
   Future<void> _start() async {
     final l10n = AppLocalizations.of(context)!;
     final baseUrl = _baseUrlController.text.trim();
-    final token = _tokenController.text.trim();
     if (baseUrl.isEmpty) {
       setState(() {
         _error = '${l10n.settingsRuntimeBaseUrl}: ${l10n.required}';
@@ -664,12 +656,7 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
     });
     try {
       final pairing = await widget.clients.server.runtimeRemoteLinkService
-          .startPairing(
-            address: baseUrl,
-            nodeId: '',
-            token: token.isEmpty ? null : token,
-            transport: _transport,
-          );
+          .startPairing(address: baseUrl, nodeId: '', transport: _transport);
       if (mounted) {
         setState(() => _pairing = pairing);
       }
@@ -739,18 +726,12 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
               enabled: pairing == null,
               decoration: InputDecoration(
                 labelText: l10n.settingsRuntimeBaseUrl,
-                border: const OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _tokenController,
-              enabled: pairing == null,
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: l10n.settingsRuntimePairToken,
-                helperText: l10n.settingsRuntimePairTokenHint,
+                helperText: switch (_transport) {
+                  null => l10n.settingsRuntimeTransportAutoHint,
+                  generated.PeerTransport.tcp =>
+                    l10n.settingsRuntimeTcpAddressHint,
+                  _ => null,
+                },
                 border: const OutlineInputBorder(),
                 isDense: true,
               ),
@@ -940,13 +921,15 @@ class _RemotePairResult {
 class _LinkTransportSelector extends StatelessWidget {
   const _LinkTransportSelector({required this.value, required this.onChanged});
 
-  final generated.PeerTransport value;
-  final ValueChanged<generated.PeerTransport> onChanged;
+  final generated.PeerTransport? value;
+  final ValueChanged<generated.PeerTransport?> onChanged;
 
-  /// Builds the explicit Link carrier selector shared by pairing dialogs.
+  /// Builds the Link carrier selector shared by pairing dialogs; null picks
+  /// the auto-detected carrier from the address alone.
   @override
   Widget build(BuildContext context) {
-    return OperitFormStyles.dropdownButtonFormField<generated.PeerTransport>(
+    final l10n = AppLocalizations.of(context)!;
+    return OperitFormStyles.dropdownButtonFormField<generated.PeerTransport?>(
       context,
       initialValue: value,
       decoration: const InputDecoration(
@@ -954,21 +937,25 @@ class _LinkTransportSelector extends StatelessWidget {
         border: OutlineInputBorder(),
         isDense: true,
       ),
-      items: const <DropdownMenuItem<generated.PeerTransport>>[
+      items: <DropdownMenuItem<generated.PeerTransport?>>[
         DropdownMenuItem(
+          value: null,
+          child: Text(l10n.settingsRuntimeTransportAuto),
+        ),
+        const DropdownMenuItem(
           value: generated.PeerTransport.http,
           child: Text('HTTP'),
         ),
-        DropdownMenuItem(
+        const DropdownMenuItem(
           value: generated.PeerTransport.webSocket,
           child: Text('WebSocket'),
         ),
+        const DropdownMenuItem(
+          value: generated.PeerTransport.tcp,
+          child: Text('TCP'),
+        ),
       ],
-      onChanged: (selected) {
-        if (selected != null) {
-          onChanged(selected);
-        }
-      },
+      onChanged: onChanged,
     );
   }
 }

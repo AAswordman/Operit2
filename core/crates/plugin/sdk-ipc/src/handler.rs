@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream,
     CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushRequest, CoreWatchRequest,
 };
 use std::sync::Arc;
@@ -30,11 +30,11 @@ pub trait PluginSdkLinkTarget: Send + Sync {
 /// Shared target handle used by one SDK IPC server.
 pub type SharedPluginSdkLinkTarget = Arc<dyn PluginSdkLinkTarget>;
 
-/// Adapts any existing mutable/shared Core Link client into the SDK target.
+/// Adapts any existing shared Core Link client into the SDK target.
 #[async_trait(?Send)]
 impl<T> PluginSdkLinkTarget for T
 where
-    T: CoreLinkClient + CoreLinkSharedClient + Clone + Send + Sync + 'static,
+    T: CoreLinkSharedClient + Send + Sync + 'static,
 {
     /// Forwards a call through the existing shared Core Link implementation.
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
@@ -51,12 +51,11 @@ where
         CoreLinkSharedClient::watch(self, request).await
     }
 
-    /// Opens a push by cloning the existing mutable Core Link client.
+    /// Opens a push through the existing shared Core Link implementation.
     async fn openPush(
         &self,
         request: CorePushRequest,
     ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
-        let mut client = self.clone();
-        CoreLinkClient::openPush(&mut client, request).await
+        CoreLinkSharedClient::openPush(self, request).await
     }
 }

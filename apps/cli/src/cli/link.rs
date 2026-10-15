@@ -35,21 +35,13 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         Some("pair-start" | "pair-finish" | "pair-cancel" | "unpair" | "peers" | "prompts" | "listen") => {
             run_node_pairing_command(args).await
         }
-        Some("token") if args.len() == 2 && args[1] == "show" => {
-            let application = create_cli_core_application_without_space_sync("client").await?;
-            let token = application.localPairingToken()?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!({"token": token})); }
-            else { println!("{token}"); }
-            Ok(())
-        }
-        Some("token") => Err("usage: operit2 cli link token show".into()),
         Some("session") => run_link_session(&args[1..]).await,
         Some("discover") => run_link_discover_command(&args[1..]).await,
         Some("space") => run_link_space_command(&args[1..]).await,
         Some("doctor") => run_link_doctor_command(&args[1..]).await,
         Some("control") => run_link_control_command(&args[1..]).await,
         Some("stream-probe") => run_link_stream_probe_command(&args[1..]).await,
-        Some("edge-plugin") => run_link_edge_plugin_command(&args[1..]).await,
+        Some("edge-call") => run_link_edge_call_command(&args[1..]).await,
         _ => {
             print_link_usage();
             Ok(())
@@ -84,12 +76,8 @@ async fn run_node_pairing_command(args: &[String]) -> Result<(), String> {
 pub(crate) fn cli_listener_config(
     services: &operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService,
 ) -> Result<operit_node_runtime::PeerStateStore::PeerHostConfig, String> {
-    use operit_node_runtime::PeerStateStore::{PeerHostConfig, PeerHostPortMode};
-    let mut config = services.localHostConfig()?.unwrap_or(PeerHostConfig {
-        bindAddress: "0.0.0.0:37195".into(), token: uuid::Uuid::new_v4().to_string(),
-        transports: Vec::new(), discoveryEnabled: true, portMode: PeerHostPortMode::Fixed,
-        updatedAt: operit_host_api::TimeUtils::currentTimeMillis(),
-    });
+    use operit_node_runtime::PeerStateStore::PeerHostPortMode;
+    let mut config = services.localHostConfig()?.ok_or("Node listener preferences are not initialized")?;
     config.portMode = PeerHostPortMode::Automatic;
     Ok(config)
 }
@@ -103,12 +91,11 @@ async fn start_node_listener(application: &operit_core_application::CoreApplicat
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--bind" | "--token" | "--duration-ms" => {
+            "--bind" | "--duration-ms" => {
                 let flag = &args[index]; index += 1;
                 let value = args.get(index).ok_or_else(|| format!("Missing value for {flag}"))?;
                 match flag.as_str() {
                     "--bind" => config.bindAddress = value.clone(),
-                    "--token" => config.token = value.clone(),
                     _ => duration = Some(value.parse::<u64>().map_err(|e| e.to_string())?),
                 }
             },
@@ -211,13 +198,7 @@ async fn execute_link_session_command(application: &operit_core_application::Cor
     match args.first().map(String::as_str) {
         Some("space") => execute_link_space_command(application, &args[1..]).await,
         Some("control") => execute_link_control_command(application, &args[1..]).await,
-        Some("edge-plugin") => execute_link_edge_plugin_command(application, &args[1..]).await,
-        Some("token") if args.len() == 2 && args[1] == "show" => {
-            let token = application.localPairingToken()?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!({"token": token})); }
-            else { println!("{token}"); }
-            Ok(())
-        }
+        Some("edge-call") => execute_link_edge_call_command(application, &args[1..]).await,
         Some("pair-start" | "pair-finish" | "pair-cancel" | "unpair" | "peers" | "prompts") =>
             execute_node_pairing_command(application.nodeServices()?.peers().as_ref(), args).await,
         Some("chat-watch") if args.len() == 2 => {
@@ -250,34 +231,32 @@ async fn execute_link_session_command(application: &operit_core_application::Cor
             if !output.stderr.is_empty() { eprint!("{}", output.stderr); }
             Ok(())
         }
-        _ => Err("session commands: pair-start|pair-finish|pair-cancel|unpair|prompts|peers|token show|space|control|core|chat-watch <chat-id>|quit".into()),
+        _ => Err("session commands: pair-start|pair-finish|pair-cancel|unpair|prompts|peers|space|control|core|chat-watch <chat-id>|quit".into()),
     }
 }
 
+/// Executes pairing and listener commands through the shared node service.
 async fn execute_node_pairing_command(
     services: &dyn operit_node_runtime::RuntimePeerService::RuntimePeerService,
     args: &[String],
 ) -> Result<(), String> {
     use operit_node_runtime::NodeServices::{PeerEndpoint, PeerTransport as Transport};
+    // `auto` leaves the carrier open: the core classifies the endpoint from
+    // the address itself (URL scheme or one probe connection).
     let transport = |value: &str| match value {
-        "http" => Ok(Transport::Http),
-        "ws" => Ok(Transport::WebSocket),
-        "tcp" => Ok(Transport::Tcp),
-        "serial" => Ok(Transport::Serial),
-        "bluetooth" => Ok(Transport::Bluetooth),
-        _ => Err("transport must be http, ws, tcp, serial or bluetooth".to_string()),
+        "http" => Ok(Some(Transport::Http)),
+        "ws" => Ok(Some(Transport::WebSocket)),
+        "tcp" => Ok(Some(Transport::Tcp)),
+        "serial" => Ok(Some(Transport::Serial)),
+        "bluetooth" => Ok(Some(Transport::Bluetooth)),
+        "auto" => Ok(None),
+        _ => Err("transport must be auto, http, ws, tcp, serial or bluetooth".to_string()),
     };
     let value = match args {
         [command, node, address, mode] if command == "pair-start" => {
             let pending = services.startPairing(
                 PeerEndpoint { nodeId: node.clone(), address: address.clone() },
-                transport(mode)?,
-                None,
-            ).await.map_err(|e| e.to_string())?;
-            serde_json::to_value(pending).map_err(|e| e.to_string())?
-        }
-        [command, node, address, mode, flag, token] if command == "pair-start" && flag == "--token" => {
-            let pending = services.startPairing(PeerEndpoint { nodeId: node.clone(), address: address.clone() }, transport(mode)?, Some(token)).await.map_err(|e| e.to_string())?;
+                transport(mode)?).await.map_err(|e| e.to_string())?;
             serde_json::to_value(pending).map_err(|e| e.to_string())?
         }
         [command, id, code] if command == "pair-finish" => {
@@ -294,12 +273,15 @@ async fn execute_node_pairing_command(
         [command] if command == "prompts" => serde_json::to_value(services.pairingPrompts().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
         [command] if command == "peers" => serde_json::to_value(services.pairedPeers().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
         [command, mode] if command == "listen" => {
-            services.startListening(&[transport(mode)?]).await.map_err(|e| e.to_string())?;
+            // Listening binds concrete carriers; "auto" only dials.
+            let listenTransport = transport(mode)?
+                .ok_or_else(|| "listening requires an explicit transport, not auto".to_string())?;
+            services.startListening(&[listenTransport]).await.map_err(|e| e.to_string())?;
             tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?;
             services.stop().await.map_err(|e| e.to_string())?;
             serde_json::json!({"stopped": true})
         }
-        _ => return Err("link pair-start <node-id> <address> <transport> [--token <token>] | pair-finish <id> <code> | pair-cancel <id> | unpair <node-id> | peers | listen <transport>".into()),
+        _ => return Err("link pair-start <node-id> <address> <transport> | pair-finish <id> <code> | pair-cancel <id> | unpair <node-id> | peers | listen <transport>".into()),
     };
     if cli_json_mode() {
         emit_cli_json(value);
@@ -312,16 +294,20 @@ async fn execute_node_pairing_command(
     Ok(())
 }
 
-async fn run_link_edge_plugin_command(args: &[String]) -> Result<(), String> {
+async fn run_link_edge_call_command(args: &[String]) -> Result<(), String> {
     let application = create_cli_core_application_without_space_sync("client").await?;
-    let result = execute_link_edge_plugin_command(&application, args).await;
+    let result = execute_link_edge_call_command(&application, args).await;
     application.shutdown().await;
     result
 }
 
-async fn execute_link_edge_plugin_command(coreApplication: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: operit2 cli link edge-plugin <device> <list|invoke <plugin-id> <action> [json-args]>";
-    let device = args.first().ok_or(USAGE)?;
+async fn execute_link_edge_call_command(coreApplication: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: operit2 cli link edge-call <device> <edge-target> <method> [json-args]";
+    if !(3..=4).contains(&args.len()) || !args[1].starts_with("edge.") || args[1] == "edge.plugins"
+        || args[1].chars().any(char::is_whitespace) || args[2].is_empty() || args[2].chars().any(char::is_whitespace) {
+        return Err(USAGE.into());
+    }
+    let device = &args[0];
     let topology = coreApplication.accessServices().deviceSpaceTopology()?;
     let deviceId = network_device_id(&topology, device)?;
     // Restored credentials are not yet an authenticated online route. Give the
@@ -337,30 +323,15 @@ async fn execute_link_edge_plugin_command(coreApplication: &operit_core_applicat
         }
     }).await.map_err(|_| format!("Device did not become reachable: {deviceId}"))??;
     let client = operit_node_runtime::NodeClient::NodeClient::new(router, deviceId);
-    let mut proxy = operit_proxy_edge::EdgeProxy::new(client);
-    let json: serde_json::Value = match args.get(1).map(String::as_str) {
-        Some("list") if args.len() == 2 => serde_json::to_value(
-            proxy
-                .plugins()
-                .list()
-                .await
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?,
-        Some("invoke") if (4..=5).contains(&args.len()) => {
-            let value: serde_json::Value =
-                serde_json::from_str(args.get(4).map(String::as_str).unwrap_or("{}"))
-                    .map_err(|error| error.to_string())?;
-            let value = operit_link::toCoreValue(value).map_err(|error| error.to_string())?;
-            let result = proxy
-                .plugins()
-                .invoke(&args[2], &args[3], value)
-                .await
-                .map_err(|error| error.to_string())?;
-            operit_link::fromCoreValue(result).map_err(|error| error.to_string())?
-        }
-        _ => return Err(USAGE.into()),
-    };
+    let value: serde_json::Value = serde_json::from_str(args.get(3).map(String::as_str).unwrap_or("{}"))
+        .map_err(|error| error.to_string())?;
+    let request = operit_link::CoreCallRequest::new(
+        operit_link::nextCoreRouteRequestId("edgeCall"), &args[1], &args[2],
+        operit_link::toCoreValue(value).map_err(|error| error.to_string())?,
+    );
+    let response = operit_link::CoreLinkSharedClient::call(&client, request).await;
+    let json: serde_json::Value = operit_link::fromCoreValue(response.result.map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
     if cli_json_mode() {
         emit_cli_json(json);
     } else {
@@ -432,7 +403,7 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
     }
 }
 
-/// 通过共享节点服务发现局域网设备；不要求手输 token，不直接调用旧发现或会话客户端。
+/// Discovers devices through the shared node service for code-confirmed pairing.
 /// Runs the shared-Space doctor: read-only by default, `--repair` quarantines
 /// damaged journal lines after a backup and a shadow-replay selfcheck.
 async fn run_link_doctor_command(args: &[String]) -> Result<(), String> {
@@ -539,7 +510,7 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {    l
 async fn run_link_space_command(args: &[String]) -> Result<(), String> {
     let ownsSpaceMutation = matches!(
         args,
-        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "admit" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync")
+        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "admit" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync" | "preference-set" | "preference-delete")
     );
     let coreApplication = if ownsSpaceMutation {
         create_cli_core_application("client").await?
@@ -562,6 +533,11 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
                 println!("Device space: {}", space.spaceName);
                 println!("Devices: {}", space.members.len());
             }
+            Ok(())
+        }
+        Some("topology") if args.len() == 1 => {
+            let topology = service.deviceSpaceTopology()?;
+            emit_cli_json(serde_json::to_value(topology).map_err(|error| error.to_string())?);
             Ok(())
         }
         Some("rename") if args.len() == 2 => {
@@ -641,6 +617,25 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
         Some("cancel") if args.len() == 2 => {
             print_space_join_request(&service.cancelDeviceSpaceJoin(args[1].clone()).await?)
         }
+        Some("preferences") if args.len() == 2 => {
+            let preferences = service.devicePreferences(args[1].clone())?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!(preferences)); }
+            else { println!("{}", serde_json::to_string_pretty(&preferences).map_err(|e| e.to_string())?); }
+            Ok(())
+        }
+        Some("preference-set") if args.len() == 4 => {
+            let value = serde_json::from_str(&args[3]).map_err(|e| format!("Invalid preference JSON: {e}"))?;
+            service.setDevicePreference(args[1].clone(), args[2].clone(), Some(value))?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({"updated": true})); }
+            else { println!("Device preference updated"); }
+            Ok(())
+        }
+        Some("preference-delete") if args.len() == 3 => {
+            service.setDevicePreference(args[1].clone(), args[2].clone(), None)?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({"updated": true})); }
+            else { println!("Device preference deleted"); }
+            Ok(())
+        }
         Some("sync") if args.len() == 1 => {
             operit_node_runtime::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
                 Arc::new(coreApplication.nodeRuntime()), coreApplication.nodeRouter(),
@@ -656,7 +651,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             else { println!("Left device space; current space: {}", space.spaceName); }
             Ok(())
         }
-        _ => Err("usage: operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|requests <incoming|outgoing>|refresh <request-id>|approve <request-id> <assignment-version>|reject <request-id> <assignment-version>|cancel <request-id>|sync|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>".to_string()),
+        _ => Err("usage: operit2 cli link space <show|topology|status <device-name>|rename <name>|join <node-id>|requests <incoming|outgoing>|refresh <request-id>|approve <request-id> <assignment-version>|reject <request-id> <assignment-version>|cancel <request-id>|preferences <node-id>|preference-set <node-id> <key> <JSON>|preference-delete <node-id> <key>|sync|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>".to_string()),
     }
 }
 
@@ -752,7 +747,7 @@ fn run_link_control_identity_command(
     coreApplication: &operit_core_application::CoreApplication,
     args: &[String],
 ) -> Result<(), String> {
-    const USAGE: &str = "usage: operit2 cli link control identity <list|define <name> <all|audit|relay|storage|execute|network|view|manage-identities|assign-identity|approve|join>...|set <device-name> <identity-name>|clear <device-name>>";
+    const USAGE: &str = "usage: operit2 cli link control identity <list|define <name> <all|audit|relay|storage|execute|view|manage-identities|assign-identity|approve|join>...|set <device-name> <identity-name>|clear <device-name>>";
     match args {
         [command] if command == "list" => {
             let state = service.deviceSpaceControl()?;
@@ -1082,27 +1077,26 @@ fn find_core_stream_descriptor(value: &CoreValue) -> Option<CoreStreamDescriptor
 pub(crate) fn print_link_usage() {
     if cli_json_mode() {
         emit_cli_json(
-            serde_json::json!({ "usage": "operit2 cli link <discover|token|pair-start|pair-finish|pair-cancel|unpair|peers|listen|session|space|doctor|control|stream-probe|edge-plugin>" }),
+            serde_json::json!({ "usage": "operit2 cli link <discover|pair-start|pair-finish|pair-cancel|unpair|peers|listen|session|space|doctor|control|stream-probe|edge-call>" }),
         );
         return;
     }
     println!("operit2 cli link discover [--timeout-ms <ms>]");
     println!("operit2 cli link doctor [--repair]  # shared-Space health diagnosis and repair");
-    println!("operit2 cli link token show  # explicitly reveal the local pairing token");
-    println!("operit2 cli link pair-start <node-id> <address> <http|ws|tcp|serial|bluetooth> [--token <token>]");
+    println!("operit2 cli link pair-start <node-id> <address> <http|ws|tcp|serial|bluetooth>");
     println!("operit2 cli link pair-finish <pairing-id> <code>");
     println!("operit2 cli link pair-cancel <pairing-id> | unpair <node-id> | peers");
     println!("operit2 cli link listen <http|ws|tcp|serial|bluetooth>");
-    println!("operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>");
+    println!("operit2 cli link space <show|topology|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>");
     println!("operit2 cli link space requests <incoming|outgoing> | refresh <request-id> | cancel <request-id>");
     println!("operit2 cli link space approve|reject <request-id> <assignment-version> | sync");
+    println!("operit2 cli link space preferences <node-id> | preference-set <node-id> <key> <JSON> | preference-delete <node-id> <key>");
     println!("operit2 cli link session <http|ws|tcp> [--bind <host:port>] [--no-discovery]  # live interactive management");
     println!("operit2 cli link control <show|bootstrap|audit|identity|device|policy>");
-    println!("  identity list|define <name> <all|audit|relay|storage|execute|network|view|manage-identities|assign-identity|approve|join>...|set <device-name> <identity-name>|clear <device-name>");
+    println!("  identity list|define <name> <all|audit|relay|storage|execute|view|manage-identities|assign-identity|approve|join>...|set <device-name> <identity-name>|clear <device-name>");
     println!("  device list|admit <device-name>|remove <device-name>|disconnect <device-name>");
     println!("operit2 cli link stream-probe <node-id>");
-    println!("operit2 cli link edge-plugin <device> list");
-    println!("operit2 cli link edge-plugin <device> invoke <plugin-id> <action> [json-args]");
+    println!("operit2 cli link edge-call <device> <edge-target> <method> [json-args]");
 }
 
 #[cfg(test)]

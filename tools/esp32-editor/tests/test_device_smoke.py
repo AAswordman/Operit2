@@ -52,7 +52,7 @@ class DeviceSmokeTests(unittest.TestCase):
         self.assertEqual(result['authenticatedCalls'], 4)
         self.assertEqual(result['heapFreeDeltaBytes'], 0)
         self.assertEqual(len(calls), 6)
-        self.assertTrue(all(call[:2] == ['edge-plugin', 'real'] for call in calls[2:]))
+        self.assertTrue(all(call[:2] == ['edge-call', 'real'] for call in calls[2:]))
 
     def test_continuing_heap_growth_after_warmup_is_not_a_pass(self):
         responses = [[{'nodeId': 'real', 'outbound': True}], {'members': ['real']}]

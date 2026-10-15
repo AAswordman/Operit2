@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::mpsc;
 
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum CoreValue {
     Null,
     Bool(bool),
@@ -14,9 +14,28 @@ pub enum CoreValue {
     Unsigned(u64),
     Float(f64),
     String(String),
-    Bytes(Vec<u8>),
+    Bytes(crate::CoreBytes),
     List(Vec<CoreValue>),
     Map(BTreeMap<String, CoreValue>),
+}
+
+impl PartialEq for CoreValue {
+    /// Compares immutable shared ranges by identity before inspecting distinct content.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Null, Self::Null) => true,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Signed(a), Self::Signed(b)) => a == b,
+            (Self::Unsigned(a), Self::Unsigned(b)) => a == b,
+            (Self::Float(a), Self::Float(b)) => a == b,
+            (Self::String(a), Self::String(b)) => a == b,
+            (Self::Bytes(a), Self::Bytes(b)) =>
+                (a.len() == b.len() && a.as_ptr() == b.as_ptr()) || a == b,
+            (Self::List(a), Self::List(b)) => a == b,
+            (Self::Map(a), Self::Map(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl CoreValue {
@@ -313,7 +332,7 @@ impl Serialize for CoreValue {
             Self::Unsigned(value) => serializer.serialize_u64(*value),
             Self::Float(value) => serializer.serialize_f64(*value),
             Self::String(value) => serializer.serialize_str(value),
-            Self::Bytes(value) => serializer.serialize_bytes(value),
+            Self::Bytes(value) => crate::codec::serialize_shared_bytes(value, serializer),
             Self::List(values) => {
                 let mut sequence = serializer.serialize_seq(Some(values.len()))?;
                 for value in values {
@@ -392,12 +411,20 @@ impl<'de> Visitor<'de> for CoreValueVisitor {
 
     /// Decodes an owned binary value.
     fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E> {
-        Ok(CoreValue::Bytes(value))
+        Ok(CoreValue::Bytes(value.into()))
     }
 
     /// Decodes a borrowed binary value.
     fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E> {
-        Ok(CoreValue::Bytes(value.to_vec()))
+        Ok(CoreValue::Bytes(crate::CoreBytes::copy_from_slice(value)))
+    }
+
+    /// Resolves a native shared-buffer extension only inside its explicit decode scope.
+    fn visit_newtype_struct<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        let (tag, payload): (i8, serde_bytes::ByteBuf) = Deserialize::deserialize(deserializer)?;
+        crate::codec::resolve_shared_bytes(tag, &payload)
+            .map(CoreValue::Bytes)
+            .map_err(serde::de::Error::custom)
     }
 
     /// Decodes a sequence value.
@@ -731,8 +758,8 @@ impl CorePushRequest {
     }
 }
 
-/// One standard application Link request. Transports must expose only these
-/// three operation families; pairing/session control is not a Link operation.
+/// One standard Link request. Transports expose only these three operation
+/// families; node pairing and session control use ordinary Call messages.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "body")]
 pub enum CoreLinkRequest {
@@ -822,100 +849,6 @@ pub struct RoutedCoreRequest<T> {
     #[serde(default)]
     pub routeKind: RoutedCoreRequestKind,
     pub payload: T,
-}
-
-/// Carries one asynchronous standard PeerLink message across any authenticated carrier.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeerFrame {
-    pub messageId: String,
-    pub payload: PeerFramePayload,
-}
-
-/// Carries an ordered batch of PeerLink frames on batch-oriented carriers.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeerFrameBatch {
-    pub frames: Vec<PeerFrame>,
-}
-
-/// Defines every message exchanged by a bidirectional Space PeerLink.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "body")]
-pub enum PeerFramePayload {
-    Request(PeerRequest),
-    Response(PeerResponse),
-    WatchEvent(PeerWatchEvent),
-    WatchClosed(PeerWatchClosed),
-    Heartbeat(PeerHeartbeat),
-}
-
-/// Carries a sequence-numbered heartbeat probe or its exact acknowledgement.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "body")]
-pub enum PeerHeartbeat {
-    Probe { sequence: u64, sentAt: i64 },
-    Ack { sequence: u64, sentAt: i64 },
-}
-
-/// Defines one routed Core operation requested by an adjacent Space member.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "body")]
-pub enum PeerRequest {
-    Call(RoutedCoreRequest<CoreCallRequest>),
-    WatchSnapshot(RoutedCoreRequest<CoreWatchRequest>),
-    WatchOpen(PeerWatchOpenRequest),
-    WatchClose(PeerWatchCloseRequest),
-    PushOpen(PeerPushOpenRequest),
-    PushItem(CorePushItem),
-    PushClose(PeerPushCloseRequest),
-}
-
-/// Defines the typed response to one PeerLink request.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "body")]
-pub enum PeerResponse {
-    Call(CoreCallResponse),
-    WatchSnapshot(Result<CoreEvent, CoreLinkError>),
-    Operation(Result<(), CoreLinkError>),
-}
-
-/// Opens one routed watch under a stable subscription identifier.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeerWatchOpenRequest {
-    pub subscriptionId: String,
-    pub request: RoutedCoreRequest<CoreWatchRequest>,
-}
-
-/// Closes one routed watch opened on the same PeerLink.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeerWatchCloseRequest {
-    pub subscriptionId: String,
-}
-
-/// Delivers one routed watch event.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeerWatchEvent {
-    pub subscriptionId: String,
-    pub event: CoreEvent,
-}
-
-/// Reports that a routed watch ended before a completion event.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeerWatchClosed {
-    pub subscriptionId: String,
-    pub error: CoreLinkError,
-}
-
-/// Opens one routed push under a stable push identifier.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeerPushOpenRequest {
-    pub pushId: String,
-    pub request: RoutedCoreRequest<CorePushRequest>,
-}
-
-/// Closes one routed push opened on the same PeerLink.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeerPushCloseRequest {
-    pub pushId: String,
 }
 
 impl CoreWatchRequest {

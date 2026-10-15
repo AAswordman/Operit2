@@ -94,8 +94,7 @@ impl RemoteAnnouncementService {
             .getPreference(PREFERENCES, ACKNOWLEDGED_VERSION)
             .map_err(|error| error.to_string())?;
         if let Some(value) = acknowledged {
-            let version = value
-                .parse::<i32>()
+            let version = serde_json::from_value::<i32>(value)
                 .map_err(|error| format!("Invalid acknowledged announcement version: {error}"))?;
             if display.version <= version {
                 return Ok(None);
@@ -114,13 +113,13 @@ impl RemoteAnnouncementService {
             .getPreference(PREFERENCES, ACKNOWLEDGED_VERSION)
             .map_err(|error| error.to_string())?;
         if let Some(value) = current {
-            let acknowledged = value.parse::<i32>().map_err(|error| error.to_string())?;
+            let acknowledged = serde_json::from_value::<i32>(value).map_err(|error| error.to_string())?;
             if acknowledged >= version {
                 return Ok(());
             }
         }
         preferences
-            .setPreference(PREFERENCES, ACKNOWLEDGED_VERSION, &version.to_string())
+            .setPreference(PREFERENCES, ACKNOWLEDGED_VERSION, serde_json::json!(version))
             .map_err(|error| error.to_string())
     }
 

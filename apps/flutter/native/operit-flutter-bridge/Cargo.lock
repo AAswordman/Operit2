@@ -2145,6 +2145,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-edge-contract"
+version = "0.1.0"
+dependencies = [
+ "operit-link",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "operit-flutter-bridge"
 version = "0.1.0"
 dependencies = [
@@ -2293,6 +2302,7 @@ name = "operit-host-native-common"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "mdns-sd",
  "operit-host-api",
  "operit-host-native-filesystem",
@@ -2432,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "operit-js-bridge"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "aes",
  "base64",
@@ -2454,6 +2464,7 @@ name = "operit-link"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "operit-host-api",
  "rmp-serde",
  "serde",
@@ -2463,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "operit-local-models"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "bzip2-rs",
  "operit-host-api",
@@ -2477,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "operit-model"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "chrono",
  "operit-host-api",
@@ -2531,13 +2542,14 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "chacha20poly1305",
  "chrono",
  "json5",
  "operit-host-api",
  "operit-plugin-sdk-codegen",
+ "operit-plugin-theme",
  "regex",
  "rquickjs",
  "serde",
@@ -2551,7 +2563,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk-codegen"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "operit-rslink-codegen",
  "quote",
@@ -2562,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk-ipc"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "async-trait",
  "operit-host-api",
@@ -2573,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk-ipc-bridge"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "operit-host-api",
  "operit-link",
@@ -2581,8 +2593,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-plugin-theme"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "image",
+ "regex",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ttf-parser",
+ "zip",
+]
+
+[[package]]
 name = "operit-providers"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "async-trait",
  "base64",
@@ -2639,6 +2666,7 @@ dependencies = [
  "operit-plugin-sdk",
  "operit-plugin-sdk-codegen",
  "operit-plugin-sdk-ipc",
+ "operit-plugin-theme",
  "operit-providers",
  "operit-proxy-bridge",
  "operit-proxy-dart-codegen",
@@ -2703,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "aes",
  "async-trait",
@@ -2716,12 +2744,14 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
+ "operit-edge-contract",
  "operit-host-api",
  "operit-js-bridge",
  "operit-link",
  "operit-local-models",
  "operit-model",
  "operit-plugin-sdk",
+ "operit-plugin-theme",
  "operit-providers",
  "operit-route-macros",
  "operit-rslink-runtime",
@@ -2731,6 +2761,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rmp-serde",
+ "roxmltree",
  "rquickjs",
  "serde",
  "serde_bytes",
@@ -2763,13 +2794,14 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2",
+ "sqlparser",
  "thiserror 1.0.69",
  "uuid",
 ]
 
 [[package]]
 name = "operit-tools"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "aes",
  "async-trait",
@@ -2806,7 +2838,7 @@ dependencies = [
 
 [[package]]
 name = "operit-util"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 dependencies = [
  "chrono",
  "flate2",
@@ -3378,6 +3410,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "rquickjs"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3846,6 +3887,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlparser"
+version = "0.63.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3679862809bd1f92e563cf6fd820e28f39135303668001c10331d5027183e8b4"
+dependencies = [
+ "log",
+ "sqlparser_derive",
+]
+
+[[package]]
+name = "sqlparser_derive"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2905ae8e8148d8f7f5748ea95d1e949fa4fc1d7f5161547b758ad118b2e4b0aa"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3897,6 +3959,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
 dependencies = [
  "proc-macro2",
+ "quote",
  "unicode-ident",
 ]
 
@@ -4238,6 +4301,12 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "tungstenite"

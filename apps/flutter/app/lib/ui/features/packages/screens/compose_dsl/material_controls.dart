@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders material controls for Compose DSL nodes.
-extension _ComposeMaterialControls on _ComposeDslRenderer {
+extension _ComposeMaterialControls on _ComposeDslRendererState {
   /// Builds button for the Compose DSL renderer.
   Widget _button(BuildContext context, String type) {
     final contentChildren = _slotChildren(
@@ -77,12 +77,23 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
   Widget _surface(BuildContext context) {
     final radius = _borderRadius(node.props['shape']);
     final borderSide = _borderSide(context, node.props['border']);
-    final shape = borderSide == null && radius == null
-        ? null
-        : RoundedRectangleBorder(
-            borderRadius: radius ?? BorderRadius.zero,
-            side: borderSide ?? BorderSide.none,
-          );
+    final rawShape = node.props['shape'];
+    final kind = _normalizeToken(
+      _string(
+        rawShape is Map ? rawShape['type'] ?? rawShape['kind'] : rawShape,
+      ),
+    );
+    final ShapeBorder? shape = switch (kind) {
+      'pill' => StadiumBorder(side: borderSide ?? BorderSide.none),
+      'circle' => CircleBorder(side: borderSide ?? BorderSide.none),
+      _ =>
+        borderSide == null && radius == null
+            ? null
+            : RoundedRectangleBorder(
+                borderRadius: radius ?? BorderRadius.zero,
+                side: borderSide ?? BorderSide.none,
+              ),
+    };
     final child = _surfaceContent(
       context,
       contentColor: _color(context, node.props['contentColor']),
@@ -112,6 +123,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
           0,
       shape: shape,
       borderRadius: shape == null ? radius : null,
+      clipBehavior: shape == null ? Clip.none : Clip.antiAlias,
       child: surfaceChild,
     );
   }
@@ -360,6 +372,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
       onTextInput: onTextInput,
       webViewHostContext: webViewHostContext,
       splitMarkdownContent: splitMarkdownContent,
+      dispatchOnLoad: widget.dispatchOnLoad,
       nodePath: childPath,
     );
   }
@@ -392,6 +405,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
       case 'FilledIconToggleButton':
         return IconButton.filled(
           onPressed: onPressed,
+          tooltip: node.props['tooltip'] as String?,
           isSelected: toggle ? checked : null,
           selectedIcon: selectedIcon,
           style: style,
@@ -401,6 +415,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
       case 'FilledTonalIconToggleButton':
         return IconButton.filledTonal(
           onPressed: onPressed,
+          tooltip: node.props['tooltip'] as String?,
           isSelected: toggle ? checked : null,
           selectedIcon: selectedIcon,
           style: style,
@@ -410,6 +425,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
       case 'OutlinedIconToggleButton':
         return IconButton.outlined(
           onPressed: onPressed,
+          tooltip: node.props['tooltip'] as String?,
           isSelected: toggle ? checked : null,
           selectedIcon: selectedIcon,
           style: style,
@@ -418,6 +434,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
       default:
         return IconButton(
           onPressed: onPressed,
+          tooltip: node.props['tooltip'] as String?,
           isSelected: toggle ? checked : null,
           selectedIcon: selectedIcon,
           style: style,
@@ -436,13 +453,19 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
           ? BorderRadius.circular(12)
           : null,
     );
-    if (!hasExplicitSize && shape == null) {
+    if (!hasExplicitSize &&
+        shape == null &&
+        node.props['contentPadding'] == null) {
       return null;
     }
     return IconButton.styleFrom(
       shape: shape,
       minimumSize: hasExplicitSize ? Size.zero : null,
-      padding: hasExplicitSize ? EdgeInsets.zero : null,
+      padding: node.props['contentPadding'] != null
+          ? _edgeInsetsFromValue(node.props['contentPadding'])
+          : hasExplicitSize
+          ? EdgeInsets.zero
+          : null,
       tapTargetSize: hasExplicitSize ? MaterialTapTargetSize.shrinkWrap : null,
     );
   }

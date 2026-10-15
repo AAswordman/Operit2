@@ -1,6 +1,6 @@
 [package]
 name = "operit-runtime"
-version = "2.0.0-preview.14"
+version = "2.0.0-preview.15"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
@@ -30,10 +30,12 @@ operit-model = { path = "../../foundation/model" }
 operit-plugin-sdk = { path = "../../plugin/sdk" }
 operit-providers = { path = "../../provider/services" }
 operit-store = { path = "../../persistence/store" }
+operit-plugin-theme = { path = "../../plugin/theme" }
 operit-tools = { path = "../../tool/services", default-features = false }
 operit-util = { path = "../../foundation/util" }
 reqwest.workspace = true
 regex.workspace = true
+roxmltree = "0.21"
 rmp-serde = "1"
 serde.workspace = true
 serde_bytes = "0.11"
@@ -47,8 +49,10 @@ zip.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true
+operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 
 [build-dependencies]
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true

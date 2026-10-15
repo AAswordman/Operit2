@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::ChatMessage::ChatMessage;
@@ -9,6 +11,7 @@ pub struct MessageVariantEntity {
     pub messageTimestamp: i64,
     pub variantIndex: i32,
     pub roleName: String,
+    pub pluginExtensions: BTreeMap<String, serde_json::Value>,
     pub provider: String,
     pub modelName: String,
     pub inputTokens: i64,
@@ -30,11 +33,8 @@ impl MessageVariantEntity {
     ) -> ChatMessage {
         ChatMessage {
             parts,
-            roleName: if self.roleName.is_empty() {
-                baseMessage.roleName
-            } else {
-                self.roleName.clone()
-            },
+            roleName: self.roleName.clone(),
+            pluginExtensions: self.pluginExtensions.clone(),
             selectedVariantIndex: self.variantIndex,
             variantCount,
             provider: self.provider.clone(),
@@ -50,6 +50,7 @@ impl MessageVariantEntity {
         }
     }
 
+    /// Captures an independent revision including its own plugin extension snapshot.
     pub fn fromChatMessage(
         chatId: String,
         messageTimestamp: i64,
@@ -63,6 +64,7 @@ impl MessageVariantEntity {
             messageTimestamp,
             variantIndex,
             roleName: message.roleName,
+            pluginExtensions: message.pluginExtensions,
             provider: message.provider,
             modelName: message.modelName,
             inputTokens: message.inputTokens,

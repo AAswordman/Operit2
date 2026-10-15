@@ -317,6 +317,14 @@ impl CoreLinkSharedClient for PluginSdkClient {
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         PluginSdkClient::watch(self, request).await
     }
+
+    /// Opens one IPC input stream without requiring mutable client ownership.
+    async fn openPush(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
+        PluginSdkClient::openPush(self, request).await
+    }
 }
 
 struct PluginSdkPushSession {

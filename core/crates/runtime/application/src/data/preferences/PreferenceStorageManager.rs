@@ -1,3 +1,4 @@
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 use operit_store::PreferencesDataStore::{
@@ -19,7 +20,7 @@ impl PreferenceStorageManager {
         &self,
         fileName: &str,
         key: &str,
-    ) -> Result<Option<String>, PreferencesDataStoreError> {
+    ) -> Result<Option<Value>, PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         let key = normalizePreferenceKey(key)?;
         Ok(preferencesDataStore(&fileName)
@@ -33,7 +34,7 @@ impl PreferenceStorageManager {
         &self,
         fileName: &str,
         keys: Vec<String>,
-    ) -> Result<BTreeMap<String, String>, PreferencesDataStoreError> {
+    ) -> Result<BTreeMap<String, Value>, PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         let preferences = preferencesDataStore(&fileName).data()?;
         let mut values = BTreeMap::new();
@@ -50,11 +51,11 @@ impl PreferenceStorageManager {
     pub fn preferencesFlow(
         &self,
         fileName: &str,
-    ) -> Result<Flow<BTreeMap<String, String>>, PreferencesDataStoreError> {
+    ) -> Result<Flow<BTreeMap<String, Value>>, PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         Ok(preferencesDataStore(&fileName)
             .dataFlow()
-            .map(|preferences| preferences.entries().into_iter().collect()))
+            .map(|preferences| preferences.entries().into_iter().filter(|(key, _)| key != operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME).collect()))
     }
 
     /// Writes one value to a named custom preference file.
@@ -62,12 +63,12 @@ impl PreferenceStorageManager {
         &self,
         fileName: &str,
         key: &str,
-        value: &str,
+        value: Value,
     ) -> Result<(), PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         let key = normalizePreferenceKey(key)?;
         preferencesDataStore(&fileName).edit(|preferences| {
-            preferences.set(&stringPreferencesKey(&key), value.to_string());
+            preferences.set(&stringPreferencesKey(&key), value);
         })
     }
 
@@ -75,7 +76,7 @@ impl PreferenceStorageManager {
     pub fn setPreferences(
         &self,
         fileName: &str,
-        values: BTreeMap<String, String>,
+        values: BTreeMap<String, Value>,
     ) -> Result<(), PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         let mut normalizedValues = BTreeMap::new();
@@ -125,6 +126,7 @@ impl PreferenceStorageManager {
         let fileName = normalizePreferenceFileName(fileName)?;
         preferencesDataStore(&fileName).edit(|preferences| {
             for (key, _) in preferences.entries() {
+                if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
                 preferences.remove(&stringPreferencesKey(&key));
             }
         })
@@ -133,6 +135,14 @@ impl PreferenceStorageManager {
 
 /// Opens the shared host-backed store for one validated custom preference file.
 fn preferencesDataStore(fileName: &str) -> PreferencesDataStore {
+    let storage = defaultRuntimeStorageHost();
+    match fileName {
+        "user_preferences.preferences.json" => return super::UserPreferencesManager::UserPreferencesManager::store(storage),
+        "sidebar_dock.preferences.json" => return super::SidebarDockPreferences::SidebarDockPreferences::store(storage),
+        "onboarding_preferences" => return super::OnboardingPreferences::OnboardingPreferences::store(storage),
+        "remote_announcement_preferences" => return super::RemoteAnnouncementPreferences::RemoteAnnouncementPreferences::store(storage),
+        _ => {}
+    }
     PreferencesDataStore::newWithStorage(
         defaultRuntimeStorageHost(),
         OperitPaths::customPreferenceStoragePath(fileName)
@@ -159,6 +169,9 @@ fn normalizePreferenceFileName(fileName: &str) -> Result<String, PreferencesData
 /// Validates and normalizes one custom preference key.
 fn normalizePreferenceKey(key: &str) -> Result<String, PreferencesDataStoreError> {
     let key = key.trim();
+    if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME {
+        return Err(PreferencesDataStoreError::Message("The schema version is owned by its preference module".into()));
+    }
     if key.is_empty() {
         return Err(PreferencesDataStoreError::Message(
             "preference key must not be blank".to_string(),

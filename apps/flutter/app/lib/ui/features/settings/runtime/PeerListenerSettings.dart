@@ -70,7 +70,7 @@ class _PeerListenerSettingsDialogState
   }
 }
 
-/// Manages node-local authentication, discovery, and explicit listener binding.
+/// Manages node-local discovery, and explicit listener binding.
 class PeerListenerSettings extends StatefulWidget {
   /// Creates the node-local connection settings panel.
   const PeerListenerSettings({
@@ -92,7 +92,6 @@ class PeerListenerSettings extends StatefulWidget {
 class _PeerListenerSettingsState extends State<PeerListenerSettings> {
   final _bindHost = TextEditingController();
   final _bindPort = TextEditingController();
-  final _token = TextEditingController();
   Set<PeerTransport> _transports = {};
   PeerListenerCapabilities? _capabilities;
   PeerHostPortMode? _portMode;
@@ -110,46 +109,12 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
     });
   }
 
-  /// Releases the address and credential text controllers.
+  /// Releases the address text controllers.
   @override
   void dispose() {
     _bindHost.dispose();
     _bindPort.dispose();
-    _token.dispose();
     super.dispose();
-  }
-
-  /// Copies the current listener token to the system clipboard.
-  Future<void> _copyToken() async {
-    final l10n = AppLocalizations.of(context)!;
-    await Clipboard.setData(ClipboardData(text: _token.text));
-    if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.settingsPeerTokenCopied)));
-    }
-  }
-
-  /// Rotates the listener token through the runtime preference operation.
-  Future<void> _refreshToken() async {
-    if (_busy || !_loaded) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    widget.onBusyChanged?.call(true);
-    try {
-      final token = await widget.clients.server.runtimeRemoteLinkService
-          .refreshLocalPairingToken();
-      if (mounted) setState(() => _token.text = token);
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-        widget.onBusyChanged?.call(false);
-      }
-    }
   }
 
   /// Loads the persisted listener configuration into the settings form.
@@ -188,7 +153,6 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
     if (_busy || !_loaded || !widget.enabled) return false;
     final l10n = AppLocalizations.of(context)!;
     final discoverable = _discoverable;
-    final appliedToken = _token.text.trim();
     final activeTransports = _transports.where(_supports).toList();
     final activeDiscovery =
         discoverable && _capabilities!.discoveryAdvertisement;
@@ -214,10 +178,6 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       setState(() => _error = l10n.settingsPeerPortRequired);
       return false;
     }
-    if (appliedToken.isEmpty) {
-      setState(() => _error = l10n.settingsPeerTokenRequired);
-      return false;
-    }
     setState(() {
       _busy = true;
       _error = null;
@@ -227,7 +187,6 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
     try {
       final config = PeerHostConfig(
         bindAddress: _composeBindAddress(host, portText),
-        token: appliedToken,
         transports: _transports.toList(),
         discoveryEnabled: discoverable,
         portMode: _portMode!,
@@ -265,7 +224,6 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
     final parts = _splitBindAddress(config.bindAddress);
     _bindHost.text = parts.host;
     _bindPort.text = parts.port;
-    _token.text = config.token;
     _transports = config.transports.toSet();
     _portMode = config.portMode;
     _discoverable = config.discoveryEnabled;
@@ -326,36 +284,6 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
           onChanged: enabled && _capabilities!.discoveryAdvertisement
               ? (value) => setState(() => _discoverable = value)
               : null,
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8, bottom: 4),
-          child: TextField(
-            controller: _token,
-            readOnly: true,
-            enabled: enabled,
-            decoration: InputDecoration(
-              labelText: l10n.settingsPeerToken,
-              helperText: l10n.settingsPeerTokenHelp,
-              helperMaxLines: 2,
-              isDense: true,
-              border: const OutlineInputBorder(),
-              suffixIcon: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: l10n.settingsPeerCopyToken,
-                    onPressed: enabled ? _copyToken : null,
-                    icon: const Icon(Icons.copy_outlined),
-                  ),
-                  IconButton(
-                    tooltip: l10n.settingsPeerRefreshToken,
-                    onPressed: enabled ? _refreshToken : null,
-                    icon: const Icon(Icons.refresh_rounded),
-                  ),
-                ],
-              ),
-            ),
-          ),
         ),
         ExpansionTile(
           dense: true,

@@ -74,7 +74,6 @@ pub struct CoreSpaceDevicePresence {
     pub nodeId: String,
     pub active: bool,
     pub baseUrl: String,
-    pub tokenHash: String,
     pub version: String,
     pub updatedAt: i64,
 }
@@ -617,14 +616,14 @@ impl CoreSpaceStore {
                 continue;
             }
             let preferences =
-                PreferencesDataStore::newWithStorage(self.storage.clone(), entry.path.clone())
+                self.recordStore(entry.path.clone())
                     .data()
                     .map_err(|error| error.to_string())?;
             let encoded = preferences
                 .get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
                 .ok_or_else(|| format!("Device space profile record is empty: {}", entry.path))?;
             let profile: CoreSpaceDeviceProfile =
-                serde_json::from_str(encoded).map_err(|error| error.to_string())?;
+                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
             validateDeviceProfile(&profile)?;
             profiles.insert(profile.nodeId.clone(), profile);
         }
@@ -687,7 +686,6 @@ impl CoreSpaceStore {
         &self,
         active: bool,
         baseUrl: String,
-        tokenHash: String,
         version: String,
     ) -> Result<CoreSpaceDevicePresence, String> {
         let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
@@ -695,7 +693,6 @@ impl CoreSpaceStore {
             nodeId: identity.nodeId,
             active,
             baseUrl,
-            tokenHash,
             version,
             updatedAt: currentTimeMillis(),
         };
@@ -725,14 +722,14 @@ impl CoreSpaceStore {
                 continue;
             }
             let preferences =
-                PreferencesDataStore::newWithStorage(self.storage.clone(), entry.path.clone())
+                self.recordStore(entry.path.clone())
                     .data()
                     .map_err(|error| error.to_string())?;
             let encoded = preferences
                 .get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
                 .ok_or_else(|| format!("Device space presence record is empty: {}", entry.path))?;
             let presence: CoreSpaceDevicePresence =
-                serde_json::from_str(encoded).map_err(|error| error.to_string())?;
+                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
             validateDevicePresence(&presence)?;
             presences.insert(presence.nodeId.clone(), presence);
         }
@@ -1101,14 +1098,14 @@ impl CoreSpaceStore {
                 continue;
             }
             let preferences =
-                PreferencesDataStore::newWithStorage(self.storage.clone(), entry.path.clone())
+                self.recordStore(entry.path.clone())
                     .data()
                     .map_err(|error| error.to_string())?;
             let encoded = preferences
                 .get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
                 .ok_or_else(|| format!("Device space member record is empty: {}", entry.path))?;
             let record: CoreSpaceMemberRecord =
-                serde_json::from_str(encoded).map_err(|error| error.to_string())?;
+                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
             validateMemberRecord(&record)?;
             records.insert(record.nodeId.clone(), record);
         }
@@ -1121,7 +1118,7 @@ impl CoreSpaceStore {
         let mut preferences = emptyPreferences();
         preferences.set(
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
-            serde_json::to_string(record).map_err(|error| error.to_string())?,
+            serde_json::to_value(record).map_err(|error| error.to_string())?,
         );
         self.syncedMemberStore(&record.nodeId)
             .replaceRecoverably(preferences)
@@ -1199,7 +1196,7 @@ impl CoreSpaceStore {
                 continue;
             }
             let preferences =
-                PreferencesDataStore::newWithStorage(self.storage.clone(), entry.path.clone())
+                self.recordStore(entry.path.clone())
                     .data()
                     .map_err(|error| error.to_string())?;
             let encoded = preferences
@@ -1208,7 +1205,7 @@ impl CoreSpaceStore {
                     format!("Device space connection record is empty: {}", entry.path)
                 })?;
             let record: CoreSpaceTopologyRecord =
-                serde_json::from_str(encoded).map_err(|error| error.to_string())?;
+                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
             validateTopologyRecord(&record)?;
             records.insert(record.nodeId.clone(), record);
         }
@@ -1221,7 +1218,7 @@ impl CoreSpaceStore {
         let mut preferences = emptyPreferences();
         preferences.set(
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
-            serde_json::to_string(record).map_err(|error| error.to_string())?,
+            serde_json::to_value(record).map_err(|error| error.to_string())?,
         );
         self.recordStore(
             format!(
@@ -1240,7 +1237,7 @@ impl CoreSpaceStore {
         let mut preferences = emptyPreferences();
         preferences.set(
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
-            serde_json::to_string(presence).map_err(|error| error.to_string())?,
+            serde_json::to_value(presence).map_err(|error| error.to_string())?,
         );
         self.recordStore(
             format!(
@@ -1259,7 +1256,7 @@ impl CoreSpaceStore {
         let mut preferences = emptyPreferences();
         preferences.set(
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
-            serde_json::to_string(profile).map_err(|error| error.to_string())?,
+            serde_json::to_value(profile).map_err(|error| error.to_string())?,
         );
         self.recordStore(
             format!(
@@ -1278,12 +1275,25 @@ impl CoreSpaceStore {
         )
     }
 
+    /// Opens versioned complete Space records using the declared storage scope.
     fn recordStore(&self, path: impl Into<String>) -> PreferencesDataStore {
-        if self.recordSyncOperations {
+        let store = if self.recordSyncOperations {
             PreferencesDataStore::newWithStorage(self.storage.clone(), path)
         } else {
             (*CoreNodeStateStore::newWithStorage(self.storage.clone(), path)).clone()
-        }
+        };
+        store.withSchema(2, |version, preferences| match version {
+            0 => Ok(()),
+            1 => {
+                let key = stringPreferencesKey(CORE_SPACE_RECORD_KEY);
+                if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                    let record: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&encoded)?;
+                    preferences.set(&key, serde_json::Value::Object(record));
+                }
+                Ok(())
+            }
+            from => Err(crate::PreferencesDataStore::PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        })
     }
 
 }
@@ -1377,7 +1387,6 @@ fn validateDevicePresence(presence: &CoreSpaceDevicePresence) -> Result<(), Stri
     validateNodeId(&presence.nodeId)?;
     if presence.active {
         validateDevicePresenceField("base URL", &presence.baseUrl)?;
-        validateDevicePresenceField("token hash", &presence.tokenHash)?;
         validateDevicePresenceField("version", &presence.version)?;
     }
     if presence.updatedAt <= 0 {
@@ -2309,13 +2318,15 @@ mod tests {
         sourcePolicy.initializeCurrentSpace().unwrap();
         addTestSpaceMember(&sourceSpace, "projection-member");
         sourcePolicy.admitMember("projection-member".into()).unwrap();
-        sourcePolicy.setIdentity(NetworkControlIdentityAssignment { nodeId: "projection-member".into(), roleId: "runner".into() }).unwrap();
+        sourcePolicy.setIdentity(NetworkControlIdentityAssignment { nodeId: "projection-member".into(), roleId: "edge".into() }).unwrap();
         let sourceLog = SyncOperationStore::new(source.clone(), RUNTIME_SYNC_DIR_PATH);
         let business = sourceLog.appendLocalOperation(&CoreNodeIdentityStore::new(source.clone()).initialize().unwrap().nodeId, NewSyncOperation {
             domain: "chat".into(), entityType: "test".into(), entityId: "older-message".into(),
             operation: "write".into(), semantics: SyncOperationSemantics::Transaction, payload: serde_json::json!({}),
         }).unwrap();
-        sourcePolicy.setIdentity(NetworkControlIdentityAssignment { nodeId: "projection-member".into(), roleId: "storage".into() }).unwrap();
+        sourcePolicy.defineRole(NetworkControlRole { roleId: "replica".into(), displayName: "Test replica".into(),
+            capabilities: BTreeSet::from(["storage.provide".into()]) }).unwrap();
+        sourcePolicy.setIdentity(NetworkControlIdentityAssignment { nodeId: "projection-member".into(), roleId: "replica".into() }).unwrap();
         let receiver = Arc::new(MemoryStorageHost::default());
         CoreNodeIdentityStore::new(receiver.clone()).writeNodeId("projection-member".into()).unwrap();
         let receiverSpace = CoreSpaceStore::newNodeLocal(receiver.clone());
@@ -2379,11 +2390,8 @@ mod tests {
             .expect("administrator must admit a member");
 
         assert!(control
-            .nodeHasCapability("peer-member", "network.user", None)
-            .expect("default user capability must materialize"));
-        assert!(control
-            .nodeHasCapability("peer-member", "chat.read", None)
-            .expect("default user chat read capability must materialize"));
+            .nodeHasCapability("peer-member", "network.devices.view", None)
+            .expect("default user device view capability must materialize"));
         assert!(!control
             .nodeHasCapability("peer-member", "storage.provide", None)
             .expect("default user storage capability must be evaluated"),
@@ -2411,15 +2419,19 @@ mod tests {
         control
             .admitMember("peer-runner".to_string())
             .expect("administrator must admit a member");
+        control.defineRole(NetworkControlRole {
+            roleId: "history-reader".into(), displayName: "History reader".into(),
+            capabilities: BTreeSet::from(["network.audit.read".into()]),
+        }).unwrap();
         control
             .setIdentity(NetworkControlIdentityAssignment {
                 nodeId: "peer-runner".to_string(),
-                roleId: "auditor".to_string(),
+                roleId: "history-reader".to_string(),
             })
-            .expect("administrator must grant auditor role");
+            .expect("administrator must grant custom history reader role");
         assert!(control
             .nodeHasCapability("peer-runner", "network.audit.read", None)
-            .expect("auditor capability must materialize"));
+            .expect("audit capability must materialize"));
 
         control
             .removeMember("peer-runner".to_string())
@@ -2430,10 +2442,10 @@ mod tests {
 
         assert!(!control
             .nodeHasCapability("peer-runner", "network.audit.read", None)
-            .expect("readmitted member must not regain auditor capability"));
+            .expect("readmitted member must not regain audit capability"));
         assert!(control
-            .nodeHasCapability("peer-runner", "network.user", None)
-            .expect("readmitted member must receive ordinary capability"));
+            .nodeHasCapability("peer-runner", "network.devices.view", None)
+            .expect("readmitted member must receive device view capability"));
         assert!(control
             .nodeHasCapability("peer-runner", "runtime.execute", None)
             .expect("readmitted member must receive default execution capability"));

@@ -1,4 +1,13 @@
+export interface CoreAccessState {
+    pairing?: {pairingId: string; peerNodeId: string} | null;
+    request?: {requestId: string; status: string; spaceName: string; error?: string | null} | null;
+    joined?: boolean;
+    nodeId?: string;
+}
+
 export interface DeviceState {
+    sessionId?: string;
+    coreAccess?: CoreAccessState;
     error?: string;
     address?: string;
     scene?: {
@@ -31,11 +40,14 @@ export interface DeviceState {
         testing?: boolean;
         error?: string | null;
     };
+    speech?: {ready?: boolean; phase?: number; requestId?: string | null; resultId?: number; text?: string | null; error?: string | null};
+    playback?: {type: string; id: string; audio?: string; contentType?: string}[];
     running?: boolean;
     connected?: boolean;
     paired?: boolean;
     pairingCode?: string;
     spaceState?: string;
+    deviceSpace?: {phase?: number; status?: string; candidates?: string[]; pendingJoin?: boolean};
     spaceJoinPrompt?: string;
     spaceJoinBusy?: boolean;
     spaceJoinRequestId?: string;
@@ -45,11 +57,15 @@ export interface DeviceState {
     chatTask?: string;
     chat?: {
         connected?: boolean;
+        hasOlder?: boolean;
+        hasNewer?: boolean;
         chatId?: string;
         messages?: {
             sender: string;
             text: string;
         }[];
+        conversationsLoading?: boolean;
+        conversationsError?: string | null;
         conversations?: {
             id: string;
             title: string;
@@ -58,6 +74,8 @@ export interface DeviceState {
         error?: string;
     };
     chatSendResult?: {
+        id: number;
+        sendId?: string | null;
         ok: boolean;
         error?: string;
     } | null;
@@ -70,12 +88,15 @@ export function simulatorViewState(state: {
 }): DeviceState {
     const device = state.ready === true ? state.device : null;
     return {
+        sessionId: device?.sessionId,
         running: state.ready === true, connected: device?.chat?.connected === true, paired: device?.paired === true,
         pairingCode: device?.pairingCode ?? '', spaceState: simulatorConnectionLabel(device),
         spaceJoinPrompt: device?.spaceJoinPrompt ?? '', spaceJoinBusy: device?.spaceJoinBusy ?? false,
         spaceJoinRequestId: device?.spaceJoinRequestId,
         spaceJoinAssignmentVersion: device?.spaceJoinAssignmentVersion,
+        deviceSpace: device?.deviceSpace,
         chatPreview: device?.chatPreview ?? '尚未连接对话',
+        speech: device?.speech, playback: device?.playback,
         scene: device?.scene,
         plugins: device?.plugins, chat: device?.chat, chatScreen: device?.chatScreen, chatTask: device?.chatTask,
         chatSendResult: device?.chatSendResult,
@@ -95,7 +116,6 @@ export interface SimulatorStatus {
     ready?: boolean;
     running?: boolean;
     output?: string;
-    token?: string;
     device?: DeviceState | null;
 }
 

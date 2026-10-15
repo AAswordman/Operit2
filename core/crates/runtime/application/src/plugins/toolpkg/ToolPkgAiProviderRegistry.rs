@@ -1,21 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgAiProviderRegistration;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 
 pub struct ToolPkgAiProviderRegistry;
 
 impl ToolPkgAiProviderRegistry {
-    /// Registers package runtime updates for one application runtime.
-    pub fn register(runtime: ToolPkgBridgeRuntime) {
-        let manager = runtime.package_manager();
-        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
-            ToolPkgAiProviderRegistry::syncToolPkgRegistrations(activeContainers);
-        }));
-    }
-
     /// Returns a registered ToolPkg AI provider by identifier.
     pub fn get(providerId: &str) -> Option<ToolPkgAiProviderRegistration> {
         providersById()
@@ -37,8 +28,9 @@ impl ToolPkgAiProviderRegistry {
         providers
     }
 
+    /// Synchronizes this bridge from the committed active package catalog.
     #[allow(non_snake_case)]
-    pub fn syncToolPkgRegistrations(activeContainers: Vec<ToolPkgContainerRuntime>) {
+    pub fn syncToolPkgRegistrations(activeContainers: &[ToolPkgContainerRuntime]) {
         let providers = activeContainers
             .iter()
             .flat_map(|runtime| {

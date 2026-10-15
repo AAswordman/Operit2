@@ -1174,6 +1174,7 @@ fn render_media_link_xml(content: &str, lines: &mut Vec<Line<'static>>) {
     ]));
 }
 
+/// Maps generic tool categories and qualified plugin calls to compact transcript symbols.
 fn tool_leading_symbol(tool_name: &str) -> &'static str {
     if tool_name.split_once(':').is_some() {
         return "→";
@@ -1202,7 +1203,7 @@ fn tool_leading_symbol(tool_name: &str) -> &'static str {
         | "browser_file_upload"
         | "read_environment_variable"
         | "write_environment_variable" => "▣",
-        "search_tools" | "find_chat" | "query_memory" | "query_memory_links" => "⌕",
+        "search_tools" | "find_chat" => "⌕",
         "get_terminal_info"
         | "create_terminal_session"
         | "execute_in_terminal_session"
@@ -1230,7 +1231,6 @@ fn tool_leading_symbol(tool_name: &str) -> &'static str {
         | "delete_chat"
         | "send_message_to_ai"
         | "send_message_to_ai_streaming"
-        | "list_character_cards"
         | "get_chat_messages"
         | "toast"
         | "send_notification"

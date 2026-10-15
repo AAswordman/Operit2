@@ -750,23 +750,12 @@ class OhosWebViewController extends PlatformWebViewController {
   }
 
   @override
-  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+  Future<Object?> runJavaScriptReturningResult(String javaScript) async {
     final String? result = await _webView.evaluateJavascript(javaScript);
-
-    if (result == null) {
-      throw ArgumentError(
-        'The JavaScript returned `null` or `undefined`, which is unsupported.',
-      );
-    }
+    if (result == null) return null;
 
     try {
-      final Object? decoded = jsonDecode(result);
-      if (decoded == null) {
-        throw ArgumentError(
-          'The JavaScript returned `null` or `undefined`, which is unsupported.',
-        );
-      }
-      return decoded;
+      return jsonDecode(result);
     } on FormatException {
       return num.tryParse(result) ?? result;
     }

@@ -1,0 +1,71 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 63,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^(theme\\.json|preview\\.png|licenses/([a-z0-9_-]+/)?[a-z0-9_-]+\\.txt|assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)|assets/fonts/([a-z0-9_-]+/)?[a-z0-9_-]+\\.ttf)$"
+          },
+          "mediaType": {
+            "type": "string",
+            "enum": [
+              "application/json",
+              "image/png",
+              "image/jpeg",
+              "image/svg+xml",
+              "font/ttf",
+              "text/plain"
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 33554432
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "path",
+          "mediaType",
+          "bytes",
+          "sha256"
+        ]
+      }
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "preview": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id",
+    "path",
+    "preview",
+    "files"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operit2:theme-template"
+}

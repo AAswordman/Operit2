@@ -14,3 +14,6 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8
 # Browser setup requests include User-Agent, client hints and other headers.
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096
 CONFIG_SPIFFS=y
+
+# Native device requests verify HTTPS using the ESP-IDF certificate bundle.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y

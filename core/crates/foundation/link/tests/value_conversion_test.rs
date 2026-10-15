@@ -43,7 +43,7 @@ fn direct_conversion_matches_wire_model() {
 }
 #[test]
 fn binary_payload_can_decode_as_byte_sequence() {
-    let value=CoreValue::Bytes(vec![1,2,255]);
+    let value=CoreValue::Bytes(vec![1,2,255].into());
     assert_eq!(fromCoreValue::<Vec<u8>>(value.clone()).unwrap(), decodeLink::<Vec<u8>>(&encodeLink(value).unwrap()).unwrap());
 }
 #[test]

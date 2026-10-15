@@ -397,6 +397,9 @@ fn expected_operation_variant(family: &str, builtin: &str) -> Option<String> {
         | "FileSystemToolOperation"
         | "HttpToolOperation"
         | "MemoryToolOperation" => Some(builtin.to_string()),
+        "PluginChatToolOperation" => builtin.strip_prefix("Chat").map(str::to_string),
+        "TtsToolOperation" => builtin.strip_prefix("Tts").map(str::to_string),
+        "ThemeToolOperation" => builtin.strip_prefix("Theme").map(str::to_string),
         "SystemOperationToolOperation" => Some(
             match builtin {
                 "DeviceInfo" => "GetDeviceInfo",

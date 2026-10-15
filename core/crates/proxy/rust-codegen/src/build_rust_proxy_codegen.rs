@@ -376,7 +376,7 @@ fn render_proxy_args_json(method: &SourceMethod) -> String {
 
 fn render_proxy_arg_core_value_expr(arg: &SourceArg) -> String {
     if arg.ty == "Vec<u8>" {
-        format!("operit_link::CoreValue::Bytes({})", arg.name)
+        format!("operit_link::CoreValue::Bytes({}.into())", arg.name)
     } else if arg.ty == "&std::path::Path" {
         format!("operit_rslink_runtime::to_named_core_arg_value({:?}, {}.to_string_lossy().to_string())?", arg.name, arg.name)
     } else {

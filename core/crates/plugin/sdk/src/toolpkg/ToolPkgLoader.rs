@@ -122,6 +122,7 @@ impl ToolPkgLoader {
     where
         FReportPackageLoadError: Fn(&str, &str),
     {
+        ToolPkgArchiveParser::readThemeTemplates(archiveBytes)?;
         let cursor = Cursor::new(archiveBytes);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|error| error.to_string())?;
         let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);

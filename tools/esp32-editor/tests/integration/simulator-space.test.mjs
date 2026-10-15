@@ -10,6 +10,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {performDeviceAction} from '../../web/device-actions.ts';
+import {simulatorViewState} from '../../web/device-state.ts';
+import {DeviceView} from '../../web/device-view.ts';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -30,8 +32,8 @@ async function buildCli() {
 class CoreSession {
   constructor(executable, config, bindAddress) {
     this.queue = []; this.waiter = null; this.output = ''; this.closed = false;
-    this.child = spawn(executable, ['cli', '--json', 'link', 'session', 'tcp', '--bind', bindAddress, '--no-discovery'],
-      {cwd: root, windowsHide: true, env: {...process.env, OPERIT_CLI_CONFIG_DIR: config}});
+    this.child = spawn(executable, ['cli', '--json', 'link', 'session', 'tcp', '--bind', bindAddress, ...(process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY==='1'?[]:['--no-discovery'])],
+      {cwd: root, windowsHide: true, env: {...process.env, OPERIT_CLI_CONFIG_DIR: config, ...(process.platform === 'darwin' ? {OPERIT_CLI_SECRET_STORE:'file'} : {})}});
     this.child.stderr.on('data', chunk => { this.output = (this.output + chunk).slice(-12000); });
     createInterface({input: this.child.stdout}).on('line', line => {
       let value;
@@ -88,7 +90,13 @@ async function files(directory, prefix = '') {
 // This opt-in integration test uses a real independent Core CLI, the editor's
 // real TCP Edge child, and the same C renderer compiled to WASM. No fake approval
 // replies, manually written membership, or developer's real profile are used.
-test('Core and rendered simulator complete pairing, rejoin, cancellation and restart through real UI actions',
+test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
+  ? 'ESP pairs, syncs preferences and chats after CLI exits and device restarts'
+  : process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1'
+  ? 'Edge device-space UI pairs, replaces retained credentials, reviews consent and syncs approval after restart'
+  : process.env.OPERIT_SIM_TEST_ACCESS_ONLY === '1'
+  ? 'Simulated device initiates TCP pairing and Core consent'
+  : 'Core and rendered simulator complete pairing, rejoin, cancellation and restart through real UI actions',
   {timeout: 600000}, async t => {
     const temporaryRoot = await realpath(tmpdir());
     const directory = await mkdtemp(path.join(temporaryRoot, 'operit-simulator-space-'));
@@ -101,7 +109,8 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
       activeIdentityId: identity, identities: [{id: identity, name: 'Simulator workflow test', createdAt: Date.now()}],
     }));
     process.env.OPERIT_SIM_STATE_DIR = edgeDirectory;
-    process.env.OPERIT_SIM_BIND = '127.0.0.1:0';
+    process.env.OPERIT_SIM_BIND = process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY==='1'?'0.0.0.0:0':'127.0.0.1:0';
+    process.env.OPERIT_SIM_DISCOVERY = process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY==='1'?'true':'false';
     const {simulatorRoute, stopSimulator} = await import('../../src/api/simulator-api.mts');
     // Only the model provider boundary is deterministic. Pairing, admission,
     // chat creation, sends, persistence, watches and renderer remain real.
@@ -113,6 +122,7 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
           for await (const chunk of req) body += chunk;
           const input = JSON.parse(body);
           providerRequests.push(input);
+          if (input.model === 'sim-direct') assert.equal(req.headers.authorization, 'Bearer simulator-direct-key');
           const prompt = JSON.stringify(input.messages);
           // XML tool results also arrive as user turns; do not mistake them
           // for the user's latest request when selecting the fixture response.
@@ -171,7 +181,7 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
       await rm(cleanup, {recursive: true, force: true, maxRetries: 20, retryDelay: 100});
     });
     const executable = await buildCli();
-    let coreAddress = '127.0.0.1:0';
+    let coreAddress = process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY==='1'?'0.0.0.0:0':'127.0.0.1:0';
     const startCore = async () => {
       core = new CoreSession(executable, config, coreAddress);
       const ready = await core.next();
@@ -191,11 +201,11 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
       let current;
       while (Date.now() < deadline) {
         current = await state();
-        assert.equal(current.running, true, `simulator exited: ${current.output}`);
+        assert.equal(current.running, true, `simulator exited: ${JSON.stringify(current)}; Core: ${core?.output}`);
         if (predicate(current.device)) return current.device;
         await sleep(100);
       }
-      assert.fail(`${description} timed out: ${JSON.stringify(current.device)}`);
+      assert.fail(`${description} timed out: ${JSON.stringify(current.device)}; Core: ${core.output}; Simulator: ${current.output}`);
     };
     const startEdge = async () => {
       await post('/api/simulator/start');
@@ -221,8 +231,14 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     const screen = () => JSON.parse(ui.ccall('operit_ui_debug_snapshot', 'string', [], []));
     const actions = [];
     let actionError = '';
+    let directSendId;
     let review;
     ui.onAction = action => {
+      if (action === 'edge_send') {
+        const text = ui.ccall('operit_ui_chat_draft', 'string', [], []);
+        actions.push(post('/api/simulator/send', {text, sendId:directSendId}).catch(error => { actionError = error.message; }));
+        return;
+      }
       actions.push(performDeviceAction(ui, action, value => post('/api/simulator/action', value), review)
         .catch(error => { actionError = error.message; }));
     };
@@ -230,44 +246,32 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
       assert.equal(ui.ccall('operit_ui_debug_tap', 'number', ['string'], [id]), 1, `not a clickable UI node: ${id}`);
       await Promise.all(actions.splice(0));
     };
+    // Use the browser adapter itself so omitted state fields cannot pass only
+    // because an independent integration fixture happened to set them.
+    const deviceView = new DeviceView(ui, {update() {}}, (ok, error) =>
+      call('chat_send_result', ['number', 'string'], [ok ? 1 : 0, error ?? '']));
     const update = async () => {
       const current = await state();
-      assert.equal(current.running, true, `simulator exited: ${current.output}`);
+      assert.equal(current.running, true, `simulator exited: ${JSON.stringify(current)}; Core: ${core?.output}`);
       assert.equal(current.ready, true);
       const device = current.device;
       review = {requestId: device.spaceJoinRequestId, assignmentVersion: device.spaceJoinAssignmentVersion};
       ui._operit_ui_set_connection(1, device.chat.connected ? 1 : 0);
-      call('set_chat_identity', ['string', 'string'], [device.chat.chatId ?? '', device.chatPreview]);
-      const messages=(device.chat.messages ?? []).filter(message=>message.text?.trim()).slice(-12);
-      messages.forEach((message,index)=>call('set_message',['number','number','string'],
-        [index,message.sender==='user'?1:0,message.text]));
-      call('finish_messages',['number'],[messages.length]);
-      const plugins=device.plugins ?? {};
-      call('set_plugin_category',['number'],[plugins.category==='exclusive'?1:0]);
-      (plugins.items ?? []).slice(0,6).forEach((item,index)=>{
-        call('set_plugin',['number','string','string','number','number'],[index,item.id,item.name,
-          item.status==='probing'?1:item.status==='success'?2:item.status==='failure'?3:0,item.latencyMs??0]);
-        call('set_plugin_test',['number','number','number','string'],[index,
-          item.toolStatus==='probing'?1:item.toolStatus==='success'?2:item.toolStatus==='failure'?3:0,
-          item.toolLatencyMs??0,item.testError??'']);
-      });
-      const details=plugins.details??{};
-      call('set_plugin_details',['string','string','string','number','number','number','string'],
-        [details.id??'',details.description??'',(details.tools??[]).join('\n'),details.toolOffset??0,details.toolTotal??0,details.loading?1:0,details.error??'']);
-      call('set_plugin_testing',['number'],[plugins.testing?1:0]);
-      call('finish_plugins',['number','number','number','number','string'],
-        [(plugins.items??[]).length,plugins.offset??0,plugins.total??0,plugins.loading?1:0,plugins.error??'']);
-      call('set_chat_screen', ['string'], [device.chatScreen]);
-      call('set_chat_task', ['string'], [device.chatTask]);
+      deviceView.update(simulatorViewState(current));
       call('set_scene', ['number','number','number'], [device.scene?.active ? 1 : 0, device.scene?.revision ?? 0, 0]);
-      call('set_paired', ['number'], [device.paired ? 1 : 0]);
-      call('set_pairing_code', ['string'], [device.pairingCode]);
-      call('set_space_join_prompt', ['string', 'number'], [device.spaceJoinPrompt, 0]);
       for (let i = 0; i < 20; i++) ui._operit_ui_pump(20);
       return current;
     };
+    const openSpace = async () => {
+      call('navigate_home'); await tap('sidebar_toggle'); await tap('sidebar_settings'); await tap('settings_space');
+    };
+    const openReview = async () => {
+      if(screen().page === 'Space') return;
+      // Error diagnostics can be dismissed without losing the captured request.
+      call('action_error',['string'],['']); await openSpace(); await tap('space_review');
+    };
     const approve = async () => {
-      await update(); assert.equal(screen().page, 'Space');
+      await update(); await openReview(); assert.equal(screen().page, 'Space');
       actionError = ''; await tap('edge_space_approve');
       assert.equal(actionError, '', `approval UI action failed: ${actionError}`);
       await update(); assert.equal(screen().nodes.some(node => node.id === 'edge_space_approve'), false);
@@ -275,7 +279,7 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     };
     const leave = async () => {
       await update(); call('navigate_home');
-      await tap('sidebar_toggle'); await tap('sidebar_settings'); await tap('settings_space'); await tap('space_leave');
+      await tap('sidebar_toggle'); await tap('sidebar_settings'); await tap('settings_space'); await tap('space_manage'); await tap('space_leave');
       assert.equal(screen().page, 'LeaveSpace');
       actionError = ''; await tap('space_leave_confirm'); assert.equal(actionError, '');
       assert.equal((await update()).device.paired, true, 'leaving must not unpair');
@@ -283,11 +287,139 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     await startCore();
     const first = await startEdge();
     const node = first.device.deviceId;
-    const edgePortArgs={node_id:node,interface_info:{pluginId:'device.status',action:'read'},args:{}};
+    if (process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1') {
+      await probeDeviceAccess();
+      const policy = await core.command(['control','show']);
+      assert.equal(policy.deviceIdentityIds[node], 'edge', 'approved ESP must have the durable edge identity');
+      assert(!policy.roles.edge.capabilities.includes('storage.provide'));
+      await core.command(['space','preference-set',node,'chat',JSON.stringify({
+        endpoint:base+'/v1/chat/completions',model:'sim-direct',apiKey:'simulator-direct-key',
+        systemPrompt:'You are the device assistant.',
+      })]);
+      await core.command(['space','sync']);
+      await waitDevice('synced device preference enables native chat', device => device.chat.mode === 'direct');
+      const sendDirect = async (prompt, expected, sendId) => {
+        await update(); call('navigate_home');
+        await tap('sidebar_toggle'); await tap('sidebar_chat'); await update();
+        await tap('conversation_0');
+        assert.equal(screen().page, 'Chat');
+        directSendId = sendId;
+        call('set_chat_draft', ['string'], [prompt]);
+        actionError = ''; await tap('edge_send'); assert.equal(actionError, '');
+        const value = await waitDevice('native streamed reply', device =>
+          !device.chat.generating && device.chat.messages.some(message => message.text === expected));
+        assert.equal(value.chat.error, null);
+        assert.equal(value.chatSendResult.ok, true);
+        await update();
+        assert(screen().nodes.find(node => node.id === 'chat_text')?.text.includes(expected), 'native reply reaches the rendered chat screen');
+        return value;
+      };
+      await sendDirect('SIM_CHAT before disconnect', 'SIM_CHAT_OK', 'direct-before');
+      assert.equal(providerRequests.length, 1);
+      await core.stop();
+      assert.equal(core.closed, true, 'the CLI process really exited');
+      await waitDevice('all peer links disconnected', device => device.activePeers.length === 0);
+      const standalone = await sendDirect('SIM_RECONNECT after CLI exit', 'SIM_RECONNECT_OK', 'direct-after');
+      assert.equal(standalone.chat.mode, 'direct');
+      assert.equal(providerRequests.length, 2);
+      assert.equal(providerRequests[1].model, 'sim-direct');
+      assert(providerRequests[1].messages.some(message => message.content === 'SIM_CHAT_OK'), 'ESP keeps its own bounded context');
+      if (process.env.OPERIT_SIM_TEST_SCREENSHOT) {
+        const pointer = ui._simulator_frame();
+        await writeFile(process.env.OPERIT_SIM_TEST_SCREENSHOT, ui.HEAPU8.subarray(pointer, pointer+320*240*2));
+      }
+      const directId = standalone.chat.chatId;
+      await post('/api/simulator/stop'); await startEdge();
+      await waitDevice('direct configuration restored without CLI', device => device.chat.mode === 'direct');
+      const rebooted = await sendDirect('SIM_CHAT after ESP restart without CLI', 'SIM_CHAT_OK', 'direct-reboot');
+      assert.notEqual(rebooted.chat.chatId, directId, 'transient context is not a hidden chat database');
+      assert.equal(providerRequests.length, 3);
+      const persisted = await files(path.join(edgeDirectory, 'runtime'));
+      assert(persisted.some(file => file.startsWith('node_preferences/')));
+      assert(!persisted.some(file => /(?:\.db(?:-|$)|\.sqlite|(?:^|\/)(?:sync|plugins|extensions)(?:\/|$))/.test(file)),
+        'ESP must not receive a chat database, business journal, plugin or file replica: '+persisted.join(', '));
+      t.diagnostic('CLI → real TCP pairing → Core approval → formal edge identity → encrypted preference sync → native chat → CLI process exit → standalone streamed chat → ESP restart → standalone chat passed');
+      return;
+    }
+    if (process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1') {
+      const coreNode=(await core.command(['space','show'])).members[0];
+      await update(); await openSpace(); await tap('space_pair');
+      assert.equal(screen().page,'PairDiscovery');
+      let found=await waitDevice('real mDNS discovery',d=>d.deviceSpace.phase===2);
+      let index=found.deviceSpace.candidateIds.indexOf(coreNode);
+      for(let attempt=0;index<0&&attempt<3;attempt++) {
+        await update();await tap('pair_scan_again');
+        found=await waitDevice('repeat discovery',d=>d.deviceSpace.phase===2);
+        index=found.deviceSpace.candidateIds.indexOf(coreNode);
+      }
+      assert(index>=0,`isolated Core must be discovered: ${JSON.stringify(found.deviceSpace)}`);
+      await update(); await tap('space_peer_'+index);
+      await waitDevice('code-entry state',d=>d.deviceSpace.phase===3);
+      await update();assert.equal(screen().page,'PairCodeEntry');
+      const prompt=(await core.command(['prompts'])).find(p=>p.peerNodeId===node);
+      assert(prompt,'Core receives the screen-initiated request');
+      const digits=async code=>{for(const digit of code)await tap('pair_digit_'+digit);await tap('pair_digit_submit');};
+      const wrong=prompt.confirmationCode==='000000'?'111111':'000000';
+      await digits(wrong);
+      await waitDevice('code failure remains retryable',d=>d.deviceSpace.phase===3&&d.deviceSpace.status!=='请输入对端显示的六位配对码');
+      assert.deepEqual(await core.command(['peers']),[],'bad code never pairs');
+      await update();for(let i=0;i<6;i++)await tap('pair_digit_delete');
+      await digits(prompt.confirmationCode);
+      await waitDevice('outgoing consent',d=>d.deviceSpace.pendingJoin);
+      let incoming=(await core.command(['space','requests','incoming'])).find(r=>r.applicantDeviceId===node);
+      assert(incoming?.canApprove);assert.equal(incoming.status,'pending');
+      await update();assert.equal(screen().page,'SpaceManage');
+      assert.equal(ui.ccall('operit_ui_debug_tap','number',['string'],['edge_unpair']),0);
+      await tap('space_join'); // This row cancels a pending request.
+      await waitDevice('cancelled consent',d=>!d.deviceSpace.pendingJoin&&d.deviceSpace.phase===0);
+      assert.equal((await core.command(['space','requests','incoming'])).some(r=>r.requestId===incoming.requestId),false);
+      await update();await tap('space_manage');await tap('space_join');
+      await waitDevice('new consent',d=>d.deviceSpace.pendingJoin);
+      incoming=(await core.command(['space','requests','incoming'])).find(r=>r.applicantDeviceId===node);
+      assert(incoming?.canApprove);
+      await post('/api/simulator/stop');await startEdge();
+      await waitDevice('pending consent recovered after restart',d=>d.deviceSpace.pendingJoin);
+      await core.command(['space','approve',incoming.requestId,String(incoming.assignmentVersion)]);
+      const joined=await waitDevice('silent approval refresh',d=>d.deviceSpace.status==='已加入设备空间'&&!d.deviceSpace.pendingJoin);
+      assert(joined.paired);assert((await core.command(['space','show'])).members.includes(node),'Core membership confirms the Edge joined');
+      // Exercise the reverse path too: Core forgets locally, Edge retains its
+      // old outbound record, then a new rendered Edge code replaces it.
+      await leave();
+      await core.command(['unpair',node]);
+      assert((await update()).device.paired,'Core unpair remains one-sided');
+      const renewed=await core.command(['pair-start',node,(await state()).device.address,'tcp']);
+      await update();assert.notEqual(screen().page,'Pairing','incoming code does not steal the current page');
+      await openSpace();await tap('space_pair_code');
+      const freshCode=screen().nodes.find(n=>n.id==='pairing_code').text;
+      assert.match(freshCode,/^\d{6}$/);
+      await core.command(['pair-finish',renewed.pairingId,freshCode]);
+      const reviewRequest=await core.command(['space','join',node]);
+      await waitDevice('Edge assigned approval',d=>d.spaceJoinRequestId===reviewRequest.requestId);
+      await approve();
+      assert.equal((await core.command(['space','refresh',reviewRequest.requestId])).status,'joined');
+      await leave();
+      const rejected=await core.command(['space','join',node]);
+      await waitDevice('Edge rejection prompt',d=>d.spaceJoinRequestId===rejected.requestId);
+      await update();await openReview();await tap('edge_space_reject');
+      assert.equal((await core.command(['space','refresh',rejected.requestId])).status,'rejected');
+      const restored=await core.command(['space','join',node]);
+      await waitDevice('incoming approval before restart',d=>d.spaceJoinRequestId===restored.requestId);
+      await post('/api/simulator/stop');await startEdge();
+      await waitDevice('incoming approval after restart',d=>d.spaceJoinRequestId===restored.requestId);
+      await approve();
+      assert.equal((await core.command(['space','refresh',restored.requestId])).status,'joined');
+      t.diagnostic('Real C UI covers mDNS, code retry, outgoing cancel, both approval directions, restart recovery and one-sided Core unpair with retained Edge pairing replacement');
+      return;
+    }
+    if (process.env.OPERIT_SIM_TEST_ACCESS_ONLY === '1') {
+      await probeDeviceAccess();
+      return;
+    }
+    const edgePortArgs={node_id:node,interface_info:{target:'edge.status',method:'read'},args:{}};
     await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify(edgePortArgs)]),
       'plugin port API must not pair, route to a guessed address, or grant access to an unadmitted node');
-    const pairing = await core.command(['pair-start', node, first.device.address, 'tcp', '--token', first.token]);
-    await update();
+    const pairing = await core.command(['pair-start', node, first.device.address, 'tcp']);
+    await update(); await openSpace(); await tap('space_pair_code');
     assert.equal(screen().page, 'Pairing');
     const code = screen().nodes.find(node => node.id === 'pairing_code')?.text;
     assert.match(code, /^\d{6}$/, 'read the pairing code from the actual rendered screen');
@@ -309,7 +441,7 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     assert.equal(edgePort.success,true);assert.equal(edgePort.result.nodeId,node);
     assert.equal(edgePort.result.data.boardId,'ESP32-2432S028-SIM');
     await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify({...edgePortArgs,
-      interface_info:{pluginId:'device.status',action:'undeclared'}})]),/not declared|not found/i);
+      interface_info:{target:'edge.status',method:'undeclared'}})]),/unsupported|not found/i);
     await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify({...edgePortArgs,
       interface_info:{target:'core.internal',methodName:'erase'}})]),/interface/i);
     await assert.rejects(()=>core.command(['core','tool','exec','io_execute',JSON.stringify({node_id:node,
@@ -322,24 +454,25 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     // Execute the public APIs from a real Core JavaScript package, not just
     // through CLI built-in tool calls or a mocked JS execution host.
     const fixture = path.join(directory, 'edge_ports_fixture.js');
-    const fixtureMetadata = {name:'edge_ports_fixture', description:'Isolated hardware SDK integration test',
+    const fixtureMetadata = {name:'edge_ports_fixture', apiVersion:'2.0.0', description:'Isolated hardware SDK integration test',
       enabledByDefault:true, tools:[{name:'probe', description:'Read a declared Edge native action',
         parameters:[{name:'node_id',description:'Explicit Edge node',type:'string',required:true}]}]};
     await writeFile(fixture, `/* METADATA
 ${JSON.stringify(fixtureMetadata)}
 */
       exports.probe = async function(params) {
-        const response = await Tools.Edge.execute(params.node_id, {pluginId:'device.status',action:'read'}, {});
+        const response = await Tools.device(params.node_id).Edge.execute({target:'edge.status',method:'read'}, {});
         let unsupported = '';
-        try { await Tools.Io.execute(params.node_id, {port:'serial',operation:'read'}, {}); }
+        try { await Tools.device(params.node_id).Io.execute({port:'serial',operation:'read'}, {}); }
         catch(error) { unsupported = String(error.message || error); }
         let missingHost = '';
-        try { await Tools.Io.execute(params.node_id, {port:'gpio',operation:'read'}, {pin:2}); }
+        try { await Tools.device(params.node_id).Io.execute({port:'gpio',operation:'read'}, {pin:2}); }
         catch(error) { missingHost = String(error.message || error); }
         return {nodeId:response.nodeId, boardId:response.data.boardId, sameAlias:tools === Tools, unsupported, missingHost};
       };
     `);
     await core.command(['core','package','import',fixture]);
+    await core.command(['core','package','enable','edge_ports_fixture']);
     try {
       const probe = await core.command(['core','package','exec','edge_ports_fixture:probe',JSON.stringify({node_id:node})]);
       assert.equal(probe.success,true);
@@ -351,7 +484,7 @@ ${JSON.stringify(fixtureMetadata)}
     } finally {
       await core.command(['core','package','delete','edge_ports_fixture']);
     }
-    t.diagnostic('Real Core JS package -> Tools.Edge/Tools.Io -> existing tool runtime -> authenticated Edge action passed');
+    t.diagnostic('Real Core JS package -> Tools.device(nodeId).Edge/Io -> existing tool runtime -> authenticated Edge action passed');
 
     // The same market-compatible ToolPkg ships as an opt-in "More packages"
     // asset, not an auto-installed built-in or an ESP JavaScript runtime.
@@ -374,13 +507,14 @@ ${JSON.stringify(fixtureMetadata)}
     };
     const nativeScene = async(action,args) => {
       assert(Buffer.byteLength(JSON.stringify({v:1,...args}))<=1024);
-      const reply=await core.command(['core','tool','exec','edge_execute',JSON.stringify({node_id:node,interface_info:{pluginId:'display.scene',action},args:{v:1,...args}})]);
+      const reply=await core.command(['core','tool','exec','edge_execute',JSON.stringify({node_id:node,interface_info:{target:'edge.scene',method:action},args:{v:1,...args}})]);
       const data=reply.result.data;assert(Buffer.byteLength(JSON.stringify(data))<=4096);return data;
     };
     try {
       const caps=(await nativeScene('capabilities',{})).result;
-      assert.equal(caps.cache.persistent,false);assert.equal(caps.screen.width,320);
-      const started=await pet('start_pet');assert.equal(started.taps,0);await update();assert.equal(screen().page,'edge_scene');
+      assert.equal(caps.cache.persistent,true);assert.equal(caps.screen.width,320);
+      const systemPageBeforeScene = screen().page;
+      const started=await pet('apply_configuration');assert(started.revision);await update();assert.equal(screen().page,'edge_scene');
       const view=await (await fetch(base+'/api/simulator/scene-view')).json();
       assert(view.active);assert.equal(view.layers.length,3);assert.equal(view.packs.length,1);
       assert(!JSON.stringify(view).includes('lease'),'browser view must not leak lease handles');
@@ -393,29 +527,29 @@ ${JSON.stringify(fixtureMetadata)}
       const waitPet = async(predicate) => {
         const deadline=Date.now()+20000;
         while(Date.now()<deadline) {
-          const state=await pet('pet_status'); // Core state only, never Edge input polling
+          const state=(await nativeScene('state',{})).result; // Explicit device state query; input handling remains local
           if(predicate(state)) return state;
           await new Promise(resolve=>setTimeout(resolve,100));
         }
-        throw new Error('Edge-initiated scene callback did not persist on Core');
+        throw new Error('Device-local scene state did not update');
       };
-      const notified=await waitPet(state=>state.taps===1);assert.equal(notified.closed,false);
-      const again=await pet('pet_status');assert.equal(again.taps,1);
-      const renew=await pet('renew_pet');assert.equal(renew.closed,false);
-      // Burst + exit must drain bounded push batches, not a Core polling loop.
+      const notified=await waitPet(state=>state.taps===1);assert.equal(notified.active,true);
+      const again=(await nativeScene('state',{})).result;assert.equal(again.taps,1);
+      // Burst + exit are handled on the device; the host only reads explicit snapshots.
       for(let i=0;i<15;i++) {ui._simulator_touch(144,146,1);ui._simulator_touch(144,146,0);await Promise.all(actions.splice(0));}
       await tap('scene_exit');await update();assert.notEqual(screen().page,'edge_scene');
-      const exited=await waitPet(state=>state.closed==='system.exit');assert.equal(exited.taps,16);assert.equal(exited.lostEvents,false);
-      assert.equal((await pet('renew_pet')).closed,'system.exit','keepalive never reopens an exited scene');
-      const restarted=await pet('start_pet');assert.equal(restarted.taps,16,'business data remains on Core across display leases');
-      await pet('close_pet');await waitPet(state=>state.closed==='lease.closed');await update();assert.equal(screen().page,'Chat');
+      const exited=await waitPet(state=>state.active===false);assert.equal(exited.taps,16);
+      assert.equal((await nativeScene('state',{})).result.active,false);
+      assert.equal((await nativeScene('config.read',{})).result.enabled,true);
+      await pet('apply_configuration');
+      await pet('clear_configuration');await waitPet(state=>state.active===false);await update();assert.equal(screen().page,systemPageBeforeScene);
       assert.equal((await nativeScene('capabilities',{})).result.cache.packs.length,1,'cached original assets reused');
       call('scene_painter',['number'],[0]);ui.removeFunction(painter);
     } finally {
       await core.command(['core','plugin','disable','com.operit.edge_pixel_pet']);
       await core.command(['core','package','delete','edge_pixel_pet']);
     }
-    t.diagnostic('Bundled More-package ToolPkg -> real Core Tools.Edge -> shared native display.scene: chunked SHA-verified assets, local strip rendering, Edge-initiated touch/exit events without Core event polling, Core-owned deduplication, protected exit and cache reuse passed');
+    t.diagnostic('Bundled More-package ToolPkg -> real Core Tools.device(nodeId).Edge -> shared native edge.scene: chunked SHA-verified assets, local strip rendering, device-local touch/exit actions, protected exit and cache reuse passed');
 
 
     const provider = await core.command(['core', 'model', 'provider-create', 'Simulator deterministic provider',
@@ -427,11 +561,17 @@ ${JSON.stringify(fixtureMetadata)}
     await update(); call('navigate_home'); await tap('sidebar_toggle'); await tap('sidebar_settings'); await tap('settings_device'); await tap('edge_new');
     const created = await waitDevice('Edge-created chat', device => device.chat.chatId && device.chat.chatId !== initialChat.chat.chatId && !device.chat.sending);
     const chatId = created.chat.chatId;
-    await post('/api/simulator/send', {text: 'SIM_CHAT'});
+    await post('/api/simulator/send', {text: 'SIM_CHAT', sendId: 'browser-fixture-send'});
     const firstReply = await waitDevice('first streamed reply', device =>
       device.chat.messages.some(message => message.text === 'SIM_CHAT_OK') && !device.chat.generating);
     assert(firstReply.chat.messages.some(message => message.sender === 'user' && message.text === 'SIM_CHAT'));
     assert.equal(providerRequests.length, 1);
+    const receipt = (await state()).device.chatSendResult;
+    assert.equal(receipt.ok, true);
+    assert.equal(receipt.sendId, 'browser-fixture-send');
+    const observers = await Promise.all([state(), state()]);
+    for (const observer of observers) assert.deepEqual(observer.device.chatSendResult, receipt,
+      'debug/state observers must not steal the browser send acknowledgement');
     await update();
     const painted=screen();
     assert.equal(painted.page,'Chat');
@@ -442,6 +582,45 @@ ${JSON.stringify(fixtureMetadata)}
     const stored = await core.command(['core', 'chat', 'show', chatId]);
     assert(JSON.stringify(stored).includes('SIM_CHAT_OK'), 'reply must be stored on Core, not fabricated by simulator');
     t.diagnostic('automatic Space chat route, rendered new-chat action, Edge send and real Core streamed reply passed (local deterministic provider)');
+    assert.equal(initialChat.chat.conversations, null, 'metadata must not load before list browsing');
+    const coreSelectionBefore = await core.command(['core','chat','current']);
+    let lastCreatedId=chatId;
+    for(let i=0;i<3;i++) {
+      await update();await tap('sidebar_toggle');await tap('sidebar_chat');await tap('edge_new');
+      const extra=await waitDevice('another Edge-created conversation',device=>device.chat.chatId!==lastCreatedId&&!device.chat.initializing&&!device.chat.sending);
+      lastCreatedId=extra.chat.chatId;
+    }
+    const browse = async () => {
+      await update();call('navigate_home');await tap('sidebar_toggle');await tap('sidebar_chat');
+      const listed=await waitDevice('bounded conversation metadata',device=>!device.chat.conversationsLoading&&device.chat.conversations?.length>=5&&!device.chat.conversationsError);
+      await update();assert.equal(screen().page,'Conversations');return listed.chat.conversations.length;
+    };
+    const selectRendered = async target => {
+      let hit;
+      for(let page=0;page<8;page++) {
+        hit=screen().nodes.find(n=>n.action==='edge_select:'+target);if(hit)break;
+        await tap('conversations_next');await update();
+      }
+      assert(hit,`missing rendered conversation ${target}`);
+      await tap(hit.id);
+      await waitDevice('selected Edge conversation',device=>device.chat.chatId===target&&!device.chat.initializing);
+      await update();assert.equal(screen().page,'Chat');
+    };
+    const listedCount=await browse();assert.equal(screen().nodes.filter(n=>/^conversation_/.test(n.id)).length,3);
+    assert(screen().nodes.some(n=>n.selected===true),'current conversation is visibly marked');
+    await tap('conversations_next');await update();
+    assert.equal(screen().nodes.filter(n=>/^conversation_/.test(n.id)).length,Math.min(3,listedCount-3));
+    await tap('conversations_prev');await update();
+    await selectRendered(initialChat.chat.chatId);
+    assert(!(await state()).device.chat.messages.some(m=>m.text==='SIM_CHAT_OK'),'switching does not retain another chat transcript');
+    await browse();await selectRendered(chatId);
+    await waitDevice('selected chat history restored',device=>device.chat.messages.some(m=>m.text==='SIM_CHAT_OK'));
+    assert.deepEqual(await core.command(['core','chat','current']),coreSelectionBefore,'Edge selection must not change Core desktop selection');
+    assert.equal(providerRequests.length,1,'browsing and selection must not resend messages');
+    await assert.rejects(()=>post('/api/simulator/action',{action:'edge_select:missing-chat'}),/不存在|刷新/);
+    assert.equal((await state()).device.chat.chatId,chatId);
+    t.diagnostic('rendered list/new/pagination/current mark/switch and history restoration passed; Core UI selection and provider send count unchanged');
+
     // Exercise the same Edge send/Binding route with a real bundled Core
     // ToolPkg. Inspect structured persisted parts, not just a model's claim.
     const beforePlugin = providerRequests.length;
@@ -505,7 +684,10 @@ ${JSON.stringify(fixtureMetadata)}
     await tap('plugins_test_all');
     const batch=await waitDevice('all enabled plugin connection functions executed',device=>
       !device.plugins.testing&&device.plugins.tested===enabledPlugins.length);
-    assert.equal(batch.plugins.failed,0);
+    assert.equal(batch.plugins.failed,batch.plugins.items.filter(item=>item.status==='failure').length);
+    assert(batch.plugins.items.every(item=>item.status==='success'||(item.status==='failure'&&item.testError)),
+      'each enabled plugin must report its actual diagnostic result, including optional dependencies');
+    assert.equal(batch.plugins.items.find(item=>item.id==='com.operit.daily_life').status,'success');
     const uiOnlyIndex=batch.plugins.items.findIndex(item=>item.id==='com.operit.thinking_guidance');
     await update();await tap('plugin_probe_'+uiOnlyIndex);
     const noTool=await waitDevice('UI-only plugin metadata has no business tools',device=>
@@ -562,7 +744,7 @@ ${JSON.stringify(fixtureMetadata)}
     await leave();
     assert.deepEqual(await core.command(['space', 'show']), former, 'the same Core retains the previous Space');
     const cancelled = await core.command(['space', 'join', node]);
-    await update(); assert.equal(screen().page, 'Space');
+    await update(); await openReview(); assert.equal(screen().page, 'Space');
     assert.equal((await core.command(['space', 'cancel', cancelled.requestId])).status, 'cancelled');
     // Cancel won just before a tap on a still-visible approval prompt. A normal
     // decision error must NOT terminate the simulated device or its listener.
@@ -578,7 +760,7 @@ ${JSON.stringify(fixtureMetadata)}
     assert(actionError, 'a stale approval must not be retargeted to the next pending request');
     assert.equal((await core.command(['space', 'refresh', second.requestId])).status, 'pending');
     t.diagnostic('a stale approval for cancelled A did not approve the newly submitted B');
-    await update();
+    await update(); await openReview();
     await assert.rejects(post('/api/simulator/action', {action: 'edge_space_approve',
       requestId: review.requestId, assignmentVersion: review.assignmentVersion + 1}));
     assert.equal((await core.command(['space', 'refresh', second.requestId])).status, 'pending', 'stale assignment cannot approve');
@@ -590,11 +772,11 @@ ${JSON.stringify(fixtureMetadata)}
     t.diagnostic('same Core successfully rejoined after leaving and cancelling');
     await leave();
     const pending = await core.command(['space', 'join', node]);
-    await update(); assert.equal(screen().page, 'Space');
+    await update(); await openReview(); assert.equal(screen().page, 'Space');
     await core.stop(); await post('/api/simulator/stop');
     await startCore();
-    const restarted = await startEdge(); assert.equal(restarted.token, first.token);
-    await update(); assert.equal(screen().page, 'Space', 'approval prompt survives process restart');
+    const restarted = await startEdge(); assert.equal(Object.hasOwn(restarted, 'token'), false);
+    await update(); await openReview(); assert.equal(screen().page, 'Space', 'approval prompt survives process restart');
     assert.equal((await core.command(['space', 'cancel', pending.requestId])).status, 'cancelled');
     await update(); assert.equal(screen().nodes.some(node => node.id === 'edge_space_approve'), false);
     const third = await core.command(['space', 'join', node]);
@@ -622,4 +804,40 @@ ${JSON.stringify(fixtureMetadata)}
     assert(!edgeFiles.some(file => /(^|\/)(chat|chats|messages|blobs|models)\//.test(file)), 'no business data copied to Edge storage');
     assert.equal(screen().heapBytes, 0); assert(screen().staticBytes < 10 * 1024);
     t.diagnostic('offline cancellation intent survived both restarts; refresh retried it and reapplication completed with pairing intact and no business replica');
+
+    async function probeDeviceAccess() {
+    // A simulated device may initiate onboarding itself, with the Core as
+    // the reviewer. Reuse TCP pairing and the ordinary Space approval records.
+    if ((await state()).device.paired) {
+      await leave();
+      await core.command(['unpair', node]);
+      await post('/api/simulator/action', {action:'edge_unpair'});
+    }
+    await core.command(['space','leave']);
+    const targetCore = (await core.command(['space','show'])).members.find(id => id !== node);
+    const access = await post('/api/simulator/core-access', {step:'request', nodeId:targetCore,
+      address:coreAddress});
+    assert.equal(access.pairing.peerNodeId, targetCore);
+    const duplicate = await post('/api/simulator/core-access', {step:'request', nodeId:targetCore});
+    assert.equal(duplicate.pairing.pairingId, access.pairing.pairingId);
+    const prompt = (await core.command(['prompts'])).find(value => value.pairingId === access.pairing.pairingId);
+    assert(prompt, 'Core receives the simulator-initiated pairing request');
+    await assert.rejects(post('/api/simulator/core-access', {step:'confirm',
+      pairingId:access.pairing.pairingId, confirmationCode:'123'}), /六位/);
+    const submission = await post('/api/simulator/core-access', {step:'confirm',
+      pairingId:access.pairing.pairingId, confirmationCode:prompt.confirmationCode});
+    assert.equal(submission.pairing, null);
+    assert.equal(submission.request.status, 'pending');
+    const incoming = (await core.command(['space','requests','incoming']))
+      .find(value => value.requestId === submission.request.requestId);
+    assert(incoming?.canApprove, 'the real Core has a pending approval for the simulator');
+    await core.command(['space','approve',incoming.requestId,String(incoming.assignmentVersion)]);
+    const joined = await post('/api/simulator/core-access', {step:'refresh',requestId:incoming.requestId});
+    assert.equal(joined.request.status, 'joined');
+    assert.equal((await post('/api/simulator/core-access', {step:'request',nodeId:targetCore})).joined, true);
+    t.diagnostic('simulated device initiated TCP pairing and a Core-reviewed permission request');
+    }
+    await probeDeviceAccess();
+
+
   });

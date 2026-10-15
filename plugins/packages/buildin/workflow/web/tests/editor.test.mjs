@@ -5,6 +5,9 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import { hostTheme } from "./host-theme.mjs";
+import { fileURLToPath } from "node:url";
+
+const screenshotDirectory = new URL("../test-results/", import.meta.url);
 
 /** Checks every exit-animation frame for premature dialog content removal. */
 async function verifyDialogExit(page, buttonText) {
@@ -81,11 +84,13 @@ test(
       }
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const browser = await chromium.launch({
-      channel: "msedge",
-      headless: true,
-    });
+    let browser;
     try {
+      browser = await chromium.launch({
+        ...(process.env.OPERIT_TEST_BROWSER_CHANNEL
+          ? { channel: process.env.OPERIT_TEST_BROWSER_CHANNEL } : {}),
+        headless: true,
+      });
       const page = await browser.newPage({
         viewport: { width: 1280, height: 800 },
       });
@@ -267,8 +272,8 @@ test(
       await page.getByRole("button", { name: "应用", exact: true }).click();
       await page.getByRole("button", { name: "保存", exact: true }).click();
       await page.getByText("已保存", { exact: true }).waitFor();
-      await mkdir("web/test-results", { recursive: true });
-      await page.screenshot({ path: "web/test-results/desktop.png" });
+      await mkdir(screenshotDirectory, { recursive: true });
+      await page.screenshot({ path: fileURLToPath(new URL("desktop.png", screenshotDirectory)) });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole("button", { name: "返回列表", exact: true }).click();
       const workflowCard = await page
@@ -295,10 +300,10 @@ test(
       await page
         .getByText("选择要放入画布的节点类型", { exact: true })
         .waitFor();
-      await page.screenshot({ path: "web/test-results/phone-node-picker.png" });
+      await page.screenshot({ path: fileURLToPath(new URL("phone-node-picker.png", screenshotDirectory)) });
       await page.getByRole("button", { name: "关闭", exact: true }).click();
       await page.locator(".MuiDrawer-paper").waitFor({ state: "hidden" });
-      await page.screenshot({ path: "web/test-results/phone.png" });
+      await page.screenshot({ path: fileURLToPath(new URL("phone.png", screenshotDirectory)) });
       const controls = await page
         .locator(".react-flow__controls")
         .boundingBox();
@@ -314,7 +319,7 @@ test(
         false,
       );
       assert.ok((await page.locator(".toolbar").boundingBox()).height <= 66);
-      await page.screenshot({ path: "web/test-results/phone-wide.png" });
+      await page.screenshot({ path: fileURLToPath(new URL("phone-wide.png", screenshotDirectory)) });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.locator(".graph-node").first().click();
       await page.getByRole("button", { name: "编辑节点", exact: true }).click();
@@ -360,8 +365,9 @@ test(
       assert.equal((await dispatch({ action: "list" })).workflows.length, 1);
       assert.deepEqual(errors, []);
     } finally {
-      await browser.close();
-      server.close();
+      await browser?.close();
+      await new Promise((resolve, reject) => server.close((error) =>
+        error ? reject(error) : resolve()));
     }
   },
 );

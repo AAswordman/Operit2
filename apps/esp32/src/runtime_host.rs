@@ -166,6 +166,10 @@ impl RuntimeStorageHost for Esp32RuntimeStorageHost {
             Ok(())
         })
     }
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        // writeBytes publishes the complete NVS snapshot through the alternate bank.
+        self.writeBytes(path, content)
+    }
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.update(|files| {
             let previous = files

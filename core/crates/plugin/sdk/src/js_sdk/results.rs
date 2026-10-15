@@ -2,20 +2,43 @@
 
 #![allow(non_snake_case)]
 pub use crate::js_sdk::{JsNullable, JsOptional};
+use super::catalog::CatalogToolSource;
+use super::chat::ChatSendEvent;
+use super::core::JsonObject;
+use super::models::ModelsSummary;
+use super::storage::{
+    StorageChangeEntry, StorageKeyValueEntry, StorageResponse, StorageSqlExecutionResult,
+    StorageSqlRow, StorageValueEntry,
+};
+use super::theme::ThemeConfig;
+use super::tts::TtsConfig;
 use chrono::{Local, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+
+/// Preserves an arbitrary JSON result without interpreting strings or discarding null values.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct JsonResultData { pub value: serde_json::Value }
 
 /// Contains every concrete payload returned by the built-in tool runtime.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "__type")]
 pub enum ToolResultData {
+    JsonResultData(JsonResultData),
     EdgePortResultData(EdgePortResultData),
     BooleanResultData(BooleanResultData),
     StringResultData(StringResultData),
     SleepResultData(SleepResultData),
     EnvironmentVariableReadResultData(EnvironmentVariableReadResultData),
     EnvironmentVariableWriteResultData(EnvironmentVariableWriteResultData),
+    ModelsListSummariesResultData(ModelsListSummariesResultData),
+    TtsSynthesizeResultData(TtsSynthesizeResultData),
+    SttTranscribeResultData(SttTranscribeResultData),
+    TtsListConfigsResultData(TtsListConfigsResultData),
+    TtsGetCurrentConfigIdResultData(TtsGetCurrentConfigIdResultData),
+    TtsSetCurrentConfigIdResultData(TtsSetCurrentConfigIdResultData),
+    ThemeListConfigsResultData(ThemeListConfigsResultData),
+    ThemeApplyConfigResultData(ThemeApplyConfigResultData),
     IntResultData(IntResultData),
     BinaryResultData(BinaryResultData),
     FilePartContentData(FilePartContentData),
@@ -26,6 +49,7 @@ pub enum ToolResultData {
     FileInfoData(FileInfoData),
     FileOperationData(FileOperationData),
     FileApplyResultData(FileApplyResultData),
+    StorageRequestResultData(StorageRequestResultData),
     HttpResponseData(HttpResponseData),
     HttpStreamEventData(HttpStreamEventData),
     SystemSettingData(SystemSettingData),
@@ -35,7 +59,6 @@ pub enum ToolResultData {
     NotificationData(NotificationData),
     LocationData(LocationData),
     DeviceInfoResultData(DeviceInfoResultData),
-    MemoryQueryResultData(MemoryQueryResultData),
     ChatServiceStartResultData(ChatServiceStartResultData),
     ChatCreationResultData(ChatCreationResultData),
     ChatListResultData(ChatListResultData),
@@ -45,9 +68,14 @@ pub enum ToolResultData {
     ChatTitleUpdateResultData(ChatTitleUpdateResultData),
     ChatDeleteResultData(ChatDeleteResultData),
     MessageSendResultData(MessageSendResultData),
+    ChatSendMessageResultData(ChatSendMessageResultData),
+    ChatObservationResultData(ChatObservationResultData),
+    ChatCancelResultData(ChatCancelResultData),
+    ChatReadExtensionResultData(ChatReadExtensionResultData),
+    ChatWriteExtensionResultData(ChatWriteExtensionResultData),
+    ChatDeleteExtensionResultData(ChatDeleteExtensionResultData),
     ChatCallResultData(ChatCallResultData),
     ChatMessagesResultData(ChatMessagesResultData),
-    CharacterCardListResultData(CharacterCardListResultData),
     VisitWebResultData(VisitWebResultData),
     TerminalInfoResultData(TerminalInfoResultData),
     TerminalCommandResultData(TerminalCommandResultData),
@@ -65,10 +93,9 @@ pub enum ToolResultData {
     BluetoothReadData(BluetoothReadData),
     BluetoothBleServicesData(BluetoothBleServicesData),
     BluetoothBleNotificationData(BluetoothBleNotificationData),
+    CatalogReadToolSourcesResultData(CatalogReadToolSourcesResultData),
     FindFilesResultData(FindFilesResultData),
     GrepResultData(GrepResultData),
-    MemoryLinkResultData(MemoryLinkResultData),
-    MemoryLinkQueryResultData(MemoryLinkQueryResultData),
 }
 
 impl ToolResultData {
@@ -82,12 +109,21 @@ impl ToolResultData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         match self {
+            Self::JsonResultData(data) => serde_json::to_string(&data.value).expect("Structured result serialization must succeed"),
             Self::EdgePortResultData(data) => serde_json::to_string(data).expect("Edge port result serialization failed"),
             Self::BooleanResultData(data) => data.value.to_string(),
             Self::StringResultData(data) => data.value.clone(),
             Self::SleepResultData(data) => data.toString(),
             Self::EnvironmentVariableReadResultData(data) => data.toString(),
             Self::EnvironmentVariableWriteResultData(data) => data.toString(),
+            Self::ModelsListSummariesResultData(data) => data.toString(),
+            Self::TtsSynthesizeResultData(data) => data.toString(),
+            Self::SttTranscribeResultData(data) => data.toString(),
+            Self::TtsListConfigsResultData(data) => data.toString(),
+            Self::TtsGetCurrentConfigIdResultData(data) => data.toString(),
+            Self::TtsSetCurrentConfigIdResultData(data) => data.toString(),
+            Self::ThemeListConfigsResultData(data) => data.toString(),
+            Self::ThemeApplyConfigResultData(data) => data.toString(),
             Self::IntResultData(data) => data.value.to_string(),
             Self::BinaryResultData(data) => format!("Binary data ({} bytes)", data.value.len()),
             Self::FilePartContentData(data) => data.toString(),
@@ -98,6 +134,7 @@ impl ToolResultData {
             Self::FileInfoData(data) => data.toString(),
             Self::FileOperationData(data) => data.toString(),
             Self::FileApplyResultData(data) => data.toString(),
+            Self::StorageRequestResultData(data) => data.toString(),
             Self::HttpResponseData(data) => data.toString(),
             Self::HttpStreamEventData(data) => data.toString(),
             Self::SystemSettingData(data) => data.toString(),
@@ -107,7 +144,6 @@ impl ToolResultData {
             Self::NotificationData(data) => data.toString(),
             Self::LocationData(data) => data.toString(),
             Self::DeviceInfoResultData(data) => data.toString(),
-            Self::MemoryQueryResultData(data) => data.toString(),
             Self::ChatServiceStartResultData(data) => {
                 if data.isConnected {
                     "Chat service started and connected successfully".to_string()
@@ -127,6 +163,12 @@ impl ToolResultData {
             }
             Self::ChatDeleteResultData(data) => format!("Deleted chat: {}", data.chatId),
             Self::MessageSendResultData(data) => data.toString(),
+            Self::ChatSendMessageResultData(data) => data.toString(),
+            Self::ChatObservationResultData(data) => data.toString(),
+            Self::ChatCancelResultData(data) => data.toString(),
+            Self::ChatReadExtensionResultData(data) => data.toString(),
+            Self::ChatWriteExtensionResultData(data) => data.toString(),
+            Self::ChatDeleteExtensionResultData(data) => data.toString(),
             Self::ChatCallResultData(data) => data.toString(),
             Self::ChatMessagesResultData(data) => {
                 let rangeInfo = match (data.start, data.end) {
@@ -142,7 +184,6 @@ impl ToolResultData {
                     data.messages.len()
                 )
             }
-            Self::CharacterCardListResultData(data) => data.toString(),
             Self::VisitWebResultData(data) => data.toString(),
             Self::TerminalInfoResultData(data) => data.toString(),
             Self::TerminalCommandResultData(data) => data.toString(),
@@ -160,10 +201,9 @@ impl ToolResultData {
             Self::BluetoothReadData(data) => data.toString(),
             Self::BluetoothBleServicesData(data) => data.toString(),
             Self::BluetoothBleNotificationData(data) => data.toString(),
+            Self::CatalogReadToolSourcesResultData(data) => data.toString(),
             Self::FindFilesResultData(data) => data.toString(),
             Self::GrepResultData(data) => data.toString(),
-            Self::MemoryLinkResultData(data) => data.toString(),
-            Self::MemoryLinkQueryResultData(data) => data.toString(),
         }
     }
 }
@@ -500,6 +540,121 @@ pub struct EnvironmentVariableWriteResultData {
     #[serde(rename = "cleared")]
     pub cleared: bool,
 }
+/// Returns the complete configured model summaries.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelsListSummariesResultData {
+    pub models: Vec<ModelsSummary>,
+}
+impl ModelsListSummariesResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ModelsListSummariesResultData serialization failed")
+    }
+}
+
+/// One encoded audio segment, in synthesis order.
+#[derive(Clone, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct TtsAudioSegment {
+    pub audio: Vec<u8>,
+    pub contentType: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsSynthesizeResultData { pub segments: Vec<TtsAudioSegment> }
+impl TtsSynthesizeResultData {
+    pub fn toString(&self) -> String { serde_json::to_string(self).expect("TTS result serialization failed") }
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SttTranscribeResultData { pub text: String }
+impl SttTranscribeResultData {
+    pub fn toString(&self) -> String { serde_json::to_string(self).expect("STT result serialization failed") }
+}
+
+/// Returns the complete configured speech records.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsListConfigsResultData {
+    pub configs: Vec<TtsConfig>,
+}
+impl TtsListConfigsResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("TtsListConfigsResultData serialization failed")
+    }
+}
+
+/// Returns the current application speech configuration identity.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsGetCurrentConfigIdResultData {
+    pub configId: String,
+}
+impl TtsGetCurrentConfigIdResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("TtsGetCurrentConfigIdResultData serialization failed")
+    }
+}
+
+/// Returns the committed application speech configuration identity.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsSetCurrentConfigIdResultData {
+    pub configId: String,
+}
+impl TtsSetCurrentConfigIdResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("TtsSetCurrentConfigIdResultData serialization failed")
+    }
+}
+
+/// Returns the complete named appearance configurations.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThemeListConfigsResultData {
+    pub configs: Vec<ThemeConfig>,
+}
+impl ThemeListConfigsResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ThemeListConfigsResultData serialization failed")
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+/// Returns the actual named appearance record committed by the tool.
+pub struct ThemeApplyConfigResultData {
+    pub id: String,
+    pub name: String,
+    pub snapshot: BTreeMap<String, serde_json::Value>,
+    pub createdAt: i64,
+    pub updatedAt: i64,
+}
+
+impl From<ThemeConfig> for ThemeApplyConfigResultData {
+    fn from(config: ThemeConfig) -> Self {
+        Self {
+            id: config.id,
+            name: config.name,
+            snapshot: config.snapshot,
+            createdAt: config.createdAt,
+            updatedAt: config.updatedAt,
+        }
+    }
+}
+
+impl ThemeApplyConfigResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ThemeApplyConfigResultData serialization failed")
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 /// Wraps an integer value returned by a built-in tool.
 pub struct IntResultData {
@@ -628,6 +783,84 @@ pub struct FileApplyResultData {
     pub aiDiffInstructions: String,
     pub diffContent: Option<String>,
 }
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+/// Returns the concrete result fields of the selected Storage tool operation.
+pub enum StorageRequestResultData {
+    #[serde(rename = "open")]
+    Open {
+        handle: String,
+        path: String,
+    },
+    #[serde(rename = "close")]
+    Close,
+    #[serde(rename = "query")]
+    Query {
+        rows: Vec<StorageSqlRow>,
+    },
+    #[serde(rename = "execute")]
+    Execute {
+        results: Vec<StorageSqlExecutionResult>,
+    },
+    #[serde(rename = "transaction")]
+    Transaction {
+        results: Vec<StorageSqlExecutionResult>,
+    },
+    #[serde(rename = "define_table")]
+    DefineTable {
+        changed: bool,
+    },
+    #[serde(rename = "get")]
+    Get {
+        entry: JsNullable<StorageValueEntry>,
+    },
+    #[serde(rename = "list")]
+    List {
+        entries: Vec<StorageKeyValueEntry>,
+    },
+    #[serde(rename = "commit")]
+    Commit {
+        version: String,
+    },
+    #[serde(rename = "changes")]
+    Changes {
+        entries: Vec<StorageChangeEntry>,
+    },
+}
+
+impl From<StorageResponse> for StorageRequestResultData {
+    fn from(response: StorageResponse) -> Self {
+        match response {
+            StorageResponse::Open(opened) => Self::Open {
+                handle: opened.handle,
+                path: opened.path,
+            },
+            StorageResponse::Close => Self::Close,
+            StorageResponse::Query(rows) => Self::Query { rows },
+            StorageResponse::Execute(results) => Self::Execute { results },
+            StorageResponse::Transaction(results) => Self::Transaction { results },
+            StorageResponse::DefineTable(result) => Self::DefineTable {
+                changed: result.changed,
+            },
+            StorageResponse::Get(entry) => Self::Get {
+                entry: JsNullable::from_option(entry),
+            },
+            StorageResponse::List(entries) => Self::List { entries },
+            StorageResponse::Commit(result) => Self::Commit {
+                version: result.version,
+            },
+            StorageResponse::Changes(entries) => Self::Changes { entries },
+        }
+    }
+}
+
+impl StorageRequestResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("StorageRequestResultData serialization failed")
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 /// Contains an HTTP response status, headers, cookies, media type, and decoded or Base64 body.
 pub struct HttpResponseData {
@@ -811,37 +1044,6 @@ pub struct DeviceInfoResultData {
     pub additionalInfo: BTreeMap<String, String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
-/// Describes one stored memory together with ownership, provenance, tags, and chunk metadata.
-pub struct MemoryInfo {
-    pub ownerKey: String,
-    pub title: String,
-    pub content: String,
-    pub source: String,
-    pub tags: Vec<String>,
-    pub createdAt: String,
-    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
-    pub chunkInfo: JsOptional<String>,
-    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
-    pub chunkIndices: JsOptional<Vec<i32>>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Contains matched memories and snapshot metadata used to suppress previously returned matches.
-pub struct MemoryQueryResultData {
-    ///Queried memories
-    #[serde(rename = "memories")]
-    pub memories: Vec<MemoryInfo>,
-    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
-    ///Snapshot id for de-duplicated follow-up or parallel queries; may be auto-generated or caller-specified
-    #[serde(rename = "snapshotId")]
-    pub snapshotId: JsOptional<String>,
-    ///Whether this call created a new snapshot, including when a caller-specified id was created on first use
-    #[serde(rename = "snapshotCreated")]
-    pub snapshotCreated: Option<bool>,
-    ///Number of matched memories excluded because they were already seen in the snapshot
-    #[serde(rename = "excludedBySnapshotCount")]
-    pub excludedBySnapshotCount: Option<i32>,
-}
-#[derive(Clone, Serialize, Deserialize)]
 /// Reports whether the chat service connected and when the connection was established.
 pub struct ChatServiceStartResultData {
     ///Whether the service is connected
@@ -862,7 +1064,7 @@ pub struct ChatCreationResultData {
     pub createdAt: i64,
 }
 #[derive(Clone, Serialize, Deserialize)]
-/// Summarizes a chat, its activity, token use, current status, and bound character card.
+/// Summarizes a workspace conversation's activity, token use, and current status.
 pub struct ChatInfo {
     ///Chat ID
     #[serde(rename = "id")]
@@ -888,10 +1090,6 @@ pub struct ChatInfo {
     ///Total output tokens used
     #[serde(rename = "outputTokens")]
     pub outputTokens: i64,
-    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
-    ///Bound character card name (if any)
-    #[serde(rename = "characterCardName")]
-    pub characterCardName: JsOptional<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 /// Contains the available chats and identifies the currently active chat.
@@ -972,8 +1170,66 @@ pub struct ChatDeleteResultData {
     #[serde(rename = "deletedAt")]
     pub deletedAt: i64,
 }
-#[derive(Clone, Serialize, Deserialize)]
-/// Records a sent chat message and its optional final AI reply.
+/// Identifies the terminal state of the actual originating generation rather than a hook decision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageSendStatus {
+    /// Indicates that generation completed and required persistence succeeded.
+    #[serde(rename = "completed")]
+    Completed,
+    /// Indicates that the originating generation was cancelled.
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+
+/// Locates one exact assistant revision committed by the originating generation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct ChatCommittedMessage {
+    /// Identifies the real persisted message record, never a wall-clock receipt timestamp.
+    pub messageTimestamp: i64,
+    /// Identifies the exact persisted revision; zero is the base message.
+    pub variantIndex: i32,
+}
+
+/// Distinguishes real persistence, nonpersistent output and input ownership decisions without inventing locators.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MessageSendOutcome {
+    /// Carries actual committed identities captured on this turn's persistence path.
+    #[serde(rename = "committed")]
+    Committed {
+        /// Describes completion or cancellation of this generation.
+        status: MessageSendStatus,
+        /// Identifies the original committed user message, including a continuation's existing row.
+        userMessageTimestamp: Option<i64>,
+        /// Locates the actual committed assistant revision or explicitly contains null.
+        assistant: Option<ChatCommittedMessage>,
+    },
+    /// Carries output that deliberately did not persist a turn and therefore has no record locator.
+    #[serde(rename = "not_persisted")]
+    NotPersisted {
+        /// Describes completion or cancellation of the nonpersistent generation.
+        status: MessageSendStatus,
+    },
+    /// Indicates that an input hook prevented submission and no generation was completed.
+    #[serde(rename = "blocked")]
+    Blocked {
+        /// Preserves the hook's explicit explanation.
+        message: Option<String>,
+    },
+    /// Indicates that a plugin took ownership of input, not that its planned turns have completed.
+    #[serde(rename = "consumed")]
+    Consumed {
+        /// Preserves the plugin's explicit input-ownership metadata.
+        metadata: BTreeMap<String, serde_json::Value>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Records only the originating send's terminal result and exact commit receipts.
 pub struct MessageSendResultData {
     ///The ID of the chat the message was sent to
     #[serde(rename = "chatId")]
@@ -992,7 +1248,129 @@ pub struct MessageSendResultData {
     ///Sent timestamp
     #[serde(rename = "sentAt")]
     pub sentAt: i64,
+    /// Reports actual persistence or input ownership without looking up unrelated recent messages.
+    pub outcome: MessageSendOutcome,
+
 }
+#[derive(Clone, Serialize, Deserialize)]
+/// Records the authenticated Chat tool's actual originating send and committed outcome.
+pub struct ChatSendMessageResultData {
+    ///The ID of the chat the message was sent to
+    #[serde(rename = "chatId")]
+    pub chatId: String,
+    ///The message content that was sent
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
+    ///Final AI response content when available
+    #[serde(rename = "aiResponse")]
+    pub aiResponse: JsOptional<String>,
+    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
+    ///Reply receive timestamp when available
+    #[serde(rename = "receivedAt")]
+    pub receivedAt: JsOptional<i64>,
+    ///Sent timestamp
+    #[serde(rename = "sentAt")]
+    pub sentAt: i64,
+    /// Reports actual persistence or input ownership without looking up unrelated recent messages.
+    pub outcome: MessageSendOutcome,
+}
+impl From<MessageSendResultData> for ChatSendMessageResultData {
+    fn from(receipt: MessageSendResultData) -> Self {
+        Self {
+            chatId: receipt.chatId,
+            message: receipt.message,
+            aiResponse: receipt.aiResponse,
+            receivedAt: receipt.receivedAt,
+            sentAt: receipt.sentAt,
+            outcome: receipt.outcome,
+        }
+    }
+}
+
+impl ChatSendMessageResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ChatSendMessageResultData serialization failed")
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+/// Describes the concrete resource result for an observation operation.
+pub enum ChatObservationResultData {
+    #[serde(rename = "open")]
+    Open {
+        handle: String,
+    },
+    #[serde(rename = "next")]
+    Next {
+        event: JsNullable<ChatSendEvent>,
+    },
+    #[serde(rename = "close")]
+    Close,
+}
+
+impl ChatObservationResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ChatObservationResultData serialization failed")
+    }
+}
+
+/// Reports cancellation of the calling owner's active Chat execution.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatCancelResultData {
+    pub chatId: String,
+    pub cancelRequested: bool,
+}
+impl ChatCancelResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ChatCancelResultData serialization failed")
+    }
+}
+
+/// Returns an owner-scoped Chat extension or its explicit absence.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatReadExtensionResultData {
+    pub extension: JsNullable<JsonObject>,
+}
+impl ChatReadExtensionResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ChatReadExtensionResultData serialization failed")
+    }
+}
+
+/// Returns the exact owner-scoped Chat extension that was persisted.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatWriteExtensionResultData {
+    pub extension: JsonObject,
+}
+impl ChatWriteExtensionResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ChatWriteExtensionResultData serialization failed")
+    }
+}
+
+/// Reports whether an owner-scoped Chat extension was removed.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatDeleteExtensionResultData {
+    pub deleted: bool,
+}
+impl ChatDeleteExtensionResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("ChatDeleteExtensionResultData serialization failed")
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 /// Contains the output of one non-persistent functional model call.
 pub struct ChatCallResultData {
@@ -1035,7 +1413,7 @@ impl ChatCallResultData {
     }
 }
 #[derive(Clone, Serialize, Deserialize)]
-/// Describes one chat message together with its role, provider, model, and timestamp.
+/// Describes one chat message's protocol sender, content, provider, model, and timestamp.
 pub struct ChatMessageInfo {
     #[serde(rename = "sender")]
     pub sender: String,
@@ -1043,8 +1421,10 @@ pub struct ChatMessageInfo {
     pub content: String,
     #[serde(rename = "timestamp")]
     pub timestamp: i64,
-    #[serde(rename = "roleName")]
-    pub roleName: String,
+    /// Identifies the exact selected persisted revision; zero selects the base message.
+    pub variantIndex: i32,
+    /// Reports the genuine number of persisted message revisions.
+    pub variantCount: i32,
     #[serde(rename = "provider")]
     pub provider: String,
     #[serde(rename = "modelName")]
@@ -1067,30 +1447,6 @@ pub struct ChatMessagesResultData {
     /// Contains the inclusive last message index for a range query.
     #[serde(rename = "end", skip_serializing_if = "Option::is_none")]
     pub end: Option<i32>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Describes a character card, including its default status and lifecycle timestamps.
-pub struct CharacterCardInfo {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "description")]
-    pub description: String,
-    #[serde(rename = "isDefault")]
-    pub isDefault: bool,
-    #[serde(rename = "createdAt")]
-    pub createdAt: i64,
-    #[serde(rename = "updatedAt")]
-    pub updatedAt: i64,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Contains the character cards available to the chat service.
-pub struct CharacterCardListResultData {
-    #[serde(rename = "totalCount")]
-    pub totalCount: usize,
-    #[serde(rename = "cards")]
-    pub cards: Vec<CharacterCardInfo>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 /// Reports the primary terminal identity and available terminal implementations.
@@ -1475,6 +1831,22 @@ pub struct LinkData {
     pub url: String,
     pub text: String,
 }
+/// Returns the actual registered built-in, package, skill and MCP tool sources.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogReadToolSourcesResultData {
+    pub builtinTools: Vec<CatalogToolSource>,
+    pub packages: Vec<CatalogToolSource>,
+    pub skills: Vec<CatalogToolSource>,
+    pub mcpServers: Vec<CatalogToolSource>,
+}
+impl CatalogReadToolSourcesResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("CatalogReadToolSourcesResultData serialization failed")
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 /// Contains file paths matching a pattern beneath a requested search path.
 pub struct FindFilesResultData {
@@ -1516,45 +1888,6 @@ pub struct GrepResultData {
     pub totalMatches: i32,
     #[serde(rename = "filesSearched")]
     pub filesSearched: i32,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Describes a newly created weighted relationship between two memories.
-pub struct MemoryLinkResultData {
-    ///The title of the source memory
-    #[serde(rename = "sourceTitle")]
-    pub sourceTitle: String,
-    ///The title of the target memory
-    #[serde(rename = "targetTitle")]
-    pub targetTitle: String,
-    ///The type of link (e.g., "related", "causes", "explains", "part_of")
-    #[serde(rename = "linkType")]
-    pub linkType: String,
-    ///The strength of the link (0.0-1.0)
-    #[serde(rename = "weight")]
-    pub weight: f32,
-    ///Optional description of the link
-    #[serde(rename = "description")]
-    pub description: String,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Describes a weighted relationship between two stored memories.
-pub struct LinkInfo {
-    pub linkId: i64,
-    pub sourceTitle: String,
-    pub targetTitle: String,
-    pub linkType: String,
-    pub weight: f32,
-    pub description: String,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Contains the weighted memory relationships returned by a link query.
-pub struct MemoryLinkQueryResultData {
-    ///Number of links returned
-    #[serde(rename = "totalCount")]
-    pub totalCount: i32,
-    ///Queried links
-    #[serde(rename = "links")]
-    pub links: Vec<LinkInfo>,
 }
 impl SleepResultData {
     /// Formats the actual sleep duration in milliseconds.
@@ -1967,58 +2300,9 @@ impl DeviceInfoResultData {
         sb
     }
 }
-impl MemoryQueryResultData {
-    #[allow(non_snake_case)]
-    /// Formats snapshot de-duplication metadata followed by the matched memory records.
-    pub fn toString(&self) -> String {
-        let mut snapshotSummary = Vec::new();
-        if let Some(snapshotId) = self
-            .snapshotId
-            .as_value()
-            .filter(|value| !value.trim().is_empty())
-        {
-            snapshotSummary.push(format!("Snapshot ID: {snapshotId}"));
-        }
-        if self.snapshotCreated.is_some_and(|created| created) {
-            snapshotSummary.push("Snapshot created: true".to_string());
-        }
-        if let Some(excluded_count) = self.excludedBySnapshotCount.filter(|count| *count > 0) {
-            snapshotSummary.push(format!("Excluded by snapshot: {excluded_count}"));
-        }
-        let snapshotSummary = snapshotSummary.join("\n");
-        if self.memories.is_empty() {
-            return if snapshotSummary.trim().is_empty() {
-                "No relevant memories found.".to_string()
-            } else {
-                format!("{snapshotSummary}\nNo relevant memories found.")
-            };
-        }
-        let memoryText = self
-            .memories
-            .iter()
-            .map(|memory| {
-                format!(
-                    "Owner: {}\nTitle: {}\nContent: {}\nSource: {}\nTags: {}\nCreated: {}",
-                    memory.ownerKey,
-                    memory.title,
-                    memory.content,
-                    memory.source,
-                    memory.tags.join(", "),
-                    memory.createdAt
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n---\n");
-        if snapshotSummary.trim().is_empty() {
-            memoryText
-        } else {
-            format!("{snapshotSummary}\n---\n{memoryText}")
-        }
-    }
-}
 impl ChatListResultData {
     #[allow(non_snake_case)]
-    /// Formats chat summaries, marks the current chat, and includes token and card metadata.
+    /// Formats workspace conversation summaries, current status, and token statistics.
     pub fn toString(&self) -> String {
         let mut sb = String::new();
         sb.push_str(&format!("Chat List ({} total):\n", self.totalCount));
@@ -2034,11 +2318,6 @@ impl ChatListResultData {
                 sb.push_str(&format!("ID: {}{}\n", chat.id, currentMarker));
                 sb.push_str(&format!("Title: {}\n", chat.title));
                 sb.push_str(&format!("Message Count: {}\n", chat.messageCount));
-                if let Some(characterCardName) = chat.characterCardName.as_value() {
-                    if !characterCardName.trim().is_empty() {
-                        sb.push_str(&format!("Character Card: {characterCardName}\n"));
-                    }
-                }
                 sb.push_str(&format!(
                     "Token Statistics: Input {} / Output {}\n",
                     chat.inputTokens, chat.outputTokens
@@ -2118,30 +2397,6 @@ impl MessageSendResultData {
                 )
             }
         }
-    }
-}
-impl CharacterCardListResultData {
-    /// Formats character card metadata and marks the default card.
-    #[allow(non_snake_case)]
-    pub fn toString(&self) -> String {
-        let mut sb = String::new();
-        sb.push_str(&format!("Character Cards ({} total):\n", self.totalCount));
-        if self.cards.is_empty() {
-            sb.push_str("No cards\n");
-        } else {
-            for card in &self.cards {
-                let defaultMarker = if card.isDefault { " [Default]" } else { "" };
-                sb.push_str(&format!("ID: {}{}\n", card.id, defaultMarker));
-                sb.push_str(&format!("Name: {}\n", card.name));
-                if !card.description.trim().is_empty() {
-                    sb.push_str(&format!("Description: {}\n", card.description));
-                }
-                sb.push_str(&format!("Created: {}\n", card.createdAt));
-                sb.push_str(&format!("Updated: {}\n", card.updatedAt));
-                sb.push_str("---\n");
-            }
-        }
-        sb.trim().to_string()
     }
 }
 impl TerminalInfoResultData {
@@ -2583,37 +2838,6 @@ impl GrepResultData {
             }
         }
         sb
-    }
-}
-impl MemoryLinkResultData {
-    #[allow(non_snake_case)]
-    /// Formats the source, target, relationship type, and strength of the created memory link.
-    pub fn toString(&self) -> String {
-        format!(
-            "Successfully linked memory: '{}' -> '{}' (Type: {}, Strength: {})",
-            self.sourceTitle, self.targetTitle, self.linkType, self.weight
-        )
-    }
-}
-impl MemoryLinkQueryResultData {
-    #[allow(non_snake_case)]
-    /// Formats each queried memory link with identifiers, relationship metadata, and description.
-    pub fn toString(&self) -> String {
-        if self.links.is_empty() {
-            return "No memory links found.".to_string();
-        }
-        let mut sb = String::new();
-        sb.push_str(&format!("Memory Links ({}):\n", self.totalCount));
-        for link in &self.links {
-            sb.push_str(&format!(
-                "- #{}: '{}' -> '{}' (Type: {}, Weight: {})\n",
-                link.linkId, link.sourceTitle, link.targetTitle, link.linkType, link.weight
-            ));
-            if !link.description.trim().is_empty() {
-                sb.push_str(&format!("  Description: {}\n", link.description));
-            }
-        }
-        sb.trim().to_string()
     }
 }
 impl VisitWebResultData {

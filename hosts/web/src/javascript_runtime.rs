@@ -1,10 +1,10 @@
 use operit_host_api::{
-    HostError, HostJavaScriptAsyncJsonCallback, HostJavaScriptExecutionInterrupt,
-    HostJavaScriptInterruptHandler, HostJavaScriptJsonCallback, HostJavaScriptRuntime,
-    HostJavaScriptRuntimeHost, HostJavaScriptRuntimeState, HostJavaScriptRuntimeStateAsyncTask,
-    HostJavaScriptRuntimeStateFactory, HostJavaScriptRuntimeStateHandle,
-    HostJavaScriptRuntimeStateOutput, HostJavaScriptRuntimeStateOutputFuture,
-    HostJavaScriptRuntimeStateTask, HostResult,
+    HostError, HostJavaScriptAsyncJsonCallback, HostJavaScriptBootstrap,
+    HostJavaScriptExecutionInterrupt, HostJavaScriptInterruptHandler, HostJavaScriptJsonCallback,
+    HostJavaScriptRuntime, HostJavaScriptRuntimeHost, HostJavaScriptRuntimeState,
+    HostJavaScriptRuntimeStateAsyncTask, HostJavaScriptRuntimeStateFactory,
+    HostJavaScriptRuntimeStateHandle, HostJavaScriptRuntimeStateOutput,
+    HostJavaScriptRuntimeStateOutputFuture, HostJavaScriptRuntimeStateTask, HostResult,
 };
 use quickjs_wasm_rs::{
     JSContextRef as QuickJsContext, JSValue as QuickJsValue, JSValueRef as QuickJsValueRef,
@@ -21,9 +21,31 @@ thread_local! {
     static DESTROYED_JAVASCRIPT_STATES: RefCell<BTreeSet<u64>> = RefCell::new(BTreeSet::new());
 }
 
+struct JavaScriptStateLease {
+    stateId: u64,
+    state: Option<HostJavaScriptRuntimeState>,
+}
+
+impl Drop for JavaScriptStateLease {
+    /// Restores the browser-affine state unless it was destroyed during execution.
+    fn drop(&mut self) {
+        let Some(state) = self.state.take() else {
+            return;
+        };
+        let destroyed = DESTROYED_JAVASCRIPT_STATES
+            .with(|destroyedStates| destroyedStates.borrow_mut().remove(&self.stateId));
+        if !destroyed {
+            JAVASCRIPT_STATES.with(|states| {
+                states.borrow_mut().insert(self.stateId, state);
+            });
+        }
+    }
+}
+
 static NEXT_JAVASCRIPT_STATE_ID: AtomicU64 = AtomicU64::new(1);
 
 struct WebHostJavaScriptRuntime {
+    bootstrap: Arc<HostJavaScriptBootstrap>,
     context: QuickJsContext,
     interruptHandler: Option<HostJavaScriptInterruptHandler>,
 }
@@ -53,6 +75,20 @@ impl WebHostJavaScriptRuntime {
 }
 
 impl HostJavaScriptRuntime for WebHostJavaScriptRuntime {
+    /// Reuses host-compiled bootstrap bytes while creating globals in this context only.
+    fn evaluateHostJavaScriptBootstrap(&mut self, source: &'static str) -> HostResult<()> {
+        self.ensureExecutionActive()?;
+        let bytes = self.bootstrap.bytecode(source, || {
+            self.context
+                .compile_global("operit.bootstrap.js", source)
+                .map_err(|error| HostError::new(error.to_string()))
+        })?;
+        self.context
+            .eval_binary(bytes)
+            .map_err(|error| HostError::new(error.to_string()))?;
+        self.ensureExecutionActive()
+    }
+
     /// Evaluates one browser QuickJS script without reading its return value.
     fn evaluateHostJavaScriptVoid(&mut self, scriptName: &str, script: &str) -> HostResult<()> {
         self.ensureExecutionActive()?;
@@ -432,13 +468,15 @@ fn structuredArgument(
 }
 
 /// Owns browser QuickJS runtimes and their event-loop-affine state.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct WebHostJavaScriptRuntimeHost;
+#[derive(Clone, Debug, Default)]
+pub struct WebHostJavaScriptRuntimeHost {
+    bootstrap: Arc<HostJavaScriptBootstrap>,
+}
 
 impl WebHostJavaScriptRuntimeHost {
     /// Creates the browser JavaScript runtime host.
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 
@@ -450,6 +488,7 @@ impl HostJavaScriptRuntimeHost for WebHostJavaScriptRuntimeHost {
             .eval_global("host-promises.js", include_str!("javascript_promises.js"))
             .map_err(|error| HostError::new(error.to_string()))?;
         Ok(Box::new(WebHostJavaScriptRuntime {
+            bootstrap: self.bootstrap.clone(),
             context,
             interruptHandler: None,
         }))
@@ -482,16 +521,10 @@ impl HostJavaScriptRuntimeHost for WebHostJavaScriptRuntimeHost {
         task: HostJavaScriptRuntimeStateTask,
     ) -> HostResult<HostJavaScriptRuntimeStateOutput> {
         let interrupt = HostJavaScriptExecutionInterrupt::new(timeoutMillis)?;
-        JAVASCRIPT_STATES.with(|states| {
-            let mut states = states.borrow_mut();
-            let state = states.get_mut(&handle.id).ok_or_else(|| {
-                HostError::new(format!(
-                    "JavaScript runtime state is unavailable: {}",
-                    handle.id
-                ))
-            })?;
-            task(state.as_mut(), interrupt)
-        })
+        let state = JAVASCRIPT_STATES.with(|states| states.borrow_mut().remove(&handle.id))
+            .ok_or_else(|| HostError::new(format!("JavaScript runtime state is unavailable: {}", handle.id)))?;
+        let mut lease = JavaScriptStateLease { stateId: handle.id, state: Some(state) };
+        task(lease.state.as_mut().expect("JavaScript state lease must own its state").as_mut(), interrupt)
     }
 
     /// Executes one asynchronous operation against a browser-affine JavaScript state.
@@ -501,27 +534,6 @@ impl HostJavaScriptRuntimeHost for WebHostJavaScriptRuntimeHost {
         timeoutMillis: u64,
         task: HostJavaScriptRuntimeStateAsyncTask,
     ) -> HostJavaScriptRuntimeStateOutputFuture {
-        struct JavaScriptStateLease {
-            stateId: u64,
-            state: Option<HostJavaScriptRuntimeState>,
-        }
-
-        impl Drop for JavaScriptStateLease {
-            /// Restores the browser-affine state unless it was destroyed during execution.
-            fn drop(&mut self) {
-                let Some(state) = self.state.take() else {
-                    return;
-                };
-                let destroyed = DESTROYED_JAVASCRIPT_STATES
-                    .with(|destroyedStates| destroyedStates.borrow_mut().remove(&self.stateId));
-                if !destroyed {
-                    JAVASCRIPT_STATES.with(|states| {
-                        states.borrow_mut().insert(self.stateId, state);
-                    });
-                }
-            }
-        }
-
         let stateLock = JAVASCRIPT_STATE_LOCKS.with(|locks| {
             locks.borrow().get(&handle.id).cloned().ok_or_else(|| {
                 HostError::new(format!(

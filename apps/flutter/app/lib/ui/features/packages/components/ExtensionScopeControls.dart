@@ -136,8 +136,9 @@ class ScopedExtensionSliver<T> extends StatelessWidget {
     final grouped = <String, List<T>>{'space': [], 'device': [], 'builtin': []};
     for (final item in items) {
       final scope = scopes[identity(item)];
-      if (!grouped.containsKey(scope))
+      if (!grouped.containsKey(scope)) {
         throw StateError('扩展缺少有效的位置：${identity(item)}');
+      }
       grouped[scope]!.add(item);
     }
     return SliverMainAxisGroup(

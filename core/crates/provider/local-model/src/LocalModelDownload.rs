@@ -1089,6 +1089,25 @@ mod tests {
         }
     }
 
+    impl operit_host_api::HttpStreamHost for TestHttpHost {
+        /// Rejects HTTP byte streams in registry-only tests.
+        fn openHttpByteStream(
+            &self,
+            _streamId: String,
+            _request: HttpRequestData,
+            _onOpened: operit_host_api::HttpStreamOpenedCallback,
+            _onChunk: operit_host_api::HttpStreamChunkCallback,
+            _onClosed: operit_host_api::HttpStreamClosedCallback,
+        ) -> HostResult<()> {
+            Err(HostError::new("test HTTP byte stream is not configured"))
+        }
+
+        /// Reports closure success because registry-only tests never open streams.
+        fn closeHttpByteStream(&self, _streamId: &str) -> HostResult<()> {
+            Ok(())
+        }
+    }
+
     impl HttpHost for FixtureArchiveHttpHost {
         /// Declares the image delivery supported by this HTTP host.
         fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
@@ -1152,6 +1171,27 @@ mod tests {
                 files: results,
                 downloadedBytes: totalBytes,
             })
+        }
+    }
+
+    impl operit_host_api::HttpStreamHost for FixtureArchiveHttpHost {
+        /// Rejects HTTP byte streams because archive installer tests feed local fixtures.
+        fn openHttpByteStream(
+            &self,
+            _streamId: String,
+            _request: HttpRequestData,
+            _onOpened: operit_host_api::HttpStreamOpenedCallback,
+            _onChunk: operit_host_api::HttpStreamChunkCallback,
+            _onClosed: operit_host_api::HttpStreamClosedCallback,
+        ) -> HostResult<()> {
+            Err(HostError::new(
+                "test HTTP byte stream is not configured for archive fixtures",
+            ))
+        }
+
+        /// Reports closure success because archive fixture tests never open streams.
+        fn closeHttpByteStream(&self, _streamId: &str) -> HostResult<()> {
+            Ok(())
         }
     }
 

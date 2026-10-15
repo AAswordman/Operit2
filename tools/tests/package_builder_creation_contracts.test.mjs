@@ -22,7 +22,7 @@ const documents = [
 
 /** Reads one current repository source as UTF-8. */
 function source(relative) {
-  return readFileSync(path.join(root, relative), 'utf8');
+  return readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 }
 
 /** Loads the real editor source without stale built assets or platform services. */

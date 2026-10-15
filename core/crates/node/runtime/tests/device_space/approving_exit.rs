@@ -57,6 +57,7 @@ fn reviewingRecord(reviewer: &str, targetSpaceId: &str, version: u64) -> join::R
             }],
             controlOperations: Vec::new(),
             topology: Vec::new(),
+            departures: Vec::new(),
         },
         accepted: None,
         unavailableSince: None,
@@ -88,7 +89,7 @@ async fn committed_approving_decision_is_pinned_and_locally_recovered() {
         .networkControlStore
         .admitSpaceForReview(
             "gx-source".into(),
-            record.source.space.members.iter().cloned().collect(),
+            record.source.space.members.iter().map(|node| (node.clone(), "user".into())).collect(),
             &format!("{}-3", record.request.requestId),
         )
         .unwrap();
@@ -158,7 +159,7 @@ async fn committed_but_excluded_decision_is_not_forged_into_approval() {
         .networkControlStore
         .admitSpaceForReview(
             "gx-source".into(),
-            record.source.space.members.iter().cloned().collect(),
+            record.source.space.members.iter().map(|node| (node.clone(), "user".into())).collect(),
             &format!("{}-5", record.request.requestId),
         )
         .unwrap();

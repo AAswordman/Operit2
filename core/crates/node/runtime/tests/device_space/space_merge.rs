@@ -149,7 +149,7 @@ async fn incomplete_space_merge_snapshot_does_not_change_membership() {
         .networkControlStore
         .admitSpace(
             before.spaceId.clone(),
-            before.members.iter().cloned().collect(),
+            before.members.iter().map(|node| (node.clone(), "user".into())).collect(),
         )
         .unwrap();
     let mut snapshot = target.peerSpaceSnapshot().unwrap();

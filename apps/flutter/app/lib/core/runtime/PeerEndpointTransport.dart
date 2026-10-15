@@ -1,3 +1,5 @@
+// ignore_for_file: file_names
+
 import '../proxy/generated/CoreProxyModels.g.dart' show PeerTransport;
 
 /// Selects the carrier advertised by discovery; bare socket addresses are TCP.

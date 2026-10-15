@@ -89,8 +89,8 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
       return false;
     }
     return switch (value) {
-      'true' => true,
-      'false' => false,
+      true => true,
+      false => false,
       _ => throw FormatException('invalid ai setup guide flag: $value'),
     };
   }
@@ -99,7 +99,7 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
     return _clients.preferencesPreferenceStorageManager.setPreference(
       fileName: _preferencesFileName,
       key: _guideSeenKey,
-      value: 'true',
+      value: true,
     );
   }
 

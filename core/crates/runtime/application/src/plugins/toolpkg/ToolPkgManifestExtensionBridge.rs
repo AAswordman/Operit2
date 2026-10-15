@@ -19,19 +19,11 @@ static DISPATCHED_MANIFEST_EXTENSIONS: OnceLock<Mutex<BTreeSet<String>>> = OnceL
 pub struct ToolPkgManifestExtensionBridge;
 
 impl ToolPkgManifestExtensionBridge {
-    /// Registers the runtime listener that synchronizes manifest extension handlers.
-    pub fn register(runtime: ToolPkgBridgeRuntime) {
-        let manager = runtime.package_manager();
-        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(move |activeContainers| {
-            Self::syncAndDispatch(&runtime, activeContainers);
-        }));
-    }
-
     /// Synchronizes active handlers and dispatches each newly visible manifest extension once.
     #[allow(non_snake_case)]
     pub fn syncAndDispatch(
         runtime: &ToolPkgBridgeRuntime,
-        activeContainers: Vec<ToolPkgContainerRuntime>,
+        activeContainers: &[ToolPkgContainerRuntime],
     ) {
         let handlers = activeContainers
             .iter()

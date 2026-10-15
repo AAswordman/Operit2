@@ -253,9 +253,9 @@ abstract class PlatformWebViewController extends PlatformInterface {
   /// Runs the given JavaScript in the context of the current page, and returns the result.
   ///
   /// The Future completes with an error if a JavaScript error occurred, or if the
-  /// type the given expression evaluates to is unsupported. Unsupported values include
-  /// certain non-primitive types on iOS, as well as `undefined` or `null` on iOS 14+.
-  Future<Object> runJavaScriptReturningResult(String javaScript) {
+  /// type the given expression evaluates to is unsupported. JavaScript `null` and
+  /// `undefined` both return Dart `null`.
+  Future<Object?> runJavaScriptReturningResult(String javaScript) {
     throw UnimplementedError(
       'runJavaScriptReturningResult is not implemented on the current platform',
     );
