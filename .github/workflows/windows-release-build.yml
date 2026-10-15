@@ -30,6 +30,8 @@ jobs:
   build-windows:
     runs-on: windows-2025
     timeout-minutes: 90
+    permissions:
+      contents: write
     env:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
@@ -101,3 +103,34 @@ jobs:
           path: tools/release/dist/operit2-cli-windows-*.zip
           if-no-files-found: error
           retention-days: 14
+
+      # 把 tools/release/dist 里已构建好的产物直接发布到本仓库的 GitHub Release。
+      # tag 由 Cargo 版本推导（tools/release/build_release.py 的 release_version）。
+      - name: Publish release assets
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API_URL: ${{ github.api_url }}
+        run: |
+          $secretsDir = "tools/release/secrets"
+          New-Item -ItemType Directory -Force -Path $secretsDir | Out-Null
+          $envFile = Join-Path $secretsDir "github.env"
+          # 必须无 BOM：带 BOM 会让 Python 读出的第一个键名变成 "\ufeffGITHUB_TOKEN"
+          [System.IO.File]::WriteAllText(
+            $envFile,
+            "GITHUB_TOKEN=$env:GITHUB_TOKEN`nGITHUB_API_URL=$env:GITHUB_API_URL",
+            (New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false)
+          )
+
+          $repo = "${{ github.repository }}"
+          # 两个 workflow 可能几乎同时结束，Release 创建会撞车，重试兜住
+          foreach ($attempt in 1..3) {
+            python tools/release/publish_dist.py --repo $repo
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Release assets published to $repo"
+              exit 0
+            }
+            Write-Warning "Release publish attempt $attempt failed with exit code $LASTEXITCODE"
+            if ($attempt -lt 3) { Start-Sleep -Seconds 45 }
+          }
+          throw "Release publish failed after 3 attempts"
