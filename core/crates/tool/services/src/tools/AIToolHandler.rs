@@ -1666,7 +1666,9 @@ mod tests {
 
 
     /// Rejects business dependencies so lifecycle tests cannot accidentally execute application services.
-    struct UnusedRuntimeSupport;
+    struct UnusedRuntimeSupport {
+        package_assets: Option<&'static [RuntimePluginAsset]>,
+    }
     impl ToolRuntimeSupport for UnusedRuntimeSupport {
         /// Rejects unexpected application service access in execution pipeline tests.
     fn bindCoreNodeToolRuntime(&self, runtime: Arc<dyn CoreNodeToolRuntime>) -> Result<(), String> { panic!("Unexpected runtime service: bindCoreNodeToolRuntime") }
@@ -1750,9 +1752,14 @@ mod tests {
         /// Rejects unexpected application service access in execution pipeline tests.
     fn cachedMcpTools(&self, serverName: &str) -> Vec<CachedMcpToolInfo> { panic!("Unexpected runtime service: cachedMcpTools") }
         /// Rejects unexpected application service access in execution pipeline tests.
-    fn builtinPluginAssets(&self) -> &'static [RuntimePluginAsset] { panic!("Unexpected runtime service: builtinPluginAssets") }
+    fn builtinPluginAssets(&self) -> &'static [RuntimePluginAsset] {
+        self.package_assets.expect("Unexpected runtime service: builtinPluginAssets")
+    }
         /// Rejects unexpected application service access in execution pipeline tests.
-    fn bundledExternalPluginAssets(&self) -> &'static [RuntimePluginAsset] { panic!("Unexpected runtime service: bundledExternalPluginAssets") }
+    fn bundledExternalPluginAssets(&self) -> &'static [RuntimePluginAsset] {
+        self.package_assets.expect("Unexpected runtime service: bundledExternalPluginAssets");
+        &[]
+    }
         /// Rejects unexpected application service access in execution pipeline tests.
     fn bundledExternalSkillAssets(&self) -> &'static [RuntimeBundledExternalSkillAsset] { panic!("Unexpected runtime service: bundledExternalSkillAssets") }
         /// Rejects unexpected application service access in execution pipeline tests.
@@ -1837,6 +1844,11 @@ mod tests {
     impl PipelineFixture {
         /// Builds only real registry, permission and storage components with rejecting business services.
         fn new() -> Self {
+            Self::with_package_assets(None)
+        }
+
+        /// Supplies optional real package sources for registry isolation tests.
+        fn with_package_assets(package_assets: Option<&'static [RuntimePluginAsset]>) -> Self {
             static SCHEDULER: std::sync::Once = std::sync::Once::new();
             SCHEDULER.call_once(|| operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
                 operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
@@ -1853,10 +1865,11 @@ mod tests {
                     availableTools: BTreeMap::new(), executingTools: BTreeSet::new(),
                     toolVisibility: BTreeMap::new(), defaultToolsRegistered: true,
                     context: HostManager { runtimeStorageHost: Some(storage.clone()), runtimeSqliteHost: Some(storage),
+                        fileSystemHost: Some(Arc::new(operit_host_native_filesystem::PosixFileSystemHost::new())),
                         hostRuntimeTaskSchedulerHost: Some(operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()),
                         ..Default::default() },
                     runtimeDependencies: ToolRuntimeDependencies::new(
-                        Arc::new(UnusedRuntimeSupport),
+                        Arc::new(UnusedRuntimeSupport { package_assets }),
                         Arc::new(operit_js_bridge::javascript::JsExecutionProvider::QuickJsExecutionProvider::new()),
                     ),
                     hooks: Vec::new(), toolPermissionSystem: permissions, packageManager: None,
@@ -1875,6 +1888,63 @@ mod tests {
             assert_eq!(self.root.parent(), Some(std::env::temp_dir().as_path()));
             std::fs::remove_dir_all(&self.root).unwrap();
         }
+    }
+
+    /// A broken theme archive stays visible as an issue while unrelated packages and command snapshots work.
+    #[tokio::test(flavor = "current_thread")]
+    async fn broken_theme_does_not_block_healthy_packages_or_registry_commands() {
+        use std::io::{Cursor, Write};
+        use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+        use operit_store::RuntimeStorageHost::{setDefaultRuntimeStorageHost, setDefaultRuntimeSqliteHost};
+
+        fn archive(manifest: serde_json::Value) -> &'static [u8] {
+            let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            zip.start_file("manifest.json", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+            zip.start_file("data.txt", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(b"healthy resource").unwrap();
+            Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice())
+        }
+        let assets = Box::leak(vec![
+            RuntimePluginAsset { name: "healthy.toolpkg", sha256: "", bytes: archive(serde_json::json!({
+                "toolpkg_id":"healthy_plugin", "resources":[{"key":"text","path":"data.txt","mime":"text/plain"}]
+            })) },
+            RuntimePluginAsset { name: "broken_theme.toolpkg", sha256: "", bytes: archive(serde_json::json!({
+                "toolpkg_id":"broken_theme", "themes":[{"id":"default","path":"theme.json","preview":"preview.png","files":[
+                    {"path":"theme.json","mediaType":"application/json"}, {"path":"preview.png","mediaType":"image/png"}
+                ]}]
+            })) },
+        ].into_boxed_slice());
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let fixture = PipelineFixture::with_package_assets(Some(assets));
+        let context = fixture.handler.getContext();
+        setDefaultRuntimeStorageHost(context.runtimeStorageHost.clone().unwrap());
+        setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.clone().unwrap());
+        let paths = RuntimeStorePaths::new(fixture.root.join("runtime"), fixture.root.join("workspaces"));
+        let mut manager = RuntimePackageManager::new(paths, fixture.handler.clone());
+        assert!(manager.claimInitialPackageRegistryLoad().unwrap());
+        let readiness = manager.packageRegistryReadiness();
+        let waiter = tokio::spawn(async move { readiness.wait_until_ready().await });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+        manager.loadAvailablePackages();
+        assert_eq!(waiter.await.unwrap(), Ok(()));
+        assert!(manager.getAvailablePackages().contains_key("healthy_plugin"));
+        assert!(!manager.getAvailablePackages().contains_key("broken_theme"));
+        let issues = manager.getToolPkgLoadIssues();
+        assert_eq!(issues.len(), 1, "unexpected package failures: {issues:?}");
+        assert!(issues[0].sourcePath.contains("broken_theme.toolpkg"));
+        let manager = Arc::new(Mutex::new(manager));
+        let snapshot = RuntimePackageManager::readySnapshot(manager.clone()).await.unwrap();
+        assert!(snapshot.getAvailablePackages().contains_key("healthy_plugin"));
+        assert_eq!(snapshot.getToolPkgLoadIssues().len(), 1);
+        // Cached failures and subsequent rescans must preserve the same isolation.
+        manager.lock().unwrap().loadAvailablePackages();
+        let snapshot = RuntimePackageManager::readySnapshot(manager).await.unwrap();
+        assert!(snapshot.getAvailablePackages().contains_key("healthy_plugin"));
+        assert_eq!(snapshot.getToolPkgLoadIssues().len(), 1);
     }
 
     #[derive(Default)]

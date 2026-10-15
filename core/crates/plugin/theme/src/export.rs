@@ -6,7 +6,7 @@
 
 use crate::{
     check_theme_template_files, json, metadata_for_path, normalize_draft,
-    preview::parse_asset_transfer, sha256_hex, validate_theme_resource_path, ManifestFile,
+    preview::parse_asset_transfer, validate_theme_resource_path, ManifestFile,
     ThemeSpecV1, ThemeTemplateMetadata, ThemeValidationError, ValidationStage,
 };
 use serde::{Deserialize, Serialize};
@@ -181,7 +181,7 @@ fn build_manifest(
     files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<ThemeTemplateMetadata, ThemeValidationError> {
     let mut manifest_files = Vec::new();
-    for (path, bytes) in files {
+    for path in files.keys() {
         if path.starts_with("licenses/") {
             continue;
         }
@@ -189,8 +189,6 @@ fn build_manifest(
         manifest_files.push(ManifestFile {
             path: path.clone(),
             media_type: media_type.to_string(),
-            bytes: bytes.len(),
-            sha256: sha256_hex(bytes),
         });
     }
     Ok(ThemeTemplateMetadata {

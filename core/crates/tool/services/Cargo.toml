@@ -62,3 +62,4 @@ operit-js-bridge = { path = "../../plugin/javascript-bridge" }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 operit-host-native-scheduler = { path = "../../../../hosts/common/operit-host-native-scheduler" }
+operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }

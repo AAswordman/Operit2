@@ -31,21 +31,15 @@
       "files": [
         {
           "path": "theme.json",
-          "mediaType": "application/json",
-          "bytes": 4887,
-          "sha256": "9e79dd8be60a898cf681d7fa385542c3d1a531a27f6bb29a61dbe2985b094dae"
+          "mediaType": "application/json"
         },
         {
           "path": "preview.png",
-          "mediaType": "image/png",
-          "bytes": 91965,
-          "sha256": "1a30707267ea4e05010a48646a0f54d211f78f7829f916de9a86e8c8f995df48"
+          "mediaType": "image/png"
         },
         {
           "path": "assets/images/ambient.png",
-          "mediaType": "image/png",
-          "bytes": 71539,
-          "sha256": "21012682ed266fdc8da80a33aa4349aa931f8e9ad9790b20789659d53760140f"
+          "mediaType": "image/png"
         }
       ]
     },
@@ -56,21 +50,15 @@
       "files": [
         {
           "path": "theme.json",
-          "mediaType": "application/json",
-          "bytes": 4887,
-          "sha256": "6488aed3ae06e64367a761782b71a7660f042c2221114d9a807a8a23f2c12a82"
+          "mediaType": "application/json"
         },
         {
           "path": "preview.png",
-          "mediaType": "image/png",
-          "bytes": 90015,
-          "sha256": "736b2375a7789ea5cb9da11ede5fd31ecc17efbf716e2edd8d4ba6ca07c54d49"
+          "mediaType": "image/png"
         },
         {
           "path": "assets/images/ambient.png",
-          "mediaType": "image/png",
-          "bytes": 69009,
-          "sha256": "780a80d5e73983f0b6b951f1fd77c8aec89cbc28088ef10f66f384ece6a2c1e2"
+          "mediaType": "image/png"
         }
       ]
     }

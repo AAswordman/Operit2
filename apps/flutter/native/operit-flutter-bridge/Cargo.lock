@@ -2812,6 +2812,7 @@ dependencies = [
  "image",
  "json5",
  "md-5",
+ "operit-edge-contract",
  "operit-host-api",
  "operit-link",
  "operit-model",

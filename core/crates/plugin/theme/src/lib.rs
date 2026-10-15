@@ -86,12 +86,10 @@ pub struct Author {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ManifestFile {
     pub path: String,
     pub media_type: String,
-    pub bytes: usize,
-    pub sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -264,7 +262,6 @@ fn theme_schema_v1() -> &'static Value {
 /// Checks one declared template's media metadata and local resource budgets.
 fn check_template_metadata(manifest: &ThemeTemplateMetadata) -> Result<(), ThemeValidationError> {
     let mut paths = BTreeSet::new();
-    let mut expanded = 0usize;
     let mut resources = 0;
     let mut fonts = 0;
     for file in &manifest.files {
@@ -272,16 +269,13 @@ fn check_template_metadata(manifest: &ThemeTemplateMetadata) -> Result<(), Theme
         if !paths.insert(file.path.clone()) {
             return Err(integrity(&file.path, "duplicate template resource"));
         }
-        let (media_type, limit) = metadata_for_path(&file.path)?;
-        if file.media_type != media_type || file.bytes == 0 || file.bytes > limit {
+        let (media_type, _) = metadata_for_path(&file.path)?;
+        if file.media_type != media_type {
             return Err(ThemeValidationError::contract(
                 &file.path,
-                "media type or declared byte budget is invalid",
+                "declared media type is invalid",
             ));
         }
-        expanded = expanded
-            .checked_add(file.bytes)
-            .ok_or_else(|| integrity(&file.path, "byte count overflow"))?;
         if file.path.starts_with("assets/") {
             resources += 1;
         }
@@ -289,7 +283,7 @@ fn check_template_metadata(manifest: &ThemeTemplateMetadata) -> Result<(), Theme
             fonts += 1;
         }
     }
-    if expanded > MAX_EXPANDED_BYTES || resources > MAX_RESOURCES || fonts > MAX_FONTS {
+    if resources > MAX_RESOURCES || fonts > MAX_FONTS {
         return Err(ThemeValidationError::contract(
             "themes/files",
             "template exceeds resource budget",
@@ -403,15 +397,19 @@ pub fn check_theme_template_files(
     manifest_bytes: &[u8],
 ) -> Result<ContractCheckedTheme, ThemeValidationError> {
     check_template_metadata(&manifest)?;
+    let mut expanded = 0usize;
     for file in &manifest.files {
         let bytes = files
             .get(&file.path)
             .ok_or_else(|| integrity(&file.path, "declared template resource is missing"))?;
-        if bytes.len() != file.bytes || sha256_hex(bytes) != file.sha256 {
-            return Err(integrity(
-                &file.path,
-                "resource byte count or SHA-256 differs from declaration",
-            ));
+        let (_, limit) = metadata_for_path(&file.path)?;
+        if bytes.is_empty() || bytes.len() > limit {
+            return Err(integrity(&file.path, "resource is empty or exceeds the file size limit"));
+        }
+        expanded = expanded.checked_add(bytes.len())
+            .ok_or_else(|| integrity(&file.path, "resource size overflow"))?;
+        if expanded > MAX_EXPANDED_BYTES {
+            return Err(integrity("themes/files", "template exceeds the total resource size limit"));
         }
         if file.media_type == "text/plain" {
             std::str::from_utf8(bytes).map_err(|_| integrity(&file.path, "text must be UTF-8"))?;
@@ -462,8 +460,8 @@ fn validate_template(
             .iter()
             .map(|file| ThemeFileValidation {
                 path: file.path.clone(),
-                bytes: file.bytes,
-                sha256: file.sha256.clone(),
+                bytes: files[&file.path].len(),
+                sha256: sha256_hex(&files[&file.path]),
             })
             .collect(),
         media: media.clone(),

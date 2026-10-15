@@ -2358,11 +2358,7 @@ impl RuntimePackageManager {
         }
         self.applyPackageScanSnapshot(mergedSnapshot);
         self.notifyToolPkgRuntimeChangeListeners();
-        let outcome = match self.getToolPkgLoadIssues().into_iter().next() {
-            Some(issue) => Err(issue.message),
-            None => Ok(()),
-        };
-        self.packageRegistryReadiness.complete_scan(outcome);
+        self.packageRegistryReadiness.complete_scan();
     }
 
     #[allow(non_snake_case)]

@@ -1277,9 +1277,7 @@ fun ToolPkgWorkspaceTemplateRuntime.toMessagePackValue(): Map<String, Any?> = ma
 
 data class ManifestFile(
     val path: String,
-    val media_type: String,
-    val bytes: Int,
-    val sha256: String
+    val media_type: String
 )
 
 fun decodeManifestFile(value: Any?): ManifestFile {
@@ -1287,8 +1285,6 @@ fun decodeManifestFile(value: Any?): ManifestFile {
     return ManifestFile(
         path = input["path"] as String as String,
         media_type = input["mediaType"] as String as String,
-        bytes = (input["bytes"] as Number).toInt() as Int,
-        sha256 = input["sha256"] as String as String,
     )
 }
 
@@ -1296,8 +1292,6 @@ fun decodeManifestFile(value: Any?): ManifestFile {
 fun ManifestFile.toMessagePackValue(): Map<String, Any?> = mapOf(
     "path" to this.path,
     "mediaType" to this.media_type,
-    "bytes" to this.bytes,
-    "sha256" to this.sha256,
 )
 
 data class ToolResult(

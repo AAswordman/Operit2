@@ -1888,7 +1888,7 @@ class ThemeStudioApp {
       fileInfo.textContent =
         row.bytes == null
           ? "尚未选择文件"
-          : `${row.bytes.byteLength.toLocaleString()} bytes · SHA-256: ${row.sha256 ? row.sha256.slice(0, 14) + "…" : "计算哈希中"}`;
+          : `${row.bytes.byteLength.toLocaleString()} 字节`;
       headerInfo.append(badgeRow, fileInfo);
 
       const remove = document.createElement("button");

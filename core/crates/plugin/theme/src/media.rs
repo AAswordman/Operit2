@@ -83,11 +83,7 @@ pub(crate) fn validate_media_files<B: AsRef<[u8]>>(
                 ))
             }
         }
-        let digest = if manifest_file.bytes == bytes.len() && manifest_file.sha256.len() == 64 {
-            manifest_file.sha256.clone()
-        } else {
-            sha256_hex(bytes)
-        };
+        let digest = sha256_hex(bytes);
         let cache_key: MediaCacheKey = (
             manifest_file.path.clone(),
             manifest_file.media_type.clone(),

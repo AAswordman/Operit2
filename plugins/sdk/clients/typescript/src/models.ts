@@ -1332,8 +1332,6 @@ export function encodeToolPkgWorkspaceTemplateRuntime(value: ToolPkgWorkspaceTem
 export interface ManifestFile {
   readonly path: string;
   readonly media_type: string;
-  readonly bytes: number;
-  readonly sha256: string;
 }
 
 export function decodeManifestFile(value: unknown): ManifestFile {
@@ -1341,8 +1339,6 @@ export function decodeManifestFile(value: unknown): ManifestFile {
   return {
     path: input['path'] as string,
     media_type: input['mediaType'] as string,
-    bytes: input['bytes'] as number,
-    sha256: input['sha256'] as string,
   };
 }
 
@@ -1351,8 +1347,6 @@ export function encodeManifestFile(value: ManifestFile): Record<string, unknown>
   return {
     'path': value.path,
     'mediaType': value.media_type,
-    'bytes': value.bytes,
-    'sha256': value.sha256,
   };
 }
 

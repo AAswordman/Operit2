@@ -125,7 +125,16 @@ fn v28_object_adoption_verifies_and_retires_business_records_once() {
         .unwrap();
     let mut card = serde_json::to_value(&data().cards[0]).unwrap();
     card["themeConfigId"] = Value::Null;
-    let source_memory = memory(12);
+    let mut source_memory = memory(12);
+    let expected_card = card.clone();
+    let expected_memory = source_memory.2.clone();
+    // Older structured JS hosts persisted safe integer timestamps as JSON floats.
+    card["createdAt"] = json!(100.0);
+    card["updatedAt"] = json!(200.0);
+    for field in ["createdAt", "updatedAt", "lastAccessedAt"] {
+        source_memory.2["record"][field] =
+            json!(source_memory.2["record"][field].as_i64().unwrap() as f64);
+    }
     writer
         .request(StorageRequest::Commit {
             handle: writer.handle.clone(),
@@ -157,14 +166,19 @@ fn v28_object_adoption_verifies_and_retires_business_records_once() {
             ],
         })
         .unwrap();
+    // Resume an interrupted attempt that already wrote the equivalent integer card.
+    writer
+        .relational
+        .put(&[("cards".into(), "legacy".into(), expected_card.clone(), None)])
+        .unwrap();
     let reopened = CharacterPluginWriter::open(fixture.host.clone(), fixture.host.clone()).unwrap();
     assert_eq!(
         reopened.get("cards", "legacy").unwrap().unwrap()["value"],
-        card
+        expected_card
     );
     assert_eq!(
         reopened.get("memories", &source_memory.1).unwrap().unwrap()["value"],
-        source_memory.2
+        expected_memory
     );
     assert!(reopened.legacyList("cards").unwrap().is_empty());
     assert!(reopened.legacyList("memories").unwrap().is_empty());
@@ -175,6 +189,7 @@ fn v28_object_adoption_verifies_and_retires_business_records_once() {
             .unwrap()["value"]["complete"],
         true
     );
+    card = expected_card;
     card["name"] = json!("Edited after adoption");
     reopened
         .commit(vec![reopened

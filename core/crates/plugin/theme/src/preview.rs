@@ -73,7 +73,6 @@ pub fn validate_theme_preview_draft(
         }
         declarations.push(ManifestFile {
             path: asset.path.clone(), media_type: asset.media_type.clone(),
-            bytes: asset.bytes.len(), sha256: sha256_hex(&asset.bytes),
         });
     }
     if paths != theme.asset_paths() {
@@ -88,7 +87,7 @@ pub fn validate_theme_preview_draft(
         validator_version: 1,
         theme_sha256: theme.sha256(),
         files: declarations.into_iter().map(|file| ThemeFileValidation {
-            path: file.path, bytes: file.bytes, sha256: file.sha256,
+            bytes: files[&file.path].len(), sha256: sha256_hex(files[&file.path]), path: file.path,
         }).collect(),
         media,
         trust: ThemeTemplateTrust::Untrusted,

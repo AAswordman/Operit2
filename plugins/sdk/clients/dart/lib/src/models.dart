@@ -1603,30 +1603,22 @@ class ManifestFile {
   const ManifestFile({
     required this.path,
     required this.media_type,
-    required this.bytes,
-    required this.sha256,
   });
 
   /// Decodes `operit_plugin_theme::ManifestFile` from a MessagePack value map.
   factory ManifestFile.fromMessagePackValue(Map<String, Object?> value) => ManifestFile(
     path: value['path'] as String,
     media_type: value['mediaType'] as String,
-    bytes: (value['bytes'] as num).toInt(),
-    sha256: value['sha256'] as String,
   );
 
   /// Encodes this model into a MessagePack-compatible value map.
   Map<String, Object?> toMessagePackValue() => <String, Object?>{
     'path': path,
     'mediaType': media_type,
-    'bytes': bytes,
-    'sha256': sha256,
   };
 
   final String path;
   final String media_type;
-  final int bytes;
-  final String sha256;
 }
 
 /// Generated SDK model for Rust type `operit_tools::ConversationMarkupManager::ToolResult`.

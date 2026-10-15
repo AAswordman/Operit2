@@ -12,6 +12,8 @@ A ToolPkg may declare scripts, resources, workspace templates and any number of 
 - `export_toolpkg_from_theme` and `export_toolpkg_from_theme_transfer` create an ordinary ToolPkg with one template declaration. Studio preserves the other capabilities when editing an existing package.
 - Browser bindings expose `normalizeThemeDraft`, `validateThemePreviewDraft` and `exportToolPkgFromTheme`.
 
+Template resource declarations contain only `path` and `mediaType`. File sizes and cache digests are computed automatically; legacy `bytes` and `sha256` values are ignored.
+
 The package-level optional `license` field references an agreement text inside the ToolPkg. Templates have no platform list, agreement field, API version or application-version requirement.
 
 See [template definitions](../../../../docs/theme-v1-contract.md) and [renderer checks](SECURITY.md).

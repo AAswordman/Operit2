@@ -326,7 +326,7 @@ fn final_archive_validation_accepts_nested_manifest_and_ordinary_id() {
 
 /// Requires untouched contributions to remain valid before returning the merged archive to Studio.
 #[test]
-fn final_archive_validation_rejects_digest_damage_in_another_template() {
+fn final_archive_validation_rejects_missing_resources_in_another_template() {
     use std::io::Read;
     let bytes = export_toolpkg_from_theme_transfer(
         &serde_json::to_vec(&metadata()).unwrap(), b"{}", &png(1280,800), b"[]", b"",
@@ -341,7 +341,7 @@ fn final_archive_validation_rejects_digest_damage_in_another_template() {
             let mut manifest: serde_json::Value = serde_json::from_slice(&data).unwrap();
             let mut other = manifest["themes"][0].clone();
             other["id"] = json!("other");
-            other["files"][0]["sha256"] = json!("0".repeat(64));
+            other["files"][0]["path"] = json!("assets/images/missing.png");
             manifest["themes"].as_array_mut().unwrap().push(other);
             data = serde_json::to_vec(&manifest).unwrap();
         }
@@ -350,4 +350,19 @@ fn final_archive_validation_rejects_digest_damage_in_another_template() {
     }
     let archive = output.finish().unwrap().into_inner();
     assert!(validate_authored_toolpkg_theme_templates(&archive,"manifest.json").is_err());
+}
+
+/// Exported contributions only ask authors to identify their files and media types.
+#[test]
+fn exported_manifest_omits_resource_sizes_and_hashes() {
+    let bytes = export_toolpkg_from_theme_transfer(
+        &serde_json::to_vec(&metadata()).unwrap(), b"{}", &png(1280,800), b"[]", b"",
+    ).unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let manifest: serde_json::Value = serde_json::from_reader(archive.by_name("manifest.json").unwrap()).unwrap();
+    for file in manifest["themes"][0]["files"].as_array().unwrap() {
+        assert_eq!(file.as_object().unwrap().len(), 2);
+        assert!(file.get("bytes").is_none());
+        assert!(file.get("sha256").is_none());
+    }
 }

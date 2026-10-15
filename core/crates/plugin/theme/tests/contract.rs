@@ -88,12 +88,12 @@ fn files() -> BTreeMap<String, Vec<u8>> {
         ("licenses/theme.txt".into(), b"Example license".to_vec()),
     ]);
     let entries: Vec<Value> = files
-        .iter()
-        .map(|(path, bytes)| {
+        .keys()
+        .map(|path| {
             json!({
                 "path":path,"mediaType":match path.as_str() {
                     "theme.json"=>"application/json","preview.png"=>"image/png",_=>"text/plain"
-                },"bytes":bytes.len(),"sha256":sha256_hex(bytes)
+                }
             })
         })
         .collect();
@@ -133,7 +133,7 @@ fn check_files(
 
 /// Checks declared resources without imposing an exact file set on the ToolPkg.
 #[test]
-fn checks_declared_resource_bytes_and_hashes() {
+fn checks_resource_presence_without_author_supplied_sizes_or_hashes() {
     let original = files();
     let checked = check_files(&original).unwrap();
     assert_eq!(
@@ -145,7 +145,7 @@ fn checks_declared_resource_bytes_and_hashes() {
     assert!(check_files(&extra).is_ok());
     let mut tampered = original.clone();
     tampered.get_mut("preview.png").unwrap().push(0);
-    assert!(check_files(&tampered).is_err());
+    assert!(check_files(&tampered).is_ok());
     let mut missing = original;
     missing.remove("preview.png");
     assert!(check_files(&missing).is_err());
@@ -257,17 +257,15 @@ fn complete_files(preview: Vec<u8>) -> BTreeMap<String, Vec<u8>> {
         ("licenses/theme.txt".into(), b"Example license".to_vec()),
     ]);
     let entries: Vec<Value> = files
-        .iter()
-        .map(|(path, bytes)| {
+        .keys()
+        .map(|path| {
             json!({
                 "path":path,
                 "mediaType":match path.as_str() {
                     "theme.json"=>"application/json",
                     "preview.png"=>"image/png",
                     _=>"text/plain"
-                },
-                "bytes":bytes.len(),
-                "sha256":sha256_hex(bytes)
+                }
             })
         })
         .collect();
@@ -316,7 +314,7 @@ fn complete_package_runs_l4_and_returns_non_installing_receipt() {
 }
 
 #[test]
-fn complete_package_rejects_media_after_hash_and_contract_checks() {
+fn complete_package_rejects_invalid_media() {
     let files = complete_files(b"not a PNG".to_vec());
     let archive = archive_from_files(&files);
     let error =
@@ -426,4 +424,78 @@ fn rejects_unsafe_template_references() {
         serde_json::to_vec(&manifest).unwrap(),
     );
     assert!(validate_toolpkg_theme_templates(&archive_from_files(&files)).is_err());
+}
+
+/// Validates shipped templates against their actual resources, including declared lengths and hashes.
+#[test]
+fn bundled_external_theme_templates_load_without_sizes_or_hashes() {
+    let external = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../plugins/packages/external");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(external).unwrap() {
+        let package = entry.unwrap().path();
+        let manifest = package.join("manifest.json");
+        if !manifest.is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(&manifest).unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        let Some(themes) = value["themes"].as_array() else {
+            continue;
+        };
+        let mut files = BTreeMap::from([("manifest.json".into(), bytes)]);
+        for theme in themes {
+            let theme_path = std::path::Path::new(theme["path"].as_str().unwrap());
+            for resource in theme["files"].as_array().unwrap() {
+                let name = resource["path"].as_str().unwrap();
+                let path = match name {
+                    "theme.json" => theme_path.to_path_buf(),
+                    "preview.png" => theme["preview"].as_str().unwrap().into(),
+                    _ => theme_path.parent().unwrap().join(name),
+                };
+                files.insert(
+                    path.to_str().unwrap().to_string(),
+                    std::fs::read(package.join(&path)).unwrap(),
+                );
+            }
+        }
+        let actual = validate_toolpkg_theme_templates(&archive_from_files(&files))
+            .unwrap_or_else(|error| panic!("{}: {error}", manifest.display()));
+        assert_eq!(actual.len(), themes.len());
+        checked += actual.len();
+    }
+    assert!(checked >= 2, "shipped theme templates must be checked");
+}
+
+/// Old, stale bookkeeping fields must not prevent loading an otherwise valid theme.
+#[test]
+fn ignores_legacy_resource_sizes_and_hashes_and_computes_receipts_from_files() {
+    let mut files = complete_files(png_preview());
+    let mut manifest: Value = serde_json::from_slice(&files["manifest.json"]).unwrap();
+    for file in manifest["themes"][0]["files"].as_array_mut().unwrap() {
+        file["bytes"] = json!(1);
+        file["sha256"] = json!("obsolete digest");
+    }
+    files.insert("manifest.json".into(), serde_json::to_vec(&manifest).unwrap());
+    let templates = validate_toolpkg_theme_templates(&archive_from_files(&files)).unwrap();
+    for receipt in &templates[0].receipt().files {
+        assert_eq!(receipt.bytes, files[&receipt.path].len());
+        assert_eq!(receipt.sha256, sha256_hex(&files[&receipt.path]));
+    }
+    let serialized = serde_json::to_value(&templates[0].metadata().files).unwrap();
+    for file in serialized.as_array().unwrap() {
+        assert_eq!(file.as_object().unwrap().len(), 2);
+        assert!(file.get("bytes").is_none());
+        assert!(file.get("sha256").is_none());
+    }
+}
+
+/// Limits apply to actual resources even without author-supplied bookkeeping.
+#[test]
+fn rejects_empty_and_oversized_actual_resources() {
+    let mut resources = files();
+    resources.insert("preview.png".into(), Vec::new());
+    assert!(check_files(&resources).is_err());
+    resources.insert("preview.png".into(), vec![0; MAX_IMAGE_BYTES + 1]);
+    assert!(check_files(&resources).is_err());
 }

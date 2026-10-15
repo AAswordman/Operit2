@@ -153,6 +153,23 @@ fn tables(root: &Layout) -> Vec<&Layout> {
 fn child_key(parent: &str, index: usize) -> String {
     format!("{}:{parent}:{index}", parent.encode_utf16().count())
 }
+/// Accepts exact int64 values and the safe whole-number floats written by older JS hosts.
+fn integer_value(value: &Value) -> Result<i64, String> {
+    if let Some(integer) = value.as_i64() {
+        return Ok(integer);
+    }
+    if value.is_f64() {
+        if let Some(number) = value.as_f64() {
+            if number.is_finite()
+                && number.fract() == 0.0
+                && number.abs() <= 9_007_199_254_740_991.0
+            {
+                return Ok(number as i64);
+            }
+        }
+    }
+    Err("Expected an int64 or a safe whole-number float".into())
+}
 /// Converts one finite field into its lossless SQLite representation.
 fn scalar(node: &Node, value: &Value) -> Result<StorageSqlValue, String> {
     match node.kind.as_str() {
@@ -168,7 +185,7 @@ fn scalar(node: &Node, value: &Value) -> Result<StorageSqlValue, String> {
             .into(),
         )),
         "integer" => Ok(StorageSqlValue::Integer(
-            value.as_i64().ok_or("Expected integer field")?.to_string(),
+            integer_value(value)?.to_string(),
         )),
         "number" => Ok(StorageSqlValue::Real(
             value.as_f64().ok_or("Expected numeric field")?,
@@ -343,7 +360,9 @@ fn encode(
                         if empty {
                             StorageSqlValue::Null
                         } else {
-                            scalar(node, input.unwrap())?
+                            scalar(node, input.unwrap()).map_err(|error| {
+                                format!("{error} at {}/{key}.{}", current.table.name, field(prefix))
+                            })?
                         },
                     );
                 }
@@ -600,7 +619,7 @@ impl CharacterRelationalStorage {
     pub fn list(&self, collection: &str) -> Result<Vec<Value>, String> {
         self.read(collection, None)
     }
-    /// Canonicalizes only declared REAL fields and vector components for exact migration comparisons.
+    /// Canonicalizes declared numeric fields for exact migration comparisons without changing identities.
     pub fn comparisonValue(&self, collection: &str, value: &Value) -> Result<Value, String> {
         /// Preserves every field and exact integer identity while applying the SQL numeric representation.
         fn normalize(node: &Node, value: &mut Value) -> Result<(), String> {
@@ -612,7 +631,8 @@ impl CharacterRelationalStorage {
                     let object = value.as_object_mut().ok_or("Expected object field")?;
                     for (key, child) in &node.fields {
                         if let Some(value) = object.get_mut(key) {
-                            normalize(child, value)?;
+                            normalize(child, value)
+                                .map_err(|error| format!("{error} at {key}"))?;
                         }
                     }
                 }
@@ -632,6 +652,9 @@ impl CharacterRelationalStorage {
                         normalize(item, value)?;
                     }
                 }
+                "integer" => {
+                    *value = json!(integer_value(value)?);
+                }
                 "number" => {
                     *value = json!(value.as_f64().ok_or("Expected numeric field")?);
                 }
@@ -649,7 +672,8 @@ impl CharacterRelationalStorage {
             .get(collection)
             .ok_or_else(|| format!("Unknown relational collection {collection}"))?;
         let mut result = value.clone();
-        normalize(&root.node, &mut result)?;
+        normalize(&root.node, &mut result)
+            .map_err(|error| format!("{error} in {collection}"))?;
         Ok(result)
     }
     /// Reconstructs typed rows for migration verification and exact version checks.
@@ -820,3 +844,7 @@ fn insert_row(table: &str, row: &Row) -> StorageStatement {
         expected_affected_rows: Some(1),
     }
 }
+
+#[cfg(test)]
+#[path = "CharacterRelationalStorageTests.rs"]
+mod tests;

@@ -244,14 +244,14 @@ test("editing Chinese metadata retains the other translations", async () => {
 
 /** Keeps templates sharing definitions, previews and image bytes intact when editing one contribution. */
 test("isolates edited template bytes from shared resources and other package capabilities", async () => {
-  const sharedFiles = [{path:"assets/images/shared.png",sha256:"original digest"}];
+  const sharedFiles = [{path:"assets/images/shared.png",mediaType:"image/png"}];
   const a = {id:"a",path:"templates/shared.json",preview:"templates/shared.png",files:sharedFiles};
   const b = {...a,id:"b"};
   const original = (await parseImportedThemeFile(archiveFile({toolpkg_id:"shared_package",themes:[a,b],resources:[{key:"cover",path:"templates/shared.png"}]}, {
     "templates/shared.json":'{"background":{"asset":"assets/images/shared.png"}}',
     "templates/shared.png":"original preview", "templates/assets/images/shared.png":"original image",
   }), async () => "a")).source!;
-  const authored = archiveFile({toolpkg_id:"shared_package",themes:[{id:"default",path:"theme.json",preview:"preview.png",files:[{path:"assets/images/shared.png",sha256:"edited digest"}]}]}, {
+  const authored = archiveFile({toolpkg_id:"shared_package",themes:[{id:"default",path:"theme.json",preview:"preview.png",files:[{path:"assets/images/shared.png",mediaType:"image/png"}]}]}, {
     "theme.json":'{"background":{"asset":"assets/images/shared.png"}}',"preview.png":"edited preview","assets/images/shared.png":"edited image",
   });
   const bytes = await updateToolPkgTheme(original, new Uint8Array(await authored.arrayBuffer()));

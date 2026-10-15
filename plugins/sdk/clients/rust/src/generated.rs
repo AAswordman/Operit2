@@ -712,10 +712,6 @@ pub struct SdkManifestFile {
     pub path: String,
     #[serde(rename = "mediaType")]
     pub media_type: String,
-    #[serde(rename = "bytes")]
-    pub bytes: usize,
-    #[serde(rename = "sha256")]
-    pub sha256: String,
 }
 
 /// Generated SDK model for `operit_tools::ConversationMarkupManager::ToolResult`.
