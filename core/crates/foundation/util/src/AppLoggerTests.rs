@@ -404,7 +404,8 @@ fn concurrent_appends_never_lose_lines_across_rotation() {
                             LOG,
                             &format!("T{thread}L{line:03}\n"),
                             CAP,
-                        );
+                        )
+                        .expect("an append under a healthy host must succeed");
                     }
                 })
             })
@@ -443,7 +444,7 @@ fn concurrent_appends_never_lose_lines_across_rotation() {
 }
 
 #[test]
-fn rotation_failure_still_appends_and_keeps_the_failure_visible() {
+fn rotation_failure_is_propagated_and_writes_no_line() {
     const LOG: &str = "/runtime/logs/operit.log";
     const CAP: i64 = 2048;
     let prefill = "x".repeat(CAP as usize + 64);
@@ -458,16 +459,83 @@ fn rotation_failure_still_appends_and_keeps_the_failure_visible() {
     }
 
     let files: Arc<dyn FileSystemHost> = host.clone();
-    append_line_with_rotation_cap(&files, LOG, "survivor\n", CAP);
+    let outcome = append_line_with_rotation_cap(&files, LOG, "dropped\n", CAP);
+    assert!(
+        outcome.is_err(),
+        "a failed rotation must surface as an explicit Err, not as a logged-and-continue"
+    );
 
     let storage = host.storage.lock().unwrap();
     assert_eq!(
-        storage.files[LOG],
-        format!("{prefill}survivor\n"),
-        "a failed rotation must not drop the appended line"
+        storage.files[LOG], prefill,
+        "after a failed rotation no line may be appended to the oversized file"
     );
     assert!(
         !storage.files.contains_key(&format!("{LOG}.1")),
         "the failed move must not produce an archive"
+    );
+}
+
+#[test]
+fn append_failure_is_propagated_as_err() {
+    const LOG: &str = "/runtime/logs/operit.log";
+    const CAP: i64 = 8192;
+    let host = Arc::new(TestFileSystemHost {
+        fail_write: Some(LOG.into()),
+        ..Default::default()
+    });
+    host.storage
+        .lock()
+        .unwrap()
+        .directories
+        .insert("/runtime/logs".into());
+
+    let files: Arc<dyn FileSystemHost> = host.clone();
+    let outcome = append_line_with_rotation_cap(&files, LOG, "never lands\n", CAP);
+    assert!(outcome.is_err(), "a failed append must be Err");
+    assert!(
+        !host.storage.lock().unwrap().files.contains_key(LOG),
+        "nothing may be written when the append fails"
+    );
+}
+
+#[test]
+fn report_log_io_error_is_infallible_and_does_not_panic() {
+    // The report path runs while the state lock is held; it must not panic
+    // (closed stderr) and must not re-enter the logger (deadlock).
+    report_log_io_error("stat", "/runtime/logs/operit.log", "simulated failure");
+}
+
+#[test]
+fn write_entry_surfaces_file_failures_to_the_caller() {
+    let _global = global_log_guard();
+    const LOG: &str = "/runtime/logs/operit.log";
+    const PACKAGE_LOG: &str = "/runtime/logs/toolpkg.log";
+
+    // Oversized runtime log whose rotation move fails: the bound sink is
+    // configured, but every write through it fails. write_entry uses the
+    // production cap, so the file must exceed LOG_ROTATE_BYTES.
+    let host = Arc::new(TestFileSystemHost {
+        fail_move: Some(LOG.into()),
+        ..Default::default()
+    });
+    {
+        let mut storage = host.storage.lock().unwrap();
+        storage.directories.insert("/runtime/logs".into());
+        storage
+            .files
+            .insert(LOG.into(), "x".repeat(LOG_ROTATE_BYTES as usize + 64));
+    }
+    AppLogger::configure_log_files(host, LOG.into(), PACKAGE_LOG.into()).unwrap();
+
+    let outcome = write_entry(ERROR, None, "FailureTest", "line with a broken sink", None);
+    assert!(
+        outcome.is_err(),
+        "write_entry must propagate a file sink failure as a value"
+    );
+    assert_eq!(
+        AppLogger::e("FailureTest", "second failure with a bound sink"),
+        -1,
+        "the public write API must expose the failure on its return value"
     );
 }

@@ -273,10 +273,14 @@ impl AppLogger {
     }
 
     /// Writes a verbose log message with an explicit detail level.
+    /// Returns `-1` when the configured file sink failed (also reported
+    /// through the host console channel); `0` on success.
     pub fn v_with_level(tag: &str, msg: &str, verbose_level: i32) -> i32 {
         assert!((VERBOSE_LEVEL_1..=VERBOSE_LEVEL_6).contains(&verbose_level));
-        write_entry(VERBOSE, Some(verbose_level), tag, msg, None);
-        0
+        match write_entry(VERBOSE, Some(verbose_level), tag, msg, None) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
     }
 
     /// Writes a flow trace at Verbose detail level five.
@@ -315,13 +319,19 @@ impl AppLogger {
     }
 
     /// Writes a log message with an explicit priority.
+    /// Returns `-1` when the configured file sink failed (also reported
+    /// through the host console channel); `0` on success.
     pub fn println(priority: i32, tag: &str, msg: &str) -> i32 {
         let verbose_level = (priority == VERBOSE).then_some(VERBOSE_LEVEL_1);
-        write_entry(priority, verbose_level, tag, msg, None);
-        0
+        match write_entry(priority, verbose_level, tag, msg, None) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
     }
 
     /// Writes a log message together with an error chain.
+    /// Returns `-1` when the configured file sink failed (also reported
+    /// through the host console channel); `0` on success.
     pub fn println_with_error(
         priority: i32,
         tag: &str,
@@ -329,8 +339,10 @@ impl AppLogger {
         tr: &(dyn std::error::Error),
     ) -> i32 {
         let verbose_level = (priority == VERBOSE).then_some(VERBOSE_LEVEL_1);
-        write_entry(priority, verbose_level, tag, msg, Some(error_chain(tr)));
-        0
+        match write_entry(priority, verbose_level, tag, msg, Some(error_chain(tr))) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
     }
 
     /// Captures the current stack trace as display text.
@@ -354,13 +366,16 @@ impl AppLogger {
 }
 
 /// Stores one log entry and emits it to the configured sinks.
+///
+/// Returns `Err` when any configured file sink failed, so the failure reaches
+/// the caller as a value instead of only as a log line.
 fn write_entry(
     priority: i32,
     verbose_level: Option<i32>,
     tag: &str,
     msg: &str,
     throwable: Option<String>,
-) {
+) -> Result<(), ()> {
     let timestamp_ms = operit_host_api::TimeUtils::currentTimeMillisU128();
     let entry = LogEntry {
         priority,
@@ -376,24 +391,29 @@ fn write_entry(
         .eq_ignore_ascii_case(TOOLPKG_LOG_TAG)
         .then(|| format_package_log_line(&entry));
 
-    let (enable_console_logging, console_min_level, console_max_verbose_level) = {
+    let (enable_console_logging, console_min_level, console_max_verbose_level, write_result) = {
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
         if guard.retain_entries { guard.entries.push(entry.clone()); }
 
         // File operations run while the state lock is held: the config check,
         // the rotation check, and the append are one critical section, so a
         // concurrent reset/reconfigure cannot slip in between them.
+        let mut write_result = Ok(());
         if guard.enable_file_logging {
             if let (Some(file_system_host), Some(path)) =
                 (&guard.file_system_host, &guard.log_file)
             {
-                append_line(file_system_host, path, &line);
+                write_result = append_line(file_system_host, path, &line);
             }
             if let (Some(file_system_host), Some(path)) =
                 (&guard.file_system_host, &guard.package_log_file)
             {
                 if let Some(package_line) = &package_line {
-                    append_line(file_system_host, path, package_line);
+                    // Keep the first failure: the runtime log line that could
+                    // not be written is the one worth reporting.
+                    if write_result.is_ok() {
+                        write_result = append_line(file_system_host, path, package_line);
+                    }
                 }
             }
         }
@@ -402,6 +422,7 @@ fn write_entry(
             guard.enable_console_logging,
             guard.console_min_level,
             guard.console_max_verbose_level,
+            write_result,
         )
     };
 
@@ -425,6 +446,7 @@ fn write_entry(
             }
         }
     }
+    write_result
 }
 
 /// Appends one formatted log line through the configured file-system host.
@@ -432,9 +454,13 @@ fn write_entry(
 /// Callers must hold the state lock; inside, rotation and the append also run
 /// while holding [`FILE_WRITE_LOCK`] (lock order: state → file-write, never the
 /// reverse) so concurrent writers cannot interleave the rotate/append sequence
-/// and drop lines.
-fn append_line(file_system_host: &Arc<dyn FileSystemHost>, path: &str, line: &str) {
-    append_line_with_rotation_cap(file_system_host, path, line, LOG_ROTATE_BYTES);
+/// and drop lines. Returns `Err` if the rotation or the append failed.
+fn append_line(
+    file_system_host: &Arc<dyn FileSystemHost>,
+    path: &str,
+    line: &str,
+) -> Result<(), ()> {
+    append_line_with_rotation_cap(file_system_host, path, line, LOG_ROTATE_BYTES)
 }
 
 /// [`append_line`] with an explicit rotation cap so tests can rotate cheaply.
@@ -443,30 +469,32 @@ fn append_line_with_rotation_cap(
     path: &str,
     line: &str,
     rotate_bytes: i64,
-) {
+) -> Result<(), ()> {
     let _guard = FILE_WRITE_LOCK
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    rotate_if_oversized(file_system_host, path, rotate_bytes);
-    if let Err(error) = file_system_host.writeFile(path, line, true) {
-        report_log_io_error("append", path, &error.message);
-    }
+        .map_err(|_| report_log_io_error("acquire-file-write-lock", path, "lock poisoned"))?;
+    rotate_if_oversized(file_system_host, path, rotate_bytes)?;
+    file_system_host
+        .writeFile(path, line, true)
+        .map_err(|error| report_log_io_error("append", path, &error.message))
 }
 
 /// Size cap before a log file rotates (bytes).
 const LOG_ROTATE_BYTES: i64 = 8 * 1024 * 1024;
 
 /// Rotates one log file once it exceeds the size cap, keeping a single `.1` archive.
-fn rotate_if_oversized(file_system_host: &Arc<dyn FileSystemHost>, path: &str, rotate_bytes: i64) {
-    let metadata = match file_system_host.fileInfo(path) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            report_log_io_error("stat", path, &error.message);
-            return;
-        }
-    };
+/// Every step must succeed: there is no "report and continue" fallback — a
+/// failed rotation returns `Err` and the caller writes no line.
+fn rotate_if_oversized(
+    file_system_host: &Arc<dyn FileSystemHost>,
+    path: &str,
+    rotate_bytes: i64,
+) -> Result<(), ()> {
+    let metadata = file_system_host
+        .fileInfo(path)
+        .map_err(|error| report_log_io_error("stat", path, &error.message))?;
     if metadata.size <= rotate_bytes {
-        return;
+        return Ok(());
     }
     let archive = format!("{path}.1");
     // Only touch a stale archive that actually exists — a missing archive is
@@ -474,30 +502,34 @@ fn rotate_if_oversized(file_system_host: &Arc<dyn FileSystemHost>, path: &str, r
     match file_system_host.fileExists(&archive) {
         Ok(existence) if !existence.exists => {}
         Ok(_) => {
-            if let Err(error) = file_system_host.deleteFile(&archive, false) {
-                // Keep going and let the move below surface any real failure.
-                report_log_io_error("delete-archive", &archive, &error.message);
-            }
+            file_system_host
+                .deleteFile(&archive, false)
+                .map_err(|error| report_log_io_error("delete-archive", &archive, &error.message))?;
         }
         Err(error) => {
-            report_log_io_error("inspect-archive", &archive, &error.message);
+            return Err(report_log_io_error("inspect-archive", &archive, &error.message));
         }
     }
-    if let Err(error) = file_system_host.moveFile(path, &archive) {
-        // Rotation failed: keep appending to the existing file rather than
-        // dropping lines, but make the failure visible.
-        report_log_io_error("rotate-move", path, &error.message);
-        return;
-    }
-    if let Err(error) = file_system_host.writeFile(path, "", false) {
-        report_log_io_error("rotate-recreate", path, &error.message);
-    }
+    file_system_host
+        .moveFile(path, &archive)
+        .map_err(|error| report_log_io_error("rotate-move", path, &error.message))?;
+    file_system_host
+        .writeFile(path, "", false)
+        .map_err(|error| report_log_io_error("rotate-recreate", path, &error.message))
 }
 
 /// Reports a log-file I/O failure without re-entering the logging pipeline,
 /// which would deadlock on the state lock (or on [`FILE_WRITE_LOCK`]).
+///
+/// Uses the host console channel (`tryLogHostConsole`, Android logcat) rather
+/// than stderr, so the report cannot panic on a closed pipe. Callers pass its
+/// return value straight into `Err(...)` so failures propagate.
 fn report_log_io_error(action: &str, path: &str, message: &str) {
-    eprintln!("AppLogger: failed to {action} '{path}': {message}");
+    let line = format!("AppLogger: failed to {action} '{path}': {message}\n");
+    if !operit_host_api::tryLogHostConsole(ERROR, "AppLogger", &line) {
+        use std::io::Write as _;
+        let _ = std::io::stderr().write_all(line.as_bytes());
+    }
 }
 
 /// Creates an empty log file through the host when the path is absent.
