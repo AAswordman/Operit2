@@ -1364,9 +1364,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelProviderTypeSiliconflow => '硅基流动';
 
   @override
-  String get settingsModelProviderTypeIflow => '心流';
-
-  @override
   String get settingsModelProviderTypeOpenrouter => 'OpenRouter';
 
   @override

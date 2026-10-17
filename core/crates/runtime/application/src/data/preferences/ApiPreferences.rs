@@ -178,7 +178,6 @@ impl ApiPreferences {
             ApiProviderType::DEEPSEEK.name(),
             ApiProviderType::MISTRAL.name(),
             ApiProviderType::SILICONFLOW.name(),
-            ApiProviderType::IFLOW.name(),
             ApiProviderType::OPENROUTER.name(),
             ApiProviderType::OPENCODE.name(),
             ApiProviderType::FOUR_ROUTER.name(),

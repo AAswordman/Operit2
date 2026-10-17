@@ -396,7 +396,6 @@ impl AIServiceFactory {
             | ApiProviderType::XUNFEI
             | ApiProviderType::ZHIPU
             | ApiProviderType::BAICHUAN
-            | ApiProviderType::IFLOW
             | ApiProviderType::INFINIAI
             | ApiProviderType::ALIPAY_BAILING
             | ApiProviderType::PPINFRA

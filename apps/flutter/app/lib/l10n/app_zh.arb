@@ -690,7 +690,6 @@
   "settingsModelProviderTypeDeepseek": "DeepSeek",
   "settingsModelProviderTypeMistral": "Mistral",
   "settingsModelProviderTypeSiliconflow": "硅基流动",
-  "settingsModelProviderTypeIflow": "心流",
   "settingsModelProviderTypeOpenrouter": "OpenRouter",
   "settingsModelProviderTypeOpencode": "OpenCode",
   "settingsModelProviderTypeFourRouter": "4Router",

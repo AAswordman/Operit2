@@ -2606,12 +2606,6 @@ abstract class AppLocalizations {
   /// **'SiliconFlow'**
   String get settingsModelProviderTypeSiliconflow;
 
-  /// No description provided for @settingsModelProviderTypeIflow.
-  ///
-  /// In en, this message translates to:
-  /// **'iFlow'**
-  String get settingsModelProviderTypeIflow;
-
   /// No description provided for @settingsModelProviderTypeOpenrouter.
   ///
   /// In en, this message translates to:

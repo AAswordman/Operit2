@@ -697,7 +697,6 @@
   "settingsModelProviderTypeDeepseek": "DeepSeek",
   "settingsModelProviderTypeMistral": "Mistral",
   "settingsModelProviderTypeSiliconflow": "SiliconFlow",
-  "settingsModelProviderTypeIflow": "iFlow",
   "settingsModelProviderTypeOpenrouter": "OpenRouter",
   "settingsModelProviderTypeOpencode": "OpenCode",
   "settingsModelProviderTypeFourRouter": "4Router",

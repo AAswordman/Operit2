@@ -1413,9 +1413,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelProviderTypeSiliconflow => 'SiliconFlow';
 
   @override
-  String get settingsModelProviderTypeIflow => 'iFlow';
-
-  @override
   String get settingsModelProviderTypeOpenrouter => 'OpenRouter';
 
   @override
