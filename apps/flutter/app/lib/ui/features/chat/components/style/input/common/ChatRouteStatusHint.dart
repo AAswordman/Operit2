@@ -61,6 +61,9 @@ class _ChatRouteStatusHintState extends State<ChatRouteStatusHint> {
       stream: _status,
       builder: (context, snapshot) {
         final status = snapshot.data;
+        if (!snapshot.hasError && status?.ownerIsLocal == true) {
+          return widget.builder('');
+        }
         final suffix =
             snapshot.hasError ||
                 (snapshot.connectionState == ConnectionState.active &&
