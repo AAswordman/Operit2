@@ -1,3 +1,4 @@
+import { createBrowserJavaScriptHost } from "./operit_javascript_runtime.js";
 import { createBrowserHttpStreamHost } from "./browser_http_stream.js";
 import { openBrowserFile } from "./browser_file_open.js";
 import { captureBrowserScreen, readBrowserLocation, recognizeBrowserText,
@@ -116,10 +117,6 @@ interface RuntimeBridge {
 interface WasmBridgeModule {
   default(options: { module_or_path: string | URL }): Promise<{ memory: WebAssembly.Memory }>;
   OperitFlutterBridgeWasm: new () => RuntimeBridge;
-}
-
-interface WasiModule {
-  setWasiMemory(memory: WebAssembly.Memory): void;
 }
 
 interface WebDeviceInfo {
@@ -3944,6 +3941,7 @@ self.onmessage = (event) => {
   installWebLocalInferenceTestApi();
 
   runtimeGlobal.__operitHost = {
+    javaScriptRuntime: registerMainHostModule(createBrowserJavaScriptHost()),
     terminal: registerMainHostModule({
       /** Starts one browser-local Linux VM terminal session. */
       startPty(sessionId: string, rows: number, cols: number): void {
@@ -4579,20 +4577,18 @@ self.onmessage = (event) => {
 
   let bridgePromise: Promise<RuntimeBridge> | null = null;
 
-  /** Initializes the WebAssembly bridge with its browser WASI host. */
+  /** Initializes the browser WebAssembly bridge and its required storage hosts. */
   async function initializeWasmBridge(
     module: WasmBridgeModule,
-    wasi: WasiModule,
   ): Promise<RuntimeBridge> {
     await ensureBrowserStorage();
     await ensureSqlite();
     if (isMainRuntimeHost()) {
       await ensureWebLocalInference();
     }
-    const wasm = await module.default({
+    await module.default({
       module_or_path: new URL("./operit_flutter_bridge_bg.wasm", import.meta.url),
     });
-    wasi.setWasiMemory(wasm.memory);
     return new module.OperitFlutterBridgeWasm();
   }
 
@@ -4602,9 +4598,7 @@ self.onmessage = (event) => {
         ? "./operit_flutter_bridge_worker.js"
         : "./operit_flutter_bridge.js";
       const wasmModule = importRuntimeScript(wasmModulePath) as Promise<WasmBridgeModule>;
-      const wasiModule = importRuntimeScript("./wasi_snapshot_preview1.js") as Promise<WasiModule>;
-      bridgePromise = Promise.all([wasmModule, wasiModule])
-        .then(([module, wasi]) => initializeWasmBridge(module, wasi));
+      bridgePromise = wasmModule.then(initializeWasmBridge);
     }
     return bridgePromise;
   }

@@ -466,8 +466,8 @@ async function saveJournal(): Promise<void> {
 /** Acquires exclusive access and loads only the standalone WebAssembly export. */
 async function initialize(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    void navigator.locks.request('operit2.data.access', { mode: 'exclusive', ifAvailable: true }, async lock => {
-      if (lock === null) throw new Error('请关闭此站点的其他 Operit 页面及后台窗口。');
+    void navigator.locks.request('operit2.data.access', { mode: 'exclusive' }, async lock => {
+      if (lock === null) throw new Error('Exclusive maintenance access was not granted');
       resolve();
       await new Promise<void>(() => {});
     }).catch(reject);
@@ -478,9 +478,7 @@ async function initialize(): Promise<void> {
   installHost();
   const dynamicImport = new Function('path', 'return import(path)') as (path: string) => Promise<unknown>;
   wasm = await dynamicImport('./operit_flutter_bridge_worker.js') as WasmModule;
-  const wasi = await dynamicImport('./wasi_snapshot_preview1.js') as { setWasiMemory(memory: WebAssembly.Memory): void };
-  const loaded = await wasm.default({ module_or_path: new URL('./operit_flutter_bridge_bg.wasm', import.meta.url) });
-  wasi.setWasiMemory(loaded.memory);
+  await wasm.default({ module_or_path: new URL('./operit_flutter_bridge_bg.wasm', import.meta.url) });
 }
 
 /** Preallocates isolated files only after the entire archive authenticates. */

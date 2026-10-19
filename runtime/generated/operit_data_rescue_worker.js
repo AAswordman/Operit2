@@ -510,9 +510,9 @@ async function saveJournal() {
 }
 async function initialize() {
     await new Promise((resolve, reject) => {
-        void navigator.locks.request('operit2.data.access', { mode: 'exclusive', ifAvailable: true }, async (lock) => {
+        void navigator.locks.request('operit2.data.access', { mode: 'exclusive' }, async (lock) => {
             if (lock === null)
-                throw new Error('请关闭此站点的其他 Operit 页面及后台窗口。');
+                throw new Error('Exclusive maintenance access was not granted');
             resolve();
             await new Promise(() => { });
         }).catch(reject);
@@ -523,9 +523,7 @@ async function initialize() {
     installHost();
     const dynamicImport = new Function('path', 'return import(path)');
     wasm = await dynamicImport('./operit_flutter_bridge_worker.js');
-    const wasi = await dynamicImport('./wasi_snapshot_preview1.js');
-    const loaded = await wasm.default({ module_or_path: new URL('./operit_flutter_bridge_bg.wasm', import.meta.url) });
-    wasi.setWasiMemory(loaded.memory);
+    await wasm.default({ module_or_path: new URL('./operit_flutter_bridge_bg.wasm', import.meta.url) });
 }
 async function prepareImport(manifest) {
     if (publication !== null)

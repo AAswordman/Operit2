@@ -1,3 +1,4 @@
+import { createBrowserJavaScriptHost } from "./operit_javascript_runtime.js";
 import { createBrowserHttpStreamHost } from "./browser_http_stream.js";
 import { openBrowserFile } from "./browser_file_open.js";
 import { captureBrowserScreen, readBrowserLocation, recognizeBrowserText } from "./browser_system_capabilities.js";
@@ -2811,6 +2812,7 @@ self.onmessage = (event) => {
     }
     installWebLocalInferenceTestApi();
     runtimeGlobal.__operitHost = {
+        javaScriptRuntime: registerMainHostModule(createBrowserJavaScriptHost()),
         terminal: registerMainHostModule({
             startPty(sessionId, rows, cols) {
                 startLinuxVmSession(sessionId, rows, cols);
@@ -3392,16 +3394,15 @@ self.onmessage = (event) => {
         }),
     };
     let bridgePromise = null;
-    async function initializeWasmBridge(module, wasi) {
+    async function initializeWasmBridge(module) {
         await ensureBrowserStorage();
         await ensureSqlite();
         if (isMainRuntimeHost()) {
             await ensureWebLocalInference();
         }
-        const wasm = await module.default({
+        await module.default({
             module_or_path: new URL("./operit_flutter_bridge_bg.wasm", import.meta.url),
         });
-        wasi.setWasiMemory(wasm.memory);
         return new module.OperitFlutterBridgeWasm();
     }
     async function bridge() {
@@ -3410,9 +3411,7 @@ self.onmessage = (event) => {
                 ? "./operit_flutter_bridge_worker.js"
                 : "./operit_flutter_bridge.js";
             const wasmModule = importRuntimeScript(wasmModulePath);
-            const wasiModule = importRuntimeScript("./wasi_snapshot_preview1.js");
-            bridgePromise = Promise.all([wasmModule, wasiModule])
-                .then(([module, wasi]) => initializeWasmBridge(module, wasi));
+            bridgePromise = wasmModule.then(initializeWasmBridge);
         }
         return bridgePromise;
     }

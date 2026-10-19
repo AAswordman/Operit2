@@ -199,6 +199,7 @@ const textDecoder = new TextDecoder();
 let runtimeStorage: RuntimeWorkerStorage | null = null;
 let archiveStaging: RuntimeWorkerArchiveStaging | null = null;
 let runtimeStorageInitialization: Promise<void> | null = null;
+let releaseRuntimeStorageOwnership: (() => void) | null = null;
 let nextHostCallId = 0;
 const mainHostModules = new Map<string, object>();
 const workerInboundMessageRegistrations = new Map<string, WorkerInboundMessageRegistration>();
@@ -340,6 +341,8 @@ function requestWorkerShutdown(): void {
     runtimeStorage?.close();
     archiveStaging = null;
     runtimeStorage = null;
+    releaseRuntimeStorageOwnership?.();
+    releaseRuntimeStorageOwnership = null;
     postWorkerMessage({ type: "shutdownComplete" });
   })();
 }
@@ -569,8 +572,22 @@ async function initializeRuntimeWorkerStorage(): Promise<void> {
   }
 }
 
-/** Opens and publishes the worker-owned OPFS stores as one all-or-nothing operation. */
+/** Keeps origin maintenance access and identity storage ownership with the worker that owns the handles. */
 async function initializeRuntimeWorkerStorageOnce(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    void navigator.locks.request("operit2.data.access", { mode: "shared" }, async () => {
+      await navigator.locks.request(`operit2.identities.${runtimeIdentityId}.runtime.storage`, { mode: "exclusive" }, async () => {
+        await openRuntimeWorkerStores();
+        const lifetime = new Promise<void>(release => { releaseRuntimeStorageOwnership = release; });
+        resolve();
+        await lifetime;
+      });
+    }).catch(reject);
+  });
+}
+
+/** Opens and publishes the worker-owned OPFS stores as one all-or-nothing operation. */
+async function openRuntimeWorkerStores(): Promise<void> {
   const root = await runtimeOpfsRoot();
   const storage = await RuntimeWorkerStorage.open(root);
   let staging: RuntimeWorkerArchiveStaging | null = null;

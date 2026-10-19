@@ -15,8 +15,10 @@
     "operit_runtime_bridge.ts",
     "operit_data_rescue.ts",
     "operit_data_rescue_worker.ts",
-    "wasi_snapshot_preview1.ts",
     "operit_runtime_worker.ts",
+    "operit_javascript_runtime.ts",
+    "operit_javascript_transport.ts",
+    "operit_javascript_worker.ts",
     "operit_model_install_worker.ts",
     "v86_runtime_worker.ts"
   ]

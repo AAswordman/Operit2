@@ -28,6 +28,7 @@ const textDecoder = new TextDecoder();
 let runtimeStorage = null;
 let archiveStaging = null;
 let runtimeStorageInitialization = null;
+let releaseRuntimeStorageOwnership = null;
 let nextHostCallId = 0;
 const mainHostModules = new Map();
 const workerInboundMessageRegistrations = new Map();
@@ -141,6 +142,8 @@ function requestWorkerShutdown() {
         runtimeStorage?.close();
         archiveStaging = null;
         runtimeStorage = null;
+        releaseRuntimeStorageOwnership?.();
+        releaseRuntimeStorageOwnership = null;
         postWorkerMessage({ type: "shutdownComplete" });
     })();
 }
@@ -337,6 +340,18 @@ async function initializeRuntimeWorkerStorage() {
     }
 }
 async function initializeRuntimeWorkerStorageOnce() {
+    await new Promise((resolve, reject) => {
+        void navigator.locks.request("operit2.data.access", { mode: "shared" }, async () => {
+            await navigator.locks.request(`operit2.identities.${runtimeIdentityId}.runtime.storage`, { mode: "exclusive" }, async () => {
+                await openRuntimeWorkerStores();
+                const lifetime = new Promise(release => { releaseRuntimeStorageOwnership = release; });
+                resolve();
+                await lifetime;
+            });
+        }).catch(reject);
+    });
+}
+async function openRuntimeWorkerStores() {
     const root = await runtimeOpfsRoot();
     const storage = await RuntimeWorkerStorage.open(root);
     let staging = null;

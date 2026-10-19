@@ -35,8 +35,8 @@ if (!window._flutter) {
 }
 _flutter.buildConfig = {"engineRevision":"42d3d75a56efe1a2e9902f52dc8006099c45d937","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.dart.js"}],"useLocalCanvasKit":true};
 
+
+// Load the exact engine font resources staged and verified by the build.
 _flutter.loader.load({
-  serviceWorkerSettings: {
-    serviceWorkerVersion: "841196002" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */
-  }
+  config: { fontFallbackBaseUrl: new URL("fonts/", document.baseURI).href },
 });
