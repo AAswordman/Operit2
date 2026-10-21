@@ -2121,6 +2121,26 @@ impl EnhancedAIService {
         callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
         runtime: &mut SendMessageRuntime,
     ) -> Result<(), AiServiceError> {
+        const MAX_TOOL_RESULT_ROUNDS: i32 = 50;
+        if context.roundManager.roundIndex > MAX_TOOL_RESULT_ROUNDS {
+            let limitWarning = format!(
+                "
+
+[工具调用轮次超过上限 {}，已自动停止以避免崩溃]",
+                MAX_TOOL_RESULT_ROUNDS
+            );
+            AppLogger::e(
+                TAG,
+                &format!(
+                    "chat.tool_call.round_limit executionId={} round={} limit={}",
+                    context.executionId, context.roundManager.roundIndex, MAX_TOOL_RESULT_ROUNDS
+                ),
+            );
+            context.roundManager.appendContent(&limitWarning);
+            collector.emit_chunk(limitWarning);
+            return Ok(());
+        }
+
         let toolNames = results
             .iter()
             .map(|result| result.toolName.clone())

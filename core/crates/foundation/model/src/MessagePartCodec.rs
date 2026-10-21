@@ -340,7 +340,9 @@ impl AssistantMarkupStreamState {
                 if self.isPotentialSemanticOpening() {
                     if isFinal {
                         let content = std::mem::take(&mut self.pending);
-                        self.appendMarkdownContent(&content);
+                        if self.preserveUnsupportedTags {
+                            self.appendMarkdownContent(&content);
+                        }
                     }
                     return Ok(());
                 }
@@ -390,7 +392,9 @@ impl AssistantMarkupStreamState {
             else {
                 if isFinal {
                     let content = std::mem::take(&mut self.pending);
-                    self.appendMarkdownContent(&content);
+                    if self.preserveUnsupportedTags {
+                        self.appendMarkdownContent(&content);
+                    }
                 }
                 return Ok(());
             };
@@ -408,7 +412,9 @@ impl AssistantMarkupStreamState {
             let part = match parsedPart {
                 Ok(part) => part,
                 Err(_) => {
-                    self.appendMarkdownContent(&raw);
+                    if self.preserveUnsupportedTags {
+                        self.appendMarkdownContent(&raw);
+                    }
                     self.pending = self.pending[rawEnd..].to_string();
                     continue;
                 }
@@ -464,6 +470,10 @@ impl AssistantMarkupStreamState {
             .expect("unfinished thinking blocks retain their opening tag");
         let pending = std::mem::take(&mut self.pending);
         self.activeThinkingCloseTag = None;
+        if !self.preserveUnsupportedTags {
+            // Live assistant output must never leak an unclosed thinking block into visible Markdown.
+            return;
+        }
         let part = self
             .parts
             .last_mut()
@@ -778,43 +788,52 @@ mod tests {
         assert_eq!(parts[0].content, "");
     }
 
-    /// Verifies unfinished generated tool markup remains literal assistant text.
+    /// Verifies unfinished generated tool markup never surfaces as visible text.
     #[test]
-    fn parses_unclosed_generated_tool_tag_as_markdown() {
+    fn live_drops_unclosed_generated_tool_tag() {
         let content = "Before<tool_G543 name=\"read_file\"><param name=\"path\">a.txt</param>";
         let parts = MessagePartCodec::parseAssistantMarkup(content)
             .expect("unfinished generated tool markup must remain representable");
 
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[0].content, content);
+        let visible = MessagePartCodec::visibleText(&parts);
+        assert!(
+            !visible.contains("<tool_G543"),
+            "live output leaked protocol markup: {visible}"
+        );
+        assert_eq!(visible, "Before");
     }
 
-    /// Verifies unfinished thinking markup remains literal assistant text.
+    /// Verifies unfinished thinking markup never surfaces as visible text.
     #[test]
-    fn parses_unclosed_thinking_tag_as_markdown() {
+    fn live_drops_unclosed_thinking_tag() {
         let content = "Before<think>partial reasoning</thi";
         let parts = MessagePartCodec::parseAssistantMarkup(content)
             .expect("unfinished thinking markup must remain representable");
 
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[0].content, "Before");
-        assert_eq!(parts[1].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[1].content, "<think>partial reasoning</thi");
+        let visible = MessagePartCodec::visibleText(&parts);
+        assert!(
+            !visible.contains("partial reasoning"),
+            "live output leaked thinking content: {visible}"
+        );
+        assert!(!visible.contains("<think"), "live output leaked raw tag: {visible}");
+        assert_eq!(visible, "Before");
     }
 
-    /// Verifies malformed complete tool markup remains visible assistant text.
+    /// Verifies malformed complete tool markup is dropped from live visible text.
     #[test]
-    fn parses_malformed_tool_parameter_as_markdown() {
+    fn live_drops_malformed_tool_parameter_markup() {
         let content =
             "Before<tool name=\"search\"><param name=\"various_search</param></tool>After";
         let parts = MessagePartCodec::parseAssistantMarkup(content)
             .expect("malformed tool markup must remain representable");
 
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[0].content, content);
+        let visible = MessagePartCodec::visibleText(&parts);
+        assert!(
+            !visible.contains("<param"),
+            "live output leaked malformed protocol markup: {visible}"
+        );
+        assert!(visible.contains("Before"), "surrounding prose lost: {visible}");
+        assert!(visible.contains("After"), "trailing prose lost: {visible}");
     }
 
     /// Verifies that visible text excludes internal thinking and tool protocol payloads.
@@ -826,5 +845,48 @@ mod tests {
         .expect("complete assistant markup must parse");
 
         assert_eq!(MessagePartCodec::visibleText(&parts), "Answercareful");
+    }
+}
+
+#[cfg(test)]
+mod live_leak_guard_tests {
+    use super::{AssistantMarkupStreamState, MessagePartCodec};
+
+    /// Live streaming must never surface an unterminated thinking block as Markdown.
+    #[test]
+    fn live_stream_drops_unclosed_thinking_block() {
+        let mut state = AssistantMarkupStreamState::new();
+        state
+            .push("Answer before <think private reasoning that never closes")
+            .expect("streaming push must succeed");
+        let parts = state.finish().expect("stream finish must succeed");
+        let visible = MessagePartCodec::visibleText(&parts);
+        assert!(
+            !visible.contains("private reasoning"),
+            "live output leaked thinking content: {visible}"
+        );
+        assert!(
+            visible.contains("Answer before"),
+            "visible prose must survive, got: {visible}"
+        );
+    }
+
+    /// Live streaming must drop a trailing partial semantic tag instead of echoing it.
+    #[test]
+    fn live_stream_drops_trailing_partial_semantic_tag() {
+        let mut state = AssistantMarkupStreamState::new();
+        state
+            .push("visible text <status type=\"completion\"")
+            .expect("streaming push must succeed");
+        let parts = state.finish().expect("stream finish must succeed");
+        let visible = MessagePartCodec::visibleText(&parts);
+        assert!(
+            !visible.contains("<status"),
+            "live output leaked a raw tag: {visible}"
+        );
+        assert!(
+            visible.contains("visible text"),
+            "visible prose must survive, got: {visible}"
+        );
     }
 }

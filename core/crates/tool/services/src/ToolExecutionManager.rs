@@ -101,13 +101,20 @@ impl ToolCall {
         if self.name == CLI_PROXY_TOOL_NAME && context.turnSnapshot().map(|turn| &turn.toolExposureMode) != Some(&ToolExposureMode::CLI) {
             return Err(CliToolModeSupport::buildCliModeUnavailableMessage(false));
         }
-        for key in self.parameters.keys() {
+        let mut extraParameters = BTreeMap::new();
+        for (key, value) in self.parameters.iter() {
             if !matches!(key.as_str(), "tool_name" | "params" | PACKAGE_CALLER_NAME_PARAM | PACKAGE_CHAT_ID_PARAM | PACKAGE_CALLER_PARTICIPANT_ID_PARAM | PACKAGE_CALLER_OWNER_PARAM) {
-                return Err(format!("Unexpected proxy parameter: {key}"));
+                extraParameters.insert(key.clone(), value.clone());
             }
         }
-        let name = self.parameters.get("tool_name").and_then(serde_json::Value::as_str)
-            .ok_or("Proxy tool_name must be text")?;
+        let nameValue = self.parameters.get("tool_name").ok_or("Proxy tool_name is required")?;
+        let nameText = match nameValue {
+            serde_json::Value::String(text) => text.clone(),
+            serde_json::Value::Number(number) => number.to_string(),
+            serde_json::Value::Bool(flag) => flag.to_string(),
+            _ => return Err("Proxy tool_name must be text".into()),
+        };
+        let name = nameText.as_str();
         if name.trim().is_empty() || name.trim() != name { return Err("Proxy tool_name must be exact nonblank text".into()); }
         if CliToolModeSupport::isReservedProxyTarget(name) { return Err(format!("Proxy cannot target another proxy or catalog entry: {name}")); }
         if self.name == PACKAGE_PROXY_TOOL_NAME {
@@ -123,6 +130,10 @@ impl ToolCall {
             _ => return Err("Proxy params must be a JSON object or its legacy text encoding".into()),
         };
         let mut parameters = object.into_iter().collect::<BTreeMap<_, _>>();
+        if !extraParameters.is_empty() {
+            AppLogger::w(TAG, &format!("tool.proxy.extra_parameters tool={} keys={}", name, extraParameters.keys().cloned().collect::<Vec<_>>().join(",")));
+            for (key, value) in extraParameters { parameters.entry(key).or_insert(value); }
+        }
         for key in [PACKAGE_CALLER_NAME_PARAM, PACKAGE_CHAT_ID_PARAM, PACKAGE_CALLER_PARTICIPANT_ID_PARAM, PACKAGE_CALLER_OWNER_PARAM] {
             parameters.remove(key);
             if let Some(value) = self.parameters.get(key) { parameters.insert(key.to_string(), value.clone()); }
@@ -295,8 +306,27 @@ impl ToolExecutionManager {
         TOOL_RUNTIME_CONTEXT.scope(context, future).await
     }
 
+    /// Replaces fenced code blocks with spaces so only prose can contain real tool calls.
+    fn stripFencedCodeBlocks(response: &str) -> String {
+        let mut output = String::with_capacity(response.len());
+        let mut in_fence = false;
+        for line in response.split_inclusive('\n') {
+            if line.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+                output.push_str(&" ".repeat(line.len()));
+            } else if in_fence {
+                output.push_str(&" ".repeat(line.len()));
+            } else {
+                output.push_str(line);
+            }
+        }
+        output
+    }
+
     /// Extracts XML-like tool invocations from an assistant response.
     pub fn extractToolInvocations(response: &str) -> Vec<ToolInvocation> {
+        // Strip fenced code blocks so examples in prose are never treated as real calls.
+        let response = &Self::stripFencedCodeBlocks(response);
         let mut invocations = Vec::new();
         for tool_match in ChatMarkupRegex::tool_call_matches(response) {
             let mut parameters = Vec::new();
@@ -415,12 +445,27 @@ impl ToolExecutionManager {
                     invocation.rawText.len()
                 ),
             );
-            let collected = toolHandler
+            let collected = match toolHandler
                 .executeToolInvocation(
                     &ToolCall::from(&invocation.tool),
                     ToolExecutionPolicy::Ai { exposure: toolExposureMode.clone() },
                 )
-                .await?;
+                .await
+            {
+                Ok(results) => results,
+                Err(error) => {
+                    AppLogger::e(
+                        TAG,
+                        &format!("tool.execution.isolated_error tool={} error={}", displayToolName, error),
+                    );
+                    vec![ToolResult {
+                        toolName: invocation.tool.name.clone(),
+                        success: false,
+                        result: stringResultData(""),
+                        error: Some(error),
+                    }]
+                }
+            };
             AppLogger::v_with_level(
                 TAG,
                 &format!(
@@ -914,5 +959,49 @@ mod tests {
         let mut mismatched = result;
         mismatched.toolName = "other_tool".to_string();
         assert!(ToolExecutionManager::routeChangeIntentForResult(&tool, &mismatched).is_none());
+    }
+}
+
+#[cfg(test)]
+mod fenced_code_tests {
+    use super::*;
+
+    /// A tool-call example inside a fenced block must never execute.
+    #[test]
+    fn fenced_code_blocks_are_not_executed() {
+        let response = concat!(
+            "Use it like this:\n",
+            "```xml\n",
+            "<tool name=\"demo\"><param name=\"a\">1</param></tool>\n",
+            "```\n",
+            "Done.\n"
+        );
+        let invocations = ToolExecutionManager::extractToolInvocations(response);
+        assert!(
+            invocations.is_empty(),
+            "fenced example must not be treated as a real invocation"
+        );
+    }
+
+    /// Prose tool calls must still be extracted with masking enabled.
+    #[test]
+    fn prose_tool_calls_are_still_extracted() {
+        let response = "Running it now.\n<tool name=\"demo\"><param name=\"a\">1</param></tool>\n";
+        let invocations = ToolExecutionManager::extractToolInvocations(response);
+        assert_eq!(invocations.len(), 1);
+        assert_eq!(invocations[0].tool.name, "demo");
+        assert_eq!(invocations[0].tool.parameters.len(), 1);
+        assert_eq!(invocations[0].tool.parameters[0].name, "a");
+        assert_eq!(invocations[0].tool.parameters[0].value, "1");
+    }
+
+    /// Masking replaces fenced blocks with equal-length spaces so offsets stay valid.
+    #[test]
+    fn fence_masking_preserves_byte_length() {
+        let response = "before\n```\n<tool name=\"x\"></tool>\n```\nafter";
+        let masked = ToolExecutionManager::stripFencedCodeBlocks(response);
+        assert_eq!(masked.len(), response.len());
+        assert!(!masked.contains("<tool"));
+        assert!(masked.ends_with("after"));
     }
 }
