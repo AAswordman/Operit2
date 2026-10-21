@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    ToolPkgBridgeRuntime, TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
+};
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_TOOL_LIFECYCLE;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgToolLifecycleHookRegistration;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
@@ -288,7 +290,7 @@ fn deliver(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value)
                         operit_util::AppLogger::VERBOSE_LEVEL_3,
                     );
                     match manager
-                        .runToolPkgMainHook(
+                        .runToolPkgMainHookWithTimeoutMillis(
                             &hook.containerPackageName,
                             &hook.functionName,
                             TOOLPKG_EVENT_TOOL_LIFECYCLE,
@@ -299,6 +301,7 @@ fn deliver(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value)
                             None,
                             None,
                             None,
+                            TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
                         )
                         .await
                     {

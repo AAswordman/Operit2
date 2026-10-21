@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    ToolPkgBridgeRuntime, TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
+};
 use operit_plugin_sdk::javascript::JsExecutionEngine;
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgChatViewHookRegistration;
@@ -232,7 +234,7 @@ fn runChatViewHook(
                     operit_util::AppLogger::VERBOSE_LEVEL_3,
                 );
                 match manager
-                    .runToolPkgMainHook(
+                    .runToolPkgMainHookWithTimeoutMillis(
                         &hook.containerPackageName,
                         &hook.functionName,
                         TOOLPKG_EVENT_CHAT_VIEW,
@@ -243,6 +245,7 @@ fn runChatViewHook(
                         None,
                         None,
                         None,
+                        TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
                     )
                     .await
                 {

@@ -621,7 +621,7 @@ fn runInputMenuToggleHook(
                 let params = &params;
                 let manager = runtime.package_manager();
                 if let Err(error) = manager
-                    .runToolPkgMainHook(
+                    .runToolPkgMainHookWithTimeoutMillis(
                         &spec.containerPackageName,
                         &spec.functionName,
                         TOOLPKG_EVENT_INPUT_MENU_TOGGLE,
@@ -637,6 +637,7 @@ fn runInputMenuToggleHook(
                         None,
                         None,
                         None,
+                        super::ToolPkgHookBridgeSupport::TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
                     )
                     .await
                 {
