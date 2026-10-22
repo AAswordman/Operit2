@@ -230,7 +230,7 @@ object AndroidRuntimeAssets {
             export PROOT_LOADER=${File(runtimeDir, "loader").absolutePath}
             # External rootfs support: OPERIT_ROOTFS_PATH wins, then an optional
             # ${runtimeDir.absolutePath}/rootfs.env drop-in, then the bundled Alpine rootfs.
-            if [ -f "${runtimeDir.absolutePath}/rootfs.env" ]; then
+            if [ -z "${'$'}{OPERIT_ROOTFS_PATH:-}" ] && [ -f "${runtimeDir.absolutePath}/rootfs.env" ]; then
               . "${runtimeDir.absolutePath}/rootfs.env"
             fi
             export UBUNTU_PATH="${'$'}{OPERIT_ROOTFS_PATH:-${rootfsDir.absolutePath}}"
