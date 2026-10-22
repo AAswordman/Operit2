@@ -103,6 +103,7 @@ class AppNotificationService with WidgetsBindingObserver {
         payload.title,
         payload.message,
         chatId: payload.chatId,
+        messageTimestamp: payload.messageTimestamp,
       );
     } catch (error, stackTrace) {
       ClientLogger.e(
@@ -121,8 +122,16 @@ class AppNotificationService with WidgetsBindingObserver {
     String title,
     String message, {
     required String? chatId,
+    int? messageTimestamp,
   }) async {
-    if (await _isApplicationForeground()) {
+    final nowMillis = DateTime.now().millisecondsSinceEpoch;
+    final appForeground = await _isApplicationForeground();
+    final deliver = shouldDeliverAppNotification(
+      appForeground: appForeground,
+      messageTimestamp: messageTimestamp,
+      nowMillis: nowMillis,
+    );
+    if (!deliver) {
       ClientLogger.v(
         'notification suppressed applicationForeground=true',
         tag: _logTag,
@@ -130,6 +139,13 @@ class AppNotificationService with WidgetsBindingObserver {
       );
       return;
     }
+    final ageMillis =
+        messageTimestamp == null ? -1 : nowMillis - messageTimestamp;
+    ClientLogger.i(
+      'notification delivered foreground=$appForeground ageMs=$ageMillis '
+      'chatId=${chatId ?? '-'}',
+      tag: _logTag,
+    );
     await _clients.servicesRuntimeHostInteractionService.sendSystemNotification(
       title: title,
       message: message,
@@ -165,4 +181,31 @@ class AppNotificationService with WidgetsBindingObserver {
       );
     }
   }
+}
+
+/// Replayed notifications older than this are treated as produced while away.
+const Duration appNotificationAwayReplayThreshold = Duration(seconds: 5);
+
+/// Decides whether one runtime application notification should reach the tray.
+///
+/// Runtime notifications are published into the host-interaction broker and are
+/// only delivered to Dart once a subscriber exists again. A reply that finished
+/// while the application was backgrounded therefore arrives after the user has
+/// already returned, so a pure foreground check would silently drop it. A
+/// notification that is old enough to predate the current foreground session is
+/// delivered regardless of the current visibility.
+bool shouldDeliverAppNotification({
+  required bool appForeground,
+  required int? messageTimestamp,
+  required int nowMillis,
+  Duration awayReplayThreshold = appNotificationAwayReplayThreshold,
+}) {
+  if (!appForeground) {
+    return true;
+  }
+  if (messageTimestamp == null) {
+    return false;
+  }
+  final ageMillis = nowMillis - messageTimestamp;
+  return ageMillis > awayReplayThreshold.inMilliseconds;
 }
