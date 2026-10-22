@@ -235,8 +235,24 @@ object AndroidRuntimeAssets {
             fi
             export UBUNTU_PATH="${'$'}{OPERIT_ROOTFS_PATH:-${rootfsDir.absolutePath}}"
             export OPERIT_BUNDLED_ROOTFS=${rootfsDir.absolutePath}
-            if [ ! -x "${'$'}UBUNTU_PATH/usr/bin/env" ] && [ ! -x "${'$'}UBUNTU_PATH/bin/env" ]; then
-              echo "OPERIT_ROOTFS_PATH points at a directory without /usr/bin/env or /bin/env: ${'$'}UBUNTU_PATH" >&2
+            # A rootfs counts as usable when it looks like a real Linux rootfs.
+            # Never test /usr/bin/env directly: Alpine ships usr/bin/env as an
+            # absolute symlink to /bin/busybox, which cannot be resolved from the
+            # Android host side, so that check gives a false negative for every
+            # busybox-based rootfs (including the bundled one).
+            rootfs_is_usable(){
+              [ -d "${'$'}1" ] || return 1
+              [ -d "${'$'}1/etc" ] || return 1
+              if [ -e "${'$'}1/usr/bin/env" ] || [ -e "${'$'}1/bin/env" ]; then
+                return 0
+              fi
+              if [ -e "${'$'}1/etc/os-release" ] || [ -e "${'$'}1/bin/busybox" ]; then
+                return 0
+              fi
+              return 1
+            }
+            if ! rootfs_is_usable "${'$'}UBUNTU_PATH"; then
+              echo "OPERIT_ROOTFS_PATH is not a usable rootfs (no /etc, /usr/bin/env, /etc/os-release or /bin/busybox): ${'$'}UBUNTU_PATH" >&2
               echo "falling back to the bundled rootfs: ${rootfsDir.absolutePath}" >&2
               export UBUNTU_PATH="${rootfsDir.absolutePath}"
             fi
