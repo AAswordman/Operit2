@@ -228,7 +228,18 @@ object AndroidRuntimeAssets {
             export TMPDIR=${File(runtimeDir, "tmp").absolutePath}
             export PROOT_TMP_DIR=${File(runtimeDir, "tmp").absolutePath}
             export PROOT_LOADER=${File(runtimeDir, "loader").absolutePath}
-            export UBUNTU_PATH=${rootfsDir.absolutePath}
+            # External rootfs support: OPERIT_ROOTFS_PATH wins, then an optional
+            # ${runtimeDir.absolutePath}/rootfs.env drop-in, then the bundled Alpine rootfs.
+            if [ -f "${runtimeDir.absolutePath}/rootfs.env" ]; then
+              . "${runtimeDir.absolutePath}/rootfs.env"
+            fi
+            export UBUNTU_PATH="${'$'}{OPERIT_ROOTFS_PATH:-${rootfsDir.absolutePath}}"
+            export OPERIT_BUNDLED_ROOTFS=${rootfsDir.absolutePath}
+            if [ ! -x "${'$'}UBUNTU_PATH/usr/bin/env" ] && [ ! -x "${'$'}UBUNTU_PATH/bin/env" ]; then
+              echo "OPERIT_ROOTFS_PATH points at a directory without /usr/bin/env or /bin/env: ${'$'}UBUNTU_PATH" >&2
+              echo "falling back to the bundled rootfs: ${rootfsDir.absolutePath}" >&2
+              export UBUNTU_PATH="${rootfsDir.absolutePath}"
+            fi
             export OPERIT_RUNTIME_ROOT=${runtimeRoot.absolutePath}
             export OPERIT_WORKSPACE_ROOT=${workspaceRoot.absolutePath}
             export OPERIT_INTERNAL_ROOT=${internalRoot.absolutePath}
@@ -385,6 +396,13 @@ object AndroidRuntimeAssets {
               fi
               mkdir -p "${'$'}UBUNTU_PATH/dev/pts" 2>/dev/null
               mkdir -p "${'$'}UBUNTU_PATH/dev/fd" 2>/dev/null
+              mkdir -p "${'$'}UBUNTU_PATH/dev/shm" 2>/dev/null
+              # An external rootfs may lack the proot bind targets the bundled Alpine one ships with.
+              mkdir -p "${'$'}UBUNTU_PATH/proc" 2>/dev/null
+              mkdir -p "${'$'}UBUNTU_PATH/sys" 2>/dev/null
+              mkdir -p "${'$'}UBUNTU_PATH/dev" 2>/dev/null
+              mkdir -p "${'$'}UBUNTU_PATH/data" 2>/dev/null
+              mkdir -p "${'$'}UBUNTU_PATH/storage" 2>/dev/null
               mkdir -p "${'$'}UBUNTU_PATH/sdcard" 2>/dev/null
               mkdir -p "${'$'}UBUNTU_PATH${emulatedStoragePath}" 2>/dev/null
               mkdir -p "${'$'}UBUNTU_PATH${userDataPackagePath}" 2>/dev/null
