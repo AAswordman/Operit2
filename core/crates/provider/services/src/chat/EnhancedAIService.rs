@@ -46,7 +46,8 @@ use operit_tools::tools::climode::CliToolModeSupport::{
 };
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::ConversationMarkupManager::{
-    ConversationMarkupManager, ToolResult, ENHANCED_PURE_THINKING_ONLY_WARNING,
+    ConversationMarkupManager, ToolResult, ENHANCED_EMPTY_RESPONSE_FAILED_WARNING,
+    ENHANCED_PURE_THINKING_ONLY_WARNING,
 };
 use operit_tools::ToolExecutionManager::{
     AITool as RuntimeAITool, RouteChangeIntent, ToolExecutionBatch, ToolExecutionManager,
@@ -2599,17 +2600,33 @@ impl EnhancedAIService {
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
         if content.is_empty() {
-            AppLogger::v_with_level(
+            // An empty round is a failure, not a finished answer. It used to be finalised as a
+            // successful completion, so the turn ended silently — the user could not tell
+            // "the provider broke" apart from "the task is done".
+            // Nothing is repaired or retried here: the round is reported as failed and the error
+            // is visible in the conversation.
+            let failedWarning =
+                ConversationMarkupManager::createWarningStatus(ENHANCED_EMPTY_RESPONSE_FAILED_WARNING);
+            AppLogger::e(
                 TAG,
                 &format!(
-                    "chat.response.finalize_empty executionId={} round={}",
-                    context.executionId, context.roundManager.roundIndex
+                    "chat.response.empty_failed executionId={} round={} historyTurns={}",
+                    context.executionId,
+                    context.roundManager.roundIndex,
+                    context.conversationHistory.len()
                 ),
-                operit_util::AppLogger::VERBOSE_LEVEL_2,
             );
+            context
+                .roundManager
+                .appendContent(&format!("\n{failedWarning}"));
+            collector.emit_chunk(failedWarning.clone());
+            if let Some(callback) = onNonFatalError {
+                callback(failedWarning.clone());
+            }
+            let reported = failedWarning.clone();
             self.finalizeAssistantResponse(
                 context,
-                &content,
+                &reported,
                 onNonFatalError,
                 isSubTask,
                 chatId.clone(),
