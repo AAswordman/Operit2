@@ -295,8 +295,29 @@ impl ToolExecutionManager {
         TOOL_RUNTIME_CONTEXT.scope(context, future).await
     }
 
+    /// Replaces fenced code blocks with spaces so only prose can contain real tool calls.
+    /// Length is preserved byte-for-byte, so reported source locations stay valid.
+    fn stripFencedCodeBlocks(response: &str) -> String {
+        let mut output = String::with_capacity(response.len());
+        let mut in_fence = false;
+        for line in response.split_inclusive('\n') {
+            if line.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+                output.push_str(&" ".repeat(line.len()));
+            } else if in_fence {
+                output.push_str(&" ".repeat(line.len()));
+            } else {
+                output.push_str(line);
+            }
+        }
+        output
+    }
+
     /// Extracts XML-like tool invocations from an assistant response.
     pub fn extractToolInvocations(response: &str) -> Vec<ToolInvocation> {
+        // Tool calls written inside a fenced code block are examples, not invocations:
+        // mask those regions (same length, so responseLocation stays valid) before parsing.
+        let response = &Self::stripFencedCodeBlocks(response);
         let mut invocations = Vec::new();
         for tool_match in ChatMarkupRegex::tool_call_matches(response) {
             let mut parameters = Vec::new();
@@ -781,6 +802,21 @@ pub struct ToolValidationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fenced examples are documentation, so they must never be executed as real invocations,
+    /// while an identical call in prose still parses with its original source offsets.
+    #[test]
+    fn fenced_tool_call_examples_are_not_invocations() {
+        let fenced = "示例如下：\n```xml\n<tool_bash name=\"bash\"><param name=\"command\">rm -rf /</param></tool_bash>\n```\n上面只是举例。";
+        assert!(ToolExecutionManager::extractToolInvocations(fenced).is_empty(), "fenced example must not be invoked");
+
+        let prose = "现在执行：\n<tool_bash name=\"bash\"><param name=\"command\">pwd</param></tool_bash>\n";
+        let invocations = ToolExecutionManager::extractToolInvocations(prose);
+        assert_eq!(invocations.len(), 1);
+        assert_eq!(invocations[0].tool.name, "bash");
+        let (start, end) = invocations[0].responseLocation;
+        assert_eq!(&prose[start..end], invocations[0].rawText);
+    }
 
     /// Keeps same-name invocation results ordered and shares their finalized markup with history.
     #[test]
