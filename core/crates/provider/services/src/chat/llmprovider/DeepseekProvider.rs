@@ -850,7 +850,7 @@ impl AIService for DeepseekProvider {
             )));
         }
 
-        let client = reqwest::Client::new();
+        let client = super::ChatHttpClient::chatHttpClient();
         let response = client
             .post(&self.api_endpoint)
             .headers(self.headers()?)
@@ -931,7 +931,7 @@ impl AIService for DeepseekProvider {
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
-        let client = reqwest::Client::new();
+        let client = super::ChatHttpClient::chatHttpClient();
         let request_body = if self.uses_responses_protocol()? {
             json!({
                 "model": self.model_name,

@@ -112,7 +112,7 @@ pub async fn exchange_browser_code(
 
 /// Starts a headless device-code login.
 pub async fn start_device_authorization() -> Result<CodexDeviceAuthorization, AiServiceError> {
-    let response = reqwest::Client::new()
+    let response = super::ChatHttpClient::chatHttpClient()
         .post(format!(
             "{CODEX_OAUTH_ISSUER}/api/accounts/deviceauth/usercode"
         ))
@@ -155,7 +155,7 @@ pub async fn poll_device_authorization_once(
     deviceAuthId: &str,
     userCode: &str,
 ) -> Result<Option<CodexOAuthTokens>, AiServiceError> {
-    let response = reqwest::Client::new()
+    let response = super::ChatHttpClient::chatHttpClient()
         .post(format!(
             "{CODEX_OAUTH_ISSUER}/api/accounts/deviceauth/token"
         ))
@@ -205,7 +205,7 @@ pub async fn ensure_fresh_tokens(
             "Codex authorization has expired".to_string(),
         ));
     }
-    let response = reqwest::Client::new()
+    let response = super::ChatHttpClient::chatHttpClient()
         .post(format!("{CODEX_OAUTH_ISSUER}/oauth/token"))
         .form(&[
             ("grant_type", "refresh_token"),
@@ -250,7 +250,7 @@ async fn exchange_authorization_code(
     redirectUri: &str,
     codeVerifier: &str,
 ) -> Result<CodexOAuthTokens, AiServiceError> {
-    let response = reqwest::Client::new()
+    let response = super::ChatHttpClient::chatHttpClient()
         .post(format!("{CODEX_OAUTH_ISSUER}/oauth/token"))
         .form(&[
             ("grant_type", "authorization_code"),

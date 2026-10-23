@@ -294,7 +294,7 @@ impl OpenCodeProvider {
 
     /// Fetches the OpenCode model catalog using its OpenAI-compatible endpoint.
     async fn get_models_list_internal(&self) -> Result<Vec<ModelOption>, AiServiceError> {
-        let mut request = reqwest::Client::new()
+        let mut request = super::ChatHttpClient::chatHttpClient()
             .get(OpenCodeRouting::models_endpoint(&self.base_endpoint))
             .header(CONTENT_TYPE, "application/json");
         if !self.api_key.trim().is_empty() {

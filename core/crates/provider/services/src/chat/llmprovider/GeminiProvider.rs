@@ -767,7 +767,7 @@ impl GeminiProvider {
         let mut retryCount = 0;
         loop {
             let request_body = self.create_request_body(&request)?;
-            let response = match reqwest::Client::new()
+            let response = match super::ChatHttpClient::chatHttpClient()
                 .post(self.request_url(false))
                 .headers(self.headers()?)
                 .json(&request_body)
@@ -832,7 +832,7 @@ impl GeminiProvider {
         let mut retryCount = 0;
         loop {
             let request_body = self.create_request_body(&request)?;
-            let response = match reqwest::Client::new()
+            let response = match super::ChatHttpClient::chatHttpClient()
                 .post(self.request_url(true))
                 .headers(self.headers()?)
                 .json(&request_body)
