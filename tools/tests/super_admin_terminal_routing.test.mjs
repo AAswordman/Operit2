@@ -33,6 +33,9 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
   const calls = [];
   const files = new Map();
   const errors = [];
+  const running = new Map();
+  const timers = [];
+  const clock = { now: 1_700_000_000_000 };
   let chatId = 'chat-a';
   const terminalInfo = {
     platform,
@@ -45,6 +48,12 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
     OPERIT_CLEAN_ON_EXIT_DIR: '/app/data/temp/clean_on_exit',
     /** Supplies the active chat identity without a platform-dependent branch. */
     getChatId() { return chatId; },
+    /** Queues wait polling so a deadline is reachable without real elapsed time. */
+    setTimeout(handler, delayMs) { timers.push({ handler, delayMs }); return timers.length; },
+    /** The wait loop never cancels a timer. */
+    clearTimeout() {},
+    /** Lets a test advance virtual time. */
+    Date: class extends Date { static now() { return clock.now; } },
     console: {
       /** Keeps command logging out of test output. */
       log() {},
@@ -84,7 +93,23 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
             calls.push({ operation: 'exec', args });
             const session = [...sessions.values()].find(value => value.sessionId === sessionId);
             assert.ok(session, 'Execution must target an explicitly created session');
+            // The guard every host applies: a busy session refuses a second command.
+            assert.notEqual(running.get(sessionId), true,
+              'a command must never be pushed into a session that still has one running');
             return { ...session, command, output, exitCode: 0, timedOut };
+          },
+          /** Reports the live session state the wait primitive must observe. */
+          async screen(sessionId) {
+            calls.push({ operation: 'screen', sessionId });
+            const session = [...sessions.values()].find(value => value.sessionId === sessionId);
+            if (!session) throw new Error(`Terminal session does not exist: ${sessionId}`);
+            return {
+              ...session,
+              rows: 24,
+              cols: 80,
+              content: '$ ',
+              commandRunning: running.get(sessionId) === true,
+            };
           },
         },
       },
@@ -92,9 +117,19 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
   });
   vm.runInContext(stripTypeScriptTypes(source('plugins/packages/buildin/super_admin.ts')), context);
   return {
-    tools: context.exports, sessions, calls, files, errors, terminalInfo,
+    tools: context.exports, sessions, calls, files, errors, terminalInfo, timers,
     /** Changes the active chat to exercise session identity isolation. */
     setChatId(value) { chatId = value; },
+    /** Marks whether the session currently has a command running, as the host would report. */
+    setCommandRunning(sessionId, value) { running.set(sessionId, value); },
+    /** Releases one queued wait poll, advancing virtual time by the delay it asked for. */
+    runNextTimer() {
+      const pending = timers.shift();
+      if (!pending) return null;
+      clock.now += pending.delayMs;
+      pending.handler();
+      return pending.delayMs;
+    },
   };
 }
 
@@ -300,4 +335,90 @@ test('production Tools transport sends exact interpreter types and preserves exp
   }
   await create('default-chat');
   assert.deepEqual(calls.at(-1), { name: 'create_terminal_session', params: { session_name: 'default-chat' } });
+});
+
+/** Ensures the wait observes the session instead of pushing a marker command into a busy PTY. */
+test('terminal_wait never sends a command to the session it is waiting on', async () => {
+  const f = fixture({ output: 'ok\n' });
+  const first = await f.tools.bash({ command: 'echo ok', timeoutMs: 3000 });
+  f.calls.length = 0;
+  await f.tools.terminal_wait({ sessionId: first.sessionId });
+  assert.equal(f.calls.filter(call => call.operation === 'exec').length, 0,
+    'waiting must not execute anything: every host refuses a command on a busy session');
+  assert.ok(f.calls.some(call => call.operation === 'screen'), 'it must read the live session state');
+});
+
+/** Ensures an idle session is reported as already finished without polling or sleeping. */
+test('terminal_wait returns immediately when nothing is running', async () => {
+  const f = fixture({ output: 'ok\n' });
+  const first = await f.tools.bash({ command: 'echo ok', timeoutMs: 3000 });
+  const result = await f.tools.terminal_wait({ sessionId: first.sessionId });
+  assert.equal(result.commandRunning, false);
+  assert.equal(result.waitCompleted, true);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.polls, 1);
+  assert.equal(result.timeoutMsUsed, 50000, 'the default must stay below the 60s step budget');
+});
+
+/** Ensures a busy session is polled until it clears, and the wait reports the real outcome. */
+test('terminal_wait polls the session until the running command clears', async () => {
+  const f = fixture({ output: 'ok\n' });
+  const first = await f.tools.bash({ command: 'sleep 5', timeoutMs: 3000 });
+  f.setCommandRunning(first.sessionId, true);
+
+  const pending = f.tools.terminal_wait({ sessionId: first.sessionId });
+  let settled = false;
+  pending.then(() => { settled = true; }, () => { settled = true; });
+
+  // The first poll sees a running command; the loop must wait rather than return.
+  for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'a busy session must not be reported as finished');
+  assert.equal(f.timers.length, 1, 'the wait must poll again after a delay');
+  assert.equal(f.timers[0].delayMs, 200, 'the documented poll interval is 200ms');
+
+  f.setCommandRunning(first.sessionId, false);
+  f.runNextTimer();
+  const result = await pending;
+  assert.equal(result.commandRunning, false);
+  assert.equal(result.waitCompleted, true);
+  assert.equal(result.timedOut, false);
+  assert.ok(result.polls >= 2, 'it must have polled more than once');
+});
+
+/** Ensures a timeout reports the command as still running and leaves the session alone. */
+test('terminal_wait reports a timeout without cancelling the running command', async () => {
+  const f = fixture({ output: 'ok\n' });
+  const first = await f.tools.bash({ command: 'sleep 60', timeoutMs: 3000 });
+  f.setCommandRunning(first.sessionId, true);
+  f.calls.length = 0;
+
+  const pending = f.tools.terminal_wait({ sessionId: first.sessionId, timeoutMs: 3000 });
+  for (let i = 0; i < 200; i++) {
+    const settled = await Promise.race([
+      pending.then(value => ({ done: true, value })),
+      new Promise(resolve => setImmediate(resolve)).then(() => ({ done: false })),
+    ]);
+    if (settled.done) {
+      assert.equal(settled.value.timedOut, true);
+      assert.equal(settled.value.waitCompleted, false);
+      assert.equal(settled.value.commandRunning, true);
+      assert.equal(settled.value.context_preserved, true, 'the session must be left untouched');
+      assert.equal(f.calls.filter(call => call.operation === 'exec').length, 0,
+        'a timeout must not cancel the command');
+      assert.equal(f.calls.every(call => call.operation === 'screen'), true,
+        'only state reads are allowed');
+      return;
+    }
+    f.runNextTimer();
+  }
+  assert.fail('terminal_wait must settle when its deadline passes');
+});
+
+/** Ensures waiting on an unknown session propagates the host error instead of inventing a result. */
+test('terminal_wait propagates an unknown session error', async () => {
+  const f = fixture({ output: 'ok\n' });
+  await assert.rejects(
+    f.tools.terminal_wait({ sessionId: 'session-that-does-not-exist' }),
+    /Terminal session does not exist/,
+  );
 });

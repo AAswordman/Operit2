@@ -53,7 +53,7 @@ type PersistedTerminalOutput = {
     "tools": [
         {
             "name": "terminal_wait",
-            "description": { "zh": "等待同一终端会话中的上一条命令执行完成。与 sleep 不同，本工具会在命令实际完成时提前返回，而不是固定睡眠。超时时会取消当前执行中的命令并保留终端会话。", "en": "Wait until the previous command in the same terminal session finishes. Unlike sleep, this tool can return early as soon as the command actually completes. On timeout, the currently executing command is cancelled and the terminal session is kept." },
+            "description": { "zh": "等待同一终端会话中的上一条命令结束。它读取会话自身的 commandRunning 状态，所以命令一结束就返回，而不是固定睡眠。典型用法：先用 background=\"true\" 启动耗时命令并拿到 sessionId，做完其他工具调用后再调用本工具。超时只表示这次没等到：它不会取消正在跑的命令，也不动终端会话，命令会继续跑；再调一次即可继续等。", "en": "Wait until the previous command in the same terminal session finishes. It reads the session's own commandRunning state, so it returns as soon as the command actually ends instead of sleeping for a fixed time. Typical usage: start the slow command with background=\"true\", do other tool calls, then call this. A timeout only means the command had not finished yet: it does not cancel the running command and does not touch the terminal session, so call it again to keep waiting." },
             "parameters": [
                 {
                     "name": "sessionId",
@@ -63,7 +63,7 @@ type PersistedTerminalOutput = {
                 },
                 {
                     "name": "timeoutMs",
-                    "description": { "zh": "可选超时（毫秒，最低3000ms）。未传时默认300000ms（5分钟）。", "en": "Optional timeout (ms, minimum 3000ms). Defaults to 300000ms (5 minutes) if omitted." },
+                    "description": { "zh": "可选超时（毫秒，最低3000ms）。未传时默认50000ms（50秒，低于 JS 运行时单次 60 秒预算，所以会正常返回而不是被打断）。命令没跑完就再调一次。", "en": "Optional timeout (ms, minimum 3000ms). Defaults to 50000ms (50s, below the 60s step budget of the JavaScript runtime, so it returns normally instead of being interrupted). Call it again if the command is still running." },
                     "type": "string",
                     "required": false
                 }
@@ -350,7 +350,12 @@ type PersistedTerminalOutput = {
 const superAdmin = (function () {
     const MAX_INLINE_TERMINAL_OUTPUT_CHARS = 12000;
     const DEFAULT_FOREGROUND_TIMEOUT_MS = 15000;
-    const DEFAULT_WAIT_TIMEOUT_MS = 300000;
+    // A package call is resumed with a 60s step budget by the JavaScript runtime, so a wait that
+    // returns later than that is interrupted instead of answered. Stay below it.
+    const DEFAULT_WAIT_TIMEOUT_MS = 50000;
+    // Reading the session state is a host round trip; 200ms keeps the wait responsive without
+    // turning it into a busy loop over the tool bridge.
+    const terminalWaitPollIntervalMs = 200;
     const MIN_TIMEOUT_MS = 3000;
     const DEFAULT_TERMINAL_SESSION_PREFIX = "super_admin_default_session";
     const BACKGROUND_TERMINAL_SESSION_PREFIX = "super_admin_background";
@@ -521,7 +526,15 @@ const superAdmin = (function () {
     }
 
     /**
-     * Waits until prior work in the same terminal session has completed.
+     * Waits for the previous command in the session by reading the session's own commandRunning
+     * flag until it clears or the deadline passes.
+     *
+     * The previous implementation pushed a `printf '<marker>'` command into the same session and
+     * waited for the marker to come back. Every host refuses that: a session that still has a
+     * command running rejects any second command with
+     * "Terminal session already has a command in progress" (hosts/android/src/terminal.rs:394 and
+     * the same guard in the linux, windows and common native hosts). So the marker could never be
+     * delivered to a busy session — the call failed immediately instead of waiting.
      * @param sessionId - Target session ID.
      * @param timeoutMs - Optional timeout in milliseconds, with a minimum of 3000ms.
      */
@@ -537,25 +550,41 @@ const superAdmin = (function () {
                 timeout = parsedTimeout;
             }
             const sessionId = params.sessionId;
-            const marker = `__OPERIT_TERMINAL_WAIT_DONE_${Date.now()}_${Math.floor(Math.random() * 1000000)}__`;
-            const waitCommand = `printf '${marker}\\n'`;
             const startedAt = Date.now();
-            const result = await Tools.System.terminal.exec(sessionId, waitCommand, timeout);
+            const deadline = startedAt + timeout;
+            let polls = 0;
+            let commandRunning = false;
+            let screen: any = null;
+            for (;;) {
+                // `screen` reports the session's live state, which is the observation primitive
+                // that already exists; waiting needs no new host capability.
+                screen = await Tools.System.terminal.screen(sessionId);
+                polls += 1;
+                commandRunning = screen?.commandRunning === true;
+                if (!commandRunning) {
+                    break;
+                }
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) {
+                    break;
+                }
+                await new Promise<void>((resolve) => {
+                    setTimeout(resolve, Math.min(terminalWaitPollIntervalMs, remaining));
+                });
+            }
             const elapsedMs = Date.now() - startedAt;
-            const timedOut = result?.timedOut === true;
-            const outputStr = typeof result?.output === "string"
-                ? result.output
-                : String(result?.output ?? "");
-            const markerSeen = outputStr.includes(marker);
             return {
                 sessionId,
-                timedOut,
+                commandRunning,
+                waitCompleted: !commandRunning,
+                timedOut: commandRunning,
                 timeoutMsUsed: timeout,
                 elapsedMs,
-                waitCompleted: !timedOut && markerSeen,
-                markerSeen,
-                exitCode: result?.exitCode,
-                context_preserved: !timedOut
+                polls,
+                platform: screen?.platform,
+                terminal: screen?.terminal,
+                terminalType: screen?.terminalType,
+                context_preserved: true
             };
         }
         catch (error) {
