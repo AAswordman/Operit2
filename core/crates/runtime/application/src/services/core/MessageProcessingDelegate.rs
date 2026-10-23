@@ -33,7 +33,7 @@ use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use operit_model::ChatTurnOptions::{ChatTurnContinuation, ChatTurnOptions};
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
-use operit_model::MessagePart::MessagePart;
+use operit_model::MessagePart::{MessagePart, MessagePartKind};
 use operit_model::MessagePartCodec::{AssistantMarkupStreamState, MessagePartCodec};
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::PromptTurn;
@@ -52,6 +52,7 @@ use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
+use operit_util::ChatMarkupRegex::tag_ranges;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 
 /// Maximum text length used when preparing automatic speech previews.
@@ -2169,13 +2170,11 @@ impl MessageProcessingDelegate {
                             .current_content()
                             .to_owned();
                         let mut workerService = workerService;
-                        let tokenSnapshot = workerService.getLastTurnTokenSnapshot().unwrap_or(
-                            operit_providers::chat::EnhancedAIService::TurnTokenSnapshot {
-                                inputTokens: 0,
-                                outputTokens: 0,
-                                cachedInputTokens: 0,
-                            },
-                        );
+                        // 失败/取消的回合不会发布成功快照；这时读本轮真实累计值，
+                        // 否则消息会记成 0 token，而实际用量已经产生（上下文占用也因此算小）。
+                        let tokenSnapshot = workerService
+                            .getLastTurnTokenSnapshot()
+                            .unwrap_or_else(|| workerService.currentTurnTokenSnapshot());
                         let completedElapsed = messageTimingNow().startedAtMs as i64;
                         let finalMessage = {
                             let parts = {
@@ -2681,7 +2680,7 @@ impl MessageProcessingDelegate {
             publishOwnerAppNotification(RuntimeHostInteractionAppNotificationPayload {
                 notificationType: "ai_message_completed".to_string(),
                 title: "Operit".to_string(),
-                message: aiMessageNotificationPreview(&aiMessage.displayText()),
+                message: aiMessageNotificationPreview(&aiMessage.parts),
                 chatId: Some(chatId.clone()),
                 messageTimestamp: Some(aiMessage.timestamp),
             });
@@ -2718,7 +2717,7 @@ impl MessageProcessingDelegate {
                 if let Some(assistant) = assistant {
                     publishOwnerAppNotification(RuntimeHostInteractionAppNotificationPayload {
                         notificationType: "ai_message_completed".to_string(), title: "Operit".to_string(),
-                        message: aiMessageNotificationPreview(&assistant.displayText()), chatId: Some(chatId.to_string()),
+                        message: aiMessageNotificationPreview(&assistant.parts), chatId: Some(chatId.to_string()),
                         messageTimestamp: Some(assistant.timestamp),
                     });
                 }
@@ -2740,11 +2739,22 @@ impl MessageProcessingDelegate {
     }
 }
 
-/// Builds a compact single-line preview for an AI reply notification.
-fn aiMessageNotificationPreview(content: &str) -> String {
+/// Builds a compact reply preview from Markdown parts without provider metadata.
+fn aiMessageNotificationPreview(parts: &[MessagePart]) -> String {
     const MAX_NOTIFICATION_PREVIEW_CHARACTERS: usize = 240;
-    content
-        .split_whitespace()
+    let content: String = MessagePartCodec::orderedParts(parts)
+        .into_iter()
+        .filter(|part| part.kind == MessagePartKind::Markdown)
+        .map(|part| part.content.as_str())
+        .collect();
+    let mut body = String::with_capacity(content.len());
+    let mut cursor = 0;
+    for (start, end) in tag_ranges(&content, "meta") {
+        body.push_str(&content[cursor..start]);
+        cursor = end;
+    }
+    body.push_str(&content[cursor..]);
+    body.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
@@ -2755,12 +2765,14 @@ fn aiMessageNotificationPreview(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        collectToolPkgChatRuntimeStatistics, ChatExecutionState, ChatSummaryTask, ChatSummaryTasks,
-        ChatTurnReceiptState, MessageProcessingCallbacks,
+        aiMessageNotificationPreview, collectToolPkgChatRuntimeStatistics, ChatExecutionState,
+        ChatSummaryTask, ChatSummaryTasks, ChatTurnReceiptState, MessageProcessingCallbacks,
     };
     use futures_util::future::{ready, AbortHandle};
     use futures_util::FutureExt;
     use operit_model::InputProcessingState::InputProcessingState;
+    use operit_model::MessagePart::MessagePart;
+    use operit_model::MessagePartCodec::MessagePartCodec;
     use operit_plugin_sdk::js_sdk::results::{
         ChatCommittedMessage, JsOptional, MessageSendOutcome, MessageSendResultData,
         MessageSendStatus,
@@ -2773,6 +2785,75 @@ mod tests {
         Arc,
     };
     use tokio::sync::oneshot;
+
+    /// Removes long provider metadata before applying the notification length limit.
+    #[test]
+    fn notification_preview_excludes_provider_metadata_before_truncation() {
+        let content = format!(
+            "<meta provider=\"openai:responses_reasoning\">{}</meta>\n回复正文",
+            "eyJ".repeat(200)
+        );
+        let parts = MessagePartCodec::parseAssistantMarkup(&content).unwrap();
+        assert_eq!(aiMessageNotificationPreview(&parts), "回复正文");
+    }
+
+    /// Omits thinking, tool payloads, and status parts while preserving reply order.
+    #[test]
+    fn notification_preview_uses_only_ordered_reply_parts() {
+        let mut parts = MessagePartCodec::parseAssistantMarkup(
+            "<think>private reasoning</think>第一段\n\n\
+             <tool name=\"run\"><param name=\"command\">secret</param></tool>\
+             <tool_result name=\"run\" status=\"success\"><content>tool payload</content></tool_result>\
+             <status type=\"complete\">completed</status>第二段",
+        )
+        .unwrap();
+        parts.reverse();
+        assert_eq!(aiMessageNotificationPreview(&parts), "第一段 第二段");
+    }
+
+    /// Removes every metadata provider without deleting surrounding reply text.
+    #[test]
+    fn notification_preview_removes_multiple_metadata_blocks() {
+        let parts = vec![MessagePart::markdown(
+            "part-0".to_string(),
+            0,
+            "前<meta provider=\"openai:responses_reasoning\">encoded</meta>中\
+             <META provider='gemini:thought_signature'>signature</META>\
+             <meta provider=\"openai:responses_output_item\">payload</meta>后"
+                .to_string(),
+        )];
+        assert_eq!(aiMessageNotificationPreview(&parts), "前中后");
+    }
+
+    /// Prevents metadata-only and unfinished metadata replies from exposing payloads.
+    #[test]
+    fn notification_preview_hides_metadata_without_a_reply_body() {
+        for content in [
+            "<meta provider=\"openai:responses_reasoning\">encoded</meta>",
+            "<meta provider=\"openai:responses_reasoning\">encoded",
+        ] {
+            let parts = vec![MessagePart::markdown(
+                "part-0".to_string(),
+                0,
+                content.to_string(),
+            )];
+            assert_eq!(aiMessageNotificationPreview(&parts), "");
+        }
+    }
+
+    /// Normalizes whitespace and counts Unicode characters when limiting reply text.
+    #[test]
+    fn notification_preview_limits_visible_unicode_characters() {
+        let parts = vec![MessagePart::markdown(
+            "part-0".to_string(),
+            0,
+            format!("\n\t你好  世界\n{}", "🙂".repeat(240)),
+        )];
+        assert_eq!(
+            aiMessageNotificationPreview(&parts),
+            format!("你好 世界 {}", "🙂".repeat(234)),
+        );
+    }
 
     /// Creates a terminal result retaining the committed user identity across a continuation.
     fn summaryContinuationResult(
