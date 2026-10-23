@@ -1412,7 +1412,7 @@ impl AIService for OpenAIResponsesProvider {
             )));
         }
 
-        let response = reqwest::Client::new()
+        let response = super::ChatHttpClient::chatHttpClient()
             .post(&self.responsesApiEndpoint)
             .headers(self.headers()?)
             .json(&requestBody)

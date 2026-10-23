@@ -886,7 +886,7 @@ impl ClaudeProvider {
             let request_body = self.create_request_body(&request)?;
             let response = match self
                 .sendHttpRequest(
-                    reqwest::Client::new()
+                    super::ChatHttpClient::chatHttpClient()
                         .post(&self.api_endpoint)
                         .headers(self.headers()?)
                         .json(&request_body),
@@ -967,7 +967,7 @@ impl ClaudeProvider {
             let request_body = self.create_request_body(&request)?;
             let response = match self
                 .sendHttpRequest(
-                    reqwest::Client::new()
+                    super::ChatHttpClient::chatHttpClient()
                         .post(&self.api_endpoint)
                         .headers(self.headers()?)
                         .json(&request_body),

@@ -6,6 +6,8 @@ pub mod AIServiceFactory;
 pub mod ApiKeyPoolAvailabilityTester;
 #[path = "ApiKeyProvider.rs"]
 pub mod ApiKeyProvider;
+#[path = "ChatHttpClient.rs"]
+pub mod ChatHttpClient;
 #[path = "ClaudeProvider.rs"]
 pub mod ClaudeProvider;
 #[path = "CodexOAuth.rs"]

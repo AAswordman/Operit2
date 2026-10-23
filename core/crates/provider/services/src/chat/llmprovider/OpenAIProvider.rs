@@ -2456,7 +2456,7 @@ impl AIService for OpenAIProvider {
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
-        let client = reqwest::Client::new();
+        let client = super::ChatHttpClient::chatHttpClient();
         let response = client
             .post(&self.api_endpoint)
             .headers(self.headers()?)
@@ -2560,7 +2560,7 @@ impl OpenAIProvider {
                             );
                             let response = provider
                                 .sendHttpRequest(
-                                    reqwest::Client::new()
+                                    super::ChatHttpClient::chatHttpClient()
                                         .post(&api_endpoint)
                                         .headers(headers.clone())
                                         .json(&request_body),
@@ -2670,7 +2670,7 @@ impl OpenAIProvider {
             let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
             let mut retryCount = 0;
             loop {
-                let client = reqwest::Client::new();
+                let client = super::ChatHttpClient::chatHttpClient();
                 let response = match self
                     .sendHttpRequest(
                         client
