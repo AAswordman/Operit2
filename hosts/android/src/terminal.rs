@@ -24,6 +24,15 @@ use std::ptr;
 
 static NEXT_TERMINAL_ID: AtomicU64 = AtomicU64::new(1);
 const PTY_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
+// 一条命令最多累积这么多字节；超出后停止追加并打上截断标记。
+// 没有这个上限时，`yes`、`cat 大文件` 这类命令会一路涨到超时，直接把 App 撑爆。
+const PTY_COMMAND_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
+/// 达到 `PTY_COMMAND_OUTPUT_LIMIT` 后追加的标记，让调用方看出输出被截断过。
+const PTY_COMMAND_OUTPUT_TRUNCATED: &str = "\n[operit: output truncated at 8 MiB]\n";
+// 渲染器里行/列的上限。终端输出里的 CSI 参数来自被执行的程序，可以是任意大的数字：
+// `\x1b[400000000B` 会让渲染器 push 4e9 个空行。这里给一个远超真实终端、但不会爆内存的界。
+const MAX_TERMINAL_ROWS: usize = 4096;
+const MAX_TERMINAL_COLS: usize = 4096;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
 const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
@@ -31,6 +40,14 @@ const PLATFORM: &str = "android";
 const PROOT_TERMINAL: &str = "proot";
 const ANDROID_SYSTEM_TERMINAL: &str = "android-system";
 const PRIMARY_TERMINAL_TYPE: &str = "bash";
+
+fn clampTerminalRows(value: usize) -> usize {
+    value.min(MAX_TERMINAL_ROWS)
+}
+
+fn clampTerminalCols(value: usize) -> usize {
+    value.min(MAX_TERMINAL_COLS)
+}
 type RawFd = i32;
 #[cfg(target_os = "android")]
 type AndroidPid = libc::pid_t;
@@ -66,6 +83,7 @@ struct AndroidPtySession {
     pid: AndroidPid,
     masterFd: RawFd,
     writer: Arc<Mutex<RawFd>>,
+    /// 供 `readPtySession` 流式读取的累计输出（会被 drain 走）。
     output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: AndroidPtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
@@ -89,6 +107,10 @@ impl Drop for AndroidPtySession {
         unsafe {
             libc::kill(self.pid, libc::SIGHUP);
             libc::kill(self.pid, libc::SIGKILL);
+            // 会话从表里删掉之后就没有别处会 wait 这个 pid 了（pollPidExitCode 拿不到它），
+            // 不回收就每关一个会话留一个僵尸。SIGKILL 之后 waitpid 会立刻返回。
+            let mut status: libc::c_int = 0;
+            libc::waitpid(self.pid, &mut status, 0);
             let fd = match self.writer.lock() {
                 Ok(mut writerFd) => {
                     let value = *writerFd;
@@ -371,9 +393,19 @@ impl TerminalHost for AndroidTerminalHost {
         command: &str,
         timeoutMs: u64,
     ) -> HostResult<TerminalCommandOutput> {
+        self.executeInSessionStreaming(sessionId, command, timeoutMs, &mut |_| Ok(()))
+    }
+
+    fn executeInSessionStreaming(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
+    ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
-        let (terminalType, commandOutput, writer) = {
+        let (terminalType, commandOutput) = {
             let mut state = self.lockState()?;
             let session = state
                 .ptySessions
@@ -381,31 +413,34 @@ impl TerminalHost for AndroidTerminalHost {
                 .ok_or_else(|| {
                     HostError::new(format!("Terminal session does not exist: {sessionId}"))
                 })?;
-            session.commandRunning = true;
+            if session.commandRunning { return Err(HostError::new("Terminal session already has a command in progress")); }
             clearAndroidPtyCommandOutput(&session.commandOutput)?;
-            (
-                session.terminalType.clone(),
-                session.commandOutput.clone(),
-                session.writer.clone(),
-            )
+            // 与共享实现保持一致：每条命令从干净的一屏开始，
+            // 否则 get_screen 会把整段会话历史当成“当前屏幕”返回。
+            clearAndroidPtyScreenOutput(&session.screenOutput)?;
+            let commandInput = format!("{normalizedCommand}\r");
+            writeAndroidPtyBytes(&session.writer, commandInput.as_bytes())?;
+            session.commandRunning = true;
+            (session.terminalType.clone(), session.commandOutput.clone())
         };
-        let commandInput = format!("{normalizedCommand}\r");
-        writeAndroidPtyBytes(&writer, commandInput.as_bytes())?;
         let result =
-            executeAndroidPtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
+            executeAndroidPtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs, onOutput);
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                if result.timedOut {
+                // Release the busy flag even if interrupting a broken PTY fails.
+                // The state lock still excludes new commands during cancellation.
+                session.commandRunning = false;
+                if result.as_ref().map_or(true, |receipt| receipt.timedOut) {
                     if let Some(workingDir) = cancelTimedOutAndroidPtyCommand(session)? {
                         session.workingDir = workingDir;
                     }
-                } else if let Some(workingDir) = result.workingDir.clone() {
+                } else if let Some(workingDir) = result.as_ref().ok().and_then(|receipt| receipt.workingDir.clone()) {
                     session.workingDir = workingDir;
                 }
-                session.commandRunning = false;
             }
         }
+        let result = result?;
         Ok(TerminalCommandOutput {
             command: normalizedCommand,
             output: result.output,
@@ -505,6 +540,15 @@ impl TerminalHost for AndroidTerminalHost {
                 HostError::new(format!("Terminal session does not exist: {sessionId}"))
             })?;
         let content = androidPtyScreenContent(session)?;
+        // 空屏幕只有两种情况：命令确实没输出，或者读线程已经不在了。
+        // 后者以前查不出来（只有 cols=0/rows=0 这个现象），所以这里把能区分二者的状态打出来。
+        if content.is_empty() {
+            androidLogError(&format!(
+                "getSessionScreen empty session={} type={} pid={} exit={:?} commandRunning={}",
+                normalizedSessionId, session.terminalType, session.pid, session.exitCode,
+                session.commandRunning
+            ));
+        }
         let rows = content.lines().count();
         let cols = content
             .lines()
@@ -659,6 +703,16 @@ fn appendAndroidPtyOutput(output: &Arc<Mutex<VecDeque<u8>>>, data: &[u8]) {
             buffer.pop_front();
         }
     }
+}
+
+/// 清空屏幕缓冲。共享实现（hosts/common）在每条命令开始前都会清屏，Android 之前漏了这一步，
+/// 结果 `get_screen` 返回的是整段会话历史而不是“一屏”，缓冲也会一路涨到 16MB。
+fn clearAndroidPtyScreenOutput(output: &Arc<Mutex<VecDeque<u8>>>) -> HostResult<()> {
+    let mut buffer = output
+        .lock()
+        .map_err(|_| HostError::new("android pty screen output mutex poisoned"))?;
+    buffer.clear();
+    Ok(())
 }
 
 fn appendAndroidPtyCommandOutput(output: &AndroidPtyCommandOutput, data: &[u8]) {
@@ -820,13 +874,16 @@ fn executeAndroidPtyCommandInSession(
     output: AndroidPtyCommandOutput,
     command: &str,
     timeoutMs: u64,
+    onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
 ) -> HostResult<AndroidSessionCommandResult> {
     let deadline = Instant::now() + Duration::from_millis(timeoutMs);
     let mut collected = Vec::new();
     let mut promptSeenAt = None;
     let quietPeriod = Duration::from_millis(150);
     loop {
+        let previousLength = collected.len();
         let drained = drainAndroidPtyCommandOutput(&output, &mut collected, deadline)?;
+        onOutput(&collected[previousLength..])?;
         if drained > 0 {
             promptSeenAt = None;
         }
@@ -898,8 +955,16 @@ fn drainAndroidPtyCommandOutput(
     }
     let mut drained = 0usize;
     while let Some(value) = buffer.pop_front() {
-        collected.push(value);
         drained += 1;
+        if collected.len() >= PTY_COMMAND_OUTPUT_LIMIT {
+            // 到上限后继续把队列排空（否则 PTY 写端会被堵住），但不再累积。
+            // 补一条显式标记 —— 否则看起来就像“命令只输出了这么多”。
+            if !collected.ends_with(PTY_COMMAND_OUTPUT_TRUNCATED.as_bytes()) {
+                collected.extend_from_slice(PTY_COMMAND_OUTPUT_TRUNCATED.as_bytes());
+            }
+            continue;
+        }
+        collected.push(value);
     }
     Ok(drained)
 }
@@ -1109,14 +1174,16 @@ impl TerminalTextRenderer {
     fn applyCsi(&mut self, params: &str, command: char) {
         let values = csiParams(params);
         match command {
-            'A' => self.moveRowUp(csiValue(&values, 0, 1)),
-            'B' => self.moveRowDown(csiValue(&values, 0, 1)),
-            'C' => self.col += csiValue(&values, 0, 1),
+            'A' => self.moveRowUp(clampTerminalRows(csiValue(&values, 0, 1))),
+            'B' => self.moveRowDown(clampTerminalRows(csiValue(&values, 0, 1))),
+            'C' => {
+                self.col = clampTerminalCols(self.col.saturating_add(clampTerminalCols(csiValue(&values, 0, 1))))
+            }
             'D' => self.col = self.col.saturating_sub(csiValue(&values, 0, 1)),
-            'G' => self.col = csiValue(&values, 0, 1).saturating_sub(1),
+            'G' => self.col = clampTerminalCols(csiValue(&values, 0, 1).saturating_sub(1)),
             'H' | 'f' => {
-                self.row = csiValue(&values, 0, 1).saturating_sub(1);
-                self.col = csiValue(&values, 1, 1).saturating_sub(1);
+                self.row = clampTerminalRows(csiValue(&values, 0, 1).saturating_sub(1));
+                self.col = clampTerminalCols(csiValue(&values, 1, 1).saturating_sub(1));
                 self.ensureCursorLine();
             }
             'J' => self.eraseDisplay(csiValue(&values, 0, 0)),
@@ -1806,8 +1873,18 @@ fn readPtyFd(fd: RawFd) -> HostResult<Vec<u8>> {
         let mut available: libc::c_int = 0;
         let ioctlResult = unsafe { libc::ioctl(fd, libc::FIONREAD, &mut available) };
         if ioctlResult != 0 {
-            androidLogError(&format!("ioctl FIONREAD failed fd={fd}"));
-            return Err(HostError::new("ioctl FIONREAD failed for Android PTY"));
+            let error = std::io::Error::last_os_error();
+            // A signal can interrupt the ioctl. That is not a reason to stop reading this PTY:
+            // the reader thread is the session's only writer of `screenOutput`, so if it exits the
+            // session stays alive while its screen stays empty forever - `get_screen` then reports
+            // cols=0/rows=0 with no output, which reads like "the terminal returned nothing".
+            if error.raw_os_error() == Some(libc::EINTR) {
+                return Ok(Vec::new());
+            }
+            androidLogError(&format!("ioctl FIONREAD failed fd={fd} errno={error}"));
+            return Err(HostError::new(format!(
+                "ioctl FIONREAD failed for Android PTY: {error}"
+            )));
         }
         if available <= 0 {
             return Ok(Vec::new());
@@ -1815,8 +1892,17 @@ fn readPtyFd(fd: RawFd) -> HostResult<Vec<u8>> {
         let mut output = vec![0u8; available as usize];
         let count = unsafe { libc::read(fd, output.as_mut_ptr().cast(), output.len()) };
         if count < 0 {
-            androidLogError(&format!("read failed fd={fd} available={available}"));
-            return Err(HostError::new("read failed for Android PTY"));
+            let error = std::io::Error::last_os_error();
+            // EINTR/EAGAIN mean "try again", not "this PTY is finished".
+            if matches!(error.raw_os_error(), Some(libc::EINTR) | Some(libc::EAGAIN)) {
+                return Ok(Vec::new());
+            }
+            androidLogError(&format!(
+                "read failed fd={fd} available={available} errno={error}"
+            ));
+            return Err(HostError::new(format!(
+                "read failed for Android PTY: {error}"
+            )));
         }
         output.truncate(count as usize);
         Ok(output)
