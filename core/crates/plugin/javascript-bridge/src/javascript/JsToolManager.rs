@@ -12,6 +12,30 @@ use operit_plugin_sdk::javascript::{
 };
 use operit_plugin_sdk::toolpkg::ToolPkgManager::ToolPkgExecutionEngineFactory;
 
+/// Explains an unknown tool parameter by naming both the accepted and the received names, so the
+/// caller can correct the call instead of guessing which spelling was expected.
+#[allow(non_snake_case)]
+fn unknownToolParameterMessage<'a>(
+    toolName: &str,
+    parameterName: &str,
+    accepted: &[&str],
+    received: impl Iterator<Item = &'a str>,
+) -> String {
+    let mut receivedNames = received
+        .filter(|name| !name.starts_with("__operit_"))
+        .collect::<Vec<_>>();
+    receivedNames.sort_unstable();
+    let receivedHint = if receivedNames.is_empty() {
+        "no parameters arrived".to_string()
+    } else {
+        format!("received: {}", receivedNames.join(", "))
+    };
+    format!(
+        "Unknown tool parameter: {toolName}:{parameterName} (accepted: [{}]; {receivedHint})",
+        accepted.join(", ")
+    )
+}
+
 #[derive(Clone)]
 /// Executes JavaScript-backed package tools through reusable JS engines.
 pub struct JsToolManager {
@@ -261,12 +285,22 @@ impl JsToolManager {
                     "string"
                 }
                 None => {
+                    // Name the accepted and received parameters: the model most often sends an
+                    // OpenAI-style "arguments" field here, and without the list it cannot tell
+                    // which name it should have used.
+                    let accepted = definition
+                        .parameters
+                        .iter()
+                        .map(|item| item.name.as_str())
+                        .collect::<Vec<_>>();
                     return Err(ToolParameterConversionException {
-                        message: format!(
-                            "Unknown tool parameter: {}:{parameterName}",
-                            request.tool_name
+                        message: unknownToolParameterMessage(
+                            &request.tool_name,
+                            parameterName,
+                            &accepted,
+                            request.parameters.keys().map(String::as_str),
                         ),
-                    })
+                    });
                 }
             };
             let value = self.convertToolParameterValue(
@@ -444,7 +478,7 @@ impl JsPackageExecutor for JsToolManager {
 
 #[cfg(test)]
 mod tests {
-    use super::JsToolManager;
+    use super::{unknownToolParameterMessage, JsToolManager};
     use crate::javascript::JsEngine::JsEngine;
     use crate::javascript::TestJsToolsHost::{expect_js_output, register_test_runtime_storage};
     use operit_host_api::{
@@ -1578,5 +1612,34 @@ mod tests {
             "subpackage shared-engine execution",
         );
         assert_eq!(output, "\"same-engine\"");
+    }
+
+    /// An unknown parameter must say which names were expected and which arrived, so the caller
+    /// can fix the call: on device this was repeatedly an OpenAI-style "arguments" field.
+    #[test]
+    fn unknown_tool_parameter_names_accepted_and_received() {
+        let message = unknownToolParameterMessage(
+            "super_admin:shell",
+            "arguments",
+            &["command", "background", "timeoutMs"],
+            ["arguments", "name"].into_iter(),
+        );
+        assert_eq!(
+            message,
+            "Unknown tool parameter: super_admin:shell:arguments \
+             (accepted: [command, background, timeoutMs]; received: arguments, name)"
+        );
+    }
+
+    /// Injected caller-context fields are not the caller’s own parameters and must not be listed.
+    #[test]
+    fn unknown_tool_parameter_message_hides_injected_context() {
+        let message = unknownToolParameterMessage(
+            "demo:echo",
+            "text",
+            &["value"],
+            ["text", "__operit_package_chat_id"].into_iter(),
+        );
+        assert!(message.ends_with("(accepted: [value]; received: text)"), "{message}");
     }
 }

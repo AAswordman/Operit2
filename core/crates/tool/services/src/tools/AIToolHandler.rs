@@ -17,6 +17,7 @@ use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::tools::defaultTool::standard::StandardMediaTools::register_native_media;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
@@ -1032,7 +1033,22 @@ impl AIToolHandler {
     /// Executes under the native caller context and dispatches lifecycle hooks only for AI requests.
     async fn executeInvocationInContext(&mut self, request: &ToolCall, policy: ToolExecutionPolicy, context: &ToolInvocationContext) -> Result<Vec<ToolResult>, String> {
         let entryRequest = request;
-        let resolved = request.resolveTarget(context)?;
+        // A proxy envelope that fails structural validation is a parameter error, not an
+        // execution failure: it is reported as a failed tool result so the model sees which
+        // parameter is wrong and can correct the call itself. Execution failures below still
+        // propagate as errors. Before this, one malformed envelope aborted the whole round, so a
+        // wrong tool_name ended the turn instead of telling the model what it got wrong.
+        let resolved = match request.resolveTarget(context) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                ChainLogger::warn(
+                    TOOL_CHAIN,
+                    "tool.invocation.parameter_rejected",
+                    &[("tool", entryRequest.name.clone()), ("error", error.clone())],
+                );
+                return Ok(vec![Self::failedInvocation(&entryRequest.toLegacyTool(), error)]);
+            }
+        };
         let request = &resolved;
         let legacyTool = std::sync::OnceLock::new();
         let tool = || legacyTool.get_or_init(|| request.toLegacyTool());
@@ -1360,6 +1376,11 @@ impl JsExecutionHost for AIToolHandler {
         self.runtimeDependencies()
             .runtime_support()
             .writeEnvironmentVariable(key, value)
+    }
+
+    /// Registers media for the synchronous v1 image globals and returns the link JSON.
+    fn register_media(&self, request_json: &str) -> Result<String, String> {
+        register_native_media(&self.getContext(), request_json)
     }
 
     /// Resolves unscoped native configuration access explicitly within this device.
@@ -2504,4 +2525,45 @@ mod tests {
             ))
         );
     }
+
+    /// A proxy envelope that fails structural validation must come back as a failed tool result,
+    /// not as an error that aborts the whole round: the model has to see what it got wrong and be
+    /// able to correct the call itself.
+    #[tokio::test]
+    async fn malformed_proxy_envelope_is_reported_as_a_tool_result_instead_of_aborting() {
+        let mut fixture = PipelineFixture::new();
+
+        // A missing tool_name is what produced "Proxy tool_name must be text" on device.
+        let missingName = ToolCall {
+            name: "package_proxy".into(),
+            parameters: BTreeMap::from([("params".into(), Value::Object(Default::default()))]),
+        };
+        let results = fixture
+            .handler
+            .executeToolInvocation(&missingName, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })
+            .await
+            .expect("a malformed proxy envelope must not abort the round");
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].success);
+        assert_eq!(results[0].error.as_deref(), Some("Proxy tool_name must be text"));
+
+        // An extra envelope field is rejected just as visibly.
+        let unexpectedField = ToolCall {
+            name: "package_proxy".into(),
+            parameters: BTreeMap::from([
+                ("tool_name".into(), Value::String("demo:echo".into())),
+                ("params".into(), Value::Object(Default::default())),
+                ("command".into(), Value::String("id".into())),
+            ]),
+        };
+        let results = fixture
+            .handler
+            .executeToolInvocation(&unexpectedField, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })
+            .await
+            .expect("an unexpected proxy parameter must not abort the round");
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].success);
+        assert_eq!(results[0].error.as_deref(), Some("Unexpected proxy parameter: command"));
+    }
+
 }
