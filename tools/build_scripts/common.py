@@ -92,9 +92,6 @@ def compress_zip(source_dir: Path, destination: Path) -> None:
         destination.unlink()
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.make_archive(str(destination.with_suffix("")), "zip", source_dir)
-    produced = destination.with_suffix("").with_suffix(".zip")
-    if produced != destination:
-        produced.replace(destination)
 
 
 def compress_tar_gz(source_dir: Path, destination: Path) -> None:

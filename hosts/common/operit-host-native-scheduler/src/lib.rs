@@ -1,13 +1,35 @@
 #![allow(non_snake_case)]
 
-#[cfg(feature = "javascript")]
+// Desktop hosts use the V8 engine; Android/iOS/OpenHarmony compile QuickJS.
+#[cfg(all(
+    feature = "javascript",
+    not(any(target_os = "android", target_os = "ios", target_env = "ohos"))
+))]
 mod javascript_engine;
-#[cfg(feature = "javascript")]
+#[cfg(all(
+    feature = "javascript",
+    any(target_os = "android", target_os = "ios", target_env = "ohos")
+))]
+#[path = "javascript_engine_quickjs.rs"]
+mod javascript_engine;
+#[cfg(all(
+    feature = "javascript",
+    not(any(target_os = "android", target_os = "ios", target_env = "ohos"))
+))]
 mod javascript_interrupt;
+#[cfg(all(
+    feature = "javascript",
+    not(any(target_os = "android", target_os = "ios", target_env = "ohos"))
+))]
+mod javascript_values;
+#[cfg(all(
+    feature = "javascript",
+    any(target_os = "android", target_os = "ios", target_env = "ohos")
+))]
+#[path = "javascript_values_quickjs.rs"]
+mod javascript_values;
 #[cfg(feature = "javascript")]
 mod javascript_runtime;
-#[cfg(feature = "javascript")]
-mod javascript_values;
 mod runtime_event_scheduler;
 mod runtime_task_scheduler;
 
