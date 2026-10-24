@@ -65,14 +65,7 @@ Widget reference(bool expanded) => Builder(
         ),
       ),
     );
-    Widget stepperButton(IconData icon) => IconButton(
-      onPressed: () {},
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 24, height: 28),
-      style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-      icon: Icon(icon, size: 16, color: colors.primary),
-    );
-    Widget stepperRow(String title, String value) => ConstrainedBox(
+    Widget inputRow(String title, String value, String hint) => ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 32),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -89,15 +82,14 @@ Widget reference(bool expanded) => Builder(
               ),
             ),
             const SizedBox(width: 8),
-            stepperButton(Icons.remove_circle_outline),
-            Text(
-              value,
-              style: text.bodySmall!.copyWith(
-                color: colors.primary,
-                fontWeight: FontWeight.w600,
+            SizedBox(
+              width: 72,
+              child: TextField(
+                controller: TextEditingController(text: value),
+                maxLines: 1,
+                decoration: InputDecoration(hintText: hint),
               ),
             ),
-            stepperButton(Icons.add_circle_outline),
           ],
         ),
       ),
@@ -172,7 +164,7 @@ Widget reference(bool expanded) => Builder(
                 switchRow(Icons.assignment_ind_outlined, '提供用户资料'),
                 switchRow(Icons.save, '自动更新记忆库'),
                 switchRow(Icons.auto_awesome, '自动检索注入记忆'),
-                stepperRow('记忆注入条数', '3'),
+                inputRow('记忆注入条数', '3', '1-50'),
                 switchRow(Icons.repeat, '允许重复命中', checked: false),
                 InkWell(
                   onTap: () {},
@@ -360,7 +352,7 @@ void main() {
             reference(expanded),
             brightness,
             GlobalKey(),
-            height: expanded ? 248 : 160,
+            height: expanded ? 280 : 160,
           );
           await tester.pumpWidget(const SizedBox.shrink());
           await tester.pumpAndSettle();
@@ -383,7 +375,7 @@ void main() {
             ),
             brightness,
             GlobalKey(),
-            height: expanded ? 248 : 160,
+            height: expanded ? 280 : 160,
           );
           expect(actual, orderedEquals(expected));
         },

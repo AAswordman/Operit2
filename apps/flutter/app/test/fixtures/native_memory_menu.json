@@ -701,86 +701,27 @@
                 "slots": {}
               },
               {
-                "type": "IconButton",
+                "type": "TextField",
                 "props": {
-                  "key": "memory-recall-limit-remove",
-                  "width": 24,
-                  "height": 28,
-                  "contentPadding": {
-                    "horizontal": 0,
-                    "vertical": 0
-                  },
-                  "onClick": {
+                  "key": "memory-recall-limit-input",
+                  "value": "3",
+                  "singleLine": true,
+                  "placeholder": "1-50",
+                  "onValueChange": {
                     "__actionId": "@fixture:10"
-                  }
-                },
-                "children": [
-                  {
-                    "type": "Icon",
-                    "props": {
-                      "name": "RemoveCircleOutline",
-                      "size": 16,
-                      "tint": {
-                        "__colorToken": "primary",
-                        "alpha": {
-                          "__composeUndefined": true
-                        }
-                      }
-                    },
-                    "children": [],
-                    "slots": {}
-                  }
-                ],
-                "slots": {}
-              },
-              {
-                "type": "Text",
-                "props": {
-                  "key": "memory-recall-limit-value",
-                  "text": "3",
-                  "style": "bodySmall",
-                  "color": {
-                    "__colorToken": "primary",
-                    "alpha": {
-                      "__composeUndefined": true
-                    }
                   },
-                  "fontWeight": "600"
+                  "modifier": {
+                    "__modifierOps": [
+                      {
+                        "name": "width",
+                        "args": [
+                          72
+                        ]
+                      }
+                    ]
+                  }
                 },
                 "children": [],
-                "slots": {}
-              },
-              {
-                "type": "IconButton",
-                "props": {
-                  "key": "memory-recall-limit-add",
-                  "width": 24,
-                  "height": 28,
-                  "contentPadding": {
-                    "horizontal": 0,
-                    "vertical": 0
-                  },
-                  "onClick": {
-                    "__actionId": "@fixture:11"
-                  }
-                },
-                "children": [
-                  {
-                    "type": "Icon",
-                    "props": {
-                      "name": "AddCircleOutline",
-                      "size": 16,
-                      "tint": {
-                        "__colorToken": "primary",
-                        "alpha": {
-                          "__composeUndefined": true
-                        }
-                      }
-                    },
-                    "children": [],
-                    "slots": {}
-                  }
-                ],
                 "slots": {}
               }
             ],
@@ -806,7 +747,7 @@
                 ]
               },
               "onClick": {
-                "__actionId": "@fixture:12"
+                "__actionId": "@fixture:11"
               }
             },
             "children": [
@@ -882,7 +823,7 @@
                   "width": 40,
                   "height": 28,
                   "onCheckedChange": {
-                    "__actionId": "@fixture:13"
+                    "__actionId": "@fixture:12"
                   }
                 },
                 "children": [],
@@ -911,7 +852,7 @@
                 ]
               },
               "onClick": {
-                "__actionId": "@fixture:14"
+                "__actionId": "@fixture:13"
               }
             },
             "children": [

@@ -21,8 +21,8 @@ export function createMemorySpace(ownerKey: string): MemorySpace {
     rebuildProgress: { status: "idle", totalChats: 0, completedChats: 0, totalWindows: 0, completedWindows: 0, totalSourceMessages: 0, processedSourceMessages: 0, failedWindows: 0, currentChatTitle: "", lastError: "" },
   };
 }
-/** Bounds the per-turn recall injection count; the menu stepper and persisted writes share this range. */
-export const MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 10 } as const;
+/** Bounds the per-turn recall injection count; the menu input and persisted writes share this range. */
+export const MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 50 } as const;
 /** Defaults for recall settings that predate a given field in persisted states. */
 export function defaultMemoryRecallSettings(): import("../model").MemoryRecallSettings {
   return { enabled: true, limit: 3, allowRepeated: false };

@@ -119,6 +119,18 @@ test("recall settings persist through the transactional state path and default t
   assert.deepEqual(plain(await reopened.readMemoryRecallSettings()), { enabled: false, limit: 5, allowRepeated: true });
   assert.deepEqual(plain(disk.readState()).memoryRecall, { enabled: false, limit: 5, allowRepeated: true });
   await assert.rejects(owner.run(session => session.writeMemoryRecallSettings({ enabled: true, limit: 0, allowRepeated: false })), /memory recall limit/);
-  // A released-shape record without the newer fields normalizes to the documented defaults.
-  await assert.rejects(owner.run(session => session.writeMemoryRecallSettings({ enabled: true, limit: 11, allowRepeated: false })), /memory recall limit/);
+  await assert.rejects(owner.run(session => session.writeMemoryRecallSettings({ enabled: true, limit: 51, allowRepeated: false })), /memory recall limit/);
+});
+
+/** Requires an unconfigured embedding provider to skip the semantic channel instead of failing recall. */
+test("vector weight degrades to zero when cloud embedding is unconfigured", async t => {
+  const env = await environment(t);
+  await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
+  const state = plain(env.disk.readState());
+  state.owners[0].searchConfig = { scoreMode: "BALANCED", keywordWeight: 10, tagWeight: 0, vectorWeight: 0.5, edgeWeight: 0.4 };
+  state.owners[0].settings.cloudEmbeddingEnabled = false;
+  env.disk.replaceState(state);
+  const hook = recallHook(env.disk);
+  const injected = await hook(finalizeEvent(RECALL_EVENT));
+  assert.match(injected, /Known durable knowledge/);
 });

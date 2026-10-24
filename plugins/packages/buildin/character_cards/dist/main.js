@@ -451,6 +451,11 @@ function embeddingSource(settings2) {
   if (!/^https?:\/\//u.test(endpoint)) throw new Error("Embedding endpoint must be an absolute HTTP URL");
   return { endpoint, model };
 }
+function embeddingConfigured(settings2) {
+  if (!settings2?.cloudEmbeddingEnabled) return false;
+  const endpoint = settings2.cloudEmbeddingEndpoint.trim().replace(/\/+$/, "");
+  return endpoint !== "" && settings2.cloudEmbeddingModel.trim() !== "" && /^https?:\/\//u.test(endpoint);
+}
 function requestEmbedding(text2, settings2) {
   return __async(this, null, function* () {
     const source = embeddingSource(settings2), headers = { "Content-Type": "application/json" };
@@ -661,8 +666,9 @@ function searchMemorySpaceDebug(space, options, config) {
   return __async(this, null, function* () {
     if (options.query.trim() === "*") throw new Error("\u68C0\u7D22\u8C03\u8BD5\u8BF7\u8F93\u5165\u5177\u4F53\u67E5\u8BE2\u6587\u672C");
     const expressions = lexicalPatterns(options.query), terms = keywords(options.query), resolved = weights(config);
+    const vectorWeight = embeddingConfigured(space.settings) ? resolved.vectorWeight : 0;
     if (expressions.length === 0) throw new Error("Memory search query has no searchable tokens");
-    if (resolved.keywordWeight + resolved.tagWeight + resolved.vectorWeight + resolved.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
+    if (resolved.keywordWeight + resolved.tagWeight + vectorWeight + resolved.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
     const candidates = space.memories.filter(
       /** Restricts all channels and graph expansion to the requested scope. */
       (memory) => matchesFilters(memory, options)
@@ -708,7 +714,7 @@ function searchMemorySpaceDebug(space, options, config) {
       /** Uses document titles and complete non-document content as provider inputs. */
       (document2, index) => ({ ...document2, texts: candidates[index].memory.isDocumentNode ? document2.texts : [candidates[index].memory.content] })
     );
-    for (const contribution of yield semanticScores(space, semanticDocuments, terms, resolved.vectorWeight)) addChannel(contribution.id, "vectorScore", contribution.score);
+    for (const contribution of yield semanticScores(space, semanticDocuments, terms, vectorWeight)) addChannel(contribution.id, "vectorScore", contribution.score);
     for (const hit of candidates) hit.score = hit.keywordScore + hit.tagScore + hit.vectorScore;
     const seeds = candidates.filter(
       /** Expands only real matched seeds, never unrelated zero-score nodes. */
@@ -754,7 +760,7 @@ function searchMemoryChunks(space, memoryId, query, count) {
       /** Gives chunks unit importance and stable document-position ties. */
       (chunk) => ({ id: chunk.id, texts: [chunk.content], importance: 1, updatedAt: 0 })
     ), resolved = weights(space.searchConfig), scores = /* @__PURE__ */ new Map();
-    const contributions = [...lexicalScores(documents2, lexicalPatterns(query), resolved.keywordWeight), ...yield semanticScores(space, documents2, keywords(query), resolved.vectorWeight)];
+    const contributions = [...lexicalScores(documents2, lexicalPatterns(query), resolved.keywordWeight), ...yield semanticScores(space, documents2, keywords(query), embeddingConfigured(space.settings) ? resolved.vectorWeight : 0)];
     for (const contribution of contributions) {
       const previous = scores.get(contribution.id);
       scores.set(contribution.id, previous === void 0 ? contribution.score : previous + contribution.score);
@@ -1971,7 +1977,7 @@ function createMemorySpace(ownerKey) {
     rebuildProgress: { status: "idle", totalChats: 0, completedChats: 0, totalWindows: 0, completedWindows: 0, totalSourceMessages: 0, processedSourceMessages: 0, failedWindows: 0, currentChatTitle: "", lastError: "" }
   };
 }
-var MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 10 };
+var MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 50 };
 function defaultMemoryRecallSettings() {
   return { enabled: true, limit: 3, allowRepeated: false };
 }

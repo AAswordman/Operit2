@@ -1,5 +1,5 @@
 import type { DocumentChunk, Memory, MemorySearchConfig, MemorySearchOptions, MemorySpace, MemorySearchDebug, MemorySearchHit } from "./model";
-import { cosineSimilarity, embeddingFor } from "./memory-jobs/embeddings";
+import { cosineSimilarity, embeddingConfigured, embeddingFor } from "./memory-jobs/embeddings";
 
 export const MEMORY_SEARCH_THRESHOLD = 0.025;
 interface SearchDocument { id: string; texts: string[]; importance: number; updatedAt: number }
@@ -138,8 +138,11 @@ export async function searchMemorySpace(space: MemorySpace, options: MemorySearc
 export async function searchMemorySpaceDebug(space: MemorySpace, options: MemorySearchOptions, config: MemorySearchConfig): Promise<MemorySearchDebug> {
   if (options.query.trim() === "*") throw new Error("检索调试请输入具体查询文本");
   const expressions = lexicalPatterns(options.query), terms = keywords(options.query), resolved = weights(config);
+  // An unconfigured embedding provider cannot serve the semantic channel; skipping it keeps keyword,
+  // tag and edge retrieval working instead of failing every search for a weight the owner cannot use.
+  const vectorWeight = embeddingConfigured(space.settings) ? resolved.vectorWeight : 0;
   if (expressions.length === 0) throw new Error("Memory search query has no searchable tokens");
-  if (resolved.keywordWeight + resolved.tagWeight + resolved.vectorWeight + resolved.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
+  if (resolved.keywordWeight + resolved.tagWeight + vectorWeight + resolved.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
   const candidates: MemorySearchHit[] = space.memories.filter(
     /** Restricts all channels and graph expansion to the requested scope. */
     memory => matchesFilters(memory, options),
@@ -186,7 +189,7 @@ export async function searchMemorySpaceDebug(space: MemorySpace, options: Memory
     /** Uses document titles and complete non-document content as provider inputs. */
     (document, index) => ({ ...document, texts: candidates[index].memory.isDocumentNode ? document.texts : [candidates[index].memory.content] }),
   );
-  for (const contribution of await semanticScores(space, semanticDocuments, terms, resolved.vectorWeight)) addChannel(contribution.id, "vectorScore", contribution.score);
+  for (const contribution of await semanticScores(space, semanticDocuments, terms, vectorWeight)) addChannel(contribution.id, "vectorScore", contribution.score);
   for (const hit of candidates) hit.score = hit.keywordScore + hit.tagScore + hit.vectorScore;
   const seeds = candidates.filter(
     /** Expands only real matched seeds, never unrelated zero-score nodes. */
@@ -232,7 +235,8 @@ export async function searchMemoryChunks(space: MemorySpace, memoryId: string, q
     /** Gives chunks unit importance and stable document-position ties. */
     chunk => ({ id: chunk.id, texts: [chunk.content], importance: 1, updatedAt: 0 }),
   ), resolved = weights(space.searchConfig), scores = new Map<string, number>();
-  const contributions = [...lexicalScores(documents, lexicalPatterns(query), resolved.keywordWeight), ...await semanticScores(space, documents, keywords(query), resolved.vectorWeight)];
+  // Same unconfigured-provider degradation as node search: skip the semantic channel entirely.
+  const contributions = [...lexicalScores(documents, lexicalPatterns(query), resolved.keywordWeight), ...await semanticScores(space, documents, keywords(query), embeddingConfigured(space.settings) ? resolved.vectorWeight : 0)];
   for (const contribution of contributions) {
     const previous = scores.get(contribution.id);
     scores.set(contribution.id, previous === undefined ? contribution.score : previous + contribution.score);

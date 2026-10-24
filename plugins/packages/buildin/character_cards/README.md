@@ -234,11 +234,18 @@ an empty result injects nothing, and provider failures fail closed without
 blocking the send.
 
 The memory menu's expanded section controls the persisted `memoryRecall` state
-field: the 自动检索注入记忆 switch, a 1–10 stepper for the per-turn injection
-count, and the 允许重复命中 switch that bypasses the per-chat snapshot
-exclusion. States written by the released plugin or the Core migration default
-to enabled, count three, and repeated hits off. This recall replaces the
-memory item formerly offered by the extra information injection package.
+field: the 自动检索注入记忆 switch, a numeric input for the per-turn injection
+count (1–50, committing every valid typed value), and the 允许重复命中 switch
+that bypasses the per-chat snapshot exclusion. States written by the released
+plugin or the Core migration default to enabled, count three, and repeated
+hits off. This recall replaces the memory item formerly offered by the extra
+information injection package.
+
+Retrieval always honors the owner's persisted search weights from the memory
+settings retrieval tab. When the cloud embedding provider is unconfigured, the
+semantic channel is skipped instead of failing the search, so keyword, tag and
+graph retrieval keep working regardless of the stored vector weight; provider
+failures on a configured endpoint still surface as search errors.
 
 ## Owner memory controls
 
