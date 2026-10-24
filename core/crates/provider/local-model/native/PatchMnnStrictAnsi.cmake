@@ -17,3 +17,33 @@ else()
     file(WRITE "CMakeLists.txt" "${mnnListsContent}")
     message(STATUS "Removed MNN Linux -D__STRICT_ANSI__ flag")
 endif()
+
+# Neutralizes the Android-only POST_BUILD custom command on the `llm` OBJECT
+# library in transformers/llm/engine/CMakeLists.txt. When MNN_SEP_BUILD=OFF
+# (this project forces it), `llm` is an OBJECT library, and CMake rejects
+# PRE_BUILD/PRE_LINK/POST_BUILD commands on OBJECT targets, aborting the
+# Android configure step. The command only copies engine headers into
+# NATIVE_INCLUDE_OUTPUT for MNN's own Android gradle builds; this project
+# includes ${mnn_SOURCE_DIR}/transformers/llm/engine/include directly, so the
+# copy is unnecessary here. Windows/macOS/Linux builds take the INSTALL branch
+# and are unaffected.
+set(llmEngineCMake "transformers/llm/engine/CMakeLists.txt")
+if(EXISTS "${llmEngineCMake}")
+    file(READ "${llmEngineCMake}" llmEngineContent)
+    set(llmPostBuildBlock [==[add_custom_command(
+  TARGET llm
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND}
+  ARGS -E copy_directory ${CMAKE_CURRENT_LIST_DIR}/include ${NATIVE_INCLUDE_OUTPUT}
+)]==])
+    string(FIND "${llmEngineContent}" "${llmPostBuildBlock}" llmPostBuildOffset)
+    if(llmPostBuildOffset EQUAL -1)
+        message(STATUS "MNN llm engine CMakeLists has no llm POST_BUILD block; nothing to patch")
+    else()
+        string(REPLACE "${llmPostBuildBlock}" "# operit: llm POST_BUILD header copy removed (OBJECT library)" llmEngineContent "${llmEngineContent}")
+        file(WRITE "${llmEngineCMake}" "${llmEngineContent}")
+        message(STATUS "Removed MNN llm POST_BUILD command on Android OBJECT library")
+    endif()
+else()
+    message(STATUS "MNN llm engine CMakeLists not found; nothing to patch")
+endif()
