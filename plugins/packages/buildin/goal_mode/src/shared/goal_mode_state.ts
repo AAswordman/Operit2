@@ -21,15 +21,12 @@ export type GoalTrackedChatView = {
   viewId: string;
   runtime: GoalRuntime;
   chatId: string;
-  workspacePath: string;
-  workspaceEnv?: string;
   title: string;
   updatedAt: number;
 };
 
 const goalsByChatId: Record<string, GoalRecord> = {};
 const trackedViewsByChatId: Record<string, GoalTrackedChatView> = {};
-const inputSlotEnabledByChatId: Record<string, true> = {};
 
 /** Returns an isolated copy of one goal record. */
 function cloneGoal(goal: GoalRecord): GoalRecord {
@@ -51,8 +48,6 @@ function cloneTrackedView(view: GoalTrackedChatView): GoalTrackedChatView {
     viewId: view.viewId,
     runtime: view.runtime,
     chatId: view.chatId,
-    workspacePath: view.workspacePath,
-    workspaceEnv: view.workspaceEnv,
     title: view.title,
     updatedAt: view.updatedAt,
   };
@@ -129,20 +124,6 @@ export function clearGoal(chatId: string): void {
   delete goalsByChatId[chatId];
 }
 
-/** Reports whether the next submitted message should become this chat's goal. */
-export function isGoalInputSlotEnabled(chatId: string): boolean {
-  return inputSlotEnabledByChatId[chatId] === true;
-}
-
-/** Opens or closes the one-message goal input slot for a chat. */
-export function setGoalInputSlotEnabled(chatId: string, enabled: boolean): void {
-  if (enabled) {
-    inputSlotEnabledByChatId[chatId] = true;
-    return;
-  }
-  delete inputSlotEnabledByChatId[chatId];
-}
-
 /** Records the currently active chat view. */
 export function upsertTrackedChatView(view: GoalTrackedChatView): void {
   trackedViewsByChatId[view.chatId] = cloneTrackedView(view);
@@ -157,23 +138,10 @@ export function removeTrackedChatView(runtime: GoalRuntime, viewId: string): voi
   });
 }
 
-/** Reads the tracked workspace binding associated with a chat. */
+/** Reads the tracked chat view associated with a chat. */
 export function readTrackedChatViewByChatId(chatId: string): GoalTrackedChatView | null {
   const view = trackedViewsByChatId[chatId];
   return view ? cloneTrackedView(view) : null;
-}
-
-/** Resolves a workspace binding for a chat and optional runtime. */
-export function resolveGoalWorkspace(chatId: string, runtime?: GoalRuntime): GoalTrackedChatView | null {
-  if (runtime) {
-    const runtimeView = Object.values(trackedViewsByChatId).find(
-      (view) => view.runtime === runtime && view.chatId === chatId
-    );
-    if (runtimeView) {
-      return cloneTrackedView(runtimeView);
-    }
-  }
-  return readTrackedChatViewByChatId(chatId);
 }
 
 /** Reads the most recently updated tracked chat view. */

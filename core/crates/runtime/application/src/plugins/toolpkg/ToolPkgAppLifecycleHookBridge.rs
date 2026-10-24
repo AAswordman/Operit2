@@ -31,7 +31,7 @@ impl ToolPkgAppLifecycleHookBridge {
             .lock()
             .expect("toolpkg app lifecycle hook mutex poisoned")
             .clone();
-        let mut nextHooks = activeContainers
+        let nextHooks = activeContainers
             .iter()
             .flat_map(|container| {
                 container
@@ -46,12 +46,6 @@ impl ToolPkgAppLifecycleHookBridge {
                     })
             })
             .collect::<Vec<_>>();
-        nextHooks.sort_by(|left, right| {
-            left.event
-                .cmp(&right.event)
-                .then(left.containerPackageName.cmp(&right.containerPackageName))
-                .then(left.hookId.cmp(&right.hookId))
-        });
         *APP_LIFECYCLE_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -149,7 +143,7 @@ fn runAppLifecycleHook(
                 let hook = &hook;
                 let eventName = &eventName;
                 let manager = runtime.package_manager();
-                ChainLogger::info(
+                ChainLogger::verbose_with_level(
                     PLUGIN_CHAIN,
                     "plugin.toolpkg.app_lifecycle.run.start",
                     &[
@@ -158,6 +152,7 @@ fn runAppLifecycleHook(
                         ("hookId", hook.hookId.clone()),
                         ("function", hook.functionName.clone()),
                     ],
+                    operit_util::AppLogger::VERBOSE_LEVEL_3,
                 );
                 match manager
                     .runToolPkgMainHook(
@@ -174,7 +169,7 @@ fn runAppLifecycleHook(
                     )
                     .await
                 {
-                    Ok(_) => ChainLogger::info(
+                    Ok(_) => ChainLogger::verbose_with_level(
                         PLUGIN_CHAIN,
                         "plugin.toolpkg.app_lifecycle.run.done",
                         &[
@@ -182,6 +177,7 @@ fn runAppLifecycleHook(
                             ("package", hook.containerPackageName.clone()),
                             ("hookId", hook.hookId.clone()),
                         ],
+                        operit_util::AppLogger::VERBOSE_LEVEL_3,
                     ),
                     Err(error) => ChainLogger::error(
                         PLUGIN_CHAIN,

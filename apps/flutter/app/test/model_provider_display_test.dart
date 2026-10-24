@@ -81,6 +81,46 @@ void main() {
     });
   }
 
+  for (final style in ['cursor', 'bubble', 'bubble-wide']) {
+    testWidgets(
+      '$style: author identity stays separate from display metadata',
+      (tester) async {
+        final message = _message(
+          role: 'Author display name',
+          extensions: const {
+            'com.operit.character_cards': {'participantId': 'author-id'},
+            'host.chat.identity': {
+              'title': 'Author display name',
+              'avatarUri': null,
+            },
+          },
+        );
+        expect(readChatMessageIdentity(message)?.title, 'Author display name');
+        await _pumpMessage(tester, message, _snapshot(style, false, false));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
+    testWidgets(
+      '$style: legacy authors without display metadata render using the message name',
+      (tester) async {
+        final message = _message(
+          role: 'Legacy author',
+          extensions: const {
+            'com.operit.character_cards': {'participantId': 'author-id'},
+          },
+        );
+        expect(readChatMessageIdentity(message), isNull);
+        await _pumpMessage(tester, message, _snapshot(style, false, false));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
   test('missing historical metadata does not invent names or separators', () {
     final snapshot = _snapshot('cursor', true, true);
     expect(

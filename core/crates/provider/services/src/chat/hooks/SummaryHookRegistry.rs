@@ -30,8 +30,9 @@ pub struct SummaryHookMutation {
 }
 
 /// Represents a hook result awaited without holding the registry lock.
-pub type SummaryHookFuture<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Option<SummaryHookMutation>> + Send + 'a>>;
+pub type SummaryHookFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Option<SummaryHookMutation>, String>> + Send + 'a>,
+>;
 
 pub trait SummaryGenerateHook: Send + Sync {
     fn id(&self) -> &str;
@@ -41,7 +42,7 @@ pub trait SummaryGenerateHook: Send + Sync {
 
     /// Adapts an immediate hook result to the asynchronous dispatcher.
     fn on_event_async<'a>(&'a self, context: &'a SummaryHookContext) -> SummaryHookFuture<'a> {
-        Box::pin(std::future::ready(self.on_event(context)))
+        Box::pin(std::future::ready(Ok(self.on_event(context))))
     }
 }
 
@@ -71,9 +72,10 @@ impl SummaryHookRegistry {
     }
 
     #[allow(non_snake_case)]
+    /// Applies summary mutations in order and returns the first execution failure.
     pub async fn dispatchSummaryGenerateHooks(
         initial_context: SummaryHookContext,
-    ) -> SummaryHookContext {
+    ) -> Result<SummaryHookContext, String> {
         let snapshot = SUMMARY_GENERATE_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -81,11 +83,11 @@ impl SummaryHookRegistry {
             .clone();
         let mut current = initial_context;
         for hook in snapshot {
-            if let Some(mutation) = hook.on_event_async(&current).await {
+            if let Some(mutation) = hook.on_event_async(&current).await? {
                 current = apply_mutation(current, mutation);
             }
         }
-        current
+        Ok(current)
     }
 }
 

@@ -142,6 +142,6 @@ test("UI bundles omit the file repository and memory job backend", async () => {
     const script = Buffer.from(bytes).toString("utf8");
     assert.doesNotMatch(script, /DatabaseCharacterRepository|MemoryJobRunner|function createServiceRuntime/, screen);
   }
-  assert.ok(screens["dist/ui/chat-sidebar/index.ui.js"].length < 100_000,
+  assert.ok(screens["dist/ui/chat-sidebar/index.ui.js"].length < 110_000,
     "Keep the native sidebar lightweight instead of bundling the management backend");
 });

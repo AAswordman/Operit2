@@ -1,8 +1,7 @@
 import type { MemoryChanges, MemoryRecord, LinkRecord, MemoryQueryMatch, MemoryQueryResult } from "../api";
-import type { DocumentChunk, MemorySpace } from "../model";
-import { decodeMemoryBackup } from "../backup";
+import type { DocumentChunk } from "../model";
 import { parseMemoryIdentifier } from "../domain";
-import { assertEmbedding, cosineSimilarity } from "../memory-jobs/embeddings";
+import { MEMORY_SEARCH_THRESHOLD } from "../memory-search";
 import type { CallerContext, DomainCall, MemoryToolName, ToolParameters, MemoryToolResult } from "./contract";
 import { formatTime, limit, optionalNumber, optionalText, requiredText, score, timeBoundary } from "./contract";
 
@@ -11,6 +10,8 @@ export type MemoryInfo = MemoryQueryMatch;
 /** Shares the exact query result contract with the public dependency API. */
 export type QueryResult = MemoryQueryResult;
 export interface LinkInfo { linkId: string; sourceTitle: string; targetTitle: string; linkType: string; weight: number; description: string }
+interface GraphMemory { id: string; uuid: string; title: string }
+interface MemoryGraphSnapshot { memories: GraphMemory[]; links: LinkRecord[] }
 interface Snapshot { seen: Set<string>; access: number }
 /** Owns ephemeral pagination only; all records and mutations remain in the main file repository. */
 export class MemoryTools {
@@ -58,12 +59,29 @@ export class MemoryTools {
     }
     return selected;
   }
-  /** Reads a validated complete repository export; no private copy of durable data is retained. */
-  private async space(ownerKey: string): Promise<MemorySpace> {
-    const exported = await this.domain("memory.export", { ownerKey });
-    const space = decodeMemoryBackup(exported.content).space;
-    if (space.ownerKey !== ownerKey) throw new Error("Memory export owner does not match the requested owner");
-    return space;
+  /** Reads complete relationship records from the existing owner-scoped graph API. */
+  private async memoryGraph(ownerKey: string): Promise<MemoryGraphSnapshot> {
+    const result = await this.domain("memory.graph", { ownerKey });
+    if (result.ownerKey !== ownerKey) throw new Error("Memory graph owner does not match the requested owner");
+    const memories = result.graph.nodes.map(
+      /** Retains only the node fields needed by relationship tools. */
+      node => {
+        const id = node.metadata.memoryId;
+        if (id === undefined) throw new Error("Memory graph node has no record identity: " + node.id);
+        return { id, uuid: node.id, title: node.label };
+      },
+    ), idsByUuid = new Map<string, string>();
+    for (const memory of memories) idsByUuid.set(memory.uuid, memory.id);
+    const links = result.graph.edges.map(
+      /** Reconstructs the canonical relationship view from its actual graph edge. */
+      edge => {
+        const sourceMemoryId = idsByUuid.get(edge.sourceId), targetMemoryId = idsByUuid.get(edge.targetId), description = edge.metadata.description;
+        if (sourceMemoryId === undefined || targetMemoryId === undefined || edge.label === null || description === undefined)
+          throw new Error("Memory graph edge is incomplete: " + edge.id);
+        return { id: edge.id, sourceMemoryId, targetMemoryId, type_: edge.label, weight: edge.weight, description };
+      },
+    );
+    return { memories, links };
   }
   /** Projects the historical model-facing result, keeping record identities internal to the plugin. */
   private info(ownerKey: string, memory: MemoryRecord): MemoryInfo {
@@ -78,99 +96,6 @@ export class MemoryTools {
       /** Uses real persisted chunk indices instead of reindexing the selected subset. */
       chunk => "Chunk " + (chunk.chunkIndex + 1) + "/" + total + ":\n" + chunk.content,
     ).join("\n---\n");
-  }
-  /** Reads only a committed main-service embedding; tool projections never mutate a detached export cache.
-   * A missing or duplicate entry is a consistency error rather than permission to compute outside the main repository.
-   */
-  private committedEmbedding(space: MemorySpace, text: string): number[] {
-    const endpoint = space.settings.cloudEmbeddingEndpoint.replace(/\/+$/, "");
-    const model = space.settings.cloudEmbeddingModel;
-    if (!space.settings.cloudEmbeddingEnabled) throw new Error("Cloud embedding is disabled");
-    const matches = space.embeddings.filter(
-      /** Selects the exact persisted provider and input provenance. */
-      item => item.endpoint === endpoint && item.model === model && item.text === text,
-    );
-    if (matches.length !== 1) throw new Error("Embedding is missing or duplicated in the committed main-service cache: " + text);
-    assertEmbedding(matches[0]);
-    return matches[0].vector;
-  }
-  /** Combines lexical coverage and genuine committed embedding channels with the original chunk RRF weights. */
-  private async searchChunks(space: MemorySpace, memory: MemoryRecord, query: string, count: number): Promise<DocumentChunk[]> {
-    const chunks = space.chunks.filter(
-      /** Selects the complete real document by UUID. */
-      chunk => chunk.memoryUuid === memory.uuid,
-    ).sort(
-      /** Preserves the persisted document order. */
-      (left, right) => left.chunkIndex - right.chunkIndex,
-    );
-    if (query.trim() === "*" || query.trim() === "") return chunks.slice(0, count);
-    const keywords = query.split(query.indexOf("|") === -1 ? /\s+/u : /\|/u).map(
-      /** Preserves the explicitly authored semantic channels. */
-      word => word.trim(),
-    ).filter(
-      /** Rejects empty separators before requesting real embeddings. */
-      word => word.length !== 0,
-    );
-    const patterns = [...new Set(keywords)].map(
-      /** Implements authored wildcard spelling using escaped literal segments. */
-      word => new RegExp(word.split("*").map(
-        /** Escapes one exact authored keyword segment. */
-        segment => segment.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&"),
-      ).join(".*"), "isu"),
-    );
-    let keywordMultiplier: number, vectorMultiplier: number;
-    switch (space.searchConfig.scoreMode) {
-      case "BALANCED": keywordMultiplier = 1; vectorMultiplier = 1; break;
-      case "KEYWORD_FIRST": keywordMultiplier = 1.3; vectorMultiplier = 0.8; break;
-      case "SEMANTIC_FIRST": keywordMultiplier = 0.8; vectorMultiplier = 1.3; break;
-      default: throw new Error("Invalid memory scoring mode");
-    }
-    const scores = new Map<string, { chunk: DocumentChunk; score: number }>();
-    if (space.searchConfig.keywordWeight > 0) {
-      const lexical = chunks.map(
-        /** Measures exact lexical coverage in each real persisted chunk. */
-        chunk => ({ chunk, hits: patterns.filter(
-          /** Matches document content against the declared lexical expression. */
-          pattern => pattern.test(chunk.content),
-        ).length }),
-      ).filter(
-        /** Includes only genuine lexical matches in the coverage channel. */
-        item => item.hits > 0,
-      ).sort(
-        /** Orders coverage ties by original document position. */
-        (left, right) => right.hits - left.hits || left.chunk.chunkIndex - right.chunk.chunkIndex,
-      );
-      for (let rank = 0; rank < lexical.length; rank += 1) {
-        const item = lexical[rank];
-        scores.set(item.chunk.id, { chunk: item.chunk, score: space.searchConfig.keywordWeight * keywordMultiplier * (1 + 0.6 * item.hits / Math.max(1, patterns.length)) / (61 + rank) });
-      }
-    }
-    if (space.searchConfig.vectorWeight > 0) {
-      const normalization = 1 / Math.sqrt(Math.max(1, keywords.length));
-      for (const keyword of keywords) {
-        await this.domain("memory.searchWithOptions", { ownerKey: space.ownerKey, query: keyword, folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null });
-        const committed = await this.space(space.ownerKey), queryVector = this.committedEmbedding(committed, keyword);
-        const semantic: { chunk: DocumentChunk; similarity: number }[] = [];
-        for (const chunk of chunks) semantic.push({ chunk, similarity: cosineSimilarity(queryVector, this.committedEmbedding(committed, chunk.content)) });
-        semantic.sort(
-          /** Ranks actual provider similarities with a stable persisted chunk tie breaker. */
-          (left, right) => right.similarity - left.similarity || left.chunk.chunkIndex - right.chunk.chunkIndex,
-        );
-        for (let rank = 0; rank < semantic.length; rank += 1) {
-          const item = semantic[rank], contribution = (1 / (61 + rank) + item.similarity * space.searchConfig.vectorWeight * vectorMultiplier) * normalization;
-          const entry = scores.get(item.chunk.id);
-          if (entry === undefined) scores.set(item.chunk.id, { chunk: item.chunk, score: contribution });
-          else entry.score += contribution;
-        }
-      }
-    }
-    return [...scores.values()].sort(
-      /** Preserves original RRF ordering and lossless numeric identity ties. */
-      (left, right) => right.score - left.score || (BigInt(left.chunk.id) < BigInt(right.chunk.id) ? -1 : BigInt(left.chunk.id) > BigInt(right.chunk.id) ? 1 : 0),
-    ).slice(0, count).map(
-      /** Returns complete original chunk records rather than a synthetic projection. */
-      item => item.chunk,
-    );
   }
   /** Allocates or reuses owner-scoped pagination under the original snapshot contract. */
   private snapshot(ownerKey: string, requested: string | undefined): { id: string; state: Snapshot; created: boolean } {
@@ -190,7 +115,7 @@ export class MemoryTools {
     return { id, state, created };
   }
   /** Resolves a relationship by its exact lossless ID or an unambiguous title pair. */
-  private link(space: MemorySpace, input: ToolParameters): LinkRecord {
+  private link(space: MemoryGraphSnapshot, input: ToolParameters): LinkRecord {
     const id = optionalText(input, "link_id");
     let matches: LinkRecord[];
     if (id !== undefined) matches = space.links.filter(
@@ -210,7 +135,7 @@ export class MemoryTools {
     return matches[0];
   }
   /** Requires an exact title and rejects ambiguous records instead of choosing one silently. */
-  private memory(space: MemorySpace, title: string): MemoryRecord {
+  private memory(space: MemoryGraphSnapshot, title: string): GraphMemory {
     const matches = space.memories.filter(
       /** Preserves exact title lookup semantics. */
       memory => memory.title === title,
@@ -220,7 +145,7 @@ export class MemoryTools {
     return matches[0];
   }
   /** Resolves complete relationship display fields from the authoritative same-owner records. */
-  private linkInfo(space: MemorySpace, link: LinkRecord): LinkInfo {
+  private linkInfo(space: MemoryGraphSnapshot, link: LinkRecord): LinkInfo {
     const source = space.memories.find(
       /** Resolves the real source identity. */
       memory => memory.id === link.sourceMemoryId,
@@ -273,7 +198,7 @@ export class MemoryTools {
       }
       case "query_memory_links": return this.links(ownerKey, input);
       case "update_memory_link": {
-        const space = await this.space(ownerKey), link = this.link(space, input), changes: { linkType?: string; weight?: number; description?: string } = {};
+        const space = await this.memoryGraph(ownerKey), link = this.link(space, input), changes: { linkType?: string; weight?: number; description?: string } = {};
         const type = optionalText(input, "new_link_type"), weight = score(input, "weight"), description = optionalText(input, "description");
         if (type !== undefined) { if (type.trim() === "") throw new Error("new_link_type must not be blank"); changes.linkType = type; }
         if (weight !== undefined) changes.weight = weight; if (description !== undefined) changes.description = description;
@@ -282,7 +207,7 @@ export class MemoryTools {
         return { totalCount: 1, links: [this.linkInfo(space, result.link)] };
       }
       case "delete_memory_link": {
-        const link = this.link(await this.space(ownerKey), input); await this.domain("memory.link.delete", { ownerKey, linkId: link.id }); return "Successfully deleted memory link: " + link.id;
+        const link = this.link(await this.memoryGraph(ownerKey), input); await this.domain("memory.link.delete", { ownerKey, linkId: link.id }); return "Successfully deleted memory link: " + link.id;
       }
       default: throw new Error("Unknown memory tool: " + operation);
     }
@@ -295,62 +220,57 @@ export class MemoryTools {
     /** Excludes empty tag entries as declared by the tool contract. */
     tag => tag !== "",
   ); }
-  /** Performs filtered full-record search and commits pagination only after every document read succeeds. */
+  /** Searches full records and commits snapshot exclusions only after document queries succeed. */
   private async query(ownerKey: string, input: ToolParameters): Promise<QueryResult> {
-    const query = requiredText(input, "query"), count = limit(input, query.trim() === "*" ? Number.MAX_SAFE_INTEGER : 20), threshold = optionalNumber(input, "threshold"), folder = optionalText(input, "folder_path");
+    const query = requiredText(input, "query"), count = limit(input, query.trim() === "*" ? Number.MAX_SAFE_INTEGER : 20);
+    const threshold = optionalNumber(input, "threshold"), folder = optionalText(input, "folder_path");
     if (threshold !== undefined && threshold < 0) throw new Error("Invalid threshold. Expected number >= 0.");
     const start = timeBoundary(input, "start_time"), end = timeBoundary(input, "end_time");
     if (start !== null && end !== null && start > end) throw new Error("start_time must not be after end_time");
-    const result = await this.domain("memory.searchWithOptions", { ownerKey, query, folderPath: folder === undefined ? null : folder, relevanceThreshold: threshold === undefined ? 0 : threshold, createdAtStartMs: start, createdAtEndMs: end });
+    const result = await this.domain("memory.searchWithOptions", { ownerKey, query, folderPath: folder === undefined ? null : folder, relevanceThreshold: threshold === undefined ? MEMORY_SEARCH_THRESHOLD : threshold, createdAtStartMs: start, createdAtEndMs: end });
     if (result.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
-    const found = result.items, space = await this.space(ownerKey);
     const snapshot = this.snapshot(ownerKey, optionalText(input, "snapshot_id"));
-    const unseen = found.filter(
-      /** Excludes only records already delivered from this same owner and snapshot. */
+    const unseen = result.items.filter(
+      /** Excludes only records delivered by this exact owner-scoped snapshot. */
       memory => !snapshot.state.seen.has(ownerKey + ":" + memory.id),
     ), returned = unseen.slice(0, count);
     const memories: MemoryInfo[] = [];
     for (const memory of returned) {
-        const info = this.info(ownerKey, memory);
-        if (memory.isDocumentNode) {
-          const total = space.chunks.filter(
-            /** Counts every real chunk belonging to this document. */
-            chunk => chunk.memoryUuid === memory.uuid,
-          ).length, chunks = await this.searchChunks(space, memory, query, Math.min(count, 20));
-          info.content = query.trim() === "*" || count > 20 ? "Document: " + memory.title + " (" + total + " chunks)" : this.formatChunks(memory.title, total, chunks);
-          if (chunks.length !== 0) { info.chunkInfo = "Chunks " + chunks.slice(0, 5).map(
-            /** Displays selected indices using the historical one-based spelling. */
+      const info = this.info(ownerKey, memory);
+      if (memory.isDocumentNode) {
+        const { total, chunks } = await this.domain("memory.chunks", { ownerKey, memoryId: memory.id, query, count: Math.min(count, 20) });
+        info.content = query.trim() === "*" || count > 20 ? "Document: " + memory.title + " (" + total + " chunks)" : this.formatChunks(memory.title, total, chunks);
+        if (chunks.length !== 0) {
+          info.chunkInfo = "Chunks " + chunks.slice(0, 5).map(
+            /** Displays the original one-based document positions. */
             chunk => chunk.chunkIndex + 1,
-          ).join(", ") + "/" + total; info.chunkIndices = chunks.map(
-            /** Returns actual zero-based persisted indices for subsequent tool calls. */
+          ).join(", ") + "/" + total;
+          info.chunkIndices = chunks.map(
+            /** Retains zero-based persisted indices for subsequent selectors. */
             chunk => chunk.chunkIndex,
-          ); }
+          );
         }
-        memories.push(info);
+      }
+      memories.push(info);
     }
     for (const memory of returned) snapshot.state.seen.add(ownerKey + ":" + memory.id);
-    return { memories, snapshotId: snapshot.id, snapshotCreated: snapshot.created, excludedBySnapshotCount: found.length - unseen.length };
+    return { memories, snapshotId: snapshot.id, snapshotCreated: snapshot.created, excludedBySnapshotCount: result.items.length - unseen.length };
   }
   /** Reads an exact title or validates the original one-based document query/index/range parameters. */
   private async byTitle(ownerKey: string, input: ToolParameters): Promise<QueryResult | string> {
     const title = requiredText(input, "title"), result = await this.domain("memory.get", { ownerKey, title }), memory = result.item;
     if (!memory.isDocumentNode) return { memories: [this.info(ownerKey, memory)], snapshotId: null, snapshotCreated: false, excludedBySnapshotCount: 0 };
-    const space = await this.space(ownerKey), chunks = space.chunks.filter(
-      /** Selects only this exact real document. */
-      chunk => chunk.memoryUuid === memory.uuid,
-    ).sort(
-      /** Retains stable document order. */
-      (left, right) => left.chunkIndex - right.chunkIndex,
-    ), total = chunks.length;
     const query = optionalText(input, "query"), index = optionalNumber(input, "chunk_index"), range = optionalText(input, "chunk_range");
     const supplied = [query !== undefined, index !== undefined, range !== undefined].filter(
       /** Counts explicitly supplied selectors instead of guessing precedence. */
       value => value,
     ).length;
+    if (supplied > 1) throw new Error("Specify exactly one of query, chunk_range or chunk_index");
+    if (query !== undefined && query.trim() === "") throw new Error("query must not be blank");
+    const { total, chunks } = await this.domain("memory.chunks", { ownerKey, memoryId: memory.id, query: query === undefined ? "*" : query, count: query === undefined ? Number.MAX_SAFE_INTEGER : limit(input, 20) });
     if (supplied === 0) return "Document: " + title + " (" + total + " chunks). Specify query, chunk_range (1-based start-end) or chunk_index (1-based).";
-    if (supplied !== 1) throw new Error("Specify exactly one of query, chunk_range or chunk_index");
     let selected: DocumentChunk[];
-    if (query !== undefined) { if (query.trim() === "") throw new Error("query must not be blank"); selected = await this.searchChunks(space, memory, query, limit(input, 20)); }
+    if (query !== undefined) selected = chunks;
     else {
       let start: number, end: number;
       if (range !== undefined) { const parsed = /^(\d+)-(\d+)$/.exec(range); if (parsed === null) throw new Error("Invalid chunk_range. Expected start-end"); start = Number(parsed[1]); end = Number(parsed[2]); }
@@ -391,7 +311,7 @@ export class MemoryTools {
   }
   /** Queries actual directed relationships with precise filters and the original 200-result cap. */
   private async links(ownerKey: string, input: ToolParameters): Promise<{ totalCount: number; links: LinkInfo[] }> {
-    const space = await this.space(ownerKey), id = optionalText(input, "link_id"), source = optionalText(input, "source_title"), target = optionalText(input, "target_title"), type = optionalText(input, "link_type");
+    const space = await this.memoryGraph(ownerKey), id = optionalText(input, "link_id"), source = optionalText(input, "source_title"), target = optionalText(input, "target_title"), type = optionalText(input, "link_type");
     if (id !== undefined) parseMemoryIdentifier(id, "link_id");
     const sourceId = source === undefined ? null : this.memory(space, source).id, targetId = target === undefined ? null : this.memory(space, target).id;
     const links = space.links.filter(

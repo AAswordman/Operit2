@@ -191,7 +191,7 @@ export function sidebarViolationsFromSources(readSource) {
     }
   }
   if (!imports(drawer.raw, "ChatSidebarTabHost") || !wiredCall(drawerBuild, "ChatSidebarTabHost", [
-    ["clients", "_clients"], ["chats", "widget\\.histories"], ["currentChatId", "widget\\.currentChatId"],
+    ["clients", "_clients"], ["chats", "widget\\.histories"], ["currentChatId", "_isChatRouteSelected\\s*\\?\\s*widget\\.currentChatId\\s*:\\s*null"],
     ["activeStreamingChatIds", "widget\\.activeStreamingChatIds"], ["workspaceBuilder", "_workspaceContent"], ["onActivateChat", "_activateChat"],
   ])) violations.push(drawer.file + ": actual build must mount ChatSidebarTabHost with runtime clients, generic chats, workspace and activation");
   if (!calls(drawer.raw, "GeneratedCoreProxyClients").some(

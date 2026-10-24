@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders navigation nodes for Compose DSL nodes.
-extension _ComposeNavigationNodes on _ComposeDslRendererState {
+extension _ComposeNavigationNodes on _ComposeProgramExecutorState {
   /// Builds navigation bar for the Compose DSL renderer.
   Widget _navigationBar(BuildContext context) {
     final items = _navigationContentNodes()
@@ -16,11 +16,11 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
     final destinations = items
         .map(_navigationDestination)
         .toList(growable: false);
-    final selectedIndex = _selectedIndex(items, node.props['selectedIndex']);
+    final selectedIndex = _selectedIndex(items, props['selectedIndex']);
     return NavigationBar(
       selectedIndex: selectedIndex,
-      backgroundColor: _color(context, node.props['containerColor']),
-      elevation: _number(node.props['tonalElevation']),
+      backgroundColor: _color(context, props['containerColor']),
+      elevation: _number(props['tonalElevation']),
       destinations: destinations.isEmpty
           ? const <Widget>[
               NavigationDestination(icon: Icon(Icons.widgets), label: ''),
@@ -37,7 +37,7 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
     );
   }
 
-  NavigationDestination _navigationDestination(_ComposeDslNode item) {
+  NavigationDestination _navigationDestination(_ComposeProgramNode item) {
     return NavigationDestination(
       icon: _navigationItemIcon(item, selected: false),
       selectedIcon: _hasSlotFrom(item, 'selectedIcon')
@@ -60,8 +60,8 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
     return SizedBox(
       height: _navigationRailHeight(items, header),
       child: NavigationRail(
-        selectedIndex: _selectedIndex(items, node.props['selectedIndex']),
-        backgroundColor: _color(context, node.props['containerColor']),
+        selectedIndex: _selectedIndex(items, props['selectedIndex']),
+        backgroundColor: _color(context, props['containerColor']),
         leading: header.isEmpty
             ? null
             : Column(mainAxisSize: MainAxisSize.min, children: header),
@@ -103,7 +103,7 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
 
   /// Builds navigation item tile for the Compose DSL renderer.
   Widget _navigationItemTile() {
-    final selected = _bool(node.props['selected']);
+    final selected = _bool(props['selected']);
     final leading = _navigationItemIcon(
       node,
       selected: selected,
@@ -116,15 +116,15 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
       trailing: _hasSlot('badge') ? _slotInline('badge') : null,
       enabled: _enabled(),
       shape: RoundedRectangleBorder(
-        borderRadius: _borderRadius(node.props['shape']) ?? BorderRadius.zero,
+        borderRadius: _borderRadius(props['shape']) ?? BorderRadius.zero,
       ),
-      onTap: _enabled() ? () => _invokeAction(node.props['onClick']) : null,
+      onTap: _enabled() ? () => _invokeAction(props['onClick']) : null,
     );
   }
 
   /// Builds navigation item icon for the Compose DSL renderer.
   Widget _navigationItemIcon(
-    _ComposeDslNode item, {
+    _ComposeProgramNode item, {
     required bool selected,
     bool includeBadge = true,
   }) {
@@ -139,17 +139,17 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
   }
 
   /// Resolves navigation content nodes for the Compose DSL renderer.
-  List<_ComposeDslNode> _navigationContentNodes() {
+  List<_ComposeProgramNode> _navigationContentNodes() {
     final content = node.slots['content'];
     return content != null && content.isNotEmpty ? content : node.children;
   }
 
   /// Resolves navigation rail height for the Compose DSL renderer.
   double _navigationRailHeight(
-    List<_ComposeDslNode> items,
+    List<_ComposeProgramNode> items,
     List<Widget> header,
   ) {
-    final explicit = _number(node.props['height']);
+    final explicit = _number(props['height']);
     if (explicit != null && explicit > 0) {
       return explicit;
     }
@@ -164,7 +164,7 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
     final topBar = _slotChildren('topBar');
     final bottomBar = _slotChildren('bottomBar');
     final snackbarHost = _slotChildren('snackbarHost');
-    final contentColor = _color(context, node.props['contentColor']);
+    final contentColor = _color(context, props['contentColor']);
     final content = contentColor == null
         ? _slotOrChildren('content')
         : IconTheme.merge(
@@ -176,7 +176,7 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
           );
     return Material(
       color:
-          _color(context, node.props['containerColor']) ??
+          _color(context, props['containerColor']) ??
           Theme.of(context).colorScheme.surface,
       child: Stack(
         children: <Widget>[
@@ -213,9 +213,9 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
   Widget _drawerSheet(BuildContext context) {
     return Material(
       color:
-          _color(context, node.props['drawerContainerColor']) ??
+          _color(context, props['drawerContainerColor']) ??
           Theme.of(context).colorScheme.surface,
-      elevation: _number(node.props['drawerTonalElevation']) ?? 0,
+      elevation: _number(props['drawerTonalElevation']) ?? 0,
       child: SafeArea(child: _slotOrChildren('content')),
     );
   }
@@ -231,7 +231,7 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         SizedBox(
-          width: _number(node.props['drawerWidth']) ?? 304,
+          width: _number(props['drawerWidth']) ?? 304,
           child: drawer.first,
         ),
         Expanded(child: content),
@@ -241,14 +241,14 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
 
   /// Builds tab item for the Compose DSL renderer.
   Widget _tabItem(BuildContext context, {required bool leadingIcon}) {
-    final selected = _bool(node.props['selected']);
+    final selected = _bool(props['selected']);
     final selectedContentColor = _color(
       context,
-      node.props['selectedContentColor'],
+      props['selectedContentColor'],
     );
     final unselectedContentColor = _color(
       context,
-      node.props['unselectedContentColor'],
+      props['unselectedContentColor'],
     );
     final contentColor = selected
         ? selectedContentColor
@@ -259,14 +259,14 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
             ? Theme.of(context).colorScheme.primary
             : Theme.of(context).colorScheme.onSurfaceVariant);
     return InkWell(
-      onTap: _enabled() ? () => _invokeAction(node.props['onClick']) : null,
+      onTap: _enabled() ? () => _invokeAction(props['onClick']) : null,
       child: IconTheme.merge(
         data: IconThemeData(color: effectiveColor),
         child: DefaultTextStyle.merge(
           style: TextStyle(color: effectiveColor),
           child: Padding(
             padding: _edgeInsetsFromValue(
-              node.props['contentPadding'] ??
+              props['contentPadding'] ??
                   (leadingIcon
                       ? const <Object?>[16, 12]
                       : const <Object?>[18, 14]),
@@ -284,7 +284,7 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
     if (content.isNotEmpty) {
       return Column(mainAxisSize: MainAxisSize.min, children: content);
     }
-    final text = _plainSlotText('text') ?? _string(node.props['text']);
+    final text = _plainSlotText('text') ?? _string(props['text']);
     return Text(text);
   }
 
@@ -300,23 +300,23 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
         if (_hasSlot('text'))
           _slotInline('text')
         else
-          Text(_string(node.props['text'])),
+          Text(_string(props['text'])),
       ],
     );
   }
 
   /// Builds tab row for the Compose DSL renderer.
   Widget _tabRow(BuildContext context, String type) {
-    final contentColor = _color(context, node.props['contentColor']);
+    final contentColor = _color(context, props['contentColor']);
     final tabNodes = _slotNodes('tabs');
     if (!_hasSlot('indicator') && !_hasSlot('divider') && tabNodes.isNotEmpty) {
       return _ComposeNativeTabRow(
-        selectedIndex: (_int(node.props['selectedTabIndex']) ?? 0).clamp(
+        selectedIndex: (_int(props['selectedTabIndex']) ?? 0).clamp(
           0,
           tabNodes.length - 1,
         ),
         scrollable: type.contains('Scrollable'),
-        color: _color(context, node.props['containerColor']),
+        color: _color(context, props['containerColor']),
         contentColor: contentColor,
         onSelected: (index) {
           final tab = tabNodes[index];
@@ -349,7 +349,7 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
     final tabWidgets = _slotChildren('tabs');
     Widget tabs = Row(mainAxisSize: MainAxisSize.min, children: tabWidgets);
     if (type.contains('Scrollable')) {
-      final edgePadding = _number(node.props['edgePadding']) ?? 0;
+      final edgePadding = _number(props['edgePadding']) ?? 0;
       tabs = SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Padding(
@@ -367,7 +367,7 @@ extension _ComposeNavigationNodes on _ComposeDslRendererState {
     );
     return Material(
       color:
-          _color(context, node.props['containerColor']) ??
+          _color(context, props['containerColor']) ??
           Theme.of(context).colorScheme.surface,
       child: DefaultTextStyle.merge(
         style: TextStyle(color: contentColor),

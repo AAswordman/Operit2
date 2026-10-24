@@ -128,6 +128,24 @@ fn network_capability_label(capability: &str) -> String {
     }
 }
 
+/// Converts one protocol capability back into the short name accepted by
+/// `network_capabilities`, so the identity editor can prefill a role.
+pub(crate) fn network_capability_short(capability: &str) -> &str {
+    match capability {
+        "*" => "all",
+        "network.audit.read" => "audit",
+        "network.relay" => "relay",
+        "storage.provide" => "storage",
+        "runtime.execute" => "execute",
+        "network.devices.view" => "view",
+        "network.identity.manage" => "manage-identities",
+        "network.identity.assign" => "assign-identity",
+        "network.approval" => "approve",
+        "network.members.join" => "join",
+        value => value,
+    }
+}
+
 /// Converts the short capability names accepted by CLI and TUI into protocol values.
 pub(crate) fn network_capabilities(values: &[String]) -> Result<BTreeSet<String>, String> {
     values

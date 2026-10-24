@@ -49,7 +49,7 @@ impl HostRuntimePeerService {
                                 if let Some(state) = state.upgrade() {
                                     HostRuntimePeerService { state }.refreshPeerAvailability(&node);
                                 }
-                                operit_util::AppLogger::AppLogger::trace("RuntimePeerService", &format!("Peer connection attempt failed peer={node} error={error}"));
+                                operit_util::AppLogger::AppLogger::v_with_level("RuntimePeerService", &format!("Peer connection attempt failed peer={node} error={error}"), operit_util::AppLogger::VERBOSE_LEVEL_3);
                             }
                         }
                     }
@@ -75,9 +75,7 @@ impl HostRuntimePeerService {
                                 continue;
                             }
                             if connecting.contains(&peer.nodeId) || service.hasLiveChannel(&peer.nodeId) { continue; }
-                            // Dialing is pointless while a return connection already carries calls.
-                            if service.dialSuppressed(&peer.nodeId) { continue; }
-                            if !(peer.outbound || service.spaceOutbound(&peer.nodeId).is_ok()) { continue; }
+                            if !peer.outbound { continue; }
                             if connecting.len() >= MAX_CONNECTING_PEERS.min(service.state.limits.concurrentProbes) { break; }
                             let node = peer.nodeId;
                             lastPeer = Some(node.clone());
@@ -85,7 +83,7 @@ impl HostRuntimePeerService {
                             let service = service.clone();
                             pending.push(Box::pin(async move {
                                 // The acquisition carries its own connect deadline.
-                                let result = service.acquirePooledChannel(&node).await.map(drop);
+                                let result = service.acquireChannel(&node).await.map(drop);
                                 (node, result)
                             }));
                         }
@@ -107,19 +105,4 @@ impl HostRuntimePeerService {
             let _ = done.await;
         }
     }
-}
-
-/// Established reusable sessions use the channel's own bounded exchange. This
-/// keeps correlation, cancellation safety and close-on-timeout in one place.
-pub(super) async fn probeConnectedSession(channel: &Channel) -> Result<(), CoreLinkError> {
-    if channel.duplex().is_some() {
-        let id = nextCoreRouteRequestId("serial-ping");
-        match channel.exchange(CoreLinkRequest::Call(CoreCallRequest::new(
-            id.clone(), "$peer.keepalive", "ping", CoreValue::Null,
-        ))).await? {
-            CoreLinkResponse::Call(CoreCallResponse { requestId, result: Ok(CoreValue::Null) }) if requestId.0 == id => {},
-            _ => { channel.close().await; return Err(error("Serial keepalive response mismatch")); }
-        }
-    }
-    Ok(())
 }

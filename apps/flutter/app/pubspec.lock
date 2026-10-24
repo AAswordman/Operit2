@@ -752,6 +752,13 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
+  operit_keep_alive:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/operit_keep_alive"
+      relative: true
+    source: path
+    version: "0.1.0"
   operit_ui:
     dependency: "direct main"
     description:

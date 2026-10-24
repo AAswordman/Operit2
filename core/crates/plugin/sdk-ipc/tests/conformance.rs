@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use operit_host_api::PluginSdkIpcEndpoint;
 use operit_host_native_plugin_sdk_ipc::MemoryPluginSdkIpcHost;
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream,
-    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushRequest, CoreValue, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
+    CoreLinkPushSession, CoreLinkSharedClient, CorePushRequest, CoreValue, CoreWatchRequest,
 };
 use operit_plugin_sdk_ipc::{PluginSdkClient, PluginSdkIpcServer};
 
@@ -100,6 +100,7 @@ fn pair() -> (
     let endpoint = PluginSdkIpcEndpoint::standard();
     let server = PluginSdkIpcServer::new(
         host.clone(),
+        Arc::new(operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new()),
         endpoint.clone(),
         Arc::new(TestCoreLinkTarget),
         {
@@ -128,7 +129,10 @@ async fn forwards_call_watch_snapshot_watch_and_push() {
             CoreValue::String("value".to_string()),
         ))
         .await;
-    assert_eq!(call.result.expect("call succeeds"), CoreValue::String("value".to_string()));
+    assert_eq!(
+        call.result.expect("call succeeds"),
+        CoreValue::String("value".to_string())
+    );
 
     let snapshot = client
         .watchSnapshot(CoreWatchRequest::new(
@@ -150,9 +154,18 @@ async fn forwards_call_watch_snapshot_watch_and_push() {
         ))
         .await
         .expect("watch opens");
-    assert_eq!(stream.recv().await.expect("snapshot event").kind, CoreEventKind::Snapshot);
-    assert_eq!(stream.recv().await.expect("changed event").kind, CoreEventKind::Changed);
-    assert_eq!(stream.recv().await.expect("completed event").kind, CoreEventKind::Completed);
+    assert_eq!(
+        stream.recv().await.expect("snapshot event").kind,
+        CoreEventKind::Snapshot
+    );
+    assert_eq!(
+        stream.recv().await.expect("changed event").kind,
+        CoreEventKind::Changed
+    );
+    assert_eq!(
+        stream.recv().await.expect("completed event").kind,
+        CoreEventKind::Completed
+    );
     drop(stream);
 
     let shared: &dyn CoreLinkSharedClient = &client;
@@ -173,8 +186,16 @@ async fn forwards_call_watch_snapshot_watch_and_push() {
 async fn rejects_unexposed_route() {
     let (_host, client, server) = pair();
     let response = client
-        .call(CoreCallRequest::new("blocked-1", "core/test", "privateMethod", CoreValue::Null))
+        .call(CoreCallRequest::new(
+            "blocked-1",
+            "core/test",
+            "privateMethod",
+            CoreValue::Null,
+        ))
         .await;
-    assert_eq!(response.result.expect_err("route must be rejected").code, "PLUGIN_SDK_ROUTE_NOT_EXPOSED");
+    assert_eq!(
+        response.result.expect_err("route must be rejected").code,
+        "PLUGIN_SDK_ROUTE_NOT_EXPOSED"
+    );
     server.stop().expect("server stops");
 }

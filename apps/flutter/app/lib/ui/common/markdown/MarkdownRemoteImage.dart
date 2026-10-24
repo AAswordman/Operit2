@@ -9,22 +9,29 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 
 import '../interactions/MessagePressShield.dart';
+import '../../features/packages/screens/ComposeDslImageSource.dart';
 import 'MarkdownLink.dart';
 
 class MarkdownRemoteImage extends StatelessWidget {
-  /// Creates a Markdown image backed by the runtime HTTP host.
+  /// Creates a Markdown image backed by the runtime file or HTTP service.
   const MarkdownRemoteImage({
     super.key,
     required this.url,
     this.alt = '',
     this.fit = BoxFit.contain,
     this.onOpenLink,
+    this.clients = _imageClients,
   });
 
+  final GeneratedCoreProxyClients clients;
   final String url;
   final String alt;
   final BoxFit fit;
   final void Function(String url)? onOpenLink;
+
+  /// Reads virtual image bytes through this renderer's owning Core connection.
+  Future<Uint8List> _readVfsBytes(String path) =>
+      readComposeDslVfsBytes(clients, path);
 
   /// Builds the image and its link interaction within the layout constraints.
   @override
@@ -46,6 +53,7 @@ class MarkdownRemoteImage extends StatelessWidget {
         final trimmed = url.trim();
         final isDataImage = trimmed.toLowerCase().startsWith('data:image/');
         final dataBytes = markdownDataImageBytes(trimmed);
+        final vfsPath = composeDslVfsImagePath(trimmed);
         final Widget image;
         if (isDataImage) {
           image = dataBytes == null
@@ -58,8 +66,24 @@ class MarkdownRemoteImage extends StatelessWidget {
                   semanticLabel: alt.trim().isEmpty ? null : alt.trim(),
                   errorBuilder: (context, failure, stackTrace) => error,
                 );
+        } else if (vfsPath != null) {
+          image = Image(
+            image: ResizeImage.resizeIfNeeded(
+              cacheWidth,
+              cacheHeight,
+              ComposeDslVfsImage(
+                path: vfsPath,
+                owner: clients.bridge,
+                readBytes: _readVfsBytes,
+              ),
+            ),
+            fit: fit,
+            semanticLabel: alt.trim().isEmpty ? null : alt.trim(),
+            errorBuilder: (context, failure, stackTrace) => error,
+          );
         } else {
           image = _RuntimeImage(
+            clients: clients,
             url: trimmed,
             alt: alt,
             fit: fit,
@@ -91,6 +115,7 @@ const _imageClients = GeneratedCoreProxyClients(
 class _RuntimeImage extends StatefulWidget {
   /// Creates a renderer with the requested decode dimensions.
   const _RuntimeImage({
+    required this.clients,
     required this.url,
     required this.alt,
     required this.fit,
@@ -99,6 +124,7 @@ class _RuntimeImage extends StatefulWidget {
     required this.error,
   });
 
+  final GeneratedCoreProxyClients clients;
   final String url;
   final String alt;
   final BoxFit fit;
@@ -125,14 +151,15 @@ class _RuntimeImageState extends State<_RuntimeImage> {
   @override
   void didUpdateWidget(covariant _RuntimeImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url) {
+    if (oldWidget.url != widget.url ||
+        oldWidget.clients.bridge != widget.clients.bridge) {
       _load();
     }
   }
 
   /// Creates the cold proxy stream owned by the image subscription.
   void _load() {
-    _request = _imageClients.servicesRuntimeHostInteractionService.imageBytes(
+    _request = widget.clients.servicesRuntimeHostInteractionService.imageBytes(
       url: widget.url,
     );
   }

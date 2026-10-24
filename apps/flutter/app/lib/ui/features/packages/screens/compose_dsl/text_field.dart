@@ -28,6 +28,7 @@ class _ComposeTextField extends StatefulWidget {
     required this.supportingText,
     required this.helperText,
     required this.border,
+    this.decoration,
     this.suffixIconConstraints,
     required this.onChanged,
   });
@@ -55,6 +56,7 @@ class _ComposeTextField extends StatefulWidget {
   final Widget? supportingText;
   final String? helperText;
   final InputBorder? border;
+  final InputDecoration? decoration;
   final BoxConstraints? suffixIconConstraints;
 
   /// Resolves function for the Compose DSL renderer.
@@ -168,7 +170,7 @@ class _ComposeTextFieldState extends State<_ComposeTextField> {
       keyboardType: widget.keyboardType,
       textInputAction: widget.textInputAction,
       style: widget.textStyle,
-      decoration: InputDecoration(
+      decoration: (widget.decoration ?? const InputDecoration()).copyWith(
         labelText: widget.labelText,
         label: widget.label,
         hintText: widget.hintText,
@@ -181,7 +183,7 @@ class _ComposeTextFieldState extends State<_ComposeTextField> {
         suffix: widget.suffix,
         helperText: widget.helperText,
         helper: widget.supportingText,
-        border: widget.border,
+        border: widget.decoration?.border ?? widget.border,
       ),
       onChanged: _enqueueEdit,
     );

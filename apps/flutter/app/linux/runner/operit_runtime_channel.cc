@@ -77,6 +77,21 @@ bool invoke_runtime_bootstrap_storage(const std::string& default_runtime_root,
   return true;
 }
 
+/// Calls the offline ABI on a retained library mapping without starting Core.
+bool invoke_data_rescue(const std::string& root, const std::string& request,
+                        std::string* response, std::string* error) {
+  static void* library = dlopen("liboperit_flutter_bridge.so", RTLD_NOW | RTLD_LOCAL);
+  if (library == nullptr) { *error = "Data rescue bridge library is unavailable"; return false; }
+  const auto call = reinterpret_cast<BridgeRuntimeBootstrapWrite>(dlsym(library, "operit_flutter_bridge_data_rescue"));
+  const auto release = reinterpret_cast<BridgeFreeString>(dlsym(library, "operit_flutter_bridge_free_string"));
+  if (call == nullptr || release == nullptr) { *error = "Data rescue ABI is incomplete"; return false; }
+  char* raw = call(root.c_str(), request.c_str());
+  if (raw == nullptr) { *error = "Data rescue returned null"; return false; }
+  *response = raw;
+  release(raw);
+  return true;
+}
+
 /// Normalizes one caller-supplied Linux storage root.
 bool normalize_linux_storage_root(const std::string& requested,
                                   const char* label,
@@ -549,6 +564,23 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
     g_autoptr(FlValue) result =
         linux_storage_paths(runtime_root, workspace_root);
     respond_success_value(method_call, result);
+    return;
+  }
+  if (strcmp(method, "dataRescue") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+      respond_error(method_call, "INVALID_ARGS", "dataRescue expects JSON text"); return;
+    }
+    std::string root;
+    std::string workspace;
+    if (!resolve_linux_default_storage_roots(&root, &workspace, &error)) { respond_error(method_call, "DATA_RESCUE_ERROR", error); return; }
+    const std::string request = fl_value_get_string(args);
+    respond_runtime_descriptor_async(method_call, [root, request](std::vector<uint8_t>* bytes, std::string* error) {
+      std::string response;
+      if (!invoke_data_rescue(root, request, &response, error)) return false;
+      bytes->assign(response.begin(), response.end());
+      return true;
+    });
     return;
   }
   if (strcmp(method, "runtimeBootstrapRead") == 0) {

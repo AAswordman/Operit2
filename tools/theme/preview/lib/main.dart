@@ -30,6 +30,7 @@ Future<void> main() async {
   );
   final fonts = await BuiltinThemeFonts.load(bundle: rootBundle);
   final artwork = await _fixtureImage();
+  await prepareLiquidGlass();
   runApp(
     ThemePreviewProbe(
       spec: spec,

@@ -1,6 +1,6 @@
 //! Device, application, Bluetooth, terminal, and media controls exposed to plugins.
 use super::results::*;
-use super::{JsDate, JsFuture};
+use super::{JsAsyncIterable, JsDate, JsFuture};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -214,6 +214,29 @@ pub enum SystemTerminalHostExecTimeoutMs {
     Variant1(f64),
     Variant2(String),
 }
+/// Starts one streamed command in an existing terminal session.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalExecRequest {
+    pub sessionId: String,
+    pub command: String,
+    /// Sets the command deadline in milliseconds; omission uses the terminal default.
+    pub timeoutMs: Option<u64>,
+}
+
+/// Carries live PTY output followed by the complete execution receipt.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum TerminalExecEvent {
+    #[serde(rename = "start")]
+    Start { sessionId: String, command: String, platform: String, terminal: TerminalImplementation, terminalType: TerminalType },
+    /// Contains terminal output, including terminal control sequences and echoed input.
+    #[serde(rename = "chunk")]
+    Chunk { sessionId: String, command: String, platform: String, terminal: TerminalImplementation, terminalType: TerminalType, chunk: String, chunkIndex: u64, receivedChars: u64 },
+    #[serde(rename = "completed")]
+    Completed { result: TerminalCommandResultData },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 /// Accepts a numeric or string-encoded streaming command timeout in milliseconds.
@@ -224,9 +247,9 @@ pub enum SystemTerminalHostExecStreamingOptionsTimeoutMs {
 /// Configures timeout and incremental output delivery for a terminal command.
 pub struct SystemTerminalHostExecStreamingOptions {
     /// Sets the maximum command execution time in milliseconds.
-    pub timeout_ms: Option<SystemTerminalHostExecStreamingOptionsTimeoutMs>,
+    pub timeoutMs: Option<SystemTerminalHostExecStreamingOptionsTimeoutMs>,
     /// Receives output events while the command is still running.
-    pub on_intermediate_result: Option<Arc<dyn Fn(TerminalStreamEventData) -> () + Send + Sync>>,
+    pub onIntermediateResult: Option<Arc<dyn Fn(TerminalStreamEventData) -> () + Send + Sync>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -595,6 +618,9 @@ pub trait SystemTerminalHost: Send + Sync {
         command: String,
         options: Option<SystemTerminalHostExecStreamingOptions>,
     ) -> JsFuture<TerminalCommandResultData>;
+    /// Runs one command as a single-consumer async iterable of live output and completion.
+    /// Returning from the iterator interrupts this command while retaining its terminal session.
+    fn execStream(&self, request: TerminalExecRequest) -> JsAsyncIterable<TerminalExecEvent>;
     ///
     ///Execute a command in a hidden non-PTY executor.
     ///Commands using the same executorKey reuse the same hidden login context and are not shown in the visible terminal UI.

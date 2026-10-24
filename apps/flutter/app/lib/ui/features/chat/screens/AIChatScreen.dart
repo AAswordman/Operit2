@@ -14,6 +14,8 @@ import '../../../../core/host/SelectedFileInput.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/contributions/ChatAttachmentResult.dart';
@@ -106,24 +108,108 @@ class AIChatScreen extends StatelessWidget {
 
 /// Renders AI chat content without the host workspace or top-bar integration.
 class AIChatEmbed extends StatelessWidget {
-  /// Creates an AI chat control for embedding in another host surface.
-  const AIChatEmbed({super.key, this.viewModel});
+  /// Creates an embedded host chat, optionally bound to one conversation.
+  const AIChatEmbed({
+    super.key,
+    this.viewModel,
+    this.chatId,
+    this.showInput = true,
+    this.clients = const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge()),
+  }) : assert(viewModel == null || chatId == null);
 
   final ChatViewModel? viewModel;
+  final String? chatId;
+  final bool showInput;
+  final GeneratedCoreProxyClients clients;
 
-  /// Builds the workspace-free chat control for the surrounding surface.
+  /// Uses a local chat selection for an explicitly identified conversation.
   @override
   Widget build(BuildContext context) {
-    return _AIChatSurface(viewModel: viewModel, embedded: true);
+    final target = chatId;
+    if (target != null) {
+      return _BoundAIChatEmbed(
+        key: ValueKey(target),
+        clients: clients,
+        chatId: target,
+        showInput: showInput,
+      );
+    }
+    return _AIChatSurface(
+      viewModel: viewModel,
+      embedded: true,
+      showInput: showInput,
+    );
+  }
+}
+
+/// Binds the existing host chat surface without changing the main chat runtime.
+class _BoundAIChatEmbed extends StatefulWidget {
+  /// Creates a conversation-owned embed on the supplied host client.
+  const _BoundAIChatEmbed({
+    required this.clients,
+    required this.chatId,
+    required this.showInput,
+    super.key,
+  });
+
+  final GeneratedCoreProxyClients clients;
+  final String chatId;
+  final bool showInput;
+
+  /// Owns the local selection before mounting native chat subscriptions.
+  @override
+  State<_BoundAIChatEmbed> createState() => _BoundAIChatEmbedState();
+}
+
+class _BoundAIChatEmbedState extends State<_BoundAIChatEmbed> {
+  late final _chatCore = widget.clients.chatRuntimeHolderMainForSlot(
+    'embedded-chat:${widget.chatId}',
+  );
+  late final _viewModel = ChatViewModel.withChatObservation(
+    bridge: widget.clients.bridge,
+    chat: _chatCore,
+    observationChat: widget.clients.chatRuntimeHolderMain,
+  );
+  late final Future<void> _binding = _chatCore.switchChatLocal(
+    chatId: widget.chatId,
+  );
+
+  /// Renders the shared chat after its exact conversation is selected, or exposes the binding error.
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: _binding,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: SelectableText(snapshot.error.toString()));
+        }
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return _AIChatSurface(
+          viewModel: _viewModel,
+          embedded: true,
+          showInput: widget.showInput,
+          draftStoreKey: 'embedded-chat:${widget.chatId}',
+        );
+      },
+    );
   }
 }
 
 class _AIChatSurface extends StatefulWidget {
   /// Creates the shared implementation for a full chat screen or embedded chat.
-  const _AIChatSurface({required this.viewModel, required this.embedded});
+  const _AIChatSurface({
+    required this.viewModel,
+    required this.embedded,
+    this.showInput = true,
+    this.draftStoreKey = 'main',
+  });
 
   final ChatViewModel? viewModel;
   final bool embedded;
+  final bool showInput;
+  final String draftStoreKey;
 
   /// Creates the state shared by the full and embedded chat surfaces.
   @override
@@ -203,6 +289,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   late final ValueNotifier<String?> _toastMessageNotifier;
 
   bool _loading = true;
+  final Set<String> _regeneratingChatIds = <String>{};
   core_proxy.InputProcessingState _inputProcessingState =
       core_proxy.InputProcessingState.idle();
   String? _errorMessage;
@@ -212,6 +299,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   StreamSubscription<List<ChatUiMessage>>? _messagesSubscription;
   StreamSubscription<core_proxy.ChatState>? _chatStateSubscription;
   String? _requestedChatFlowChatId;
+  bool _hasBoundChatFlow = false;
   int _chatFlowBindingGeneration = 0;
 
   /// Expires composer presentations on pending as well as committed selections.
@@ -261,7 +349,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   void initState() {
     super.initState();
     _inputDraftsByChatId = _chatInputDraftStores.putIfAbsent(
-      'main',
+      widget.draftStoreKey,
       () => <String?, TextEditingValue>{},
     );
     _chatContentDataNotifier = ValueNotifier<_ChatContentData>(
@@ -277,15 +365,17 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     );
     PluginHotReload.revision.addListener(_requestChatUiContextRefresh);
     unawaited(_reloadChatUiContext());
-    ChatSelectionTransition.requests.addListener(_onChatSelectionTransition);
-    PendingChatDraftHandler.revision.addListener(_consumePendingChatDraft);
-    _onChatSelectionTransition();
+    if (!widget.embedded) {
+      ChatSelectionTransition.requests.addListener(_onChatSelectionTransition);
+      PendingChatDraftHandler.revision.addListener(_consumePendingChatDraft);
+      _onChatSelectionTransition();
+    }
     _messageController.addListener(_onMessageControllerChanged);
     unawaited(_loadLongPastedTextInputSettings());
     unawaited(_loadAttachmentHostCapabilities());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _consumePendingChatDraft();
+      if (!widget.embedded) _consumePendingChatDraft();
       _refreshAttachments();
       if (!widget.embedded) {
         unawaited(_recoverLostCameraPhoto());
@@ -1026,7 +1116,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       if (decision.timedOut && timeoutMessage != null) {
         _showLocalToast(timeoutMessage);
       }
-      if (decision.action == 'block') {
+      if (decision.action == chatInputActionBlock) {
         if (cancelCurrentConversation) {
           await _viewModel.clearPendingQueueAutoDequeueSuppression(queueChatId);
         }
@@ -1040,7 +1130,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         }
         return;
       }
-      if (decision.action == 'consume') {
+      if (decision.action == chatInputActionConsume) {
         if (cancelCurrentConversation) {
           await _viewModel.clearPendingQueueAutoDequeueSuppression(queueChatId);
         }
@@ -1050,7 +1140,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         }
         return;
       }
-      if (decision.action == 'replace') {
+      if (decision.action == chatInputActionReplace) {
         final updatedText = decision.text;
         if (updatedText != null) {
           queuedText = updatedText;
@@ -1398,9 +1488,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Rebinds the two per-chat Core watches after the selected chat changes.
   void _bindChatFlows(String? chatId) {
-    if (chatId == _requestedChatFlowChatId) {
+    if (_hasBoundChatFlow && chatId == _requestedChatFlowChatId) {
       return;
     }
+    _hasBoundChatFlow = true;
     _requestedChatFlowChatId = chatId;
     _chatSelectionGeneration += 1;
     _clearChatFlowError();
@@ -1448,6 +1539,15 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       return;
     }
     if (chatId == null || chatId.isEmpty) {
+      if (mounted && generation == _chatFlowBindingGeneration) {
+        _mutateChatContentData(() {
+          _clearChatFlowError();
+          _loading = false;
+          _messages.clear();
+          _currentChatId = null;
+          _inputProcessingState = core_proxy.InputProcessingState.idle();
+        });
+      }
       return;
     }
     _messagesSubscription = _viewModel
@@ -1458,9 +1558,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
                 _requestedChatFlowChatId == chatId) {
               if (!firstMessagesLogged && switchTimer != null) {
                 firstMessagesLogged = true;
-                ClientLogger.i(
+                ClientLogger.v(
                   'chat_switch.messages_received chatId=$chatId elapsedMs=${switchTimer.elapsedMilliseconds} count=${messages.length}',
                   tag: 'ChatSwitchTrace',
+                  verboseLevel: VerboseLevel.level2,
                 );
               }
               _applyMessages(messages);
@@ -1484,9 +1585,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
                 state.currentChatId == chatId) {
               if (!firstStateLogged && switchTimer != null) {
                 firstStateLogged = true;
-                ClientLogger.i(
+                ClientLogger.v(
                   'chat_switch.state_received chatId=$chatId elapsedMs=${switchTimer.elapsedMilliseconds}',
                   tag: 'ChatSwitchTrace',
+                  verboseLevel: VerboseLevel.level2,
                 );
               }
               _applyChatState(state);
@@ -1683,7 +1785,27 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   }
 
   /// Dispatches submit_requested before mutating the visible input field.
+  ///
+  /// Runs unawaited from [_sendMessage]; a failed hook dispatch or send must stay
+  /// visible as a toast instead of surfacing only as an uncaught zone error.
   Future<void> _sendMessageWithHooks() async {
+    try {
+      await _sendMessageWithHooksInner();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to send chat message',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        _showLocalToast(error.toString());
+      }
+    }
+  }
+
+  /// Applies the submit decision before changing the composer or starting a send.
+  Future<void> _sendMessageWithHooksInner() async {
     final text = _messageController.text.trim();
     final hasAttachments = _attachments.isNotEmpty;
     if (text.isEmpty && !hasAttachments) {
@@ -1720,8 +1842,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       if (decision.timedOut && timeoutMessage != null) {
         _showLocalToast(timeoutMessage);
       }
-      if (decision.action == 'block' || decision.action == 'consume') {
-        if (decision.action == 'consume' && decision.clearInput) {
+      if (decision.action == chatInputActionBlock ||
+          decision.action == chatInputActionConsume) {
+        if (decision.action == chatInputActionConsume &&
+            decision.clearInput) {
           _clearMentionSuggestionState();
           _messageController.clear();
           await _viewModel.clearAttachments();
@@ -1732,7 +1856,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         }
         return;
       }
-      if (decision.action == 'replace') {
+      if (decision.action == chatInputActionReplace) {
         final updatedText = decision.text;
         if (updatedText != null) {
           _messageController.value = TextEditingValue(
@@ -2093,7 +2217,16 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (chatId == null) {
       return;
     }
-    await _viewModel.regenerateSingleAiMessage(chatId, messageTimestamp);
+    if (_isQueueBlocked || _regeneratingChatIds.contains(chatId)) {
+      _showLocalToast('当前对话正在处理，请结束后再重新生成');
+      return;
+    }
+    _regeneratingChatIds.add(chatId);
+    try {
+      await _viewModel.regenerateSingleAiMessage(chatId, messageTimestamp);
+    } finally {
+      _regeneratingChatIds.remove(chatId);
+    }
   }
 
   void _insertSummary(ChatUiMessage message) {
@@ -2413,6 +2546,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           chatSelectionGeneration: _chatSelectionGeneration,
         );
         return ChatScreenContent(
+          showInput: widget.showInput,
           messages: data.messages,
           loading: data.loading,
           errorMessage: data.errorMessage,

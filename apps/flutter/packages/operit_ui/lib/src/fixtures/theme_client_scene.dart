@@ -758,6 +758,7 @@ class _PreviewComposerState extends State<_PreviewComposer> {
           inputExpanded: false,
           readOnly: true,
           hasDraftText: false,
+          transparentSurface: snapshot.transparentSurfaceEnabled,
           settings: ThemeComposerIconTarget(
             icon: Icons.tune_outlined,
             color: scheme.onSurfaceVariant,

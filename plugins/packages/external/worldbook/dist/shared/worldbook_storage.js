@@ -1,21 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getWorldBookDir = getWorldBookDir;
-exports.getWorldBookFile = getWorldBookFile;
-exports.ensureWorldBookStorage = ensureWorldBookStorage;
+exports.initializeWorldBookStorage = initializeWorldBookStorage;
 exports.readWorldBookEntries = readWorldBookEntries;
 exports.writeWorldBookEntries = writeWorldBookEntries;
-exports.getWorldBookGroupsFile = getWorldBookGroupsFile;
 exports.readWorldBookGroups = readWorldBookGroups;
 exports.writeWorldBookGroups = writeWorldBookGroups;
 const LEGACY_WORLD_BOOK_DIR = "/sdcard/Download/Operit/worldbook";
 const LEGACY_WORLD_BOOK_FILE = `${LEGACY_WORLD_BOOK_DIR}/entries.json`;
-function getWorldBookDir() {
-    return ToolPkg.getConfigDir();
-}
-function getWorldBookFile() {
-    return `${getWorldBookDir()}/entries.json`;
-}
 async function deleteLegacyWorldBookStorage() {
     try {
         const legacyFileExists = await Tools.Files.exists(LEGACY_WORLD_BOOK_FILE);
@@ -34,10 +25,10 @@ async function deleteLegacyWorldBookStorage() {
     catch (_error) {
     }
 }
-async function ensureWorldBookStorage() {
-    const worldBookDir = getWorldBookDir();
-    const worldBookFile = getWorldBookFile();
-    const worldBookGroupsFile = getWorldBookGroupsFile();
+async function initializeStorage(worldBookDir) {
+    const worldBookFile = `${worldBookDir}/entries.json`;
+    const worldBookGroupsFile = `${worldBookDir}/groups.json`;
+    const variablesFile = `${worldBookDir}/variables.json`;
     await Tools.Files.mkdir(worldBookDir, true);
     const currentFileExists = await Tools.Files.exists(worldBookFile);
     if (!currentFileExists?.exists) {
@@ -55,12 +46,31 @@ async function ensureWorldBookStorage() {
     if (!groupFileExists?.exists) {
         await Tools.Files.write(worldBookGroupsFile, "[]", false);
     }
+    const variablesExist = await Tools.Files.exists(variablesFile);
+    if (!variablesExist?.exists) {
+        await Tools.Files.write(variablesFile, JSON.stringify({
+            global_variables: {}, character_variables: {}, chats: {}
+        }), false);
+    }
     await deleteLegacyWorldBookStorage();
+    return { entriesFile: worldBookFile, groupsFile: worldBookGroupsFile, variablesFile };
+}
+// One initialization per retained plugin owner and storage root. A failed open is
+// retained too: ordinary reads must not silently restart migration on every hook.
+let storageRoot;
+let initialization;
+function initializeWorldBookStorage() {
+    const root = ToolPkg.getConfigDir();
+    if (!initialization || storageRoot !== root) {
+        storageRoot = root;
+        initialization = initializeStorage(root);
+    }
+    return initialization;
 }
 async function readWorldBookEntries() {
-    await ensureWorldBookStorage();
+    const storage = await initializeWorldBookStorage();
     try {
-        const fileResult = await Tools.Files.read(getWorldBookFile());
+        const fileResult = await Tools.Files.read(storage.entriesFile);
         if (!fileResult?.content) {
             return [];
         }
@@ -72,15 +82,12 @@ async function readWorldBookEntries() {
     }
 }
 async function writeWorldBookEntries(entries) {
-    await ensureWorldBookStorage();
-    await Tools.Files.write(getWorldBookFile(), JSON.stringify(entries, null, 2));
-}
-function getWorldBookGroupsFile() {
-    return `${getWorldBookDir()}/groups.json`;
+    const storage = await initializeWorldBookStorage();
+    await Tools.Files.write(storage.entriesFile, JSON.stringify(entries, null, 2));
 }
 async function readWorldBookGroups() {
-    await ensureWorldBookStorage();
-    const fileResult = await Tools.Files.read(getWorldBookGroupsFile());
+    const storage = await initializeWorldBookStorage();
+    const fileResult = await Tools.Files.read(storage.groupsFile);
     if (fileResult?.content == null) {
         throw new Error("世界书分组文件读取失败");
     }
@@ -91,6 +98,6 @@ async function readWorldBookGroups() {
     return parsed;
 }
 async function writeWorldBookGroups(groups) {
-    await ensureWorldBookStorage();
-    await Tools.Files.write(getWorldBookGroupsFile(), JSON.stringify(groups, null, 2));
+    const storage = await initializeWorldBookStorage();
+    await Tools.Files.write(storage.groupsFile, JSON.stringify(groups, null, 2));
 }

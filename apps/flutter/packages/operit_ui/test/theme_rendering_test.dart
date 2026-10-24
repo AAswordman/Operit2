@@ -18,6 +18,16 @@ void main() {
           )
           as Map<String, dynamic>;
 
+  test('theme image fitted size stays inside the renderer bounds', () {
+    expect(themeImageFittedSize(800, 400), (800, 400));
+    expect(themeImageFittedSize(8000, 2000), (4096, 1024));
+    expect(themeImageFittedSize(2000, 8000), (1024, 4096));
+    final square = themeImageFittedSize(9000, 9000);
+    expect(square.$1, 4096);
+    expect(square.$2, 4096);
+    expect(square.$1 * square.$2, lessThanOrEqualTo(themeImageMaxPixels));
+  });
+
   test('internal snapshot transport is unchanged and complete', () {
     const snapshot = ThemePreferenceDefaults.snapshot;
     expect(snapshot.toJson(), hasLength(103));
@@ -265,27 +275,36 @@ void main() {
     );
   }
 
-  test('buildOperitThemeData supports non-unit fontScale in light and dark modes', () async {
-    final spec = ThemeVisualSpecV1.fromCheckedContract(await fixture());
-    for (final scale in <double>[0.85, 1.0, 1.25]) {
-      final snapshot = ThemePreferenceSnapshot.fromJson(<String, Object?>{
-        ...ThemePreferenceDefaults.snapshot.toJson(),
-        'fontScale': scale,
-      });
-      final lightTheme = buildOperitThemeData(
-        spec.colorScheme(Brightness.light),
-        snapshot,
-        fontFamily: 'Ahem',
-        fontFamilyFallback: const <String>[],
-      );
-      final darkTheme = buildOperitThemeData(
-        spec.colorScheme(Brightness.dark),
-        snapshot,
-        fontFamily: 'Ahem',
-        fontFamilyFallback: const <String>[],
-      );
-      expect(lightTheme.textTheme.bodyMedium?.fontSize, closeTo(14.0 * scale, 0.001));
-      expect(darkTheme.textTheme.bodyMedium?.fontSize, closeTo(14.0 * scale, 0.001));
-    }
-  });
+  test(
+    'buildOperitThemeData supports non-unit fontScale in light and dark modes',
+    () async {
+      final spec = ThemeVisualSpecV1.fromCheckedContract(await fixture());
+      for (final scale in <double>[0.85, 1.0, 1.25]) {
+        final snapshot = ThemePreferenceSnapshot.fromJson(<String, Object?>{
+          ...ThemePreferenceDefaults.snapshot.toJson(),
+          'fontScale': scale,
+        });
+        final lightTheme = buildOperitThemeData(
+          spec.colorScheme(Brightness.light),
+          snapshot,
+          fontFamily: 'Ahem',
+          fontFamilyFallback: const <String>[],
+        );
+        final darkTheme = buildOperitThemeData(
+          spec.colorScheme(Brightness.dark),
+          snapshot,
+          fontFamily: 'Ahem',
+          fontFamilyFallback: const <String>[],
+        );
+        expect(
+          lightTheme.textTheme.bodyMedium?.fontSize,
+          closeTo(14.0 * scale, 0.001),
+        );
+        expect(
+          darkTheme.textTheme.bodyMedium?.fontSize,
+          closeTo(14.0 * scale, 0.001),
+        );
+      }
+    },
+  );
 }

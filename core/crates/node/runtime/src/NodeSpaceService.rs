@@ -224,8 +224,10 @@ impl NodeSpaceService {
         Ok(())
     }
     pub fn acceptPeerSpaceCall(&self, peer: &str, request: CoreCallRequest) -> Result<CoreValue, String> {
-        if !self.peers.hasPairing(peer, crate::NodeServices::PairingDirection::Inbound).map_err(|e| e.to_string())? {
-            return Err("Node Space calls require direct inbound pairing".into());
+        // Join rides any current pairing: the direction the pairing was
+        // established in is transport history, not applicant authority.
+        if !self.peers.hasPairing(peer, crate::NodeServices::PairingDirection::Either).map_err(|e| e.to_string())? {
+            return Err("Node Space calls require a current direct pairing".into());
         }
         dispatchPeerSpaceCall(self, peer, request)
     }

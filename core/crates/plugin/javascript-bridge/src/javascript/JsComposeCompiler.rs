@@ -12,7 +12,6 @@ use operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::{
 use operit_util::AppLogger::AppLogger;
 use serde_json::Value;
 
-const COMPILATION_TIMEOUT_MS: u64 = 10_000;
 const CACHE_BYTES: usize = 16 * 1024 * 1024;
 const CACHE_ENTRIES: usize = 128;
 
@@ -113,9 +112,9 @@ impl ComposeCompiler {
     /// Creates a host-affine compiler with no plugin execution, storage or business bindings.
     fn new(host: Arc<dyn HostJavaScriptRuntimeHost>) -> HostResult<Self> {
         let owner = host.clone();
-        let state = host.createHostJavaScriptRuntimeState("ComposeCompiler", Box::new(move || {
+        let state = host.createHostJavaScriptRuntimeState("ComposeCompiler", operit_host_api::HostJavaScriptRuntimeStateKind::Compilation, Box::new(move || {
             let mut runtime = owner.createHostJavaScriptRuntime()?;
-            runtime.registerHostJavaScriptJsonFunction("__operitReadComposeParserSource", Arc::new(|arguments| {
+            runtime.registerHostJavaScriptFunction("__operitReadComposeParserSource", Arc::new(|arguments| {
                 if !arguments.is_empty() { return Err(HostError::new("Parser source takes no arguments")); }
                 Ok(Value::String(readComposeDslParserSource().to_owned()))
             }))?;
@@ -132,7 +131,7 @@ impl ComposeCompiler {
     fn prepare(&self, source: String, identity: String) -> HostResult<Compilation> {
         let result = self.host.executeHostJavaScriptRuntimeStateTask(
             self.state,
-            COMPILATION_TIMEOUT_MS,
+            operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(),
             Box::new(move |state, interrupt| {
                 let state = state
                     .downcast_mut::<CompilerState>()
@@ -196,7 +195,7 @@ mod tests {
             .prepare(source.into(), "pkg:screen".into())
             .unwrap();
         assert!(!first.cache_hit);
-        assert!(first.script.contains("OperitComposeGeneration"));
+        assert!(first.script.contains("__operitUiPrograms_"));
         let repeated = compiler
             .prepare(source.into(), "pkg:screen".into())
             .unwrap();

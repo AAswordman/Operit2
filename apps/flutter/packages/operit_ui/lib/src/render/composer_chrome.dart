@@ -38,6 +38,7 @@ class ThemeComposerHorizontalVisibility extends StatelessWidget {
 
 /// Shared Classic editor, including outline, inline settings and expansion.
 class ThemeClassicComposerTextEditor extends StatelessWidget {
+  /// Creates the classic editor with the configured surface transparency.
   const ThemeClassicComposerTextEditor({
     super.key,
     required this.controller,
@@ -46,6 +47,7 @@ class ThemeClassicComposerTextEditor extends StatelessWidget {
     required this.inputExpanded,
     required this.readOnly,
     required this.hasDraftText,
+    required this.transparentSurface,
     required this.settings,
     required this.onSubmitted,
     required this.onToggleExpansion,
@@ -59,12 +61,15 @@ class ThemeClassicComposerTextEditor extends StatelessWidget {
   final bool inputExpanded;
   final bool readOnly;
   final bool hasDraftText;
+  final bool transparentSurface;
   final Widget settings;
   final ValueChanged<String> onSubmitted;
   final VoidCallback onToggleExpansion;
   final String expandTooltip;
   final String collapseTooltip;
   final ContentInsertionConfiguration? contentInsertionConfiguration;
+
+  /// Builds the editor without covering the transparent composer surface.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -92,8 +97,10 @@ class ThemeClassicComposerTextEditor extends StatelessWidget {
             hintStyle: theme.textTheme.bodyMedium?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
-            filled: true,
-            fillColor: scheme.surface.withValues(alpha: 0.84),
+            filled: !transparentSurface,
+            fillColor: transparentSurface
+                ? Colors.transparent
+                : scheme.surface.withValues(alpha: 0.84),
             border: inputBorder,
             enabledBorder: inputBorder,
             focusedBorder: inputBorder.copyWith(

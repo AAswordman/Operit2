@@ -40,41 +40,41 @@ pub const TOOLPKG_EVENT_AI_PROVIDER_TEST_CONNECTION: &str = "toolpkg_ai_provider
 pub const TOOLPKG_EVENT_AI_PROVIDER_CALCULATE_INPUT_TOKENS: &str =
     "toolpkg_ai_provider_calculate_input_tokens";
 
-pub const TOOLPKG_REGISTRATION_TOOLBOX_UI_MODULE: &str = "registerToolPkgToolboxUiModule";
-pub const TOOLPKG_REGISTRATION_UI_ROUTE: &str = "registerToolPkgUiRoute";
-pub const TOOLPKG_REGISTRATION_CHAT_COMPOSER_SLOT: &str = "registerToolPkgChatComposerSlot";
-pub const TOOLPKG_REGISTRATION_NAVIGATION_ENTRY: &str = "registerToolPkgNavigationEntry";
-pub const TOOLPKG_REGISTRATION_DESKTOP_WIDGET: &str = "registerToolPkgDesktopWidget";
-pub const TOOLPKG_REGISTRATION_APP_LIFECYCLE_HOOK: &str = "registerToolPkgAppLifecycleHook";
+pub const TOOLPKG_REGISTRATION_TOOLBOX_UI_MODULE: &str = "ToolPkg.registerToolboxUiModule";
+pub const TOOLPKG_REGISTRATION_UI_ROUTE: &str = "ToolPkg.registerUiRoute";
+pub const TOOLPKG_REGISTRATION_CHAT_COMPOSER_SLOT: &str = "ToolPkg.registerChatComposerSlot";
+pub const TOOLPKG_REGISTRATION_NAVIGATION_ENTRY: &str = "ToolPkg.registerNavigationEntry";
+pub const TOOLPKG_REGISTRATION_DESKTOP_WIDGET: &str = "ToolPkg.registerDesktopWidget";
+pub const TOOLPKG_REGISTRATION_APP_LIFECYCLE_HOOK: &str = "ToolPkg.registerAppLifecycleHook";
 pub const TOOLPKG_REGISTRATION_MESSAGE_PROCESSING_PLUGIN: &str =
-    "registerToolPkgMessageProcessingPlugin";
-pub const TOOLPKG_REGISTRATION_XML_RENDER_PLUGIN: &str = "registerToolPkgXmlRenderPlugin";
+    "ToolPkg.registerMessageProcessingPlugin";
+pub const TOOLPKG_REGISTRATION_XML_RENDER_PLUGIN: &str = "ToolPkg.registerXmlRenderPlugin";
 pub const TOOLPKG_REGISTRATION_INPUT_MENU_TOGGLE_PLUGIN: &str =
-    "registerToolPkgInputMenuTogglePlugin";
-pub const TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK: &str = "registerToolPkgChatInputHook";
-pub const TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK: &str = "registerToolPkgChatViewHook";
-pub const TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK: &str = "registerToolPkgChatMessageHook";
+    "ToolPkg.registerInputMenuTogglePlugin";
+pub const TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK: &str = "ToolPkg.registerChatInputHook";
+pub const TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK: &str = "ToolPkg.registerChatViewHook";
+pub const TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK: &str = "ToolPkg.registerChatMessageHook";
 /// Names capture of the single registered conversation creation handler.
-pub const TOOLPKG_REGISTRATION_CHAT_LIFECYCLE_HOOK: &str = "registerToolPkgChatLifecycleHook";
-pub const TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM: &str = "registerToolPkgChatMessageMenuItem";
-pub const TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK: &str = "registerToolPkgChatRuntimeHook";
-pub const TOOLPKG_REGISTRATION_HOST_EVENT_HOOK: &str = "registerToolPkgHostEventHook";
-pub const TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK: &str = "registerToolPkgToolLifecycleHook";
-pub const TOOLPKG_REGISTRATION_PROMPT_INPUT_HOOK: &str = "registerToolPkgPromptInputHook";
-pub const TOOLPKG_REGISTRATION_PROMPT_HISTORY_HOOK: &str = "registerToolPkgPromptHistoryHook";
+pub const TOOLPKG_REGISTRATION_CHAT_LIFECYCLE_HOOK: &str = "ToolPkg.registerChatLifecycleHook";
+pub const TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM: &str = "ToolPkg.registerChatMessageMenuItem";
+pub const TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK: &str = "ToolPkg.registerChatRuntimeHook";
+pub const TOOLPKG_REGISTRATION_HOST_EVENT_HOOK: &str = "ToolPkg.registerHostEventHook";
+pub const TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK: &str = "ToolPkg.registerToolLifecycleHook";
+pub const TOOLPKG_REGISTRATION_PROMPT_INPUT_HOOK: &str = "ToolPkg.registerPromptInputHook";
+pub const TOOLPKG_REGISTRATION_PROMPT_HISTORY_HOOK: &str = "ToolPkg.registerPromptHistoryHook";
 pub const TOOLPKG_REGISTRATION_PROMPT_ESTIMATE_HISTORY_HOOK: &str =
-    "registerToolPkgPromptEstimateHistoryHook";
+    "ToolPkg.registerPromptEstimateHistoryHook";
 pub const TOOLPKG_REGISTRATION_SYSTEM_PROMPT_COMPOSE_HOOK: &str =
-    "registerToolPkgSystemPromptComposeHook";
+    "ToolPkg.registerSystemPromptComposeHook";
 pub const TOOLPKG_REGISTRATION_TOOL_PROMPT_COMPOSE_HOOK: &str =
-    "registerToolPkgToolPromptComposeHook";
-pub const TOOLPKG_REGISTRATION_PROMPT_FINALIZE_HOOK: &str = "registerToolPkgPromptFinalizeHook";
+    "ToolPkg.registerToolPromptComposeHook";
+pub const TOOLPKG_REGISTRATION_PROMPT_FINALIZE_HOOK: &str = "ToolPkg.registerPromptFinalizeHook";
 pub const TOOLPKG_REGISTRATION_PROMPT_ESTIMATE_FINALIZE_HOOK: &str =
-    "registerToolPkgPromptEstimateFinalizeHook";
-pub const TOOLPKG_REGISTRATION_SUMMARY_GENERATE_HOOK: &str = "registerToolPkgSummaryGenerateHook";
-pub const TOOLPKG_REGISTRATION_CORE_COMMAND: &str = "registerToolPkgCoreCommand";
-pub const TOOLPKG_REGISTRATION_AI_PROVIDER: &str = "registerToolPkgAiProvider";
-pub const TOOLPKG_REGISTRATION_MANIFEST_EXTENSION: &str = "registerManifestExtension";
+    "ToolPkg.registerPromptEstimateFinalizeHook";
+pub const TOOLPKG_REGISTRATION_SUMMARY_GENERATE_HOOK: &str = "ToolPkg.registerSummaryGenerateHook";
+pub const TOOLPKG_REGISTRATION_CORE_COMMAND: &str = "ToolPkg.registerCoreCommand";
+pub const TOOLPKG_REGISTRATION_AI_PROVIDER: &str = "ToolPkg.registerAiProvider";
+pub const TOOLPKG_REGISTRATION_MANIFEST_EXTENSION: &str = "ToolPkg.registerManifestExtension";
 
 pub const TOOLPKG_NAV_SURFACE_TOOLBOX: &str = "toolbox";
 pub const TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS: &str = "main_sidebar_plugins";

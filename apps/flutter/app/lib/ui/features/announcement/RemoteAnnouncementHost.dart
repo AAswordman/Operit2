@@ -9,7 +9,7 @@ import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart';
 
-/// Checks public announcements after onboarding and whenever the app resumes.
+/// Shows an announcement that was fetched on an earlier launch.
 class RemoteAnnouncementHost extends StatefulWidget {
   /// Creates the announcement owner for the main application screen.
   const RemoteAnnouncementHost({super.key, required this.child});

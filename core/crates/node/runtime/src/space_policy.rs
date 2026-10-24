@@ -3,7 +3,7 @@ use operit_link::CoreLinkError;
 use operit_store::CoreSpaceStore::CoreSpaceStore;
 use operit_store::NetworkControlStore::NetworkControlStore;
 
-/// Pairing alone cannot authorize a Space return channel. Both endpoints must
+/// Pairing alone cannot authorize a Space entry. Both endpoints must
 /// be admitted and active in the same initialized control projection.
 pub(crate) fn spaceChannelScope(
     spaceStore: &CoreSpaceStore,

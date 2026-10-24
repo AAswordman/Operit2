@@ -80,28 +80,48 @@ v2.0.0
 
 ## Package Assets
 
-Release asset names are fixed by product, platform, and architecture. They do not include the version number.
+All release packages include the full Operit2 release version, including prerelease
+identifiers, immediately before the extension:
 
 ```text
-operit2-cli-windows-x86_64.zip
-operit2-cli-windows-aarch64.zip
-operit2-cli-linux-x86_64.tar.gz
-operit2-cli-linux-aarch64.tar.gz
-operit2-cli-macos-x86_64.tar.gz
-operit2-cli-macos-aarch64.tar.gz
-operit2-app-android-arm64-v8a.apk
-operit2-app-ohos-arm64.hap
-operit2-app-windows-x86_64.zip
-operit2-app-linux-x86_64.tar.gz
-operit2-app-macos-universal.zip
-operit2-app-ios-arm64.zip
+operit2-<product>-<platform>-<architecture>-<release-version>.<extension>
 ```
 
-The version lives in the Git tag and package metadata.
+The shared naming implementation is `tools/build_scripts/release_artifacts.py`.
+It reads the App runtime and CLI Cargo manifests, validates both versions, and
+requires them to match. Flutter platform metadata remains separate.
 
-CLI archives contain the executable, installer script, uninstaller script, and README. The archive asset name remains the updater target.
+```text
+operit2-cli-windows-x86_64-2.0.0-preview.16.zip
+operit2-cli-windows-aarch64-2.0.0-preview.16.zip
+operit2-cli-linux-x86_64-2.0.0-preview.16.tar.gz
+operit2-cli-linux-aarch64-2.0.0-preview.16.tar.gz
+operit2-cli-macos-x86_64-2.0.0-preview.16.tar.gz
+operit2-cli-macos-aarch64-2.0.0-preview.16.tar.gz
+operit2-app-android-arm64-v8a-2.0.0-preview.16.apk
+operit2-app-ohos-arm64-2.0.0-preview.16.hap
+operit2-app-windows-x86_64-2.0.0-preview.16.zip
+operit2-app-linux-x86_64-2.0.0-preview.16.tar.gz
+operit2-app-macos-universal-2.0.0-preview.16.zip
+operit2-app-ios-arm64-2.0.0-preview.16.zip
+operit2-app-macos-universal-2.0.0-preview.16.pkg
+operit2-firmware-esp32-2432s028-2.0.0-preview.16.zip
+```
 
-A GitHub Release may contain only the selected scope's assets. The updater selects releases by exact target asset name, so an app client does not treat a CLI-only release as an app update.
+Release packages are published without separate checksum files. CLI archives
+contain the executable, installer script, uninstaller script, and README.
+
+The filename version matches the Git tag without its leading `v`. The updater
+builds the exact filename from each release's own tag and the requested product,
+platform, and architecture. The macOS App package uses the universal ZIP for both
+Intel and Apple Silicon. CLI macOS packages retain their individual architectures
+and `tar.gz` extension.
+
+A GitHub Release may contain only the selected scope's assets. An App client does
+not treat a CLI-only release as an App update. Packages with another version,
+architecture, or product do not match the requested release asset. The Actions
+artifact collector accepts the exact current-version package names; publishing
+rejects outdated names and unrelated files in the distribution directory.
 
 ## Version Sources
 
@@ -257,7 +277,7 @@ python3 tools/build_scripts/build_local.py --products esp32
 
 The ESP32 local build requires the ESP-IDF Rust toolchain, `espflash`, `ldproxy`,
 and an `EMSDK` environment variable. It writes the board-specific ZIP bundle to
-`tools/release/dist/operit2-esp32-esp32-2432s028.zip`. The bundle contains the
+`tools/release/dist/operit2-firmware-esp32-2432s028-<release-version>.zip`. The bundle contains the
 full 4 MiB initial-flash image, split flash images, `partitions.csv`, and a
 manifest with verified offsets and SHA-256 digests.
 
@@ -323,7 +343,7 @@ GitHub tag                             v2.0.0-preview.1
 The updater implementation is in:
 
 ```text
-core/crates/runtime/application/src/util/GithubReleaseUtil.rs
+core/crates/foundation/util/src/GithubReleaseUtil.rs
 ```
 
 The implementation must keep these rules:
@@ -331,7 +351,7 @@ The implementation must keep these rules:
 - Parse versions strictly as `major.minor.patch[-prerelease][+build]`.
 - Ignore build metadata during version comparison.
 - Select releases by updater channel.
-- Match assets by fixed asset name.
+- Match assets by exact product, platform, architecture, and full release tag version.
 - Reject mismatched GitHub prerelease flags.
 
 ## Update Testing

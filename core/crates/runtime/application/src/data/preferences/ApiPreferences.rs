@@ -1,3 +1,4 @@
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -49,6 +50,20 @@ impl ApiPreferences {
     pub(crate) fn store(storage: std::sync::Arc<dyn RuntimeStorageHost>) -> PreferencesDataStore {
         PreferencesDataStore::newWithStorage(storage, OperitPaths::API_PREFERENCES_PATH)
             .withSchema(2, Self::migratePreferences)
+    }
+
+    /// Registers the API preference contract independently of its local schema migration lifecycle.
+    pub(crate) fn spaceMergeStore() -> operit_store::PreferenceMerge::PreferenceMergeStore {
+        operit_store::PreferenceMerge::PreferenceMergeStore::values(OperitPaths::API_PREFERENCES_PATH, false, 2, Self::decodeSyncedEntry)
+    }
+
+    /// Converts historical API values to the current typed value contract.
+    fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+        entry.decodeHistoricalValues(|version, values| {
+            if version > 2 { return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: 2 }); }
+            if version < 2 { Self::migratePreferences(1, values)?; }
+            Ok(())
+        })
     }
 
     /// Reads the committed typed values for another owning runtime module.
@@ -177,7 +192,6 @@ impl ApiPreferences {
             ApiProviderType::DEEPSEEK.name(),
             ApiProviderType::MISTRAL.name(),
             ApiProviderType::SILICONFLOW.name(),
-            ApiProviderType::IFLOW.name(),
             ApiProviderType::OPENROUTER.name(),
             ApiProviderType::OPENCODE.name(),
             ApiProviderType::FOUR_ROUTER.name(),
@@ -290,36 +304,21 @@ impl ApiPreferences {
         outputTokens: i64,
         cachedInputTokens: i64,
     ) -> Result<(), PreferencesDataStoreError> {
-        let result = self.apiDataStore.edit_result(|preferences| {
-            let inputKey = Self::tokenInputKey(providerModel);
-            let cachedInputKey = Self::tokenCachedInputKey(providerModel);
-            let outputKey = Self::tokenOutputKey(providerModel);
-
-            let currentInputTokens = Self::readRecordedTokenCount(preferences, &inputKey);
-            let currentCachedInputTokens =
-                Self::readRecordedTokenCount(preferences, &cachedInputKey);
-            let currentOutputTokens = Self::readRecordedTokenCount(preferences, &outputKey);
-            let (currentInputTokens, currentCachedInputTokens, currentOutputTokens) = (
-                currentInputTokens?,
-                currentCachedInputTokens?,
-                currentOutputTokens?,
-            );
-
-            preferences.set(
-                &stringPreferencesKey(&inputKey),
-                (currentInputTokens + inputTokens),
-            );
-            preferences.set(
-                &stringPreferencesKey(&cachedInputKey),
-                (currentCachedInputTokens + cachedInputTokens),
-            );
-            preferences.set(
-                &stringPreferencesKey(&outputKey),
-                (currentOutputTokens + outputTokens),
-            );
+        self.apiDataStore.try_edit_result(|preferences| {
+            preferences.incrementInteger(
+                &stringPreferencesKey(&Self::tokenInputKey(providerModel)),
+                inputTokens,
+            )?;
+            preferences.incrementInteger(
+                &stringPreferencesKey(&Self::tokenCachedInputKey(providerModel)),
+                cachedInputTokens,
+            )?;
+            preferences.incrementInteger(
+                &stringPreferencesKey(&Self::tokenOutputKey(providerModel)),
+                outputTokens,
+            )?;
             Ok(())
-        })?;
-        result
+        })
     }
 
     #[allow(non_snake_case)]
@@ -569,24 +568,12 @@ impl ApiPreferences {
         if normalizedKey.is_empty() {
             return Ok(());
         }
-        self.apiDataStore.edit(|preferences| {
-            let mut currentMap = preferences
-                .get(&stringPreferencesKey("feature_toggles_json"))
-                .map(|value| {
-                    serde_json::from_value::<HashMap<String, bool>>(value.clone())
-                        .expect("feature_toggles_json must be a boolean map")
-                })
-                .unwrap_or_else(|| {
-                    serde_json::from_str::<HashMap<String, bool>>(
-                        Self::DEFAULT_FEATURE_TOGGLES_JSON,
-                    )
-                    .expect("DEFAULT_FEATURE_TOGGLES_JSON must be a boolean map")
-                });
-            currentMap.insert(normalizedKey.clone(), isEnabled);
-            preferences.set(
+        self.apiDataStore.try_edit_result(|preferences| {
+            preferences.setObjectField(
                 &stringPreferencesKey("feature_toggles_json"),
-                serde_json::to_value(&currentMap).expect("feature toggle map must serialize"),
-            );
+                &normalizedKey,
+                Value::Bool(isEnabled),
+            )
         })
     }
 
@@ -613,25 +600,12 @@ impl ApiPreferences {
         toolName: &str,
         isVisible: bool,
     ) -> Result<(), PreferencesDataStoreError> {
-        self.apiDataStore.edit(|preferences| {
-            let mut currentMap = preferences
-                .get(&stringPreferencesKey("tool_prompt_visibility_json"))
-                .map(|value| {
-                    serde_json::from_value::<HashMap<String, bool>>(value.clone())
-                        .expect("tool_prompt_visibility_json must be a boolean map")
-                })
-                .unwrap_or_else(|| {
-                    serde_json::from_str::<HashMap<String, bool>>(
-                        Self::DEFAULT_TOOL_PROMPT_VISIBILITY_JSON,
-                    )
-                    .expect("DEFAULT_TOOL_PROMPT_VISIBILITY_JSON must be a boolean map")
-                });
-            currentMap.insert(toolName.to_string(), isVisible);
-            preferences.set(
+        self.apiDataStore.try_edit_result(|preferences| {
+            preferences.setObjectField(
                 &stringPreferencesKey("tool_prompt_visibility_json"),
-                serde_json::to_value(&currentMap)
-                    .expect("tool prompt visibility map must serialize"),
-            );
+                toolName,
+                Value::Bool(isVisible),
+            )
         })
     }
 

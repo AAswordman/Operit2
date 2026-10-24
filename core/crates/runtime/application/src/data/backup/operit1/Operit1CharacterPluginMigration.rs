@@ -204,20 +204,18 @@ fn resolveOperit1ArchiveBindings(
             .pluginExtensions
             .remove(LEGACY_BINDING_NAMESPACE)
             .ok_or("Operit1 archive is missing its staged character binding")?;
-        writer.adoptRecord(
-            "chat_drafts",
-            &chat.id,
-            resolveBinding(&cards, &groups, &old)?,
-        )?;
-        if chat
-            .pluginExtensions
-            .insert(
-                PLUGIN_ID.into(),
-                serde_json::json!({"recordId":chat.id,"schemaVersion":1}),
-            )
-            .is_some()
-        {
-            return Err("Operit1 archive already has a character namespace".into());
+        if let Some(binding) = resolveBinding(&cards, &groups, &old)? {
+            writer.adoptRecord("chat_drafts", &chat.id, binding)?;
+            if chat
+                .pluginExtensions
+                .insert(
+                    PLUGIN_ID.into(),
+                    serde_json::json!({"recordId":chat.id,"schemaVersion":1}),
+                )
+                .is_some()
+            {
+                return Err("Operit1 archive already has a character namespace".into());
+            }
         }
     }
     Ok(())

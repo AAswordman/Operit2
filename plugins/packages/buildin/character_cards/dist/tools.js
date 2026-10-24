@@ -408,7 +408,7 @@
           "name": "link_id",
           "type": "string",
           "required": false,
-          "description": "Lossless decimal-string relationship ID."
+          "description": "Opaque stable relationship identity."
         },
         {
           "name": "source_title",
@@ -456,7 +456,7 @@
           "name": "link_id",
           "type": "string",
           "required": false,
-          "description": "Lossless decimal-string relationship ID."
+          "description": "Opaque stable relationship identity."
         },
         {
           "name": "source_title",
@@ -516,7 +516,7 @@
           "name": "link_id",
           "type": "string",
           "required": false,
-          "description": "Lossless decimal-string relationship ID."
+          "description": "Opaque stable relationship identity."
         },
         {
           "name": "source_title",
@@ -670,256 +670,8 @@ function timeBoundary(input, name) {
 }
 
 // src/validation.ts
-function requireDecimal(value, label, positive = false) {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${label} must be a canonical decimal string`);
-  const integer2 = BigInt(value);
-  if (integer2 > 9223372036854775807n || positive && integer2 === 0n) throw new Error(`${label} is outside its i64 range`);
-  return value;
-}
 function assertObject(value, label) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
-}
-function assertString(value, label) {
-  if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
-}
-function assertBoolean(value, label) {
-  if (typeof value !== "boolean") throw new Error(`${label} \u5FC5\u987B\u662F\u5E03\u5C14\u503C`);
-}
-function assertNumber(value, label, min, max) {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new Error(`${label} \u5FC5\u987B\u5728 ${min} \u5230 ${max} \u4E4B\u95F4`);
-}
-function assertInteger(value, label, min) {
-  assertNumber(value, label, min, Number.MAX_SAFE_INTEGER);
-  if (!Number.isSafeInteger(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5B89\u5168\u6574\u6570`);
-}
-function assertNullableString(value, label) {
-  if (value !== null) assertString(value, label);
-}
-function requireId(value, label) {
-  assertString(value, label);
-  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} \u65E0\u6548`);
-  return value;
-}
-function requireName(value, label) {
-  assertString(value, label);
-  const name = value.trim();
-  if (name === "") throw new Error(`${label} \u4E0D\u80FD\u4E3A\u7A7A`);
-  return name;
-}
-function assertMemory(value) {
-  assertObject(value, "\u8BB0\u5FC6\u8BB0\u5F55");
-  requireDecimal(value.id, "\u8BB0\u5FC6\u6570\u636E\u5E93\u6807\u8BC6", true);
-  requireId(value.uuid, "\u8BB0\u5FC6 UUID");
-  for (const field of ["title", "content", "contentType", "source"]) assertString(value[field], field);
-  assertNumber(value.credibility, "\u53EF\u4FE1\u5EA6", 0, 1);
-  assertNumber(value.importance, "\u91CD\u8981\u6027", 0, 1);
-  for (const field of ["documentPath", "chunkIndexFilePath", "folderPath"]) assertNullableString(value[field], field);
-  assertBoolean(value.isDocumentNode, "\u6587\u6863\u8282\u70B9\u6807\u8BC6");
-  for (const field of ["createdAt", "updatedAt", "lastAccessedAt"]) assertInteger(value[field], field, 0);
-  if (!Array.isArray(value.tags) || !Array.isArray(value.properties)) throw new Error("\u8BB0\u5FC6\u6807\u7B7E\u548C\u5C5E\u6027\u5FC5\u987B\u662F\u6570\u7EC4");
-  for (const tag of value.tags) {
-    assertObject(tag, "\u8BB0\u5FC6\u6807\u7B7E");
-    requireDecimal(tag.id, "\u8BB0\u5FC6\u6807\u7B7E\u6807\u8BC6");
-    assertString(tag.name, "\u8BB0\u5FC6\u6807\u7B7E\u540D\u79F0");
-  }
-  for (const property2 of value.properties) {
-    assertObject(property2, "\u8BB0\u5FC6\u5C5E\u6027");
-    requireDecimal(property2.id, "\u8BB0\u5FC6\u5C5E\u6027\u6807\u8BC6");
-    assertString(property2.key, "\u8BB0\u5FC6\u5C5E\u6027\u952E");
-    assertString(property2.value, "\u8BB0\u5FC6\u5C5E\u6027\u503C");
-  }
-}
-function assertMemoryChatMessage(value) {
-  assertObject(value, "chat message");
-  assertInteger(value.timestamp, "message timestamp", 0);
-  for (const key of ["sender", "content", "provider", "modelName"]) assertString(value[key], key);
-  assertInteger(value.variantIndex, "message variant index", 0);
-  assertInteger(value.variantCount, "message variant count", 1);
-  if (value.variantIndex > 2147483647 || value.variantCount > 2147483647 || value.variantIndex >= value.variantCount) throw new Error("Invalid persisted message variant identity");
-}
-function assertMemorySettings(value) {
-  assertObject(value, "\u8BB0\u5FC6\u8BBE\u7F6E");
-  assertInteger(value.autoSaveIntervalMinutes, "\u81EA\u52A8\u4FDD\u5B58\u95F4\u9694", 1);
-  if (value.autoSaveIntervalMinutes > 30) throw new Error("\u81EA\u52A8\u4FDD\u5B58\u95F4\u9694\u5FC5\u987B\u5728 1 \u5230 30 \u5206\u949F\u4E4B\u95F4");
-  assertInteger(value.nextAutoSaveRunAtMs, "\u4E0B\u6B21\u81EA\u52A8\u4FDD\u5B58\u65F6\u95F4", 0);
-  for (const field of ["memoryExtractionCustomRules", "cloudEmbeddingEndpoint", "cloudEmbeddingApiKey", "cloudEmbeddingModel"]) assertString(value[field], field);
-  for (const field of ["profileAutoUpdateEnabled", "profileAutoUpdateLocked", "cloudEmbeddingEnabled"]) assertBoolean(value[field], field);
-}
-function assertSearchConfig(value) {
-  assertObject(value, "\u8BB0\u5FC6\u641C\u7D22\u8BBE\u7F6E");
-  if (value.scoreMode !== "BALANCED" && value.scoreMode !== "KEYWORD_FIRST" && value.scoreMode !== "SEMANTIC_FIRST") throw new Error("\u8BB0\u5FC6\u8BC4\u5206\u6A21\u5F0F\u65E0\u6548");
-  for (const field of ["keywordWeight", "tagWeight", "vectorWeight", "edgeWeight"]) assertNumber(value[field], field, 0, Number.MAX_VALUE);
-}
-
-// src/memory-jobs/embeddings.ts
-function assertEmbedding(value) {
-  assertObject(value, "embedding");
-  requireName(value.endpoint, "embedding endpoint");
-  requireName(value.model, "embedding model");
-  assertString(value.text, "embedding text");
-  assertInteger(value.updatedAt, "embedding timestamp", 0);
-  if (!Array.isArray(value.vector) || value.vector.length === 0) throw new Error("Embedding must contain a nonempty vector");
-  let norm = 0;
-  for (const component of value.vector) {
-    assertNumber(component, "embedding component", -Number.MAX_VALUE, Number.MAX_VALUE);
-    norm += component * component;
-  }
-  if (!Number.isFinite(norm) || norm === 0) throw new Error("Embedding vector has an invalid norm");
-}
-function cosineSimilarity(left, right) {
-  if (left.length === 0 || left.length !== right.length) throw new Error("Embedding dimensions do not match");
-  let dot = 0, leftNorm = 0, rightNorm = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    dot += left[index] * right[index];
-    leftNorm += left[index] ** 2;
-    rightNorm += right[index] ** 2;
-  }
-  if (leftNorm === 0 || rightNorm === 0) throw new Error("Embedding norm must be positive");
-  return Math.max(-1, Math.min(1, dot / Math.sqrt(leftNorm * rightNorm)));
-}
-
-// src/storage/state.ts
-function userDocumentPath(ownerKey) {
-  return "owners/" + encodeURIComponent(ownerKey) + "/USER.md";
-}
-function array(value, label) {
-  if (!Array.isArray(value)) throw new Error(label + " must be an array");
-}
-function identities(records, label) {
-  const ids = /* @__PURE__ */ new Set();
-  for (const record2 of records) {
-    assertObject(record2, label);
-    const id2 = requireId(record2.id, label + " id");
-    if (ids.has(id2)) throw new Error(label + " has duplicate id: " + id2);
-    ids.add(id2);
-  }
-  return ids;
-}
-function assertMemorySpace(value) {
-  assertObject(value, "memory space");
-  requireId(value.ownerKey, "memory owner");
-  array(value.memories, "memories");
-  array(value.links, "links");
-  array(value.chunks, "chunks");
-  array(value.candidates, "candidates");
-  const memoryIds = identities(value.memories, "memories");
-  identities(value.links, "links");
-  identities(value.chunks, "chunks");
-  identities(value.candidates, "candidates");
-  const memoriesByUuid = /* @__PURE__ */ new Map();
-  for (const memory of value.memories) {
-    assertMemory(memory);
-    if (memoriesByUuid.has(memory.uuid)) throw new Error("Duplicate memory UUID: " + memory.uuid);
-    memoriesByUuid.set(memory.uuid, memory);
-  }
-  for (const link of value.links) {
-    assertObject(link, "link");
-    requireDecimal(link.id, "link id", true);
-    const source = requireDecimal(link.sourceMemoryId, "source memory id", true), target = requireDecimal(link.targetMemoryId, "target memory id", true);
-    if (!memoryIds.has(source) || !memoryIds.has(target)) throw new Error("Relationship references a missing memory: " + link.id);
-    if (source === target) throw new Error("Relationship cannot point to itself");
-    assertString(link.type_, "link type");
-    assertNumber(link.weight, "link weight", 0, 1);
-    assertString(link.description, "link description");
-  }
-  const indices = /* @__PURE__ */ new Set();
-  for (const chunk of value.chunks) {
-    assertObject(chunk, "chunk");
-    requireDecimal(chunk.id, "chunk id", true);
-    const memoryUuid = requireId(chunk.memoryUuid, "chunk memory UUID");
-    assertInteger(chunk.chunkIndex, "chunk index", 0);
-    assertString(chunk.content, "chunk content");
-    const memory = memoriesByUuid.get(memoryUuid);
-    if (memory === void 0 || !memory.isDocumentNode) throw new Error("Chunk references a missing document memory");
-    const identity = JSON.stringify([chunk.memoryUuid, chunk.chunkIndex]);
-    if (indices.has(identity)) throw new Error("Duplicate document chunk index");
-    indices.add(identity);
-  }
-  const candidateSources = /* @__PURE__ */ new Set();
-  for (const candidate of value.candidates) {
-    assertObject(candidate, "candidate");
-    requireDecimal(candidate.id, "candidate id", true);
-    requireId(candidate.chatId, "candidate chat id");
-    for (const field of ["triggerMessageTimestamp", "triggerVariantIndex", "createdAt", "updatedAt", "attemptCount"]) assertInteger(candidate[field], field, 0);
-    for (const field of ["status", "lastError", "sourceType"]) assertString(candidate[field], field);
-    if (candidate.status !== "pending" && candidate.status !== "processing" && candidate.status !== "failed") throw new Error("Invalid candidate status");
-    if (candidate.sourceType !== "reply_finalized_auto" && candidate.sourceType !== "selected_user_message") throw new Error("Invalid candidate source type");
-    if (typeof candidate.triggerVariantIndex !== "number" || candidate.triggerVariantIndex > 2147483647) throw new Error("Candidate message variant exceeds the host range");
-    const sourceKey = JSON.stringify([candidate.chatId, candidate.triggerMessageTimestamp, candidate.triggerVariantIndex, candidate.sourceType]);
-    if (candidateSources.has(sourceKey)) throw new Error("Duplicate persisted candidate source");
-    candidateSources.add(sourceKey);
-  }
-  assertMemorySettings(value.settings);
-  assertSearchConfig(value.searchConfig);
-  assertString(value.userDocumentPath, "USER.md path");
-  if (value.userDocumentPath !== userDocumentPath(requireId(value.ownerKey, "owner key"))) throw new Error("Invalid owner USER.md path");
-  assertObject(value.rebuildProgress, "rebuild progress");
-  for (const field of ["status", "currentChatTitle", "lastError"]) assertString(value.rebuildProgress[field], field);
-  for (const field of ["totalChats", "completedChats", "totalWindows", "completedWindows", "totalSourceMessages", "processedSourceMessages", "failedWindows"]) assertInteger(value.rebuildProgress[field], field, 0);
-  if (!["idle", "preparing", "running", "completed", "failed", "cancelled"].some(
-    /** Accepts only the declared durable task lifecycle states. */
-    (status) => value.rebuildProgress !== null && typeof value.rebuildProgress === "object" && "status" in value.rebuildProgress && value.rebuildProgress.status === status
-  )) throw new Error("Invalid memory rebuild status");
-  if (value.rebuildTask !== null) {
-    assertObject(value.rebuildTask, "rebuild task");
-    requireDecimal(value.rebuildTask.id, "rebuild task id", true);
-    array(value.rebuildTask.windows, "rebuild windows");
-    assertInteger(value.rebuildTask.nextWindow, "rebuild cursor", 0);
-    if (value.rebuildTask.windows.length === 0 || value.rebuildTask.nextWindow > value.rebuildTask.windows.length) throw new Error("Invalid rebuild cursor or source plan");
-    let sourceTotal = 0, processedTotal = 0, completedChats = 0, windowIndex = 0;
-    const chats = /* @__PURE__ */ new Set(), finishedChats = /* @__PURE__ */ new Set();
-    let previousChat = null;
-    for (const window of value.rebuildTask.windows) {
-      assertObject(window, "rebuild window");
-      requireId(window.chatId, "rebuild chat id");
-      assertString(window.chatTitle, "rebuild chat title");
-      assertInteger(window.sourceMessageCount, "source message count", 1);
-      array(window.messages, "rebuild messages");
-      if (window.messages.length < window.sourceMessageCount) throw new Error("Rebuild source count exceeds the stored messages");
-      sourceTotal += window.sourceMessageCount;
-      if (windowIndex < value.rebuildTask.nextWindow) processedTotal += window.sourceMessageCount;
-      const chatId = requireId(window.chatId, "window chat id");
-      if (previousChat !== null && previousChat !== chatId) {
-        finishedChats.add(previousChat);
-        if (finishedChats.has(chatId)) throw new Error("Rebuild plan repeats a completed chat block");
-        if (windowIndex <= value.rebuildTask.nextWindow) completedChats += 1;
-      }
-      previousChat = chatId;
-      chats.add(chatId);
-      windowIndex += 1;
-      for (const message of window.messages) {
-        assertMemoryChatMessage(message);
-        if (message.sender !== "user" && message.sender !== "ai" && message.sender !== "assistant") throw new Error("Rebuild window has an unsupported source sender");
-        assertString(message.content, "source message content");
-        if (message.content.trim() === "") throw new Error("Rebuild window contains a blank source message");
-      }
-    }
-    if (value.rebuildTask.nextWindow === value.rebuildTask.windows.length) completedChats += 1;
-    if (value.rebuildProgress.totalWindows !== value.rebuildTask.windows.length || value.rebuildProgress.completedWindows !== value.rebuildTask.nextWindow) throw new Error("Rebuild plan and progress disagree");
-    if (value.rebuildProgress.totalSourceMessages !== sourceTotal || value.rebuildProgress.processedSourceMessages !== processedTotal || value.rebuildProgress.totalChats !== chats.size || value.rebuildProgress.completedChats !== completedChats) throw new Error("Rebuild counters disagree with the actual source plan");
-    if (value.rebuildProgress.status === "completed" && value.rebuildTask.nextWindow !== value.rebuildTask.windows.length) throw new Error("Completed rebuild has unprocessed source windows");
-    if (value.rebuildProgress.status === "preparing" && value.rebuildTask.nextWindow !== 0) throw new Error("Preparing rebuild already has processed source windows");
-  } else if (value.rebuildProgress.status !== "idle") throw new Error("Rebuild progress is missing its source plan");
-  array(value.embeddings, "embeddings");
-  const embeddingKeys = /* @__PURE__ */ new Set();
-  for (const item of value.embeddings) {
-    assertEmbedding(item);
-    const key = JSON.stringify([item.endpoint, item.model, item.text]);
-    if (embeddingKeys.has(key)) throw new Error("Duplicate stored embedding input");
-    embeddingKeys.add(key);
-  }
-}
-
-// src/backup.ts
-function decodeMemoryBackup(content) {
-  assertString(content, "memory backup");
-  const document = JSON.parse(content);
-  assertObject(document, "memory backup");
-  if (document.version !== "2.0") throw new Error("Unsupported memory backup version; this plugin uses full-record version 2.0");
-  assertInteger(document.exportDate, "exportDate", 0);
-  assertMemorySpace(document.space);
-  assertString(document.userMarkdown, "USER.md backup content");
-  return { version: "2.0", exportDate: document.exportDate, space: document.space, userMarkdown: document.userMarkdown };
 }
 
 // src/chat-markers.ts
@@ -954,10 +706,8 @@ function nonblank(value, path) {
   text(value, path);
   if (value.trim() === "") throw new Error(`${path} must not be blank`);
 }
-function parseMemoryIdentifier(value, path, positive = true) {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${path} must be a canonical decimal string`);
-  const id2 = BigInt(value);
-  if (id2 > 9223372036854775807n || positive && id2 === 0n) throw new Error(`${path} is outside its declared identity range`);
+function parseMemoryIdentifier(value, path, _positive = true) {
+  if (typeof value !== "string" || value.trim() === "" || value !== value.trim() || value.length > 256) throw new Error(`${path} must be a nonblank identity`);
   return value;
 }
 function memoryIdentifier(value, path) {
@@ -974,6 +724,10 @@ function number(value, path) {
 }
 function integer(value, path) {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${path} must be a safe integer`);
+}
+function nonnegativeInteger(value, path) {
+  integer(value, path);
+  nonnegative(value, path);
 }
 function messageVariant(value, path) {
   integer(value, path);
@@ -998,7 +752,7 @@ function nullable(validate) {
     if (value !== null) validate(value, path);
   };
 }
-function array2(validate) {
+function array(validate) {
   return (value, path) => {
     if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
     for (let index = 0; index < value.length; index += 1) validate(value[index], `${path}[${index}]`);
@@ -1027,8 +781,8 @@ function shape(fields, nonempty = false) {
 function owner(value, path) {
   if (typeof value !== "string" || !/^(character|shared):[^:\s]+$/.test(value)) throw new Error(`${path} must be character:<id> or shared:<id>`);
 }
-var strings = array2(text);
-var identifiers = array2(nonblank);
+var strings = array(text);
+var identifiers = array(nonblank);
 var member = shape({ characterCardId: required(nonblank), orderIndex: required(integer) });
 var mount = shape({ sharedMemoryId: required(nonblank), readable: required(boolean), writable: required(boolean) });
 var toolAccess = shape({ enabled: required(boolean), allowedBuiltinTools: required(strings), allowedPackages: required(strings), allowedSkills: required(strings), allowedMcpServers: required(strings) });
@@ -1046,17 +800,17 @@ var characterFields = {
   marks: optional(text),
   chatModelBindingMode: optional(enumeration("FOLLOW_GLOBAL", "FIXED_MODEL")),
   chatModelId: optional(nullable(text)),
+  chatProviderId: optional(nullable(text)),
   ttsConfigId: optional(nullable(text)),
   themeConfigId: optional(nullable(text)),
   memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
   sharedMemoryId: optional(nullable(text)),
-  sharedMemoryMounts: optional(array2(mount)),
+  sharedMemoryMounts: optional(array(mount)),
   toolAccessConfig: optional(toolAccess),
-  isDefault: optional(boolean),
   createdAt: optional(integer),
   updatedAt: optional(integer)
 };
-var groupFields = { name: optional(nonblank), description: optional(text), themeConfigId: optional(nullable(text)), members: optional(array2(member)), createdAt: optional(integer), updatedAt: optional(integer) };
+var groupFields = { name: optional(nonblank), description: optional(text), themeConfigId: optional(nullable(text)), members: optional(array(member)), createdAt: optional(integer), updatedAt: optional(integer) };
 var tagFields = { name: optional(nonblank), description: optional(text), promptContent: optional(text), tagType: optional(enumeration("TONE", "CHARACTER", "FUNCTION", "CUSTOM")), createdAt: optional(integer), updatedAt: optional(integer) };
 var memoryFields = {
   uuid: optional(text),
@@ -1074,7 +828,7 @@ var memoryFields = {
   updatedAt: optional(integer),
   lastAccessedAt: optional(integer),
   tags: optional(strings),
-  properties: optional(array2(property))
+  properties: optional(array(property))
 };
 var settings = shape({
   autoSaveIntervalMinutes: required(nonnegative),
@@ -1095,8 +849,10 @@ var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
 var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
+  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
+  "memory.chat.pruneMissing": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
   "memory.categorize": ownerOnly,
   "memory.rebuild.start": shape({ ownerKey: required(owner), rebuild: required(shape({ chatIds: required(strings), windowMessageCount: required(integer), fromInclusive: required(nullable(integer)), toInclusive: required(nullable(integer)) })) }),
@@ -1116,7 +872,6 @@ var validators = {
   "character.delete": id,
   "character.setActive": id,
   "character.combine": shape({ id: required(nonblank), promptFunctionType: optional(enumeration("CHAT", "VOICE")), additionalTagIds: optional(identifiers) }),
-  "character.resetDefault": empty,
   "character.export": shape({ id: required(nonblank), format: required(format) }),
   "character.import": shape({ format: required(format), content: required(nonblank) }),
   "character.exportBackup": empty,
@@ -1164,7 +919,7 @@ var validators = {
   "memory.create": shape({ ownerKey: required(owner), values: required(shape({ ...memoryFields, id: optional(memoryIdentifier), title: required(nonblank), content: required(text) })) }),
   "memory.update": shape({ ownerKey: required(owner), originalTitle: required(nonblank), expectedId: optional(memoryIdentifier), changes: required(shape(memoryFields, true)) }),
   "memory.delete": shape({ ownerKey: required(owner), id: required(memoryIdentifier) }),
-  "memory.move": shape({ ownerKey: required(owner), ids: required(array2(memoryIdentifier)), folderPath: required(text) }),
+  "memory.move": shape({ ownerKey: required(owner), ids: required(array(memoryIdentifier)), folderPath: required(text) }),
   "memory.link.create": shape({ ownerKey: required(owner), sourceTitle: required(nonblank), targetTitle: required(nonblank), linkType: required(nonblank), weight: required(score2), description: required(text) }),
   "memory.link.update": shape({ ownerKey: required(owner), linkId: required(memoryIdentifier), changes: required(shape({ linkType: optional(nonblank), weight: optional(score2), description: optional(text) }, true)) }),
   "memory.link.delete": shape({ ownerKey: required(owner), linkId: required(memoryIdentifier) }),
@@ -1176,7 +931,6 @@ function parseChatConfigurationRequest(value) {
     purpose: required(enumeration("display", "execution")),
     chatId: required(nullable(nonblank)),
     chatExtension: required(nullable(markerObject)),
-    messageExtension: required(nullable(markerObject)),
     participantId: required(nullable(nonblank)),
     promptFunctionType: required(enumeration("CHAT", "VOICE")),
     defaultModelBinding: required(shape({ providerId: required(text), modelId: required(text) })),
@@ -1184,7 +938,7 @@ function parseChatConfigurationRequest(value) {
   })(value, "chat.configuration.resolve");
   const request = value;
   if (request.purpose === "display") {
-    if (request.participantId !== null || request.messageExtension !== null) throw new Error("Display configuration cannot request an execution participant or message snapshot");
+    if (request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
   } else {
     nonblank(request.defaultModelBinding.providerId, "execution default provider");
     nonblank(request.defaultModelBinding.modelId, "execution default model");
@@ -1192,6 +946,9 @@ function parseChatConfigurationRequest(value) {
   }
   return request;
 }
+
+// src/memory-search.ts
+var MEMORY_SEARCH_THRESHOLD = 0.025;
 
 // src/runtime-tools/memory.ts
 var MemoryTools = class {
@@ -1243,12 +1000,29 @@ var MemoryTools = class {
     }
     return selected;
   }
-  /** Reads a validated complete repository export; no private copy of durable data is retained. */
-  async space(ownerKey) {
-    const exported = await this.domain("memory.export", { ownerKey });
-    const space = decodeMemoryBackup(exported.content).space;
-    if (space.ownerKey !== ownerKey) throw new Error("Memory export owner does not match the requested owner");
-    return space;
+  /** Reads complete relationship records from the existing owner-scoped graph API. */
+  async memoryGraph(ownerKey) {
+    const result = await this.domain("memory.graph", { ownerKey });
+    if (result.ownerKey !== ownerKey) throw new Error("Memory graph owner does not match the requested owner");
+    const memories = result.graph.nodes.map(
+      /** Retains only the node fields needed by relationship tools. */
+      (node) => {
+        const id2 = node.metadata.memoryId;
+        if (id2 === void 0) throw new Error("Memory graph node has no record identity: " + node.id);
+        return { id: id2, uuid: node.id, title: node.label };
+      }
+    ), idsByUuid = /* @__PURE__ */ new Map();
+    for (const memory of memories) idsByUuid.set(memory.uuid, memory.id);
+    const links = result.graph.edges.map(
+      /** Reconstructs the canonical relationship view from its actual graph edge. */
+      (edge) => {
+        const sourceMemoryId = idsByUuid.get(edge.sourceId), targetMemoryId = idsByUuid.get(edge.targetId), description = edge.metadata.description;
+        if (sourceMemoryId === void 0 || targetMemoryId === void 0 || edge.label === null || description === void 0)
+          throw new Error("Memory graph edge is incomplete: " + edge.id);
+        return { id: edge.id, sourceMemoryId, targetMemoryId, type_: edge.label, weight: edge.weight, description };
+      }
+    );
+    return { memories, links };
   }
   /** Projects the historical model-facing result, keeping record identities internal to the plugin. */
   info(ownerKey, memory) {
@@ -1263,109 +1037,6 @@ var MemoryTools = class {
       /** Uses real persisted chunk indices instead of reindexing the selected subset. */
       (chunk) => "Chunk " + (chunk.chunkIndex + 1) + "/" + total + ":\n" + chunk.content
     ).join("\n---\n");
-  }
-  /** Reads only a committed main-service embedding; tool projections never mutate a detached export cache.
-   * A missing or duplicate entry is a consistency error rather than permission to compute outside the main repository.
-   */
-  committedEmbedding(space, text2) {
-    const endpoint = space.settings.cloudEmbeddingEndpoint.replace(/\/+$/, "");
-    const model = space.settings.cloudEmbeddingModel;
-    if (!space.settings.cloudEmbeddingEnabled) throw new Error("Cloud embedding is disabled");
-    const matches = space.embeddings.filter(
-      /** Selects the exact persisted provider and input provenance. */
-      (item) => item.endpoint === endpoint && item.model === model && item.text === text2
-    );
-    if (matches.length !== 1) throw new Error("Embedding is missing or duplicated in the committed main-service cache: " + text2);
-    assertEmbedding(matches[0]);
-    return matches[0].vector;
-  }
-  /** Combines lexical coverage and genuine committed embedding channels with the original chunk RRF weights. */
-  async searchChunks(space, memory, query, count) {
-    const chunks = space.chunks.filter(
-      /** Selects the complete real document by UUID. */
-      (chunk) => chunk.memoryUuid === memory.uuid
-    ).sort(
-      /** Preserves the persisted document order. */
-      (left, right) => left.chunkIndex - right.chunkIndex
-    );
-    if (query.trim() === "*" || query.trim() === "") return chunks.slice(0, count);
-    const keywords = query.split(query.indexOf("|") === -1 ? /\s+/u : /\|/u).map(
-      /** Preserves the explicitly authored semantic channels. */
-      (word) => word.trim()
-    ).filter(
-      /** Rejects empty separators before requesting real embeddings. */
-      (word) => word.length !== 0
-    );
-    const patterns = [...new Set(keywords)].map(
-      /** Implements authored wildcard spelling using escaped literal segments. */
-      (word) => new RegExp(word.split("*").map(
-        /** Escapes one exact authored keyword segment. */
-        (segment) => segment.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&")
-      ).join(".*"), "isu")
-    );
-    let keywordMultiplier, vectorMultiplier;
-    switch (space.searchConfig.scoreMode) {
-      case "BALANCED":
-        keywordMultiplier = 1;
-        vectorMultiplier = 1;
-        break;
-      case "KEYWORD_FIRST":
-        keywordMultiplier = 1.3;
-        vectorMultiplier = 0.8;
-        break;
-      case "SEMANTIC_FIRST":
-        keywordMultiplier = 0.8;
-        vectorMultiplier = 1.3;
-        break;
-      default:
-        throw new Error("Invalid memory scoring mode");
-    }
-    const scores = /* @__PURE__ */ new Map();
-    if (space.searchConfig.keywordWeight > 0) {
-      const lexical = chunks.map(
-        /** Measures exact lexical coverage in each real persisted chunk. */
-        (chunk) => ({ chunk, hits: patterns.filter(
-          /** Matches document content against the declared lexical expression. */
-          (pattern) => pattern.test(chunk.content)
-        ).length })
-      ).filter(
-        /** Includes only genuine lexical matches in the coverage channel. */
-        (item) => item.hits > 0
-      ).sort(
-        /** Orders coverage ties by original document position. */
-        (left, right) => right.hits - left.hits || left.chunk.chunkIndex - right.chunk.chunkIndex
-      );
-      for (let rank = 0; rank < lexical.length; rank += 1) {
-        const item = lexical[rank];
-        scores.set(item.chunk.id, { chunk: item.chunk, score: space.searchConfig.keywordWeight * keywordMultiplier * (1 + 0.6 * item.hits / Math.max(1, patterns.length)) / (61 + rank) });
-      }
-    }
-    if (space.searchConfig.vectorWeight > 0) {
-      const normalization = 1 / Math.sqrt(Math.max(1, keywords.length));
-      for (const keyword of keywords) {
-        await this.domain("memory.searchWithOptions", { ownerKey: space.ownerKey, query: keyword, folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null });
-        const committed = await this.space(space.ownerKey), queryVector = this.committedEmbedding(committed, keyword);
-        const semantic = [];
-        for (const chunk of chunks) semantic.push({ chunk, similarity: cosineSimilarity(queryVector, this.committedEmbedding(committed, chunk.content)) });
-        semantic.sort(
-          /** Ranks actual provider similarities with a stable persisted chunk tie breaker. */
-          (left, right) => right.similarity - left.similarity || left.chunk.chunkIndex - right.chunk.chunkIndex
-        );
-        for (let rank = 0; rank < semantic.length; rank += 1) {
-          const item = semantic[rank], contribution = (1 / (61 + rank) + item.similarity * space.searchConfig.vectorWeight * vectorMultiplier) * normalization;
-          const entry = scores.get(item.chunk.id);
-          if (entry === void 0) scores.set(item.chunk.id, { chunk: item.chunk, score: contribution });
-          else entry.score += contribution;
-        }
-      }
-    }
-    return [...scores.values()].sort(
-      /** Preserves original RRF ordering and lossless numeric identity ties. */
-      (left, right) => right.score - left.score || (BigInt(left.chunk.id) < BigInt(right.chunk.id) ? -1 : BigInt(left.chunk.id) > BigInt(right.chunk.id) ? 1 : 0)
-    ).slice(0, count).map(
-      /** Returns complete original chunk records rather than a synthetic projection. */
-      (item) => item.chunk
-    );
   }
   /** Allocates or reuses owner-scoped pagination under the original snapshot contract. */
   snapshot(ownerKey, requested) {
@@ -1488,7 +1159,7 @@ var MemoryTools = class {
       case "query_memory_links":
         return this.links(ownerKey, input);
       case "update_memory_link": {
-        const space = await this.space(ownerKey), link = this.link(space, input), changes = {};
+        const space = await this.memoryGraph(ownerKey), link = this.link(space, input), changes = {};
         const type = optionalText(input, "new_link_type"), weight = score(input, "weight"), description = optionalText(input, "description");
         if (type !== void 0) {
           if (type.trim() === "") throw new Error("new_link_type must not be blank");
@@ -1501,7 +1172,7 @@ var MemoryTools = class {
         return { totalCount: 1, links: [this.linkInfo(space, result.link)] };
       }
       case "delete_memory_link": {
-        const link = this.link(await this.space(ownerKey), input);
+        const link = this.link(await this.memoryGraph(ownerKey), input);
         await this.domain("memory.link.delete", { ownerKey, linkId: link.id });
         return "Successfully deleted memory link: " + link.id;
       }
@@ -1519,36 +1190,33 @@ var MemoryTools = class {
       (tag) => tag !== ""
     );
   }
-  /** Performs filtered full-record search and commits pagination only after every document read succeeds. */
+  /** Searches full records and commits snapshot exclusions only after document queries succeed. */
   async query(ownerKey, input) {
-    const query = requiredText(input, "query"), count = limit(input, query.trim() === "*" ? Number.MAX_SAFE_INTEGER : 20), threshold = optionalNumber(input, "threshold"), folder = optionalText(input, "folder_path");
+    const query = requiredText(input, "query"), count = limit(input, query.trim() === "*" ? Number.MAX_SAFE_INTEGER : 20);
+    const threshold = optionalNumber(input, "threshold"), folder = optionalText(input, "folder_path");
     if (threshold !== void 0 && threshold < 0) throw new Error("Invalid threshold. Expected number >= 0.");
     const start = timeBoundary(input, "start_time"), end = timeBoundary(input, "end_time");
     if (start !== null && end !== null && start > end) throw new Error("start_time must not be after end_time");
-    const result = await this.domain("memory.searchWithOptions", { ownerKey, query, folderPath: folder === void 0 ? null : folder, relevanceThreshold: threshold === void 0 ? 0 : threshold, createdAtStartMs: start, createdAtEndMs: end });
+    const result = await this.domain("memory.searchWithOptions", { ownerKey, query, folderPath: folder === void 0 ? null : folder, relevanceThreshold: threshold === void 0 ? MEMORY_SEARCH_THRESHOLD : threshold, createdAtStartMs: start, createdAtEndMs: end });
     if (result.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
-    const found = result.items, space = await this.space(ownerKey);
     const snapshot = this.snapshot(ownerKey, optionalText(input, "snapshot_id"));
-    const unseen = found.filter(
-      /** Excludes only records already delivered from this same owner and snapshot. */
+    const unseen = result.items.filter(
+      /** Excludes only records delivered by this exact owner-scoped snapshot. */
       (memory) => !snapshot.state.seen.has(ownerKey + ":" + memory.id)
     ), returned = unseen.slice(0, count);
     const memories = [];
     for (const memory of returned) {
       const info = this.info(ownerKey, memory);
       if (memory.isDocumentNode) {
-        const total = space.chunks.filter(
-          /** Counts every real chunk belonging to this document. */
-          (chunk) => chunk.memoryUuid === memory.uuid
-        ).length, chunks = await this.searchChunks(space, memory, query, Math.min(count, 20));
+        const { total, chunks } = await this.domain("memory.chunks", { ownerKey, memoryId: memory.id, query, count: Math.min(count, 20) });
         info.content = query.trim() === "*" || count > 20 ? "Document: " + memory.title + " (" + total + " chunks)" : this.formatChunks(memory.title, total, chunks);
         if (chunks.length !== 0) {
           info.chunkInfo = "Chunks " + chunks.slice(0, 5).map(
-            /** Displays selected indices using the historical one-based spelling. */
+            /** Displays the original one-based document positions. */
             (chunk) => chunk.chunkIndex + 1
           ).join(", ") + "/" + total;
           info.chunkIndices = chunks.map(
-            /** Returns actual zero-based persisted indices for subsequent tool calls. */
+            /** Retains zero-based persisted indices for subsequent selectors. */
             (chunk) => chunk.chunkIndex
           );
         }
@@ -1556,31 +1224,24 @@ var MemoryTools = class {
       memories.push(info);
     }
     for (const memory of returned) snapshot.state.seen.add(ownerKey + ":" + memory.id);
-    return { memories, snapshotId: snapshot.id, snapshotCreated: snapshot.created, excludedBySnapshotCount: found.length - unseen.length };
+    return { memories, snapshotId: snapshot.id, snapshotCreated: snapshot.created, excludedBySnapshotCount: result.items.length - unseen.length };
   }
   /** Reads an exact title or validates the original one-based document query/index/range parameters. */
   async byTitle(ownerKey, input) {
     const title = requiredText(input, "title"), result = await this.domain("memory.get", { ownerKey, title }), memory = result.item;
     if (!memory.isDocumentNode) return { memories: [this.info(ownerKey, memory)], snapshotId: null, snapshotCreated: false, excludedBySnapshotCount: 0 };
-    const space = await this.space(ownerKey), chunks = space.chunks.filter(
-      /** Selects only this exact real document. */
-      (chunk) => chunk.memoryUuid === memory.uuid
-    ).sort(
-      /** Retains stable document order. */
-      (left, right) => left.chunkIndex - right.chunkIndex
-    ), total = chunks.length;
     const query = optionalText(input, "query"), index = optionalNumber(input, "chunk_index"), range = optionalText(input, "chunk_range");
     const supplied = [query !== void 0, index !== void 0, range !== void 0].filter(
       /** Counts explicitly supplied selectors instead of guessing precedence. */
       (value) => value
     ).length;
+    if (supplied > 1) throw new Error("Specify exactly one of query, chunk_range or chunk_index");
+    if (query !== void 0 && query.trim() === "") throw new Error("query must not be blank");
+    const { total, chunks } = await this.domain("memory.chunks", { ownerKey, memoryId: memory.id, query: query === void 0 ? "*" : query, count: query === void 0 ? Number.MAX_SAFE_INTEGER : limit(input, 20) });
     if (supplied === 0) return "Document: " + title + " (" + total + " chunks). Specify query, chunk_range (1-based start-end) or chunk_index (1-based).";
-    if (supplied !== 1) throw new Error("Specify exactly one of query, chunk_range or chunk_index");
     let selected;
-    if (query !== void 0) {
-      if (query.trim() === "") throw new Error("query must not be blank");
-      selected = await this.searchChunks(space, memory, query, limit(input, 20));
-    } else {
+    if (query !== void 0) selected = chunks;
+    else {
       let start, end;
       if (range !== void 0) {
         const parsed = /^(\d+)-(\d+)$/.exec(range);
@@ -1628,7 +1289,7 @@ var MemoryTools = class {
   }
   /** Queries actual directed relationships with precise filters and the original 200-result cap. */
   async links(ownerKey, input) {
-    const space = await this.space(ownerKey), id2 = optionalText(input, "link_id"), source = optionalText(input, "source_title"), target = optionalText(input, "target_title"), type = optionalText(input, "link_type");
+    const space = await this.memoryGraph(ownerKey), id2 = optionalText(input, "link_id"), source = optionalText(input, "source_title"), target = optionalText(input, "target_title"), type = optionalText(input, "link_type");
     if (id2 !== void 0) parseMemoryIdentifier(id2, "link_id");
     const sourceId = source === void 0 ? null : this.memory(space, source).id, targetId = target === void 0 ? null : this.memory(space, target).id;
     const links = space.links.filter(
@@ -1693,6 +1354,6 @@ async function list_character_cards(input) {
   const records = await callDomain("character.list", {});
   return { totalCount: records.length, cards: records.map(
     /** Preserves the historical tool projection from actual complete stored card records. */
-    (card) => ({ id: card.id, name: card.name, description: card.description, isDefault: card.isDefault, createdAt: card.createdAt, updatedAt: card.updatedAt })
+    (card) => ({ id: card.id, name: card.name, description: card.description, createdAt: card.createdAt, updatedAt: card.updatedAt })
   ) };
 }

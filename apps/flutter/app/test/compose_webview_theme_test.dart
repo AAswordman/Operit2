@@ -1,14 +1,20 @@
+import 'package:operit2/core/compose/compose_program_buffer.dart' as compose_buffer;
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:webview_all/webview_all.dart';
 import 'package:webview_all_linux/webview_all_linux.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 
-/// Verifies native preference delivery and browser-preserving theme updates.
+import 'support/compose_program_fixture.dart';
+
+/// Verifies native preference, theme, and platform-view visibility behavior.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -200,10 +206,237 @@ void main() {
     expect(actions, isNotEmpty);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'program WebView resolves navigation and interception callbacks after parameter updates',
+    (tester) async {
+      final platform = _ThemeTestPlatform();
+      WebViewPlatform.instance = platform;
+      const themeChannel = MethodChannel('operit/webview_theme');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        themeChannel,
+        (_) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          themeChannel,
+          null,
+        ),
+      );
+      final calls = <(String, Object?)>[];
+      final delivered = <Object?>[];
+      final options = <String, Object?>{'scope': 'workflow'};
+      final host = ComposeDslWebViewHostContext(
+        packageName: 'com.operit.workflow',
+        routeInstanceId: 'workflow',
+        executionContextKey: 'workflow-session',
+        runtimeOptionsProvider: () => options,
+        onActionResultDelivered: delivered.add,
+        dispatchAction: (id, [payload]) async {
+          calls.add((id, payload));
+          switch (id) {
+            case 'navigation:first':
+            case 'navigation:second':
+              return {'action': 'cancel'};
+            case 'resource:first':
+            case 'resource:second':
+              return {
+                'action': 'respond',
+                'response': {
+                  'statusCode': 200,
+                  'mimeType': 'text/html',
+                  'base64': base64Encode(utf8.encode('<html>$id</html>')),
+                },
+              };
+            case 'controller:method':
+              return {'value': 7};
+            default:
+              throw StateError('Unexpected source callback: $id');
+          }
+        },
+      );
+
+      /// Replaces source callbacks while retaining the same Flutter WebView occurrence.
+      compose_buffer.ToolPkgComposeDslInstance source(String generation) =>
+          composeTestInstance(
+            id: 'web',
+            nodeType: 'WebView',
+            props: {
+              'key': 'workflow-web',
+              'url': 'https://workflow.operit.local/',
+              'onShouldOverrideUrlLoading': {
+                '__actionId': 'navigation:$generation',
+              },
+              'onInterceptRequest': {'__actionId': 'resource:$generation'},
+            },
+          );
+      late void Function(core.ToolPkgComposeDslTransaction) apply;
+      late VoidCallback dispose;
+      final body = buildComposeProgramLayoutForTest(
+        update: composeTestTransaction(
+          reset: true,
+          revision: 1,
+          rootInstanceId: 'web',
+          instances: [source('first')],
+        ),
+        hostContext: host,
+        registerApply: (callback) => apply = callback,
+        registerDispose: (callback) => dispose = callback,
+      );
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: body)));
+      await tester.pumpAndSettle();
+      final view = tester.widget<ComposeDslWebView>(
+        find.byType(ComposeDslWebView),
+      );
+      final occurrence = tester.element(find.byType(ComposeDslWebView));
+      final navigationId =
+          (view.props['onShouldOverrideUrlLoading'] as Map)['__actionId']
+              as String;
+      final interceptionId =
+          (view.props['onInterceptRequest'] as Map)['__actionId'] as String;
+      expect(navigationId, startsWith('@program:'));
+      expect(interceptionId, startsWith('@program:'));
+      final mappedUrl = platform.controller.events
+          .singleWhere((value) => value.startsWith('load:'))
+          .substring(5);
+      final navigation = platform.navigation.onNavigationRequest;
+      final resource = platform.controller.resourceHandler!;
+      for (final generation in ['first', 'second']) {
+        if (generation == 'second') {
+          apply(
+            composeTestTransaction(
+              reset: false,
+              revision: 2,
+              rootInstanceId: 'web',
+              instances: [source(generation)],
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            tester.element(find.byType(ComposeDslWebView)),
+            same(occurrence),
+          );
+        }
+        expect(
+          await navigation(
+            NavigationRequest(url: mappedUrl, isMainFrame: true),
+          ),
+          NavigationDecision.prevent,
+        );
+        expect(calls.last.$1, 'navigation:$generation');
+        expect((calls.last.$2 as Map)['url'], 'https://workflow.operit.local/');
+        final response = await resource(
+          WebViewLocalResourceRequest(url: mappedUrl, isMainFrame: true),
+        );
+        expect(response.statusCode, 200);
+        expect(response.mimeType, 'text/html');
+        expect(utf8.decode(response.body), '<html>resource:$generation</html>');
+        expect(calls.last.$1, 'resource:$generation');
+        expect((calls.last.$2 as Map)['url'], 'https://workflow.operit.local/');
+      }
+      final boundHost = tester
+          .widget<ComposeDslWebView>(find.byType(ComposeDslWebView))
+          .hostContext!;
+      final queuedNavigation = await view.hostContext!.executeAction(
+        actionId: navigationId,
+      );
+      expect(queuedNavigation.message, isNull);
+      expect(queuedNavigation.actionResult, {'action': 'cancel'});
+      expect(calls.last.$1, 'navigation:second');
+      final queuedInterception = await view.hostContext!.executeAction(
+        actionId: interceptionId,
+      );
+      expect(queuedInterception.message, isNull);
+      expect(calls.last.$1, 'resource:second');
+      expect(boundHost.packageName, host.packageName);
+      expect(boundHost.routeInstanceId, host.routeInstanceId);
+      expect(boundHost.executionContextKey, host.executionContextKey);
+      expect(boundHost.clients, same(host.clients));
+      expect(boundHost.runtimeOptionsProvider(), same(options));
+      expect(
+        boundHost.onActionResultDelivered,
+        same(host.onActionResultDelivered),
+      );
+      expect(
+        (await boundHost.executeAction(
+          actionId: 'controller:method',
+        )).actionResult,
+        {'value': 7},
+      );
+      expect(calls.every((call) => !call.$1.startsWith('@program:')), isTrue);
+      expect(
+        platform.controller.events.where((value) => value.startsWith('load:')),
+        hasLength(1),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      dispose();
+    },
+  );
+
+  // Dialog routes must preserve the platform view and its loaded page on every host.
+  testWidgets(
+    'keeps the WebView mounted and visible beneath dialog routes',
+    (tester) async {
+      final platform = _ThemeTestPlatform();
+      WebViewPlatform.instance = platform;
+      const channel = MethodChannel('operit/webview_theme');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (_) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ComposeDslWebView(
+            props: const {'url': 'https://example.com'},
+            onAction: (id, [payload]) async => null,
+            hostContext: null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final webView = find.byType(WebViewWidget);
+      expect(webView, findsOneWidget);
+      final element = tester.element(webView);
+      final events = List<String>.of(platform.controller.events);
+      final context = tester.element(find.byType(ComposeDslWebView));
+      unawaited(
+        showDialog<void>(
+          context: context,
+          builder: (_) => const AlertDialog(title: Text('dialog')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('dialog'), findsOneWidget);
+      expect(webView, findsOneWidget);
+      expect(tester.element(webView), same(element));
+      expect(platform.controller.events, events);
+
+      Navigator.of(context).pop();
+      await tester.pumpAndSettle();
+      expect(webView, findsOneWidget);
+      expect(tester.element(webView), same(element));
+      expect(platform.controller.events, events);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+    variant: TargetPlatformVariant(TargetPlatform.values.toSet()),
+  );
 }
 
 class _ThemeTestPlatform extends WebViewPlatform {
   final controller = _ThemeTestController();
+  late _ThemeTestDelegate navigation;
 
   /// Returns one stable browser for the lifecycle test.
   @override
@@ -215,7 +448,7 @@ class _ThemeTestPlatform extends WebViewPlatform {
   @override
   PlatformNavigationDelegate createPlatformNavigationDelegate(
     PlatformNavigationDelegateCreationParams params,
-  ) => _ThemeTestDelegate(params);
+  ) => navigation = _ThemeTestDelegate(params);
 
   /// Renders an inert view while exercising the production browser controller.
   @override
@@ -240,6 +473,19 @@ class _ThemeTestController extends PlatformWebViewController {
   List<String> events = [];
   Future<void> channelRegistration = Future<void>.value();
   Future<void> scriptRegistration = Future<void>.value();
+  WebViewLocalResourceHandler? resourceHandler;
+
+  /// Exposes the shared resource-handler contract without creating a native browser.
+  @override
+  String get localResourceScheme => 'https';
+
+  /// Retains the production resource callback for request interception tests.
+  @override
+  Future<void> setLocalResourceHandler(
+    WebViewLocalResourceHandler? handler,
+  ) async {
+    resourceHandler = handler;
+  }
 
   /// Records navigation for detecting unexpected page reloads.
   @override
@@ -341,12 +587,15 @@ class _ThemeTestController extends PlatformWebViewController {
 class _ThemeTestDelegate extends PlatformNavigationDelegate {
   /// Creates a delegate with inert callbacks.
   _ThemeTestDelegate(super.params) : super.implementation();
+  late NavigationRequestCallback onNavigationRequest;
 
   /// Accepts navigation request callbacks.
   @override
   Future<void> setOnNavigationRequest(
     NavigationRequestCallback callback,
-  ) async {}
+  ) async {
+    onNavigationRequest = callback;
+  }
 
   /// Accepts page start callbacks.
   @override

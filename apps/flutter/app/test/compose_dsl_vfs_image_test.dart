@@ -8,15 +8,95 @@ import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
+import 'package:operit2/ui/common/markdown/MarkdownImageRenderer.dart';
+import 'package:operit2/ui/common/markdown/MarkdownRemoteImage.dart';
 import 'package:operit2/ui/features/packages/screens/ComposeDslImageSource.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 
 final png = base64Decode(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAANSURBVBhXY2Bg+P8fAAMCAf/Jsq3uAAAAAElFTkSuQmCC',
 );
 
+/// Verifies shared VFS image resolution and the production Markdown rendering path.
 void main() {
+  testWidgets(
+    'Markdown shared images read Core VFS and reuse the decoded image',
+    (tester) async {
+      const path =
+          '/app/data/plugin_data/space/com.operit.image_display/chart.png';
+      final bridge = _VfsFileBridge({
+        '__type': 'BinaryFileContentData',
+        'path': path,
+        'contentBase64': base64Encode(png),
+        'size': png.length,
+      });
+      final clients = GeneratedCoreProxyClients(bridge);
+      final source = extractMarkdownImageUrl('![Chart]($path)');
+
+      /// Renders the same Markdown image through one stable Core connection.
+      Future<void> render() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: SizedBox(
+              width: 200,
+              height: 140,
+              child: MarkdownRemoteImage(
+                url: source,
+                alt: 'Chart',
+                clients: clients,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.runAsync(
+          () => precacheImage(
+            tester.widget<Image>(find.byType(Image)).image,
+            tester.element(find.byType(MarkdownRemoteImage)),
+          ),
+        );
+        await tester.pump();
+      }
+
+      await render();
+      expect(tester.widget<RawImage>(find.byType(RawImage)).image, isNotNull);
+      expect(bridge.calls.single.methodName, 'executeTool');
+      expect((bridge.calls.single.args as Map)['tool'], {
+        'name': 'read_file_binary',
+        'parameters': [
+          {'name': 'path', 'value': path},
+        ],
+      });
+      await render();
+      expect(bridge.calls, hasLength(1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('Markdown VFS failures display an error after one file request', (
+    tester,
+  ) async {
+    final bridge = _VfsFileBridge(
+      {'__type': 'StringResultData', 'value': ''},
+      success: false,
+      error: 'VFS access denied',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MarkdownRemoteImage(
+          url:
+              '/app/data/plugin_data/space/com.operit.image_display/missing.png',
+          clients: GeneratedCoreProxyClients(bridge),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    expect(bridge.calls.single.methodName, 'executeTool');
+    expect(tester.takeException(), isNull);
+  });
+
   test(
     'VFS uses the generated Core binary file service without rewriting the path',
     () async {
@@ -88,6 +168,8 @@ void main() {
             '/app/data/cache/toolpkg_resource_exports/operit-avatar.png',
         '/mnt/macos/Users/test/avatar.png': '/mnt/macos/Users/test/avatar.png',
         'file:///app/data/avatar.png': '/app/data/avatar.png',
+        'file:///app/data/avatar%20one.png': '/app/data/avatar one.png',
+        'file://localhost/app/data/avatar.png': '/app/data/avatar.png',
         'vfs:///app/data/avatar.png': '/app/data/avatar.png',
         'operit-vfs://app/data/avatar.png': '/app/data/avatar.png',
         'runtime/data/user_assets/avatar.png':

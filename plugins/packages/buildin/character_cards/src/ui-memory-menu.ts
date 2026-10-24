@@ -2,6 +2,8 @@ import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-d
 import type { GlobalMemoryPreferences, MemoryAutoSaveStatus, Request, RequestOutput } from "./model";
 import { chatIdentity } from "./ui-contributions";
 import { definition } from "./definition";
+import { findChatBinding } from "./chat-storage";
+import { parseChatSelection } from "./chat-bindings";
 
 /** Calls the same serialized main-runtime service used by the memory editor and scheduler. */
 function request<R extends Request>(input: R): Promise<RequestOutput<R>> {
@@ -29,6 +31,7 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   const [chatId] = ctx.useState<string | null>("chatId", null);
   if (chatId !== null) chatIdentity(chatId, "memory menu chatId");
   const owner = ctx.useRef("memory-menu-chat", chatId);
+  const [available, setAvailable] = ctx.useState<boolean | null>("memory-menu-available", null);
   const [preferences, setPreferences] = ctx.useState<GlobalMemoryPreferences | null>("memory-menu-preferences", null);
   const [, setQueue] = ctx.useState<MemoryAutoSaveStatus | null>("memory-menu-queue", null);
   const [expanded, setExpanded] = ctx.useState("memory-menu-expanded", false);
@@ -49,9 +52,15 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
     const value = await request({ action: "readChatMemoryAutoSaveStatus", chatId });
     assertOwner(); setQueue(value);
   }
-  /** Loads persisted preferences and queue status once for this menu instance. */
+  /** Loads memory controls only for conversations with an explicitly selected character. */
   async function load(): Promise<void> {
     assertOwner(); if (started.current) return; started.current = true;
+    if (chatId !== null) {
+      const binding = await findChatBinding(chatId); assertOwner();
+      const hasCharacter = binding !== null && parseChatSelection(binding.selection).kind === "card";
+      setAvailable(hasCharacter);
+      if (!hasCharacter) return;
+    }
     const value = await request({ action: "readGlobalMemoryPreferences" }); assertOwner(); setPreferences(value);
     await refreshQueue();
   }
@@ -94,6 +103,7 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       ctx.UI.Spacer({ width: 8 }), ctx.UI.Switch({ checked, width: 40, height: 28, onCheckedChange: () => toggle(key) }),
     ]);
   }
+  if (available === false) return ctx.UI.Box({ key: "memory-menu-unavailable" });
   if (preferences === null) return ctx.UI.Box({ key: "memory-menu-loading", onLoad: load });
   const children: ComposeNode[] = [ctx.UI.Row({ key: "memory-section-header", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
     modifier: ctx.Modifier.heightIn({ minHeight: 36 }), onClick: () => { assertOwner(); setExpanded(!expanded); } }, [

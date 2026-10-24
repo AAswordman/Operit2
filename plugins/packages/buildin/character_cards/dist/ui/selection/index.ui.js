@@ -1,5 +1,7 @@
-// @operit-compose-artifact 1
+// @operit-compose-artifact 4
 "use strict";
+var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:83756","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:83872","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,28],[0,28],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint","contentDescription"],[[0,"Person"],[0,22],[0,"onSurfaceVariant"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:84043","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:84128","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,28],[0,28],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint","contentDescription"],[[0,"SmartToy"],[0,22],[0,"onSurfaceVariant"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:84331","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,28],[0,28],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint","contentDescription"],[[0,"Groups"],[0,22],[0,"onSurfaceVariant"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:85388","root":0,"nodes":[{"type":"Text","props":[2,["text","style","maxLines","overflow","color","fontWeight"],[[1,0],[0,"bodySmall"],[0,1],[0,"ellipsis"],[1,1],[1,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:85578","root":0,"nodes":[{"type":"Text","props":[2,["text","style","maxLines","overflow","color"],[[1,0],[0,"labelSmall"],[0,1],[0,"ellipsis"],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:85321","root":0,"nodes":[{"type":"Column","props":[2,["weight","horizontalAlignment"],[[0,1],[0,"start"]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:85792","root":0,"nodes":[{"type":"CircularProgressIndicator","props":[2,["width","height","strokeWidth"],[[0,16],[0,16],[0,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:85870","root":0,"nodes":[{"type":"Icon","props":[2,["name","size","tint","contentDescription"],[[1,0],[1,1],[1,2],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:85714","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,20],[0,20],[0,"center"]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:86141","root":0,"nodes":[{"type":"Row","props":[1,0],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:86179","root":0,"nodes":[{"type":"Row","props":[1,0],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:86911","root":0,"nodes":[{"type":"Text","props":[2,["text","style","fontWeight","weight"],[[1,0],[0,"titleSmall"],[0,"700"],[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:87027","root":0,"nodes":[{"type":"Text","props":[2,["text","style","color"],[[1,0],[0,"labelSmall"],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:87142","root":0,"nodes":[{"type":"Spacer","props":[2,["width"],[[0,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:87176","root":0,"nodes":[{"type":"IconButton","props":[2,["key","enabled","width","height","onClick"],[[0,"selector-close"],[1,0],[0,32],[0,32],[1,1]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","contentDescription"],[[0,"Close"],[0,18],[0,"关闭"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:86775","root":0,"nodes":[{"type":"Row","props":[2,["fillMaxWidth","paddingStart","paddingTop","paddingEnd","paddingBottom","verticalAlignment"],[[0,true],[0,16],[0,8],[0,8],[0,4],[0,"center"]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:87625","root":0,"nodes":[{"type":"Box","props":[2,["weight","fillMaxWidth","contentAlignment"],[[0,1],[0,true],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"CircularProgressIndicator","props":[2,["width","height","strokeWidth"],[[0,20],[0,20],[0,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:87816","root":0,"nodes":[{"type":"Text","props":[2,["key","text","color","paddingHorizontal","paddingVertical","weight"],[[0,"selector-load-error"],[1,0],[1,1],[0,16],[0,18],[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:88007","root":0,"nodes":[{"type":"Text","props":[2,["text","style","color","paddingStart","paddingTop","paddingEnd","paddingBottom","weight"],[[1,0],[0,"bodySmall"],[1,1],[0,16],[0,18],[0,16],[0,20],[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:88730","root":0,"nodes":[{"type":"HorizontalDivider","props":[2,["thickness","color"],[[0,1],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:88537","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth"],[[1,0],[0,true]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:88853","root":0,"nodes":[{"type":"LazyColumn","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:89836","root":0,"nodes":[{"type":"HorizontalDivider","props":[2,["thickness"],[[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:89947","root":0,"nodes":[{"type":"Text","props":[2,["key","text","color","style","paddingHorizontal","paddingVertical"],[[0,"selector-commit-error"],[1,0],[1,1],[0,"bodySmall"],[0,16],[0,8]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:1sa0vmu:89020","root":0,"nodes":[{"type":"Dialog","props":[2,["key","containerColor","shape","closeOnDismissRequest","properties","onLoad","onDismissRequest"],[[0,"character-selection"],[0,"surfaceContainerHigh"],[2,["cornerRadius"],[[0,28]]],[0,false],[2,["usePlatformDefaultWidth","dismissOnBackPress","dismissOnClickOutside"],[[0,false],[1,0],[1,1]]],[1,2],[1,3]]],"children":[4,1],"explicitChildren":true},{"type":"Column","props":[2,["fillMaxWidth","height","modifier"],[[0,true],[0,420],[1,4]]],"children":[1,5],"explicitChildren":true}]}];
+
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -51,6 +53,13 @@ function assertObject(value, label) {
 }
 function assertString(value, label) {
   if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+}
+function assertNumber(value, label, min, max) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new Error(`${label} \u5FC5\u987B\u5728 ${min} \u5230 ${max} \u4E4B\u95F4`);
+}
+function assertInteger(value, label, min) {
+  assertNumber(value, label, min, Number.MAX_SAFE_INTEGER);
+  if (!Number.isSafeInteger(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5B89\u5168\u6574\u6570`);
 }
 function requireId(value, label) {
   assertString(value, label);
@@ -129,10 +138,8 @@ function nonblank(value, path) {
   text(value, path);
   if (value.trim() === "") throw new Error(`${path} must not be blank`);
 }
-function parseMemoryIdentifier(value, path, positive = true) {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${path} must be a canonical decimal string`);
-  const id2 = BigInt(value);
-  if (id2 > 9223372036854775807n || positive && id2 === 0n) throw new Error(`${path} is outside its declared identity range`);
+function parseMemoryIdentifier(value, path, _positive = true) {
+  if (typeof value !== "string" || value.trim() === "" || value !== value.trim() || value.length > 256) throw new Error(`${path} must be a nonblank identity`);
   return value;
 }
 function memoryIdentifier(value, path) {
@@ -149,6 +156,10 @@ function number(value, path) {
 }
 function integer(value, path) {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${path} must be a safe integer`);
+}
+function nonnegativeInteger(value, path) {
+  integer(value, path);
+  nonnegative(value, path);
 }
 function messageVariant(value, path) {
   integer(value, path);
@@ -221,13 +232,13 @@ var characterFields = {
   marks: optional(text),
   chatModelBindingMode: optional(enumeration("FOLLOW_GLOBAL", "FIXED_MODEL")),
   chatModelId: optional(nullable(text)),
+  chatProviderId: optional(nullable(text)),
   ttsConfigId: optional(nullable(text)),
   themeConfigId: optional(nullable(text)),
   memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
   sharedMemoryId: optional(nullable(text)),
   sharedMemoryMounts: optional(array(mount)),
   toolAccessConfig: optional(toolAccess),
-  isDefault: optional(boolean),
   createdAt: optional(integer),
   updatedAt: optional(integer)
 };
@@ -270,8 +281,10 @@ var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
 var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
+  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
+  "memory.chat.pruneMissing": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
   "memory.categorize": ownerOnly,
   "memory.rebuild.start": shape({ ownerKey: required(owner), rebuild: required(shape({ chatIds: required(strings), windowMessageCount: required(integer), fromInclusive: required(nullable(integer)), toInclusive: required(nullable(integer)) })) }),
@@ -291,7 +304,6 @@ var validators = {
   "character.delete": id,
   "character.setActive": id,
   "character.combine": shape({ id: required(nonblank), promptFunctionType: optional(enumeration("CHAT", "VOICE")), additionalTagIds: optional(identifiers) }),
-  "character.resetDefault": empty,
   "character.export": shape({ id: required(nonblank), format: required(format) }),
   "character.import": shape({ format: required(format), content: required(nonblank) }),
   "character.exportBackup": empty,
@@ -356,7 +368,6 @@ function parseChatConfigurationRequest(value) {
     purpose: required(enumeration("display", "execution")),
     chatId: required(nullable(nonblank)),
     chatExtension: required(nullable(markerObject)),
-    messageExtension: required(nullable(markerObject)),
     participantId: required(nullable(nonblank)),
     promptFunctionType: required(enumeration("CHAT", "VOICE")),
     defaultModelBinding: required(shape({ providerId: required(text), modelId: required(text) })),
@@ -364,7 +375,7 @@ function parseChatConfigurationRequest(value) {
   })(value, "chat.configuration.resolve");
   const request = value;
   if (request.purpose === "display") {
-    if (request.participantId !== null || request.messageExtension !== null) throw new Error("Display configuration cannot request an execution participant or message snapshot");
+    if (request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
   } else {
     nonblank(request.defaultModelBinding.providerId, "execution default provider");
     nonblank(request.defaultModelBinding.modelId, "execution default model");
@@ -514,1292 +525,1229 @@ function createScreenSession(presentation) {
   };
 }
 
-// src/storage/schema.json
-var collections = {
+// src/identity.ts
+function uuid() {
+  const bytes = [];
+  for (let index = 0; index < 16; index += 1) bytes.push(Math.floor(Math.random() * 256));
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const text3 = bytes.map(
+    /** Encodes every byte as two hexadecimal digits. */
+    (byte) => byte.toString(16).padStart(2, "0")
+  ).join("");
+  return text3.slice(0, 8) + "-" + text3.slice(8, 12) + "-" + text3.slice(12, 16) + "-" + text3.slice(16, 20) + "-" + text3.slice(20);
+}
+
+// src/storage/merge.json
+var merge_default = {
   cards: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      characterSetting: {
-        kind: "text"
-      },
-      openingStatement: {
-        kind: "text"
-      },
-      otherContentChat: {
-        kind: "text"
-      },
-      otherContentVoice: {
-        kind: "text"
-      },
-      avatarUri: {
-        kind: "text",
-        nullable: true
-      },
-      attachedTagIds: {
-        kind: "array",
-        item: {
-          kind: "text"
-        }
-      },
-      advancedCustomPrompt: {
-        kind: "text"
-      },
-      marks: {
-        kind: "text"
-      },
-      chatModelBindingMode: {
-        kind: "text"
-      },
-      chatModelId: {
-        kind: "text",
-        nullable: true
-      },
-      ttsConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      themeConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      memoryBindingMode: {
-        kind: "text"
-      },
-      sharedMemoryId: {
-        kind: "text",
-        nullable: true
-      },
-      sharedMemoryMounts: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            sharedMemoryId: {
-              kind: "text"
-            },
-            readable: {
-              kind: "boolean"
-            },
-            writable: {
-              kind: "boolean"
-            }
+    version: 1,
+    catalog: {
+      keyPrefix: "record_",
+      keySuffix: "",
+      identityField: "id",
+      nameField: "name",
+      ignoredFields: [
+        "id",
+        "createdAt",
+        "updatedAt"
+      ],
+      retiredKeys: []
+    },
+    references: [
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "chatProviderId"
           }
-        }
+        ],
+        target: "runtime/config/preferences/model_configs.preferences.json"
       },
-      toolAccessConfig: {
-        kind: "object",
-        fields: {
-          enabled: {
-            kind: "boolean"
-          },
-          allowedBuiltinTools: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedPackages: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedSkills: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedMcpServers: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "ttsConfigId"
           }
-        }
+        ],
+        target: "runtime/config/preferences/tts_configs.preferences.json"
       },
-      isDefault: {
-        kind: "boolean"
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "themeConfigId"
+          }
+        ],
+        target: "runtime/config/preferences/user_preferences.preferences.json"
       },
-      createdAt: {
-        kind: "integer"
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "sharedMemoryId"
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
       },
-      updatedAt: {
-        kind: "integer"
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "attachedTagIds"
+          },
+          {
+            kind: "array_values"
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/tags.preferences.json"
+      },
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "sharedMemoryMounts"
+          },
+          {
+            kind: "array_values"
+          },
+          {
+            kind: "field",
+            name: "sharedMemoryId"
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
       }
-    }
+    ],
+    projection: null
   },
   groups: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      members: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            characterCardId: {
-              kind: "text"
-            },
-            orderIndex: {
-              kind: "integer"
-            }
+    version: 1,
+    catalog: {
+      keyPrefix: "record_",
+      keySuffix: "",
+      identityField: "id",
+      nameField: "name",
+      ignoredFields: [
+        "id",
+        "createdAt",
+        "updatedAt"
+      ],
+      retiredKeys: []
+    },
+    references: [
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "themeConfigId"
           }
-        }
+        ],
+        target: "runtime/config/preferences/user_preferences.preferences.json"
       },
-      themeConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "members"
+          },
+          {
+            kind: "array_values"
+          },
+          {
+            kind: "field",
+            name: "characterCardId"
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
       }
-    }
+    ],
+    projection: null
   },
   tags: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      promptContent: {
-        kind: "text"
-      },
-      tagType: {
-        kind: "text"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
+    version: 1,
+    catalog: {
+      keyPrefix: "record_",
+      keySuffix: "",
+      identityField: "id",
+      nameField: "name",
+      ignoredFields: [
+        "id",
+        "createdAt",
+        "updatedAt"
+      ],
+      retiredKeys: []
+    },
+    references: [],
+    projection: null
   },
   stores: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
+    version: 1,
+    catalog: {
+      keyPrefix: "record_",
+      keySuffix: "",
+      identityField: "id",
+      nameField: "name",
+      ignoredFields: [
+        "id",
+        "createdAt",
+        "updatedAt"
+      ],
+      retiredKeys: []
+    },
+    references: [],
+    projection: null
   },
   conversationGroups: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      ownerSelection: {
-        kind: "text",
-        nullable: true
-      },
-      name: {
-        kind: "text"
-      },
-      chatIds: {
-        kind: "array",
-        item: {
-          kind: "text"
-        }
-      },
-      displayOrder: {
-        kind: "integer"
-      },
-      pinned: {
-        kind: "boolean"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  owners: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      settings: {
-        kind: "object",
-        fields: {
-          autoSaveIntervalMinutes: {
-            kind: "integer"
-          },
-          nextAutoSaveRunAtMs: {
-            kind: "integer"
-          },
-          memoryExtractionCustomRules: {
-            kind: "text"
-          },
-          profileAutoUpdateEnabled: {
-            kind: "boolean"
-          },
-          profileAutoUpdateLocked: {
-            kind: "boolean"
-          },
-          cloudEmbeddingEnabled: {
-            kind: "boolean"
-          },
-          cloudEmbeddingEndpoint: {
-            kind: "text"
-          },
-          cloudEmbeddingApiKey: {
-            kind: "text"
-          },
-          cloudEmbeddingModel: {
-            kind: "text"
-          }
-        }
-      },
-      searchConfig: {
-        kind: "object",
-        fields: {
-          scoreMode: {
-            kind: "text"
-          },
-          keywordWeight: {
-            kind: "number"
-          },
-          tagWeight: {
-            kind: "number"
-          },
-          vectorWeight: {
-            kind: "number"
-          },
-          edgeWeight: {
-            kind: "number"
-          }
-        }
-      },
-      userDocumentPath: {
-        kind: "text"
-      },
-      rebuildProgress: {
-        kind: "object",
-        fields: {
-          status: {
-            kind: "text"
-          },
-          totalChats: {
-            kind: "integer"
-          },
-          completedChats: {
-            kind: "integer"
-          },
-          totalWindows: {
-            kind: "integer"
-          },
-          completedWindows: {
-            kind: "integer"
-          },
-          totalSourceMessages: {
-            kind: "integer"
-          },
-          processedSourceMessages: {
-            kind: "integer"
-          },
-          failedWindows: {
-            kind: "integer"
-          },
-          currentChatTitle: {
-            kind: "text"
-          },
-          lastError: {
-            kind: "text"
-          }
-        }
-      },
-      rebuildTask: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          windows: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                chatId: {
-                  kind: "text"
-                },
-                chatTitle: {
-                  kind: "text"
-                },
-                messages: {
-                  kind: "array",
-                  item: {
-                    kind: "object",
-                    fields: {
-                      sender: {
-                        kind: "text"
-                      },
-                      content: {
-                        kind: "text"
-                      },
-                      timestamp: {
-                        kind: "integer"
-                      },
-                      variantIndex: {
-                        kind: "integer"
-                      },
-                      variantCount: {
-                        kind: "integer"
-                      },
-                      provider: {
-                        kind: "text"
-                      },
-                      modelName: {
-                        kind: "text"
-                      }
-                    }
-                  }
-                },
-                sourceMessageCount: {
-                  kind: "integer"
-                }
-              }
-            }
-          },
-          nextWindow: {
-            kind: "integer"
-          }
+    version: 1,
+    catalog: null,
+    references: [
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
         },
-        nullable: true
-      }
-    }
-  },
-  memories: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
+        path: [
+          {
+            kind: "field",
+            name: "ownerSelection"
           },
-          uuid: {
-            kind: "text"
-          },
-          title: {
-            kind: "text"
-          },
-          content: {
-            kind: "text"
-          },
-          contentType: {
-            kind: "text"
-          },
-          source: {
-            kind: "text"
-          },
-          credibility: {
-            kind: "number"
-          },
-          importance: {
-            kind: "number"
-          },
-          documentPath: {
-            kind: "text",
-            nullable: true
-          },
-          isDocumentNode: {
-            kind: "boolean"
-          },
-          chunkIndexFilePath: {
-            kind: "text",
-            nullable: true
-          },
-          folderPath: {
-            kind: "text",
-            nullable: true
-          },
-          createdAt: {
-            kind: "integer"
-          },
-          updatedAt: {
-            kind: "integer"
-          },
-          lastAccessedAt: {
-            kind: "integer"
-          },
-          tags: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                id: {
-                  kind: "text"
-                },
-                name: {
-                  kind: "text"
-                }
-              }
-            }
-          },
-          properties: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                id: {
-                  kind: "text"
-                },
-                key: {
-                  kind: "text"
-                },
-                value: {
-                  kind: "text"
-                }
-              }
-            }
+          {
+            kind: "identity",
+            prefix: "card:",
+            suffix: ""
           }
-        }
-      }
-    }
-  },
-  links: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
       },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
+      {
+        key: {
+          kind: "records",
+          prefix: "record_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "ownerSelection"
           },
-          sourceMemoryId: {
-            kind: "text"
-          },
-          targetMemoryId: {
-            kind: "text"
-          },
-          type_: {
-            kind: "text"
-          },
-          weight: {
-            kind: "number"
-          },
-          description: {
-            kind: "text"
+          {
+            kind: "identity",
+            prefix: "group:",
+            suffix: ""
           }
-        }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
       }
-    }
-  },
-  chunks: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          memoryUuid: {
-            kind: "text"
-          },
-          chunkIndex: {
-            kind: "integer"
-          },
-          content: {
-            kind: "text"
-          }
-        }
-      }
-    }
-  },
-  candidates: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          chatId: {
-            kind: "text"
-          },
-          triggerMessageTimestamp: {
-            kind: "integer"
-          },
-          triggerVariantIndex: {
-            kind: "integer"
-          },
-          createdAt: {
-            kind: "integer"
-          },
-          updatedAt: {
-            kind: "integer"
-          },
-          status: {
-            kind: "text"
-          },
-          attemptCount: {
-            kind: "integer"
-          },
-          lastError: {
-            kind: "text"
-          },
-          sourceType: {
-            kind: "text"
-          }
-        }
-      }
-    }
-  },
-  embeddings: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          endpoint: {
-            kind: "text"
-          },
-          model: {
-            kind: "text"
-          },
-          text: {
-            kind: "text"
-          },
-          vector: {
-            kind: "vector"
-          },
-          updatedAt: {
-            kind: "integer"
-          }
-        }
-      }
-    }
+    ],
+    projection: null
   },
   meta: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      nextId: {
-        kind: "text"
-      },
-      active: {
-        kind: "object",
-        nullable: true,
-        fields: {
-          CharacterCard: {
-            kind: "object",
-            optional: true,
-            fields: {
-              id: {
-                kind: "text"
-              }
-            }
-          },
-          CharacterGroup: {
-            kind: "object",
-            optional: true,
-            fields: {
-              id: {
-                kind: "text"
-              }
-            }
-          }
-        }
-      },
-      memoryPreferences: {
-        kind: "object",
-        fields: {
-          userDescriptionEnabled: {
-            kind: "boolean"
-          },
-          autoUpdateEnabled: {
-            kind: "boolean"
-          }
+    version: 1,
+    catalog: null,
+    references: [
+      {
+        key: {
+          kind: "exact",
+          key: "state"
         },
-        optional: true
-      },
-      migrationStatus: {
-        kind: "text",
-        optional: true
-      },
-      migrationSource: {
-        kind: "text",
-        optional: true
-      }
-    }
-  },
-  chat_bindings: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      }
-    }
-  },
-  chat_drafts: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      }
-    }
-  },
-  message_snapshots: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      },
-      promptFunctionType: {
-        kind: "text"
-      },
-      primaryOwnerKey: {
-        kind: "text"
-      },
-      profile: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
+        path: [
+          {
+            kind: "field",
+            name: "active"
           },
-          name: {
-            kind: "text"
+          {
+            kind: "variant",
+            name: "CharacterCard"
           },
-          avatarUri: {
-            kind: "text",
-            nullable: true
-          },
-          introPrompt: {
-            kind: "text"
-          },
-          userPreferencesText: {
-            kind: "text"
-          },
-          openingStatement: {
-            kind: "text"
-          },
-          modelBinding: {
-            kind: "object",
-            fields: {
-              providerId: {
-                kind: "text"
-              },
-              modelId: {
-                kind: "text"
-              }
-            }
-          },
-          ttsConfigId: {
-            kind: "text"
-          },
-          toolAccess: {
-            kind: "object",
-            fields: {
-              enabled: {
-                kind: "boolean"
-              },
-              allowedBuiltinTools: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedPackages: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedSkills: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedMcpServers: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              }
-            }
-          },
-          resources: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                key: {
-                  kind: "text"
-                },
-                readable: {
-                  kind: "boolean"
-                },
-                writable: {
-                  kind: "boolean"
-                }
-              }
-            }
+          {
+            kind: "field",
+            name: "id"
           }
-        }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
       },
-      participants: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            id: {
-              kind: "text"
-            },
-            name: {
-              kind: "text"
-            },
-            avatarUri: {
-              kind: "text",
-              nullable: true
-            },
-            introPrompt: {
-              kind: "text"
-            },
-            userPreferencesText: {
-              kind: "text"
-            },
-            openingStatement: {
-              kind: "text"
-            },
-            modelBinding: {
-              kind: "object",
-              fields: {
-                providerId: {
-                  kind: "text"
-                },
-                modelId: {
-                  kind: "text"
-                }
-              }
-            },
-            ttsConfigId: {
-              kind: "text"
-            },
-            toolAccess: {
-              kind: "object",
-              fields: {
-                enabled: {
-                  kind: "boolean"
-                },
-                allowedBuiltinTools: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedPackages: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedSkills: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedMcpServers: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                }
-              }
-            },
-            resources: {
-              kind: "array",
-              item: {
-                kind: "object",
-                fields: {
-                  key: {
-                    kind: "text"
-                  },
-                  readable: {
-                    kind: "boolean"
-                  },
-                  writable: {
-                    kind: "boolean"
-                  }
-                }
-              }
-            }
+      {
+        key: {
+          kind: "exact",
+          key: "state"
+        },
+        path: [
+          {
+            kind: "field",
+            name: "active"
+          },
+          {
+            kind: "variant",
+            name: "CharacterGroup"
+          },
+          {
+            kind: "field",
+            name: "id"
           }
-        }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
       }
-    }
+    ],
+    projection: null
+  },
+  chats: {
+    version: 1,
+    catalog: null,
+    references: [
+      {
+        key: {
+          kind: "records",
+          prefix: "binding_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "selection"
+          },
+          {
+            kind: "identity",
+            prefix: "card:",
+            suffix: ""
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      },
+      {
+        key: {
+          kind: "records",
+          prefix: "draft_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "selection"
+          },
+          {
+            kind: "identity",
+            prefix: "card:",
+            suffix: ""
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      },
+      {
+        key: {
+          kind: "records",
+          prefix: "binding_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "selection"
+          },
+          {
+            kind: "identity",
+            prefix: "group:",
+            suffix: ""
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
+      },
+      {
+        key: {
+          kind: "records",
+          prefix: "draft_",
+          suffix: ""
+        },
+        path: [
+          {
+            kind: "field",
+            name: "selection"
+          },
+          {
+            kind: "identity",
+            prefix: "group:",
+            suffix: ""
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
+      }
+    ],
+    projection: null
   }
 };
 
-// src/storage/relational.ts
-var schemas = collections;
-function quote(name) {
-  if (!/^[A-Za-z_][A-Za-z_0-9]*$/.test(name))
-    throw new Error("Invalid relational identifier: " + name);
-  return '"' + name + '"';
+// src/storage/state.ts
+function userDocumentPath(ownerKey) {
+  return "owners/" + encodeURIComponent(ownerKey) + "/USER.md";
 }
-function field(path) {
-  return path === "" ? "_value" : path;
-}
-function layout(name, node, child = false) {
-  const columns = [
-    { name: "_key", affinity: "text", nullable: false },
-    { name: "_revision", affinity: "text", nullable: false }
-  ];
-  if (child)
-    columns.push(
-      { name: "_root", affinity: "text", nullable: false },
-      { name: "_parent", affinity: "text", nullable: false },
-      { name: "_position", affinity: "integer", nullable: false },
-      { name: "_map_key", affinity: "text", nullable: true }
+
+// src/storage/records.ts
+var ownerCollections = [
+  "memories",
+  "links",
+  "chunks",
+  "candidates",
+  "embeddings"
+];
+function clone(value) {
+  if (Array.isArray(value)) return value.map(clone);
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, clone(item)])
     );
-  const children = [];
-  function visit(schema, path, absent) {
-    if (schema.optional || schema.nullable)
-      columns.push({
-        name: field(path) + "__state",
-        affinity: "integer",
-        nullable: absent
-      });
-    const nullable2 = absent || schema.optional === true || schema.nullable === true;
-    if (schema.kind === "object") {
-      for (const [key, value] of Object.entries(schema.fields).sort(
-        ([left], [right]) => left < right ? -1 : left > right ? 1 : 0
-      ))
-        visit(value, path === "" ? key : path + "__" + key, nullable2);
-    } else if (schema.kind === "array" || schema.kind === "map") {
-      columns.push({
-        name: field(path) + "__count",
-        affinity: "integer",
-        nullable: nullable2
-      });
-      children.push(layout(name + "_" + field(path), schema.item, true));
-    } else
-      columns.push({
-        name: field(path),
-        affinity: schema.kind === "text" ? "text" : schema.kind === "vector" ? "blob" : schema.kind === "boolean" || schema.kind === "integer" ? "integer" : "real",
-        nullable: nullable2
+  return value;
+}
+function equal(left, right) {
+  if (left === right) return true;
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object")
+    return false;
+  const keys = Object.keys(left), other = Object.keys(right);
+  return Array.isArray(left) === Array.isArray(right) && keys.length === other.length && keys.every(
+    (key) => Object.prototype.hasOwnProperty.call(right, key) && equal(
+      left[key],
+      right[key]
+    )
+  );
+}
+function recordKey(value) {
+  assertObject(value, "stored record");
+  return requireId(value.id, "stored record id");
+}
+function storedValue(record2) {
+  return record2;
+}
+function records(state) {
+  const result = [];
+  for (const collection of [
+    "cards",
+    "groups",
+    "tags",
+    "stores",
+    "conversationGroups"
+  ]) {
+    for (const record2 of state[collection])
+      result.push({
+        collection,
+        key: record2.id,
+        value: storedValue(record2),
+        version: null
       });
   }
-  visit(node, "", false);
-  return { name, node, table: { name, primaryKey: "_key", columns }, children };
-}
-var layouts = Object.fromEntries(
-  Object.entries(schemas).map(([name, node]) => [name, layout(name, node)])
-);
-function tables(root) {
-  return [root, ...root.children.flatMap(tables)];
-}
-function childKey(parent, index) {
-  return parent.length + ":" + parent + ":" + index;
-}
-function vector(value) {
-  if (!Array.isArray(value))
-    throw new Error("Embedding vector must be an array");
-  const bytes = new Uint8Array(value.length * 8), view = new DataView(bytes.buffer);
-  value.forEach((item, index) => {
-    if (typeof item !== "number" || !Number.isFinite(item))
-      throw new Error("Invalid embedding component");
-    view.setFloat64(index * 8, item, true);
-  });
-  return bytes;
-}
-function encode(collection, key, value, revision) {
-  const root = layouts[collection];
-  if (root === void 0)
-    throw new Error("Unknown relational collection: " + collection);
-  const rows = new Map(tables(root).map((table) => [table.name, []]));
-  function record2(current, identity2, input, extra) {
-    const row = { _key: identity2, _revision: revision, ...extra };
-    function visit(node, path, item, absent = false) {
-      const column = field(path);
-      if (node.optional || node.nullable)
-        row[column + "__state"] = item === void 0 ? 0 : item === null ? 1 : 2;
-      if (item === void 0 && !node.optional && !absent)
-        throw new Error(collection + "/" + key + " missing " + path);
-      if (item === null && !node.nullable && !absent)
-        throw new Error(collection + "/" + key + " null " + path);
-      const empty2 = absent || item === void 0 || item === null;
-      if (node.kind === "object") {
-        if (!empty2 && (typeof item !== "object" || Array.isArray(item)))
-          throw new Error("Expected object: " + path);
-        if (!empty2) {
-          for (const name of Object.keys(item))
-            if (!Object.prototype.hasOwnProperty.call(node.fields, name))
-              throw new Error("Undeclared stored field: " + path + "." + name);
-        }
-        for (const [name, schema] of Object.entries(node.fields))
-          visit(
-            schema,
-            path === "" ? name : path + "__" + name,
-            empty2 ? void 0 : item[name],
-            empty2
-          );
-      } else if (node.kind === "array" || node.kind === "map") {
-        if (empty2) {
-          row[column + "__count"] = null;
-          return;
-        }
-        if (node.kind === "array" && !Array.isArray(item))
-          throw new Error("Expected array: " + path);
-        if (node.kind === "map" && (typeof item !== "object" || Array.isArray(item)))
-          throw new Error("Expected map: " + path);
-        const child = current.children.find(
-          (table) => table.name === current.name + "_" + column
-        );
-        const items = node.kind === "array" ? item.map(
-          (entry, index) => [null, entry]
-        ) : Object.entries(item);
-        row[column + "__count"] = items.length;
-        items.forEach(
-          ([mapKey, entry], index) => record2(child, childKey(identity2, index), entry, {
-            _root: key,
-            _parent: identity2,
-            _position: index,
-            _map_key: mapKey
-          })
-        );
-      } else if (empty2) row[column] = null;
-      else if (node.kind === "vector") row[column] = vector(item);
-      else if (node.kind === "boolean") {
-        if (typeof item !== "boolean")
-          throw new Error("Expected boolean: " + path);
-        row[column] = item ? 1 : 0;
-      } else if (node.kind === "text") {
-        if (typeof item !== "string") throw new Error("Expected text: " + path);
-        row[column] = item;
-      } else {
-        if (typeof item !== "number" || !Number.isFinite(item))
-          throw new Error("Expected finite number: " + path);
-        if (node.kind === "integer" && !Number.isSafeInteger(item))
-          throw new Error("Expected safe integer: " + path);
-        row[column] = item;
-      }
-    }
-    visit(current.node, "", input);
-    rows.get(current.name).push(row);
-  }
-  record2(root, key, value, {});
-  return rows;
-}
-function indexRelations(root, rows) {
-  const index = /* @__PURE__ */ new Map();
-  for (const table of tables(root)) {
-    for (const child of table.children) {
-      const parents = new Map(
-        rows.get(table.name).map((row) => [row._key, []])
-      );
-      for (const row of rows.get(child.name)) {
-        const siblings = parents.get(row._parent);
-        if (siblings === void 0)
-          throw new Error("Orphan relation: " + child.name);
-        siblings.push(row);
-      }
-      for (const siblings of parents.values())
-        siblings.sort(
-          (left, right) => Number(left._position) - Number(right._position)
-        );
-      index.set(child.name, parents);
-    }
-  }
-  return index;
-}
-function decodeLayout(root, row, rows = /* @__PURE__ */ new Map()) {
-  function record2(current, stored) {
-    function visit(node, path) {
-      const column = field(path);
-      if (node.optional || node.nullable) {
-        const state = Number(stored[column + "__state"]);
-        if (state === 0 && node.optional) return void 0;
-        if (state === 1 && node.nullable) return null;
-        if (state !== 2) throw new Error("Invalid field presence: " + path);
-      }
-      if (node.kind === "object") {
-        const value2 = {};
-        for (const [key, schema] of Object.entries(node.fields)) {
-          const item = visit(schema, path === "" ? key : path + "__" + key);
-          if (item !== void 0) value2[key] = item;
-        }
-        return value2;
-      }
-      if (node.kind === "array" || node.kind === "map") {
-        const child = current.children.find(
-          (table) => table.name === current.name + "_" + column
-        );
-        const children = rows.get(child.name).get(stored._key);
-        if (children.length !== Number(stored[column + "__count"]))
-          throw new Error("Incomplete relation: " + child.name);
-        children.forEach((item, index) => {
-          if (Number(item._position) !== index || item._key !== childKey(String(stored._key), index) || item._revision !== stored._revision)
-            throw new Error("Incomplete ordered relation: " + child.name);
+  for (const owner2 of state.owners) {
+    const { memories, links, chunks, candidates, embeddings, ...metadata } = owner2;
+    result.push({
+      collection: "owners",
+      key: owner2.ownerKey,
+      value: storedValue(metadata),
+      version: null
+    });
+    for (const collection of ownerCollections)
+      for (const record2 of owner2[collection])
+        result.push({
+          collection,
+          key: owner2.ownerKey + "/" + recordKey(storedValue(record2)),
+          value: storedValue({ ownerKey: owner2.ownerKey, record: record2 }),
+          version: null
         });
-        if (node.kind === "array")
-          return children.map((item) => record2(child, item));
-        const result = {};
-        for (const item of children) {
-          if (typeof item._map_key !== "string" || Object.prototype.hasOwnProperty.call(result, item._map_key))
-            throw new Error("Invalid map relation");
-          Object.defineProperty(result, item._map_key, {
-            value: record2(child, item),
-            enumerable: true
-          });
-        }
-        return result;
-      }
-      const value = stored[column];
-      if (node.kind === "vector") {
-        if (!(value instanceof Uint8Array) && Object.prototype.toString.call(value) !== "[object Uint8Array]")
-          throw new Error("Invalid embedding bytes");
-        const bytes = value;
-        if (bytes.byteLength % 8 !== 0)
-          throw new Error("Invalid embedding length");
-        const view = new DataView(
-          bytes.buffer,
-          bytes.byteOffset,
-          bytes.byteLength
-        );
-        return Array.from(
-          { length: bytes.byteLength / 8 },
-          (_, index) => view.getFloat64(index * 8, true)
-        );
-      }
-      if (node.kind === "boolean") {
-        if (value !== 0 && value !== 1 && value !== 0n && value !== 1n)
-          throw new Error("Invalid stored boolean");
-        return Number(value) === 1;
-      }
-      if (node.kind === "text") {
-        if (typeof value !== "string")
-          throw new Error("Invalid stored text: " + path);
-        return value;
-      }
-      if (typeof value !== "number" && typeof value !== "bigint")
-        throw new Error("Invalid stored number: " + path);
-      const number2 = Number(value);
-      if (!Number.isFinite(number2) || node.kind === "integer" && !Number.isSafeInteger(number2))
-        throw new Error("Invalid stored number: " + path);
-      return number2;
-    }
-    return visit(current.node, "");
   }
-  return record2(root, row);
+  return result;
 }
-var RelationalDatabase = class _RelationalDatabase {
-  /** Retains the generic host SQL handle. */
-  constructor(sql) {
-    this.sql = sql;
-    this.sequence = 0;
-    this.executionId = Array.from(
-      { length: 4 },
-      () => Math.floor(Math.random() * 4294967296).toString(16).padStart(8, "0")
-    ).join("");
+function decodeStateFromRecords(metadata, rows) {
+  assertObject(metadata, "character database metadata");
+  if (metadata.migrationStatus === "writing" || metadata.legacyImportPending === true)
+    throw new Error("Character migration has not completed");
+  const state = {
+    version: metadata.version,
+    active: metadata.active === null ? { Model: { id: "chat" } } : metadata.active,
+    memoryPreferences: metadata.memoryPreferences,
+    cards: [],
+    groups: [],
+    tags: [],
+    stores: [],
+    conversationGroups: [],
+    owners: []
+  };
+  const owners = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    switch (row.collection) {
+      case "owners": {
+        assertObject(row.value, "memory owner metadata");
+        const owner2 = {
+          ...row.value,
+          memories: [],
+          links: [],
+          chunks: [],
+          candidates: [],
+          embeddings: []
+        };
+        if (owner2.ownerKey !== row.key || owners.has(row.key))
+          throw new Error("Invalid memory owner record: " + row.key);
+        owners.set(row.key, owner2);
+        state.owners.push(owner2);
+        break;
+      }
+      case "cards":
+      case "groups":
+      case "tags":
+      case "stores":
+      case "conversationGroups":
+        state[row.collection].push(row.value);
+        break;
+    }
   }
-  /** Opens the sole runtime database and declares its exact typed schema. */
+  for (const row of rows) {
+    if (!ownerCollections.some((collection) => collection === row.collection))
+      continue;
+    assertObject(row.value, "owner-scoped record");
+    const ownerKey = requireId(row.value.ownerKey, "record owner key");
+    const owner2 = owners.get(ownerKey);
+    if (owner2 === void 0)
+      throw new Error("Missing record owner: " + ownerKey);
+    const entries = owner2[row.collection];
+    if (!Array.isArray(entries))
+      throw new Error("Invalid owner collection: " + row.collection);
+    if (row.key !== ownerKey + "/" + recordKey(row.value.record)) {
+      throw new Error("Invalid owner-scoped record: " + row.key);
+    }
+    entries.push(row.value.record);
+  }
+  return state;
+}
+
+// src/storage/migrations/legacy-to-v1.ts
+function assertMigrationPlan(value) {
+  assertObject(value, "character schema migration");
+  if (value.from !== "released" || value.to !== 1) throw new Error("Unsupported pending character schema migration");
+  if (!["files", "authors", "records", "verify", "cleanup"].some((phase) => phase === value.phase)) throw new Error("Invalid character migration phase");
+  assertInteger(value.cursor, "character migration cursor", 0);
+  assertObject(value.identities, "character migration identities");
+  for (const field of ["files", "directories", "authors", "changes"])
+    if (!Array.isArray(value[field])) throw new Error("Invalid character migration work: " + field);
+  for (const directory of value.directories) {
+    assertObject(directory, "character migration directory");
+    for (const field of ["source", "destination"])
+      if (typeof directory[field] !== "string" || !/^owners\/(?:character|shared)%3A[^/]+$/u.test(directory[field]))
+        throw new Error("Invalid character migration owner directory");
+    if (directory.source === directory.destination) throw new Error("Character migration owner directory must change");
+  }
+  for (const file of value.files) {
+    assertObject(file, "character migration file");
+    if (typeof file.source !== "string" || typeof file.destination !== "string") throw new Error("Invalid character migration file path");
+    const source = file.source, destination = file.destination;
+    if (!value.directories.some((directory) => source.startsWith(directory.source + "/") && destination === directory.destination + source.slice(directory.source.length)))
+      throw new Error("Character migration file is outside its owner directory");
+  }
+  for (const group of value.changes)
+    if (!Array.isArray(group) || group.length < 1 || group.length > 2) throw new Error("Invalid atomic character migration record change");
+  const lengths = { files: value.files.length, authors: value.authors.length, records: value.changes.length, verify: 0, cleanup: value.directories.length };
+  if (value.cursor > lengths[value.phase]) throw new Error("Character migration cursor exceeds its work");
+}
+function completed(result) {
+  if (!result.successful) throw new Error(result.details);
+}
+function absolute(directory, relative) {
+  if (relative.split("/").some((part) => part === "" || part === "." || part === ".." || /[\\:\u0000-\u001f]/u.test(part)))
+    throw new Error("Invalid character migration resource path: " + relative);
+  return directory + "/" + relative;
+}
+function ownerFiles(directory, source, destination) {
+  return __async(this, null, function* () {
+    const path = absolute(directory, source);
+    if (!(yield Tools.Files.exists(path)).exists) return [];
+    const listing = yield Tools.Files.list(path);
+    const result = [];
+    for (const entry of listing.entries) {
+      if (entry.name === "." || entry.name === ".." || /[/\\:\u0000-\u001f]/u.test(entry.name))
+        throw new Error("Invalid owner resource entry: " + entry.name);
+      const from = source + "/" + entry.name, to = destination + "/" + entry.name;
+      if (entry.isDirectory) result.push(...yield ownerFiles(directory, from, to));
+      else result.push({ source: from, destination: to });
+    }
+    return result;
+  });
+}
+function removeDeletedReferences(state) {
+  const tags = new Set(state.tags.map((tag) => tag.id));
+  const stores = new Set(state.stores.map((store) => store.id));
+  const cards = new Set(state.cards.map((card) => card.id));
+  for (const card of state.cards) {
+    card.attachedTagIds = card.attachedTagIds.filter((id2) => tags.has(id2));
+    card.sharedMemoryMounts = card.sharedMemoryMounts.filter((mount2) => stores.has(mount2.sharedMemoryId));
+  }
+  for (const group of state.groups) group.members = group.members.filter((member2) => cards.has(member2.characterCardId));
+  for (const owner2 of state.owners) {
+    const memories = new Set(owner2.memories.map((memory) => memory.id));
+    const documents2 = new Set(owner2.memories.filter((memory) => memory.isDocumentNode).map((memory) => memory.uuid));
+    owner2.links = owner2.links.filter((link) => memories.has(link.sourceMemoryId) && memories.has(link.targetMemoryId));
+    owner2.chunks = owner2.chunks.filter((chunk) => documents2.has(chunk.memoryUuid));
+  }
+}
+function prepareVersionOne(storage, metadata, directory) {
+  return __async(this, null, function* () {
+    const rows = yield migrationRecords(storage);
+    const input = clone(rows);
+    for (const row of input) {
+      if (row.collection === "cards") {
+        assertObject(row.value, "legacy card");
+        delete row.value.isDefault;
+      }
+    }
+    const inputMetadata = { ...metadata, version: 1 };
+    delete inputMetadata.legacyImportPending;
+    const state = decodeStateFromRecords(inputMetadata, input);
+    removeDeletedReferences(state);
+    const before = records(state), identities = {};
+    function identity2(scope, value) {
+      requireId(value, scope + " identity");
+      const key = JSON.stringify([scope, value]);
+      if (!Object.prototype.hasOwnProperty.call(identities, key)) identities[key] = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value) ? value : uuid();
+      return identities[key];
+    }
+    function reference(scope, value) {
+      const key = JSON.stringify([scope, value]);
+      if (!Object.prototype.hasOwnProperty.call(identities, key)) throw new Error("Missing migration reference: " + key);
+      return identities[key];
+    }
+    const sourceStoreIds = new Set(state.stores.map((store) => store.id));
+    const sourceCardIds = new Set(state.cards.map((card) => card.id));
+    const sourceGroupIds = new Set(state.groups.map((group) => group.id));
+    for (const collection of configurationNames)
+      for (const record2 of state[collection]) record2.id = identity2(collection, record2.id);
+    function selection2(value) {
+      const parsed = parseChatSelection(value);
+      if (parsed.kind === "card" && sourceCardIds.has(parsed.id)) value = "card:" + reference("cards", parsed.id);
+      if (parsed.kind === "group" && sourceGroupIds.has(parsed.id)) value = "group:" + reference("groups", parsed.id);
+      return value;
+    }
+    for (const card of state.cards) {
+      card.attachedTagIds = card.attachedTagIds.map((id2) => reference("tags", id2));
+      if (card.sharedMemoryId !== null && sourceStoreIds.has(card.sharedMemoryId)) card.sharedMemoryId = reference("stores", card.sharedMemoryId);
+      for (const mount2 of card.sharedMemoryMounts) mount2.sharedMemoryId = reference("stores", mount2.sharedMemoryId);
+    }
+    for (const group of state.groups)
+      for (const member2 of group.members) member2.characterCardId = reference("cards", member2.characterCardId);
+    for (const group of state.conversationGroups) {
+      if (group.ownerSelection !== null && /^(card|group):/u.test(group.ownerSelection)) group.ownerSelection = selection2(group.ownerSelection);
+    }
+    if ("CharacterCard" in state.active && sourceCardIds.has(state.active.CharacterCard.id)) state.active.CharacterCard.id = reference("cards", state.active.CharacterCard.id);
+    if ("CharacterGroup" in state.active && sourceGroupIds.has(state.active.CharacterGroup.id)) state.active.CharacterGroup.id = reference("groups", state.active.CharacterGroup.id);
+    const directories = [];
+    for (const owner2 of state.owners) {
+      const old = owner2.ownerKey;
+      if (old.startsWith("character:")) owner2.ownerKey = "character:" + reference("cards", old.slice(10));
+      else if (old.startsWith("shared:")) owner2.ownerKey = "shared:" + reference("stores", old.slice(7));
+      else throw new Error("Invalid migration owner: " + old);
+      owner2.userDocumentPath = userDocumentPath(owner2.ownerKey);
+      if (old !== owner2.ownerKey) directories.push({ source: "owners/" + encodeURIComponent(old), destination: "owners/" + encodeURIComponent(owner2.ownerKey) });
+      const scope = owner2.ownerKey;
+      for (const collection of ["memories", "links", "chunks", "candidates", "embeddings"])
+        for (const record2 of owner2[collection]) record2.id = identity2(scope + "/" + collection, record2.id);
+      for (const memory of owner2.memories) {
+        memory.uuid = identity2(scope + "/memoryUuid", memory.uuid);
+        for (const tag of memory.tags) tag.id = identity2(scope + "/memoryTags", tag.id);
+        for (const property2 of memory.properties) property2.id = identity2(scope + "/memoryProperties", property2.id);
+      }
+      for (const link of owner2.links) {
+        link.sourceMemoryId = reference(scope + "/memories", link.sourceMemoryId);
+        link.targetMemoryId = reference(scope + "/memories", link.targetMemoryId);
+      }
+      for (const chunk of owner2.chunks) chunk.memoryUuid = reference(scope + "/memoryUuid", chunk.memoryUuid);
+      if (owner2.rebuildTask !== null) owner2.rebuildTask.id = identity2(scope + "/rebuildTask", owner2.rebuildTask.id);
+    }
+    const resourceMoves = [];
+    for (const move of directories) {
+      resourceMoves.push(move, { source: absolute(directory, move.source), destination: absolute(directory, move.destination) });
+    }
+    for (const owner2 of state.owners) for (const memory of owner2.memories)
+      for (const field of ["documentPath", "chunkIndexFilePath"]) {
+        const path = memory[field];
+        if (path === null) continue;
+        const source = path.startsWith("owners/") ? absolute(directory, path) : path;
+        if (!(yield Tools.Files.exists(source)).exists) {
+          memory[field] = null;
+          continue;
+        }
+        for (const move of resourceMoves) if (path.startsWith(move.source + "/")) {
+          memory[field] = move.destination + path.slice(move.source.length);
+          break;
+        }
+      }
+    const after = records(state), changes = [];
+    const original = new Map(rows.map((row) => [JSON.stringify([row.collection, row.key]), row]));
+    const targets = /* @__PURE__ */ new Set();
+    for (let index = 0; index < after.length; index += 1) {
+      const from = before[index], to = after[index], key = JSON.stringify([to.collection, to.key]);
+      if (targets.has(key)) throw new Error("Duplicate migration destination: " + key);
+      targets.add(key);
+      const source = original.get(JSON.stringify([from.collection, from.key]));
+      if (source === void 0) throw new Error("Missing migration source record");
+      if (from.key === to.key) {
+        if (!equal(source.value, to.value)) changes.push([{ op: "put", collection: to.collection, key: to.key, value: to.value, expectedValue: source.value }]);
+      } else {
+        if (original.has(key)) throw new Error("Occupied migration destination: " + key);
+        changes.push([
+          { op: "put", collection: to.collection, key: to.key, value: to.value, expectedValue: null },
+          { op: "delete", collection: from.collection, key: from.key, expectedValue: source.value }
+        ]);
+      }
+    }
+    const retained = new Set(before.map((row) => JSON.stringify([row.collection, row.key])));
+    for (const row of rows) if (!retained.has(JSON.stringify([row.collection, row.key])))
+      changes.push([{ op: "delete", collection: row.collection, key: row.key, expectedValue: row.value }]);
+    for (const [key, originalValue] of (yield storage.chats.data()).entries()) {
+      const collection = key.startsWith("binding_") ? "chat_bindings" : key.startsWith("draft_") ? "chat_drafts" : null;
+      if (collection === null) throw new Error("Unsupported chat preference during migration: " + key);
+      const id2 = key.slice(collection === "chat_bindings" ? 8 : 6);
+      assertObject(originalValue, collection);
+      const value = clone(originalValue);
+      value.selection = selection2(requireId(value.selection, "stored selection"));
+      if (!equal(value, originalValue)) changes.push([{ op: "put", collection, key: id2, value, expectedValue: originalValue }]);
+    }
+    const files = [];
+    for (const move of directories) {
+      const entries = yield ownerFiles(directory, move.source, move.destination);
+      files.push(...entries);
+    }
+    const authors = [];
+    const cardIds = new Map(before.filter((row) => row.collection === "cards").map((row) => [row.key, reference("cards", row.key)]));
+    if ([...cardIds].some(([old, next]) => old !== next)) {
+      const chats = yield Tools.Chat.listAll();
+      for (const chat of chats.chats) for (let start = 0; start < chat.messageCount; start += 100) {
+        const page = yield Tools.Chat.getMessagesRange(chat.id, { order: "asc", start, end: Math.min(chat.messageCount - 1, start + 99) });
+        for (const message of page.messages) for (let variantIndex = 0; variantIndex < message.variantCount; variantIndex += 1) {
+          const target = { kind: "message", chatId: chat.id, messageTimestamp: message.timestamp, variantIndex };
+          const { extension } = yield Tools.Chat.readExtension(target);
+          if (extension === null) continue;
+          assertObject(extension, "legacy message author");
+          if (Object.keys(extension).length !== 1) throw new Error("Invalid legacy message author");
+          const participant = requireId(extension.participantId, "legacy participant id"), next = cardIds.get(participant);
+          if (next !== void 0 && next !== participant) authors.push({ target, before: participant, after: next });
+        }
+      }
+    }
+    return { from: "released", to: 1, phase: "files", cursor: 0, active: storedValue(state.active), identities, files, directories, authors, changes };
+  });
+}
+function verifyFile(directory, file) {
+  return __async(this, null, function* () {
+    const source = yield Tools.Files.readBinary(absolute(directory, file.source));
+    const target = yield Tools.Files.readBinary(absolute(directory, file.destination));
+    if (source.size !== target.size || source.contentBase64 !== target.contentBase64)
+      throw new Error("Character migration resource verification failed: " + file.destination);
+  });
+}
+function migrationRecords(storage) {
+  return __async(this, null, function* () {
+    const rows = [], configuration = yield storage.data();
+    for (const name of configurationNames) for (const [key, value] of configuration[name].entries()) {
+      if (!key.startsWith(recordPrefix)) throw new Error("Unknown character preference during migration: " + key);
+      rows.push({ collection: name, key: key.slice(recordPrefix.length), value, version: null });
+    }
+    for (const collection of ["owners", "memories", "links", "chunks", "candidates", "embeddings"])
+      for (const entry of yield storage.memory.read(collection)) rows.push({ collection, ...entry });
+    return rows;
+  });
+}
+function applyChanges(storage, changes) {
+  return __async(this, null, function* () {
+    const first = changes[0];
+    if (first === void 0) throw new Error("Empty character migration unit");
+    if (changes.some((change) => change.collection !== first.collection)) throw new Error("Migration unit spans storage owners");
+    const collection = first.collection;
+    const name = configurationNames.find((name2) => name2 === collection);
+    const store = name === void 0 ? collection === "chat_bindings" || collection === "chat_drafts" ? storage.chats : null : storage.configuration[name];
+    if (store !== null) {
+      yield store.edit((preferences) => {
+        const prefix = collection === "chat_bindings" ? "binding_" : collection === "chat_drafts" ? "draft_" : recordPrefix;
+        for (const change of changes) {
+          const key = prefix + change.key, value = preferences.get(key);
+          if (change.op === "put" && equal(value, change.value) || change.op === "delete" && value === void 0) continue;
+          if (change.expectedValue === null ? value !== void 0 : !equal(value, change.expectedValue)) throw new Error("Character migration source changed: " + collection + "/" + change.key);
+          if (change.op === "put") preferences.set(key, change.value);
+          else preferences.remove(key);
+        }
+      });
+      return;
+    }
+    const mutations = [];
+    for (const change of changes) {
+      const entry = yield storage.memory.get(collection, change.key);
+      if (change.op === "put" && entry !== null && equal(entry.value, change.value) || change.op === "delete" && entry === null) continue;
+      if (change.expectedValue === null ? entry !== null : entry === null || !equal(entry.value, change.expectedValue)) throw new Error("Character memory migration source changed: " + change.key);
+      mutations.push(change.op === "put" ? { op: "put", collection, key: change.key, value: change.value, expectedVersion: entry === null ? null : entry.version } : { op: "delete", collection, key: change.key, expectedVersion: entry === null ? null : entry.version });
+    }
+    if (mutations.length !== 0) yield storage.memory.commit(mutations);
+  });
+}
+function migrateLegacyToV1(storage, preferences, directory, source) {
+  return __async(this, null, function* () {
+    const metadata = clone(source);
+    let plan;
+    const persisted = (yield storage.migration.data()).get("plan");
+    if (persisted === void 0) plan = yield prepareVersionOne(storage, metadata, directory);
+    else {
+      assertMigrationPlan(persisted);
+      plan = clone(persisted);
+    }
+    let previous = persisted === void 0 ? void 0 : storedValue(persisted);
+    function publish() {
+      return __async(this, null, function* () {
+        yield storage.migration.edit((work) => {
+          if (!equal(work.get("plan"), previous)) throw new Error("Character migration plan changed concurrently");
+          work.set("plan", storedValue(clone(plan)));
+        });
+        previous = storedValue(clone(plan));
+      });
+    }
+    if (persisted === void 0) yield publish();
+    while (true) {
+      switch (plan.phase) {
+        case "files":
+          for (; plan.cursor < plan.files.length; ) {
+            const file = plan.files[plan.cursor], destination = absolute(directory, file.destination);
+            const exists = yield Tools.Files.exists(destination);
+            if (!exists.exists) {
+              completed(yield Tools.Files.mkdir(destination.slice(0, destination.lastIndexOf("/")), true));
+              completed(yield Tools.Files.copy(absolute(directory, file.source), destination, false));
+            } else yield verifyFile(directory, file);
+            plan.cursor += 1;
+            yield publish();
+          }
+          for (const move of plan.directories) {
+            const document2 = absolute(directory, move.destination + "/USER.md");
+            if (!(yield Tools.Files.exists(document2)).exists) {
+              completed(yield Tools.Files.mkdir(document2.slice(0, document2.lastIndexOf("/")), true));
+              completed(yield Tools.Files.write(document2, ""));
+            }
+          }
+          plan.phase = "authors";
+          plan.cursor = 0;
+          yield publish();
+          break;
+        case "authors":
+          for (; plan.cursor < plan.authors.length; ) {
+            const author = plan.authors[plan.cursor], { extension } = yield Tools.Chat.readExtension(author.target);
+            if (extension === null || Object.keys(extension).length !== 1 || extension.participantId !== author.before && extension.participantId !== author.after)
+              throw new Error("Message author changed during character migration");
+            if (extension.participantId === author.before) yield Tools.Chat.writeExtension(author.target, { participantId: author.after });
+            plan.cursor += 1;
+            yield publish();
+          }
+          plan.phase = "records";
+          plan.cursor = 0;
+          yield publish();
+          break;
+        case "records":
+          while (plan.cursor < plan.changes.length) {
+            const batch = [], collection = plan.changes[plan.cursor][0].collection;
+            let cursor = plan.cursor;
+            while (cursor < plan.changes.length && plan.changes[cursor][0].collection === collection && batch.length + plan.changes[cursor].length <= 1e3) {
+              batch.push(...plan.changes[cursor]);
+              cursor += 1;
+            }
+            yield applyChanges(storage, batch);
+            plan.cursor = cursor;
+            yield publish();
+          }
+          plan.phase = "cleanup";
+          plan.cursor = 0;
+          yield publish();
+          break;
+        // Retains the persisted phase name so interrupted released migrations can continue.
+        case "verify":
+          plan.phase = "cleanup";
+          plan.cursor = 0;
+          yield publish();
+          break;
+        case "cleanup":
+          for (; plan.cursor < plan.directories.length; ) {
+            const source2 = absolute(directory, plan.directories[plan.cursor].source);
+            if ((yield Tools.Files.exists(source2)).exists) {
+              completed(yield Tools.Files.deleteFile(source2, true));
+            }
+            plan.cursor += 1;
+            yield publish();
+          }
+          metadata.version = 1;
+          metadata.active = plan.active;
+          delete metadata.legacyImportPending;
+          preferences.set("state", metadata);
+          return;
+        default:
+          throw new Error("Invalid character migration phase");
+      }
+    }
+  });
+}
+
+// src/storage/schema.ts
+function migrateCharacterSchema(storage, preferences, directory) {
+  return __async(this, null, function* () {
+    const metadata = preferences.get("state");
+    if (metadata === void 0) return;
+    assertObject(metadata, "character schema metadata");
+    if (metadata.migrationStatus === "writing") throw new Error("Character migration has not completed: legacy import is still writing");
+    if (metadata.version !== 1) throw new Error("Unsupported character schema version: " + metadata.version);
+    yield migrateLegacyToV1(storage, preferences, directory, metadata);
+  });
+}
+
+// src/storage/memory-merge.json
+var memory_merge_default = {
+  version: 4,
+  maxEntities: 1,
+  maxReferences: 48,
+  entities: [
+    {
+      collection: "owners",
+      identityColumn: "ownerKey",
+      nameColumn: null,
+      ignoredColumns: [],
+      keyEncoding: "slash_root",
+      matchMode: "identity",
+      keyReferences: [
+        {
+          prefix: "character:",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          }
+        },
+        {
+          prefix: "shared:",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          }
+        }
+      ],
+      childCollections: [
+        "memories",
+        "links",
+        "chunks",
+        "candidates",
+        "embeddings"
+      ],
+      references: [
+        {
+          collection: "owners",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          keyPrefix: "character:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "owners",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          keyPrefix: "shared:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "owners",
+          column: "userDocumentPath",
+          target: {
+            kind: "collection",
+            collection: "owners"
+          },
+          keyPrefix: "owners/",
+          keySuffix: "/USER.md",
+          valueEncoding: "uri_component"
+        },
+        {
+          collection: "memories",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          keyPrefix: "character:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "memories",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          keyPrefix: "shared:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "links",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          keyPrefix: "character:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "links",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          keyPrefix: "shared:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "chunks",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          keyPrefix: "character:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "chunks",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          keyPrefix: "shared:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "candidates",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          keyPrefix: "character:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "candidates",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          keyPrefix: "shared:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "embeddings",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          keyPrefix: "character:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        },
+        {
+          collection: "embeddings",
+          column: "ownerKey",
+          target: {
+            kind: "preference",
+            path: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          keyPrefix: "shared:",
+          keySuffix: "",
+          valueEncoding: "direct"
+        }
+      ]
+    }
+  ]
+};
+
+// src/storage/memory.ts
+var characterMerge = memory_merge_default;
+var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
+  /** Retains one authenticated object handle without declaring business SQL tables. */
+  constructor(database2) {
+    this.database = database2;
+  }
+  /** Opens the sole synchronized character namespace independently of plugin installation scope. */
   static open() {
     return __async(this, null, function* () {
       const directory = ToolPkg.getSpaceDataDir();
       if (typeof directory !== "string" || directory.trim() === "")
         throw new Error("Plugin data directory is unavailable");
-      const sql = yield Tools.Storage.sqlite.open({
-        path: directory + "/characters-relational.sqlite"
-      });
-      for (const root of Object.values(layouts))
-        for (const table of tables(root)) yield sql.defineTable(table.table);
-      for (const root of Object.values(layouts))
-        for (const child of tables(root).slice(1))
-          yield sql.execute(
-            "CREATE INDEX IF NOT EXISTS " + quote(child.name + "_root_idx") + " ON " + quote(child.name) + ' ("_root", "_parent", "_position")'
-          );
-      yield sql.execute(
-        'CREATE INDEX IF NOT EXISTS "chat_binding_selection_idx" ON "chat_bindings" ("selection")'
-      );
-      return new _RelationalDatabase(sql);
+      const database2 = new _CharacterMemoryDatabase(yield Tools.Storage.objects.open({ path: directory + "/memory.sqlite", merge: characterMerge }));
+      return database2;
     });
   }
-  /** Reads a collection as typed records with all child rows from the same guarded operation snapshot. */
-  read(collection, key) {
+  /** Closes the retained memory engine handle. */
+  close() {
+    return this.database.close();
+  }
+  /** Reads complete JSON values in primary-key order using bounded host pages. */
+  read(collection) {
     return __async(this, null, function* () {
-      const root = layouts[collection];
-      if (root === void 0)
-        throw new Error("Unknown relational collection: " + collection);
-      const rows = /* @__PURE__ */ new Map();
-      for (const table of tables(root))
-        rows.set(
-          table.name,
-          yield this.sql.query(
-            "SELECT * FROM " + quote(table.name) + (key === void 0 ? "" : " WHERE " + quote(table === root ? "_key" : "_root") + " = ?") + ' ORDER BY "_key"',
-            key === void 0 ? [] : [key]
-          )
-        );
-      const relations = indexRelations(root, rows);
-      return rows.get(collection).map((row) => {
-        if (typeof row._key !== "string" || typeof row._revision !== "string")
-          throw new Error("Invalid stored identity");
-        return {
-          key: row._key,
-          version: row._revision,
-          value: decodeLayout(root, row, relations)
-        };
-      });
+      const result = [];
+      const source = this.database.collection(collection);
+      let after = null;
+      for (; ; ) {
+        const page = yield source.list(after, 1e3);
+        result.push(...page);
+        if (page.length < 1e3) return result;
+        after = page[page.length - 1].key;
+      }
     });
   }
-  /** Reads one exact root identity and its declared child relations. */
+  /** Reads one exact document and its host-issued concurrency version. */
   get(collection, key) {
+    return this.database.collection(collection).get(key);
+  }
+  /** Reads selected identities in one host snapshot without scanning their collections. */
+  getMany(collection, keys) {
+    return this.database.collection(collection).getMany([...keys]);
+  }
+  /** Publishes complete changed JSON documents and memory objects in one guarded transaction. */
+  commit(mutations) {
+    return this.database.commit(mutations);
+  }
+};
+
+// src/storage/preferences.ts
+var merge = merge_default;
+var configurationNames = ["cards", "groups", "tags", "stores", "conversationGroups"];
+var recordPrefix = "record_";
+var CharacterStorage = class _CharacterStorage {
+  /** Retains explicit storage owners without emulating a cross-engine transaction. */
+  constructor(configuration, metadata, chats, migration, memory) {
+    this.configuration = configuration;
+    this.metadata = metadata;
+    this.chats = chats;
+    this.migration = migration;
+    this.memory = memory;
+  }
+  /** Opens JSON configuration owners and upgrades the plugin schema before business reads. */
+  static open() {
     return __async(this, null, function* () {
-      const rows = yield this.read(collection, key);
-      return rows.length === 0 ? null : rows[0];
+      const directory = ToolPkg.getSpaceDataDir();
+      if (typeof directory !== "string" || directory.trim() === "") throw new Error("Plugin data directory is unavailable");
+      const handles = [];
+      let memory;
+      try {
+        function open(name) {
+          return __async(this, null, function* () {
+            const store = yield Tools.Storage.dataStore.open({ path: directory + "/" + name + ".preferences.json", merge: merge[name] });
+            handles.push(store);
+            return store;
+          });
+        }
+        const configuration = {};
+        for (const name of configurationNames) configuration[name] = yield open(name);
+        const metadata = yield open("meta"), chats = yield open("chats");
+        const migration = yield Tools.Storage.dataStore.open({ path: directory + "/migration.preferences.json" });
+        handles.push(migration);
+        memory = yield CharacterMemoryDatabase.open();
+        const storage = new _CharacterStorage(configuration, metadata, chats, migration, memory);
+        metadata.withSchema(1, (version, preferences) => __async(null, null, function* () {
+          switch (version) {
+            case 0:
+              yield migrateCharacterSchema(storage, preferences, directory);
+              break;
+            default:
+              throw new Error("Missing character schema migration: " + version);
+          }
+        }));
+        const current = yield metadata.data();
+        const state = current.get("state");
+        if (state !== void 0 && state.legacyImportPending === true) yield metadata.edit((preferences) => migrateCharacterSchema(storage, preferences, directory));
+        if ((yield migration.data()).contains("plan")) yield migration.edit((preferences) => {
+          preferences.remove("plan");
+        });
+        return storage;
+      } catch (error) {
+        const closed = yield Promise.allSettled([...handles.map((handle) => handle.close()), ...memory === void 0 ? [] : [memory.close()]]);
+        const failures = closed.filter((result) => result.status === "rejected").map((result) => result.reason);
+        if (failures.length !== 0) throw Object.assign(new Error("Character storage open and handle cleanup failed"), { cause: error, cleanupErrors: failures });
+        throw error;
+      }
     });
   }
-  /** Writes guarded roots and their relations atomically through the host journal. */
-  commit(mutations) {
+  /** Reads each configuration owner's immutable snapshot without loading memory objects. */
+  data() {
     return __async(this, null, function* () {
-      const version = this.executionId + ":" + ++this.sequence;
-      const statements = [];
-      for (const mutation of mutations) {
-        const root = layouts[mutation.collection];
-        if (root === void 0)
-          throw new Error(
-            "Unknown relational collection: " + mutation.collection
-          );
-        const { key, expectedVersion } = mutation;
-        if (mutation.op === "delete") {
-          statements.push({
-            sql: "DELETE FROM " + quote(root.name) + ' WHERE "_key" = ? AND "_revision" = ?',
-            params: [key, expectedVersion],
-            expectedAffectedRows: 1
-          });
-        } else {
-          const encoded = encode(root.name, key, mutation.value, version);
-          const row = encoded.get(root.name)[0];
-          statements.push(rootWrite(root.name, row, expectedVersion));
-          if (expectedVersion !== null)
-            statements.push(...deleteRelations(root, key));
-          for (const table of tables(root).slice(1)) {
-            for (const child of encoded.get(table.name))
-              statements.push(insertRow(table.name, child));
-          }
-        }
-        if (mutation.op === "delete")
-          statements.push(...deleteRelations(root, key));
-      }
-      if (statements.length === 0 || statements.length > 1e3) {
-        throw new Error(
-          "Relational operation exceeds the host transaction statement limit"
-        );
-      }
-      yield this.sql.transaction(statements);
-      return { version };
+      const result = {};
+      for (const name of configurationNames) result[name] = yield this.configuration[name].data();
+      return result;
     });
   }
 };
-function insertRow(table, row) {
-  const columns = Object.keys(row);
-  return {
-    sql: "INSERT INTO " + quote(table) + " (" + columns.map(quote).join(", ") + ") VALUES (" + columns.map(() => "?").join(", ") + ")",
-    params: columns.map((column) => row[column]),
-    expectedAffectedRows: 1
-  };
-}
-function rootWrite(table, row, expectedVersion) {
-  if (expectedVersion === null) return insertRow(table, row);
-  const columns = Object.keys(row).filter((column) => column !== "_key");
-  return {
-    sql: "UPDATE " + quote(table) + " SET " + columns.map((column) => quote(column) + " = ?").join(", ") + ' WHERE "_key" = ? AND "_revision" = ?',
-    params: [
-      ...columns.map((column) => row[column]),
-      row._key,
-      expectedVersion
-    ],
-    expectedAffectedRows: 1
-  };
-}
-function deleteRelations(root, key) {
-  return tables(root).slice(1).reverse().map((child) => ({
-    sql: "DELETE FROM " + quote(child.name) + ' WHERE "_root" = ?',
-    params: [key]
-  }));
-}
 
 // src/chat-storage.ts
 var database = null;
 function chatDatabase() {
-  if (database === null) database = RelationalDatabase.open();
+  if (database === null) database = CharacterStorage.open();
   return database;
 }
 function findChatBinding(chatId) {
   return __async(this, null, function* () {
     requireId(chatId, "chat id");
-    const row = yield (yield chatDatabase()).get("chat_bindings", chatId);
-    return row === null ? null : { chatId, selection: decodeChatMarker(row.value).selection };
+    const value = (yield (yield chatDatabase()).chats.data()).get("binding_" + chatId);
+    return value === void 0 ? null : { chatId, selection: decodeChatMarker(value).selection };
   });
 }
 
@@ -2041,13 +1989,13 @@ function selectorAvatar(ctx, option) {
   const props = { width: 28, height: 28, contentScale: "crop", contentDescription: option.title, modifier: ctx.Modifier.clip({ type: "circle" }) };
   switch (option.avatar.type) {
     case "uri":
-      return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:71535",[{ ...props, uri: option.avatar.uri }],(...__operitArgs)=>ctx.UI.Image(...__operitArgs));
+      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:83756",__operitUiPrograms_[0],[{ ...props, uri: option.avatar.uri }]);
     case "resource":
-      return option.avatar.path === null ? OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:71651",[{ width: 28, height: 28, contentAlignment: "center" },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:71717",[{ name: "Person", size: 22, tint: "onSurfaceVariant", contentDescription: option.title }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs)) : OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:71822",[{ ...props, path: option.avatar.path }],(...__operitArgs)=>ctx.UI.Image(...__operitArgs));
+      return option.avatar.path === null ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:83872",__operitUiPrograms_[1],[option.title]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:84043",__operitUiPrograms_[2],[{ ...props, path: option.avatar.path }]);
     case "model":
-      return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:71907",[{ width: 28, height: 28, contentAlignment: "center" },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:71973",[{ name: "SmartToy", size: 22, tint: "onSurfaceVariant", contentDescription: option.title }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs));
+      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:84128",__operitUiPrograms_[3],[option.title]);
     case "group":
-      return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:72110",[{ width: 28, height: 28, contentAlignment: "center" },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:72176",[{ name: "Groups", size: 22, tint: "onSurfaceVariant", contentDescription: option.title }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs));
+      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:84331",__operitUiPrograms_[4],[option.title]);
   }
 }
 function selectorRow(ctx, option, state, controller) {
@@ -2059,68 +2007,51 @@ function selectorRow(ctx, option, state, controller) {
   const props = { key: option.key, fillMaxWidth: true, paddingStart: 10, paddingTop: 7, paddingEnd: 8, paddingBottom: 7, verticalAlignment: "center", spacing: 8 };
   const contents = [
     selectorAvatar(ctx, option),
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:73100",[{ weight: 1, horizontalAlignment: "start" },[
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:73167",[{ text: option.title, style: "bodySmall", maxLines: 1, overflow: "ellipsis", color: titleColor, fontWeight: active ? "700" : "600" }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
-      ...option.description === "" ? [] : [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:73357",[{ text: option.description, style: "labelSmall", maxLines: 1, overflow: "ellipsis", color: descriptionColor }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))]
-    ]],(...__operitArgs)=>ctx.UI.Column(...__operitArgs)),
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:73493",[{ width: 20, height: 20, contentAlignment: "center" },switching ? OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:73571",[],()=>[{ width: 16, height: 16, strokeWidth: 2 }],(...__operitArgs)=>ctx.UI.CircularProgressIndicator(...__operitArgs)) : OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:73649",[{ name: active ? "Check" : "CircleOutlined", size: active ? 18 : 16, tint: active ? colors.primary : colors.onSurfaceVariant.copy({ alpha: 0.45 }), contentDescription: active ? "\u5F53\u524D\u9009\u4E2D" : "\u672A\u9009\u4E2D" }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs))
+    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:85321",__operitUiPrograms_[7],[[
+      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:85388",__operitUiPrograms_[5],[option.title,titleColor,active ? "700" : "600"]),
+      ...option.description === "" ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:85578",__operitUiPrograms_[6],[option.description,descriptionColor])]
+    ]]),
+    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:85714",__operitUiPrograms_[10],[switching ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:85792",__operitUiPrograms_[8],[]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:85870",__operitUiPrograms_[9],[active ? "Check" : "CircleOutlined",active ? 18 : 16,active ? colors.primary : colors.onSurfaceVariant.copy({ alpha: 0.45 }),active ? "\u5F53\u524D\u9009\u4E2D" : "\u672A\u9009\u4E2D"])])
   ];
-  if (!enabled) return OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:73920",[props,contents],()=>[props,contents],(...__operitArgs)=>ctx.UI.Row(...__operitArgs));
-  return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:73958",[{
+  if (!enabled) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:86141",__operitUiPrograms_[11],[props,contents]);
+  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:86179",__operitUiPrograms_[12],[{
     ...props,
     /** Returns the real commit result to the existing generic Compose action channel without a synthetic receiver. */
     onClick: () => __async(null, null, function* () {
       return selectorResultJson(yield controller.select(option.key));
     })
-  },contents],(...__operitArgs)=>ctx.UI.Row(...__operitArgs));
+  },contents]);
 }
 function selectorView(ctx, input, state, controller) {
   const title = input.kind === "card" ? "\u5207\u6362\u89D2\u8272\u5361" : input.kind === "group" ? "\u5207\u6362\u7FA4\u7EC4" : "\u5207\u6362\u89D2\u8272\u5361\u6216\u7FA4\u7EC4";
   const colors = ctx.MaterialTheme.colorScheme;
-  const header = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:74554",[{ fillMaxWidth: true, paddingStart: 16, paddingTop: 8, paddingEnd: 8, paddingBottom: 4, verticalAlignment: "center" },[
-    OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:74690",[title],()=>[{ text: title, style: "titleSmall", fontWeight: "700", weight: 1 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
-    ...state.data === null ? [] : [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:74806",[{ text: state.data.options.length + " \u4E2A", style: "labelSmall", color: colors.onSurfaceVariant }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)), OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:74921",[],()=>[{ width: 2 }],(...__operitArgs)=>ctx.UI.Spacer(...__operitArgs))],
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:74955",[{
-      key: "selector-close",
-      enabled: state.switchingKey === null && !state.finished,
-      width: 32,
-      height: 32,
-      /** Emits the explicit cancellation discriminator, not a route pop that bypasses the plugin session. */
-      onClick: () => selectorResultJson(controller.cancel())
-    },OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:75280",[],()=>[{ name: "Close", size: 18, contentDescription: "\u5173\u95ED" }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.IconButton(...__operitArgs))
-  ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs));
+  const header = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:86775",__operitUiPrograms_[17],[[
+    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:86911",__operitUiPrograms_[13],[title]),
+    ...state.data === null ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:87027",__operitUiPrograms_[14],[state.data.options.length + " \u4E2A",colors.onSurfaceVariant]), OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:87142",__operitUiPrograms_[15],[])],
+    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:87176",__operitUiPrograms_[16],[state.switchingKey === null && !state.finished,() => selectorResultJson(controller.cancel())])
+  ]]);
   let body;
-  if (state.loading) body = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:75404",[{ weight: 1, fillMaxWidth: true, contentAlignment: "center" },OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:75478",[],()=>[{ width: 20, height: 20, strokeWidth: 2 }],(...__operitArgs)=>ctx.UI.CircularProgressIndicator(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs));
-  else if (state.data === null) body = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:75595",[{ key: "selector-load-error", text: state.error, color: colors.error, paddingHorizontal: 16, paddingVertical: 18, weight: 1 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs));
-  else if (state.data.options.length === 0) body = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:75786",[{ text: input.kind === "group" ? "\u6682\u65E0\u7FA4\u7EC4" : "\u6682\u65E0\u89D2\u8272\u5361", style: "bodySmall", color: colors.onSurfaceVariant, paddingStart: 16, paddingTop: 18, paddingEnd: 16, paddingBottom: 20, weight: 1 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs));
+  if (state.loading) body = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:87625",__operitUiPrograms_[18],[]);
+  else if (state.data === null) body = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:87816",__operitUiPrograms_[19],[state.error,colors.error]);
+  else if (state.data.options.length === 0) body = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:88007",__operitUiPrograms_[20],[input.kind === "group" ? "\u6682\u65E0\u7FA4\u7EC4" : "\u6682\u65E0\u89D2\u8272\u5361",colors.onSurfaceVariant]);
   else {
     const options = state.data.options;
     const items = ctx.lazyItems(
-      { key: "selector-records", itemCount: options.length, itemExtent: 56, initialItemCount: 12 },
+      { key: "selector-records", itemCount: options.length, itemExtent: 56, initialItemCount: 24 },
       /** Builds one keyed row only when it enters the materialized viewport window. */
-      (index) => OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:76316",[{ key: "selector-item:" + options[index].key, fillMaxWidth: true },[
+      (index) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:88537",__operitUiPrograms_[22],["selector-item:" + options[index].key,[
         selectorRow(ctx, options[index], state, controller),
-        ...index + 1 === options.length ? [] : [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:76509",[{ thickness: 1, color: colors.outlineVariant.copy({ alpha: 0.45 }) }],(...__operitArgs)=>ctx.UI.HorizontalDivider(...__operitArgs))]
-      ]],(...__operitArgs)=>ctx.UI.Column(...__operitArgs))
+        ...index + 1 === options.length ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:88730",__operitUiPrograms_[21],[colors.outlineVariant.copy({ alpha: 0.45 })])]
+      ]])
     );
-    body = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:76632",[{ key: "selector-records", weight: 1, fillMaxWidth: true, paddingStart: 8, paddingTop: 4, paddingEnd: 8, paddingBottom: 8, ...items }],(...__operitArgs)=>ctx.UI.LazyColumn(...__operitArgs));
+    body = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:88853",__operitUiPrograms_[23],[{ key: "selector-records", weight: 1, fillMaxWidth: true, paddingStart: 8, paddingTop: 4, paddingEnd: 8, paddingBottom: 8, ...items }]);
   }
-  return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:76799",[{
-    key: "character-selection",
-    containerColor: "surfaceContainerHigh",
-    shape: { cornerRadius: 28 },
-    closeOnDismissRequest: false,
-    properties: { usePlatformDefaultWidth: false, dismissOnBackPress: state.switchingKey === null, dismissOnClickOutside: state.switchingKey === null },
-    /** Loads once through the main domain IPC; a rerender cannot initialize another store or retry a failed read. */
-    onLoad: () => controller.load(),
-    /** Returns explicit V1 cancellation for host dismissal rather than changing a global active selection. */
-    onDismissRequest: () => selectorResultJson(controller.cancel())
-  },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:77450",[{ fillMaxWidth: true, height: 420, modifier: ctx.Modifier.widthIn({ maxWidth: 360 }).heightIn({ minHeight: 420, maxHeight: 420 }) },[
+  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:89020",__operitUiPrograms_[26],[state.switchingKey === null,state.switchingKey === null,() => controller.load(),() => selectorResultJson(controller.cancel()),({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"widthIn",args:[{ maxWidth: 360 }]}]).concat([{name:"heightIn",args:[{ minHeight: 420, maxHeight: 420 }]}])}),[
     header,
-    OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:77615",[],()=>[{ thickness: 1 }],(...__operitArgs)=>ctx.UI.HorizontalDivider(...__operitArgs)),
+    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:89836",__operitUiPrograms_[24],[]),
     body,
-    ...state.error === "" || state.data === null ? [] : [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:77726",[{ key: "selector-commit-error", text: state.error, color: colors.error, style: "bodySmall", paddingHorizontal: 16, paddingVertical: 8 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))]
-  ]],(...__operitArgs)=>ctx.UI.Column(...__operitArgs))],(...__operitArgs)=>ctx.UI.Dialog(...__operitArgs));
+    ...state.error === "" || state.data === null ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:89947",__operitUiPrograms_[25],[state.error,colors.error])]
+  ]]);
 }
 function renderSelectionScreen(ctx) {
   const [presentation] = ctx.useState("presentation", null);

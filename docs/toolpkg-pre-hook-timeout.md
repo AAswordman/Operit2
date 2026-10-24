@@ -1,9 +1,13 @@
-# ToolPkg 前置 Hook 总超时
+# 脚本执行与 ToolPkg 前置 Hook 超时
 
-ToolPkg 的 Chat Input、Prompt 与 Summary 前置 Hook 链各自使用一份总超时预算。默认值为 10 秒，可在“工具设置 → 高级设置”中、MCP 启动超时的下方调整，允许范围为 1 至 60 秒。
+普通 JS 调用、AI 工具调用、工作流、IPC、公共 API、插件通知及 after Hook 不设置脚本完成超时。Promise await、Host 异步操作和定时器等待不会消耗普通脚本的执行预算。调用持续到结果完成、调用方主动取消或运行时销毁；移除完成期限后仍保留主动取消对同步死循环的中断能力。
 
-一次分发开始时会建立绝对截止时间。每个 Hook 会取得当时的剩余时长；到达截止时间后，正在等待的结果不会应用，后续 Hook 也不会启动。这避免多个 Hook 各自消耗完整超时而累计卡住一次用户操作。
+仅消息提交前的 `submit_requested` 与前置 Hook 使用总超时预算。默认 10 秒，可在“工具设置 → 高级设置”调整，范围 1 至 60 秒。预算覆盖整个前置链路，包括排队、同步执行和异步等待；每个 Hook 使用剩余时长，不会重新取得完整预算。
 
-聊天的 `submit_requested` 链超时时，当前已确认的文本仍会继续发送，并通过 `ChatToastHost` 显示具体的“前置插件「包名:HookID」响应超时，已跳过并继续发送”提示。发送前的 Prompt Input 链超时也通过同一条 Toast 事件流提示具体插件；Prompt History、Prompt Finalize 与 Summary 链只记录链路日志，以免在模型处理期间打断界面。
+受限阶段包括聊天 `before_create`、工具执行前的拦截、Prompt Input 的 `before_process`、History 的 `before_prepare_history`、Finalize 的 `before_finalize_prompt` / `before_send_to_model`、Summary 的准备与发送前阶段，以及系统／工具提示词的前置编排与过滤。`after_process`、`after_prepare_history`、`after_compose_system_prompt`、`after_compose_tool_prompt` 和 `after_generate_summary` 不设置超时。
 
-消息处理接管链不属于这项前置 Hook 门禁；它具有独立的回复接管语义。
+前置链路超时后立即终止当前 Hook，并将错误传回调用方，中止依赖该 Hook 的操作。通过 Host Toast 弹出“前置插件「包名:HookID」响应超时（阶段），本次 Hook 已终止。”，同时记录错误日志。提示展示失败也会写入返回错误，不会吞掉。
+
+JS 引擎按当前实际运行的调用选择中断令牌。一个前置 Hook 超时，只终止其自身，不会使同一运行时里等待 Promise 的普通调用一起失败。Host 状态调度层接受调用方的令牌，不再自行叠加 60 秒期限。
+
+Host 状态创建显式声明执行或编译角色。原生 Host 为编译角色保留独立的执行资源，避免所有脚本 worker 同步等待共用池里的编译器。取消会话后的 Promise 拒绝与原生 await continuation 仍携带取消状态，不能绕过前置超时继续占用执行器。

@@ -443,7 +443,7 @@
   "settingsCategoryModelSubtitle": "Models, keys, context",
   "settingsCategoryModelDescription": "Configure model connections, choose the chat model, and manage thinking, context, and multimodal abilities.",
   "settingsCategoryLocalModelsTitle": "Local Models",
-  "settingsCategoryLocalModelsSubtitle": "Downloads, engines, STT / TTS",
+  "settingsCategoryLocalModelsSubtitle": "LLMs, downloads, STT / TTS",
   "settingsCategoryLocalModelsDescription": "Manage local models and inference engines installed on demand.",
   "settingsCategoryToolsTitle": "Tools & Permissions",
   "settingsCategoryToolsSubtitle": "AI capability, system authorization, extensions",
@@ -697,7 +697,6 @@
   "settingsModelProviderTypeDeepseek": "DeepSeek",
   "settingsModelProviderTypeMistral": "Mistral",
   "settingsModelProviderTypeSiliconflow": "SiliconFlow",
-  "settingsModelProviderTypeIflow": "iFlow",
   "settingsModelProviderTypeOpenrouter": "OpenRouter",
   "settingsModelProviderTypeOpencode": "OpenCode",
   "settingsModelProviderTypeFourRouter": "4Router",
@@ -1361,6 +1360,14 @@
   "settingsAppearanceBubbleImageAdjustAi": "Adjust AI bubble image",
   "settingsAppearanceBubbleImagePreview": "Preview",
   "settingsAppearanceBubbleImagePreviewText": "Bubble preview with 9-slice guides",
+  "settingsAppearanceBubbleImageImportFailed": "Bubble image was not applied: {error}",
+  "@settingsAppearanceBubbleImageImportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceBubbleImageCrop": "Crop",
   "settingsAppearanceBubbleImageRepeat": "Repeat region",
   "settingsAppearanceBubbleImageScale": "Image scale",
@@ -1820,6 +1827,7 @@
   "pluginLoadingFailed": "Failed",
   "pluginLoadingWaiting": "Waiting",
   "pluginLoadingKindPackage": "Package",
+  "pluginLoadingKindPlugin": "Plugin",
   "pluginLoadingKindMcp": "MCP",
   "pluginLoadingCompleteSuccess": "All packages and plugins loaded",
   "pluginLoadingCompleteWithFailures": "Some packages or plugins failed to load",
@@ -1829,6 +1837,9 @@
   "chatRouteRemoteOffline": "Remote {platform} offline",
   "chatRouteLoading": "Loading execution device",
   "chatRouteUnknown": "Execution device status unknown",
+  "chatRouteClaimHostPrompt": "The device host for this chat was not found. Switch it to this device?",
+  "chatRouteClaimHostYes": "Yes",
+  "chatRouteClaimHostNo": "No",
   "@chatRouteRemote": {
     "placeholders": {
       "platform": {
@@ -2109,6 +2120,10 @@
   "deviceSpaceManageDevice": "Manage device",
   "deviceSpaceConnectDirect": "Connect directly",
   "deviceSpaceConnectDirectHint": "This device is already a Space member. Pairing it adds a direct link without joining again; pairing shows a six-digit code on the other device for you to enter.",
+  "deviceSpaceUpdateEndpoint": "Update direct address",
+  "deviceSpaceUpdateEndpointLabel": "Direct address",
+  "deviceSpaceUpdateEndpointHint": "For example ws://192.168.1.20:37195/link",
+  "deviceSpaceUpdateEndpointSaved": "Direct address updated",
   "deviceSpaceDirectLinkEstablished": "Direct link established: {device}",
   "@deviceSpaceDirectLinkEstablished": {
     "placeholders": {
@@ -2193,5 +2208,40 @@
   "settingsAppearanceLoadFailed": "Unable to load appearance",
   "settingsAppearanceRepairHint": "Your saved appearance has not been replaced. Retry after repairing its resources, or reset appearance explicitly. Reset keeps your avatar and saved configurations and selects custom appearance.",
   "settingsAppearanceRetry": "Retry",
-  "settingsAppearanceResetAfterError": "Reset appearance"
+  "settingsAppearanceResetAfterError": "Reset appearance",
+  "backgroundWorkIdle": "No work is running",
+  "backgroundWorkRunningCount": "work items running",
+  "backgroundWorkWaiting": "Waiting for your confirmation",
+  "backgroundWorkWaitingCount": "awaiting confirmation",
+  "backgroundWorkCompleted": "Completed",
+  "backgroundWorkFailed": "Failed — open to view details",
+  "backgroundWorkCancelled": "Stopped",
+  "backgroundWorkProcessing": "Preparing",
+  "backgroundWorkConnecting": "Connecting",
+  "backgroundWorkReceiving": "Writing a response",
+  "backgroundWorkTool": "Running a tool",
+  "backgroundWorkToolResult": "Processing tool results",
+  "backgroundWorkSummarizing": "Organizing context",
+  "backgroundWorkPlan": "Executing a plan",
+  "backgroundWorkOpen": "View conversation",
+  "backgroundWorkReview": "Review",
+  "backgroundWorkStop": "Stop",
+  "localModelsDeviceOnly": "Stored on this device",
+  "localModelsDeviceOnlyDescription": "Weights, download progress and installation records stay on this device and are excluded from Space sync. Chats can route inference to the device with the model.",
+  "localModelsRunChat": "Run and configure",
+  "localModelsUseForChat": "Use for chat",
+  "localModelsChatActivated": "Selected as the chat model",
+  "localModelsPrompt": "Enter a prompt",
+  "localModelsGenerate": "Generate",
+  "localModelsGenerating": "Generating…",
+  "localModelsThreads": "CPU threads",
+  "localModelsContextSize": "Context size (tokens)",
+  "localModelsBatchSize": "Batch size",
+  "localModelsUnload": "Unload model",
+  "localModelsCpuBackend": "On-device CPU inference",
+  "localModelsLlmDescription": "Download a GGUF model for llama.cpp or an MNN model bundle. After installation, try it here or select it for chat.",
+  "localModelsInvalidSettings": "Check the thread count, context size and batch size.",
+  "localModelsFilterAll": "All models",
+  "localModelsFilterInstalled": "Installed only",
+  "localModelsSearchCatalog": "Search by name or inference engine"
 }

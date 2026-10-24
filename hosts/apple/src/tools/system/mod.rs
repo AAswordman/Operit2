@@ -23,34 +23,24 @@ impl AppleSystemOperationHost {
 
 impl SystemOperationHost for AppleSystemOperationHost {
     fn getSystemLanguageCode(&self) -> HostResult<String> {
-        #[cfg(target_os = "ios")]
-        {
-            use core_foundation::base::TCFType;
-            use core_foundation::string::CFString;
-            extern "C" {
-                fn CFLocaleCopyCurrent() -> core_foundation::base::CFTypeRef;
-                fn CFLocaleGetIdentifier(locale: core_foundation::base::CFTypeRef)
-                    -> core_foundation::string::CFStringRef;
-            }
-            unsafe {
-                let locale = CFLocaleCopyCurrent();
-                if locale.is_null() {
-                    return Err(HostError::new("Current iOS locale is unavailable"));
-                }
-                let value = CFString::wrap_under_get_rule(CFLocaleGetIdentifier(locale))
-                    .to_string().replace('_', "-");
-                core_foundation::base::CFRelease(locale.cast());
-                return Ok(value);
-            }
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        extern "C" {
+            fn CFLocaleCopyCurrent() -> core_foundation::base::CFTypeRef;
+            fn CFLocaleGetIdentifier(locale: core_foundation::base::CFTypeRef)
+                -> core_foundation::string::CFStringRef;
         }
-        #[cfg(not(target_os = "ios"))]
-        {
-        let output = run_command_output("defaults", &["read", "-g", "AppleLocale"])?;
-        let value = output.trim().replace('_', "-");
-        if value.is_empty() {
-            return Err(HostError::new("AppleLocale is empty"));
-        }
-        Ok(value)
+        // Query the current locale on both Apple platforms without launching a
+        // subprocess for every plugin entry. CopyCurrent retains the locale.
+        unsafe {
+            let locale = CFLocaleCopyCurrent();
+            if locale.is_null() {
+                return Err(HostError::new("Current Apple locale is unavailable"));
+            }
+            let value = CFString::wrap_under_get_rule(CFLocaleGetIdentifier(locale))
+                .to_string().replace('_', "-");
+            core_foundation::base::CFRelease(locale.cast());
+            Ok(value)
         }
     }
 

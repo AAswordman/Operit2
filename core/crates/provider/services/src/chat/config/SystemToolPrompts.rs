@@ -527,13 +527,13 @@ fn hostPromptHeader(host_environment: &HostEnvironmentDescriptor, use_english: b
     let pathList = formatBacktickedPaths(&headerPaths, separator);
     if use_english {
         format!(
-            "Current file VFS host: {} (`{}`).\n- Use VFS paths only: {pathList}.\n- When `/mnt` is listed, it contains the mounted entries available on this host.\n- Hidden Android aliases `/sdcard` and `/data` can be opened directly on Android hosts but are not listed at root.",
+            "Current file VFS host: {} (`{}`).\n- Use VFS paths only: {pathList}.\n- When `/mnt` is listed, it contains the mounted entries available on this host.\n- Hidden Android aliases `/sdcard` and `/data` can be opened directly on Android hosts but are not listed at root.\n- Bare paths target this device; prefixing a path with `nodeName:` (names from `list_core_nodes`) reads files on another device in the space. File operations run on the target device; copying or moving across devices streams the file between them, which may take time for large files.",
             host_environment.displayName,
             host_environment.id
         )
     } else {
         format!(
-            "当前文件 VFS Host：{}（`{}`）。\n- 只使用 VFS 路径：{pathList}。\n- 当 `/mnt` 出现在根目录时，其中只包含当前 Host 已挂载入口。\n- Android 隐藏别名 `/sdcard` 和 `/data` 可在 Android Host 上直接访问，但不会在根目录列表展示。",
+            "当前文件 VFS Host：{}（`{}`）。\n- 只使用 VFS 路径：{pathList}。\n- 当 `/mnt` 出现在根目录时，其中只包含当前 Host 已挂载入口。\n- Android 隐藏别名 `/sdcard` 和 `/data` 可在 Android Host 上直接访问，但不会在根目录列表展示。\n- 裸路径指向本机；在路径前加 `nodeName:`（名字来自 `list_core_nodes`）可读取空间内其他设备上的文件。文件操作在目标设备上执行；跨设备的复制或移动会在设备间流式传输文件，大文件可能耗时较长。",
             host_environment.displayName,
             host_environment.id
         )
@@ -684,7 +684,6 @@ async fn compose_tool_prompt(
         model_parameters: Vec::new(),
         available_tools,
         metadata,
-        on_hook_timeout: None,
     })
     .await?;
     let before_context = PromptHookRegistry::dispatchToolPromptComposeHooks(PromptHookContext {
@@ -944,6 +943,9 @@ fn file_system_tools_en() -> SystemToolPromptCategory {
         tool("edit_file", "Edit an existing file by delegating to apply_file with type=replace.", vec![param("path", "string", "VFS file path", true, None), param("old", "string", "the exact content to be matched and replaced", true, None), param("new", "string", "the new content to insert", true, None)]),
         tool("delete_file", "Delete a file or directory.", vec![param("path", "string", "target VFS path", true, None), param("recursive", "boolean", "boolean", false, Some("false"))]),
         tool("make_directory", "Create a directory.", vec![param("path", "string", "VFS directory path", true, None), param("create_parents", "boolean", "boolean", false, Some("false"))]),
+        tool("move_file", "Move or rename a file or directory.", vec![param("source", "string", "source VFS path", true, None), param("destination", "string", "destination VFS path", true, None)]),
+        tool("copy_file", "Copy a file or directory.", vec![param("source", "string", "source VFS path", true, None), param("destination", "string", "destination VFS path", true, None), param("recursive", "boolean", "copy directories recursively", false, Some("false"))]),
+        tool("file_info", "Get detailed file or directory information including type, size, permissions, owner, group, and last modified time.", vec![param("path", "string", "VFS file path", true, None)]),
         tool("find_files", "Search for files matching a pattern.", vec![param("path", "string", "VFS search path", true, None), param("pattern", "string", "search pattern, e.g. \"*.jpg\"", true, None), param("max_depth", "integer", "optional, controls depth of subdirectory search, -1=unlimited", false, None), param("use_path_pattern", "boolean", "boolean", false, Some("false")), param("case_insensitive", "boolean", "boolean", false, Some("false"))]),
         tool("grep_code", "Search code content matching a regex pattern in files. Returns matches with surrounding context lines.", vec![param("path", "string", "VFS search path", true, None), param("pattern", "string", "regex pattern", true, None), param("file_pattern", "string", "file filter", false, Some("\"*\"")), param("case_insensitive", "boolean", "boolean", false, Some("false")), param("context_lines", "integer", "lines of context before/after match", false, Some("3")), param("max_results", "integer", "max matches", false, Some("100"))]),
         tool("grep_context", "Search for relevant content based on intent/context understanding. Supports directory and file modes. Uses semantic relevance scoring.", vec![param("path", "string", "VFS directory or file path", true, None), param("intent", "string", "intent or context description string", true, None), param("file_pattern", "string", "file filter for directory mode", false, Some("\"*\"")), param("max_results", "integer", "maximum items to return", false, Some("10"))]),
@@ -966,6 +968,9 @@ fn file_system_tools_cn() -> SystemToolPromptCategory {
         tool("edit_file", "通过委托给 apply_file 且 type=replace 来编辑已存在文件。", vec![param("path", "string", "VFS 文件路径", true, None), param("old", "string", "用于匹配并替换的原始内容", true, None), param("new", "string", "要插入的新内容", true, None)]),
         tool("delete_file", "删除文件或目录。", vec![param("path", "string", "目标 VFS 路径", true, None), param("recursive", "boolean", "布尔值", false, Some("false"))]),
         tool("make_directory", "创建目录。", vec![param("path", "string", "VFS 目录路径", true, None), param("create_parents", "boolean", "布尔值", false, Some("false"))]),
+        tool("move_file", "移动或重命名文件或目录。", vec![param("source", "string", "源 VFS 路径", true, None), param("destination", "string", "目标 VFS 路径", true, None)]),
+        tool("copy_file", "复制文件或目录。", vec![param("source", "string", "源 VFS 路径", true, None), param("destination", "string", "目标 VFS 路径", true, None), param("recursive", "boolean", "是否递归复制目录", false, Some("false"))]),
+        tool("file_info", "获取文件或目录的详细信息，包括类型、大小、权限、所有者、所属组和最后修改时间。", vec![param("path", "string", "VFS 文件路径", true, None)]),
         tool("find_files", "搜索匹配模式的文件。", vec![param("path", "string", "VFS 搜索路径", true, None), param("pattern", "string", "搜索模式，例如\"*.jpg\"", true, None), param("max_depth", "integer", "可选，控制子目录搜索深度，-1=无限", false, None), param("use_path_pattern", "boolean", "布尔值", false, Some("false")), param("case_insensitive", "boolean", "布尔值", false, Some("false"))]),
         tool("grep_code", "在文件中搜索匹配正则表达式的代码内容，返回带上下文的匹配结果。", vec![param("path", "string", "VFS 搜索路径", true, None), param("pattern", "string", "正则表达式模式", true, None), param("file_pattern", "string", "文件过滤", false, Some("\"*\"")), param("case_insensitive", "boolean", "布尔值", false, Some("false")), param("context_lines", "integer", "匹配行前后的上下文行数", false, Some("3")), param("max_results", "integer", "最大匹配数", false, Some("100"))]),
         tool("grep_context", "基于意图/上下文理解搜索相关内容。支持目录模式和文件模式，使用语义相关性评分。", vec![param("path", "string", "VFS 目录或文件路径", true, None), param("intent", "string", "意图或上下文描述字符串", true, None), param("file_pattern", "string", "目录模式下的文件过滤", false, Some("\"*\"")), param("max_results", "integer", "返回的最大项数", false, Some("10"))]),

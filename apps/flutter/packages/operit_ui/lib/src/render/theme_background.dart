@@ -1,14 +1,15 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../model/theme_preference_snapshot.dart';
+import 'liquid_glass.dart';
 
 const _backgroundDuration = Duration(milliseconds: 360);
 
 /// Composition is shared; the application alone supplies private video media.
 class ThemeBackground extends StatelessWidget {
+  /// Creates a scene with one source texture shared by all liquid lenses.
   const ThemeBackground({
     super.key,
     required this.themePreferenceSnapshot,
@@ -22,6 +23,7 @@ class ThemeBackground extends StatelessWidget {
   final Widget? media;
   final StackFit fit;
 
+  /// Builds the shared theme background composition.
   @override
   Widget build(BuildContext context) {
     final path = themePreferenceSnapshot.backgroundImageUri;
@@ -32,38 +34,31 @@ class ThemeBackground extends StatelessWidget {
     if (hasMedia && media == null) {
       throw StateError('Background media must be prepared before rendering');
     }
-    return LiquidGlassScope(
-      child: Stack(
-        fit: fit,
+    return LiquidGlassBackdrop(
+      fit: fit,
+      background: Stack(
+        fit: StackFit.expand,
         children: <Widget>[
-          Positioned.fill(
-            child: GlassBackgroundSource(
-              child: Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  AnimatedContainer(
-                    duration: _backgroundDuration,
-                    curve: Curves.easeOutCubic,
-                    color: Theme.of(context).colorScheme.surface,
-                  ),
-                  if (hasMedia)
-                    media!
-                  else
-                    const SizedBox.expand(
-                      key: ValueKey<String>('empty-theme-background'),
-                    ),
-                ],
-              ),
-            ),
+          AnimatedContainer(
+            duration: _backgroundDuration,
+            curve: Curves.easeOutCubic,
+            color: Theme.of(context).colorScheme.surface,
           ),
-          child,
+          if (hasMedia)
+            media!
+          else
+            const SizedBox.expand(
+              key: ValueKey<String>('empty-theme-background'),
+            ),
         ],
       ),
+      child: child,
     );
   }
 }
 
 class ThemeBackgroundMedia extends StatelessWidget {
+  /// Creates the configured media opacity and blur presentation.
   const ThemeBackgroundMedia({
     super.key,
     required this.child,
@@ -77,6 +72,7 @@ class ThemeBackgroundMedia extends StatelessWidget {
   final bool blurEnabled;
   final double blurRadius;
 
+  /// Applies the user's media opacity and background blur preferences.
   @override
   Widget build(BuildContext context) {
     return AnimatedOpacity(

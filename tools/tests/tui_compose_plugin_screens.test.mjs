@@ -20,10 +20,12 @@ function load(context, url) {
 /** Creates a UI runtime with recorded IPC endpoints instead of a running chat service. */
 function runtime(screen) {
   const calls = [];
-  const context = vm.createContext({ console, module: { exports: {} }, Icons: { Assignment: 'assignment' },
+  const context = vm.createContext({ console: { ...console, verbose() {} }, module: { exports: {} }, Icons: { Assignment: 'assignment' },
     getLang: () => 'en',
     async toolCall(name) { assert.equal(name, 'toast'); return { success: true }; },
-    ToolPkg: { ipc: { async call(channel, payload) {
+    ToolPkg: {
+      route: () => (method, metadata) => metadata.name === 'watchStarted' ? async function* () { yield false; } : method,
+      ipc: { on() {}, async call(channel, payload) {
       calls.push({ channel, payload });
       if (channel === 'plan_mode.is_plan_started') return false;
       return { success: true };

@@ -65,7 +65,11 @@ fn scan_source_tree(
                 };
                 let targetType =
                     generated_target_type(runtime_root, &entry_path, &item_impl.self_ty);
-                let routeKind = route_kind(&function.sig.output);
+                let routeKind = if function.sig.inputs.iter().any(|argument| {
+                    let syn::FnArg::Typed(argument) = argument else { return false };
+                    let Type::Path(path) = argument.ty.as_ref() else { return false };
+                    path.path.segments.last().is_some_and(|segment| segment.ident == "ReverseStream")
+                }) { "push".to_string() } else { route_kind(&function.sig.output) };
                 let (permissionScope, permissionCapability) = route_permission(&function.attrs)
                     .unwrap_or_else(|| ("Caller".to_string(), String::new()));
                 let lifecycle = route_lifecycle(&function.attrs);
@@ -304,7 +308,11 @@ fn render_route_catalog(
     output.push_str(
         "/// Resolves one annotation-generated Space route from a standard Link push request.\n",
     );
-    output.push_str("pub fn generated_space_push_route(request: &operit_link::CorePushRequest) -> Option<GeneratedSpaceRoute> { if request.target == operit_link::CORE_INTERNAL_TARGET { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(&request.target, &request.methodName) } }\n\n");
+    output.push_str("pub fn generated_space_push_route(request: &operit_link::CorePushRequest) -> Option<GeneratedSpaceRoute> { let route = if request.target == operit_link::CORE_INTERNAL_TARGET { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(&request.target, &request.methodName) }?; match route.methodName {\n");
+    for (method, _, _, kind, _, _, _, _) in declarations {
+        if kind == "push" { output.push_str(&format!("{method:?} => Some(route),\n")); }
+    }
+    output.push_str("_ => None, } }\n\n");
     output
         .push_str("/// Resolves one request using route declarations from runtime annotations.\n");
     output.push_str("fn generated_route_for_request(methodName: &str, args: &operit_link::CoreValue) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {\n");

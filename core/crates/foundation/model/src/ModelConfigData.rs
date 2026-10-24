@@ -79,7 +79,6 @@ pub enum ApiProviderType {
     DEEPSEEK,
     MISTRAL,
     SILICONFLOW,
-    IFLOW,
     OPENROUTER,
     OPENCODE,
     FOUR_ROUTER,
@@ -123,7 +122,6 @@ impl ApiProviderType {
             "DEEPSEEK" => Some(Self::DEEPSEEK),
             "MISTRAL" => Some(Self::MISTRAL),
             "SILICONFLOW" => Some(Self::SILICONFLOW),
-            "IFLOW" => Some(Self::IFLOW),
             "OPENROUTER" => Some(Self::OPENROUTER),
             "OPENCODE" => Some(Self::OPENCODE),
             "FOUR_ROUTER" => Some(Self::FOUR_ROUTER),
@@ -167,7 +165,6 @@ impl ApiProviderType {
             Self::DEEPSEEK => "DEEPSEEK",
             Self::MISTRAL => "MISTRAL",
             Self::SILICONFLOW => "SILICONFLOW",
-            Self::IFLOW => "IFLOW",
             Self::OPENROUTER => "OPENROUTER",
             Self::OPENCODE => "OPENCODE",
             Self::FOUR_ROUTER => "FOUR_ROUTER",
@@ -338,6 +335,14 @@ impl Default for ModelContextSpec {
     }
 }
 
+impl ModelContextSpec {
+    /// Converts the persisted kilo-token limit into an absolute token budget.
+    #[allow(non_snake_case)]
+    pub fn maxContextTokens(&self) -> i32 {
+        (f64::from(self.maxContextLength) * 1000.0).clamp(0.0, f64::from(i32::MAX)) as i32
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct ModelSummarySettings {
@@ -360,9 +365,25 @@ impl Default for ModelSummarySettings {
     }
 }
 
+impl ModelSummarySettings {
+    /// Returns the threshold as a context ratio, accepting legacy percent values.
+    #[allow(non_snake_case)]
+    pub fn tokenThresholdRatio(&self) -> f64 {
+        let threshold = f64::from(self.summaryTokenThreshold);
+        if threshold > 1.0 {
+            (threshold / 100.0).clamp(0.0, 1.0)
+        } else {
+            threshold.clamp(0.0, 1.0)
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct LocalModelRuntimeSettings {
+    /// Opaque Binding selecting the device that owns the installed model weights.
+    #[serde(default)]
+    pub inferenceBindingKey: String,
     pub mnnForwardType: i32,
     pub mnnThreadCount: i32,
     pub llamaThreadCount: i32,
@@ -379,6 +400,7 @@ pub struct LocalModelRuntimeSettings {
 impl Default for LocalModelRuntimeSettings {
     fn default() -> Self {
         Self {
+            inferenceBindingKey: String::new(),
             mnnForwardType: 0,
             mnnThreadCount: 4,
             llamaThreadCount: 4,
@@ -678,4 +700,42 @@ pub fn default_deepseek_model() -> ModelProfile {
         BuiltinToolExclusivity::CanMixWithExternalTools,
     )]);
     model
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_budget_uses_decimal_kilo_tokens() {
+        assert_eq!(
+            ModelContextSpec {
+                maxContextLength: 128.0
+            }
+            .maxContextTokens(),
+            128_000
+        );
+        assert_eq!(
+            ModelContextSpec {
+                maxContextLength: 1000.0
+            }
+            .maxContextTokens(),
+            1_000_000
+        );
+    }
+
+    #[test]
+    fn summary_threshold_accepts_ratio_and_legacy_percent() {
+        let ratio = ModelSummarySettings {
+            summaryTokenThreshold: 0.7,
+            ..ModelSummarySettings::default()
+        };
+        assert!((ratio.tokenThresholdRatio() - 0.7).abs() < 1e-6);
+
+        let percent = ModelSummarySettings {
+            summaryTokenThreshold: 70.0,
+            ..ModelSummarySettings::default()
+        };
+        assert!((percent.tokenThresholdRatio() - 0.7).abs() < 1e-6);
+    }
 }

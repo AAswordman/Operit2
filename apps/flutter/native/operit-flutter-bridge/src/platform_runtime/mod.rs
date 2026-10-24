@@ -71,3 +71,8 @@ pub(crate) fn install_owner_media(context: HostManager, system_speech: bool) -> 
 pub(crate) fn release_host() {
     selected::release_host();
 }
+
+/// Creates a minimal secret-store adapter through the selected Host distribution.
+pub(crate) fn rescue_secret_store(root: &std::path::Path) -> Result<Option<std::sync::Arc<dyn operit_host_api::HostSecretStore>>, String> {
+    selected::rescue_secret_store(root)
+}

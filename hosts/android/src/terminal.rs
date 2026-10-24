@@ -23,7 +23,7 @@ use crate::runtime_common::requiredAndroidRuntimePath;
 use std::ptr;
 
 static NEXT_TERMINAL_ID: AtomicU64 = AtomicU64::new(1);
-const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
+const PTY_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
 const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
@@ -371,9 +371,19 @@ impl TerminalHost for AndroidTerminalHost {
         command: &str,
         timeoutMs: u64,
     ) -> HostResult<TerminalCommandOutput> {
+        self.executeInSessionStreaming(sessionId, command, timeoutMs, &mut |_| Ok(()))
+    }
+
+    fn executeInSessionStreaming(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
+    ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
-        let (terminalType, commandOutput, writer) = {
+        let (terminalType, commandOutput) = {
             let mut state = self.lockState()?;
             let session = state
                 .ptySessions
@@ -381,31 +391,43 @@ impl TerminalHost for AndroidTerminalHost {
                 .ok_or_else(|| {
                     HostError::new(format!("Terminal session does not exist: {sessionId}"))
                 })?;
-            session.commandRunning = true;
+            if session.commandRunning {
+                return Err(HostError::new(
+                    "Terminal session already has a command in progress",
+                ));
+            }
             clearAndroidPtyCommandOutput(&session.commandOutput)?;
-            (
-                session.terminalType.clone(),
-                session.commandOutput.clone(),
-                session.writer.clone(),
-            )
+            let commandInput = format!("{normalizedCommand}\r");
+            writeAndroidPtyBytes(&session.writer, commandInput.as_bytes())?;
+            session.commandRunning = true;
+            (session.terminalType.clone(), session.commandOutput.clone())
         };
-        let commandInput = format!("{normalizedCommand}\r");
-        writeAndroidPtyBytes(&writer, commandInput.as_bytes())?;
-        let result =
-            executeAndroidPtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
+        let result = executeAndroidPtyCommandInSession(
+            commandOutput,
+            &normalizedCommand,
+            timeoutMs,
+            onOutput,
+        );
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                if result.timedOut {
+                // Release the busy flag even if interrupting a broken PTY fails.
+                // The state lock still excludes new commands during cancellation.
+                session.commandRunning = false;
+                if result.as_ref().map_or(true, |receipt| receipt.timedOut) {
                     if let Some(workingDir) = cancelTimedOutAndroidPtyCommand(session)? {
                         session.workingDir = workingDir;
                     }
-                } else if let Some(workingDir) = result.workingDir.clone() {
+                } else if let Some(workingDir) = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|receipt| receipt.workingDir.clone())
+                {
                     session.workingDir = workingDir;
                 }
-                session.commandRunning = false;
             }
         }
+        let result = result?;
         Ok(TerminalCommandOutput {
             command: normalizedCommand,
             output: result.output,
@@ -586,14 +608,17 @@ fn createAndroidPtySession(
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
     let cursorState: AndroidPtyCursorState =
         Arc::new(Mutex::new(AndroidPtyCursor { row: 1, col: 1 }));
-    spawnAndroidPtyReaderThread(
+    if let Err(error) = scheduleAndroidPtyReader(
         masterFd,
         writer.clone(),
         output.clone(),
         commandOutput.clone(),
         screenOutput.clone(),
         cursorState,
-    );
+    ) {
+        closeAndroidPtyProcess(pid, masterFd);
+        return Err(error);
+    }
     if let Err(error) =
         waitForInitialAndroidPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))
     {
@@ -622,16 +647,17 @@ fn createAndroidPtySession(
     })
 }
 
-fn spawnAndroidPtyReaderThread(
+/// Schedules the PTY reader on bounded Host service capacity.
+fn scheduleAndroidPtyReader(
     masterFd: RawFd,
     writer: Arc<Mutex<RawFd>>,
     output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: AndroidPtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     cursorState: AndroidPtyCursorState,
-) {
+) -> HostResult<()> {
     androidLogInfo(&format!("Android PTY reader thread start fd={masterFd}"));
-    thread::spawn(move || loop {
+    operit_host_native_common::scheduleNativeServiceTask("android-pty-reader", move || loop {
         match readPtyFd(masterFd) {
             Ok(data) if data.is_empty() => thread::sleep(Duration::from_millis(20)),
             Ok(data) => {
@@ -649,7 +675,8 @@ fn spawnAndroidPtyReaderThread(
                 break;
             }
         }
-    });
+    })
+    .map(|_| ())
 }
 
 fn appendAndroidPtyOutput(output: &Arc<Mutex<VecDeque<u8>>>, data: &[u8]) {
@@ -820,13 +847,16 @@ fn executeAndroidPtyCommandInSession(
     output: AndroidPtyCommandOutput,
     command: &str,
     timeoutMs: u64,
+    onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
 ) -> HostResult<AndroidSessionCommandResult> {
     let deadline = Instant::now() + Duration::from_millis(timeoutMs);
     let mut collected = Vec::new();
     let mut promptSeenAt = None;
     let quietPeriod = Duration::from_millis(150);
     loop {
+        let previousLength = collected.len();
         let drained = drainAndroidPtyCommandOutput(&output, &mut collected, deadline)?;
+        onOutput(&collected[previousLength..])?;
         if drained > 0 {
             promptSeenAt = None;
         }
@@ -1911,7 +1941,8 @@ mod tests {
         let host = AndroidTerminalHost::new();
         let resolveHost = |_: &str| Err(HostError::new("/mnt/linux is not mounted"));
         assert_eq!(
-            host.resolveWorkingDirectory("proot", "bash", "/mnt/linux/root", &resolveHost).unwrap(),
+            host.resolveWorkingDirectory("proot", "bash", "/mnt/linux/root", &resolveHost)
+                .unwrap(),
             "/root",
         );
     }
@@ -1922,8 +1953,14 @@ mod tests {
         let host = AndroidTerminalHost::new();
         let resolveHost = |_: &str| Err(HostError::new("/mnt/linux is not mounted"));
         assert_eq!(
-            host.resolveWorkingDirectory("android-system", "shell", "/mnt/linux/root", &resolveHost)
-                .unwrap_err().message,
+            host.resolveWorkingDirectory(
+                "android-system",
+                "shell",
+                "/mnt/linux/root",
+                &resolveHost
+            )
+            .unwrap_err()
+            .message,
             "/mnt/linux is not mounted",
         );
     }
@@ -1956,7 +1993,10 @@ mod tests {
         let error = host
             .createOrGetTypedSession("chat", "powershell")
             .unwrap_err();
-        assert_eq!(error.message, "Unsupported Android terminal type: powershell");
+        assert_eq!(
+            error.message,
+            "Unsupported Android terminal type: powershell"
+        );
         assert!(host.lockState().unwrap().ptySessions.is_empty());
     }
 

@@ -708,18 +708,6 @@ event_cancel_cb(FlEventChannel *channel, FlValue *args, gpointer user_data) {
   return nullptr;
 }
 
-static void webview_size_allocate_cb(GtkWidget *widget,
-                                     GtkAllocation *allocation,
-                                     gpointer user_data) {
-  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  schedule_flutter_view_input_region_update(webview->plugin);
-}
-
-static void webview_mapping_changed_cb(GtkWidget *widget, gpointer user_data) {
-  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  schedule_flutter_view_input_region_update(webview->plugin);
-}
-
 void destroy_linux_webview(gpointer data) {
   LinuxWebView *webview = static_cast<LinuxWebView *>(data);
   if (webview == nullptr) {
@@ -731,9 +719,6 @@ void destroy_linux_webview(gpointer data) {
     webview->download_policy = nullptr;
     webview->visible = FALSE;
     release_linux_webview_focus(webview);
-    if (webview->plugin != nullptr && !webview->plugin->disposing) {
-      schedule_flutter_view_input_region_update(webview->plugin);
-    }
     resolve_all_pending_requests(webview);
     g_object_set_data(G_OBJECT(webview->web_view), kLinuxWebViewInstanceKey,
                       nullptr);
@@ -743,7 +728,14 @@ void destroy_linux_webview(gpointer data) {
       g_object_remove_weak_pointer(
           G_OBJECT(webview->clip_container),
           reinterpret_cast<gpointer *>(&webview->clip_container));
-      gtk_widget_destroy(webview->clip_container);
+      GtkWidget* container = webview->clip_container;
+      g_object_ref(container);
+      if (webview->plugin->flutter_view != nullptr) {
+        fl_view_unregister_native_view(FL_VIEW(webview->plugin->flutter_view),
+                                       webview->id);
+      }
+      gtk_widget_destroy(container);
+      g_object_unref(container);
       webview->clip_container = nullptr;
     } else {
       gtk_widget_destroy(GTK_WIDGET(webview->web_view));
@@ -776,6 +768,7 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
   g_object_ref_sink(webview->web_view);
   g_object_set_data(G_OBJECT(webview->web_view), kLinuxWebViewInstanceKey,
                     webview);
+  ensure_local_resource_scheme(webkit_web_view_get_context(webview->web_view));
   webview->pending_nav_decisions =
       g_hash_table_new_full(g_direct_hash, g_direct_equal, nullptr,
                             destroy_pending_navigation_decision);
@@ -877,12 +870,6 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
                    G_CALLBACK(zoom_scroll_event_cb), webview);
   g_signal_connect(webview->web_view, "key-press-event",
                    G_CALLBACK(zoom_key_press_event_cb), webview);
-  g_signal_connect(webview->web_view, "size-allocate",
-                   G_CALLBACK(webview_size_allocate_cb), webview);
-  g_signal_connect(webview->web_view, "map",
-                   G_CALLBACK(webview_mapping_changed_cb), webview);
-  g_signal_connect(webview->web_view, "unmap",
-                   G_CALLBACK(webview_mapping_changed_cb), webview);
 
   gtk_widget_set_halign(GTK_WIDGET(webview->web_view), GTK_ALIGN_START);
   gtk_widget_set_valign(GTK_WIDGET(webview->web_view), GTK_ALIGN_START);

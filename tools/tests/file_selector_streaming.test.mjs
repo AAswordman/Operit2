@@ -17,8 +17,9 @@ function fixture() {
   let nextFd = 0;
   let failRead = false;
   let readGate = null;
+  let shortWrite = false;
   const fs = {
-    OpenMode: { READ_ONLY: 0 },
+    OpenMode: { READ_ONLY: 0, READ_WRITE: 2, CREATE: 4, TRUNC: 8 },
     async open(path) {
       calls.push(['open', path]);
       const file = { fd: ++nextFd };
@@ -33,7 +34,7 @@ function fixture() {
     async read(fd, buffer, { offset, length }) {
       assert.ok(handles.has(fd));
       assert.ok(buffer.byteLength <= chunkBytes);
-      assert.equal(buffer.byteLength, length);
+      assert.ok(length <= buffer.byteLength);
       calls.push(['read', fd, offset, length]);
       await readGate;
       if (failRead) throw new Error('READ_FAILED');
@@ -42,6 +43,16 @@ function fixture() {
       for (let i = 0; i < count; i++) bytes[i] = (offset + i) % 251;
       return count;
     },
+    /** Writes only one bounded source chunk and can expose an incomplete destination. */
+    async write(fd, buffer, { offset, length }) {
+      assert.ok(handles.has(fd));
+      assert.ok(buffer.byteLength <= 65536);
+      assert.ok(length <= buffer.byteLength);
+      calls.push(['write', fd, offset, length]);
+      return shortWrite ? length - 1 : length;
+    },
+    /** Requires an open destination when the copy requests durability. */
+    async fsync(fd) { assert.ok(handles.has(fd)); calls.push(['fsync', fd]); },
     async close(file) {
       assert.ok(handles.delete(file.fd), 'Descriptor must be closed exactly once');
       calls.push(['close', file.fd]);
@@ -52,6 +63,8 @@ function fixture() {
     constructor(_messenger, name) { channels.set(name, this); }
     setMethodCallHandler(handler) { this.handler = handler; }
     setMessageHandler(_handler) {}
+    /** Records platform progress events without allocating any file-sized payload. */
+    invokeMethod(method, values) { calls.push([method, new Map(values)]); }
   }
   class FileResponse {
     constructor(path, mimeType, name, size) { Object.assign(this, { path, mimeType, name, size }); }
@@ -69,6 +82,12 @@ function fixture() {
     });
   });
   return { Api, api, call, calls, handles, channels,
+    /** Calls the real save-channel handler with a URI destination. */
+    save() { return new Promise((resolve, reject) => channels.get('dev.flutter.packages.file_selector_ohos/save').handler.onMethodCall(
+      { method: 'copyFileFromPathWithProgress', arguments: new Map([['sourcePath', '/host/archive'], ['destinationUri', 'file://selected/archive']]) },
+      { success: resolve, error: (_code, message) => reject(new Error(message)), notImplemented: () => reject(new Error('NOT_IMPLEMENTED')) },
+    )); },
+    shortWrites() { shortWrite = true; },
     failReads() { failRead = true; },
     blockRead() { return new Promise(resolve => { readGate = new Promise(release => resolve(release)); }); },
   };
@@ -144,4 +163,31 @@ test('OHOS selection protocol contains no full-file content field in Dart or nat
   assert.doesNotMatch(dart, /Uint8List bytes|this\.bytes|result\[4\]/);
   assert.doesNotMatch(native, /getBytes|setBytes|this\.bytes|list\[4\]/);
   assert.doesNotMatch(source(`${prefix}FileSelectorApiImpl.ets`), /new ArrayBuffer\(size\)|getUrisForPaths|fdopenStreamSync/);
+});
+
+/** Verifies real URI saving uses bounded writes and completes progress only after flushing. */
+test('OHOS progress saving copies 143 MB in 64 KiB writes without a whole-file allocation', async () => {
+  const f = fixture();
+  await f.save();
+  const writes = f.calls.filter(call => call[0] === 'write');
+  assert.ok(writes.length > 2000);
+  let completed = 0;
+  for (const [, , offset, length] of writes) { assert.equal(offset, completed); assert.ok(length <= 65536); completed += length; }
+  assert.equal(completed, 143388128);
+  const progress = f.calls.filter(call => call[0] === 'saveProgress');
+  assert.equal(progress[0][1].get('completed'), 0);
+  assert.equal(progress.at(-1)[1].get('completed'), completed);
+  assert.equal(progress.at(-1)[1].get('total'), completed);
+  assert.ok(f.calls.findIndex(call => call[0] === 'fsync') < f.calls.findLastIndex(call => call[0] === 'saveProgress'));
+  assert.equal(f.handles.size, 0);
+});
+
+/** Propagates a partial write before reporting any completed copy. */
+test('OHOS progress saving rejects partial destination writes and closes both descriptors', async () => {
+  const f = fixture();
+  f.shortWrites();
+  await assert.rejects(f.save(), /Incomplete document destination write/);
+  assert.equal(f.calls.filter(call => call[0] === 'saveProgress').at(-1)[1].get('completed'), 0);
+  assert.equal(f.calls.some(call => call[0] === 'fsync'), false);
+  assert.equal(f.handles.size, 0);
 });

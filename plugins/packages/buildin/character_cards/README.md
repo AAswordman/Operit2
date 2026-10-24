@@ -38,6 +38,20 @@ Stable node keys and an unchanged wrapper hierarchy preserve in-flight transitio
 and ink ripples when chat selection refreshes. Flutter's own Workspace drawer is
 independent and may keep using its internal rail widget.
 
+## Host sidebar state and detached windows
+
+The host supplies `chatSidebar.currentChatId` only while its chat route is active;
+other destinations supply `null`, clearing the role sidebar's selected row without
+changing the actual current conversation or reloading the role catalog.
+
+`chatSidebarCapabilities.openInWindow` is separate host-supplied Compose input.
+Only an explicit `true` exposes “在新窗口打开” in the long-press dialog. The action
+returns exactly `{ type: "toolpkg.chat.openInWindow", chatId }`; Flutter validates
+the live registration and conversation, then uses its existing desktop launcher
+and current theme snapshot without activating the chat in the original window.
+Missing capability input (including older hosts) keeps this desktop-only action
+hidden. The canonical sidebar metadata/catalog contract is unchanged.
+
 ## Chat input menu
 
 The package registers one `chat_input_menu` navigation entry pointing to
@@ -242,15 +256,28 @@ placeholder controls:
   without flags upgrades to its previously active behavior; malformed stored flags
   fail reads instead of guessing values. Provider prompt assembly trusts the plugin
   execution profile, not a second retired Core preference gate.
-- Retrieval debugging reuses the production search index and real provider embeddings.
+- Retrieval debugging reuses the production RRF search and real provider embeddings.
   Draft weights are not saved. Each candidate reports actual lexical/tag/vector/edge
   contributions and its threshold decision; normal retrieval filters the same results.
 - Graph export/import invokes the full owner backup codec, including records, document
-  chunks, relationships, settings and USER.md. Relationship editing reads the canonical
-  persisted link by ID, even if a graph projection lacks its description.
+  chunks, relationships, settings and USER.md. Relationship tools read one owner-scoped
+  graph snapshot containing the actual record and link identities and descriptions.
 - Character imports select Operit or Tavern JSON; exports invoke the corresponding
   production serializer. Preview avatars use the existing host-loaded image resources.
   Export dialogs only report success after the real host file operation acknowledges it.
+
+Memory nodes and document chunks share lexical and semantic ranking; tools no longer
+export full backups or maintain their own embedding/scoring implementation. UI memory
+mutations use the same domain operations as dependency clients. Extraction follows the
+Kotlin query budgets, duplicate-title prompt and new-identity merge behavior; the
+scheduler orders candidates by source timestamp before applying its twenty-record cap.
+
+Kotlin remains the behavior reference, with explicit implementation differences:
+lexical expansion uses bounded Unicode terms and Han unigrams/bigrams rather than
+Jieba; imported document chunks also participate in node recall; vectors use the
+configured HTTP provider, exact-input cache and linear comparison rather than native
+indices. Failed jobs stay terminal without automatic retry. Merge removes source
+chunks and internal links that would become self-links under this domain's invariant.
 
 The browser/main-IPC suite covers these flows, failed writes, runtime reopening,
 owner isolation and a real local HTTP vector provider. `cargo check -p operit-runtime

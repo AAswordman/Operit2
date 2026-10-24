@@ -117,6 +117,7 @@ class ThemeSidebarInfoCard extends StatelessWidget {
   final ThemeDrawerPalette appearance;
   final Widget? trailing;
 
+  /// Constrains the brand title to the space left by the native tab switch.
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -124,15 +125,19 @@ class ThemeSidebarInfoCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          Text(
-            brandName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              letterSpacing: 0,
-              color: appearance.titleColor,
-              fontWeight: FontWeight.bold,
+          Expanded(
+            child: Text(
+              brandName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                letterSpacing: 0,
+                color: appearance.titleColor,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
-          if (trailing != null) ...<Widget>[const Spacer(), trailing!],
+          ?trailing,
         ],
       ),
     );

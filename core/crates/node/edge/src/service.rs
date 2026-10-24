@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc::{UnboundedReceiver as Receiver, UnboundedSender as Sender};
 
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{
@@ -28,7 +28,7 @@ impl EdgeServiceError {
 
 /// Carries typed digital-output states from one Edge Service watch.
 pub struct DeviceIoStateStream {
-    receiver: Receiver<DeviceDigitalOutputState>,
+    receiver: Option<Receiver<DeviceDigitalOutputState>>,
     close: DeviceIoStateStreamClose,
 }
 
@@ -70,7 +70,7 @@ impl DeviceIoStateStream {
     /// Creates a typed state stream from its service-owned receiver.
     pub fn new(receiver: Receiver<DeviceDigitalOutputState>) -> Self {
         Self {
-            receiver,
+            receiver: Some(receiver),
             close: DeviceIoStateStreamClose::empty(),
         }
     }
@@ -81,7 +81,7 @@ impl DeviceIoStateStream {
         onClose: impl FnOnce() + Send + 'static,
     ) -> Self {
         Self {
-            receiver,
+            receiver: Some(receiver),
             close: DeviceIoStateStreamClose::new(onClose),
         }
     }
@@ -91,9 +91,17 @@ impl DeviceIoStateStream {
         self.close.clone()
     }
 
-    /// Reads the next typed digital-output state from the service.
-    pub(crate) fn recv(&self) -> Result<DeviceDigitalOutputState, std::sync::mpsc::RecvError> {
-        self.receiver.recv()
+    /// Transfers the typed receiver to Link while retaining subscription cancellation.
+    pub(crate) fn intoEventStream(
+        mut self,
+        map: impl FnMut(DeviceDigitalOutputState) -> Option<operit_link::CoreEvent> + Send + 'static,
+    ) -> operit_link::CoreEventStream {
+        let receiver = self
+            .receiver
+            .take()
+            .expect("typed stream receiver must be owned");
+        operit_link::CoreEventStream::fromMappedReceiver(receiver, map)
+            .withOnClose(move || drop(self))
     }
 }
 
@@ -106,7 +114,7 @@ impl Drop for DeviceIoStateStream {
 
 /// Carries typed robot face states from one Edge Service watch.
 pub struct RobotFaceStateStream {
-    receiver: Receiver<RobotFaceState>,
+    receiver: Option<Receiver<RobotFaceState>>,
     close: RobotFaceStateStreamClose,
 }
 
@@ -148,7 +156,7 @@ impl RobotFaceStateStream {
     /// Creates a typed robot face stream from its service-owned receiver.
     pub fn new(receiver: Receiver<RobotFaceState>) -> Self {
         Self {
-            receiver,
+            receiver: Some(receiver),
             close: RobotFaceStateStreamClose::empty(),
         }
     }
@@ -159,7 +167,7 @@ impl RobotFaceStateStream {
         onClose: impl FnOnce() + Send + 'static,
     ) -> Self {
         Self {
-            receiver,
+            receiver: Some(receiver),
             close: RobotFaceStateStreamClose::new(onClose),
         }
     }
@@ -169,9 +177,17 @@ impl RobotFaceStateStream {
         self.close.clone()
     }
 
-    /// Reads the next typed robot face state from the service.
-    pub(crate) fn recv(&self) -> Result<RobotFaceState, std::sync::mpsc::RecvError> {
-        self.receiver.recv()
+    /// Transfers robot face updates to Link without a forwarding task.
+    pub(crate) fn intoEventStream(
+        mut self,
+        map: impl FnMut(RobotFaceState) -> Option<operit_link::CoreEvent> + Send + 'static,
+    ) -> operit_link::CoreEventStream {
+        let receiver = self
+            .receiver
+            .take()
+            .expect("typed stream receiver must be owned");
+        operit_link::CoreEventStream::fromMappedReceiver(receiver, map)
+            .withOnClose(move || drop(self))
     }
 }
 
@@ -288,7 +304,7 @@ impl DeviceIoService for HostDeviceIoService {
 
     /// Opens a typed digital-output state stream with an initial snapshot.
     fn watchDigitalOutput(&self, pin: u8) -> Result<DeviceIoStateStream, EdgeServiceError> {
-        let (sender, receiver) = std::sync::mpsc::channel();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let mut watchers = self
             .watchers
             .lock()
@@ -376,7 +392,7 @@ impl RobotFaceService for HostRobotFaceService {
 
     /// Opens a typed robot face state stream with an initial snapshot.
     fn watchExpression(&self) -> Result<RobotFaceStateStream, EdgeServiceError> {
-        let (sender, receiver) = std::sync::mpsc::channel();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let mut watchers = self
             .watchers
             .lock()

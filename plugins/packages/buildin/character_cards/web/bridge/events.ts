@@ -1,7 +1,8 @@
+import { inputChatBinding, changeChatBinding } from "../features/characters/chat-binding";
 import { changeMemoryControls } from "../features/memory/controls-events";
 import { cancelGraphCameraAnimation } from "../features/graph/camera";
 import { updateScoreOutput } from "../features/memory/item-events";
-import { dataValue } from "../shared/dom";
+import { dataValue, requireElement } from "../shared/dom";
 import { editableDialog, setEditableValue } from "../shared/edits";
 import type { ActionFeature, EditorContext } from "./context";
 /** Routes user events to an exact registered feature; unregistered actions are explicit errors. */
@@ -21,6 +22,8 @@ export function createEditorEvents(context: EditorContext, features: readonly Ac
   /** Serializes interactive operations and preserves drafts when the host reports an error. */
   async function onClick(event: MouseEvent | KeyboardEvent): Promise<void> {
     if (!(event.target instanceof Element)) return;
+    const overflow = context.dialogsRoot.querySelector<HTMLDetailsElement>(".graph-overflow[open]");
+    if (overflow !== null && (!overflow.contains(event.target) || event.target.closest("[data-action]") !== null)) overflow.open = false;
     if (event.type === "click" && event.detail !== 0 && state.gestureMoved && event.target.closest<SVGSVGElement>("[data-graph-surface]") !== null) {
       event.preventDefault(); return;
     }
@@ -42,6 +45,8 @@ export function createEditorEvents(context: EditorContext, features: readonly Ac
     if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement)) return;
     const element = event.target;
     if (element.disabled) return;
+    if (element.hasAttribute("data-binding-query") && event instanceof InputEvent && event.isComposing) return;
+    if (inputChatBinding(context, element)) return;
     if (element instanceof HTMLInputElement && context.onScreenInput(element)) return;
     if (element instanceof HTMLInputElement && element.type === "checkbox") return;
     if (element.hasAttribute("data-graph-search")) { topDialog("graph").query = element.value; return; }
@@ -61,6 +66,7 @@ export function createEditorEvents(context: EditorContext, features: readonly Ac
     if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement)) return;
     const element = event.target;
     if (element.disabled) return;
+    if (changeChatBinding(context, element)) return;
     if (element.hasAttribute("data-graph-folder")) { topDialog("graph").folder = element.value; updateGraphSurface(topDialog("graph")); return; }
     if (element instanceof HTMLInputElement && changeMemoryControls(context, element)) return;
   }
@@ -68,6 +74,12 @@ export function createEditorEvents(context: EditorContext, features: readonly Ac
   async function onCancel(event: Event): Promise<void> {
     event.preventDefault();
     if (state.busy || state.dialogs.length === 0) return;
+    const overflow = context.dialogsRoot.querySelector<HTMLDetailsElement>(".graph-overflow[open]");
+    if (overflow !== null) {
+      overflow.open = false;
+      requireElement(overflow.querySelector("summary"), HTMLElement).focus();
+      return;
+    }
     state.busy = true;
     try { await dismissDialog(); }
     catch (error) { if (state.dialogs.length !== 0) topDialog().error = String(error); else state.error = String(error); }

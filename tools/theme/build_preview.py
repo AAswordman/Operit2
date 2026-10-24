@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +28,7 @@ def output(*args: str, cwd: Path = ROOT) -> str:
 
 
 def main() -> None:
+    """Build a pinned renderer release with its rendering engine served locally."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--renderer-release-id", required=True)
     parser.add_argument("--flutter-sdk", required=True, type=Path)
@@ -71,8 +73,11 @@ def main() -> None:
     run("cargo", "build", "--manifest-path", "core/Cargo.toml", "-p", "operit-plugin-theme",
         "--features", "wasm", "--target", "wasm32-unknown-unknown", "--release", "--locked")
     wasm = Path(workspace["target_directory"]) / "wasm32-unknown-unknown/release/operit_plugin_theme.wasm"
+    run(sys.executable, str(ROOT / "tools/prepare_flutter_web_fonts.py"),
+        "--flutter-sdk", str(sdk), "--output-dir", str(PREVIEW / "web/fonts"))
     run(str(flutter), "pub", "get", "--enforce-lockfile", cwd=PREVIEW)
-    run(str(flutter), "build", "web", "--release", "--no-pub", "--output=" + str(destination),
+    run(str(flutter), "build", "web", "--release", "--no-pub", "--no-web-resources-cdn",
+        "--output=" + str(destination),
         "--base-href=" + base_prefix + "/theme-preview/" + release_id + "/",
         "--dart-define=OPERIT_THEME_RENDERER_RELEASE_ID=" + release_id,
         "--dart-define=OPERIT_THEME_FIXTURE_SOURCE_SHA256=" + fixture_source_sha256, cwd=PREVIEW)

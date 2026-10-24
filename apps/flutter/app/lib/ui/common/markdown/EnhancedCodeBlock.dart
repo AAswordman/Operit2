@@ -10,6 +10,7 @@ import 'package:webview_all/webview_all.dart';
 import '../interactions/MessagePressShield.dart';
 import 'CanvasMonospaceCodeBlockBody.dart';
 import 'MarkdownCodeTypeface.dart';
+import 'Utf16Text.dart';
 
 // Lucide SVG Icons (MIT License)
 const String _kSvgWrapText =
@@ -75,7 +76,8 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
 
   @override
   Widget build(BuildContext context) {
-    final lines = widget.code.split('\n');
+    final code = sanitizeUtf16(widget.code);
+    final lines = code.split('\n');
     final highlightedLines = <InlineSpan>[
       for (final line in lines) _highlightSyntaxLine(line, widget.language),
     ];
@@ -312,9 +314,9 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
                 ),
               ),
               if (isMermaid && showRenderedMermaid)
-                MermaidRenderer(code: widget.code, height: 300)
+                MermaidRenderer(code: code, height: 300)
               else if (isHtml && showRenderedHtml)
-                HtmlPreviewRenderer(code: widget.code, height: 360)
+                HtmlPreviewRenderer(code: code, height: 360)
               else
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 420),
@@ -341,7 +343,7 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
         block,
         _FullscreenPreviewDialog(
           type: fullscreenPreviewType,
-          code: widget.code,
+          code: code,
           onClose: () {
             setState(() {
               showFullscreenPreview = false;
@@ -515,9 +517,11 @@ final RegExp _numberPattern = RegExp(
 );
 final RegExp _tokenPattern = RegExp(
   r'''("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|//.*$|0[xX][0-9a-fA-F_]+|0[bB][01_]+|\d[\d_]*(?:\.[\d_]+)?(?:[eE][+-]?\d+)?|[A-Za-z_$][A-Za-z0-9_$]*|\S|\s+)''',
+  unicode: true,
 );
 final RegExp _hashCommentTokenPattern = RegExp(
   r'''("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|#.*$|//.*$|0[xX][0-9a-fA-F_]+|0[bB][01_]+|\d[\d_]*(?:\.[\d_]+)?(?:[eE][+-]?\d+)?|[A-Za-z_$][A-Za-z0-9_$]*|\S|\s+)''',
+  unicode: true,
 );
 
 const Set<String> _mermaidKeywords = <String>{

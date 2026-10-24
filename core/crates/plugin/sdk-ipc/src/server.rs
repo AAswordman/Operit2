@@ -1,15 +1,15 @@
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 use operit_host_api::{
-    PluginSdkIpcEndpoint, PluginSdkIpcHost, PluginSdkIpcSessionCallbacks,
-    PluginSdkIpcSessionId,
+    HostRuntimeTaskSchedulerHost, PluginSdkIpcEndpoint, PluginSdkIpcHost,
+    PluginSdkIpcSessionCallbacks, PluginSdkIpcSessionId,
 };
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreLinkError, CoreLinkPushSession,
-    CorePushItem, CorePushRequest, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreLinkError, CoreLinkPushSession, CorePushItem,
+    CorePushRequest, CoreWatchRequest,
 };
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 
@@ -24,8 +24,7 @@ struct InboundMessage {
 
 struct ServerState {
     activeRequests: HashMap<(String, String), Arc<AtomicBool>>,
-    pushSessions:
-        HashMap<(String, String), Arc<AsyncMutex<Option<Box<dyn CoreLinkPushSession>>>>>,
+    pushSessions: HashMap<(String, String), Arc<AsyncMutex<Option<Box<dyn CoreLinkPushSession>>>>>,
 }
 
 /// Owns the Operit-side forwarding of Core Link traffic for external SDKs.
@@ -37,13 +36,14 @@ pub struct PluginSdkIpcServer {
     state: Arc<Mutex<ServerState>>,
     ingress: Arc<Mutex<Option<mpsc::UnboundedSender<InboundMessage>>>>,
     shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
-    worker: Arc<Mutex<Option<JoinHandle<()>>>>,
+    scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
 }
 
 impl PluginSdkIpcServer {
     /// Creates a server that forwards every SDK message to one existing Core Link target.
     pub fn new(
         host: Arc<dyn PluginSdkIpcHost>,
+        scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
         endpoint: PluginSdkIpcEndpoint,
         target: SharedPluginSdkLinkTarget,
         surface: PluginSdkSurface,
@@ -59,11 +59,11 @@ impl PluginSdkIpcServer {
             })),
             ingress: Arc::new(Mutex::new(None)),
             shutdown: Arc::new(Mutex::new(None)),
-            worker: Arc::new(Mutex::new(None)),
+            scheduler,
         }
     }
 
-    /// Starts the host listener and a local Tokio worker for non-Send Core Link futures.
+    /// Starts the host listener and one Host-owned task for non-Send Core Link futures.
     pub fn start(&self) -> Result<(), CoreLinkError> {
         let (sender, mut receiver) = mpsc::unbounded_channel::<InboundMessage>();
         {
@@ -104,35 +104,33 @@ impl PluginSdkIpcServer {
             return Err(CoreLinkError::internal(error.to_string()));
         }
         let workerServer = server.clone();
-        let worker = std::thread::Builder::new()
-            .name("operit-plugin-sdk-ipc".to_string())
-            .spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("Plugin SDK IPC worker runtime must start");
-                let localSet = tokio::task::LocalSet::new();
-                runtime.block_on(localSet.run_until(async move {
+        if let Err(error) = self.scheduler.scheduleHostRuntimeAsyncTask(
+            "plugin-sdk-ipc",
+            Box::new(move || {
+                Box::pin(async move {
+                    let mut active = FuturesUnordered::new();
                     tokio::pin!(shutdownReceiver);
                     loop {
                         tokio::select! {
                             _ = &mut shutdownReceiver => break,
+                            _ = active.next(), if !active.is_empty() => {},
                             inbound = receiver.recv() => {
                                 let Some(inbound) = inbound else { break; };
                                 let server = workerServer.clone();
-                                tokio::task::spawn_local(async move {
-                                    server.handleMessage(inbound).await;
-                                });
+                                active.push(async move { server.handleMessage(inbound).await; });
                             }
                         }
                     }
-                }));
-            })
-            .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-        self.worker
-            .lock()
-            .map_err(|error| CoreLinkError::internal(error.to_string()))?
-            .replace(worker);
+                })
+            }),
+        ) {
+            let _ = self.shutdown.lock().map(|mut value| value.take());
+            let _ = self.ingress.lock().map(|mut value| value.take());
+            self.host
+                .stopListener()
+                .map_err(|error| CoreLinkError::internal(error.to_string()))?;
+            return Err(CoreLinkError::internal(error.to_string()));
+        }
         Ok(())
     }
 
@@ -166,7 +164,7 @@ impl PluginSdkIpcServer {
             state: self.state.clone(),
             ingress: self.ingress.clone(),
             shutdown: self.shutdown.clone(),
-            worker: self.worker.clone(),
+            scheduler: self.scheduler.clone(),
         }
     }
 
@@ -175,18 +173,11 @@ impl PluginSdkIpcServer {
         let message = match decodePluginSdkIpcMessage(&bytes) {
             Ok(message) => message,
             Err(error) => {
-                self.sendMessage(
-                    &sessionId,
-                    PluginSdkIpcMessage::ProtocolError { error },
-                );
+                self.sendMessage(&sessionId, PluginSdkIpcMessage::ProtocolError { error });
                 return;
             }
         };
-        let sender = self
-            .ingress
-            .lock()
-            .ok()
-            .and_then(|value| value.clone());
+        let sender = self.ingress.lock().ok().and_then(|value| value.clone());
         if let Some(sender) = sender {
             let _ = sender.send(InboundMessage { sessionId, message });
         }
@@ -200,7 +191,10 @@ impl PluginSdkIpcServer {
             PluginSdkIpcMessage::WatchOpen {
                 subscriptionId,
                 request,
-            } => self.handleWatchOpen(sessionId, subscriptionId, request).await,
+            } => {
+                self.handleWatchOpen(sessionId, subscriptionId, request)
+                    .await
+            }
             PluginSdkIpcMessage::WatchSnapshot { request } => {
                 self.handleWatchSnapshot(sessionId, request).await
             }
@@ -209,7 +203,9 @@ impl PluginSdkIpcServer {
             }
             PluginSdkIpcMessage::PushOpen(request) => self.handlePushOpen(sessionId, request).await,
             PluginSdkIpcMessage::PushItem(item) => self.handlePushItem(sessionId, item).await,
-            PluginSdkIpcMessage::PushClose { pushId } => self.handlePushClose(sessionId, pushId).await,
+            PluginSdkIpcMessage::PushClose { pushId } => {
+                self.handlePushClose(sessionId, pushId).await
+            }
             PluginSdkIpcMessage::CallResponse(_)
             | PluginSdkIpcMessage::WatchOpened { .. }
             | PluginSdkIpcMessage::WatchEvent { .. }
@@ -227,9 +223,16 @@ impl PluginSdkIpcServer {
     }
 
     /// Forwards one call without interpreting its target object or method.
-    async fn handleCall(self: Arc<Self>, sessionId: PluginSdkIpcSessionId, request: CoreCallRequest) {
+    async fn handleCall(
+        self: Arc<Self>,
+        sessionId: PluginSdkIpcSessionId,
+        request: CoreCallRequest,
+    ) {
         if let Err(error) = self.surface.check(&request.target, &request.methodName) {
-            self.sendMessage(&sessionId, PluginSdkIpcMessage::CallResponse(CoreCallResponse::err(request.requestId, error)));
+            self.sendMessage(
+                &sessionId,
+                PluginSdkIpcMessage::CallResponse(CoreCallResponse::err(request.requestId, error)),
+            );
             return;
         }
         let response = self.target.call(request).await;
@@ -237,10 +240,20 @@ impl PluginSdkIpcServer {
     }
 
     /// Forwards one watch snapshot and returns its event through the watch envelope.
-    async fn handleWatchSnapshot(self: Arc<Self>, sessionId: PluginSdkIpcSessionId, request: CoreWatchRequest) {
+    async fn handleWatchSnapshot(
+        self: Arc<Self>,
+        sessionId: PluginSdkIpcSessionId,
+        request: CoreWatchRequest,
+    ) {
         let subscriptionId = request.requestId.0.clone();
         if let Err(error) = self.surface.check(&request.target, &request.propertyName) {
-            self.sendMessage(&sessionId, PluginSdkIpcMessage::WatchClose { subscriptionId, error: Some(error) });
+            self.sendMessage(
+                &sessionId,
+                PluginSdkIpcMessage::WatchClose {
+                    subscriptionId,
+                    error: Some(error),
+                },
+            );
             return;
         }
         match self.target.watchSnapshot(request.clone()).await {
@@ -279,7 +292,13 @@ impl PluginSdkIpcServer {
         request: CoreWatchRequest,
     ) {
         if let Err(error) = self.surface.check(&request.target, &request.propertyName) {
-            self.sendMessage(&sessionId, PluginSdkIpcMessage::WatchOpened { subscriptionId, result: Err(error) });
+            self.sendMessage(
+                &sessionId,
+                PluginSdkIpcMessage::WatchOpened {
+                    subscriptionId,
+                    result: Err(error),
+                },
+            );
             return;
         }
         let active = match self.registerRequest(&sessionId, &subscriptionId) {
@@ -354,10 +373,20 @@ impl PluginSdkIpcServer {
     }
 
     /// Opens one Core push stream and acknowledges the server-side session.
-    async fn handlePushOpen(self: Arc<Self>, sessionId: PluginSdkIpcSessionId, request: CorePushRequest) {
+    async fn handlePushOpen(
+        self: Arc<Self>,
+        sessionId: PluginSdkIpcSessionId,
+        request: CorePushRequest,
+    ) {
         let pushId = request.requestId.0.clone();
         if let Err(error) = self.surface.check(&request.target, &request.methodName) {
-            self.sendMessage(&sessionId, PluginSdkIpcMessage::PushOpened { pushId, result: Err(error) });
+            self.sendMessage(
+                &sessionId,
+                PluginSdkIpcMessage::PushOpened {
+                    pushId,
+                    result: Err(error),
+                },
+            );
             return;
         }
         match self.target.openPush(request).await {
@@ -403,7 +432,10 @@ impl PluginSdkIpcServer {
                 PluginSdkIpcMessage::PushItemResult {
                     pushId: item.pushId,
                     sequence: item.sequence,
-                    result: Err(CoreLinkError::new("PUSH_NOT_FOUND", "Core push is not active")),
+                    result: Err(CoreLinkError::new(
+                        "PUSH_NOT_FOUND",
+                        "Core push is not active",
+                    )),
                 },
             );
             return;
@@ -412,7 +444,10 @@ impl PluginSdkIpcServer {
             let mut guard = push.lock().await;
             match guard.as_mut() {
                 Some(session) => session.send(item.args).await,
-                None => Err(CoreLinkError::new("PUSH_CLOSED", "Core push is already closed")),
+                None => Err(CoreLinkError::new(
+                    "PUSH_CLOSED",
+                    "Core push is already closed",
+                )),
             }
         };
         self.sendMessage(
@@ -436,9 +471,15 @@ impl PluginSdkIpcServer {
         let result = match push {
             Some(push) => match push.lock().await.take() {
                 Some(session) => session.close().await,
-                None => Err(CoreLinkError::new("PUSH_CLOSED", "Core push is already closed")),
+                None => Err(CoreLinkError::new(
+                    "PUSH_CLOSED",
+                    "Core push is already closed",
+                )),
             },
-            None => Err(CoreLinkError::new("PUSH_NOT_FOUND", "Core push is not active")),
+            None => Err(CoreLinkError::new(
+                "PUSH_NOT_FOUND",
+                "Core push is not active",
+            )),
         };
         self.sendMessage(
             &sessionId,
@@ -452,7 +493,10 @@ impl PluginSdkIpcServer {
         sessionId: &PluginSdkIpcSessionId,
         requestId: &str,
     ) -> Result<Arc<AtomicBool>, CoreLinkError> {
-        let mut state = self.state.lock().expect("Plugin SDK server state mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .expect("Plugin SDK server state mutex poisoned");
         let key = (sessionId.0.clone(), requestId.to_string());
         if state.activeRequests.contains_key(&key) {
             return Err(CoreLinkError::new(
@@ -472,7 +516,10 @@ impl PluginSdkIpcServer {
         requestId: &str,
         active: &Arc<AtomicBool>,
     ) -> bool {
-        let mut state = self.state.lock().expect("Plugin SDK server state mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .expect("Plugin SDK server state mutex poisoned");
         let key = (sessionId.0.clone(), requestId.to_string());
         if state
             .activeRequests
@@ -499,7 +546,10 @@ impl PluginSdkIpcServer {
 
     /// Cancels requests and removes push handles owned by one session.
     fn cancelSessionState(&self, sessionId: Option<&PluginSdkIpcSessionId>) {
-        let mut state = self.state.lock().expect("Plugin SDK server state mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .expect("Plugin SDK server state mutex poisoned");
         for ((owner, _), active) in state.activeRequests.iter() {
             if sessionId.is_none_or(|session| session.0 == *owner) {
                 active.store(true, Ordering::SeqCst);

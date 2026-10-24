@@ -59,6 +59,10 @@ impl RuntimeStorageHost for AndroidRuntimeStorageHost {
         self.inner.writeBytesAtomically(path, content)
     }
 
+    fn flushFile(&self, path: &str) -> HostResult<()> {
+        self.inner.flushFile(path)
+    }
+
     /// Appends bytes to Android runtime storage.
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.inner.appendBytes(path, content)

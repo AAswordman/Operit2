@@ -84,7 +84,6 @@ class ThemeStudioApp {
   private readonly themeJson = document.createElement("textarea");
   private readonly preview = document.createElement("iframe");
   private readonly previewCanvas = document.createElement("div");
-  private readonly previewInspectOverlay = document.createElement("div");
   private readonly assetList = document.createElement("div");
   private readonly rendererUrl = document.createElement("input");
   private readonly workerUrl = document.createElement("input");
@@ -272,8 +271,8 @@ class ThemeStudioApp {
     this.preview.title = oldIframe.title;
     this.preview.referrerPolicy = "no-referrer";
     this.previewCanvas.className = "preview-canvas";
-    this.previewInspectOverlay.className = "preview-inspect-overlay";
-    this.previewCanvas.append(this.preview, this.previewInspectOverlay);
+    // Flutter owns hit testing and highlights for the rendered component bounds.
+    this.previewCanvas.append(this.preview);
     oldIframe.replaceWith(this.previewCanvas);
 
     this.buildEditor(this.root.querySelector<HTMLElement>("#editor-form")!, visualHost);
@@ -654,7 +653,6 @@ class ThemeStudioApp {
   }
 
   private renderLayerChips(): void {
-    this.renderPreviewInspectOverlay();
     this.layerChipBar.replaceChildren();
     for (const item of LAYER_CHIPS) {
       const chip = document.createElement("button");
@@ -675,123 +673,6 @@ class ThemeStudioApp {
   }
 
 
-
-  private renderPreviewInspectOverlay(): void {
-    this.previewInspectOverlay.replaceChildren();
-    const active = this.inspectEnabled;
-    this.previewInspectOverlay.classList.toggle("active", active);
-    if (!active) return;
-
-    const compact = this.viewport.width < 600;
-    const zones: Array<{
-      id: string;
-      label: string;
-      rect: { left: string; top: string; width: string; height: string };
-      zIndex: number;
-    }> = [];
-
-    if (!compact) {
-      const sbPct = ((280 / this.viewport.width) * 100).toFixed(2);
-      const chatPct = (100 - Number(sbPct)).toFixed(2);
-      zones.push({
-        id: "navigation.sidebar",
-        label: "🧭 导航侧栏 (点击配置明暗双套色)",
-        rect: { left: "0%", top: "0%", width: `${sbPct}%`, height: "100%" },
-        zIndex: 2,
-      });
-      zones.push({
-        id: "chat.topBar",
-        label: "📌 对话顶栏 (点击配置明暗双套色)",
-        rect: { left: `${sbPct}%`, top: "0%", width: `${chatPct}%`, height: "8.5%" },
-        zIndex: 2,
-      });
-      zones.push({
-        id: "background",
-        label: "🖼️ 画布背景 (点击配置背景与双套底色)",
-        rect: { left: `${sbPct}%`, top: "8.5%", width: `${chatPct}%`, height: "75.5%" },
-        zIndex: 1,
-      });
-      if (this.showConversation) {
-        zones.push({
-          id: "chat.userMessage",
-          label: "💬 用户消息气泡 (点击配置气泡与明暗双套色)",
-          rect: { left: "65%", top: "41%", width: "22%", height: "8%" },
-          zIndex: 3,
-        });
-        zones.push({
-          id: "chat.aiMessage",
-          label: "🤖 AI 消息气泡 (点击配置气泡与明暗双套色)",
-          rect: { left: "26%", top: "50%", width: "44%", height: "8%" },
-          zIndex: 3,
-        });
-      }
-      zones.push({
-        id: "chat.composer",
-        label: "⌨️ 消息输入框 (点击配置输入框与明暗双套色)",
-        rect: { left: `${sbPct}%`, top: "84%", width: `${chatPct}%`, height: "16%" },
-        zIndex: 2,
-      });
-    } else {
-      zones.push({
-        id: "chat.topBar",
-        label: "📌 对话顶栏 (点击配置明暗双套色)",
-        rect: { left: "0%", top: "0%", width: "100%", height: "8.5%" },
-        zIndex: 2,
-      });
-      zones.push({
-        id: "background",
-        label: "🖼️ 画布背景 (点击配置背景与双套底色)",
-        rect: { left: "0%", top: "8.5%", width: "100%", height: "75.5%" },
-        zIndex: 1,
-      });
-      if (this.showConversation) {
-        zones.push({
-          id: "chat.userMessage",
-          label: "💬 用户消息气泡 (点击配置气泡与明暗双套色)",
-          rect: { left: "26%", top: "33%", width: "68%", height: "11%" },
-          zIndex: 3,
-        });
-        zones.push({
-          id: "chat.aiMessage",
-          label: "🤖 AI 消息气泡 (点击配置气泡与明暗双套色)",
-          rect: { left: "5%", top: "45%", width: "78%", height: "11%" },
-          zIndex: 3,
-        });
-      }
-      zones.push({
-        id: "chat.composer",
-        label: "⌨️ 消息输入框 (点击配置输入框与明暗双套色)",
-        rect: { left: "0%", top: "84%", width: "100%", height: "16%" },
-        zIndex: 2,
-      });
-    }
-
-    for (const zone of zones) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      const isSelected = this.selectedInspectTargetId === zone.id;
-      btn.className = `preview-hotspot-zone${isSelected ? " selected" : ""}`;
-      btn.dataset.targetId = zone.id;
-      btn.setAttribute("aria-label", zone.label);
-      btn.style.left = zone.rect.left;
-      btn.style.top = zone.rect.top;
-      btn.style.width = zone.rect.width;
-      btn.style.height = zone.rect.height;
-      btn.style.zIndex = String(zone.zIndex);
-
-      const tag = document.createElement("span");
-      tag.className = "preview-hotspot-tag";
-      tag.textContent = zone.label;
-      btn.append(tag);
-
-      btn.onclick = event => {
-        event.preventDefault();
-        event.stopPropagation();
-        this.selectInspectorLayer(zone.id);
-      };
-      this.previewInspectOverlay.append(btn);
-    }
-  }
 
   private renderStageColorHud(): void {
     this.hudToggleButton.classList.toggle("selected", this.stageHudOpen);
@@ -1546,7 +1427,6 @@ class ThemeStudioApp {
     this.hudToggleButton.classList.toggle("selected", this.stageHudOpen);
     // Allow toggling conversation scene even if inspect mode is active (toggleConversationScene handles it seamlessly)
     this.conversationToggle.disabled = !rendered || this.busy;
-    this.renderPreviewInspectOverlay();
   }
 
   private toggleConversationScene(): void {

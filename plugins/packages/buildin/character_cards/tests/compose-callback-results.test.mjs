@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { createHash } from "node:crypto";
 
 const root = new URL("../../../../../", import.meta.url);
 const sdkRoot = "core/crates/plugin/sdk/src/";
@@ -64,6 +65,7 @@ function nativeTransport(callbackBody) {
   context.__operitNativeLog=()=>{};
   context.__operitNativeHashText=text=>{let hash=0;for(let i=0;i<text.length;i++)hash=(Math.imul(hash,31)+text.charCodeAt(i))>>>0;return hash.toString(16);};
   context.__operitNativePrepareComposeModule = compileComposeModule;
+  vm.runInContext("globalThis.__operitNativeCompileModuleFactory = body => new Function('module','exports','require','__operit_call_runtime',body);", context);
   vm.runInContext(productionBootstrap(),context);
   const fixture = composeStreamFixture(context, { inspectStorage: false });
   context.__operitNativeSetCallStructuredResult =
@@ -100,13 +102,15 @@ function nativeTransport(callbackBody) {
       /** Registers the sole terminal receiver before executing the real JavaScript call. */
       (resolve, reject) => pending.set(callId, { resolve, reject }),
     );
+    const sourceId = callId + ":" + createHash("sha256").update(script).digest("hex");
+    context.__operitRegisterScriptSource(sourceId, script);
     context.__operitExecuteScriptFunction(callId, {
       __operit_ui_package_name: "arbitrary.callback.fixture",
       __operit_script_screen: "ui/callback/index.ui.js",
       __operit_execution_context_key: "toolpkg_compose:callback-fixture",
       __operit_toolpkg_runtime_kind: "ui",
       ...params,
-    }, script, name, 10, 10000, true);
+    }, sourceId, name, 10, 10000, true);
     return result;
   }
   return { invoke, terminal, intermediate, traces };

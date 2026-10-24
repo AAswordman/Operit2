@@ -13,14 +13,14 @@ impl StreamLogger {
         ENABLED.store(enabled, Ordering::Relaxed);
     }
 
-    /// Writes a debug-level stream diagnostic.
+    /// Writes internal stream scheduling and state diagnostics at V5.
     pub fn d(component: &str, message: &str) {
         if ENABLED.load(Ordering::Relaxed) {
-            AppLogger::d("StreamFramework", &format!("[{component}] {message}"));
+            AppLogger::trace("StreamFramework", &format!("[{component}] {message}"));
         }
     }
 
-    /// Writes a verbose stream diagnostic through the legacy info entry point.
+    /// Writes per-item stream details at V6 through the legacy info entry point.
     pub fn i(component: &str, message: &str) {
         if ENABLED.load(Ordering::Relaxed) {
             AppLogger::v_with_level(
@@ -31,7 +31,7 @@ impl StreamLogger {
         }
     }
 
-    /// Writes a verbose stream diagnostic.
+    /// Writes per-item stream details at V6.
     pub fn v(component: &str, message: &str) {
         if ENABLED.load(Ordering::Relaxed) {
             AppLogger::v_with_level(

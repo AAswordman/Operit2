@@ -1,6 +1,7 @@
 //! 只按 transport 选择 Host 适配，不处理鉴权或配对。
 mod bluetooth;
 mod http;
+mod http_outbox;
 mod inbox;
 mod serial;
 mod stream;
@@ -69,13 +70,6 @@ impl HostPeerLink {
 
 #[async_trait]
 impl PeerLink for HostPeerLink {
-    fn exclusiveEndpointKey(&self, target: &PeerEndpoint, transport: PeerTransport) -> Option<String> {
-        match transport {
-            PeerTransport::Serial => Some(format!("serial:{}", serial::endpointKey(&target.address))),
-            _ => None,
-        }
-    }
-
     async fn connect(
         &self,
         host: Arc<HostManager>,

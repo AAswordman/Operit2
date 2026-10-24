@@ -17,6 +17,11 @@ struct RecordingStorageHost {
 }
 
 impl RuntimeStorageHost for RecordingStorageHost {
+    /// Delegates durability to the real storage host without rewriting the file.
+    fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+        self.inner.flushFile(path)
+    }
+
     /// Reads the physical root from the real storage host.
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         self.inner.runtimeRootDir()
@@ -37,14 +42,19 @@ impl RuntimeStorageHost for RecordingStorageHost {
         self.inner.readBytesRange(path, offset, length)
     }
 
-    /// Records ordinary preference writes and delegates successful commits to the real host.
-    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+    /// Records and atomically publishes one complete preference commit through the real host.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
         if path == OperitPaths::USER_PREFERENCES_PATH {
             if self.failPreferenceWrite.load(Ordering::SeqCst) {
                 return Err(HostError::new("injected theme preference write failure"));
             }
             self.preferenceWrites.fetch_add(1, Ordering::SeqCst);
         }
+        self.inner.writeBytesAtomically(path, content)
+    }
+
+    /// Delegates ordinary nontransactional test writes to the real host.
+    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.inner.writeBytes(path, content)
     }
 
@@ -248,7 +258,7 @@ fn initial_catalog_initializes_only_schema_metadata() {
         values.get(&stringPreferencesKey(
             operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME
         )),
-        Some(&json!(2))
+        Some(&json!(4))
     );
 }
 
@@ -420,7 +430,7 @@ fn corrupt_catalog_json_propagates_without_mutating_bytes() {
             .preferences()
             .edit(|preferences| {
                 preferences.set(
-                    &stringPreferencesKey(THEME_CONFIGS_KEY),
+                    &stringPreferencesKey("theme_config_known"),
                     invalid.to_string(),
                 )
             })
@@ -438,7 +448,7 @@ fn corrupt_catalog_json_propagates_without_mutating_bytes() {
     }
 }
 
-/// Rejects missing snapshot fields, unknown record fields, duplicate IDs and dangling active IDs.
+/// Rejects missing snapshot fields, unknown record fields, mismatched IDs and dangling active IDs.
 #[test]
 fn invalid_saved_records_and_selections_are_not_repaired() {
     let valid = ThemeConfig {
@@ -455,16 +465,14 @@ fn invalid_saved_records_and_selections_are_not_repaired() {
         .as_object_mut()
         .unwrap()
         .insert("unknown".to_string(), json!(true));
-    for catalog in [
-        json!([incomplete]),
-        json!([unknown_record]),
-        json!([valid.clone(), valid.clone()]),
-    ] {
+    let mut wrong_identity = valid.clone();
+    wrong_identity.id = "another".into();
+    for record in [json!(incomplete), unknown_record, json!(wrong_identity)] {
         let fixture = StoreFixture::new();
         fixture
             .preferences()
             .edit(|preferences| {
-                preferences.set(&stringPreferencesKey(THEME_CONFIGS_KEY), catalog.clone())
+                preferences.set(&stringPreferencesKey("theme_config_known"), record.clone())
             })
             .unwrap();
         let before = fixture.bytes();
@@ -478,8 +486,8 @@ fn invalid_saved_records_and_selections_are_not_repaired() {
             .preferences()
             .edit(|preferences| {
                 preferences.set(
-                    &stringPreferencesKey(THEME_CONFIGS_KEY),
-                    json!([valid.clone()]),
+                    &stringPreferencesKey("theme_config_known"),
+                    json!(valid.clone()),
                 );
                 preferences.set(
                     &stringPreferencesKey(ACTIVE_THEME_CONFIG_ID_KEY),
@@ -837,7 +845,7 @@ fn user_schema_one_migration_preserves_declared_native_types() {
     })).unwrap()).unwrap();
     let preferences = fixture.preferences();
     let values = preferences.data().unwrap();
-    assert_eq!(preferences.schemaVersion().unwrap(), 2);
+    assert_eq!(preferences.schemaVersion().unwrap(), 4);
     assert_eq!(
         values.get(&stringPreferencesKey("font_scale")),
         Some(&json!(1.25))
@@ -860,7 +868,7 @@ fn user_schema_one_migration_preserves_declared_native_types() {
     );
     assert_eq!(
         values.get(&stringPreferencesKey("theme_configs")),
-        Some(&json!([]))
+        None
     );
     assert_eq!(
         values.get(&stringPreferencesKey("active_theme_config_id")),
@@ -1022,4 +1030,281 @@ fn explicit_custom_appearance_repairs_invalid_preferences_and_preserves_catalog(
     assert_eq!(manager.get(saved.id.clone()).unwrap(), saved);
     assert!(manager.getActive().unwrap().is_none());
     assert_eq!(fixture.preferences().data().unwrap().get(&stringPreferencesKey("font_scale")), Some(&snapshot()["fontScale"]));
+}
+
+
+/// Migrates through the user preferences owner before any theme manager is opened.
+#[test]
+fn user_schema_two_migration_preserves_records_and_active_appearance() {
+    let fixture = StoreFixture::new();
+    let first = ThemeConfig {
+        id: Uuid::new_v4().to_string(), name: "First".into(), snapshot: snapshot(),
+        createdAt: 1, updatedAt: 2,
+    };
+    let second = ThemeConfig {
+        id: Uuid::new_v4().to_string(), name: "Second".into(),
+        snapshot: changedSnapshot("fontScale", json!(1.2)), createdAt: 3, updatedAt: 4,
+    };
+    let mut saved = Preferences::default();
+    saved.set(&stringPreferencesKey("__operit_preferences_schema_version"), 2);
+    saved.set(&stringPreferencesKey("theme_configs"), json!([first, second]));
+    saved.set(&stringPreferencesKey("active_theme_config_id"), json!(second.id));
+    writeThemePreferenceSnapshot(&mut saved, &second.snapshot).unwrap();
+    fixture.host.writeBytes(OperitPaths::USER_PREFERENCES_PATH, &serde_json::to_vec(&saved).unwrap()).unwrap();
+    let writes = fixture.writes();
+    let entries = fixture.preferences().data().unwrap();
+    assert_eq!(fixture.writes(), writes + 1);
+    assert_eq!(entries.get(&stringPreferencesKey("__operit_preferences_schema_version")), Some(&json!(4)));
+    let migratedBytes = fixture.bytes();
+    let manager = fixture.manager();
+    assert_eq!(manager.list().unwrap(), vec![first.clone(), second.clone()]);
+    assert_eq!(manager.getActive().unwrap(), Some(second.clone()));
+    assert_eq!(fixture.writes(), writes + 1);
+    assert_eq!(fixture.bytes(), migratedBytes);
+    assert!(!entries.contains(&stringPreferencesKey("theme_configs")));
+    assert_eq!(entries.get(&stringPreferencesKey(&format!("theme_config_{}", first.id))), Some(&json!(first)));
+    assert_eq!(entries.get(&stringPreferencesKey(&format!("theme_config_{}", second.id))), Some(&json!(second)));
+}
+
+/// Keeps the schema-two file intact when catalog migration rejects conflicting or invalid records.
+#[test]
+fn user_schema_two_migration_rejects_invalid_catalogs_without_persisting_changes() {
+    let first = ThemeConfig {
+        id: Uuid::new_v4().to_string(),
+        name: "First".into(),
+        snapshot: snapshot(),
+        createdAt: 1,
+        updatedAt: 2,
+    };
+    let second = ThemeConfig {
+        id: Uuid::new_v4().to_string(),
+        name: "Second".into(),
+        ..first.clone()
+    };
+    let mut invalid = second.clone();
+    invalid.snapshot.remove("fontScale");
+    for (catalog, destination) in [
+        (json!([first, first]), None),
+        (json!([first, second]), Some(second.clone())),
+        (json!([first, invalid]), None),
+        (json!({"invalid": "catalog"}), None),
+    ] {
+        let fixture = StoreFixture::new();
+        let mut saved = Preferences::default();
+        saved.set(&stringPreferencesKey("__operit_preferences_schema_version"), 2);
+        saved.set(&stringPreferencesKey("theme_configs"), catalog);
+        saved.set(&stringPreferencesKey("active_theme_config_id"), json!(first.id));
+        if let Some(config) = destination {
+            saved.set(
+                &stringPreferencesKey(&format!("theme_config_{}", config.id)),
+                json!(config),
+            );
+        }
+        let original = serde_json::to_vec(&saved).unwrap();
+        fixture.host.writeBytes(OperitPaths::USER_PREFERENCES_PATH, &original).unwrap();
+        let writes = fixture.writes();
+        let store = fixture.preferences();
+        assert!(store.data().is_err());
+        assert_eq!(fixture.writes(), writes);
+        assert_eq!(fixture.bytes(), original);
+        assert!(store.data().is_err());
+        assert_eq!(fixture.bytes(), original);
+    }
+}
+
+/// Keeps two independently synchronized themes instead of replacing a shared catalog array.
+#[test]
+fn synchronized_themes_preserve_independent_identity_records() {
+    use operit_store::SyncOperationStore::{SyncClock, SyncOperationStore};
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+    let source = StoreFixture::new();
+    let target = StoreFixture::new();
+    let first = source
+        .manager()
+        .create("Shared name".into(), snapshot())
+        .unwrap();
+    let second = target
+        .manager()
+        .create(
+            "Shared name".into(),
+            changedSnapshot("fontScale", json!(1.2)),
+        )
+        .unwrap();
+    let sourceJournal = SyncOperationStore::new(source.host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let targetJournal = SyncOperationStore::new(target.host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let operations = sourceJournal
+        .operationsSince(&SyncClock::empty(), &["preferences".into()], 512)
+        .unwrap();
+    let history = targetJournal.preferenceHistory().unwrap();
+    operit_store::PreferenceMerge::applyOperations(
+        target.host.clone(),
+        &operit_store::PreferenceMerge::PreferenceMergeSchema::default(),
+        &history,
+        &operations,
+        |_, _| true,
+    )
+    .unwrap();
+    let manager = target.manager();
+    assert_eq!(manager.list().unwrap().len(), 2);
+    assert_eq!(manager.get(first.id.clone()).unwrap(), first);
+    assert_eq!(manager.get(second.id.clone()).unwrap(), second);
+}
+
+/// Repairs installed schema-one, schema-two and schema-three color representations before any active-theme validation.
+#[test]
+fn legacy_color_migration_covers_existing_user_schema_versions() {
+    use super::super::ThemePreferenceSnapshot::{snapshotFields, FieldKind};
+    for version in [1, 2, 3] {
+        let fixture = StoreFixture::new();
+        let canonical = snapshot();
+        let mut saved = Preferences::default();
+        writeThemePreferenceSnapshot(&mut saved, &canonical).unwrap();
+        let mut old_snapshot = canonical;
+        for field in snapshotFields().filter(|field| matches!(field.kind, FieldKind::OptionalColor))
+        {
+            old_snapshot.insert(field.json_key.to_string(), json!(-16711936));
+            saved.set(
+                &stringPreferencesKey(field.preference_key),
+                if version == 1 {
+                    json!("-16711936")
+                } else {
+                    json!(-16711936)
+                },
+            );
+        }
+        old_snapshot.insert("retiredHistoricalSetting".to_string(), json!(true));
+        let old = ThemeConfig {
+            id: "legacy-color".into(),
+            name: "My theme".into(),
+            snapshot: old_snapshot,
+            createdAt: 10,
+            updatedAt: 20,
+        };
+        saved.set(
+            &stringPreferencesKey("__operit_preferences_schema_version"),
+            json!(version),
+        );
+        saved.set(
+            &stringPreferencesKey("active_theme_config_id"),
+            if version == 1 {
+                json!("\"legacy-color\"")
+            } else {
+                json!("legacy-color")
+            },
+        );
+        match version {
+            1 => saved.set(
+                &stringPreferencesKey("theme_configs"),
+                serde_json::to_string(&vec![old.clone()]).unwrap(),
+            ),
+            2 => saved.set(&stringPreferencesKey("theme_configs"), json!([old.clone()])),
+            3 => saved.set(
+                &stringPreferencesKey("theme_config_legacy-color"),
+                json!(old.clone()),
+            ),
+            _ => unreachable!(),
+        }
+        saved.set(&stringPreferencesKey("unrelated"), json!({"keep":true}));
+        fixture
+            .host
+            .writeBytes(
+                OperitPaths::USER_PREFERENCES_PATH,
+                &serde_json::to_vec(&saved).unwrap(),
+            )
+            .unwrap();
+        let entries = fixture.preferences().data().unwrap();
+        assert_eq!(fixture.preferences().schemaVersion().unwrap(), 4);
+        let mut expected = old;
+        expected.snapshot.remove("retiredHistoricalSetting");
+        for field in snapshotFields().filter(|field| matches!(field.kind, FieldKind::OptionalColor))
+        {
+            expected
+                .snapshot
+                .insert(field.json_key.to_string(), json!(4278255360_u32));
+            assert_eq!(
+                entries.get(&stringPreferencesKey(field.preference_key)),
+                Some(&json!(4278255360_u32))
+            );
+        }
+        let manager = fixture.manager();
+        assert_eq!(manager.getActive().unwrap(), Some(expected.clone()));
+        assert_eq!(manager.get(expected.id.clone()).unwrap(), expected);
+        assert_eq!(
+            entries.get(&stringPreferencesKey("unrelated")),
+            Some(&json!({"keep":true}))
+        );
+        assert!(entries
+            .get(&stringPreferencesKey("theme_configs"))
+            .is_none());
+        let committed = fixture.bytes();
+        fixture.preferences().data().unwrap();
+        assert_eq!(fixture.bytes(), committed);
+    }
+}
+
+/// Rejects values that do not encode a 32-bit ARGB integer without manufacturing a replacement color.
+#[test]
+fn legacy_color_conversion_checks_exact_bit_width() {
+    use super::super::ThemePreferenceSnapshot::{
+        decodeLegacyThemePreference, snapshotFields, FieldKind,
+    };
+    for field in snapshotFields().filter(|field| matches!(field.kind, FieldKind::OptionalColor)) {
+        for raw in [
+            json!(-2147483649_i64),
+            json!(4294967296_i64),
+            json!(1.5),
+            json!(true),
+            json!("invalid"),
+        ] {
+            assert!(
+                decodeLegacyThemePreference(field, raw).is_err(),
+                "{}",
+                field.json_key
+            );
+        }
+        assert_eq!(
+            decodeLegacyThemePreference(field, json!(i32::MIN)).unwrap(),
+            json!(2147483648_u32)
+        );
+        assert_eq!(
+            decodeLegacyThemePreference(field, json!(u32::MAX)).unwrap(),
+            json!(u32::MAX)
+        );
+    }
+}
+
+/// Migrates all 78 fields emitted by the October 8 writer (425074726), including already installed schema markers.
+#[test]
+fn october_eighth_preferences_migrate_all_released_field_types() {
+    let released: Value =
+        serde_json::from_str(include_str!("theme_preferences_oct08_fixture.json")).unwrap();
+    let expected: BTreeMap<String, Value> =
+        serde_json::from_value(released["snapshot"].clone()).unwrap();
+    for version in [0, 1, 2, 3] {
+        let fixture = StoreFixture::new();
+        let mut saved = released["preferences"].clone();
+        if version != 0 {
+            saved["__operit_preferences_schema_version"] = json!(version.to_string());
+        }
+        fixture
+            .host
+            .writeBytes(
+                OperitPaths::USER_PREFERENCES_PATH,
+                &serde_json::to_vec(&saved).unwrap(),
+            )
+            .unwrap();
+        let initial_writes = fixture.writes();
+        let preferences = fixture.preferences();
+        let migrated = preferences.data().unwrap();
+        assert_eq!(preferences.schemaVersion().unwrap(), 4);
+        assert_eq!(
+            readThemePreferenceSnapshot(&migrated, &snapshot()).unwrap(),
+            expected
+        );
+        assert_eq!(fixture.writes(), initial_writes + 1);
+        let committed = fixture.bytes();
+        preferences.data().unwrap();
+        assert_eq!(fixture.bytes(), committed);
+        assert_eq!(fixture.writes(), initial_writes + 1);
+    }
 }

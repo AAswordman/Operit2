@@ -1,5 +1,7 @@
-// @operit-compose-artifact 1
+// @operit-compose-artifact 4
 "use strict";
+var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/memory-status/index.ui.js:sj3anc:16730","root":0,"nodes":[{"type":"AlertDialog","props":[2,["key","title","text","confirmText","onConfirm","onDismissRequest"],[[0,"memory-status"],[0,"记忆状态"],[1,0],[0,"关闭"],[1,1],[1,2]]],"children":[0,null],"explicitChildren":false}]}];
+
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -70,10 +72,8 @@ function nonblank(value, path) {
   text(value, path);
   if (value.trim() === "") throw new Error(`${path} must not be blank`);
 }
-function parseMemoryIdentifier(value, path, positive = true) {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${path} must be a canonical decimal string`);
-  const id2 = BigInt(value);
-  if (id2 > 9223372036854775807n || positive && id2 === 0n) throw new Error(`${path} is outside its declared identity range`);
+function parseMemoryIdentifier(value, path, _positive = true) {
+  if (typeof value !== "string" || value.trim() === "" || value !== value.trim() || value.length > 256) throw new Error(`${path} must be a nonblank identity`);
   return value;
 }
 function memoryIdentifier(value, path) {
@@ -90,6 +90,10 @@ function number(value, path) {
 }
 function integer(value, path) {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${path} must be a safe integer`);
+}
+function nonnegativeInteger(value, path) {
+  integer(value, path);
+  nonnegative(value, path);
 }
 function messageVariant(value, path) {
   integer(value, path);
@@ -162,13 +166,13 @@ var characterFields = {
   marks: optional(text),
   chatModelBindingMode: optional(enumeration("FOLLOW_GLOBAL", "FIXED_MODEL")),
   chatModelId: optional(nullable(text)),
+  chatProviderId: optional(nullable(text)),
   ttsConfigId: optional(nullable(text)),
   themeConfigId: optional(nullable(text)),
   memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
   sharedMemoryId: optional(nullable(text)),
   sharedMemoryMounts: optional(array(mount)),
   toolAccessConfig: optional(toolAccess),
-  isDefault: optional(boolean),
   createdAt: optional(integer),
   updatedAt: optional(integer)
 };
@@ -211,8 +215,10 @@ var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
 var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
+  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
+  "memory.chat.pruneMissing": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
   "memory.categorize": ownerOnly,
   "memory.rebuild.start": shape({ ownerKey: required(owner), rebuild: required(shape({ chatIds: required(strings), windowMessageCount: required(integer), fromInclusive: required(nullable(integer)), toInclusive: required(nullable(integer)) })) }),
@@ -232,7 +238,6 @@ var validators = {
   "character.delete": id,
   "character.setActive": id,
   "character.combine": shape({ id: required(nonblank), promptFunctionType: optional(enumeration("CHAT", "VOICE")), additionalTagIds: optional(identifiers) }),
-  "character.resetDefault": empty,
   "character.export": shape({ id: required(nonblank), format: required(format) }),
   "character.import": shape({ format: required(format), content: required(nonblank) }),
   "character.exportBackup": empty,
@@ -292,7 +297,6 @@ function parseChatConfigurationRequest(value) {
     purpose: required(enumeration("display", "execution")),
     chatId: required(nullable(nonblank)),
     chatExtension: required(nullable(markerObject)),
-    messageExtension: required(nullable(markerObject)),
     participantId: required(nullable(nonblank)),
     promptFunctionType: required(enumeration("CHAT", "VOICE")),
     defaultModelBinding: required(shape({ providerId: required(text), modelId: required(text) })),
@@ -300,7 +304,7 @@ function parseChatConfigurationRequest(value) {
   })(value, "chat.configuration.resolve");
   const request = value;
   if (request.purpose === "display") {
-    if (request.participantId !== null || request.messageExtension !== null) throw new Error("Display configuration cannot request an execution participant or message snapshot");
+    if (request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
   } else {
     nonblank(request.defaultModelBinding.providerId, "execution default provider");
     nonblank(request.defaultModelBinding.modelId, "execution default model");
@@ -321,12 +325,5 @@ function Screen(ctx) {
   function close() {
     return { type: "toolpkg.presentation.cancel", requestId };
   }
-  return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/memory-status/index.ui.js:16700",[{
-    key: "memory-status",
-    title: "\u8BB0\u5FC6\u72B6\u6001",
-    text: input.description,
-    confirmText: "\u5173\u95ED",
-    onConfirm: close,
-    onDismissRequest: close
-  }],(...__operitArgs)=>ctx.UI.AlertDialog(...__operitArgs));
+  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-status/index.ui.js:16730",__operitUiPrograms_[0],[input.description,close,close]);
 }

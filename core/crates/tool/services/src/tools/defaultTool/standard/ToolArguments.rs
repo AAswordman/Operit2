@@ -2,7 +2,6 @@
 
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::ToolExecutionManager::ToolCall;
 
@@ -27,8 +26,8 @@ pub(crate) struct RequestArguments<T> {
 
 /// Decodes the declared argument contract once before execution and permission admission.
 pub(crate) fn decodeArguments<T: DeserializeOwned>(request: &ToolCall) -> Result<T, String> {
-    serde_json::from_value(Value::Object(
-        request.parameters.clone().into_iter().collect(),
+    T::deserialize(serde::de::value::MapDeserializer::<_, serde_json::Error>::new(
+        request.parameters.iter().map(|(key, value)| (key.as_str(), value)),
     ))
     .map_err(|error| error.to_string())
 }

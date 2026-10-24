@@ -12,7 +12,7 @@ an independent authorization state machine.
 - `PeerStateStore`: versioned local credentials and listener configuration.
 - `peer/crypto.rs`: handshake proofs and authenticated encryption.
 - `peer/dispatch.rs`: authenticated Link sessions, delegated to the shared router.
-- `peer/space_channel.rs`: separately authorized Space return channels.
+- `peer/space_client.rs`: Space clients bound to the sole authenticated carrier.
 - `peer/availability.rs`: authenticated availability and revocation handling.
 
 Transport I/O belongs to `operit-peer-link` and platform Host implementations.
@@ -106,13 +106,14 @@ cargo check --manifest-path core/Cargo.toml -p operit-proxy-local
 
 ## Session and resource boundaries
 
-- `PeerLink::exclusiveEndpointKey` identifies exclusive I/O resources;
-  connection setup locks are per endpoint, never global across network transports.
-  `PeerConnection::requiresSessionReuse` selects reusable session handling.
-- Session return is an optional authenticated capability (`$peer.space-channel`,
-  `capabilities` / `session-return`). Legacy peers without it retain ordinary
-  directional calls. Every return operation still checks the original pairing
-  and current Space admission; it creates neither reverse pairing nor a role.
+- Each peer has exactly one authenticated bidirectional carrier. Call, Watch and
+  Push share its reader and ordered writer on every Host transport. The pairing
+  initiator establishes and reconnects it; the receiver uses that same carrier.
+- A Watch sending turn drains the currently queued prefix of every ready stream.
+  The writer holds the entire burst in order; later operations cannot interleave
+  it. HTTP coalesces idle bursts once and drains accumulated batches immediately.
+- Space admission is checked by the shared router. There are no separate return
+  credentials, callback sockets or optional legacy session dispatchers.
 - The embedding app owns the `PeerRouter`. Peer services and idle dispatchers
   hold weak references; releasing the router returns `PEER_ROUTER_CLOSED`.
 - Pairing policy is selected locally by the embedding node. The normal
@@ -169,10 +170,10 @@ node instead of rejecting it as already paired.
 
 Starting, cancelling, expiring or failing a code challenge never replaces the
 receiver's old credential. Only successful proof of the new six-digit code
-replaces the retained device's inbound/outbound credentials, invalidates scoped
-return grants and old pending consent, and disconnects old business sessions.
+replaces the retained device's inbound/outbound credentials, invalidates old
+pending consent, and disconnects the old authenticated channel.
 New pairings use the upstream confirmation path. A confirmed replacement uses
-the same credential and scoped-grant cleanup as the upstream local unpair API,
+the same credential cleanup as the upstream local unpair API,
 then stores its credential through the existing handshake and storage schema.
 It does not import membership or bypass Space approval/revocation checks. Cross-file
 persistence is not atomic: write failures are reported and old sessions closed;

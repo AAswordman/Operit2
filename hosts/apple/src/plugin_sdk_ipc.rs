@@ -1,9 +1,9 @@
+use operit_host_native_common::{scheduleNativeServiceTask, NativeTaskHandle as JoinHandle};
 use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 use operit_host_api::{
     HostError, HostResult, PluginSdkIpcEndpoint, PluginSdkIpcHost, PluginSdkIpcSessionCallbacks,
@@ -18,11 +18,17 @@ use operit_host_native_plugin_sdk_ipc::stream::{
 /// Closing the retained writer must also wake readers holding cloned Unix stream handles.
 struct SocketWriter(UnixStream);
 impl std::io::Write for SocketWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { std::io::Write::write(&mut self.0, bytes) }
-    fn flush(&mut self) -> std::io::Result<()> { std::io::Write::flush(&mut self.0) }
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        std::io::Write::write(&mut self.0, bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::Write::flush(&mut self.0)
+    }
 }
 impl Drop for SocketWriter {
-    fn drop(&mut self) { let _ = self.0.shutdown(std::net::Shutdown::Both); }
+    fn drop(&mut self) {
+        let _ = self.0.shutdown(std::net::Shutdown::Both);
+    }
 }
 
 /// Unix-domain-socket Plugin SDK IPC carrier used as a byte stream helper.
@@ -57,7 +63,8 @@ impl UnixPluginSdkIpcHost {
                     root
                 } else {
                     root.join(operit_host_native_plugin_sdk_ipc::pluginSdkIpcInstanceName(
-                        "operit-ipc", instance,
+                        "operit-ipc",
+                        instance,
                     ))
                 }
             });
@@ -187,15 +194,25 @@ impl PluginSdkIpcHost for UnixPluginSdkIpcHost {
             return Err(HostError::new("Plugin SDK IPC listener is already started"));
         }
         let socketPath = self.socketPathForEndpoint(&endpoint);
-        std::fs::create_dir_all(&self.directory).map_err(|error| HostError::new(error.to_string()))?;
+        std::fs::create_dir_all(&self.directory)
+            .map_err(|error| HostError::new(error.to_string()))?;
         // Hold the endpoint lock through shutdown. Only its owner may remove a stale socket.
-        let ownership = std::fs::OpenOptions::new().write(true).create(true).truncate(false)
-            .open(socketPath.with_extension("lock")).map_err(|error| HostError::new(error.to_string()))?;
-        ownership.try_lock().map_err(|error| HostError::new(format!("Plugin SDK IPC endpoint is already in use: {error}")))?;
+        let ownership = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(socketPath.with_extension("lock"))
+            .map_err(|error| HostError::new(error.to_string()))?;
+        ownership.try_lock().map_err(|error| {
+            HostError::new(format!(
+                "Plugin SDK IPC endpoint is already in use: {error}"
+            ))
+        })?;
         match UnixStream::connect(&socketPath) {
             Ok(_) => return Err(HostError::new("Plugin SDK IPC endpoint is already in use")),
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
-                std::fs::remove_file(&socketPath).map_err(|error| HostError::new(error.to_string()))?;
+                std::fs::remove_file(&socketPath)
+                    .map_err(|error| HostError::new(error.to_string()))?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(HostError::new(error.to_string())),
@@ -209,57 +226,72 @@ impl PluginSdkIpcHost for UnixPluginSdkIpcHost {
         let host = self.inner.clone();
         let nextSession = self.nextSession.clone();
         let workerStop = stop.clone();
-        let thread = std::thread::Builder::new()
-            .name("operit-plugin-sdk-ipc-listen".to_string())
-            .spawn(move || {
-                while !workerStop.load(Ordering::SeqCst) {
-                    match listener.accept() {
-                        Ok((stream, _)) => {
-                            // The frame reader is blocking; accepted sockets may inherit O_NONBLOCK.
-                            if stream.set_nonblocking(false).is_err() { continue; }
-                            let sessionId = PluginSdkIpcSessionId::new(format!(
-                                "plugin-sdk-unix-{}",
-                                nextSession.fetch_add(1, Ordering::Relaxed)
-                            ));
-                            let Ok(reader) = stream.try_clone() else {
-                                continue;
-                            };
-                            let Ok(writer) = stream.try_clone() else {
-                                continue;
-                            };
-                            let session = Arc::new(PluginSdkIpcStreamSession::new(
-                                sessionId.clone(),
-                                Box::new(SocketWriter(writer)),
-                                true,
-                            ));
-                            if let Ok(mut inner) = host.lock() {
-                                inner.sessions.insert(sessionId.0.clone(), session);
-                            }
-                            let sessions = host.clone();
-                            let closedId = sessionId.clone();
-                            let _ = spawnPluginSdkIpcReadLoop(
-                                sessionId.clone(),
-                                reader,
-                                callbacks.clone(),
-                                move || {
-                                    if let Ok(mut inner) = sessions.lock() {
-                                        inner.sessions.remove(&closedId.0);
-                                    }
-                                },
+        let thread = scheduleNativeServiceTask("operit-plugin-sdk-ipc-listener", move || {
+            while !workerStop.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        // The frame reader is blocking; accepted sockets may inherit O_NONBLOCK.
+                        if stream.set_nonblocking(false).is_err() {
+                            continue;
+                        }
+                        let sessionId = PluginSdkIpcSessionId::new(format!(
+                            "plugin-sdk-unix-{}",
+                            nextSession.fetch_add(1, Ordering::Relaxed)
+                        ));
+                        let Ok(reader) = stream.try_clone() else {
+                            continue;
+                        };
+                        let Ok(writer) = stream.try_clone() else {
+                            continue;
+                        };
+                        let session = Arc::new(PluginSdkIpcStreamSession::new(
+                            sessionId.clone(),
+                            Box::new(SocketWriter(writer)),
+                            true,
+                        ));
+                        if let Ok(mut inner) = host.lock() {
+                            inner.sessions.insert(sessionId.0.clone(), session);
+                        }
+                        let sessions = host.clone();
+                        let closedId = sessionId.clone();
+                        let scheduled = spawnPluginSdkIpcReadLoop(
+                            sessionId.clone(),
+                            reader,
+                            callbacks.clone(),
+                            move || {
+                                if let Ok(mut inner) = sessions.lock() {
+                                    inner.sessions.remove(&closedId.0);
+                                }
+                            },
+                        );
+                        if let Err(error) = scheduled {
+                            operit_host_api::logHostError(
+                                "PluginSdkIpc",
+                                &format!("Plugin SDK reader rejected: {error}"),
                             );
-                            (callbacks.onConnected)(sessionId);
+                            continue;
                         }
-                        Err(error)
-                            if error.kind() == std::io::ErrorKind::WouldBlock
-                                || error.kind() == std::io::ErrorKind::Interrupted =>
-                        {
-                            std::thread::sleep(std::time::Duration::from_millis(20));
-                        }
-                        Err(_) => break,
+                        (callbacks.onConnected)(sessionId);
                     }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            || error.kind() == std::io::ErrorKind::Interrupted =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    Err(_) => break,
                 }
-            })
-            .map_err(|error| HostError::new(error.to_string()))?;
+            }
+        });
+        let thread = match thread {
+            Ok(thread) => thread,
+            Err(error) => {
+                std::fs::remove_file(&socketPath).map_err(|cleanup| {
+                    HostError::new(format!("{error}; remove rejected listener: {cleanup}"))
+                })?;
+                return Err(error);
+            }
+        };
         inner.listenerStop = Some(stop);
         inner.listenerThread = Some(thread);
         inner.socketPath = Some(socketPath);
@@ -343,15 +375,23 @@ mod tests {
 
     fn testDirectory() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let directory = std::env::temp_dir().join(format!("ipc-{}-{}",
-            std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let directory = std::env::temp_dir().join(format!(
+            "ipc-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&directory).unwrap();
         directory
     }
 
     fn callbacks(received: std::sync::mpsc::Sender<Vec<u8>>) -> PluginSdkIpcSessionCallbacks {
-        PluginSdkIpcSessionCallbacks::new(Arc::new(|_| {}),
-            Arc::new(move |_, bytes| { let _ = received.send(bytes); }), Arc::new(|_| {}))
+        PluginSdkIpcSessionCallbacks::new(
+            Arc::new(|_| {}),
+            Arc::new(move |_, bytes| {
+                let _ = received.send(bytes);
+            }),
+            Arc::new(|_| {}),
+        )
     }
 
     /// A second listener cannot unlink a live endpoint, and shutdown releases its ownership.
@@ -362,14 +402,25 @@ mod tests {
         let second = UnixPluginSdkIpcHost::withDirectory(directory.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let endpoint = PluginSdkIpcEndpoint::standard();
-        first.startListener(endpoint.clone(), callbacks(tx.clone())).unwrap();
-        assert!(first.startListener(endpoint.clone(), callbacks(tx.clone())).is_err());
-        assert!(second.startListener(endpoint.clone(), callbacks(tx.clone())).is_err());
+        first
+            .startListener(endpoint.clone(), callbacks(tx.clone()))
+            .unwrap();
+        assert!(first
+            .startListener(endpoint.clone(), callbacks(tx.clone()))
+            .is_err());
+        assert!(second
+            .startListener(endpoint.clone(), callbacks(tx.clone()))
+            .is_err());
         assert!(second.stopListener().is_err());
         let client = UnixPluginSdkIpcHost::withDirectory(directory.clone());
-        let id = client.connect(endpoint.clone(), callbacks(tx.clone())).unwrap();
+        let id = client
+            .connect(endpoint.clone(), callbacks(tx.clone()))
+            .unwrap();
         client.send(&id, b"still first".to_vec()).unwrap();
-        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap(), b"still first");
+        assert_eq!(
+            rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap(),
+            b"still first"
+        );
         client.closeSession(&id).unwrap();
         first.stopListener().unwrap();
         second.startListener(endpoint, callbacks(tx)).unwrap();
@@ -386,7 +437,9 @@ mod tests {
         let path = host.socketPathForEndpoint(&endpoint);
         let listener = UnixListener::bind(&path).unwrap();
         let (tx, _) = std::sync::mpsc::channel();
-        assert!(host.startListener(endpoint.clone(), callbacks(tx.clone())).is_err());
+        assert!(host
+            .startListener(endpoint.clone(), callbacks(tx.clone()))
+            .is_err());
         assert!(UnixStream::connect(&path).is_ok());
         drop(listener);
         host.startListener(endpoint, callbacks(tx)).unwrap();
@@ -404,15 +457,23 @@ mod tests {
         let (connected, accepted) = std::sync::mpsc::channel();
         let (closed, disconnected) = std::sync::mpsc::channel();
         let mut incoming = callbacks(tx.clone());
-        incoming.onConnected = Arc::new(move |_| { let _ = connected.send(()); });
+        incoming.onConnected = Arc::new(move |_| {
+            let _ = connected.send(());
+        });
         let mut outgoing = callbacks(tx);
-        outgoing.onClosed = Arc::new(move |_| { let _ = closed.send(()); });
+        outgoing.onClosed = Arc::new(move |_| {
+            let _ = closed.send(());
+        });
         let endpoint = PluginSdkIpcEndpoint::standard();
         server.startListener(endpoint.clone(), incoming).unwrap();
         let id = client.connect(endpoint, outgoing).unwrap();
-        accepted.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        accepted
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
         server.stopListener().unwrap();
-        disconnected.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        disconnected
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
         assert!(client.send(&id, vec![1]).is_err());
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -431,20 +492,31 @@ mod tests {
             let endpoint = PluginSdkIpcEndpoint::standard();
             let (connected, accepted) = std::sync::mpsc::channel();
             let mut incoming = callbacks(tx.clone());
-            incoming.onConnected = Arc::new(move |_| { let _ = connected.send(()); });
+            incoming.onConnected = Arc::new(move |_| {
+                let _ = connected.send(());
+            });
             server.startListener(endpoint.clone(), incoming).unwrap();
             let id = client.connect(endpoint, callbacks(tx)).unwrap();
-            accepted.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+            accepted
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap();
             servers.push((server, client, id, rx, index as u8));
         }
         assert_ne!(directories[0], directories[1]);
-        for (_, client, id, _, index) in &servers { client.send(id, vec![*index]).unwrap(); }
+        for (_, client, id, _, index) in &servers {
+            client.send(id, vec![*index]).unwrap();
+        }
         for (server, client, id, rx, index) in servers {
-            assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap(), vec![index]);
+            assert_eq!(
+                rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap(),
+                vec![index]
+            );
             client.closeSession(&id).unwrap();
             server.stopListener().unwrap();
         }
-        for directory in directories { std::fs::remove_dir_all(directory).unwrap(); }
+        for directory in directories {
+            std::fs::remove_dir_all(directory).unwrap();
+        }
     }
 
     #[test]

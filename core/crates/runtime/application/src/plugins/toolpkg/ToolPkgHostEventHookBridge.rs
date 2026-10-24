@@ -44,10 +44,11 @@ impl ToolPkgHostEventHookBridge {
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
             .expect("toolpkg host event hook mutex poisoned") = hooks;
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             PLUGIN_CHAIN,
             "plugin.toolpkg.host_event.sync",
             &[("hookCount", hookCount.to_string())],
+            operit_util::AppLogger::VERBOSE_LEVEL_4,
         );
         syncHostEventSchedules(runtime);
     }
@@ -84,7 +85,7 @@ impl ToolPkgHostEventHookBridge {
                         if !hostEventHookMatchesPayload(&hook, &eventPayload) {
                             continue;
                         }
-                        ChainLogger::info(
+                        ChainLogger::verbose_with_level(
                             PLUGIN_CHAIN,
                             "plugin.toolpkg.host_event.run.start",
                             &[
@@ -93,6 +94,7 @@ impl ToolPkgHostEventHookBridge {
                                 ("hookId", hook.hookId.clone()),
                                 ("function", hook.functionName.clone()),
                             ],
+                            operit_util::AppLogger::VERBOSE_LEVEL_3,
                         );
                         let payload = serde_json::json!({
                             "eventSource": source,
@@ -115,7 +117,7 @@ impl ToolPkgHostEventHookBridge {
                             )
                             .await
                         {
-                            Ok(_) => ChainLogger::info(
+                            Ok(_) => ChainLogger::verbose_with_level(
                                 PLUGIN_CHAIN,
                                 "plugin.toolpkg.host_event.run.done",
                                 &[
@@ -123,6 +125,7 @@ impl ToolPkgHostEventHookBridge {
                                     ("package", hook.containerPackageName.clone()),
                                     ("hookId", hook.hookId.clone()),
                                 ],
+                                operit_util::AppLogger::VERBOSE_LEVEL_3,
                             ),
                             Err(error) => ChainLogger::error(
                                 PLUGIN_CHAIN,

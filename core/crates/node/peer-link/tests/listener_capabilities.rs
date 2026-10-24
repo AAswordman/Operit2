@@ -191,18 +191,3 @@ async fn unsupported_websocket_does_not_acquire_http_resources() {
     assert!(matches!(result, Err(message) if message == "Host does not support WebSocket peer listeners"));
     assert_eq!(server.binds.load(Ordering::SeqCst), 0);
 }
-
-
-#[test]
-fn connection_policy_only_serializes_the_same_exclusive_endpoint() {
-    let link = HostPeerLink::default();
-    let endpoint = |address: &str| PeerEndpoint { nodeId: "peer".into(), address: address.into() };
-    for transport in [PeerTransport::Tcp, PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Bluetooth] {
-        assert_eq!(link.exclusiveEndpointKey(&endpoint("address"), transport), None);
-    }
-    assert_ne!(link.exclusiveEndpointKey(&endpoint("COM1"), PeerTransport::Serial),
-        link.exclusiveEndpointKey(&endpoint("COM2"), PeerTransport::Serial));
-    #[cfg(windows)]
-    assert_eq!(link.exclusiveEndpointKey(&endpoint("COM1"), PeerTransport::Serial),
-        link.exclusiveEndpointKey(&endpoint(r"\\.\com1"), PeerTransport::Serial));
-}

@@ -5,6 +5,7 @@
 use std::fmt::{Display, Formatter};
 
 use async_trait::async_trait;
+use operit_edge_contract::{EdgeScreenInputRequest, EdgeScreenInputState, EdgeScreenSnapshot};
 use operit_edge_contract::{
     EDGE_DEVICE_IO_OBJECT_ID, EDGE_DEVICE_IO_STATE_PROPERTY, EDGE_ROBOT_FACE_OBJECT_ID,
     EDGE_ROBOT_FACE_STATE_PROPERTY, EDGE_SCREEN_OBJECT_ID,
@@ -14,9 +15,6 @@ use operit_link::{
     fromCoreValue, CoreCallRequest, CoreEventStream, CoreLinkError, CoreLinkSharedClient,
     CoreValue, CoreWatchRequest,
 };
-use operit_edge_contract::{EdgeScreenInputRequest, EdgeScreenInputState, EdgeScreenSnapshot};
-
-
 
 /// Owns the typed proxy entry point for Edge Core services.
 pub struct EdgeProxy<C> {
@@ -425,8 +423,8 @@ mod tests {
         DeviceIoService, DeviceIoStateStream, EdgeNode, EdgeServiceError, RobotFaceService,
         RobotFaceStateStream,
     };
-    use std::sync::mpsc;
     use std::sync::Arc;
+    use tokio::sync::mpsc;
 
     /// Provides typed device operations for a deterministic Edge Proxy test.
     struct TestDeviceIoService;
@@ -450,7 +448,7 @@ mod tests {
 
         /// Opens a typed stream containing one deterministic snapshot.
         fn watchDigitalOutput(&self, pin: u8) -> Result<DeviceIoStateStream, EdgeServiceError> {
-            let (sender, receiver) = mpsc::channel();
+            let (sender, receiver) = mpsc::unbounded_channel();
             sender
                 .send(DeviceDigitalOutputState { pin, level: false })
                 .map_err(|error| EdgeServiceError::new(error.to_string()))?;
@@ -481,7 +479,7 @@ mod tests {
 
         /// Opens a typed robot face stream containing one deterministic snapshot.
         fn watchExpression(&self) -> Result<RobotFaceStateStream, EdgeServiceError> {
-            let (sender, receiver) = mpsc::channel();
+            let (sender, receiver) = mpsc::unbounded_channel();
             sender
                 .send(RobotFaceState {
                     expression: "neutral".to_string(),

@@ -46,6 +46,11 @@ jobs:
           dart pub global activate fvm "$FVM_VERSION"
           echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
 
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Cache project Flutter SDK
         uses: actions/cache@v4
         with:

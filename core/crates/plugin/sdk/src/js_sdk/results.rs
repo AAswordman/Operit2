@@ -7,7 +7,7 @@ use super::chat::ChatSendEvent;
 use super::core::JsonObject;
 use super::models::ModelsSummary;
 use super::storage::{
-    StorageChangeEntry, StorageKeyValueEntry, StorageResponse, StorageSqlExecutionResult,
+    StorageKeyValueEntry, StorageResponse, StorageSqlExecutionResult,
     StorageSqlRow, StorageValueEntry,
 };
 use super::theme::ThemeConfig;
@@ -80,6 +80,7 @@ pub enum ToolResultData {
     TerminalInfoResultData(TerminalInfoResultData),
     TerminalCommandResultData(TerminalCommandResultData),
     TerminalStreamEventData(TerminalStreamEventData),
+    TerminalObservationResultData(TerminalObservationResultData),
     HiddenTerminalCommandResultData(HiddenTerminalCommandResultData),
     TerminalSessionCreationResultData(TerminalSessionCreationResultData),
     TerminalSessionCloseResultData(TerminalSessionCloseResultData),
@@ -94,6 +95,7 @@ pub enum ToolResultData {
     BluetoothBleServicesData(BluetoothBleServicesData),
     BluetoothBleNotificationData(BluetoothBleNotificationData),
     CatalogReadToolSourcesResultData(CatalogReadToolSourcesResultData),
+    MediaRegistrationResultData(MediaRegistrationResultData),
     FindFilesResultData(FindFilesResultData),
     GrepResultData(GrepResultData),
 }
@@ -188,6 +190,7 @@ impl ToolResultData {
             Self::TerminalInfoResultData(data) => data.toString(),
             Self::TerminalCommandResultData(data) => data.toString(),
             Self::TerminalStreamEventData(data) => data.toString(),
+            Self::TerminalObservationResultData(data) => serde_json::to_string(data).expect("Terminal observation serialization failed"),
             Self::HiddenTerminalCommandResultData(data) => data.toString(),
             Self::TerminalSessionCreationResultData(data) => data.toString(),
             Self::TerminalSessionCloseResultData(data) => data.message.clone(),
@@ -202,6 +205,7 @@ impl ToolResultData {
             Self::BluetoothBleServicesData(data) => data.toString(),
             Self::BluetoothBleNotificationData(data) => data.toString(),
             Self::CatalogReadToolSourcesResultData(data) => data.toString(),
+            Self::MediaRegistrationResultData(data) => data.toString(),
             Self::FindFilesResultData(data) => data.toString(),
             Self::GrepResultData(data) => data.toString(),
         }
@@ -613,6 +617,26 @@ impl TtsSetCurrentConfigIdResultData {
     }
 }
 
+/// Returns the pool identity and canonical link for one registered media item.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaRegistrationResultData {
+    pub id: String,
+    pub mimeType: String,
+    pub link: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<i32>,
+}
+
+impl MediaRegistrationResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("MediaRegistrationResultData serialization failed")
+    }
+}
+
 /// Returns the complete named appearance configurations.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -792,6 +816,14 @@ pub enum StorageRequestResultData {
         handle: String,
         path: String,
     },
+    #[serde(rename = "preferences_data")]
+    PreferencesData { snapshot: super::storage::StoragePreferencesSnapshot },
+    #[serde(rename = "preferences_begin_edit")]
+    PreferencesBeginEdit { edit: super::storage::StoragePreferencesEdit },
+    #[serde(rename = "preferences_finish_edit")]
+    PreferencesFinishEdit { snapshot: super::storage::StoragePreferencesSnapshot },
+    #[serde(rename = "preferences_cancel_edit")]
+    PreferencesCancelEdit,
     #[serde(rename = "close")]
     Close,
     #[serde(rename = "query")]
@@ -814,6 +846,10 @@ pub enum StorageRequestResultData {
     Get {
         entry: JsNullable<StorageValueEntry>,
     },
+    #[serde(rename = "get_many")]
+    GetMany {
+        entries: Vec<JsNullable<StorageValueEntry>>,
+    },
     #[serde(rename = "list")]
     List {
         entries: Vec<StorageKeyValueEntry>,
@@ -821,10 +857,6 @@ pub enum StorageRequestResultData {
     #[serde(rename = "commit")]
     Commit {
         version: String,
-    },
-    #[serde(rename = "changes")]
-    Changes {
-        entries: Vec<StorageChangeEntry>,
     },
 }
 
@@ -835,6 +867,10 @@ impl From<StorageResponse> for StorageRequestResultData {
                 handle: opened.handle,
                 path: opened.path,
             },
+            StorageResponse::PreferencesData(snapshot) => Self::PreferencesData { snapshot },
+            StorageResponse::PreferencesBeginEdit(edit) => Self::PreferencesBeginEdit { edit },
+            StorageResponse::PreferencesFinishEdit(snapshot) => Self::PreferencesFinishEdit { snapshot },
+            StorageResponse::PreferencesCancelEdit => Self::PreferencesCancelEdit,
             StorageResponse::Close => Self::Close,
             StorageResponse::Query(rows) => Self::Query { rows },
             StorageResponse::Execute(results) => Self::Execute { results },
@@ -845,11 +881,13 @@ impl From<StorageResponse> for StorageRequestResultData {
             StorageResponse::Get(entry) => Self::Get {
                 entry: JsNullable::from_option(entry),
             },
+            StorageResponse::GetMany(entries) => Self::GetMany {
+                entries: entries.into_iter().map(JsNullable::from_option).collect(),
+            },
             StorageResponse::List(entries) => Self::List { entries },
             StorageResponse::Commit(result) => Self::Commit {
                 version: result.version,
             },
-            StorageResponse::Changes(entries) => Self::Changes { entries },
         }
     }
 }
@@ -2970,4 +3008,13 @@ pub struct EdgePortResultData {
     pub nodeId: String,
     /// Native Edge action/port result; no JavaScript source or local serial handle.
     pub data: crate::js_sdk::JsAny,
+}
+
+/// Exchanges one scoped terminal execution observation through the common tool transport.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TerminalObservationResultData {
+    Open { handle: String },
+    Next { event: JsNullable<super::system::TerminalExecEvent> },
+    Close {},
 }

@@ -40,6 +40,25 @@ impl RuntimeFileSyncStore {
     /// Writes a complete Space file snapshot and records its synchronization operation.
     #[allow(non_snake_case)]
     pub fn writeBytes(&self, storagePath: &str, content: &[u8]) -> Result<(), String> {
+        self.writeSnapshot(storagePath, content, false)
+    }
+
+    /// Seeds an unseen file below explicit edits and deletion tombstones in conflict order.
+    pub fn initializeBytes(&self, storagePath: &str, content: &[u8]) -> Result<(), String> {
+        self.writeSnapshot(storagePath, content, true)
+    }
+
+    /// Reports whether this file has synchronized state, even when it has been deleted.
+    pub fn hasSnapshot(&self, storagePath: &str) -> Result<bool, String> {
+        self.syncOperationStore.hasEntityVersion(RUNTIME_FILE_SYNC_DOMAIN, RUNTIME_FILE_SYNC_ENTITY_TYPE, storagePath)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Writes explicit changes and initial seeds through the same file synchronization path.
+    fn writeSnapshot(&self, storagePath: &str, content: &[u8], initial: bool) -> Result<(), String> {
+        if initial && self.hasSnapshot(storagePath)? {
+            return Ok(());
+        }
         requireSpaceFile(storagePath)?;
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
@@ -51,21 +70,23 @@ impl RuntimeFileSyncStore {
         self.storageHost
             .writeBytes(storagePath, content)
             .map_err(|error| error.to_string())?;
-        self.recordSnapshot(storagePath, content)?;
+        self.recordSnapshot(storagePath, content, initial)?;
         Ok(())
     }
 
     /// Records observed bytes without rewriting an externally edited workspace file.
-    pub(crate) fn recordSnapshot(&self, storagePath: &str, content: &[u8]) -> Result<RuntimeFileSyncReference, String> {
+    pub(crate) fn recordSnapshot(&self, storagePath: &str, content: &[u8], initial: bool) -> Result<RuntimeFileSyncReference, String> {
         requireSpaceFile(storagePath)?;
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
         }
         let reference = self.storeBlob(content)?;
-        let deviceId = self
-            .syncOperationStore
-            .localDeviceId()
-            .map_err(|error| error.to_string())?;
+        let mut deviceId = self.syncOperationStore.localDeviceId().map_err(|error| error.to_string())?;
+        let mut payload = serde_json::to_value(&reference).map_err(|error| error.to_string())?;
+        if initial {
+            deviceId.push_str(":initial");
+            payload["initial"] = true.into();
+        }
         self.syncOperationStore
             .appendLocalOperation(
                 &deviceId,
@@ -75,7 +96,7 @@ impl RuntimeFileSyncStore {
                     entityId: storagePath.to_string(),
                     operation: "upsert".to_string(),
                     semantics: SyncOperationSemantics::EntityState,
-                    payload: serde_json::to_value(&reference).map_err(|error| error.to_string())?,
+                    payload,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -452,6 +473,13 @@ fn requireSpaceFile(storagePath: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_model_files_cannot_enter_space_file_sync() {
+        for path in ["runtime/models/local/chat/llama_cpp/qwen/model.gguf", "runtime/models/local/chat/mnn/qwen/llm.mnn.weight", operit_util::RuntimeStorageLayout::RUNTIME_LOCAL_MODEL_REGISTRY_PATH] {
+            assert!(super::requireSpaceFile(path).is_err(), "{path}");
+        }
+    }
+
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
@@ -469,6 +497,14 @@ mod tests {
     }
 
     impl RuntimeStorageHost for MemoryStorageHost {
+        /// Confirms synchronous in-memory publication without copying or rewriting bytes.
+        fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+            if !self.exists(path)? {
+                return Err(operit_host_api::HostError::new("runtime storage entry not found"));
+            }
+            Ok(())
+        }
+
         /// Reports no physical runtime root for the in-memory host.
         fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
             None
@@ -507,6 +543,11 @@ mod tests {
                 .ok_or_else(|| HostError::new("test range length overflow"))?
                 .min(content.len());
             Ok(content[offset..end].to_vec())
+        }
+
+        /// Atomically publishes one complete in-memory test entry.
+        fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+            self.writeBytes(path, content)
         }
 
         /// Writes one in-memory runtime storage object.

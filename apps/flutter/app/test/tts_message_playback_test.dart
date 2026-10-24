@@ -485,7 +485,7 @@ class _MessageVoiceBridge extends OperitRuntimeBridge {
         }
         value = {
           'contextKey': 'opaque-unused-by-speech',
-          'messageExtension': null,
+          'executionData': {'current': true},
           'profile': profile.toJson(),
           'participants': [profile.toJson()],
         };

@@ -212,7 +212,7 @@ impl AsyncToolExecutor for EdgePortToolExecutor {
                             timeout_ms: 120_000,
                         }),
                     };
-                    let result = self.runtime.executeDeviceTool(request, None).await;
+                    let result = self.runtime.executeDeviceTool(request).await;
                     if !result.success {
                         failure(
                             tool,

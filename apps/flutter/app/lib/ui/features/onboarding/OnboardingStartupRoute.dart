@@ -206,6 +206,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   bool _agreementAccepted = false;
   Future<void>? _coreSetupFuture;
   bool _storageConfirmed = false;
+
+  /// Base roots are chosen once for the machine. A later identity must not
+  /// select them again after the runtime has already mounted them.
+  late final bool _storageSelectionRequired;
   bool _loadingStoragePaths = false;
   bool _savingStorage = false;
   bool _savingModel = false;
@@ -270,7 +274,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     final commonPages = <_AiSetupPage>[
       _AiSetupPage.intro,
       if (widget.agreementRequired) _AiSetupPage.agreement,
-      _AiSetupPage.storage,
+      if (_storageSelectionRequired) _AiSetupPage.storage,
       _AiSetupPage.mode,
     ];
     return switch (_selectedStartMode) {
@@ -339,6 +343,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       duration: const Duration(milliseconds: 760),
     );
     final localStorage = RuntimeBootstrapManager.instance.config;
+    _storageSelectionRequired = !localStorage.confirmed;
     _storageConfirmed = localStorage.confirmed;
     if (_storageConfirmed) {
       _runtimeRootController.text = localStorage.runtimeRoot;
@@ -562,7 +567,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         _agreementAccepted = true;
         _setupError = null;
       });
-      await _animateToPage(_storagePageIndex);
+      await _animateToPage(_agreementPageIndex + 1);
     } catch (error) {
       if (!mounted) {
         return;
@@ -613,7 +618,12 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return;
     }
     if (_currentPage == _modePageIndex) {
-      await _animateToPage(_storagePageIndex);
+      final previousIndex = _modePageIndex - 1;
+      if (previousIndex == _introPageIndex) {
+        await _returnToIntro();
+        return;
+      }
+      await _animateToPage(previousIndex);
       return;
     }
     if (_currentPage == _permissionPageIndex) {
@@ -987,9 +997,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   Future<void> _pickOperit1Snapshot() async {
     final previousSession = _operit1SnapshotSession;
     SnapshotImportSession? stagedSession;
-    ClientLogger.i(
+    ClientLogger.v(
       'snapshot selection started',
       tag: _operit1SnapshotImportLogTag,
+      verboseLevel: VerboseLevel.level2,
     );
     setState(() {
       _readingOperit1Snapshot = true;
@@ -1013,9 +1024,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       if (file == null) {
         return;
       }
-      ClientLogger.i(
+      ClientLogger.v(
         'snapshot selected name=${file.name} bytes=${file.byteLength}',
         tag: _operit1SnapshotImportLogTag,
+        verboseLevel: VerboseLevel.level2,
       );
       if (!mounted) {
         await file.close();
@@ -1059,9 +1071,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
               );
         });
       }
-      ClientLogger.i(
+      ClientLogger.v(
         'snapshot upload completed bytes=${session.byteLength}; inspection started',
         tag: _operit1SnapshotImportLogTag,
+        verboseLevel: VerboseLevel.level3,
       );
       final snapshot = await session.completeOperit1();
       ClientLogger.i(

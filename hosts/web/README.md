@@ -15,6 +15,40 @@ before constructing the web host structs.
 - `src/tools/system/mod.rs` implements `SystemOperationHost`.
 - `src/common.rs` contains the shared JS bridge and value conversion helpers.
 
+## Plugin JavaScript execution
+
+The Web JavaScript host executes plugin code with the browser's native engine. Each runtime owns
+one dedicated module Worker with independent globals; Core continues to use `HostJavaScriptRuntime`.
+No QuickJS/WASM engine or WASI libc is required by the Web build.
+
+`operit_javascript_runtime.ts` creates workers through the existing main-page host channel and
+acknowledges module readiness before Core starts synchronous waiting. Commands use structured clone
+for input and MessagePack frames in a 64 KiB shared buffer for results and synchronous host calls.
+Every frame is acknowledged before reuse, so messages can exceed the buffer size. Rust preserves
+the structured bridge's depth/node limits and safe integer representation. Plugin host operations
+continue to execute on the Core executor with its current execution context.
+
+The browser drains Promise microtasks before acknowledging a command. Core delivers asynchronous
+host completions through the same scoped Promise registry. The host interrupt predicate is polled
+while waiting; an interrupt terminates the entire execution Worker. Subsequent commands report that
+the runtime was destroyed. Disposing the Rust runtime also terminates its Worker.
+
+Run `node --test tools/tests/web_javascript_runtime.test.mjs` from the repository root to exercise
+isolated globals, synchronous callbacks, multi-frame Unicode payloads, native Promise completion,
+scoped cancellation, script exceptions, and busy-loop interruption with real worker threads.
+
+The same-machine engine comparison used Chrome 155, QuickJS-NG 0.16.2 compiled to WASM with
+`-O3`, a warm-up, and seven measured samples with matching checksums. Median times were:
+
+| Workload | QuickJS/WASM | Browser engine |
+| --- | ---: | ---: |
+| Compile the actual 521,155-byte character-card entry | 26.2 ms | 8.0 ms |
+| One million integer iterations | 44.7 ms | 3.7 ms |
+| JSON/filter/map/sort over 10,000 records | 254.5 ms | 27.5 ms |
+| Traverse 20,000 object nodes | 170.0 ms | 6.3 ms |
+
+These measure engine work, not whole-application speedups or the new worker transport overhead.
+
 ## Browser Bridge Shape
 
 ```ts
@@ -42,7 +76,12 @@ The bridge values use the same field names as `operit-host-api`. Binary data is 
 
 `localInference` executes installed Sherpa ONNX Web STT and TTS bundles. Runtime-owned
 files are stored in OPFS by the dedicated runtime worker; the host bridge never loads the
-complete runtime tree into a main-thread map. The serving origin must provide COOP and
+complete runtime tree into a main-thread map. The storage Worker holds an identity-specific
+exclusive Web Lock and shared maintenance access for the entire lifetime of its OPFS handles.
+Ownership remains with the Worker during page teardown; shutdown closes the handles before
+releasing the locks. A new page cannot open the same stores while an old Worker still owns them.
+The standalone data rescue Worker queues its exclusive maintenance lease, so page teardown completes
+before maintenance opens storage; the UI asks users to close other Operit windows while waiting. The serving origin must provide COOP and
 COEP headers because the runtime worker host RPC uses `SharedArrayBuffer`.
 
 Archive staging is also worker-owned OPFS. `createArchive` reserves the declared byte range,
@@ -64,3 +103,13 @@ type SqliteRow = {
   values: SqliteValue[];
 };
 ```
+
+## Rendering resources
+
+The app and theme preview bootstrap configure Flutter to load its engine fonts from their own
+`fonts/` directory. `tools/prepare_flutter_web_fonts.py` reads the selected SDK's complete font
+inventory, requires an exact match with `tools/flutter_web_fonts.lock.json`, and verifies every
+file's size and SHA-256 before staging. Invalid cache entries fail the build. The deployment
+includes the font source inventory, preserved font metadata, and accompanying Noto/Roboto licenses.
+Browser verification blocks both the renderer CDN and Google font CDN while exercising onboarding,
+real plugin calls, three configured reloads, theme export, and the standalone data rescue entry.

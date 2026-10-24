@@ -21,6 +21,37 @@ class FileSelectorOhos extends FileSelectorPlatform {
     'dev.flutter.packages.file_selector_ohos/save',
   );
 
+  /// Saves into a document URI while the platform counts each completed write.
+  @override
+  Future<FileSaveLocation?> saveGeneratedFileWithProgress({
+    required Future<XFile> Function() generate,
+    required void Function() onChooseDestination,
+    required Future<void> Function(XFile file, String destination) write,
+    required void Function(int completed, int total) onProgress,
+    List<XTypeGroup>? acceptedTypeGroups,
+    SaveDialogOptions options = const SaveDialogOptions(),
+  }) async {
+    final location = await getSaveLocation(
+        acceptedTypeGroups: acceptedTypeGroups, options: options);
+    if (location == null) return null;
+    final file = await generate();
+    _saveChannel.setMethodCallHandler((call) async {
+      if (call.method != 'saveProgress')
+        throw StateError('Unknown document save event: ${call.method}');
+      final progress = Map<String, Object?>.from(call.arguments as Map);
+      onProgress(progress['completed']! as int, progress['total']! as int);
+    });
+    try {
+      await _saveChannel.invokeMethod<void>('copyFileFromPathWithProgress', {
+        'sourcePath': file.path,
+        'destinationUri': location.path,
+      });
+      return location;
+    } finally {
+      _saveChannel.setMethodCallHandler(null);
+    }
+  }
+
   /// Copies a host-backed snapshot into the selected document without reading its bytes in Dart.
   @override
   Future<FileSaveLocation?> saveFileReference({

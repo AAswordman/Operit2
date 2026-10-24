@@ -1,3 +1,4 @@
+import { createChatBindingFeature } from "../features/characters/chat-binding";
 import type { Snapshot } from "../../src/model";
 import { createCharactersActionsFeature } from "../features/characters/actions";
 import { createPageRenderer } from "../features/characters/page";
@@ -119,7 +120,7 @@ state, app, dialogsRoot, snapshot, topDialog, pushDialog, popDialog, request, re
   const page = createPageRenderer(context), dialogs = createDialogRenderer(context);
   const screens = createScreenController(context, page);
   const graph = createGraphActionsFeature(context), profile = createProfileFeature(context), transfers = createCharactersTransfersFeature(context);
-  const events = createEditorEvents(context, [...screens.features, createPreviewFeature(context), createDialogActions(context), createCharactersActionsFeature(context), createGroupsActionsFeature(context), createMemoryLibraryActionsFeature(context), createMemoryItemActionsFeature(context), createMemoryLinkActionsFeature(context), transfers, graph, profile, createMemoryControlsFeature(context)]);
+  const events = createEditorEvents(context, [...screens.features, createPreviewFeature(context), createDialogActions(context), createCharactersActionsFeature(context), createChatBindingFeature(context), createGroupsActionsFeature(context), createMemoryLibraryActionsFeature(context), createMemoryItemActionsFeature(context), createMemoryLinkActionsFeature(context), transfers, graph, profile, createMemoryControlsFeature(context)]);
   const gestures = createGraphGestures(context);
   /** Mounts finite DOM events once, with graph-specific gesture handlers kept in their own feature. */
   function mount(): void {
@@ -132,6 +133,9 @@ state, app, dialogsRoot, snapshot, topDialog, pushDialog, popDialog, request, re
     });
     document.addEventListener("click", events.onClick);
     document.addEventListener("input", events.onInput);
+    document.addEventListener("compositionend", event => {
+      if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-binding-query")) events.onInput(event);
+    });
     document.addEventListener("change", events.onChange);
     document.addEventListener("keydown", screens.onKeyDown);
     dialogsRoot.addEventListener("cancel", events.onCancel, true);

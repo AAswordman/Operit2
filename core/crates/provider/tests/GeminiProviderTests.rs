@@ -83,3 +83,30 @@ fn packageProxyResultMatchesGeminiFunctionCall() {
         Some(&serde_json::json!("2026-09-12"))
     );
 }
+
+/// Verifies audio and video media links become Gemini inline_data parts.
+#[test]
+fn audioAndVideoLinksBecomeGeminiInlineDataParts() {
+    use operit_util::MediaPoolManager::MediaPoolManager;
+
+    let audio_id = MediaPoolManager::add_media_bytes(b"audio", "audio/mpeg");
+    let video_id = MediaPoolManager::add_media_bytes(b"video", "video/mp4");
+    let prompt = format!(
+        "listen {} watch {}",
+        MediaLinkBuilder::audio(&audio_id),
+        MediaLinkBuilder::video(&video_id)
+    );
+    let provider = test_provider();
+
+    let parts = provider.build_parts_array(&prompt);
+
+    MediaPoolManager::remove_media(&audio_id);
+    MediaPoolManager::remove_media(&video_id);
+
+    assert_eq!(parts.len(), 3);
+    assert_eq!(parts[0]["inline_data"]["mime_type"], "audio/mpeg");
+    assert_eq!(parts[0]["inline_data"]["data"], "YXVkaW8=");
+    assert_eq!(parts[1]["inline_data"]["mime_type"], "video/mp4");
+    assert_eq!(parts[1]["inline_data"]["data"], "dmlkZW8=");
+    assert_eq!(parts[2]["text"], "listen  watch");
+}

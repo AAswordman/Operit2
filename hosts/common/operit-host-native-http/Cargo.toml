@@ -9,7 +9,9 @@ publish = false
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws"] }
 http-body-util = "0.1"
+futures-util = "0.3"
+operit-host-native-scheduler = { path = "../operit-host-native-scheduler", default-features = false }
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls", "stream"] }
-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["multipart", "rustls-tls", "stream"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }

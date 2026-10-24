@@ -22,8 +22,6 @@ pub struct PromptHookContext {
     pub model_parameters: Vec<HashMap<String, Value>>,
     pub available_tools: Vec<HashMap<String, Value>>,
     pub metadata: HashMap<String, Value>,
-    /// Host callback used to surface a timed-out Prompt Input Hook in the chat Toast stream.
-    pub on_hook_timeout: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl Default for PromptHookContext {
@@ -43,7 +41,6 @@ impl Default for PromptHookContext {
             model_parameters: Vec::new(),
             available_tools: Vec::new(),
             metadata: HashMap::new(),
-            on_hook_timeout: None,
         }
     }
 }
@@ -63,8 +60,9 @@ pub struct PromptHookMutation {
 
 /// Hook invoked while raw user input is being prepared.
 /// Represents a hook result awaited without holding the registry lock.
-pub type PromptHookFuture<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Option<PromptHookMutation>> + Send + 'a>>;
+pub type PromptHookFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Option<PromptHookMutation>, String>> + Send + 'a>,
+>;
 
 pub trait PromptInputHook: Send + Sync {
     /// Returns the unique hook identifier.
@@ -77,7 +75,7 @@ pub trait PromptInputHook: Send + Sync {
 
     /// Adapts an immediate hook result to the asynchronous dispatcher.
     fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> PromptHookFuture<'a> {
-        Box::pin(std::future::ready(self.on_event(context)))
+        Box::pin(std::future::ready(Ok(self.on_event(context))))
     }
 }
 
@@ -93,7 +91,7 @@ pub trait PromptHistoryHook: Send + Sync {
 
     /// Adapts an immediate hook result to the asynchronous dispatcher.
     fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> PromptHookFuture<'a> {
-        Box::pin(std::future::ready(self.on_event(context)))
+        Box::pin(std::future::ready(Ok(self.on_event(context))))
     }
 }
 
@@ -109,7 +107,7 @@ pub trait PromptEstimateHistoryHook: Send + Sync {
 
     /// Adapts an immediate hook result to the asynchronous dispatcher.
     fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> PromptHookFuture<'a> {
-        Box::pin(std::future::ready(self.on_event(context)))
+        Box::pin(std::future::ready(Ok(self.on_event(context))))
     }
 }
 
@@ -125,13 +123,14 @@ pub trait SystemPromptComposeHook: Send + Sync {
 
     /// Adapts an immediate hook result to the asynchronous dispatcher.
     fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> PromptHookFuture<'a> {
-        Box::pin(std::future::ready(self.on_event(context)))
+        Box::pin(std::future::ready(Ok(self.on_event(context))))
     }
 }
 
 /// Carries a tool-policy mutation or its original failure without permitting unfiltered execution.
-pub type ToolPromptHookFuture<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<PromptHookMutation>, String>> + Send + 'a>>;
+pub type ToolPromptHookFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Option<PromptHookMutation>, String>> + Send + 'a>,
+>;
 
 /// Hook invoked while composing the tool prompt.
 pub trait ToolPromptComposeHook: Send + Sync {
@@ -161,7 +160,7 @@ pub trait PromptFinalizeHook: Send + Sync {
 
     /// Adapts an immediate hook result to the asynchronous dispatcher.
     fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> PromptHookFuture<'a> {
-        Box::pin(std::future::ready(self.on_event(context)))
+        Box::pin(std::future::ready(Ok(self.on_event(context))))
     }
 }
 
@@ -177,7 +176,7 @@ pub trait PromptEstimateFinalizeHook: Send + Sync {
 
     /// Adapts an immediate hook result to the asynchronous dispatcher.
     fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> PromptHookFuture<'a> {
-        Box::pin(std::future::ready(self.on_event(context)))
+        Box::pin(std::future::ready(Ok(self.on_event(context))))
     }
 }
 
@@ -350,7 +349,9 @@ impl PromptHookRegistry {
 
     #[allow(non_snake_case)]
     /// Dispatches prompt-input hooks in registration order.
-    pub async fn dispatchPromptInputHooks(initial_context: PromptHookContext) -> PromptHookContext {
+    pub async fn dispatchPromptInputHooks(
+        initial_context: PromptHookContext,
+    ) -> Result<PromptHookContext, String> {
         dispatch(
             initial_context,
             PROMPT_INPUT_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
@@ -363,7 +364,7 @@ impl PromptHookRegistry {
     /// Dispatches prompt-history hooks in registration order.
     pub async fn dispatchPromptHistoryHooks(
         initial_context: PromptHookContext,
-    ) -> PromptHookContext {
+    ) -> Result<PromptHookContext, String> {
         dispatch(
             initial_context,
             PROMPT_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
@@ -376,7 +377,7 @@ impl PromptHookRegistry {
     /// Dispatches estimate-history hooks in registration order.
     pub async fn dispatchPromptEstimateHistoryHooks(
         initial_context: PromptHookContext,
-    ) -> PromptHookContext {
+    ) -> Result<PromptHookContext, String> {
         dispatch(
             initial_context,
             PROMPT_ESTIMATE_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
@@ -389,7 +390,7 @@ impl PromptHookRegistry {
     /// Dispatches system-prompt compose hooks in registration order.
     pub async fn dispatchSystemPromptComposeHooks(
         initial_context: PromptHookContext,
-    ) -> PromptHookContext {
+    ) -> Result<PromptHookContext, String> {
         dispatch(
             initial_context,
             SYSTEM_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
@@ -403,8 +404,11 @@ impl PromptHookRegistry {
     pub async fn dispatchToolPromptComposeHooks(
         initial_context: PromptHookContext,
     ) -> Result<PromptHookContext, String> {
-        let snapshot = TOOL_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new()))
-            .lock().map_err(|error| error.to_string())?.clone();
+        let snapshot = TOOL_PROMPT_COMPOSE_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone();
         let mut current = initial_context;
         for hook in snapshot {
             if let Some(mutation) = hook.on_event_async(&current).await? {
@@ -418,7 +422,7 @@ impl PromptHookRegistry {
     /// Dispatches prompt-finalize hooks in registration order.
     pub async fn dispatchPromptFinalizeHooks(
         initial_context: PromptHookContext,
-    ) -> PromptHookContext {
+    ) -> Result<PromptHookContext, String> {
         dispatch(
             initial_context,
             PROMPT_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
@@ -431,7 +435,7 @@ impl PromptHookRegistry {
     /// Dispatches estimate-finalize hooks in registration order.
     pub async fn dispatchPromptEstimateFinalizeHooks(
         initial_context: PromptHookContext,
-    ) -> PromptHookContext {
+    ) -> Result<PromptHookContext, String> {
         dispatch(
             initial_context,
             PROMPT_ESTIMATE_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
@@ -449,11 +453,12 @@ where
     hooks.lock().unwrap().retain(|hook| id_of(hook) != hook_id);
 }
 
+/// Dispatches hook mutations in order and propagates execution failures.
 async fn dispatch<THook, F>(
     initial_context: PromptHookContext,
     hooks: &Mutex<Vec<Arc<THook>>>,
     invoke: F,
-) -> PromptHookContext
+) -> Result<PromptHookContext, String>
 where
     THook: ?Sized,
     F: for<'a> Fn(&'a Arc<THook>, &'a PromptHookContext) -> PromptHookFuture<'a>,
@@ -461,11 +466,11 @@ where
     let snapshot = hooks.lock().unwrap().clone();
     let mut current = initial_context;
     for hook in snapshot {
-        if let Some(mutation) = invoke(&hook, &current).await {
+        if let Some(mutation) = invoke(&hook, &current).await? {
             current = apply_mutation(current, mutation);
         }
     }
-    current
+    Ok(current)
 }
 
 fn apply_mutation(
@@ -497,4 +502,57 @@ fn apply_mutation(
         current.metadata.extend(mutation.metadata);
     }
     current
+}
+
+#[cfg(test)]
+mod execution_failure_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct FailingBeforeHook;
+    struct LaterHook(Arc<AtomicBool>);
+
+    impl PromptInputHook for FailingBeforeHook {
+        /// Identifies the timed-out handler used by this local dispatch chain.
+        fn id(&self) -> &str {
+            "before-send"
+        }
+
+        /// Returns a terminal deadline failure rather than an absent mutation.
+        fn on_event_async<'a>(&'a self, _context: &'a PromptHookContext) -> PromptHookFuture<'a> {
+            Box::pin(async { Err("TOOLPKG_BEFORE_HOOK_TIMEOUT: before-send".to_string()) })
+        }
+    }
+
+    impl PromptInputHook for LaterHook {
+        /// Identifies the handler that must never execute after a failed gate.
+        fn id(&self) -> &str {
+            "later"
+        }
+
+        /// Records whether the dispatcher incorrectly continued the before chain.
+        fn on_event(&self, _context: &PromptHookContext) -> Option<PromptHookMutation> {
+            self.0.store(true, Ordering::SeqCst);
+            None
+        }
+    }
+
+    /// Stops a failed before chain and returns its exact failure without publishing partial success.
+    #[tokio::test]
+    async fn before_hook_failure_stops_dispatch_and_reaches_the_caller() {
+        let continued = Arc::new(AtomicBool::new(false));
+        let hooks: Mutex<Vec<Arc<dyn PromptInputHook>>> = Mutex::new(vec![
+            Arc::new(FailingBeforeHook),
+            Arc::new(LaterHook(continued.clone())),
+        ]);
+        let result = dispatch(PromptHookContext::default(), &hooks, |hook, context| {
+            hook.on_event_async(context)
+        })
+        .await;
+        assert_eq!(
+            result.err().as_deref(),
+            Some("TOOLPKG_BEFORE_HOOK_TIMEOUT: before-send")
+        );
+        assert!(!continued.load(Ordering::SeqCst));
+    }
 }

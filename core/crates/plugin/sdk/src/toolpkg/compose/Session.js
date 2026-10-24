@@ -1,3 +1,34 @@
+/** Publishes effect-driven state changes while the mounted page has no active UI command. */
+function observeComposeState(bundle, entry, responseSink) {
+  var callId = responseSink.callId;
+  var previous = bundle.stateObservers.get(callId);
+  if (previous) previous.stop();
+  var observer = { entry: entry, active: true, queued: false };
+  /** Releases the listener and prevents queued work from publishing after page disposal. */
+  observer.stop = function () {
+    observer.active = false;
+    unsubscribe();
+    releaseCleanup();
+    bundle.stateObservers.delete(callId);
+  };
+  /** Coalesces page changes and lets active commands own their intermediate and final revisions. */
+  function changed() {
+    if (!observer.active || observer.queued || bundle.activeCommands > 0 || globalThis.__operitCurrentCallId !== callId) return;
+    observer.queued = true;
+    Promise.resolve().then(/** Delivers state changes without requiring a click or host input refresh. */ function () {
+      observer.queued = false;
+      if (!observer.active || bundle.activeCommands > 0) return;
+      return buildComposeResponse(bundle, observer.entry, undefined, false, responseSink, false, false);
+    }).catch(/** Reports the actual render failure and closes this failed observer. */ function (error) {
+      observer.stop();
+      responseSink.reportError(String(error && error.message || error));
+    });
+  }
+  var unsubscribe = bundle.subscribeStateChange(changed);
+  var releaseCleanup = responseSink.onCleanup(observer.stop);
+  bundle.stateObservers.set(callId, observer);
+}
+
 /// Resolves a registered entry exactly before handling standalone screen-module conventions.
 function resolveComposeEntry() {
   if (typeof module !== 'undefined' && module && module.exports && Object.prototype.hasOwnProperty.call(module.exports, '__operit_compose_entry_export')) {
@@ -53,6 +84,7 @@ function renderComposeDsl(runtimeOptions) {
     return refreshComposeInputs(options);
   }
   var reuse = !!sameContext;
+  if (previous && !reuse) OperitComposeReactive.dispose(previous.ctx);
   var bundle = reuse ? previous : OperitComposeDslRuntime.createContext(options);
   bundle.composeSessionId = sessionId;
   if (reuse || options.__operit_update_inputs === true) {
@@ -68,7 +100,9 @@ function renderComposeDsl(runtimeOptions) {
   }
   root.__operit_compose_bundle = bundle;
   root.__operit_compose_entry = entry;
-  return buildComposeResponse(bundle, entry, undefined, true, requireComposeResponseSink(activeCallRuntime));
+  var response = buildComposeResponse(bundle, entry, undefined, true, requireComposeResponseSink(activeCallRuntime));
+  observeComposeState(bundle, entry, requireComposeResponseSink(activeCallRuntime));
+  return response;
 }
 function refreshComposeInputs(runtimeOptions) {
   var root = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this;
@@ -86,5 +120,8 @@ function refreshComposeInputs(runtimeOptions) {
   if (activeCallRuntime) {
     bundle.setCallRuntime(activeCallRuntime);
   }
-  return buildComposeResponse(bundle, entry, undefined, true, requireComposeResponseSink(activeCallRuntime));
+  var response = buildComposeResponse(bundle, entry, undefined, true, requireComposeResponseSink(activeCallRuntime),
+    Object.prototype.hasOwnProperty.call(options, '__operit_input_state'));
+  observeComposeState(bundle, entry, requireComposeResponseSink(activeCallRuntime));
+  return response;
 }

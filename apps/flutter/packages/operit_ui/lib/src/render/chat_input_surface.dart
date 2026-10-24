@@ -1,10 +1,7 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
-import 'package:liquid_glass_widgets/widgets/shared/glass_effect.dart';
 
 import 'bubble_surface.dart';
+import 'liquid_glass.dart';
 
 class AgentInputSurface extends StatelessWidget {
   /// Creates the agent surface with its original system-inset placement.
@@ -88,38 +85,12 @@ class AgentInputSurface extends StatelessWidget {
     );
     final Widget surface;
     if (transparentSurface && !useImage) {
-      final settings = _inputTransparentGlassSettings(context);
       surface = ClipPath(
         clipper: ShapeBorderClipper(shape: shape),
-        child: Stack(
-          children: <Widget>[
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(
-                  sigmaX: settings.blur,
-                  sigmaY: settings.blur,
-                ),
-                child: const ColoredBox(color: Colors.transparent),
-              ),
-            ),
-            Positioned.fill(
-              child: GlassEffect(
-                quality: GlassQuality.standard,
-                shape: LiquidRoundedSuperellipse(
-                  borderRadius: borderRadius.topLeft.x,
-                ),
-                settings: settings,
-                interactionIntensity: 0.85,
-                ambientRim: 0.11,
-                baseAlphaMultiplier: 0.75,
-                edgeAlphaMultiplier: 0.75,
-                rimThickness: 1.48,
-                rimSmoothing: 8,
-                child: const SizedBox.expand(),
-              ),
-            ),
-            decorated,
-          ],
+        child: LiquidGlassSurface(
+          borderRadius: borderRadius,
+          tint: const Color(0x09FFFFFF),
+          child: decorated,
         ),
       );
     } else {
@@ -133,23 +104,6 @@ class AgentInputSurface extends StatelessWidget {
       child: Padding(padding: margin, child: surface),
     );
   }
-}
-
-LiquidGlassSettings _inputTransparentGlassSettings(BuildContext context) {
-  final dark = Theme.of(context).brightness == Brightness.dark;
-  return LiquidGlassSettings(
-    glassColor: dark ? const Color(0x08FFFFFF) : const Color(0x07FFFFFF),
-    thickness: 80,
-    blur: 8,
-    chromaticAberration: 0.18,
-    lightIntensity: 0.42,
-    ambientStrength: 0.2,
-    refractiveIndex: 1.16,
-    saturation: 1.04,
-    glowIntensity: 0.17,
-    specularSharpness: GlassSpecularSharpness.soft,
-    standardOpacityMultiplier: 0.12,
-  );
 }
 
 class ClassicInputSurface extends StatelessWidget {
@@ -225,38 +179,12 @@ class ClassicInputSurface extends StatelessWidget {
     );
     final Widget surface;
     if (transparentSurface && !useImage) {
-      final settings = _classicInputGlassSettings(context);
       surface = ClipPath(
         clipper: ShapeBorderClipper(shape: shape),
-        child: Stack(
-          children: <Widget>[
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(
-                  sigmaX: settings.blur,
-                  sigmaY: settings.blur,
-                ),
-                child: const ColoredBox(color: Colors.transparent),
-              ),
-            ),
-            Positioned.fill(
-              child: GlassEffect(
-                quality: GlassQuality.standard,
-                shape: LiquidRoundedSuperellipse(
-                  borderRadius: borderRadius.topLeft.x,
-                ),
-                settings: settings,
-                interactionIntensity: 0.85,
-                ambientRim: 0.11,
-                baseAlphaMultiplier: 0.75,
-                edgeAlphaMultiplier: 0.75,
-                rimThickness: 1.48,
-                rimSmoothing: 8,
-                child: const SizedBox.expand(),
-              ),
-            ),
-            decorated,
-          ],
+        child: LiquidGlassSurface(
+          borderRadius: borderRadius,
+          tint: const Color(0x09FFFFFF),
+          child: decorated,
         ),
       );
     } else {
@@ -270,22 +198,4 @@ class ClassicInputSurface extends StatelessWidget {
       child: Padding(padding: margin, child: surface),
     );
   }
-}
-
-/// Builds the glass settings used by the classic transparent input surface.
-LiquidGlassSettings _classicInputGlassSettings(BuildContext context) {
-  final dark = Theme.of(context).brightness == Brightness.dark;
-  return LiquidGlassSettings(
-    glassColor: dark ? const Color(0x08FFFFFF) : const Color(0x07FFFFFF),
-    thickness: 80,
-    blur: 8,
-    chromaticAberration: 0.18,
-    lightIntensity: 0.42,
-    ambientStrength: 0.2,
-    refractiveIndex: 1.16,
-    saturation: 1.04,
-    glowIntensity: 0.17,
-    specularSharpness: GlassSpecularSharpness.soft,
-    standardOpacityMultiplier: 0.12,
-  );
 }

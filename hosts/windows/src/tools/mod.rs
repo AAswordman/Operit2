@@ -3,6 +3,7 @@ pub mod bluetooth;
 pub mod browser;
 pub mod fs;
 pub mod http;
+mod mci;
 pub mod runtime;
 pub mod storage;
 pub mod system;

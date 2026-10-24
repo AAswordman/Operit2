@@ -96,7 +96,7 @@ class FfiCoreTransport implements CoreByteTransport {
 class _FfiConnection implements Finalizable {
   /// Binds the versioned ABI and registers a VM-owned port for asynchronous replies.
   _FfiConnection(Map<String, dynamic> descriptor) {
-    if (descriptor['version'] != 2 || NativeApi.majorVersion != 2) {
+    if (descriptor['version'] != 3 || NativeApi.majorVersion != 2) {
       throw StateError('Unsupported Core FFI or Dart native API version');
     }
     _session = Pointer<Void>.fromAddress(_address(descriptor, 'session'));
@@ -282,17 +282,16 @@ class _FfiConnection implements Finalizable {
     CoreLinkMessage payload,
   ) => _send(_nextRequest++, operation, payload);
 
-  /// Buffers early watch frames and closes Rust state after open acknowledgement.
+  /// Buffers early frames and cancels the exact generation even during source opening.
   Stream<Uint8List> watch(String subscriptionId, CoreLinkMessage payload) {
     final id = _nextRequest++;
     late final StreamController<Uint8List> controller;
-    Future<void>? opening;
-    bool opened = false;
+    bool openingFailed = false;
     bool cancelled = false;
     controller = StreamController<Uint8List>(
       onListen: () {
         _watches[id] = controller;
-        opening = () async {
+        unawaited(() async {
           try {
             final response = await _send(
               id,
@@ -300,28 +299,27 @@ class _FfiConnection implements Finalizable {
               payload,
             );
             final actualId = decodeNativeCoreWatchStreamResult(response);
-            opened = true;
             if (actualId != subscriptionId) {
               throw StateError('Core FFI watch acknowledgement mismatch');
             }
           } catch (error, stack) {
+            openingFailed = true;
             _watches.remove(id);
             if (!cancelled && !controller.isClosed) {
               controller.addError(error, stack);
               unawaited(controller.close());
             }
           }
-        }();
+        }());
       },
       onCancel: () async {
         cancelled = true;
         _watches.remove(id);
-        await opening;
-        if (opened && !_closed) {
+        if (!openingFailed && !_closed) {
           decodeNativeCoreVoidResult(
             await request(
               CoreTransportOperation.closeWatchStream,
-              CoreLinkMessage.bytes(utf8.encode(subscriptionId)),
+              encodeCoreLinkMessage([subscriptionId, id]),
             ),
           );
         }
@@ -330,66 +328,75 @@ class _FfiConnection implements Finalizable {
     return controller.stream;
   }
 
-  /// Routes shared byte frames using the existing ABI header and read-only views.
+  /// Routes one uniformly batched delivery while retaining each frame's own attachments.
   void _receive(dynamic message) {
     try {
-      final keepAlive = _FfiEnvelope(message as List<dynamic>);
-      final envelope = keepAlive.values;
-      if (envelope.isEmpty || (envelope.length - 1) % 4 != 0) {
-        throw const FormatException('Invalid Core FFI shared envelope');
-      }
-      final bytes = (envelope[0] as Uint8List).asUnmodifiableView();
-      final buffers = <CoreLinkSharedBuffer>[];
-      for (var index = 1; index < envelope.length; index += 4) {
-        final token = envelope[index] as int;
-        final receipt = envelope[index + 1] as Uint8List;
-        final address = envelope[index + 2] as int;
-        final length = envelope[index + 3] as int;
-        if (receipt.length != 1 || token == 0 || address == 0 || length < 0) {
-          throw const FormatException('Invalid Core FFI buffer receipt');
-        }
-        final existing = _views[(address, length)]?.target;
-        final buffer =
-            existing ??
-            _rememberBuffer(
-              Pointer<Uint8>.fromAddress(address),
-              length,
-              _bufferRetain(Pointer<Void>.fromAddress(token)),
-            );
-        buffers.add(buffer);
-      }
-      attachCoreLinkBuffers(bytes, buffers);
-      if (bytes.length < 9) {
-        throw const FormatException('Truncated Core FFI frame');
-      }
-      final kind = bytes[0];
-      final id = ByteData.sublistView(bytes, 1, 9).getInt64(0, Endian.little);
-      final payload = sliceCoreLinkBytes(bytes, 9);
-      switch (kind) {
-        case 0:
-          final pending = _pending.remove(id);
-          if (pending == null) throw StateError('Unknown Core FFI reply: $id');
-          pending.complete(payload);
-        case 1:
-          _watches[id]?.add(payload);
-        case 2:
-          final controller = _watches[id];
-          if (controller != null) {
-            try {
-              decodeNativeCoreVoidResult(payload);
-              throw const FormatException('Expected Core FFI watch error');
-            } catch (error, stack) {
-              controller.addError(error, stack);
-            }
-          }
-        case 3:
-          final controller = _watches.remove(id);
-          if (controller != null) unawaited(controller.close());
-        default:
-          throw FormatException('Unknown Core FFI frame type: $kind');
+      final frames = message as List<dynamic>;
+      if (frames.isEmpty) throw const FormatException('Empty Core FFI batch');
+      for (final frame in frames) {
+        _receiveFrame(frame as List<dynamic>);
       }
     } catch (error, stack) {
       close(error, stack);
+    }
+  }
+
+  /// Adopts one frame's receipts and routes its connection-local correlation id.
+  void _receiveFrame(List<dynamic> message) {
+    final keepAlive = _FfiEnvelope(message);
+    final envelope = keepAlive.values;
+    if (envelope.isEmpty || (envelope.length - 1) % 4 != 0) {
+      throw const FormatException('Invalid Core FFI shared envelope');
+    }
+    final bytes = (envelope[0] as Uint8List).asUnmodifiableView();
+    final buffers = <CoreLinkSharedBuffer>[];
+    for (var index = 1; index < envelope.length; index += 4) {
+      final token = envelope[index] as int;
+      final receipt = envelope[index + 1] as Uint8List;
+      final address = envelope[index + 2] as int;
+      final length = envelope[index + 3] as int;
+      if (receipt.length != 1 || token == 0 || address == 0 || length < 0) {
+        throw const FormatException('Invalid Core FFI buffer receipt');
+      }
+      final existing = _views[(address, length)]?.target;
+      final buffer =
+          existing ??
+          _rememberBuffer(
+            Pointer<Uint8>.fromAddress(address),
+            length,
+            _bufferRetain(Pointer<Void>.fromAddress(token)),
+          );
+      buffers.add(buffer);
+    }
+    attachCoreLinkBuffers(bytes, buffers);
+    if (bytes.length < 9) {
+      throw const FormatException('Truncated Core FFI frame');
+    }
+    final kind = bytes[0];
+    final id = ByteData.sublistView(bytes, 1, 9).getInt64(0, Endian.little);
+    final payload = sliceCoreLinkBytes(bytes, 9);
+    switch (kind) {
+      case 0:
+        final pending = _pending.remove(id);
+        if (pending == null) throw StateError('Unknown Core FFI reply: $id');
+        pending.complete(payload);
+      case 1:
+        _watches[id]?.add(payload);
+      case 2:
+        final controller = _watches[id];
+        if (controller != null) {
+          try {
+            decodeNativeCoreVoidResult(payload);
+            throw const FormatException('Expected Core FFI watch error');
+          } catch (error, stack) {
+            controller.addError(error, stack);
+          }
+        }
+      case 3:
+        final controller = _watches.remove(id);
+        if (controller != null) unawaited(controller.close());
+      default:
+        throw FormatException('Unknown Core FFI frame type: $kind');
     }
   }
 

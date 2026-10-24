@@ -16,7 +16,7 @@ const cardCalls = ["Theme.listConfigs", "Tts.listConfigs", "Theme.applyConfig", 
 function writes(runtime) {
   return runtime.disk.calls.filter(
     /** Counts only the actual generic native namespace write. */
-    call => call.method === "storage.transaction" && call.args[0].some(statement => /^(INSERT INTO|UPDATE) "chat_bindings" /.test(statement.sql)),
+    call => call.method === "storage.preferences.edit" && call.args[0].endsWith("/chats.preferences.json") && Object.keys(call.args[1]).some(key => key.startsWith("binding_")),
   );
 }
 
@@ -301,7 +301,7 @@ test("registered selector cancellation never writes selection or applies Theme a
 /** A real file publication error cannot be reported as a successful selection or trigger independent preference mutations. */
 test("registered file selection commit failure preserves the original IO rejection and makes zero apply calls", async t => {
   const { runtime, settings, card } = await environment(t), original = new Error("Controlled selection file move failure"), before = await stateBytes(runtime);
-  runtime.disk.failNext("storage.transaction", original);
+  runtime.disk.failNext("storage.preferences.edit", original);
   await assert.rejects(runtime.api("activePrompt.setCard", { id: card.id }),
     /** Preserves the actual original IO error identity through the registered provider and central coordinator. */
     failure => failure === original,
@@ -333,7 +333,7 @@ test("actual registered before-create hook never applies configs for explicit, s
 
 /** Executes the same main module as an ordinary engine owner without invoking the registration-only export. */
 test("execution runtime can read named themes before registerToolPkg is invoked", async t => {
-  const disk = await createDiskHarness(t), settings = createSelectionSettingsFixture(), channels = new Map();
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createSelectionSettingsFixture(), channels = new Map();
   loadModule("src/main.ts", {
     ...disk.globals,
     Tools: { ...disk.globals.Tools, ...settings.settings },

@@ -136,6 +136,26 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
 
     pub fn hasWatches(&self) -> bool { !self.watches.is_empty() }
 
+    /// Drains each ready stream's queued prefix in order, including its terminal notification.
+    pub async fn nextWatchBatch(&mut self) -> Option<Vec<CoreLinkResponse>> {
+        use tokio::sync::mpsc::error::TryRecvError;
+        let mut batch = vec![self.nextWatchEvent().await?];
+        self.watches.retain(|requestId, stream| {
+            for _ in 0..=stream.pendingCount() {
+                let result = match stream.try_recv() {
+                    Ok(event) => CoreLinkWatchResponse::Event(event),
+                    Err(TryRecvError::Empty) => return true,
+                    Err(TryRecvError::Disconnected) => CoreLinkWatchResponse::Closed,
+                };
+                let closed = matches!(result, CoreLinkWatchResponse::Closed);
+                batch.push(CoreLinkResponse::Watch { requestId: requestId.clone(), result: Ok(result) });
+                if closed { return false; }
+            }
+            true
+        });
+        Some(batch)
+    }
+
     /// Multiplex watch events fairly without spawning per-watch tasks or polling
     /// on a timer. Cancellation before readiness does not consume an event.
     /// Returns None only when this connection has no open watches.

@@ -17,3 +17,6 @@ pub mod JsPackageLoader;
 
 #[path = "JsTools.rs"]
 pub mod JsTools;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod javascript_test;

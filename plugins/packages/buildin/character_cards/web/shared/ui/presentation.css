@@ -1,5 +1,5 @@
 /* Presentation views reuse the manager's host-provided Material palette and offline icons. */
-.presentation-page{min-width:0;max-width:100%;background:var(--surface)}
+.presentation-page{min-width:0;max-width:100%;background:var(--background)}
 .selection-toolbar{flex:none;padding:8px 16px 0}.selection-toolbar .field{margin:4px 0 8px}
 .selection-categories{margin-bottom:10px}.selection-check{display:grid;place-items:center;width:24px;flex:none;color:var(--primary)}
 .entity.selected{border-color:var(--primary);background:color-mix(in srgb,var(--primaryContainer) 24%,var(--surfaceContainer))}

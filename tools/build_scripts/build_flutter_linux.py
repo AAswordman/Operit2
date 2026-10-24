@@ -5,6 +5,7 @@ from pathlib import Path
 
 from common import (
     DIST_DIR,
+    release_asset_name,
     FLUTTER_APP_DIR,
     compress_tar_gz,
     flutter_command,
@@ -35,7 +36,7 @@ def main() -> int:
         command.extend(["--build-number", args.build_number])
     run(command, cwd=FLUTTER_APP_DIR)
     bundle = FLUTTER_APP_DIR / "build" / "linux" / "x64" / "release" / "bundle"
-    archive_path = args.archive_path or DIST_DIR / f"operit2-app-linux-{host_arch()}.tar.gz"
+    archive_path = args.archive_path or DIST_DIR / release_asset_name("app", "linux", host_arch(), "tar.gz")
     compress_tar_gz(bundle, archive_path)
     print(f"Linux archive: {archive_path}", flush=True)
     return 0

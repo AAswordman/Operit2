@@ -42,7 +42,7 @@ function toErrorText(error: Error | string | null | undefined): string {
   return error || "error";
 }
 
-/** Completes the tool call with the current workspace plan content. */
+/** Completes the tool call with the current plugin-owned chat plan content. */
 export async function get_plan(): Promise<void> {
   const text = resolvePlanModeI18n();
   const chatId = getChatId();
@@ -78,7 +78,7 @@ export async function get_plan(): Promise<void> {
   }
 }
 
-/** Deletes the current workspace plan after implementation completes. */
+/** Deletes the current plugin-owned chat plan after implementation completes. */
 export async function complete_plan(): Promise<void> {
   const chatId = getChatId();
   if (chatId === undefined) {

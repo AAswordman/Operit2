@@ -412,6 +412,9 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RUNTIME_LINK_ACCESS_HOST_CONFIG,
     CLIENT_RUNTIME_BOOTSTRAP,
     RUNTIME_APPLICATION_ZOOM,
+    // Model weights, native runtimes and installation inventories belong to this node.
+    RuntimeStoragePathDefinition::tree(RUNTIME_LOCAL_MODELS_DIR_PATH, RuntimeStorageOwnership::CoreNode),
+    RuntimeStoragePathDefinition::exact(RUNTIME_LOCAL_MODEL_REGISTRY_PATH, RuntimeStorageOwnership::CoreNode),
     RUNTIME_CLIENT_LOG,
     RUNTIME_SHARE_IMAGE_EXPORTS,
     // Retain ownership for queued operations and legacy data during the non-destructive upgrade.
@@ -488,6 +491,20 @@ mod tests {
     use super::*;
 
     /// Verifies exact, tree, and relative-file definitions resolve from path metadata.
+    #[test]
+    fn local_model_weights_and_install_inventory_are_node_owned() {
+        for path in [
+            "runtime/models/local/chat/llama_cpp/qwen/model.gguf",
+            "runtime/models/local/chat/mnn/qwen/llm.mnn.weight",
+            "runtime/models/local/engines/mnn/3.6.1/engine.json",
+            "runtime/models/local/manifests/qwen.json",
+            "runtime/models/local/download/weights.part",
+            RUNTIME_LOCAL_MODEL_REGISTRY_PATH,
+        ] {
+            assert_eq!(runtimeStorageOwnership(path).unwrap(), RuntimeStorageOwnership::CoreNode, "{path}");
+        }
+    }
+
     #[test]
     fn resolves_registered_runtime_storage_ownership() {
         assert_eq!(

@@ -1,19 +1,18 @@
 # operit-board-esp32
 
-Board profile for ESP32-2432S028 hardware.
+ESP32-2432S028 implementations of Host API capabilities, used by
+[`apps/esp32`](../../../apps/esp32/README.md). The firmware application assembles
+identity, shared pairing/Space services, device behavior and UI. See
+[Edge responsibilities](../../../docs/edge-architecture.md).
 
-This crate owns the board-specific Host API implementations used by
-`apps/esp32`. The implemented surfaces are:
+The board crate provides GPIO, ILI9341 RGB565 display and touch adaptation,
+robot-face support, and ESP-IDF TCP/serial Host adapters. Host code owns the
+platform sockets, byte I/O and physical display; it does not own pairing trust,
+Space policy, Link semantics or application navigation.
 
-- `DeviceIoHost` for the onboard RGB status LEDs
-- `RobotFaceHost` for the ILI9341 face display
+The panel uses rotation 90 and a physical 320×240 landscape display. The current
+firmware flushes two RGB565 rows at a time (1280 bytes). The optional 75 KiB
+RGB332 diagnostic mirror is disabled by the firmware to preserve heap capacity.
 
-The crate does not own Operit Core startup, Access pairing, Link packets,
-Wi-Fi transport, or the firmware HTTP home page. Those belong to `apps/esp32`.
-
-Display rotation `90` is used for the physical 320x240 landscape panel.
-
-The physical panel receives RGB565 pixels. The board still exposes an optional
-RGB332 diagnostic mirror for hosts that explicitly enable it, but the firmware
-releases that 75 KiB buffer because its current UI uses the physical panel only.
-The self-drawn UI uses a synchronous two-row RGB565 strip buffer (1280 bytes), without a widget-library runtime.
+[`app/`](app/README.md) is a separate minimal GPIO example, not the production
+firmware or a device-space acceptance test.

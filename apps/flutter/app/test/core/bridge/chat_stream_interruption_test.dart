@@ -6,16 +6,94 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart';
 import 'package:operit2/ui/features/chat/components/part/StructuredMessagePartRenderer.dart';
+import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 
 enum _Interruption { transportError, eofWithoutCompleted, malformedFrame }
 
 void main() {
+  setUpAll(ClientLogger.initialize);
+
+  testWidgets(
+    'embedded child observes live main-runtime messages while selection stays local',
+    (tester) async {
+      final bridge = _LiveChatBridge(incrementalDescriptors: true);
+      final clients = GeneratedCoreProxyClients(bridge);
+      final viewModel = ChatViewModel.withChatObservation(
+        bridge: bridge,
+        chat: clients.chatRuntimeHolderMainForSlot('embedded-chat:chat-1'),
+        observationChat: clients.chatRuntimeHolderMain,
+      );
+      await viewModel.chatCore.switchChatLocal(chatId: 'chat-1');
+      expect(bridge.calls.single.args, {
+        '__core_instance_id': 'embedded-chat:chat-1',
+        'chatId': 'chat-1',
+      });
+      final states = <ChatState>[];
+      final stateWatch = viewModel.watchChatState('chat-1').listen(states.add);
+      addTearDown(() async {
+        await stateWatch.cancel();
+        await bridge.dispose();
+      });
+      final rendererState = StreamMarkdownRendererState();
+      final messages = viewModel.watchMessages('chat-1');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StreamBuilder<List<ChatMessage>>(
+              stream: messages,
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const SizedBox();
+                return StreamingStructuredMessageRenderer(
+                  parts: snapshot.data!.single.parts,
+                  showThinkingProcess: true,
+                  nodeGrouper: const NoopMarkdownNodeGrouper(),
+                  textColor: Colors.black,
+                  backgroundColor: Colors.white,
+                  contentStream: snapshot.data!.single.contentStream,
+                  rendererId: 'embedded:chat-1:1',
+                  streamState: rendererState,
+                  splitMarkdownContent: (_) async => <MarkdownStreamEvent>[],
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await _pumpOutput(tester);
+      bridge.produce('first');
+      await _pumpOutput(tester);
+      expect(rendererState.collectedContent.toString(), 'first');
+      bridge.produce(' second');
+      await _pumpOutput(tester);
+      expect(rendererState.collectedContent.toString(), 'first second');
+      expect(states, hasLength(2));
+      expect(
+        states.every(
+          (state) => state.currentChatId == 'chat-1' && state.isLoading,
+        ),
+        isTrue,
+      );
+      for (final request in bridge.watches.where(
+        (watch) =>
+            watch.propertyName == 'chatMessagesFlow' ||
+            watch.propertyName == 'chatStateFlow',
+      )) {
+        expect(request.args, {'chatId': 'chat-1'});
+      }
+      expect(bridge.messageWatchOpenCount, 1);
+      expect(bridge.cancelCalls, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final interruption in _Interruption.values) {
     test(
       'live chat resumes on its next descriptor after ${interruption.name}, without cancelling AI',
@@ -275,6 +353,8 @@ class _ChatObserver {
 class _LiveChatBridge extends OperitRuntimeBridge {
   _LiveChatBridge({this.incrementalDescriptors = false});
 
+  final calls = <CoreCallRequest>[];
+  final watches = <CoreWatchRequest>[];
   final bool incrementalDescriptors;
   bool _descriptorPublished = false;
   static const streamId = 'chat-message-stream:chat-1:1';
@@ -292,6 +372,7 @@ class _LiveChatBridge extends OperitRuntimeBridge {
 
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
+    watches.add(request);
     switch (request.propertyName) {
       case 'chatMessagesFlow':
         _messagesRequest = request;
@@ -345,7 +426,19 @@ class _LiveChatBridge extends OperitRuntimeBridge {
     }
     _states.add(
       _event(_stateRequest!, 'Changed', {
+        'currentChatId': 'chat-1',
+        'currentChatTitle': 'Child',
+        'currentWorkspacePath': null,
         'isLoading': true,
+        'inputProcessingState': {
+          'Receiving': {'message': 'Streaming'},
+        },
+        'hasOlderDisplayHistory': false,
+        'hasNewerDisplayHistory': false,
+        'isLoadingDisplayWindow': false,
+        'pendingQueueMessages': [],
+        'isPendingQueueExpanded': false,
+        'toolPermissionRequests': [],
         'progress': producerTicks,
       }),
     );
@@ -425,6 +518,10 @@ class _LiveChatBridge extends OperitRuntimeBridge {
 
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) {
+    calls.add(request);
+    if (request.methodName == 'switchChatLocal') {
+      return Future.value(encodeCoreLink([0, null]));
+    }
     if (request.methodName == 'cancelMessage') cancelCalls += 1;
     throw StateError(
       'No model or cancellation calls should be made during watch recovery',

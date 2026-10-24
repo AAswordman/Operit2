@@ -124,7 +124,7 @@ var OperitComposeWebView = function () {
       });
       if (previous) previous.forEach(/** Releases only methods removed by this explicit interface replacement. */
       function (id, name) {
-        if (!owned.has(name)) runtime.actions.release(id);
+        if (!owned.has(name)) runtime.actions.unregister(id);
       });
       interfaces.set(interfaceName, owned);
     });
@@ -141,7 +141,7 @@ var OperitComposeWebView = function () {
       if (methods) {
         methods.forEach(/** Releases interface-owned actions when the plugin explicitly unregisters it. */
         function (id) {
-          runtime.actions.release(id);
+          runtime.actions.unregister(id);
         });
         interfaces.delete(interfaceName);
         if (interfaces.size === 0) runtime.webViewInterfaces.delete(controllerKey);

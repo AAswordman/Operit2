@@ -11,6 +11,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   dynamic_color
   file_selector_windows
   geolocator_windows
+  operit_keep_alive
   printing
   record_windows
   url_launcher_windows

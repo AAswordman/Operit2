@@ -319,9 +319,10 @@ impl RuntimeBrowserService {
         let log_context = (command.action != BROWSER_RUNTIME_INTERACTION_ACTION)
             .then(|| (command.action.clone(), command.sessionId.clone()));
         if let Some((action, session_id)) = log_context.as_ref() {
-            AppLogger::i(
+            AppLogger::v_with_level(
                 BROWSER_RUNTIME_LOG_TAG,
                 &format!("command start action={} session={:?}", action, session_id),
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
         }
         let result = self
@@ -330,7 +331,7 @@ impl RuntimeBrowserService {
             .map(runtime_browser_command_result)
             .map_err(|error| error.message)?;
         if let Some((action, session_id)) = log_context.as_ref() {
-            AppLogger::i(
+            AppLogger::v_with_level(
                 BROWSER_RUNTIME_LOG_TAG,
                 &format!(
                     "command done action={} session={:?} elapsedMs={}",
@@ -338,6 +339,7 @@ impl RuntimeBrowserService {
                     session_id,
                     currentTimeMillis() - startedAtMillis
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
         }
         Ok(result)

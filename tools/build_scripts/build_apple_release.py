@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import argparse
 import platform
-import shutil
 import sys
 from pathlib import Path
 
-from common import DIST_DIR, REPO_ROOT, run
+from common import DIST_DIR, REPO_ROOT, copy_required_file, host_arch, release_asset_name, run
 
 
 BUILD_SCRIPTS_DIR = REPO_ROOT / "tools" / "build_scripts"
@@ -44,7 +43,7 @@ def build_apple_apps(build_name: str, build_number: str, dist_dir: Path, include
             build_number,
             "--enforce-lockfile",
             "--archive-path",
-            dist_dir / "operit2-app-macos-universal.zip",
+            dist_dir / release_asset_name("app", "macos", "universal", "zip"),
         ],
     )
     if include_ios:
@@ -58,7 +57,7 @@ def build_apple_apps(build_name: str, build_number: str, dist_dir: Path, include
                 build_number,
                 "--enforce-lockfile",
                 "--archive-path",
-                dist_dir / "operit2-app-ios-arm64.zip",
+                dist_dir / release_asset_name("app", "ios", "arm64", "zip"),
             ],
         )
 
@@ -74,9 +73,17 @@ def build_apple_cli(cli_arches: str, dist_dir: Path) -> None:
         ],
     )
     dist_dir.mkdir(parents=True, exist_ok=True)
-    for asset in sorted(DIST_DIR.glob("operit2-cli-macos-*")):
-        if asset.is_file():
-            shutil.copy2(asset, dist_dir / asset.name)
+    if dist_dir.resolve() == DIST_DIR.resolve():
+        return
+    if cli_arches == "all":
+        arches = ("x86_64", "aarch64")
+    elif cli_arches == "host":
+        arches = (host_arch(),)
+    else:
+        arches = (cli_arches,)
+    for arch in arches:
+        name = release_asset_name("cli", "macos", arch, "tar.gz")
+        copy_required_file(DIST_DIR / name, dist_dir / name)
 
 
 # Builds every selected Apple release asset.

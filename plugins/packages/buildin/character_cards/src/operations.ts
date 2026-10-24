@@ -1,10 +1,13 @@
+import { uuid } from "./identity";
+import { searchMemoryChunks } from "./memory-search";
 import type { DomainInput, DomainOperation, DomainOutput } from "./api";
 import type { CharacterRepository } from "./canonical";
 import type { Card, Memory, MemoryLink } from "./model";
 import { createCharacterDraft, createGroupDraft, createTagDraft } from "./drafts";
 import { parseDomainPayload, resolveChatConfiguration } from "./domain";
+import type { ChatConfigurationService } from "./domain";
 import { autoCategorizeMemory, updateChatMemory } from "./memory-jobs/analysis";
-import { listMemoryChats, requireChat } from "./memory-jobs/chat";
+import { listMemoryChats, pruneMissingMemoryChats, requireChat } from "./memory-jobs/chat";
 import { rebuildMemoryEmbeddings } from "./memory-jobs/embeddings";
 import { enqueueCandidate, startMemoryRebuild } from "./memory-jobs/scheduler";
 import { decodeCharacterBackup, decodeGroupBackup, decodeMemoryBackup, exportCharacterBackup, exportGroupBackup, exportMemoryBackup } from "./backup";
@@ -30,7 +33,6 @@ function findMemory(items: Memory[], title: string): Memory {
 /** Converts canonical deletion lifecycle completion to the public activation-independent result. */
 async function deleteCharacter(id: string, host: CharacterRepository): Promise<{ id: string; deleted: boolean }> {
   requireId(id, "角色卡标识"); const card = await host.getCharacter(id); assertCard(card);
-  if (card.isDefault) throw new Error("默认角色卡不能删除");
   await host.deleteCharacter(id); return { id, deleted: true };
 }
 
@@ -61,12 +63,34 @@ async function activateForChat(input: DomainInput<"activePrompt.activateForChat"
   return { characterCardName: input.characterCardName, characterGroupId: input.characterGroupId, updated: true };
 }
 
+/** Applies live privacy preferences to current and historical configuration reads. */
+export async function resolveConfiguration(
+  input: DomainInput<"chat.configuration.resolve">,
+  service: ChatConfigurationService,
+): Promise<DomainOutput<"chat.configuration.resolve">> {
+  const result = await resolveChatConfiguration(input, service);
+  if (!("profile" in result) || (await service.readGlobalMemoryPreferences()).userDescriptionEnabled) return result;
+  return {
+    ...result,
+    profile: { ...result.profile, userPreferencesText: "" },
+    participants: result.participants.map(profile => ({ ...profile, userPreferencesText: "" })),
+  };
+}
+
 /** Implements every published domain operation with typed handlers sharing the editor's actual business service. */
 const handlers: DomainHandlers = {
+  /** Ranks original chunks and commits provider vectors in the same repository operation. */
+  "memory.chunks": async (input, repository) => {
+    const space = await repository.readMemorySpace(input.ownerKey), cached = space.embeddings.length;
+    const result = await searchMemoryChunks(space, input.memoryId, input.query, input.count);
+    if (space.embeddings.length !== cached) await repository.writeMemorySpace(input.ownerKey, space);
+    return result;
+  },
   /** Keeps full-filter searches and provider embedding persistence on the same serialized service. */
   "memory.searchWithOptions": async (input, repository) => ({ ownerKey: input.ownerKey, items: await searchMemories(input, repository) }),
   /** Lists actual owner-bound generic chat summaries. */
   "memory.chat.list": (input, repository) => listMemoryChats(input.ownerKey, repository),
+  "memory.chat.pruneMissing": (input, repository) => pruneMissingMemoryChats(input.ownerKey, repository),
   /** Extracts real chat messages through the configured functional MEMORY model. */
   "memory.chat.update": (input, repository) => updateChatMemory(input.ownerKey, input.chatId, repository),
   /** Performs genuine ten-record functional categorization in the same operation. */
@@ -81,23 +105,23 @@ const handlers: DomainHandlers = {
   "memory.embeddings.rebuild": (input, repository) => rebuildMemoryEmbeddings(input.ownerKey, repository),
   /** Enqueues only actual persisted message sources and genuine bound owners. */
   "memory.candidate.enqueue": (input, repository) => enqueueCandidate(input, repository),
-  /** Resolves binding, catalogs, prompt and USER.md from one serialized repository operation. */
-  "chat.configuration.resolve": async (input, repository) => {
-    const result = await resolveChatConfiguration(input, {
-      /** Reads the same in-flight directory without reacquiring the publisher. */
-      snapshot: () => snapshot(repository),
-      readGlobalMemoryPreferences: () => repository.readGlobalMemoryPreferences(),
-      /** Executes nested resolution reads on this exact snapshot without another service. */
-      dispatchDomain: <K extends DomainOperation>(operation: K, payload: DomainInput<K>) => executeDomain(operation, payload, repository),
-    });
-    // Privacy applies to historical re-execution too, without rewriting its opaque
-    // saved marker, resolving a different actor or rereading mutable catalogs.
-    if ("profile" in result && !(await repository.readGlobalMemoryPreferences()).userDescriptionEnabled) {
-      return { ...result, profile: { ...result.profile, userPreferencesText: "" },
-        participants: result.participants.map(profile => ({ ...profile, userPreferencesText: "" })) };
-    }
-    return result;
-  },
+  /** Resolves chat configuration using this operation's existing repository snapshot. */
+  "chat.configuration.resolve": (input, repository) => resolveConfiguration(input, {
+    /** Reads only the requested character. */
+    getCharacter: (id) => repository.getCharacter(id),
+    /** Reads only the requested group. */
+    getGroup: (id) => repository.getGroup(id),
+    /** Reads only a referenced tag. */
+    getTag: (id) => repository.getTag(id),
+    /** Reads only a referenced shared library. */
+    getStore: (id) => repository.getStore(id),
+    /** Reads only the model directory. */
+    listModels: () => repository.listModels(),
+    /** Reads only the speech directory. */
+    listTtsConfigs: () => repository.listTtsConfigs(),
+    readGlobalMemoryPreferences: () => repository.readGlobalMemoryPreferences(),
+    dispatchDomain: <K extends DomainOperation>(operation: K, payload: DomainInput<K>) => executeDomain(operation, payload, repository),
+  }),
   /** Requires the chat's persisted selection rather than global active state. */
   "chat.configuration.binding.read": (input, repository) => repository.readChatBinding(input.chatId),
   /** Stages a genuine selector submission in the shared publication. */
@@ -114,7 +138,7 @@ const handlers: DomainHandlers = {
   "character.create": (input, host) => saveCharacter({ ...createCharacterDraft(), ...input.values }, true, { created: [], updated: [], deleted: [] }, host),
   /** Merges an explicit edit into the complete canonical record before one manager write. */
   "character.update": async (input, host) => { const original = await host.getCharacter(input.id); return saveCharacter({ ...original, ...input.changes, id: original.id }, false, { created: [], updated: [], deleted: [] }, host); },
-  /** Deletes an existing non-default character using the canonical lifecycle. */
+  /** Deletes any existing character using the canonical lifecycle. */
   "character.delete": (input, host) => deleteCharacter(input.id, host),
   /** Activates the selected canonical character. */
   "character.setActive": async (input, host) => { await activate("card", input.id, host); return { type: "character_card", id: input.id, active: true }; },
@@ -124,8 +148,6 @@ const handlers: DomainHandlers = {
     const prompt = await combinePrompts(input.id, options.additionalTagIds, options.promptFunctionType, host);
     return { id: input.id, promptFunctionType: options.promptFunctionType, additionalTagIds: options.additionalTagIds, prompt };
   },
-  /** Resets the canonical default character through its established manager operation. */
-  "character.resetDefault": async (_input, host) => { const card = await host.resetDefaultCharacter(); assertCard(card); return { defaultCharacterReset: true }; },
   /** Serializes the plugin-owned character interchange representation. */
   "character.export": async (input, host) => { const card = await host.getCharacter(input.id), tags = await host.listTags(); return { id: input.id, format: input.format, content: encodeCharacterExport(card, input.format, tags) }; },
   /** Parses and stages interchange imports in the plugin before full canonical persistence. */
@@ -167,7 +189,7 @@ const handlers: DomainHandlers = {
   /** Applies the plugin's explicit chat-binding selection logic. */
   "activePrompt.activateForChat": (input, host) => activateForChat(input, host),
   /** Resolves the real next-send actor under the canonical active card or group selection. */
-  "activePrompt.resolvedCard": async (_input, host) => { const active = await host.readActive(); if (!("CharacterCard" in active)) throw new Error("An active group requires an explicit execution participant"); return { id: active.CharacterCard.id }; },
+  "activePrompt.resolvedCard": async (_input, host) => { const active = await host.readActive(); if (!("CharacterCard" in active)) throw new Error("An active group requires an explicit execution participant"); const card = await host.getCharacter(active.CharacterCard.id); return { id: card.id }; },
   /** Reads complete canonical tags. */
   "tag.list": async (_input, host) => { const tags = await host.listTags(); for (const tag of tags) assertTag(tag); return tags; },
   /** Requires an existing complete canonical tag. */
@@ -243,7 +265,7 @@ const handlers: DomainHandlers = {
       documentPath: null, isDocumentNode: false, chunkIndexFilePath: null, folderPath: null, createdAt: 0, updatedAt: 0,
       lastAccessedAt: 0, tags: [] as string[], properties: [], ...input.values };
     assertStrings(values.tags, "记忆标签");
-    const tags = []; for (const name of normalizeNames(values.tags)) tags.push({ id: String(tags.length + 1), name });
+    const tags = []; for (const name of normalizeNames(values.tags)) tags.push({ id: uuid(), name });
     const memory = { ...values, id: "", uuid: "", title: requireName(values.title, "记忆标题"), tags };
     const item = await host.saveMemory(input.ownerKey, memory); assertMemory(item);
     return { ownerKey: input.ownerKey, item, created: true };
@@ -254,7 +276,7 @@ const handlers: DomainHandlers = {
     if (input.expectedId !== undefined && input.expectedId !== original.id) throw new Error("Memory identity changed since editing began");
     const changes = { ...input.changes };
     const tags = [];
-    if (Object.prototype.hasOwnProperty.call(changes, "tags")) { assertStrings(changes.tags, "记忆标签"); for (const name of normalizeNames(changes.tags)) tags.push({ id: String(tags.length + 1), name }); }
+    if (Object.prototype.hasOwnProperty.call(changes, "tags")) { assertStrings(changes.tags, "记忆标签"); for (const name of normalizeNames(changes.tags)) tags.push({ id: uuid(), name }); }
     else for (const tag of original.tags) tags.push(tag);
     const memory = { ...original, ...changes, id: original.id, tags };
     assertMemory(memory);

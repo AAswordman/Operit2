@@ -134,6 +134,7 @@ void main() {
                   inputExpanded: false,
                   readOnly: false,
                   hasDraftText: true,
+                  transparentSurface: false,
                   settings: const SizedBox.shrink(),
                   onSubmitted: _ignoreSubmit,
                   onToggleExpansion: _ignoreToggle,

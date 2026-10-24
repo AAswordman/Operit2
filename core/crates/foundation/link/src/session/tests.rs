@@ -157,6 +157,43 @@ async fn watches_are_fair_and_source_end_is_reported() {
     assert_eq!(state.watchDrops.load(Ordering::SeqCst), 2);
 }
 
+/// A delayed consumer receives the whole backlog in order, then waits for a new burst.
+#[tokio::test]
+async fn watch_batch_drains_all_ready_streams_beyond_the_cooperative_budget() {
+    let (mut session, state) = session(8);
+    for id in ["a", "b"] {
+        session.dispatch(open_watch(id)).await;
+        for value in 0..256 {
+            let mut update = event(id);
+            update.value = CoreValue::Signed(value);
+            state.events.lock().unwrap()[id].send(update).unwrap();
+        }
+    }
+    let batch = session.nextWatchBatch().await.unwrap();
+    assert_eq!(batch.len(), 512);
+    for id in ["a", "b"] {
+        let values = batch.iter().filter_map(|response| match response {
+            CoreLinkResponse::Watch { requestId, result: Ok(CoreLinkWatchResponse::Event(event)) }
+                if requestId.0 == id => Some(event.value.clone()),
+            _ => None,
+        }).collect::<Vec<_>>();
+        assert_eq!(values, (0..256).map(CoreValue::Signed).collect::<Vec<_>>());
+    }
+    let flag = Arc::new(WakeFlag(AtomicUsize::new(0)));
+    let waker = Waker::from(flag.clone());
+    let mut cx = Context::from_waker(&waker);
+    assert!(Box::pin(session.nextWatchBatch()).as_mut().poll(&mut cx).is_pending());
+    state.events.lock().unwrap()["a"].send(event("a")).unwrap();
+    assert!(flag.0.load(Ordering::SeqCst) > 0);
+    assert_eq!(session.nextWatchBatch().await.unwrap().len(), 1);
+    state.events.lock().unwrap().clear();
+    let closed = session.nextWatchBatch().await.unwrap();
+    assert_eq!(closed.len(), 2);
+    assert!(closed.iter().all(|response| matches!(response,
+        CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Closed), .. })));
+    assert!(!session.hasWatches());
+}
+
 #[tokio::test]
 async fn push_is_ordered_and_close_finishes_service() {
     let (mut session, state) = session(8);

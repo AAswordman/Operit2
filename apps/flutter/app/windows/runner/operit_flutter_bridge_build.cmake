@@ -51,18 +51,20 @@ execute_process(
 if(NOT OPERIT_CARGO_RESULT EQUAL 0)
   message(FATAL_ERROR "operit flutter bridge ${OPERIT_CARGO_LABEL} build failed: ${OPERIT_CARGO_RESULT}")
 endif()
-execute_process(
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+get_filename_component(OPERIT_CARGO_OUTPUT_DIRECTORY "${OPERIT_CARGO_DLL}" DIRECTORY)
+foreach(OPERIT_RUNTIME_DLL IN ITEMS
     "${OPERIT_CARGO_DLL}"
-    "${OPERIT_OUTPUT_DIRECTORY}/operit_flutter_bridge.dll"
-  RESULT_VARIABLE OPERIT_COPY_RESULT
-)
-if(NOT OPERIT_COPY_RESULT EQUAL 0)
-  message(FATAL_ERROR
-    "Failed to copy operit_flutter_bridge.dll into ${OPERIT_OUTPUT_DIRECTORY}. "
-    "Close the running Windows debug app (operit2.exe) and retry. "
-    "error=${OPERIT_COPY_RESULT}")
-endif()
+    "${OPERIT_CARGO_OUTPUT_DIRECTORY}/operit_local_llm.dll")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${OPERIT_RUNTIME_DLL}" "${OPERIT_OUTPUT_DIRECTORY}/"
+    RESULT_VARIABLE OPERIT_COPY_RESULT
+  )
+  if(NOT OPERIT_COPY_RESULT EQUAL 0)
+    message(FATAL_ERROR
+      "Failed to deploy ${OPERIT_RUNTIME_DLL} into ${OPERIT_OUTPUT_DIRECTORY}: ${OPERIT_COPY_RESULT}")
+  endif()
+endforeach()
 if(OPERIT_BUILD_CONFIG STREQUAL "Debug")
   execute_process(
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different

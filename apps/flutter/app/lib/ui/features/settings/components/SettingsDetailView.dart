@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import '../appearance/AppearanceSettingsPanel.dart';
 import '../access_links/AccessLinksSettingsPanel.dart';
@@ -28,25 +29,27 @@ class SettingsDetailView extends StatelessWidget {
   final bool showHeader;
   final VoidCallback? onProfileChanged;
 
-  /// Builds the settings panel selected by the navigation list.
+  /// Shares matching panel blurs within this page, including during transitions.
   @override
   Widget build(BuildContext context) {
-    return switch (category) {
-      SettingsCategory.profile => UserProfileSettingsPanel(
-        onProfileChanged: onProfileChanged,
-      ),
-      SettingsCategory.model => const ModelSettingsPanel(),
-      SettingsCategory.localModels => const LocalModelSettingsPanel(),
-      SettingsCategory.tts => const ModelSettingsPanel(),
-      SettingsCategory.tools => const ToolSettingsPanel(),
-      SettingsCategory.workspace => const WorkspaceSettingsPanel(),
-      SettingsCategory.globalBehavior => const GlobalBehaviorSettingsPanel(),
-      SettingsCategory.appearance => const AppearanceSettingsPanel(),
-      SettingsCategory.data => const DataSettingsPanel(),
-      SettingsCategory.accessLinks => AccessLinksSettingsPanel(
-        onOpenProfile: onOpenProfile,
-      ),
-      SettingsCategory.about => const AboutOperitScreen(),
-    };
+    return ThemeGlassSurfaceGroup(
+      child: switch (category) {
+        SettingsCategory.profile => UserProfileSettingsPanel(
+          onProfileChanged: onProfileChanged,
+        ),
+        SettingsCategory.model => const ModelSettingsPanel(),
+        SettingsCategory.localModels => const LocalModelSettingsPanel(),
+        SettingsCategory.tts => const ModelSettingsPanel(),
+        SettingsCategory.tools => const ToolSettingsPanel(),
+        SettingsCategory.workspace => const WorkspaceSettingsPanel(),
+        SettingsCategory.globalBehavior => const GlobalBehaviorSettingsPanel(),
+        SettingsCategory.appearance => const AppearanceSettingsPanel(),
+        SettingsCategory.data => const DataSettingsPanel(),
+        SettingsCategory.accessLinks => AccessLinksSettingsPanel(
+          onOpenProfile: onOpenProfile,
+        ),
+        SettingsCategory.about => const AboutOperitScreen(),
+      },
+    );
   }
 }

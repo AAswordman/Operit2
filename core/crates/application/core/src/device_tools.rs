@@ -9,7 +9,7 @@ use operit_plugin_sdk::javascript::{
     JsToolCallResult, JsToolCallResultData,
 };
 use operit_tools::tools::DeviceTools::{
-    failure, DeviceToolPreflight, DeviceToolRuntime, DEVICE_TOOL_TARGET,
+    failure, DeviceToolRuntime, DEVICE_TOOL_TARGET,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -143,10 +143,9 @@ impl CoreDeviceToolRuntime {
 impl DeviceToolRuntime for CoreDeviceToolRuntime {
     fn close_transports(&self, owner: &str) {self.close_transport_owner(owner);}
 
-    fn dispatch_with_preflight(
+    fn dispatch(
         &self,
         mut request: JsToolCallRequest,
-        preflight: Option<DeviceToolPreflight>,
     ) -> JsExecutionCompletion<JsToolCallResult> {
         let Some(device) = request.device.take() else {
             return Box::pin(async { failure("Device metadata is required") });
@@ -194,12 +193,7 @@ impl DeviceToolRuntime for CoreDeviceToolRuntime {
                 Box::pin(async move {
                     let transport_open=device.action==JsDeviceToolAction::Transport && request.parameters.get("op").and_then(serde_json::Value::as_str)==Some("open");
                     let transport_receive=device.action==JsDeviceToolAction::Transport && request.parameters.get("op").and_then(serde_json::Value::as_str)==Some("next");
-                    let execution = async {
-                        if let Some(preflight) = preflight {
-                            preflight.await?;
-                        }
-                        runtime.execute_device(request, device).await
-                    };
+                    let execution = runtime.execute_device(request, device);
                     let result = tokio::select! {
                         biased;
                         _ = cancelled => failure("Device tool call cancelled"),

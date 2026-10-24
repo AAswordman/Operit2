@@ -1,101 +1,77 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.openPlanDatabase = openPlanDatabase;
 exports.normalizePlanText = normalizePlanText;
 exports.normalizePlanContent = normalizePlanContent;
-exports.resolvePlanFileBinding = resolvePlanFileBinding;
 exports.hasPlanFile = hasPlanFile;
 exports.readPlanFile = readPlanFile;
 exports.planFileMatchesContent = planFileMatchesContent;
 exports.writePlanFile = writePlanFile;
 exports.deletePlanFile = deletePlanFile;
-const plan_mode_constants_js_1 = require("./plan_mode_constants.js");
-const plan_mode_workspace_js_1 = require("./plan_mode_workspace.js");
-/** Normalizes plan text for stable comparison and persistence. */
-function normalizePlanText(content) {
-    return content.replace(/\r\n/g, "\n").trim();
+exports.watchPlanFile = watchPlanFile;
+let database = null;
+/** Opens the plan package's synchronized object database. */
+function openPlanDatabase() {
+    if (database === null)
+        database = Tools.Storage.objects.open({ path: ToolPkg.getSpaceDataDir() + "/plans.sqlite" });
+    return database;
 }
-/** Validates and terminates plan content before it is written. */
+/** Normalizes plan text for stable comparison and persistence. */
+function normalizePlanText(content) { return content.replace(/\r\n/g, "\n").trim(); }
+/** Requires nonempty plan text and terminates it consistently. */
 function normalizePlanContent(content) {
     const normalized = normalizePlanText(content);
-    if (!normalized) {
+    if (!normalized)
         throw new Error("plan content is empty");
-    }
-    return `${normalized}\n`;
+    return normalized + "\n";
 }
-/** Resolves the current chat workspace and its plan file path. */
-function resolvePlanFileBinding(chatId) {
-    const binding = (0, plan_mode_workspace_js_1.resolveChatWorkspace)(chatId);
-    if (!binding) {
-        return null;
-    }
-    return {
-        ...binding,
-        path: (0, plan_mode_workspace_js_1.buildPlanFilePath)(binding.workspacePath),
-    };
-}
-/** Reports whether the workspace has a persisted plan file. */
+/** Reports whether the chat owns a persisted plan. */
 async function hasPlanFile(chatId) {
-    const binding = resolvePlanFileBinding(chatId);
-    if (!binding) {
-        return false;
-    }
-    const result = await Tools.Files.exists(binding.path);
-    return result.exists;
+    return (await (await openPlanDatabase()).collection("plans").get(chatId)) !== null;
 }
-/** Reads the plan associated with the specified chat workspace. */
+/** Reads a structured plan from plugin storage, independently of active views. */
 async function readPlanFile(chatId) {
-    const binding = resolvePlanFileBinding(chatId);
-    if (!binding) {
+    const entry = await (await openPlanDatabase()).collection("plans").get(chatId);
+    if (entry === null)
         return null;
-    }
-    const exists = await Tools.Files.exists(binding.path);
-    if (!exists.exists) {
-        return null;
-    }
-    const result = await Tools.Files.read(binding.path);
-    return {
-        ...binding,
-        content: result.content.replace(/\r\n/g, "\n"),
-    };
+    return parsePlanFile(chatId, entry.value);
 }
-/** Compares normalized content against the plan stored for a chat. */
+/** Validates one structured plan record for both reads and live observation. */
+function parsePlanFile(chatId, value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value) || typeof value.content !== "string") {
+        throw new Error("Persisted plan has invalid content");
+    }
+    return { chatId, content: value.content };
+}
+/** Compares a candidate plan with this chat's durable plan. */
 async function planFileMatchesContent(chatId, content) {
     const normalized = normalizePlanText(content);
-    if (!normalized) {
+    if (!normalized)
         return false;
-    }
     const plan = await readPlanFile(chatId);
     return plan !== null && normalizePlanText(plan.content) === normalized;
 }
-/** Persists a normalized plan through the runtime's shared file host. */
+/** Commits normalized plan content to the owning package's collection. */
 async function writePlanFile(chatId, content) {
-    const binding = resolvePlanFileBinding(chatId);
-    if (!binding) {
-        throw new Error("workspace is not bound");
-    }
     const normalized = normalizePlanContent(content);
-    await Tools.Files.mkdir(`${binding.workspacePath}/${plan_mode_constants_js_1.PLAN_FILE_DIRECTORY_NAME}`, true);
-    await Tools.Files.write(binding.path, normalized, false);
-    return {
-        ...binding,
-        path: binding.path,
-        content: normalized,
-    };
+    await (await openPlanDatabase()).commit([
+        { op: "put", collection: "plans", key: chatId, value: { content: normalized } },
+        { op: "delete", collection: "modes", key: chatId },
+    ]);
+    return { chatId, content: normalized };
 }
-/** Deletes the plan stored for the specified chat workspace. */
+/** Removes the chat's plan with an exact read-version precondition. */
 async function deletePlanFile(chatId) {
-    const binding = resolvePlanFileBinding(chatId);
-    if (!binding) {
-        throw new Error("workspace is not bound");
+    const plans = (await openPlanDatabase()).collection("plans");
+    const entry = await plans.get(chatId);
+    if (entry !== null)
+        await plans.remove(chatId, { expectedVersion: entry.version });
+    return { chatId, deleted: entry !== null };
+}
+/** Streams current plan records when a local or remote transaction changes the chat. */
+async function* watchPlanFile(chatId, signal) {
+    const database = await openPlanDatabase();
+    for await (const entry of database.collection("plans").watch(chatId, { signal })) {
+        yield entry === null ? null : parsePlanFile(chatId, entry.value);
     }
-    const exists = await Tools.Files.exists(binding.path);
-    if (exists.exists) {
-        await Tools.Files.deleteFile(binding.path, false);
-    }
-    return {
-        chatId: binding.chatId,
-        workspacePath: binding.workspacePath,
-        path: binding.path,
-        deleted: exists.exists,
-    };
 }

@@ -1,6 +1,5 @@
 //! Extension activation is a consumer of committed data, not part of sync dispatch.
 use operit_host_api::HostManager::HostManager;
-use operit_store::PreferencesDataStore::PreferencesSyncedEntry;
 use operit_store::SyncAppliedChanges::{self, SyncAppliedSubscription};
 use operit_store::SyncOperationStore::SyncOperation;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
@@ -13,14 +12,13 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Copy, Default)]
 struct Changes {
     packages: bool,
-    settings: bool,
     mcp: bool,
     catalog: bool,
 }
 impl Changes {
+    /// Coalesces committed installation changes for one activation pass.
     fn merge(&mut self, other: Self) {
         self.packages |= other.packages;
-        self.settings |= other.settings;
         self.mcp |= other.mcp;
         self.catalog |= other.catalog;
     }
@@ -81,31 +79,27 @@ pub fn start(host: HostManager, tools: AIToolHandler) -> Option<SyncAppliedSubsc
     }))
 }
 
+/// Activates installations only from their canonical synchronized files.
 fn classify(operations: &[SyncOperation]) -> Changes {
     let mut changes = Changes::default();
     for operation in operations {
-        let path = match operation.domain.as_str() {
-            "runtime_file" => operation.entityId.clone(),
-            "preferences" => match PreferencesSyncedEntry::fromOperation(operation) {
-                Ok(entry) => entry.storagePath().to_string(),
-                Err(_) => continue,
-            },
-            _ => continue,
-        };
+        if operation.domain != "runtime_file" {
+            continue;
+        }
+        let path = &operation.entityId;
         let Some(relative) = path.strip_prefix("runtime/extensions/space/") else {
             continue;
         };
         changes.catalog = true;
         changes.packages |=
             relative.starts_with("packages/") || relative.starts_with("records/package-");
-        changes.settings |= relative.starts_with("settings/package-");
-        changes.mcp |=
-            relative.starts_with("records/mcp-") || relative.starts_with("settings/mcp-");
+        changes.mcp |= relative.starts_with("records/mcp-");
     }
     changes
 }
 
 impl Worker {
+    /// Consumes committed changes independently from synchronization transactions.
     async fn run(&self) {
         // Retry activation independently of already committed data. Failed work remains pending
         // for the next notification; normal startup also reconstructs runtime state from storage.
@@ -138,8 +132,9 @@ impl Worker {
         }
     }
 
+    /// Reloads canonical installations while preserving unchanged execution engines.
     async fn refresh(&self, changes: Changes) -> Result<(), String> {
-        if changes.packages || changes.settings {
+        if changes.packages {
             let storage = self
                 .host
                 .runtimeStorageHost
@@ -149,11 +144,7 @@ impl Worker {
             operit_store::ExtensionStore::ExtensionStore::new(storage).records("package")?;
             let manager = self.tools.getOrCreatePackageManager();
             let mut manager = manager.lock().map_err(|e| e.to_string())?;
-            if changes.packages {
-                manager.loadAvailablePackages();
-            } else {
-                manager.refreshExtensionSettings()?;
-            }
+            manager.loadAvailablePackages();
         }
         if changes.mcp {
             // Propagate malformed/conflicting definitions BEFORE making destructive changes.
@@ -239,28 +230,27 @@ mod tests {
                 &format!("runtime/extensions/space/{path}"),
             )]);
             assert!(changes.catalog);
-            assert!(!changes.packages && !changes.settings && !changes.mcp);
+            assert!(!changes.packages && !changes.mcp);
         }
     }
 
+    /// Retired preference operations cannot independently change installed packages.
     #[test]
-    fn package_flags_refresh_state_without_destroying_engines() {
-        let changes = classify(&[operation(
-            "preferences",
-            "runtime/extensions/space/settings/package-demo.preferences.json",
-        )]);
-        assert!(changes.catalog && changes.settings);
-        assert!(!changes.packages && !changes.mcp);
+    fn retired_settings_do_not_activate_installations() {
+        let changes = classify(&[operation("preferences", "runtime/extensions/space/settings/package-demo.preferences.json")]);
+        assert!(!changes.catalog);
+        let changes = classify(&[operation("runtime_file", "runtime/extensions/space/records/package-demo.json")]);
+        assert!(changes.catalog && changes.packages);
     }
 
     #[test]
     fn mcp_changes_do_not_reload_packages_and_unrelated_files_are_ignored() {
         let changes = classify(&[operation(
-            "preferences",
-            "runtime/extensions/space/settings/mcp-demo.preferences.json",
+            "runtime_file",
+            "runtime/extensions/space/records/mcp-demo.json",
         )]);
         assert!(changes.catalog && changes.mcp);
-        assert!(!changes.packages && !changes.settings);
+        assert!(!changes.packages);
         assert!(!classify(&[operation("runtime_file", "runtime/data/unrelated.json")]).catalog);
     }
 }

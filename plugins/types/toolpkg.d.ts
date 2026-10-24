@@ -5,6 +5,10 @@ import type { ComposeDslScreen } from "./compose-dsl";
 import type { ToolParams } from "./core";
 
 export namespace ToolPkg {
+  /** Exposes the host registry IPC service. */
+  export const ipc: IpcApi;
+  /** Exposes the host registry WASM service. */
+  export const wasm: WasmApi;
   /**
    * Stores localized strings keyed by language tag.
    */
@@ -863,7 +867,7 @@ export namespace ToolPkg {
   }
 
   /**
-   * Exposes only the receiving registered package's immutable namespace for an actual tool-policy turn.
+   * Exposes only the receiving registered package's current execution context for an actual tool-policy turn.
    */
   export interface ToolExecutionContext extends JsonObject {
     /**
@@ -879,13 +883,13 @@ export namespace ToolPkg {
      */
     extensionOwner: string;
     /**
-     * Carries only this owner's frozen message object; null explicitly means no contribution.
+     * Carries only this owner's current in-memory execution data; null explicitly means no contribution.
      */
-    messageExtension: JsonObject | null;
+    executionData: JsonObject | null;
   }
 
   /**
-   * Carries a required isolated snapshot while retaining ordinary prompt metadata fields.
+   * Carries a required isolated execution context while retaining ordinary prompt metadata fields.
    */
   export interface ToolHookMetadata extends JsonObject {
     /**
@@ -902,6 +906,10 @@ export namespace ToolPkg {
      * Carries the exact execution participant selected for this prompt request.
      */
     executionContext?: ExecutionContext;
+    /**
+     * Identifies one send preparation across system composition and finalization; absent for independent estimates.
+     */
+    promptPreparationId?: string;
   }
 
   /**
@@ -1157,7 +1165,7 @@ export namespace ToolPkg {
   }
 
   /**
-   * Carries the actual tool-prompt policy state and its required owner-isolated execution snapshot.
+   * Carries the actual tool-prompt policy state and its required owner-isolated execution context.
    */
   export interface ToolPromptHookEventPayload extends JsonObject {
     /**
@@ -3871,6 +3879,10 @@ export namespace ToolPkg {
      */
     wasm: WasmApi;
     /**
+     * Routes an implemented async method or generator through the existing Binding mechanism.
+     */
+    route(options: RouteOptions): <TThis, TArgs extends unknown[], TResult>(method: (this: TThis, ...args: TArgs) => TResult, context: ClassMethodDecoratorContext<TThis, (this: TThis, ...args: TArgs) => TResult>) => (this: TThis, ...args: TArgs) => TResult;
+    /**
      * Publishes an exported handler for dependent packages.
      */
     registerApi<TPayload, TResult>(definition: PublicApiRegistration<TPayload, TResult>): void;
@@ -4023,137 +4035,172 @@ export namespace ToolPkg {
     getSpaceDataDir(): string;
   }
 
-}
-
-/**
- * Requires the host to implement every global host operation.
- */
-declare global {
   /**
-   * Registers an AI provider and its required operation callbacks. The global binding delegates to the active ToolPkg registry.
+   * Calls an explicitly published method of a declared prerequisite.
    */
-  function registerToolPkgAiProvider(definition: ToolPkg.AiProviderRegistration): void;
+  function callDependency<TPayload, TResult>(packageName: string, methodName: string, payload: TPayload): Promise<TResult>;
   /**
-   * Registers a callback for an application or activity lifecycle event. The global binding delegates to the active ToolPkg registry.
+   * Returns the selected plugin configuration directory during registration and runtime execution.
+   * Registration uses the explicitly selected scope before an installation record exists.
    */
-  function registerToolPkgAppLifecycleHook(definition: ToolPkg.AppLifecycleHookRegistration): void;
+  function getConfigDir(pluginId?: string): string;
   /**
-   * Registers a Compose DSL contribution for a host-owned chat composer slot. The global binding delegates to the active ToolPkg registry.
+   * Returns device-local plugin data independent of installation scope during registration and runtime.
    */
-  function registerToolPkgChatComposerSlot(definition: ToolPkg.ChatComposerSlotRegistration): void;
+  function getLocalDataDir(): string;
   /**
-   * Registers a callback for chat input changes and submissions. The global binding delegates to the active ToolPkg registry.
+   * Returns shared plugin data independent of installation scope during registration and runtime.
    */
-  function registerToolPkgChatInputHook(definition: ToolPkg.ChatInputHookRegistration): void;
+  function getSpaceDataDir(): string;
   /**
-   * Registers the same strictly isolated chat creation lifecycle handler through the global alias.
+   * Extracts a packaged plugin resource and resolves to its readable path.
    */
-  function registerToolPkgChatLifecycleHook(definition: ToolPkg.ChatLifecycleHookRegistration): void;
+  function readResource(key: string, outputFileName?: string, internal?: boolean): Promise<string>;
   /**
-   * Registers a callback for persisted chat message notifications. The global binding delegates to the active ToolPkg registry.
+   * Extracts a resource owned by another ToolPkg container and resolves to its readable path.
    */
-  function registerToolPkgChatMessageHook(definition: ToolPkg.ChatMessageHookRegistration): void;
+  function readResourceFromPackage(packageNameOrSubpackageId: string, key: string, outputFileName?: string, internal?: boolean): Promise<string>;
   /**
-   * Registers a context-menu item for chat messages. The global binding delegates to the active ToolPkg registry.
+   * Registers an AI provider and its required operation callbacks.
+   */
+  function registerAiProvider(definition: AiProviderRegistration): void;
+  /**
+   * Publishes an exported handler for dependent packages.
+   */
+  function registerApi<TPayload, TResult>(definition: PublicApiRegistration<TPayload, TResult>): void;
+  /**
+   * Registers a callback for an application or activity lifecycle event.
+   */
+  function registerAppLifecycleHook(definition: AppLifecycleHookRegistration): void;
+  /**
+   * Registers a Compose DSL contribution for a host-owned chat composer slot.
+   */
+  function registerChatComposerSlot(definition: ChatComposerSlotRegistration): void;
+  /**
+   * Registers a callback for chat input changes and submissions.
+   */
+  function registerChatInputHook(definition: ChatInputHookRegistration): void;
+  /**
+   * Registers the sole awaited before-create hook for this package's own extension namespace.
+   */
+  function registerChatLifecycleHook(definition: ChatLifecycleHookRegistration): void;
+  /**
+   * Registers a callback for persisted chat message notifications.
+   */
+  function registerChatMessageHook(definition: ChatMessageHookRegistration): void;
+  /**
+   * Registers a context-menu item for chat messages.
    * @since ToolPkg API 2.0.0
    */
-  function registerToolPkgChatMessageMenuItem(definition: ToolPkg.ChatMessageMenuItemRegistration): void;
+  function registerChatMessageMenuItem(definition: ChatMessageMenuItemRegistration): void;
   /**
-   * Registers a callback for chat runtime state changes. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback for chat runtime state changes.
    * @since ToolPkg API 2.0.0
    */
-  function registerToolPkgChatRuntimeHook(definition: ToolPkg.ChatRuntimeHookRegistration): void;
+  function registerChatRuntimeHook(definition: ChatRuntimeHookRegistration): void;
   /**
-   * Registers a callback for chat view lifecycle changes. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback for chat view lifecycle changes.
    */
-  function registerToolPkgChatViewHook(definition: ToolPkg.ChatViewHookRegistration): void;
+  function registerChatViewHook(definition: ChatViewHookRegistration): void;
   /**
-   * Registers a slash command handled by the current ToolPkg package. The global binding delegates to the active ToolPkg registry.
+   * Registers a slash command handled by the current ToolPkg package.
    */
-  function registerToolPkgCoreCommand(definition: ToolPkg.CoreCommandRegistration): void;
+  function registerCoreCommand(definition: CoreCommandRegistration): void;
   /**
-   * Registers a plugin widget on the desktop surface. The global binding delegates to the active ToolPkg registry.
+   * Registers a plugin widget on the desktop surface.
    */
-  function registerToolPkgDesktopWidget(definition: ToolPkg.DesktopWidgetRegistration): void;
+  function registerDesktopWidget(definition: DesktopWidgetRegistration): void;
   /**
-   * Registers a typed timer, interval, or broadcast hook. The global binding delegates to the active ToolPkg registry.
+   * Registers a typed timer, interval, or broadcast hook.
    */
-  function registerToolPkgHostEventHook<TPayload>(definition: ToolPkg.HostEventTimerHookRegistration<TPayload>): void;
+  function registerHostEventHook<TPayload>(definition: HostEventTimerHookRegistration<TPayload>): void;
   /**
-   * Registers a typed timer, interval, or broadcast hook. The global binding delegates to the active ToolPkg registry.
+   * Registers a typed timer, interval, or broadcast hook.
    */
-  function registerToolPkgHostEventHook<TPayload>(definition: ToolPkg.HostEventIntervalHookRegistration<TPayload>): void;
+  function registerHostEventHook<TPayload>(definition: HostEventIntervalHookRegistration<TPayload>): void;
   /**
-   * Registers a typed timer, interval, or broadcast hook. The global binding delegates to the active ToolPkg registry.
+   * Registers a typed timer, interval, or broadcast hook.
    */
-  function registerToolPkgHostEventHook<TTopic extends ToolPkg.BroadcastTopic>(definition: ToolPkg.HostEventBroadcastHookRegistration<TTopic>): void;
+  function registerHostEventHook<TTopic extends ToolPkg.BroadcastTopic>(definition: HostEventBroadcastHookRegistration<TTopic>): void;
   /**
-   * Registers a callback that supplies chat input menu toggles. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback that supplies chat input menu toggles.
    */
-  function registerToolPkgInputMenuTogglePlugin(definition: ToolPkg.InputMenuTogglePluginRegistration): void;
+  function registerInputMenuTogglePlugin(definition: InputMenuTogglePluginRegistration): void;
   /**
-   * Registers a handler for one dependent ToolPkg manifest extension. The global binding delegates to the active ToolPkg registry.
+   * Registers a handler for one manifest extension declared by dependent ToolPkg packages.
    */
-  function registerToolPkgManifestExtension(definition: ToolPkg.ManifestExtensionRegistration): void;
+  function registerManifestExtension(definition: ManifestExtensionRegistration): void;
   /**
-   * Registers a callback that inspects or transforms messages. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback that inspects or transforms messages.
    */
-  function registerToolPkgMessageProcessingPlugin(definition: ToolPkg.MessageProcessingPluginRegistration): void;
+  function registerMessageProcessingPlugin(definition: MessageProcessingPluginRegistration): void;
   /**
-   * Adds a plugin action to a host navigation surface. The global binding delegates to the active ToolPkg registry.
+   * Adds a plugin action to a host navigation surface.
    */
-  function registerToolPkgNavigationEntry(definition: ToolPkg.NavigationEntryRegistration): void;
+  function registerNavigationEntry(definition: NavigationEntryRegistration): void;
   /**
-   * Registers a prompt-finalization callback used during token estimation. The global binding delegates to the active ToolPkg registry.
+   * Registers a prompt-finalization callback used during token estimation.
    */
-  function registerToolPkgPromptEstimateFinalizeHook(definition: ToolPkg.PromptEstimateFinalizeHookRegistration): void;
+  function registerPromptEstimateFinalizeHook(definition: PromptEstimateFinalizeHookRegistration): void;
   /**
-   * Registers a prompt-history callback used during token estimation. The global binding delegates to the active ToolPkg registry.
+   * Registers a prompt-history callback used during token estimation.
    */
-  function registerToolPkgPromptEstimateHistoryHook(definition: ToolPkg.PromptEstimateHistoryHookRegistration): void;
+  function registerPromptEstimateHistoryHook(definition: PromptEstimateHistoryHookRegistration): void;
   /**
-   * Registers a callback before a prompt is sent to the model. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback before a prompt is sent to the model.
    */
-  function registerToolPkgPromptFinalizeHook(definition: ToolPkg.PromptFinalizeHookRegistration): void;
+  function registerPromptFinalizeHook(definition: PromptFinalizeHookRegistration): void;
   /**
-   * Registers a callback around prompt-history preparation. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback around prompt-history preparation.
    */
-  function registerToolPkgPromptHistoryHook(definition: ToolPkg.PromptHistoryHookRegistration): void;
+  function registerPromptHistoryHook(definition: PromptHistoryHookRegistration): void;
   /**
-   * Registers a callback around user-input processing. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback around user-input processing.
    */
-  function registerToolPkgPromptInputHook(definition: ToolPkg.PromptInputHookRegistration): void;
+  function registerPromptInputHook(definition: PromptInputHookRegistration): void;
   /**
-   * Registers a callback for summary preparation and generation. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback for summary preparation and generation.
    */
-  function registerToolPkgSummaryGenerateHook(definition: ToolPkg.SummaryGenerateHookRegistration): void;
+  function registerSummaryGenerateHook(definition: SummaryGenerateHookRegistration): void;
   /**
-   * Registers a callback for system-prompt assembly. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback for system-prompt assembly.
    */
-  function registerToolPkgSystemPromptComposeHook(definition: ToolPkg.SystemPromptComposeHookRegistration): void;
+  function registerSystemPromptComposeHook(definition: SystemPromptComposeHookRegistration): void;
   /**
-   * Registers a callback for tool permission and execution stages. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback for tool permission and execution stages.
    */
-  function registerToolPkgToolLifecycleHook(definition: ToolPkg.ToolLifecycleHookRegistration): void;
+  function registerToolLifecycleHook(definition: ToolLifecycleHookRegistration): void;
   /**
-   * Registers a callback for tool-prompt assembly and filtering. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback for tool-prompt assembly and filtering.
    */
-  function registerToolPkgToolPromptComposeHook(definition: ToolPkg.ToolPromptComposeHookRegistration): void;
+  function registerToolPromptComposeHook(definition: ToolPromptComposeHookRegistration): void;
   /**
-   * Registers a Compose DSL screen in the toolbox UI. The global binding delegates to the active ToolPkg registry.
+   * Registers a Compose DSL screen in the toolbox UI.
    */
-  function registerToolPkgToolboxUiModule(definition: ToolPkg.ToolboxUiModuleRegistration): void;
+  function registerToolboxUiModule(definition: ToolboxUiModuleRegistration): void;
   /**
-   * Registers a routable Compose DSL screen for the current plugin. The global binding delegates to the active ToolPkg registry.
+   * Registers a routable Compose DSL screen for the current plugin.
    */
-  function registerToolPkgUiRoute(definition: ToolPkg.UiRouteRegistration): void;
+  function registerUiRoute(definition: UiRouteRegistration): void;
   /**
-   * Registers a callback that renders a selected XML tag. The global binding delegates to the active ToolPkg registry.
+   * Registers a callback that renders a selected XML tag.
    */
-  function registerToolPkgXmlRenderPlugin(definition: ToolPkg.XmlRenderPluginRegistration): void;
+  function registerXmlRenderPlugin(definition: XmlRenderPluginRegistration): void;
   /**
-   * Binds the complete registry API to the JavaScript `ToolPkg` global.
+   * Routes an implemented async method or generator through the existing Binding mechanism.
    */
-  const ToolPkg: ToolPkg.Registry;
+  function route(options: RouteOptions): <TThis, TArgs extends unknown[], TResult>(method: (this: TThis, ...args: TArgs) => TResult, context: ClassMethodDecoratorContext<TThis, (this: TThis, ...args: TArgs) => TResult>) => (this: TThis, ...args: TArgs) => TResult;
+  /**
+   * Declares the argument that selects the Binding for an implemented plugin method.
+   */
+  export interface RouteOptions {
+    /**
+     * Zero-based position of the method's Binding key argument.
+     */
+    binding: number;
+  }
 
 }
+
+import { ToolPkg as ToolPkgRuntime } from "./toolpkg";
+declare global { export import ToolPkg = ToolPkgRuntime; }

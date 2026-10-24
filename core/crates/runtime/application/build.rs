@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -9,6 +10,8 @@ use sha2::{Digest, Sha256};
 const MANIFEST_FILENAMES: &[&str] = &["manifest.hjson", "manifest.json"];
 const SKILL_FILENAMES: &[&str] = &["SKILL.md", "skill.md"];
 const SKILL_INCLUDE_FILE: &str = "skill.include.json";
+const PLUGIN_ASSET_SYNC_HINT: &str =
+    "Run: python3 plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload";
 
 struct BuildinAsset {
     name: String,
@@ -35,6 +38,8 @@ fn main() {
     }
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    validate_plugin_assets(&manifest_dir, "buildin");
+    validate_plugin_assets(&manifest_dir, "external");
     let source_dir = manifest_dir.join("assets").join("plugins").join("buildin");
     emit_rerun_for_asset_tree(&source_dir);
 
@@ -143,6 +148,114 @@ fn collect_packaged_plugin_assets(source_dir: &Path) -> Vec<BuildinAsset> {
         assets.push(BuildinAsset { name, path });
     }
     assets
+}
+
+/// Rejects builds whose generated plugin assets drifted from the package sources they mirror.
+fn validate_plugin_assets(manifest_dir: &Path, kind: &str) {
+    let plugins_root = pluginsSourceRoot(manifest_dir);
+    let source_dir = plugins_root.join("packages").join(kind);
+    let asset_dir = manifest_dir.join("assets").join("plugins").join(kind);
+    if !source_dir.is_dir() {
+        fail_or_warn(&format!(
+            "Plugin package sources are missing at {}; built-in ToolPkg assets cannot be verified. {}",
+            source_dir.display(),
+            PLUGIN_ASSET_SYNC_HINT,
+        ));
+        return;
+    }
+    let expected = expected_asset_names(&source_dir);
+    let actual = actual_asset_names(&asset_dir);
+    let missing = expected
+        .difference(&actual)
+        .cloned()
+        .collect::<Vec<_>>();
+    let stale = actual
+        .difference(&expected)
+        .cloned()
+        .collect::<Vec<_>>();
+    if missing.is_empty() && stale.is_empty() {
+        return;
+    }
+    let mut details = Vec::new();
+    if !missing.is_empty() {
+        details.push(format!("missing assets: {}", missing.join(", ")));
+    }
+    if !stale.is_empty() {
+        details.push(format!("stale assets: {}", stale.join(", ")));
+    }
+    fail_or_warn(&format!(
+        "Generated plugin assets under {} do not match {} package sources ({}). {}",
+        asset_dir.display(),
+        source_dir.display(),
+        details.join("; "),
+        PLUGIN_ASSET_SYNC_HINT,
+    ));
+}
+
+/// Mirrors the sync tool's plan: compiled standalone scripts plus packed package folders.
+fn expected_asset_names(source_dir: &Path) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let Ok(entries) = fs::read_dir(source_dir) else {
+        return names;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if path.is_dir() {
+            if has_manifest(&path) {
+                names.insert(format!("{file_name}.toolpkg"));
+            }
+            continue;
+        }
+        let lower_name = file_name.to_ascii_lowercase();
+        if lower_name.ends_with(".d.ts") {
+            continue;
+        }
+        if lower_name.ends_with(".ts") {
+            names.insert(format!("{}.js", &file_name[..file_name.len() - ".ts".len()]));
+        } else if lower_name.ends_with(".js") || lower_name.ends_with(".toolpkg") {
+            names.insert(file_name.to_string());
+        }
+    }
+    names
+}
+
+/// Reads the assets the compiler would embed, including legacy loose package folders.
+fn actual_asset_names(asset_dir: &Path) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let Ok(entries) = fs::read_dir(asset_dir) else {
+        return names;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if path.is_dir() {
+            if has_manifest(&path) {
+                names.insert(format!("{file_name}.toolpkg"));
+            }
+            continue;
+        }
+        let lower_name = file_name.to_ascii_lowercase();
+        if lower_name.ends_with(".js")
+            || lower_name.ends_with(".hjson")
+            || lower_name.ends_with(".toolpkg")
+        {
+            names.insert(file_name.to_string());
+        }
+    }
+    names
+}
+
+/// Fails release builds and only warns debug builds so cargo check stays usable without Node.
+fn fail_or_warn(message: &str) {
+    if env::var("PROFILE").as_deref() == Ok("release") {
+        panic!("{}", message);
+    }
+    println!("cargo:warning={}", message.replace('\n', " "));
 }
 
 fn emit_rerun_for_asset_tree(path: &Path) {

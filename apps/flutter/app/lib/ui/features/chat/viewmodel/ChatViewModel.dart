@@ -64,6 +64,12 @@ class PastedImageAttachmentPayload {
   }
 }
 
+/// Canonical submit actions returned by the Core chat input hook bridge.
+const String chatInputActionAllow = 'Allow';
+const String chatInputActionBlock = 'Block';
+const String chatInputActionConsume = 'Consume';
+const String chatInputActionReplace = 'Replace';
+
 class ChatInputSubmitDecision {
   const ChatInputSubmitDecision({
     required this.action,
@@ -73,10 +79,20 @@ class ChatInputSubmitDecision {
     required this.timedOut,
   });
 
-  /// Parses the JSON decision returned by the Core ToolPkg chat input bridge.
+  /// Decodes exactly the canonical submit actions declared by the Core bridge.
   factory ChatInputSubmitDecision.fromJson(Map<String, Object?> json) {
+    final action = switch (json['action']) {
+      chatInputActionAllow => chatInputActionAllow,
+      chatInputActionBlock => chatInputActionBlock,
+      chatInputActionConsume => chatInputActionConsume,
+      chatInputActionReplace => chatInputActionReplace,
+      final value => throw FormatException(
+        'Unsupported chat input submit action',
+        value,
+      ),
+    };
     return ChatInputSubmitDecision(
-      action: json['action'] as String,
+      action: action,
       text: json['text'] == null ? null : json['text'] as String,
       message: json['message'] == null ? null : json['message'] as String,
       clearInput: json['clearInput'] == null
@@ -94,15 +110,28 @@ class ChatInputSubmitDecision {
 }
 
 class ChatViewModel {
+  /// Creates a chat model whose selection and observations use the same runtime.
   ChatViewModel({
     this.bridge = const ProxyCoreRuntimeBridge(),
     GeneratedChatRuntimeHolderMainCoreProxy? chat,
   }) : clients = GeneratedCoreProxyClients(bridge),
-       _chat = chat ?? GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain;
+       _chat = chat ?? GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain {
+    _observationChat = _chat;
+  }
+
+  /// Keeps local selection separate from the runtime that owns live generation.
+  ChatViewModel.withChatObservation({
+    required this.bridge,
+    required GeneratedChatRuntimeHolderMainCoreProxy chat,
+    required GeneratedChatRuntimeHolderMainCoreProxy observationChat,
+  }) : clients = GeneratedCoreProxyClients(bridge),
+       _chat = chat,
+       _observationChat = observationChat;
 
   final OperitRuntimeBridge bridge;
   final GeneratedCoreProxyClients clients;
   final GeneratedChatRuntimeHolderMainCoreProxy _chat;
+  late final GeneratedChatRuntimeHolderMainCoreProxy _observationChat;
 
   /// The chat runtime scoped to this view model's window.
   GeneratedChatRuntimeHolderMainCoreProxy get chatCore => _chat;
@@ -117,14 +146,21 @@ class ChatViewModel {
     return clients.serverCoreNodeRouter.bindingRouteStatusFlow(key: chatId);
   }
 
+  /// Moves a chat with missing route metadata onto the device running this UI.
+  Future<void> claimMissingBindingLocal(String chatId) {
+    return clients.serverRuntimeRemoteLinkService.claimMissingBindingLocal(
+      chatId: chatId,
+    );
+  }
+
   /// Watches messages for one explicit main-runtime chat id.
   Stream<List<ChatUiMessage>> watchMessages(String chatId) {
-    return _chat.chatMessagesFlow(chatId: chatId);
+    return _observationChat.chatMessagesFlow(chatId: chatId);
   }
 
   /// Watches runtime state for one explicit main-runtime chat id.
   Stream<core_proxy.ChatState> watchChatState(String chatId) {
-    return _chat.chatStateFlow(chatId: chatId);
+    return _observationChat.chatStateFlow(chatId: chatId);
   }
 
   /// Sends a decision for a permission request through the owning chat route.

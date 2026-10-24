@@ -1,11 +1,11 @@
 #![allow(non_snake_case)]
 
+use operit_host_native_common::{scheduleNativeServiceTask, NativeTaskHandle as JoinHandle};
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::sync::mpsc;
-use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use operit_host_api::{
@@ -125,12 +125,12 @@ impl HostRuntimeEventHost for WindowsHostRuntimeEventHost {
         sink: HostRuntimeEventSink,
     ) -> HostResult<Box<dyn HostRuntimeEventRegistration>> {
         let (sender, receiver) = mpsc::channel::<Result<isize, String>>();
-        let worker = thread::Builder::new()
-            .name("operit-windows-host-runtime-event".to_string())
-            .spawn(move || run_windows_event_loop(sink, sender))
-            .map_err(|error| {
-                HostError::new(format!("spawn windows host event worker failed: {error}"))
-            })?;
+        let worker = scheduleNativeServiceTask("operit-windows-host-runtime-event", move || {
+            run_windows_event_loop(sink, sender)
+        })
+        .map_err(|error| {
+            HostError::new(format!("spawn windows host event worker failed: {error}"))
+        })?;
         let hwnd = receiver
             .recv()
             .map_err(|error| {

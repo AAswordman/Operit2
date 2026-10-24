@@ -15,15 +15,25 @@ async function exerciseStorage(path: string): Promise<void> {
   await sql.transaction([{sql:"INSERT INTO cards VALUES(?)",params:["one"]}]);
   const rows=await sql.query("SELECT id FROM cards WHERE id=?",["one"]);
   const value: Storage.SqlValue=rows[0].id;
-  await sql.changes(); await sql.close();
+  // @ts-expect-error The transaction journal is internal to Rust synchronization.
+  void sql.changes();
+  await sql.close();
   const objects=await Tools.Storage.objects.open({path:path+".objects"});
   const cards=objects.collection<{title:string; nested:{count:number}}>("cards");
   await cards.put("one",{title:"One",nested:{count:1}},{expectedVersion:null});
+  for await (const entry of cards.watch("one")) {
+    if (entry !== null) { const title: string = entry.value.title; void title; }
+    break;
+  }
+  // @ts-expect-error Record watches select a key, never a journal cursor and page limit.
+  void cards.watch("0", 100);
+  // @ts-expect-error Whole-database transaction watches are not an author-facing API.
+  void objects.watch("0", 100);
   const record=await cards.edit("one");record.value.nested.count++;await record.flush();
   const datastore=await Tools.Storage.dataStore.open({path:path+".keys"});
   await datastore.commit({set:{theme:"dark",nullable:null},remove:["old"],expectedVersions:{theme:null}});
   const scalar:StorageSqlValue={kind:"integer",value:"9223372036854775807"};
-  const request:StorageRequest={op:"query",handle:"internal",statement:{sql:"SELECT ?",params:[scalar]}};
+  const request:StorageRequest={op:"query",handle:"internal",statement:{sql:"SELECT ?",params:[scalar],expectedAffectedRows:null}};
   await Tools.Storage.request(request);
   void value;
 }

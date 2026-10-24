@@ -111,6 +111,41 @@ function installV1Adapters(runtime) {
         }
         return participant;
     }
+    /**
+     * Registers base64 image bytes and returns the historical link string.
+     * @param {string} base64
+     * @param {string} [mimeType]
+     */
+    function registerImageFromBase64(base64, mimeType) {
+        if (typeof base64 !== 'string' || base64.trim() === '') {
+            throw new Error('registerImageFromBase64 requires image data');
+        }
+        return __operitRegisterV1Image('base64', base64, mimeType);
+    }
+    /**
+     * Registers an Android device image path and returns the historical link string.
+     * @param {string} path
+     */
+    function registerImageFromPath(path) {
+        return __operitRegisterV1Image('path', path, null);
+    }
+    /**
+     * Exposes one historical global only while the active call uses API 1.0.0 or 1.0.1.
+     * @param {string} name
+     * @param {Function} implementation
+     */
+    function exposeLegacyFunction(name, implementation) {
+        var gated = api.method().between('1.0.0', '2.0.0', implementation).build(name);
+        Object.defineProperty(globalThis, name, {
+            configurable: true,
+            get: function() {
+                var version = api.currentVersion();
+                return version === '1.0.0' || version === '1.0.1' ? gated : undefined;
+            },
+        });
+    }
+    exposeLegacyFunction('registerImageFromBase64', registerImageFromBase64);
+    exposeLegacyFunction('registerImageFromPath', registerImageFromPath);
     var legacyGetter = api.method().between('1.0.0', '2.0.0', legacyCallerCardId).build('getCallerCardId');
     Object.defineProperty(globalThis, 'getCallerCardId', {
         configurable: true,

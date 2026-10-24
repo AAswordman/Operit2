@@ -96,20 +96,14 @@ function __operitCreateV1ChatCall(currentCall) {
  * @param {() => Promise<import('../../../../../../../plugins/types-v1/results').CharacterCardListResultData>} listCards
  */
 function __operitCreateV1Chat(current, requireCard, sendLegacy, listCards) {
-    /** Builds one persisted submission after rejecting unsupported legacy controls.
+    /** Builds one persisted submission for controls supported by structured streaming.
      * @param {string} message
      * @param {string | undefined} chatId
      * @param {string | undefined} roleCardId
-     * @param {string | undefined} senderName
      * @param {import('../../../../../../../plugins/types-v1/chat').Chat.SendMessageOptions} options
      * @returns {Promise<import('../../../../../../../plugins/types/chat').Chat.SendRequest>}
      */
-    async function request(message, chatId, roleCardId, senderName, options) {
-        if (senderName !== undefined) throw new Error('ToolPkg v1 senderName has no equivalent in persisted native submissions');
-        if (options.persist_turn !== undefined && options.persist_turn !== true) throw new Error('Legacy streaming persist_turn=false requires an ephemeral streaming host operation');
-        if (options.hide_user_message !== undefined && options.hide_user_message !== false) throw new Error('Legacy streaming hide_user_message=true requires a hidden-input streaming host operation');
-        if (options.disable_warning !== undefined && options.disable_warning !== false) throw new Error('Legacy streaming disable_warning=true is not exposed by the structured streaming host');
-        if (options.timeout_ms !== undefined) throw new Error('Legacy streaming timeout_ms is not exposed by the structured streaming host');
+    async function request(message, chatId, roleCardId, options) {
         if (chatId === undefined) {
             var chats = await current.listAll();
             if (chats.currentChatId === null) throw new Error('ToolPkg v1 send requires a current chat or an explicit chatId');
@@ -149,8 +143,29 @@ function __operitCreateV1Chat(current, requireCard, sendLegacy, listCards) {
          * @type {typeof import('../../../../../../../plugins/types-v1/chat').Chat.sendMessageStreaming}
          */
         async sendMessageStreaming(message, chatId, roleCardId, senderName, options = {}) {
-            var submission = await request(message, chatId, roleCardId, senderName, options);
             if (options.waifu === true) throw new Error('Legacy waifu sentence aggregation requires an explicit streaming aggregation contract');
+            // These controls already have a native ordinary-send implementation. Preserve them
+            // there and deliver the real completed answer as one callback chunk.
+            if (senderName !== undefined || options.persist_turn === false || options.hide_user_message === true ||
+                options.disable_warning === true || options.timeout_ms !== undefined) {
+                if (roleCardId !== undefined) await requireCard(roleCardId);
+                if (chatId === undefined) {
+                    var chats = await current.listAll();
+                    if (chats.currentChatId === null) throw new Error('ToolPkg v1 send requires a current chat or an explicit chatId');
+                    chatId = chats.currentChatId;
+                }
+                var { onIntermediateResult, waifu, ...controls } = options;
+                if (onIntermediateResult !== undefined) onIntermediateResult({ type: 'start', chatId, message, waifu: false, receivedChars: 0 });
+                var result = await sendLegacy(Object.assign({}, controls, { message, chat_id: chatId },
+                    roleCardId === undefined ? {} : { participant_id: roleCardId },
+                    senderName === undefined ? {} : { sender_name: senderName }));
+                if (onIntermediateResult !== undefined && typeof result.aiResponse === 'string' && result.aiResponse !== '') {
+                    onIntermediateResult({ type: 'chunk', chatId: result.chatId, message, waifu: false,
+                        chunk: result.aiResponse, chunkIndex: 0, receivedChars: result.aiResponse.length });
+                }
+                return result;
+            }
+            var submission = await request(message, chatId, roleCardId, options);
             var delivered = '', chunkIndex = 0;
             if (options.onIntermediateResult !== undefined) options.onIntermediateResult({ type: 'start', chatId: submission.chatId, message, waifu: false, receivedChars: 0 });
             for await (var event of current.sendMessageStreaming(submission)) {

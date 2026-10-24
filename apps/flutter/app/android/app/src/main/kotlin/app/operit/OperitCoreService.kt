@@ -1,10 +1,7 @@
 package app.operit
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
+import app.operit.keep_alive.KeepAliveServiceHost
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -49,13 +46,30 @@ class OperitCoreService : Service() {
     override fun onCreate() {
         super.onCreate()
         runtimeHost = AndroidCoreRuntime.get(applicationContext)
-        startForeground(notificationId, createNotification())
+        KeepAliveServiceHost.attach(
+            this,
+            notificationChannelId,
+            notificationId,
+            getString(R.string.operit_core_service_name),
+            getString(R.string.operit_core_service_status),
+            R.drawable.ic_stat_operit,
+        )
         ensureRuntimeStarted()
     }
 
     /** Keeps the Core service active across task removal and process recreation. */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureRuntimeStarted()
+        when (intent?.action) {
+            KeepAliveServiceHost.STOP_WORK_ACTION -> {
+                val workId = requireNotNull(intent.getStringExtra(KeepAliveServiceHost.WORK_ID_EXTRA))
+                runtimeHost.stopBackgroundWork(workId)
+            }
+            KeepAliveServiceHost.DISMISS_WORK_ACTION -> {
+                val workId = requireNotNull(intent.getStringExtra(KeepAliveServiceHost.WORK_ID_EXTRA))
+                KeepAliveServiceHost.dismissWork(workId)
+            }
+        }
         return START_STICKY
     }
 
@@ -66,6 +80,7 @@ class OperitCoreService : Service() {
     override fun onDestroy() {
         destroyed.set(true)
         HostEventBridge.clear(applicationContext)
+        KeepAliveServiceHost.detach(this)
         super.onDestroy()
     }
 
@@ -91,6 +106,7 @@ class OperitCoreService : Service() {
                 }
             } catch (error: Throwable) {
                 Log.e(TAG, "Core Runtime startup failed", error)
+                mainHandler.post { stopSelf() }
                 NativeCrashActivity.start(
                     applicationContext,
                     "Core Runtime startup failed\n\n${error.stackTraceToString()}",
@@ -99,41 +115,4 @@ class OperitCoreService : Service() {
         }
     }
 
-    /** Creates the persistent Core service notification. */
-    private fun createNotification(): Notification {
-        val notificationManager =
-            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationManager.createNotificationChannel(
-                NotificationChannel(
-                    notificationChannelId,
-                    getString(R.string.operit_core_service_name),
-                    NotificationManager.IMPORTANCE_LOW,
-                ),
-            )
-        }
-        val launchIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent =
-            PendingIntent.getActivity(
-                this,
-                0,
-                launchIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
-        val builder =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Notification.Builder(this, notificationChannelId)
-            } else {
-                Notification.Builder(this)
-            }
-        return builder
-            .setContentTitle(getString(R.string.operit_core_service_name))
-            .setContentText(getString(R.string.operit_core_service_status))
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .build()
-    }
 }

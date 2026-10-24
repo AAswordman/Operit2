@@ -1,0 +1,84 @@
+{
+  "type": "Box",
+  "props": {
+    "key": "sidebar-search-container",
+    "fillMaxWidth": true,
+    "animation": {
+      "durationMillis": 180,
+      "curve": "easeOutCubic",
+      "animateContentSize": true
+    }
+  },
+  "children": [
+    {
+      "type": "Column",
+      "props": {
+        "fillMaxWidth": true,
+        "paddingHorizontal": 12,
+        "paddingBottom": 12
+      },
+      "children": [
+        {
+          "type": "TextField",
+          "props": {
+            "key": "sidebar-search",
+            "value": "",
+            "onValueChange": {
+              "__actionId": "__action_49"
+            },
+            "placeholder": "搜索对话",
+            "singleLine": true,
+            "fillMaxWidth": true,
+            "style": {
+              "color": {
+                "__colorToken": "onSurface"
+              }
+            },
+            "decoration": {
+              "isDense": true,
+              "filled": true,
+              "fillColor": {
+                "__colorToken": "surfaceContainerLow",
+                "alpha": 0.72
+              },
+              "cornerRadius": 14,
+              "focusedBorderColor": {
+                "__colorToken": "primary"
+              },
+              "hintStyle": {
+                "color": {
+                  "__colorToken": "onSurfaceVariant",
+                  "alpha": 0.62
+                }
+              },
+              "contentPadding": {
+                "horizontal": 12,
+                "vertical": 10
+              }
+            }
+          },
+          "children": [],
+          "slots": {
+            "leadingIcon": [
+              {
+                "type": "Icon",
+                "props": {
+                  "name": "Search",
+                  "size": 20,
+                  "tint": {
+                    "__colorToken": "onSurfaceVariant",
+                    "alpha": 0.72
+                  }
+                },
+                "children": [],
+                "slots": {}
+              }
+            ]
+          }
+        }
+      ],
+      "slots": {}
+    }
+  ],
+  "slots": {}
+}

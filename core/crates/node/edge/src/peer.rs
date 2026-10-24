@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use operit_host_api::HostManager::HostManager;
 use operit_link::protocol::LinkDeviceInfo;
-use operit_node_runtime::HostRuntimePeerService::{
-    HostRuntimePeerService, PeerRuntimeLimits,
-};
+use operit_node_runtime::HostRuntimePeerService::{HostRuntimePeerService, PeerRuntimeLimits};
 use operit_node_runtime::PeerRouter::PeerRouter;
 
 /// Creates the Edge receiver using the existing pairing and session engine.
@@ -18,10 +16,5 @@ pub fn createPeerService<R: PeerRouter + 'static>(
     info: LinkDeviceInfo,
     limits: PeerRuntimeLimits,
 ) -> Result<Arc<HostRuntimePeerService>, String> {
-    HostRuntimePeerService::newWithLimits(
-        host,
-        router,
-        info,
-        limits,
-    )
+    HostRuntimePeerService::newWithLimits(host, router, info, limits)
 }

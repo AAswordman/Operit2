@@ -8,6 +8,15 @@ Build outputs and transient logs belong under `tools/release/work` and
 `tools/release/dist`. Private credentials belong under `tools/release/secrets`.
 These ignored directories are not used to store reusable build scripts.
 
+Release package filenames use
+`operit2-<product>-<platform>-<architecture>-<release-version>.<extension>`.
+`release_artifacts.py` validates the shared App runtime and CLI version and keeps
+prerelease identifiers and compound extensions intact. App packages for macOS
+use `universal` and `.zip`; macOS CLI packages use their target architecture and
+`.tar.gz`. Build and verification scripts must not write separate `.sha256`
+files or `SHA256SUMS` lists for release packages. Verification results may
+include hashes in the existing build manifest.
+
 ## Entry points
 
 - `build_flutter_<platform>.py`: Flutter builds for Android, iOS, Linux, macOS,
@@ -19,6 +28,17 @@ These ignored directories are not used to store reusable build scripts.
 - `build_esp32.py`: ESP32 firmware builder.
 - `check_build_environment.py`: shared local/CI environment checker.
 - `common.py`, `cli_common.py`, and `appstore_connect_common.py`: shared helpers.
+
+## Generated plugin assets
+
+Every App/CLI build embeds the ToolPkg assets generated from `plugins/packages/`
+into `core/crates/runtime/application/assets/plugins/{buildin,external}`.
+`prepare_plugin_assets()` in `common.py` runs
+`plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload`; the
+CLI entry points call it before `cargo build`, and Flutter builds trigger it
+from their native hooks. `verify_cli_plugin_assets()` rejects a packaged CLI
+whose binary omits any generated asset name. Do not commit or reuse stale
+asset directories across machines.
 
 ## Apple release helpers
 

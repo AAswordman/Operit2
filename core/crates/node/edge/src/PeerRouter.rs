@@ -7,8 +7,11 @@ use operit_link::{
     CoreLinkPushSession, CoreLinkSharedClient, CoreWatchRequest, RoutedCoreRequest,
     RoutedCoreRequestKind,
 };
+use operit_node_runtime::NodeSpaceService::{
+    acceptSpaceControlCall, NodeSpaceContext, NodeSpaceService, NODE_SPACE_APPROVAL_TARGET,
+    NODE_SPACE_CONTROL_TARGET, NODE_SPACE_TARGET,
+};
 use operit_node_runtime::PeerRouter::PeerRouter;
-use operit_node_runtime::NodeSpaceService::{NodeSpaceService, NodeSpaceContext, NODE_SPACE_TARGET, NODE_SPACE_APPROVAL_TARGET, NODE_SPACE_CONTROL_TARGET, acceptSpaceControlCall};
 use std::sync::{Arc, OnceLock};
 
 /// The Edge adapter uses the shared authenticated session engine and only
@@ -32,7 +35,9 @@ impl EdgePeerRouter {
             .map_err(|_| "Edge node already installed".into())
     }
     pub fn installSpace(&self, space: Arc<NodeSpaceService>) -> Result<(), String> {
-        self.space.set(space).map_err(|_| "Edge Space services already installed".into())
+        self.space
+            .set(space)
+            .map_err(|_| "Edge Space services already installed".into())
     }
     fn node(&self) -> Result<Arc<EdgeNode>, CoreLinkError> {
         self.node
@@ -70,22 +75,47 @@ impl PeerRouter for EdgePeerRouter {
         if let Err(e) = self.check(&request) {
             return CoreCallResponse::err(id, e);
         }
-        if request.payload.target == NODE_SPACE_TARGET || request.payload.target == NODE_SPACE_APPROVAL_TARGET || request.payload.target == NODE_SPACE_CONTROL_TARGET {
+        if request.payload.target == NODE_SPACE_TARGET
+            || request.payload.target == NODE_SPACE_APPROVAL_TARGET
+            || request.payload.target == NODE_SPACE_CONTROL_TARGET
+        {
             // Authenticate the direct origin, not the remaining routing budget.
             // Core's same-Space control/reviewer calls carry a positive TTL even
             // on a direct connection. Pre-admission calls remain zero-hop only.
             if request.originNodeId != previous
                 || (request.payload.target == NODE_SPACE_TARGET && request.ttl != 0)
             {
-                return CoreCallResponse::err(id, CoreLinkError::new("PEER_DIRECT_CALL_REQUIRED", "Edge Space calls cannot be relayed"));
+                return CoreCallResponse::err(
+                    id,
+                    CoreLinkError::new(
+                        "PEER_DIRECT_CALL_REQUIRED",
+                        "Edge Space calls cannot be relayed",
+                    ),
+                );
             }
             let Some(space) = self.space.get() else {
-                return CoreCallResponse::err(id, CoreLinkError::new("EDGE_SPACE_UNAVAILABLE", "Edge Space services are not installed"));
+                return CoreCallResponse::err(
+                    id,
+                    CoreLinkError::new(
+                        "EDGE_SPACE_UNAVAILABLE",
+                        "Edge Space services are not installed",
+                    ),
+                );
             };
-            if request.payload.target == NODE_SPACE_APPROVAL_TARGET || request.payload.target == NODE_SPACE_CONTROL_TARGET {
+            if request.payload.target == NODE_SPACE_APPROVAL_TARGET
+                || request.payload.target == NODE_SPACE_CONTROL_TARGET
+            {
                 match space.spaceStore().space() {
-                    Ok(current) if request.spaceId == current.spaceId => {},
-                    Ok(_) => return CoreCallResponse::err(id, CoreLinkError::new("SPACE_ID_MISMATCH", "Approval traffic must belong to the current Space")),
+                    Ok(current) if request.spaceId == current.spaceId => {}
+                    Ok(_) => {
+                        return CoreCallResponse::err(
+                            id,
+                            CoreLinkError::new(
+                                "SPACE_ID_MISMATCH",
+                                "Approval traffic must belong to the current Space",
+                            ),
+                        )
+                    }
                     Err(error) => return CoreCallResponse::err(id, CoreLinkError::internal(error)),
                 }
             }
@@ -94,9 +124,15 @@ impl PeerRouter for EdgePeerRouter {
             } else if request.payload.target == NODE_SPACE_CONTROL_TARGET {
                 acceptSpaceControlCall(space.as_ref(), &previous, request.payload)
             } else {
-                space.acceptSpaceApprovalCall(&previous, request.payload).await
-            }.map_err(CoreLinkError::internal);
-            return CoreCallResponse { requestId: id, result };
+                space
+                    .acceptSpaceApprovalCall(&previous, request.payload)
+                    .await
+            }
+            .map_err(CoreLinkError::internal);
+            return CoreCallResponse {
+                requestId: id,
+                result,
+            };
         }
         match self.node() {
             Ok(node) => node.call(request.payload).await,

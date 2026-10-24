@@ -8,6 +8,8 @@ mod core_stream;
 pub mod protocol;
 pub mod route_runtime;
 mod value_codec;
+mod buffer;
+pub use buffer::CoreBuffer;
 
 pub const LINK_VERSION: &str = env!("CARGO_PKG_VERSION");
 

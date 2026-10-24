@@ -6,12 +6,8 @@ import { createDiskHarness } from "./disk-files.mjs";
 const submitted = { submissionId: "submission", chatId: "chat", selection: "group:33", runtime: "main", notifyReply: true,
   text: "Original full input", attachments: [{ filePath: "vfs://a", nodeId: "node", fileName: "a.txt", mimeType: "text/plain", fileSize: 7, content: "payload" }], replyToMessageTimestamp: 9 };
 
-/** Declares a complete frozen native snapshot at the controlled host ABI, not a configured production model. */
-function marker(id) {
-  const profile = { id, name: "Participant " + id, avatarUri: null, introPrompt: "Saved prompt", userPreferencesText: "Saved user", openingStatement: "", modelBinding: { providerId: "provider", modelId: "model" }, ttsConfigId: "voice",
-    toolAccess: { enabled: true, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] }, resources: [{ key: "character:" + id, readable: true, writable: true }] };
-  return { version: 1, selection: "group:33", promptFunctionType: "CHAT", primaryOwnerKey: "character:" + id, profile, participants: [profile] };
-}
+/** Supplies only the author Core attaches to a committed message. */
+function marker(id) { return { participantId: id }; }
 
 /** Supplies one explicit controlled native receipt with no timestamp or latest-history heuristic. */
 function receipt(message, timestamp, status = "completed", user = 10) {
@@ -30,16 +26,15 @@ function transport(chat, globals = {}) {
 }
 
 /** The real plugin transport submits once, continues the precise user row and never asks for native handles or finish methods. */
-test("native send transport: complete input, exact continuations and host-authored snapshots", async t => {
-  const disk = await createDiskHarness(t);
-  const storage = loadModule("src/chat-storage.ts", disk.globals);
+test("native send transport: complete input, exact continuations and host-authored identities", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" });
   const calls = [], snapshots = new Map(); let count = 0;
   const native = transport({
-    /** Acknowledges the explicitly planned send and stores its complete controlled native message snapshot. */
+    /** Acknowledges the explicitly planned send and stores its controlled author identity. */
     async sendMessage(request) {
       const input = plain(request); calls.push(input); count++;
       const id = input.kind === "submit" ? input.turn.participantId : input.participantId;
-      snapshots.set(20 + count, await storage.storeSnapshot(marker(id)));
+      snapshots.set(20 + count, marker(id));
       return receipt(input.kind === "submit" ? input.input.text : "", 20 + count);
     },
     /** Reads only the exact committed message locator, never current character state. */

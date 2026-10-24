@@ -19,7 +19,7 @@
     "network.d.ts": "f04bc04b9254f148940f6b56acc61a9f32cb4221d1a578d8079a87aef8ad350f",
     "okhttp.d.ts": "4a0d26c65a5dee8eaafd6c8f982f3a246f18f6b89edfeca55e74dbe5db1fcf05",
     "pako.d.ts": "69424d6206ab397805b30c22eb7edcc325c2663900687ee688c9c680d9aff8fe",
-    "quickjs-runtime.d.ts": "591ceb566260941350434e256fd294b1b1f71de23450d7a6b1a39d19fb436977",
+    "quickjs-runtime.d.ts": "5a72f03f78a91e6ddbbedde93d37ce415de86d163c7dc32618138db4e430f98c",
     "results.d.ts": "bff03bc6d827d1c00fed519449b4b06524725f0911199a896ee37f07079a9f0d",
     "software_settings.d.ts": "f97f7b659257b1ceefda1cb9cb80393855accc2da0ce641a78031f8e68a7ca98",
     "system.d.ts": "f09a1181314bf95cb5e94d42637d507ba401c29020c1cc9e2b6b48de7890ed7b",
@@ -28,5 +28,10 @@
     "toolpkg.d.ts": "e2760f7151c8c68a5e517be8b07b135d74cc46a6ed696906c0f9ec44a2e5fd67",
     "ui.d.ts": "dd2f593e01a572fada58a2d8b265445f36f8791e699c3b347db03b03594cf790",
     "workflow.d.ts": "51f0e189856383d975479c65c30f6de464e194f30421e5dfa1dcc8fbe0b7a7c9"
+  },
+  "localExtensions": {
+    "quickjs-runtime.d.ts": [
+      "Declare global as an alias of globalThis supplied by the shared engine bootstrap."
+    ]
   }
 }

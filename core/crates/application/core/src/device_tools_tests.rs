@@ -16,7 +16,7 @@ use operit_tools::tools::ToolResultDataClasses::{
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{ToolEffect, ToolValidationResult};
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeResultData, DeviceInfoData, HostResult,
@@ -60,21 +60,21 @@ impl SystemOperationHost for TestSystemLocale {
     }
 }
 
-struct BlockProbe;
+#[derive(Default)]
+struct BlockProbe { calls: AtomicUsize }
 impl AIToolHook for BlockProbe {
-    fn id(&self) -> &str {
-        "device-probe-hook"
+    fn id(&self) -> &str { "device-probe-hook" }
+    fn onToolCallRequested(&self, _: &operit_tools::ToolExecutionManager::AITool) { self.calls.fetch_add(1, Ordering::SeqCst); }
+    fn onToolCallIntercept(&self, tool: &operit_tools::ToolExecutionManager::AITool) -> AIToolHookDecision {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if tool.name == "blocked_probe" { AIToolHookDecision::Block("Blocked by AI hook".into()) }
+        else { AIToolHookDecision::Allow }
     }
-    fn onToolCallIntercept(
-        &self,
-        tool: &operit_tools::ToolExecutionManager::AITool,
-    ) -> AIToolHookDecision {
-        if tool.name == "blocked_probe" {
-            AIToolHookDecision::Block("Blocked by target device hook".into())
-        } else {
-            AIToolHookDecision::Allow
-        }
-    }
+    fn onToolPermissionChecked(&self, _: &operit_tools::ToolExecutionManager::AITool, _: bool, _: Option<&str>) { self.calls.fetch_add(1, Ordering::SeqCst); }
+    fn onToolExecutionStarted(&self, _: &operit_tools::ToolExecutionManager::AITool) { self.calls.fetch_add(1, Ordering::SeqCst); }
+    fn onToolExecutionResult(&self, _: &operit_tools::ToolExecutionManager::AITool, _: &ToolResult) { self.calls.fetch_add(1, Ordering::SeqCst); }
+    fn onToolExecutionError(&self, _: &operit_tools::ToolExecutionManager::AITool, _: &str) { self.calls.fetch_add(1, Ordering::SeqCst); }
+    fn onToolExecutionFinished(&self, _: &operit_tools::ToolExecutionManager::AITool) { self.calls.fetch_add(1, Ordering::SeqCst); }
 }
 struct Cancelled(Arc<AtomicBool>);
 impl Drop for Cancelled {
@@ -107,7 +107,7 @@ async fn wait(flag: &AtomicBool) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and_timeout() {
+async fn device_tools_direct_calls_skip_ai_policy_and_preserve_transport_semantics() {
     let root = std::env::temp_dir().join(format!("operit-device-runtime-{}", uuid_suffix()));
     let data = root.join("runtime");
     let workspace = root.join("workspace");
@@ -145,7 +145,7 @@ async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and
                 valid: true,
                 errorMessage: String::new(),
             }),
-            effect: ToolEffect::READ,
+            effect: ToolEffect::WRITE,
         })
     };
     handler.registerTool("binary_probe".into(), executor());
@@ -175,7 +175,30 @@ async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and
             );
         }
     }
-    handler.addToolHook(Arc::new(BlockProbe));
+    let hooks = Arc::new(BlockProbe::default());
+    handler.addToolHook(hooks.clone());
+    let approvals = Arc::new(AtomicUsize::new(0));
+    let requested = approvals.clone();
+    handler.getToolPermissionSystem().saveAiPermissionMode(
+        operit_tools::tools::ToolPermissionSystem::AiPermissionMode::ReadOnly,
+    ).unwrap();
+    handler.getToolPermissionSystem().setAsyncPermissionRequester(move |_, _, _| {
+        requested.fetch_add(1, Ordering::SeqCst);
+        async { operit_tools::tools::ToolPermissionSystem::PermissionRequestResult::DENY }
+    });
+    // The identical executors must still obey AI interception and permission policy.
+    use operit_tools::ToolExecutionManager::{ToolCall, ToolExecutionPolicy, ToolExposureMode};
+    let ai = |name: &str| ToolCall { name: name.into(), parameters: Default::default() };
+    let blocked = handler.executeToolInvocation(&ai("blocked_probe"),
+        ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL }).await.unwrap();
+    assert!(blocked[0].error.as_deref().unwrap().contains("Blocked by AI hook"));
+    let denied = handler.executeToolInvocation(&ai("binary_probe"),
+        ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL }).await.unwrap();
+    assert!(!denied[0].success);
+    assert_eq!(approvals.load(Ordering::SeqCst), 1);
+    assert!(hooks.calls.swap(0, Ordering::SeqCst) > 0);
+    approvals.store(0, Ordering::SeqCst);
+
     let entered = Arc::new(AtomicBool::new(false));
     let cancelled = Arc::new(AtomicBool::new(false));
     let started = entered.clone();
@@ -231,20 +254,35 @@ async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and
     )
     .await;
     assert!(bound.success, "{:?}", bound.error);
-    let source_blocked = operit_plugin_sdk::javascript::JsExecutionHost::execute_tool_call(
-        &handler,
-        request(
-            "unreachable-source-probe",
-            "bound-blocked",
-            "blocked_probe",
-            2000,
-        ),
-    )
-    .await;
-    assert!(source_blocked
-        .error
-        .unwrap()
-        .contains("Blocked by target device hook"));
+    let direct = operit_plugin_sdk::javascript::JsExecutionHost::execute_tool_call(
+        &handler, request(&node, "bound-no-intercept", "blocked_probe", 2000),
+    ).await;
+    assert!(direct.success, "Direct JS must bypass both source and target AI hooks: {:?}", direct.error);
+    assert_eq!(hooks.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(approvals.load(Ordering::SeqCst), 0);
+    // Exercise real SDK namespaces through native QuickJS, not only the Rust adapter.
+    let engine = handler.runtimeDependencies().js_execution_provider()
+        .create_execution_engine(Arc::new(handler.clone())).unwrap();
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("node".into(), node.clone().into());
+    params.insert("__operit_toolpkg_api_version".into(), "2.0.0".into());
+    let result = engine.execute_script_function_async(
+        r#"exports.run=async function(params) {
+            await Tools.Files.mkdir('/app/data/direct-sdk',true);
+            await Tools.Files.write('/app/data/direct-sdk/probe.txt','direct');
+            var local=await Tools.Files.exists('/app/data/direct-sdk/probe.txt');
+            var remote=await Tools.device(params.node).Files.exists('/app/data/direct-sdk/probe.txt');
+            await Tools.device(params.node).call('blocked_probe',{});
+            await Tools.device(params.node).call('internal_probe',{});
+            return {local:local.exists,remote:remote.exists};
+        };"#.into(),
+        "run".into(), params, Default::default(), None, false,
+    ).await.unwrap().unwrap();
+    engine.destroy();
+    let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(result, serde_json::json!({"local":true,"remote":true}));
+    assert_eq!(hooks.calls.load(Ordering::SeqCst), 0, "Real Tools namespaces must skip AI lifecycle");
+    assert_eq!(approvals.load(Ordering::SeqCst), 0, "Real Tools writes must skip AI approval");
     let immediate = operit_plugin_sdk::javascript::JsExecutionHost::execute_tool_call(
         &handler,
         request(&node, "immediate-cancel", "delayed_probe", 2000),
@@ -260,39 +298,6 @@ async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and
         .success
     );
     assert!(immediate.await.error.unwrap().contains("cancelled"));
-    let denied = runtime
-        .dispatch_with_preflight(
-            request(&node, "source-denied", "binary_probe", 2000),
-            Some(Box::pin(async { Err("Blocked by source hook".into()) })),
-        )
-        .await;
-    assert!(denied.error.unwrap().contains("Blocked by source hook"));
-    let source_waiting = Arc::new(AtomicBool::new(false));
-    let source_dropped = Arc::new(AtomicBool::new(false));
-    let started = source_waiting.clone();
-    let dropped = source_dropped.clone();
-    let preflight = Box::pin(async move {
-        let _cancelled = Cancelled(dropped);
-        started.store(true, Ordering::SeqCst);
-        std::future::pending::<Result<(), String>>().await
-    });
-    let pending_source = runtime.dispatch_with_preflight(
-        request(&node, "source-cancel", "binary_probe", 2000),
-        Some(preflight),
-    );
-    wait(&source_waiting).await;
-    let mut cancel_source = request(&node, "source-cancel", "binary_probe", 2000);
-    cancel_source.device.as_mut().unwrap().action = JsDeviceToolAction::Cancel;
-    assert!(runtime.dispatch(cancel_source).await.success);
-    assert!(pending_source.await.error.unwrap().contains("cancelled"));
-    wait(&source_dropped).await;
-    let timed_source = runtime
-        .dispatch_with_preflight(
-            request(&node, "source-timeout", "binary_probe", 25),
-            Some(Box::pin(std::future::pending())),
-        )
-        .await;
-    assert!(timed_source.error.unwrap().contains("timed out"));
     let mut catalog_request = request(&node, "catalog", "unused", 2000);
     catalog_request.device.as_mut().unwrap().action = JsDeviceToolAction::Catalog;
     let catalog = runtime.dispatch(catalog_request).await;
@@ -305,9 +310,8 @@ async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and
     assert!(tools
         .iter()
         .any(|tool| tool["name"] == "enabled_device_probe:echo"));
-    assert!(!tools
-        .iter()
-        .any(|tool| tool["name"] == "disabled_device_probe:echo"));
+    let local_catalog = operit_plugin_sdk::javascript::JsExecutionHost::get_tool_catalog(&handler).unwrap();
+    assert_eq!(catalog, local_catalog, "Device selection must not add an AI visibility filter");
     let enabled = runtime
         .dispatch(request(
             &node,
@@ -325,10 +329,7 @@ async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and
             2000,
         ))
         .await;
-    assert!(disabled.error.unwrap().contains("disabled"));
-    assert!(tools.iter().all(|tool| tool["source"] == "package"
-        || handler.getToolVisibility(tool["name"].as_str().unwrap())
-            == Some(operit_tools::tools::AIToolHandler::ToolRegistrationVisibility::PUBLIC)));
+    assert!(disabled.success, "Direct device calls use the same registered executors as local JS: {:?}", disabled.error);
     assert!(
         !runtime
             .dispatch(request(&node, "missing", "unknown_device_probe", 2000))
@@ -343,16 +344,11 @@ async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and
     let hidden = runtime
         .dispatch(request(&node, "hidden", "internal_probe", 2000))
         .await;
-    assert!(!hidden.success);
-    assert!(hidden.error.unwrap().contains("not public"));
+    assert!(hidden.success, "SDK-internal tools must remain callable on selected devices: {:?}", hidden.error);
     let blocked = runtime
         .dispatch(request(&node, "blocked", "blocked_probe", 2000))
         .await;
-    assert!(!blocked.success);
-    assert!(blocked
-        .error
-        .unwrap()
-        .contains("Blocked by target device hook"));
+    assert!(blocked.success, "Direct device calls must not enter AI interception: {:?}", blocked.error);
 
     let pending = runtime.dispatch(request(&node, "cancelled", "delayed_probe", 2000));
     wait(&entered).await;
@@ -387,7 +383,11 @@ async fn device_tools_runtime_executes_permissions_hooks_binary_cancellation_and
         "Timed-out executor must return to the registry"
     );
     assert!(runtime.pending.lock().unwrap().is_empty());
+    assert_eq!(hooks.calls.load(Ordering::SeqCst), 0, "All direct device operations must be hook-free");
+    assert_eq!(approvals.load(Ordering::SeqCst), 0, "All direct device operations must skip AI approval");
     crate::speech_transport_tests::verify(&mut core,&handler,&root,speech_http).await;
+    assert_eq!(hooks.calls.load(Ordering::SeqCst), 0, "Direct tools must never dispatch AI lifecycle events, including failures and cancellation");
+    assert_eq!(approvals.load(Ordering::SeqCst), 0, "Direct tools must never request AI approval");
     // Close the application before deleting its runtime files.
     operit_link::clearCoreRouteRuntime();
     drop(runtime);

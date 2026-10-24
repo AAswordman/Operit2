@@ -127,8 +127,8 @@ test("real attachment registration rejects actions but other navigation surfaces
     assert.deepEqual(actual.entries(), []);
   }
   assert.throws(
-    /** Requires the legacy registration alias to enforce the same attachment boundary. */
-    () => actual.evaluate("registerToolPkgNavigationEntry({id:'invalid',surface:'chat_attachments',route:'registered-route',action:function(){}});"),
+    /** Requires the namespaced registration to enforce the attachment boundary. */
+    () => actual.evaluate("ToolPkg.registerNavigationEntry({id:'invalid',surface:'chat_attachments',route:'registered-route',action:function(){}});"),
     /registerNavigationEntry\.action is unsupported for chat_attachments/,
   );
   actual.evaluate("function existingAction(){}; globalThis.__operitGetActiveModuleExports=function(){return {existingAction:existingAction};};");
@@ -240,8 +240,8 @@ test("real sidebar tab registration rejects every action callback before capture
     );
   }
   assert.throws(
-    /** Exercises the actual legacy alias of the same formal registration API. */
-    () => actual.evaluate(`registerToolPkgNavigationEntry({id:'invalid',surface:'chat_sidebar_tabs',route:${JSON.stringify(route)},action:function(){}});`),
+    /** Exercises the namespaced navigation registration API. */
+    () => actual.evaluate(`ToolPkg.registerNavigationEntry({id:'invalid',surface:'chat_sidebar_tabs',route:${JSON.stringify(route)},action:function(){}});`),
     /registerNavigationEntry\.action is unsupported for chat_sidebar_tabs/,
   );
   assert.deepEqual(actual.entries(), []);

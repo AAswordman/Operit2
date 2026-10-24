@@ -549,7 +549,7 @@ class _ChatSessionSummarySectionState
           final maxContextLength = snapshot.data;
           final maxContextTokens = maxContextLength == null
               ? null
-              : (maxContextLength * 1024).round();
+              : (maxContextLength * 1000).round();
           final contextUsagePercentage = maxContextTokens == null
               ? null
               : _contextUsagePercentage(maxContextTokens);

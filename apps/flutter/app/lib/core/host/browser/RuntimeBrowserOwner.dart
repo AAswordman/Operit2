@@ -256,9 +256,10 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       await ensureLoaded();
       final normalizedUrl = normalizeWorkspaceBrowserUrl(nextUrl);
       final requestHeaders = headers ?? const <String, String>{};
-      ClientLogger.i(
+      ClientLogger.v(
         'openTab start url=$normalizedUrl headers=${requestHeaders.length} userAgentSet=${userAgent != null}',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level2,
       );
       final tab = _createTab(
         normalizedUrl,
@@ -276,9 +277,10 @@ class RuntimeBrowserOwner extends ChangeNotifier {
         Uri.parse(normalizedUrl),
         headers: requestHeaders,
       );
-      ClientLogger.i(
+      ClientLogger.v(
         'openTab done tab=${tab.id} elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level2,
       );
       return tab;
     } catch (error, stackTrace) {
@@ -492,13 +494,14 @@ class RuntimeBrowserOwner extends ChangeNotifier {
         canGoForward: afterCanGoForward,
       );
       stopwatch.stop();
-      ClientLogger.i(
+      ClientLogger.v(
         'back native tab=${tab.id} beforeCanGoBack=$beforeCanGoBack '
         'beforeCanGoForward=$beforeCanGoForward '
         'afterCanGoBack=$afterCanGoBack afterCanGoForward=$afterCanGoForward '
         'beforeUrl=$beforeUrl afterUrl=$afterUrl '
         'elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level2,
       );
     } catch (error, stackTrace) {
       stopwatch.stop();
@@ -749,9 +752,10 @@ class RuntimeBrowserOwner extends ChangeNotifier {
             return;
           }
           final logicalUrl = _logicalUrl(url);
-          ClientLogger.d(
+          ClientLogger.v(
             'page started tab=${tab.id} url=$logicalUrl',
             tag: _logTag,
+            verboseLevel: VerboseLevel.level2,
           );
           final hasLogicalUrl = logicalUrl.isNotEmpty;
           tab.update(
@@ -783,9 +787,10 @@ class RuntimeBrowserOwner extends ChangeNotifier {
             return;
           }
           final logicalUrl = _logicalUrl(url);
-          ClientLogger.d(
+          ClientLogger.v(
             'page finished tab=${tab.id} url=$logicalUrl',
             tag: _logTag,
+            verboseLevel: VerboseLevel.level2,
           );
           if (tab.isDisposed) {
             return;
@@ -1250,7 +1255,6 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       frameHeight: frame.height.round(),
     );
   }
-
 
   bool _isDownloadUrl(String url) {
     final lower = url.toLowerCase();

@@ -575,12 +575,9 @@ impl LocalModelInstaller {
             .storageHost
             .as_ref()
             .ok_or_else(|| LocalModelDownloadError::Storage(storagePath.clone()))?;
-        verifyFileBytes(
-            file,
-            &storageHost
-                .readBytes(&storagePath)
-                .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?,
-        )
+        // LLM weights can be several GiB. Hash bounded ranges through the storage host.
+        let mut input = StorageFileReader { host: storageHost.as_ref(), path: &storagePath, offset: 0 };
+        verifyFileReader(file, &mut input)
     }
 
     /// Verifies one downloaded archive by size and SHA-256 checksum.
@@ -1468,5 +1465,22 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+}
+
+/// Sequential bounded reader for large model files; never allocates the complete weights.
+struct StorageFileReader<'a> {
+    host: &'a dyn RuntimeStorageHost,
+    path: &'a str,
+    offset: u64,
+}
+impl Read for StorageFileReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let bytes = self.host.readBytesRange(self.path, self.offset, buffer.len())
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        if bytes.len() > buffer.len() { return Err(std::io::Error::other("storage range exceeds requested length")); }
+        buffer[..bytes.len()].copy_from_slice(&bytes);
+        self.offset += bytes.len() as u64;
+        Ok(bytes.len())
     }
 }

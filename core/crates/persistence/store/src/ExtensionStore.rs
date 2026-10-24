@@ -31,9 +31,11 @@ pub fn notifyCatalogChanged() {
 
 pub const SPACE_EXTENSION_RECORDS: &str = "runtime/extensions/space/records";
 
-/// Installation identity and initial settings. File bytes are only retained for legacy migration.
+/// Atomic installation ownership and configuration. Embedded bytes only support legacy migration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtensionRecord {
+    #[serde(default)]
+    pub schemaVersion: u32,
     pub kind: String,
     pub id: String,
     pub scope: String,
@@ -277,18 +279,27 @@ impl ExtensionStore {
                     return Err("Extension identity does not match its record path".to_string());
                 }
                 if record.kind == kind {
-                    // Old snapshots are upgraded in the owning repository, never in sync dispatch.
-                    // Check actual files, not the received record, so interrupted upgrades can retry.
+                    let legacy = record.schemaVersion == 0;
+                    if legacy {
+                        if let Some(settings) = self.legacySettingsStore(&record)?.data().map_err(|e| e.to_string())?
+                            .get(&stringPreferencesKey("settings")) {
+                            if record.kind == "package" {
+                                // Source ownership belongs to the descriptor, never to the old settings copy.
+                                for key in ["enabledNames", "disabledNames", "subpackageStates", "order"] {
+                                    if let Some(value) = settings.get(key) {
+                                        record.settings[key] = value.clone();
+                                    }
+                                }
+                            } else {
+                                record.settings = settings.clone();
+                            }
+                        }
+                        record.schemaVersion = 1;
+                    }
                     if !record.files.is_empty() {
                         self.upgradeLegacyBundle(&mut record)?;
-                    }
-                    let settings = self.settingsStore(&record)?;
-                    if let Some(value) = settings
-                        .data()
-                        .map_err(|e| e.to_string())?
-                        .get(&stringPreferencesKey("settings"))
-                    {
-                        record.settings = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+                    } else if legacy {
+                        self.write(&record)?;
                     }
                     self.validate(&record)?;
                     records.push(record);
@@ -339,6 +350,14 @@ impl ExtensionStore {
         sourceName: &str,
         settings: Value,
     ) -> Result<(), String> {
+        self.registerInScope(kind, id, sourceName, settings, "device")
+    }
+
+    /// Registers an installation in its explicitly selected ownership scope.
+    pub fn registerInScope(
+        &self, kind: &str, id: &str, sourceName: &str, settings: Value, scope: &str,
+    ) -> Result<(), String> {
+        validateScope(scope)?;
         let records = self.records(kind)?;
         let matching = records
             .iter()
@@ -347,32 +366,153 @@ impl ExtensionStore {
         if matching.len() > 1 {
             return Err(format!("Extension ownership conflict: {kind}:{id}"));
         }
-        if matching.len() == 1 {
+        if let Some(record) = matching.first() {
+            if record.scope != scope { return Err(format!("Extension scope conflicts with installation: {kind}:{id}")); }
             return Ok(());
         }
         let record = ExtensionRecord {
+            schemaVersion: 1,
             kind: kind.to_string(),
             id: id.to_string(),
-            scope: "device".to_string(),
+            scope: scope.to_string(),
             sourceName: sourceName.to_string(),
             settings: self.initialSettings(kind, id, settings)?,
             files: BTreeMap::new(),
         };
-        self.write(&record)
+        self.validate(&record)?;
+        if kind == "package" && scope == "space" && record.settings["builtin"] == true {
+            let path = recordPath(kind, id, scope)?;
+            let bytes = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
+            RuntimeFileSyncStore::new(self.storage.clone(), RUNTIME_SYNC_DIR_PATH).initializeBytes(&path, &bytes)
+        } else {
+            self.write(&record)
+        }
     }
 
-    /// Retires an archived device package source without deleting its configuration or data.
-    pub fn retireDevicePackageSource(&self, id: &str, sourceName: &str) -> Result<(), String> {
-        let record = self.record("package", id)?;
-        if record.scope != "device" || record.sourceName != sourceName {
-            return Err(format!("Package retirement ownership mismatch: {id}/{sourceName}"));
+    /// Selects bundled code from its real owner; a shared installation replaces the local bundled record.
+    pub fn acceptsBuiltinPackage(&self, id: &str) -> Result<bool, String> {
+        let records = self.records("package")?.into_iter()
+            .filter(|record| record.id == id).collect::<Vec<_>>();
+        let local = records.iter().find(|record| record.scope == "device");
+        let shared = records.iter().find(|record| record.scope == "space");
+        let owner = match (local, shared) {
+            (Some(local), Some(shared)) => {
+                if local.settings["builtin"] != true || !local.sourceName.is_empty() {
+                    return Err(format!("Extension ownership conflict: package:{id}"));
+                }
+                self.remove(local)?;
+                shared
+            }
+            (Some(record), None) | (None, Some(record)) => record,
+            (None, None) => {
+                let local = recordPath("package", id, "device")?.replace("/records/", "/uninstalled/");
+                if self.storage.exists(&local).map_err(|e| e.to_string())? {
+                    return Ok(false);
+                }
+                let path = recordPath("package", id, "space")?;
+                return Ok(!RuntimeFileSyncStore::new(self.storage.clone(), RUNTIME_SYNC_DIR_PATH).hasSnapshot(&path)?);
+            }
+        };
+        Ok(owner.sourceName.is_empty() && owner.settings["builtin"] == true)
+    }
+
+    /// Publishes an explicitly reinstalled bundled source while retaining its scope and settings.
+    pub fn installBundledPackageSource(
+        &self,
+        id: &str,
+        sourceName: &str,
+        members: Vec<String>,
+        scope: &str,
+    ) -> Result<(), String> {
+        validateSegment(sourceName)?;
+        let mut record = self.record("package", id)?;
+        if record.scope != scope {
+            return Err(format!("Extension scope conflicts with installation: package:{id}"));
         }
-        let source = format!("{}/{}", Self::root("package", "device")?, sourceName);
-        if self.storage.exists(&source).map_err(|error| error.to_string())? {
-            return Err(format!("Package source must be archived before retirement: {sourceName}"));
+        if record.settings["builtin"] == true {
+            if !record.sourceName.is_empty() {
+                return Err(format!("Built-in package has an unexpected source: {id}"));
+            }
+        } else if record.sourceName != sourceName {
+            return Err(format!("Package source conflicts with installation: {id}"));
         }
-        self.storage.delete(&recordPath("package", id, "device")?, false)
-            .map_err(|error| error.to_string())?;
+        let previousSource = record.sourceName.clone();
+        record.sourceName = sourceName.to_string();
+        record.settings["builtin"] = Value::Bool(false);
+        record.settings["members"] =
+            serde_json::to_value(members).map_err(|error| error.to_string())?;
+        self.publishPackageSource(&record, &previousSource)
+    }
+
+    /// Installs a custom implementation under the built-in identity while retaining its settings.
+    pub fn customizePackage(
+        &self,
+        id: &str,
+        sourceName: &str,
+        members: Vec<String>,
+    ) -> Result<(), String> {
+        let mut record = self.record("package", id)?;
+        let previousSource = record.sourceName.clone();
+        if record.settings["builtin"] == true {
+            record.settings["builtinMembers"] = record.settings["members"].clone();
+        } else if record.settings["customized"] != true {
+            return Err(format!("Package is not a built-in customization: {id}"));
+        }
+        record.sourceName = sourceName.to_string();
+        record.settings["builtin"] = Value::Bool(false);
+        record.settings["customized"] = Value::Bool(true);
+        record.settings["members"] =
+            serde_json::to_value(members).map_err(|error| error.to_string())?;
+        self.publishPackageSource(&record, &previousSource)
+    }
+
+    /// Removes only custom code and restores the built-in installation with its existing data.
+    pub fn removePackageCustomization(&self, id: &str) -> Result<(), String> {
+        let mut record = self.record("package", id)?;
+        if record.settings["customized"] != true {
+            return Err(format!("Package is not customized: {id}"));
+        }
+        let members: Vec<String> =
+            serde_json::from_value(record.settings["builtinMembers"].clone())
+                .map_err(|error| error.to_string())?;
+        let previousSource = record.sourceName.clone();
+        record.sourceName.clear();
+        record.settings["builtin"] = Value::Bool(true);
+        record.settings["customized"] = Value::Bool(false);
+        record.settings["members"] =
+            serde_json::to_value(members).map_err(|error| error.to_string())?;
+        self.publishPackageSource(&record, &previousSource)
+    }
+
+    /// Publishes a source change and retires its previous archive without touching configuration roots.
+    fn publishPackageSource(
+        &self,
+        record: &ExtensionRecord,
+        previousSource: &str,
+    ) -> Result<(), String> {
+        self.validate(record)?;
+        let root = Self::root("package", &record.scope)?;
+        if record.scope == "space" && !record.sourceName.is_empty() {
+            let path = format!("{root}/{}", record.sourceName);
+            let bytes = self
+                .storage
+                .readBytes(&path)
+                .map_err(|error| error.to_string())?;
+            self.writeOwnedBytes(record, &path, &bytes)?;
+        }
+        self.write(record)?;
+        if !previousSource.is_empty() && previousSource != record.sourceName {
+            let path = format!("{root}/{previousSource}");
+            match record.scope.as_str() {
+                "device" => self
+                    .storage
+                    .delete(&path, false)
+                    .map_err(|error| error.to_string())?,
+                "space" => RuntimeFileSyncStore::new(self.storage.clone(), RUNTIME_SYNC_DIR_PATH)
+                    .delete(&path)?,
+                _ => return Err("Unknown extension scope".to_string()),
+            }
+        }
         notifyCatalogChanged();
         Ok(())
     }
@@ -385,7 +525,7 @@ impl ExtensionStore {
         }
         record.settings = settings;
         self.validate(&record)?;
-        self.writeSettings(&record)?;
+        self.write(&record)?;
         notifyCatalogChanged();
         Ok(())
     }
@@ -417,14 +557,7 @@ impl ExtensionStore {
             source
         } else {
             let mut source = self.record(kind, id)?;
-            if source.settings.get("builtin").and_then(Value::as_bool) == Some(true) {
-                return Err(
-                    "Built-in application resources do not have an installation scope".into(),
-                );
-            }
-            if source.scope == scope {
-                return Ok(());
-            }
+            if source.scope == scope { return Ok(()); }
             let mut target = source.clone();
             target.scope = scope.to_string();
             self.validate(&target)?;
@@ -469,33 +602,52 @@ impl ExtensionStore {
             "runtime/extensions/device/deletions/{kind}-{:x}.json",
             Sha256::digest(id.as_bytes())
         );
-        let record: ExtensionRecord = if self.storage.exists(&journal).map_err(|e| e.to_string())? {
-            serde_json::from_slice(
-                &self
-                    .storage
-                    .readBytes(&journal)
-                    .map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| e.to_string())?
+        let resuming = self.storage.exists(&journal).map_err(|e| e.to_string())?;
+        let mut record: ExtensionRecord = if resuming {
+            serde_json::from_slice(&self.storage.readBytes(&journal).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?
         } else {
-            let mut record = self.record(kind, id)?;
-            record.files = self.snapshot(&record)?;
-            self.storage
-                .writeBytes(
-                    &journal,
-                    &serde_json::to_vec(&record).map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
-            record
+            self.record(kind, id)?
         };
         if record.kind != kind || record.id != id {
             return Err("Deletion journal identity mismatch".into());
         }
+        if !resuming {
+            record.files = self.snapshot(&record)?;
+            self.storage.writeBytes(&journal, &serde_json::to_vec(&record).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        }
+        self.retireBuiltinPackage(&record)?;
         self.remove(&record)?;
-        self.storage
-            .delete(&journal, false)
-            .map_err(|e| e.to_string())?;
+        self.storage.delete(&journal, false).map_err(|e| e.to_string())?;
         notifyCatalogChanged();
+        Ok(())
+    }
+
+    /// Removes every persisted installation of a failed package, including conflicting owners.
+    /// Each record keeps its own scope so shared removals still publish file tombstones.
+    pub fn deleteFailedPackageInstallations(&self, id: &str) -> Result<bool, String> {
+        let records = self
+            .records("package")?
+            .into_iter()
+            .filter(|record| record.id == id)
+            .collect::<Vec<_>>();
+        for record in &records {
+            self.retireBuiltinPackage(record)?;
+            self.remove(record)?;
+        }
+        if !records.is_empty() {
+            notifyCatalogChanged();
+        }
+        Ok(!records.is_empty())
+    }
+
+    /// Records explicit device-local uninstallation so bundled scans cannot recreate the package.
+    fn retireBuiltinPackage(&self, record: &ExtensionRecord) -> Result<(), String> {
+        if record.kind == "package" && record.scope == "device" && record.settings["builtin"] == true {
+            let path = recordPath("package", &record.id, "device")?.replace("/records/", "/uninstalled/");
+            self.storage.writeBytes(&path, b"true").map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
@@ -528,8 +680,8 @@ impl ExtensionStore {
         self.configRoot(&self.record("package", id)?)
     }
 
-    /// Synchronizes one complete settings value independently from installation bytes.
-    fn settingsStore(&self, record: &ExtensionRecord) -> Result<PreferencesDataStore, String> {
+    /// Reads the retired settings layout only while migrating a version-zero descriptor.
+    fn legacySettingsStore(&self, record: &ExtensionRecord) -> Result<PreferencesDataStore, String> {
         let path = recordPath(&record.kind, &record.id, &record.scope)?
             .replace("/records/", "/settings/")
             .replace(".json", ".preferences.json");
@@ -552,16 +704,6 @@ impl ExtensionStore {
         }))
     }
 
-    /// Writes complete plugin or MCP settings as one synchronization entity.
-    fn writeSettings(&self, record: &ExtensionRecord) -> Result<(), String> {
-        let value = serde_json::to_value(&record.settings).map_err(|e| e.to_string())?;
-        self.settingsStore(record)?
-            .edit(|preferences| {
-                preferences.set(&stringPreferencesKey("settings"), value);
-            })
-            .map_err(|e| e.to_string())
-    }
-
     /// Compatibility with already installed bundles. Existing config is never overwritten;
     /// new peers receive ordinary file operations, not another embedded bundle.
     fn upgradeLegacyBundle(&self, record: &mut ExtensionRecord) -> Result<(), String> {
@@ -581,6 +723,9 @@ impl ExtensionStore {
 
     /// Validates content paths and rejects space-local executable MCP definitions before any mutation.
     fn validate(&self, record: &ExtensionRecord) -> Result<(), String> {
+        if record.schemaVersion > 1 {
+            return Err(format!("Unsupported extension record schema: {}", record.schemaVersion));
+        }
         Self::root(&record.kind, &record.scope)?;
         if record.id.trim().is_empty() || !record.settings.is_object() {
             return Err("Extension requires a nonempty identity and object settings".to_string());
@@ -590,6 +735,13 @@ impl ExtensionStore {
         }
         match record.kind.as_str() {
             "package" => {
+                if let Some(required) = record.settings.get("installationScope") {
+                    let required = required.as_str().ok_or("Invalid package installation scope")?;
+                    validateScope(required)?;
+                    if record.scope != required {
+                        return Err(format!("Package {} only supports {} installation scope", record.id, required));
+                    }
+                }
                 for field in ["members", "enabledNames", "disabledNames"] {
                     let _: Vec<String> = serde_json::from_value(record.settings[field].clone())
                         .map_err(|e| format!("Invalid package {field}: {e}"))?;
@@ -660,7 +812,6 @@ impl ExtensionStore {
         if !record.files.is_empty() {
             return Err("Installation records must not embed file content".into());
         }
-        self.writeSettings(record)?;
         let content = serde_json::to_vec(record).map_err(|e| e.to_string())?;
         match record.scope.as_str() {
             "device" => self
@@ -676,11 +827,11 @@ impl ExtensionStore {
     /// Removes owned content and records only after the target move has been published.
     fn remove(&self, record: &ExtensionRecord) -> Result<(), String> {
         self.deleteContent(record)?;
-        self.settingsStore(record)?
-            .edit(|preferences| {
-                preferences.remove(&stringPreferencesKey("settings"));
-            })
-            .map_err(|e| e.to_string())?;
+        self.removeRecordMetadata(record)
+    }
+
+    /// Removes one record and its settings while leaving plugin content for the canonical owner.
+    fn removeRecordMetadata(&self, record: &ExtensionRecord) -> Result<(), String> {
         let path = recordPath(&record.kind, &record.id, &record.scope)?;
         match record.scope.as_str() {
             "device" => self.storage.delete(&path, false).map_err(|e| e.to_string()),

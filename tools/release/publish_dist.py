@@ -15,6 +15,7 @@ from build_release import (
     publish_release,
     release_version,
     verify_github_publish_access,
+    validate_release_assets,
 )
 
 
@@ -41,6 +42,7 @@ def release_assets() -> list[Path]:
     assets = sorted(path for path in DIST_DIR.iterdir() if path.is_file())
     if not assets:
         raise RuntimeError(f"Release dist directory contains no files: {DIST_DIR}")
+    validate_release_assets(assets)
     return assets
 
 

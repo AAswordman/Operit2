@@ -15,7 +15,7 @@ class _ComposeFlex extends Flex {
     super.spacing,
   });
 
-  final List<_ComposeDslNode> nodes;
+  final List<_ComposeProgramNode> nodes;
 
   /// Creates a flex layout with per-child Compose drawing metadata.
   @override
@@ -43,7 +43,7 @@ class _ComposeFlex extends Flex {
 class _ComposeRenderFlex extends RenderFlex {
   /// Configures standard flex measurement with plugin child metadata.
   _ComposeRenderFlex({
-    required List<_ComposeDslNode> nodes,
+    required List<_ComposeProgramNode> nodes,
     required super.direction,
     required super.mainAxisSize,
     required super.mainAxisAlignment,
@@ -51,27 +51,27 @@ class _ComposeRenderFlex extends RenderFlex {
     required super.textDirection,
     super.spacing,
   }) : _nodes = nodes {
-    for (final node in _nodes) {
-      node.addListener(_nodeChanged);
+    for (final source in _nodes.map((node) => node.source).toSet()) {
+      source.addListener(_nodeChanged);
     }
   }
 
-  List<_ComposeDslNode> _nodes;
+  List<_ComposeProgramNode> _nodes;
   List<RenderBox>? _paintChildren;
 
   /// Exposes child metadata used by layout and paint.
-  List<_ComposeDslNode> get nodes => _nodes;
+  List<_ComposeProgramNode> get nodes => _nodes;
 
   /// Rebinds child metadata listeners when the flex membership changes.
-  set nodes(List<_ComposeDslNode> value) {
+  set nodes(List<_ComposeProgramNode> value) {
     if (listEquals(_nodes, value)) return;
-    for (final node in _nodes) {
-      node.removeListener(_nodeChanged);
+    for (final source in _nodes.map((node) => node.source).toSet()) {
+      source.removeListener(_nodeChanged);
     }
     _nodes = value;
     _paintChildren = null;
-    for (final node in _nodes) {
-      node.addListener(_nodeChanged);
+    for (final source in _nodes.map((node) => node.source).toSet()) {
+      source.addListener(_nodeChanged);
     }
     markNeedsLayout();
   }
@@ -86,8 +86,8 @@ class _ComposeRenderFlex extends RenderFlex {
   /// Releases retained child subscriptions with the render object.
   @override
   void dispose() {
-    for (final node in _nodes) {
-      node.removeListener(_nodeChanged);
+    for (final source in _nodes.map((node) => node.source).toSet()) {
+      source.removeListener(_nodeChanged);
     }
     super.dispose();
   }

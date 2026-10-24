@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../interactions/MessagePressShield.dart';
 import 'EnhancedCodeBlock.dart';
@@ -18,35 +19,12 @@ import 'MarkdownInlineSpannable.dart';
 import 'MarkdownLatexBlock.dart';
 import 'StreamMarkdownRendererState.dart';
 import '../../features/chat/components/part/CustomXmlRenderer.dart';
+import 'Utf16Text.dart';
 
 part 'CanvasMarkdownNodeRenderer.dart';
 
 typedef MarkdownContentSplitter =
     Future<List<core_proxy.MarkdownStreamEvent>> Function(String content);
-
-/// Replaces unpaired UTF-16 surrogates before text reaches Flutter paragraph layout.
-String sanitizeUtf16(String value) {
-  final units = value.codeUnits;
-  final buffer = StringBuffer();
-  for (var index = 0; index < units.length; index++) {
-    final unit = units[index];
-    if (unit >= 0xD800 && unit <= 0xDBFF) {
-      if (index + 1 < units.length &&
-          units[index + 1] >= 0xDC00 &&
-          units[index + 1] <= 0xDFFF) {
-        buffer.writeCharCode(unit);
-        buffer.writeCharCode(units[++index]);
-      } else {
-        buffer.write('\uFFFD');
-      }
-    } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
-      buffer.write('\uFFFD');
-    } else {
-      buffer.writeCharCode(unit);
-    }
-  }
-  return buffer.toString();
-}
 
 /// Reports whether a Markdown surface is preparing its first content layout.
 class MarkdownLayoutNotification extends Notification {
@@ -194,7 +172,14 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         _notifyContentReady(generation);
         return;
       }
-      _loadStaticContent(sanitizeUtf16(widget.content), generation);
+      _loadStaticContent(sanitizeUtf16(widget.content), generation).catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        if (mounted && generation == _startGeneration) {
+          _handleMarkdownError(error, stackTrace);
+        }
+      });
       return;
     }
 
@@ -244,26 +229,49 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 
   /// Subscribes to Markdown events and schedules incremental node syncs.
   void _subscribe(Stream<Object> stream) {
-    _subscription = stream.listen(
-      (event) {
-        _applyMarkdownEvent(event);
-        if (!_streamDone) {
-          _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
-        }
-      },
-      onDone: () {
-        if (mounted) {
-          setState(_completeLiveStreamRender);
-        } else {
-          _completeLiveStreamRender();
-        }
-        _notifyStreamDone();
-      },
-      onError: (Object _, StackTrace _) {
-        _rendererState.streamParsingCompletedSuccessfully = false;
-        widget.onStreamError?.call();
-      },
+    _subscription = stream
+        .map((event) {
+          // Stream transformations deliver parser exceptions to this subscription's onError.
+          _applyMarkdownEvent(event);
+          return event;
+        })
+        .listen(
+          (_) {
+            if (!_streamDone) {
+              _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
+            }
+          },
+          onDone: () {
+            if (mounted) {
+              setState(_completeLiveStreamRender);
+            } else {
+              _completeLiveStreamRender();
+            }
+            _notifyStreamDone();
+          },
+          onError: _handleMarkdownError,
+        );
+  }
+
+  /// Terminates only the failed surface and retains its parsed nodes for inspection.
+  void _handleMarkdownError(Object error, StackTrace stackTrace) {
+    // Report failure before waiting for transport cancellation to finish.
+    unawaited(_subscription?.cancel());
+    ClientLogger.e(
+      'Markdown parsing failed for $_rendererId',
+      tag: 'StreamMarkdownRenderer',
+      error: error,
+      stackTrace: stackTrace,
     );
+    _renderTimer?.cancel();
+    _renderTimer = null;
+    _streamDone = true;
+    _rendererState.eventBuilder.complete();
+    _rendererState.streamParsingCompletedSuccessfully = false;
+    if (mounted) {
+      setState(() => _synchronizeRenderNodes(isStreaming: false));
+      widget.onStreamError?.call();
+    }
   }
 
   /// Completes live parsing and synchronizes the final render nodes.
@@ -328,9 +336,20 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     final normalized = _NormalizedMarkdownEvent.from(event);
     final parentBlockId = normalized.parentBlockId;
     if (parentBlockId != null) {
+      final owner = _rendererState.eventBuilder.xmlMarkdownStreamOwner(
+        parentBlockId,
+      );
       _rendererState.eventBuilder.appendXmlMarkdownEvent(
         parentBlockId: parentBlockId,
-        event: normalized.asLocalEvent(),
+        // Remove one nesting level only when the event reaches its direct parent.
+        event: normalized.asLocalEvent(
+          parentBlockId: owner == parentBlockId ? null : parentBlockId,
+        ),
+        xmlBlockId:
+            normalized.type == 'markdownBlockStart' &&
+                normalized.nodeType == 'XmlBlock'
+            ? normalized.blockId
+            : null,
       );
       return;
     }
@@ -573,19 +592,21 @@ class _NormalizedMarkdownEvent {
         parentBlockId: event.parentBlockId,
         nodeType: event.nodeType,
         headerLevel: event.headerLevel,
-        xml: null,
+        xml: event.xml,
       );
     }
     throw StateError('Unsupported markdown event ${event.runtimeType}');
   }
 
-  _LocalMarkdownStreamEvent asLocalEvent() {
+  /// Preserves metadata and the remaining nesting while forwarding an XML event.
+  _LocalMarkdownStreamEvent asLocalEvent({required int? parentBlockId}) {
     return _LocalMarkdownStreamEvent(
       type: type,
       id: id,
       value: value,
       blockId: blockId,
       inlineId: inlineId,
+      parentBlockId: parentBlockId,
       nodeType: nodeType,
       headerLevel: headerLevel,
       xml: xml,
@@ -610,6 +631,7 @@ class _LocalMarkdownStreamEvent {
     required this.value,
     required this.blockId,
     required this.inlineId,
+    required this.parentBlockId,
     required this.nodeType,
     required this.headerLevel,
     required this.xml,
@@ -623,7 +645,7 @@ class _LocalMarkdownStreamEvent {
   final String? nodeType;
   final int? headerLevel;
   final core_proxy.MarkdownXmlStreamEvent? xml;
-  int? get parentBlockId => null;
+  final int? parentBlockId;
 }
 
 MarkdownNodeType _nodeTypeFromLabel(String? label) {

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = Screen;
+const plan_mode_runtime_ipc_js_1 = require("../../shared/plan_mode_runtime_ipc.js");
 const plan_mode_constants_js_1 = require("../../shared/plan_mode_constants.js");
 const plan_mode_i18n_js_1 = require("../../shared/plan_mode_i18n.js");
 const plan_mode_execution_js_1 = require("../../shared/plan_mode_execution.js");
@@ -19,7 +20,6 @@ function Screen(ctx) {
     const [chatId] = ctx.useState("chatId", null);
     const submittingState = useStateValue(ctx, "submitting", false);
     const startedState = useStateValue(ctx, "started", false);
-    const startedCheckedState = useStateValue(ctx, "startedChecked", false);
     const closedState = useStateValue(ctx, "closed", false);
     const errorState = useStateValue(ctx, "error", "");
     const expandedState = useStateValue(ctx, "expanded", false);
@@ -32,6 +32,26 @@ function Screen(ctx) {
     const visibleLines = canExpand && !expandedState.value ? lines.slice(0, PLAN_PREVIEW_LINE_COUNT) : lines;
     const previewMarkdown = visibleLines.join("\n");
     const rootKey = ready ? "plantodo-ready" : "plantodo-streaming";
+    /** Owns one routed handoff subscription for this exact chat and plan. */
+    ctx.useEffect("plan-handoff", () => {
+        startedState.set(false);
+        if (!ready || !planContent || chatId === null || chatId.trim() === "")
+            return () => { };
+        const iterator = plan_mode_runtime_ipc_js_1.PlanModeShared.watchStarted(chatId, planContent);
+        let active = true;
+        /** Applies synchronized status while this composition owns the collector. */
+        const observe = async () => {
+            for await (const next of iterator) {
+                if (!active)
+                    return;
+                startedState.set(next);
+            }
+        };
+        void observe().catch((error) => { if (active)
+            ctx.reportError(error); });
+        /** Cancels the previous stream when plan identity or page ownership changes. */
+        return () => { active = false; void iterator.return(undefined).catch((error) => { ctx.reportError(error); }); };
+    }, [chatId, planContent, ready]);
     /** Starts implementation for the rendered, confirmed plan. */
     const handleStart = async () => {
         if (submittingState.value) {
@@ -232,19 +252,6 @@ function Screen(ctx) {
         onLoad: async () => {
             if (parsed.closed && !closedState.value) {
                 closedState.set(true);
-            }
-            // This screen is re-created from scratch on every chat view rebuild, so the
-            // handoff has to be re-read from the plugin runtime instead of assumed idle.
-            if (!ready || !planContent || startedState.value || startedCheckedState.value) {
-                return;
-            }
-            startedCheckedState.set(true);
-            if (chatId === null || chatId.trim() === "") {
-                return;
-            }
-            const started = await (0, plan_mode_execution_js_1.isPlanImplementationStarted)(planContent, chatId);
-            if (started) {
-                startedState.set(true);
             }
         },
     }, children);

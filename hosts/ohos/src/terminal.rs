@@ -22,9 +22,9 @@ const SHELL_TERMINAL_TYPE: &str = "shell";
 const QEMU_VROOT_EXECUTABLE: &str = "/data/app/bin/qemu-harmonix-aarch64";
 const QEMU_VROOT_LIBRARY_DIRECTORY: &str = "/data/app/app.operit.mobile/harmonix_1.0/lib";
 const VROOT_ASSET_DIRECTORY: &str = "ohos-vroot";
-const VROOT_ROOTFS_DIRECTORY: &str = "alpine-3.22.1-aarch64";
-const VROOT_ROOTFS_ARCHIVE: &str = "alpine-minirootfs-3.22.1-aarch64.tar.gz";
-const VROOT_ROOTFS_SHA256: &str = "alpine-minirootfs-3.22.1-aarch64.tar.gz.sha256";
+const VROOT_ROOTFS_DIRECTORY: &str = "alpine-3.23.6-aarch64";
+const VROOT_ROOTFS_ARCHIVE: &str = "alpine-minirootfs-3.23.6-aarch64.tar.gz";
+const VROOT_ROOTFS_SHA256: &str = "alpine-minirootfs-3.23.6-aarch64.tar.gz.sha256";
 const VROOT_INSTALL_MARKER: &str = ".operit-rootfs.sha256";
 const VROOT_HOST_WORKING_DIRECTORY_ENV: &str = "OPERIT_OHOS_HOST_WORKING_DIR";
 pub(crate) const VROOT_HOST_MOUNT_ROOT: &str = "/mnt/host-root";
@@ -39,7 +39,7 @@ enum OhosTerminalBackend {
 struct OhosVrootRuntime {
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
-    installationLock: Arc<Mutex<()>>,
+    installationLock: Arc<Mutex<bool>>,
 }
 
 impl OhosVrootRuntime {
@@ -48,7 +48,7 @@ impl OhosVrootRuntime {
         Self {
             runtimeRoot,
             workspaceRoot,
-            installationLock: Arc::new(Mutex::new(())),
+            installationLock: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -86,41 +86,139 @@ impl OhosVrootRuntime {
 
     /// Extracts the checksum-verified Alpine root filesystem before a vroot session starts.
     fn ensureReady(&self) -> HostResult<()> {
-        let _installation = self
+        let mut installed = self
             .installationLock
             .lock()
             .map_err(|_| HostError::new("OpenHarmony vroot installation mutex poisoned"))?;
+        if *installed {
+            return Ok(());
+        }
         let executable = self.executablePath();
         if !executable.is_file() {
             return Err(HostError::new(format!(
                 "OpenHarmony qemu-vroot executable does not exist: {}",
-                executable.to_string_lossy()
+                executable.display()
             )));
         }
         let archive = self.rootfsArchivePath();
-        let checksumFile = self.rootfsSha256Path();
-        let expectedChecksum = readRootfsSha256(&checksumFile)?;
-        verifyRootfsArchiveSha256(&archive, &expectedChecksum)?;
+        let expectedChecksum = readRootfsSha256(&self.rootfsSha256Path())?;
         let rootfsDirectory = self.rootfsDirectory();
-        if rootfsDirectory.exists() {
-            verifyInstalledRootfs(&rootfsDirectory, &expectedChecksum)?;
+        if rootfsDirectory.join(VROOT_INSTALL_MARKER).is_file()
+            && fs::read_to_string(rootfsDirectory.join(VROOT_INSTALL_MARKER))?.trim()
+                == expectedChecksum
+        {
+            verifyRootfsPayload(&rootfsDirectory)?;
+            *installed = true;
             return Ok(());
         }
-        let assetDirectory = self.assetDirectory();
-        fs::create_dir_all(&assetDirectory)?;
-        let stagingDirectory = assetDirectory.join(format!(
+        verifyRootfsArchiveSha256(&archive, &expectedChecksum)?;
+        let staging = self.assetDirectory().join(format!(
             ".{VROOT_ROOTFS_DIRECTORY}.installing-{}",
             Uuid::new_v4()
         ));
-        fs::create_dir_all(&stagingDirectory)?;
-        extractRootfsArchive(&archive, &stagingDirectory)?;
-        verifyRootfsPayload(&stagingDirectory)?;
-        fs::write(
-            stagingDirectory.join(VROOT_INSTALL_MARKER),
-            &expectedChecksum,
-        )?;
-        fs::rename(&stagingDirectory, &rootfsDirectory)?;
-        verifyInstalledRootfs(&rootfsDirectory, &expectedChecksum)
+        fs::create_dir_all(&staging)?;
+        let result = self.installRootfs(&archive, &staging, &rootfsDirectory, &expectedChecksum);
+        if staging.exists() {
+            fs::remove_dir_all(&staging)?;
+        }
+        result?;
+        *installed = true;
+        Ok(())
+    }
+
+    /// Installs or upgrades bundled packages through apk without replacing the user's rootfs.
+    fn installRootfs(
+        &self,
+        archive: &Path,
+        staging: &Path,
+        rootfs: &Path,
+        checksum: &str,
+    ) -> HostResult<()> {
+        let payload = staging.join("payload");
+        fs::create_dir(&payload)?;
+        extractRootfsArchive(archive, &payload)?;
+        let repository = staging.join("repository");
+        fs::rename(payload.join("etc/operit/packages"), &repository)?;
+        let repositoriesFile = staging.join("repositories");
+        fs::rename(payload.join("etc/operit/repositories"), &repositoriesFile)?;
+        let packages = fs::read_to_string(payload.join("etc/operit/packages.list"))?;
+        let names: Vec<&str> = packages.split_whitespace().collect();
+        if names.is_empty()
+            || names.iter().any(|name| {
+                !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            })
+        {
+            return Err(HostError::new("Invalid packaged Alpine package manifest"));
+        }
+        // QEMU creates physical absolute symlinks, so packages must install at the final path.
+        if !rootfs.exists() {
+            fs::rename(&payload, rootfs)?;
+        }
+        let destination = rootfs;
+        let output = std::process::Command::new(self.executablePath())
+            .current_dir(destination)
+            .env("LD_LIBRARY_PATH", QEMU_VROOT_LIBRARY_DIRECTORY)
+            .args([
+                "-E",
+                "LD_LIBRARY_PATH=",
+                "-L",
+                ".",
+                "./sbin/apk",
+                "--no-network",
+                "--allow-untrusted",
+                "--no-scripts",
+                "--repositories-file",
+            ])
+            .arg(format!(
+                "{VROOT_HOST_MOUNT_ROOT}{}",
+                repositoriesFile.display()
+            ))
+            .arg("--repository")
+            .arg(format!("{VROOT_HOST_MOUNT_ROOT}{}", repository.display()))
+            .args(["add", "--upgrade"])
+            .args(names)
+            .output()?;
+        if !output.status.success() {
+            return Err(HostError::new(format!(
+                "OpenHarmony Alpine package installation failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        let status = std::process::Command::new(self.executablePath())
+            .current_dir(destination)
+            .env("LD_LIBRARY_PATH", QEMU_VROOT_LIBRARY_DIRECTORY)
+            .args([
+                "-E",
+                "LD_LIBRARY_PATH=",
+                "-L",
+                ".",
+                "./bin/busybox",
+                "--install",
+                "-s",
+            ])
+            .status()?;
+        if !status.success() {
+            return Err(HostError::new(
+                "OpenHarmony Alpine shell command installation failed",
+            ));
+        }
+        let resolver = self.assetDirectory().join("resolv.conf");
+        if !resolver.exists() {
+            fs::write(&resolver, "")?;
+        }
+        let guestResolver = destination.join("etc/resolv.conf");
+        if guestResolver.symlink_metadata().is_ok() {
+            fs::remove_file(&guestResolver)?;
+        }
+        std::os::unix::fs::symlink(&resolver, guestResolver)?;
+        verifyRootfsPayload(destination)?;
+        let marker = destination.join(format!("{VROOT_INSTALL_MARKER}.installing"));
+        fs::write(&marker, checksum)?;
+        fs::rename(marker, destination.join(VROOT_INSTALL_MARKER))?;
+        Ok(())
     }
 }
 
@@ -351,7 +449,9 @@ impl TerminalHost for OhosTerminalHost {
     ) -> HostResult<TerminalSessionInfo> {
         let backend = self.backendForTerminal(QEMU_VROOT_TERMINAL, terminalType)?;
         self.prepareBackend(backend)?;
-        let session = self.vrootShell.createOrGetTypedSession(sessionName, terminalType)?;
+        let session = self
+            .vrootShell
+            .createOrGetTypedSession(sessionName, terminalType)?;
         self.recordSession(&session.sessionId, backend)?;
         Ok(mapSessionInfo(session, backend))
     }
@@ -366,6 +466,20 @@ impl TerminalHost for OhosTerminalHost {
         let backend = self.backendForSession(sessionId)?;
         self.ptyHost(backend)
             .executeInSession(sessionId, command, timeoutMs)
+            .map(|output| mapCommandOutput(output, backend))
+    }
+
+    /// Executes one hidden command in the primary QEMU-vroot Alpine environment.
+    fn executeInSessionStreaming(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
+    ) -> HostResult<TerminalCommandOutput> {
+        let backend = self.backendForSession(sessionId)?;
+        self.ptyHost(backend)
+            .executeInSessionStreaming(sessionId, command, timeoutMs, onOutput)
             .map(|output| mapCommandOutput(output, backend))
     }
 
@@ -569,46 +683,23 @@ fn extractRootfsArchive(archivePath: &Path, destination: &Path) -> HostResult<()
     })
 }
 
-/// Verifies the minimum executable and package-manager structure of an Alpine rootfs.
+/// Verifies the runtimes supplied by the offline Alpine image.
 fn verifyRootfsPayload(rootfsDirectory: &Path) -> HostResult<()> {
-    let busybox = rootfsDirectory.join("bin").join("busybox");
-    if !busybox.is_file() {
-        return Err(HostError::new(format!(
-            "OpenHarmony vroot rootfs busybox is missing: {}",
-            busybox.to_string_lossy()
-        )));
-    }
-    let apk = rootfsDirectory.join("sbin").join("apk");
-    if !apk.is_file() {
-        return Err(HostError::new(format!(
-            "OpenHarmony vroot rootfs apk is missing: {}",
-            apk.to_string_lossy()
-        )));
-    }
-    Ok(())
-}
-
-/// Verifies a previously installed rootfs against the current packaged checksum.
-fn verifyInstalledRootfs(rootfsDirectory: &Path, expectedChecksum: &str) -> HostResult<()> {
-    if !rootfsDirectory.is_dir() {
-        return Err(HostError::new(format!(
-            "OpenHarmony vroot rootfs path is not a directory: {}",
-            rootfsDirectory.to_string_lossy()
-        )));
-    }
-    verifyRootfsPayload(rootfsDirectory)?;
-    let markerPath = rootfsDirectory.join(VROOT_INSTALL_MARKER);
-    let marker = fs::read_to_string(&markerPath).map_err(|error| {
-        HostError::new(format!(
-            "OpenHarmony vroot installation marker cannot be read: {}: {error}",
-            markerPath.to_string_lossy()
-        ))
-    })?;
-    if marker.trim() != expectedChecksum {
-        return Err(HostError::new(format!(
-            "OpenHarmony vroot installed rootfs checksum differs from packaged archive: {}",
-            rootfsDirectory.to_string_lossy()
-        )));
+    for relative in [
+        "bin/busybox",
+        "sbin/apk",
+        "usr/bin/python3",
+        "usr/bin/node",
+        "usr/bin/uv",
+        "usr/bin/pnpm",
+        "usr/bin/tesseract",
+        "usr/bin/pdftoppm",
+    ] {
+        if !rootfsDirectory.join(relative).is_file() {
+            return Err(HostError::new(format!(
+                "OpenHarmony rootfs executable is missing: {relative}"
+            )));
+        }
     }
     Ok(())
 }

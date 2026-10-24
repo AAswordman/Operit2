@@ -18,6 +18,7 @@
     "workflow.js",
     "characters.js",
     "memory.js",
+    "runtime.js",
     "install.js"
   ]
 }

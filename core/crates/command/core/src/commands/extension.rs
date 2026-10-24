@@ -318,6 +318,7 @@ mod tests {
     #[test]
     fn summaries_never_expose_mcp_secrets_or_legacy_file_contents() {
         let record = ExtensionRecord {
+            schemaVersion: 1,
             kind: "mcp".into(),
             id: "remote".into(),
             scope: "device".into(),

@@ -15,6 +15,15 @@ use crate::SyncOperationStore::{
     SyncOperationStore,
 };
 
+/// Identifies only preference datasets explicitly retired into endpoint-local authority projections.
+fn endpointProjectionPreferencePath(path: &str) -> bool {
+    ["runtime/space/members/", "runtime/space/device_profiles/",
+        operit_util::RuntimeStorageLayout::RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH,
+        operit_util::RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH]
+        .iter().any(|prefix| path.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with('/') || prefix.ends_with('/'))
+            && path.ends_with(".preferences.json"))
+}
+
 /// Names the synchronized domain that owns Space authorization and control commands.
 pub const NETWORK_CONTROL_SYNC_DOMAIN: &str = "network_control";
 const NETWORK_CONTROL_ENTITY_TYPE: &str = "command";
@@ -545,6 +554,12 @@ impl NetworkControlStore {
         if self.nodeLocalOnly { return self.projectControlOperationsUnlocked(std::slice::from_ref(operation)); }
         self.syncOperationStore
             .appendUnobservedOperation(operation)
+            .map_err(|error| error.to_string())?;
+        // Acknowledge the control sequence on its own clock so the same page is
+        // not exported on every synchronization pass. Business sequences stay
+        // behind this command so earlier chat or file operations are not lost.
+        self.syncOperationStore
+            .observeNetworkControlOperation(operation)
             .map_err(|error| error.to_string())
     }
 
@@ -630,10 +645,17 @@ impl NetworkControlStore {
                         let record = crate::PreferencesDataStore::PreferencesSyncedEntry::fromOperation(&operation)
                             .map_err(|_| "Endpoint journal contains business operations; refusing automatic retirement")?;
                         let path = record.storagePath();
-                        if !["runtime/space/members/", "runtime/space/device_profiles/", operit_util::RuntimeStorageLayout::RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH, operit_util::RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH]
-                            .iter().any(|prefix| path.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with('/') || prefix.ends_with('/')) && path.ends_with(".preferences.json")) {
+                        if !endpointProjectionPreferencePath(path) {
                             return Err("Endpoint journal contains business operations; refusing automatic retirement".into());
                         }
+                    }
+                }
+            } else if entry.path == "runtime/sync/preference_outboxes.json" {
+                let registry: BTreeMap<String, bool> = serde_json::from_slice(&storage.readBytes(&entry.path).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+                for (path, encrypted) in registry {
+                    if encrypted || !endpointProjectionPreferencePath(&path) {
+                        return Err("Endpoint outbox contains business operations; refusing automatic retirement".into());
                     }
                 }
             } else if !["runtime/sync/clocks.json", "runtime/sync/devices.json", "runtime/sync/entity_versions.jsonl",
@@ -904,9 +926,10 @@ fn builtinRoles() -> BTreeMap<String, NetworkControlRole> {
                 NETWORK_DEVICES_VIEW_CAPABILITY,
                 "network.relay",
                 "runtime.execute",
+                "storage.provide",
             ],
         ),
-        builtinRole("relay", "Relay", [NETWORK_DEVICES_VIEW_CAPABILITY, "network.relay"]),
+        builtinRole("relay", "Relay", [NETWORK_DEVICES_VIEW_CAPABILITY, "network.relay", "storage.provide"]),
         builtinRole("edge", "Edge", [NETWORK_DEVICES_VIEW_CAPABILITY, "runtime.execute"]),
     ]
     .into_iter()

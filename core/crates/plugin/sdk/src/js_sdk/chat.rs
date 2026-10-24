@@ -48,6 +48,9 @@ pub struct ChatCreateOptions {
     /// Identifies an explicitly selected existing source conversation for creation hooks.
     #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
     pub sourceChatId: JsOptional<String>,
+    /// Places the new conversation beneath an existing parent without cloning its history.
+    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
+    pub parentChatId: JsOptional<String>,
     /// Supplies opaque creation input interpreted solely by registered plugins.
     #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
     pub input: JsOptional<JsonObject>,

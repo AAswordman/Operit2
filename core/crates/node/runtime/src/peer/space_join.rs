@@ -109,9 +109,12 @@ fn canReview(service: &dyn NodeSpaceContext, node: &str) -> Result<bool, String>
         && service.networkControlStore().nodeHasCapability(node, "network.members.join", None)?
         && service.networkControlStore().nodeHasCapability(node, "network.approval", None)?)
 }
+/// Join rides any current pairing with the peer; the direction the pairing was
+/// established in is transport history, not applicant authority. Approval on
+/// the paired side stays the only membership consent.
 fn paired(service: &dyn NodeSpaceContext, peer: &str, direction: crate::NodeServices::PairingDirection) -> Result<(), String> {
     if !service.peers()?.hasPairing(peer, direction).map_err(|e| e.to_string())? {
-        return Err("Join request requires a current directional pairing".into());
+        return Err("Join request requires a current pairing".into());
     }
     Ok(())
 }
@@ -490,7 +493,7 @@ fn leaveLocked(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
 pub(crate) async fn request(service: &dyn NodeSpaceContext, deviceId: String) -> Result<SpaceJoinRequest, String> {
     let mut retiredStaleSplit = false;
     loop {
-    paired(service, &deviceId, crate::NodeServices::PairingDirection::Outbound)?;
+    paired(service, &deviceId, crate::NodeServices::PairingDirection::Either)?;
     if let Some(old) = outgoing(service)?.into_iter().find(|r| r.targetDeviceId == deviceId && active(&r.status)) {
         return refresh(service, old.requestId).await;
     }
@@ -631,7 +634,7 @@ pub(crate) fn purgePeerRecords(store: &PeerStateStore, deviceId: &str) -> Result
 /// Receives applicant commands; cancellation never depends on reviewer discovery.
 pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreCallRequest) -> Result<CoreValue, String> {
     let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
-    paired(service, peer, crate::NodeServices::PairingDirection::Inbound)?;
+    paired(service, peer, crate::NodeServices::PairingDirection::Either)?;
     let current = service.spaceStore().initialize()?;
     let now = currentTimeMillis();
     let cancellation = request.methodName == "cancelJoin";
@@ -783,7 +786,7 @@ pub(crate) async fn incoming(service: &dyn NodeSpaceContext) -> Result<Vec<Space
         let records = match fetched {
             Ok(records) => records,
             Err(error) => {
-                operit_util::AppLogger::AppLogger::d("SpaceJoin", &format!("Assignment source unavailable {node}: {error}"));
+                operit_util::AppLogger::AppLogger::v_with_level("SpaceJoin", &format!("Assignment source unavailable {node}: {error}"), operit_util::AppLogger::VERBOSE_LEVEL_3);
                 continue;
             }
         };
@@ -865,7 +868,7 @@ fn claimDecision(service: &dyn NodeSpaceContext, origin: &str, decision: Decisio
             saveRecord(service, INBOUND, &decision.requestId, &record)?;
             validateAssignment(service, &record, origin, &decision)?;
             if record.request.status == SpaceJoinStatus::Pending {
-                paired(service, &record.request.applicantDeviceId, crate::NodeServices::PairingDirection::Inbound)?;
+                paired(service, &record.request.applicantDeviceId, crate::NodeServices::PairingDirection::Either)?;
                 record.request.status = SpaceJoinStatus::Approving;
                 record.approvedDecision = Some(decision.approve);
                 record.request.decisionApprove = Some(decision.approve);
@@ -1012,7 +1015,7 @@ pub(crate) async fn refresh(service: &dyn NodeSpaceContext, id: String) -> Resul
         local = load(service, OUTBOUND, &id)?;
         if !active(&local.request.status) { return Ok(local.request); }
     }
-    paired(service, &local.request.targetDeviceId, crate::NodeServices::PairingDirection::Outbound)?;
+    paired(service, &local.request.targetDeviceId, crate::NodeServices::PairingDirection::Either)?;
     let mut remote = sendSubmission(service, &local).await?;
     validateResponse(&local, &remote)?;
     // A user cancellation may have committed while this network request was in

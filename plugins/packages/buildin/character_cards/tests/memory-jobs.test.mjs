@@ -2,10 +2,35 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { plain } from "./runtime.mjs";
+import { loadModule, plain } from "./runtime.mjs";
 import { CONTROLLED_CHAT_ID, CONTROLLED_OWNER, createMemoryJobsHarness } from "./memory-jobs-runtime.mjs";
 
 const owner = { ownerKey: CONTROLLED_OWNER };
+
+/** Keeps candidate retrieval aligned with the Kotlin question, answer, and recent-context budgets. */
+test("candidate search query focuses recent question and answer within explicit bounds", () => {
+  const { buildCandidateSearchQuery } = loadModule("src/memory-jobs/analysis.ts");
+  const messages = [
+    { sender: "user", content: "Earlier unrelated request" },
+    { sender: "assistant", content: "<think>private reasoning</think>Answer https://example.test/path" },
+    { sender: "user", content: "Question: preserve SSH context\n<memory>injected memory</memory>" },
+  ];
+  const query = buildCandidateSearchQuery(messages);
+  assert.match(query, /Question: preserve SSH context/u);
+  assert.match(query, /Answer/u);
+  assert.doesNotMatch(query, /private reasoning|injected memory|https:/u);
+  assert.ok(query.length <= 1880);
+
+  const longMessages = [
+    ...Array.from({ length: 12 }, () => ({ sender: "user", content: "c".repeat(400) })),
+    { sender: "user", content: "q".repeat(900) },
+    { sender: "assistant", content: "a".repeat(900) },
+  ];
+  const bounded = buildCandidateSearchQuery(longMessages);
+  assert.ok(bounded.length <= 1882);
+  assert.ok(bounded.startsWith("q".repeat(500)));
+  assert.ok(bounded.includes("a".repeat(180)));
+});
 
 /** Reads one genuine owner from native bytes and rejects absent or duplicated persisted spaces. */
 async function readOwner(harness) {
@@ -23,12 +48,12 @@ function mutations(disk) {
 
 /** Exercises main registration, lifecycle, real candidates across restart, and extraction through the registered interval. */
 test("controlled Chat/AI: registered main lifecycle and message hooks persist candidates across restart and interval commits graph plus real USER.md", async t => {
-  const harness = await createMemoryJobsHarness(t), first = harness.openRuntime();
+  const harness = await createMemoryJobsHarness(t), beforeRegistration = await harness.readStateText(), first = harness.openRuntime();
   assert.equal(first.chatMessageHooks.length, 1); assert.equal(first.hostEventHooks.length, 1); assert.equal(first.lifecycle.length, 1);
   assert.equal(first.chatMessageHooks[0].id, "memory-candidate-enqueue"); assert.equal(first.chatMessageHooks[0].function, first.main.onMemoryMessagePersisted);
   assert.equal(first.hostEventHooks[0].id, "memory-jobs-interval"); assert.equal(first.hostEventHooks[0].function, first.main.onMemoryInterval);
   assert.deepEqual(plain(first.hostEventHooks[0].trigger), { kind: "interval", intervalMs: 60000 });
-  assert.equal(harness.disk.calls.length, 0); assert.deepEqual(await harness.disk.entries(), []);
+  assert.equal(harness.disk.calls.length, 0); assert.equal(await harness.readStateText(), beforeRegistration);
   assert.throws(
     /** Probes an intentionally unprovided SDK directory capability. */
     () => harness.tools.SoftwareSettings,
@@ -146,16 +171,18 @@ test("controlled Chat/AI: rebuild and candidate execution plus state-publication
       error => error === statusFailure,
     );
     assert.equal(harness.modelCalls.length, calls);
-    const writes = harness.disk.calls.filter(call => call.method === "storage.transaction");
+    const writes = harness.disk.calls.filter(call => call.method === "storage.commit");
     assert.ok(writes.length > 0, "The failure must occur during an actual storage transaction");
     const unpublished = writes[writes.length - 1].args[0];
     if (kind === "rebuild") {
-      const owner = unpublished.find(statement => /^UPDATE "owners" /.test(statement.sql));
-      assert.ok(owner.params.includes("failed"));
-      assert.ok(owner.params.includes(failure.message));
+      const owner = unpublished.find(mutation => mutation.collection === "owners" && mutation.op === "put");
+      assert.equal(owner.value.rebuildProgress.status, "failed");
+      assert.equal(owner.value.rebuildProgress.lastError, failure.message);
     } else {
-      for (const row of unpublished.filter(statement => /^UPDATE "candidates" /.test(statement.sql))) {
-        assert.ok(row.params.includes("failed")); assert.ok(row.params.includes(failure.message));
+      const candidates = unpublished.filter(mutation => mutation.collection === "candidates" && mutation.op === "put");
+      assert.ok(candidates.length > 0);
+      for (const row of candidates) {
+        assert.equal(row.value.record.status, "failed"); assert.equal(row.value.record.lastError, failure.message);
       }
     }
   }
@@ -209,7 +236,7 @@ async function enqueueProviderReplies(runtime, harness) {
 }
 
 /** Proves provider-to-interval work keeps the original send identity even after the current chat namespace is removed. */
-test("controlled Chat/AI: registered candidate provider and interval use exact saved message snapshots without reading current chat selection", async t => {
+test("controlled Chat/AI: registered candidate provider and interval use exact message authors and current permissions without reading current chat selection", async t => {
   const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
   await enqueueProviderReplies(runtime, harness);
   const before = await readOwner(harness);
@@ -221,7 +248,7 @@ test("controlled Chat/AI: registered candidate provider and interval use exact s
   await runtime.interval(); harness.assertOutputsConsumed();
   const saved = await readOwner(harness); assert.equal(saved.candidates.length, 0); assert.equal(saved.memories.length, 1);
   assert.equal(saved.memories[0].title, "Snapshot ownership");
-  for (const call of harness.extensionCalls.slice(readCount)) assert.equal(call.target.kind, "message", "Historical assistant execution must not read current chat identity");
+  for (const call of harness.extensionCalls.slice(readCount)) assert.equal(call.target.kind, "message", "Message author lookup must not read current chat identity");
 });
 
 /** Checks strict missing-snapshot and required-revision errors without manufacturing an owner or publishing a candidate. */
@@ -229,8 +256,8 @@ test("controlled Chat/AI: candidate provider rejects missing snapshots or absent
   const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
   const source = harness.message(31), before = await harness.readStateText(); harness.disk.clearCalls();
   await assert.rejects(() => runtime.api("memory.candidate.enqueue", { chatId: CONTROLLED_CHAT_ID, timestamp: source.timestamp, sourceType: "reply_finalized_auto", ownerKey: null }), /variantIndex is required/);
-  harness.removeMessageMarker(source.timestamp, source.variantIndex);
-  await assert.rejects(() => runtime.api("memory.candidate.enqueue", { chatId: CONTROLLED_CHAT_ID, timestamp: source.timestamp, variantIndex: source.variantIndex, sourceType: "reply_finalized_auto", ownerKey: null }), /no saved configuration reference/);
+  harness.removeExecutionData(source.timestamp, source.variantIndex);
+  await assert.rejects(() => runtime.api("memory.candidate.enqueue", { chatId: CONTROLLED_CHAT_ID, timestamp: source.timestamp, variantIndex: source.variantIndex, sourceType: "reply_finalized_auto", ownerKey: null }), /has no character author identity/);
   assert.equal(await harness.readStateText(), before); assert.equal(mutations(harness.disk).length, 0); assert.equal(harness.modelCalls.length, 0);
 });
 

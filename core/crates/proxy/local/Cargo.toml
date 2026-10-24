@@ -34,6 +34,7 @@ operit-proxy-rust-codegen = { path = "../rust-codegen" }
 operit-plugin-sdk-codegen = { path = "../../plugin/codegen" }
 
 [dev-dependencies]
+zip.workspace = true
 operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 

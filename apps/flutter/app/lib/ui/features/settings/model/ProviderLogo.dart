@@ -17,7 +17,6 @@ const Map<String, String> providerLogoAssets = <String, String>{
   'FOUR_ROUTER': 'assets/model_logos/FOUR_ROUTER.svg',
   'GEMINI_GENERIC': 'assets/model_logos/GEMINI_GENERIC.svg',
   'GOOGLE': 'assets/model_logos/GOOGLE.svg',
-  'IFLOW': 'assets/model_logos/IFLOW.png',
   'INFINIAI': 'assets/model_logos/INFINIAI.png',
   'LMSTUDIO': 'assets/model_logos/LMSTUDIO.svg',
   'MIMO': 'assets/model_logos/MIMO.svg',
@@ -46,7 +45,6 @@ const Map<String, String> providerLogoAssets = <String, String>{
 /// Logos that carry brand colors and keep them in both themes.
 const Set<String> _coloredLogoProviderTypeIds = <String>{
   'FOUR_ROUTER',
-  'IFLOW',
   'INFINIAI',
 };
 

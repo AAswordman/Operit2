@@ -5,12 +5,11 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
-import 'package:liquid_glass_widgets/widgets/shared/glass_effect.dart';
 
-import '../model/theme_preference_defaults.dart';
 import '../assets/theme_asset_resolver.dart';
 import '../assets/theme_image_decoder.dart';
+import '../model/theme_preference_defaults.dart';
+import 'liquid_glass.dart';
 
 class BubbleImageStyle {
   /// Creates image slicing parameters for a bubble surface asset.
@@ -61,10 +60,13 @@ class BubbleSurface extends StatelessWidget {
   final BubbleImageStyle? imageStyle;
   final bool transparentSurface;
 
+  /// Paints imported image decorations or the shared liquid material.
   @override
   Widget build(BuildContext context) {
     final useImage = imageStyle != null;
-    final surfaceColor = (transparentSurface || useImage) ? Colors.transparent : color;
+    final surfaceColor = (transparentSurface || useImage)
+        ? Colors.transparent
+        : color;
     final decoration = BoxDecoration(
       color: surfaceColor,
       borderRadius: borderRadius,
@@ -77,97 +79,26 @@ class BubbleSurface extends StatelessWidget {
             child: BubbleImageBackgroundSurface(imageStyle: imageStyle!),
           ),
         child,
+        if (useImage && imageStyle!.showSliceGuides)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: _BubbleDestinationSliceGuides(imageStyle: imageStyle!),
+            ),
+          ),
       ],
     );
     if (transparentSurface && !useImage) {
-      final transparentGlassSettings = _bubbleTransparentGlassSettings(color);
       return ClipRRect(
         borderRadius: borderRadius,
-        child: Stack(
-          children: <Widget>[
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(
-                  sigmaX: transparentGlassSettings.blur,
-                  sigmaY: transparentGlassSettings.blur,
-                ),
-                child: const ColoredBox(color: Colors.transparent),
-              ),
-            ),
-            Positioned.fill(
-              child: _BubbleTransparentGlassSurface(
-                glassRadius: _dominantCornerRadius(borderRadius),
-                settings: transparentGlassSettings,
-                child: const SizedBox.expand(),
-              ),
-            ),
-            child,
-          ],
+        child: LiquidGlassSurface(
+          borderRadius: borderRadius,
+          tint: color.withValues(alpha: 0.025),
+          child: child,
         ),
       );
     }
     return ClipRRect(borderRadius: borderRadius, child: content);
   }
-}
-
-class _BubbleTransparentGlassSurface extends StatelessWidget {
-  /// Creates the transparent glass layer used by bubble surfaces.
-  const _BubbleTransparentGlassSurface({
-    required this.glassRadius,
-    required this.settings,
-    required this.child,
-  });
-
-  final double glassRadius;
-  final LiquidGlassSettings settings;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassEffect(
-      quality: GlassQuality.standard,
-      shape: LiquidRoundedSuperellipse(borderRadius: glassRadius),
-      settings: settings,
-      interactionIntensity: 0.85,
-      ambientRim: 0.11,
-      baseAlphaMultiplier: 0.75,
-      edgeAlphaMultiplier: 0.75,
-      rimThickness: 1.48,
-      rimSmoothing: 8,
-      child: child,
-    );
-  }
-}
-
-/// Builds glass settings for transparent bubble surfaces.
-LiquidGlassSettings _bubbleTransparentGlassSettings(Color color) {
-  return LiquidGlassSettings(
-    glassColor: color.withValues(alpha: 0.018),
-    thickness: 80,
-    blur: 5,
-    chromaticAberration: 0.18,
-    lightIntensity: 0.42,
-    ambientStrength: 0.3,
-    refractiveIndex: 1.16,
-    saturation: 1.04,
-    glowIntensity: 0.17,
-    specularSharpness: GlassSpecularSharpness.soft,
-    standardOpacityMultiplier: 0.12,
-  );
-}
-
-/// Returns the largest corner radius in a border radius.
-double _dominantCornerRadius(BorderRadius borderRadius) {
-  return <double>[
-    borderRadius.topLeft.x,
-    borderRadius.topLeft.y,
-    borderRadius.topRight.x,
-    borderRadius.topRight.y,
-    borderRadius.bottomRight.x,
-    borderRadius.bottomRight.y,
-    borderRadius.bottomLeft.x,
-    borderRadius.bottomLeft.y,
-  ].reduce(math.max);
 }
 
 class BubbleImageBackgroundSurface extends StatelessWidget {
@@ -185,14 +116,51 @@ class BubbleImageBackgroundSurface extends StatelessWidget {
   }
 }
 
+/// Shows the source image with the crop box and the repeat cell in red.
+class BubbleSliceSourceGuide extends StatelessWidget {
+  /// Creates the source-image guide used while adjusting a bubble image.
+  const BubbleSliceSourceGuide({super.key, required this.imageStyle});
+
+  final BubbleImageStyle imageStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ResolvedBubbleImageSurface(
+      resolver: ThemeAssetScope.of(context),
+      imageStyle: imageStyle,
+      view: _BubbleImageView.sourceGuide,
+    );
+  }
+}
+
+class _BubbleDestinationSliceGuides extends StatelessWidget {
+  /// Creates the red destination guides drawn above bubble content.
+  const _BubbleDestinationSliceGuides({required this.imageStyle});
+
+  final BubbleImageStyle imageStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ResolvedBubbleImageSurface(
+      resolver: ThemeAssetScope.of(context),
+      imageStyle: imageStyle,
+      view: _BubbleImageView.destinationGuides,
+    );
+  }
+}
+
+enum _BubbleImageView { background, destinationGuides, sourceGuide }
+
 class _ResolvedBubbleImageSurface extends StatefulWidget {
   const _ResolvedBubbleImageSurface({
     required this.resolver,
     required this.imageStyle,
+    this.view = _BubbleImageView.background,
   });
 
   final ThemeAssetResolver resolver;
   final BubbleImageStyle imageStyle;
+  final _BubbleImageView view;
 
   @override
   State<_ResolvedBubbleImageSurface> createState() =>
@@ -279,7 +247,23 @@ class _BubbleImageBackgroundSurfaceState
       return const SizedBox.expand();
     }
     return CustomPaint(
-      painter: _BubbleImagePainter(image: image, style: widget.imageStyle),
+      painter: switch (widget.view) {
+        _BubbleImageView.background => _BubbleImagePainter(
+          image: image,
+          style: widget.imageStyle,
+        ),
+        _BubbleImageView.destinationGuides => _BubbleDestinationGuidePainter(
+          image: image,
+          style: widget.imageStyle,
+        ),
+        _BubbleImageView.sourceGuide => _BubbleSourceGuidePainter(
+          image: image,
+          style: widget.imageStyle,
+        ),
+      },
+      child: widget.view == _BubbleImageView.background
+          ? null
+          : const SizedBox.expand(),
     );
   }
 }
@@ -350,9 +334,6 @@ class _BubbleImagePainter extends CustomPainter {
       _drawStretchedNinePatchBubble(canvas, size, layout);
     } else {
       _drawRepeatedCenterBubble(canvas, size, layout);
-    }
-    if (style.showSliceGuides) {
-      _drawNinePatchSliceGuides(canvas, size, layout);
     }
   }
 
@@ -811,19 +792,6 @@ class _BubbleImagePainter extends CustomPainter {
       dstHeight,
       style.imageScale,
     );
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.58)
-      ..strokeWidth = 1.2
-      ..style = PaintingStyle.stroke;
-    final shadowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.34)
-      ..strokeWidth = 2.2
-      ..style = PaintingStyle.stroke;
-
-    void drawGuideLine(Offset start, Offset end) {
-      canvas.drawLine(start, end, shadowPaint);
-      canvas.drawLine(start, end, paint);
-    }
 
     final leftX = dstLayout.centerDstStartX
         .toDouble()
@@ -842,10 +810,19 @@ class _BubbleImagePainter extends CustomPainter {
         .clamp(0, size.height)
         .toDouble();
 
-    drawGuideLine(Offset(leftX, 0), Offset(leftX, size.height));
-    drawGuideLine(Offset(rightX, 0), Offset(rightX, size.height));
-    drawGuideLine(Offset(0, topY), Offset(size.width, topY));
-    drawGuideLine(Offset(0, bottomY), Offset(size.width, bottomY));
+    _drawSliceGuideLine(canvas, Offset(leftX, 0), Offset(leftX, size.height));
+    _drawSliceGuideLine(canvas, Offset(rightX, 0), Offset(rightX, size.height));
+    _drawSliceGuideLine(canvas, Offset(0, topY), Offset(size.width, topY));
+    _drawSliceGuideLine(
+      canvas,
+      Offset(0, bottomY),
+      Offset(size.width, bottomY),
+    );
+  }
+
+  /// Paints only the red destination cell boundaries.
+  void paintSliceGuides(Canvas canvas, Size size) {
+    _drawNinePatchSliceGuides(canvas, size, _buildSliceLayout(image, style));
   }
 
   void _drawTiledHorizontally(
@@ -976,4 +953,108 @@ class _BubbleImagePainter extends CustomPainter {
       currentY += tileDstHeight;
     }
   }
+}
+
+class _BubbleDestinationGuidePainter extends CustomPainter {
+  /// Creates a painter for the red cell boundaries on the rendered bubble.
+  const _BubbleDestinationGuidePainter({
+    required this.image,
+    required this.style,
+  });
+
+  final ui.Image image;
+  final BubbleImageStyle style;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    _BubbleImagePainter(
+      image: image,
+      style: style,
+    ).paintSliceGuides(canvas, size);
+  }
+
+  @override
+  bool shouldRepaint(covariant _BubbleDestinationGuidePainter oldDelegate) {
+    return oldDelegate.image != image || oldDelegate.style != style;
+  }
+}
+
+class _BubbleSourceGuidePainter extends CustomPainter {
+  /// Creates a painter for the red crop and repeat boundaries on the source image.
+  const _BubbleSourceGuidePainter({required this.image, required this.style});
+
+  final ui.Image image;
+  final BubbleImageStyle style;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final imageSize = Size(image.width.toDouble(), image.height.toDouble());
+    final fitted = applyBoxFit(BoxFit.contain, imageSize, size);
+    final destination = Alignment.center.inscribe(
+      fitted.destination,
+      Offset.zero & size,
+    );
+    final source = Alignment.center.inscribe(
+      fitted.source,
+      Offset.zero & imageSize,
+    );
+    canvas.drawImageRect(
+      image,
+      source,
+      destination,
+      Paint()..filterQuality = FilterQuality.medium,
+    );
+
+    final cropLeft = style.cropLeftRatio.clamp(0.0, 0.45);
+    final cropTop = style.cropTopRatio.clamp(0.0, 0.45);
+    final cropRight = style.cropRightRatio.clamp(0.0, 0.45);
+    final cropBottom = style.cropBottomRatio.clamp(0.0, 0.45);
+    final crop = Rect.fromLTRB(
+      destination.left + destination.width * cropLeft,
+      destination.top + destination.height * cropTop,
+      destination.right - destination.width * cropRight,
+      destination.bottom - destination.height * cropBottom,
+    );
+    final repeatXStart = style.repeatXStartRatio.clamp(0.05, 0.9);
+    final repeatXEnd = style.repeatXEndRatio.clamp(repeatXStart + 0.01, 0.95);
+    final repeatYStart = style.repeatYStartRatio.clamp(0.05, 0.9);
+    final repeatYEnd = style.repeatYEndRatio.clamp(repeatYStart + 0.01, 0.95);
+    final repeat = Rect.fromLTRB(
+      crop.left + crop.width * repeatXStart,
+      crop.top + crop.height * repeatYStart,
+      crop.left + crop.width * repeatXEnd,
+      crop.top + crop.height * repeatYEnd,
+    );
+    _drawSliceGuideRect(canvas, crop);
+    _drawSliceGuideRect(canvas, repeat);
+  }
+
+  @override
+  bool shouldRepaint(covariant _BubbleSourceGuidePainter oldDelegate) {
+    return oldDelegate.image != image || oldDelegate.style != style;
+  }
+}
+
+/// Paints one nine-slice boundary in red with a white edge so it stays visible.
+void _drawSliceGuideLine(Canvas canvas, Offset start, Offset end) {
+  final halo = Paint()
+    ..color = const Color(0xFFFFFFFF)
+    ..strokeWidth = 3
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.square;
+  final line = Paint()
+    ..color = const Color(0xFFFF1744)
+    ..strokeWidth = 1.6
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.square;
+  canvas.drawLine(start, end, halo);
+  canvas.drawLine(start, end, line);
+}
+
+/// Paints the four edges of one nine-slice rectangle.
+void _drawSliceGuideRect(Canvas canvas, Rect rect) {
+  _drawSliceGuideLine(canvas, rect.topLeft, rect.topRight);
+  _drawSliceGuideLine(canvas, rect.topRight, rect.bottomRight);
+  _drawSliceGuideLine(canvas, rect.bottomRight, rect.bottomLeft);
+  _drawSliceGuideLine(canvas, rect.bottomLeft, rect.topLeft);
 }

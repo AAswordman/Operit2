@@ -23,7 +23,7 @@ function sourceFixture() {
       GeneratedCoreProxyClients get _clients => GeneratedCoreProxyClients(widget.bridge);
       Widget _workspaceContent(context) { final workspaceId = history.workspaceId; return workspace; }
       Future<void> _activateChat(String chatId) async { widget.onConversationActivated(); await core.switchChat(chatId: chatId); }
-      Widget build(context) { return ChatSidebarTabHost(clients: _clients, chats: widget.histories, currentChatId: widget.currentChatId, activeStreamingChatIds: widget.activeStreamingChatIds, workspaceBuilder: _workspaceContent, onActivateChat: _activateChat); } }`],
+      Widget build(context) { return ChatSidebarTabHost(clients: _clients, chats: widget.histories, currentChatId: _isChatRouteSelected ? widget.currentChatId : null, activeStreamingChatIds: widget.activeStreamingChatIds, workspaceBuilder: _workspaceContent, onActivateChat: _activateChat); } }`],
     [paths.state, "class DrawerConversationState { final List<ChatHistoryListItem> histories; }"],
     [paths.host, `import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart'; class _ChatSidebarTabHostState {
       Future<List> _readCatalog() async {
@@ -128,6 +128,7 @@ test("sidebar static checker rejects missing clients empty summaries and disconn
     [paths.phone, "histories: drawerState.histories", "histories: const []"],
     [paths.drawer, "GeneratedCoreProxyClients(widget.bridge)", "GeneratedCoreProxyClients(detachedBridge)"],
     [paths.drawer, "chats: widget.histories", "chats: const []"],
+    [paths.drawer, "currentChatId: _isChatRouteSelected ? widget.currentChatId : null", "currentChatId: widget.currentChatId"],
     [paths.drawer, "onActivateChat: _activateChat", "onActivateChat: unrelatedCallback"],
     [paths.drawer, "await core.switchChat(chatId: chatId)", "await unrelatedCall(chatId)"],
     [paths.host, "await widget.onActivateChat(chatId)", "await unrelatedCallback(chatId)"],

@@ -19,6 +19,7 @@ pub mod compose_dsl_material3_generated;
 pub mod core;
 pub mod files;
 pub mod material_icons;
+pub mod media;
 pub mod network;
 pub mod results;
 pub mod runtime_bindings;
@@ -29,6 +30,7 @@ pub mod stt;
 pub mod theme;
 pub mod catalog;
 pub mod storage;
+pub mod storage_facade;
 pub mod system;
 pub mod tool_types;
 pub mod toolpkg;
@@ -75,6 +77,16 @@ pub trait JsAsyncIterator<T>: Send + Sync {
 
 /// Represents the single-consumer JavaScript async iterable returned by a streaming operation.
 pub type JsAsyncIterable<T> = std::sync::Arc<dyn JsAsyncIterator<T>>;
+
+/// Represents a standard JavaScript async iterable iterator at the SDK boundary.
+pub struct JsAsyncIterableIterator<T>(std::marker::PhantomData<T>);
+/// Represents a JavaScript arbitrary precision integer.
+pub struct JsBigInt;
+/// Represents a JavaScript byte array.
+pub struct JsUint8Array;
+
+/// Represents a standard TypeScript method decorator that preserves its method signature.
+pub struct JsMethodDecorator;
 
 /// Retains a rejected stream opening as the original iterator rejection, not a fabricated event.
 struct RejectedJsAsyncIterator<T> {
@@ -309,15 +321,11 @@ impl<T> JsFutureToolsHost for T where T: network::NetFutureHost + ui::UIHost + S
 
 /// Requires an embedding host to implement the complete ToolPkg runtime API.
 pub trait ToolPkgHost:
-    toolpkg::ToolPkgRegistryMethods + toolpkg::ToolPkgIpcApiMethods + toolpkg::GlobalHost + Send + Sync
+    toolpkg::ToolPkgRegistryMethods + toolpkg::ToolPkgIpcApiMethods + Send + Sync
 {
 }
 
 impl<T> ToolPkgHost for T where
-    T: toolpkg::ToolPkgRegistryMethods
-        + toolpkg::ToolPkgIpcApiMethods
-        + toolpkg::GlobalHost
-        + Send
-        + Sync
+    T: toolpkg::ToolPkgRegistryMethods + toolpkg::ToolPkgIpcApiMethods + Send + Sync
 {
 }

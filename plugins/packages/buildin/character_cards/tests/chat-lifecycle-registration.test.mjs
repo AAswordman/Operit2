@@ -117,19 +117,17 @@ test("real lifecycle registration rejects undeclared functions blank ids and mis
   );
 });
 
-/** Rejects owner duplication even with different ids and both official aliases instead of permitting namespace overwrite. */
-test("real lifecycle registration rejects the second same-owner handler through every registration name", () => {
-  for (const name of ["ToolPkg.registerChatLifecycleHook", "registerToolPkgChatLifecycleHook", "registerChatLifecycleHook"]) {
+/** Rejects owner duplication through the sole namespaced registration entry point. */
+test("real lifecycle registration rejects the second same-owner handler", () => {
     const actual = registry("org.example.single");
     actual.evaluate("function beforeCreate() {return {extension:null};}; globalThis.__operitGetActiveModuleExports=function(){return {beforeCreate:beforeCreate};}; ToolPkg.registerChatLifecycleHook({id:'first',function:beforeCreate});");
     assert.throws(
       /** A second valid exported handler with another id is still a duplicate owner and must not be captured. */
-      () => actual.evaluate(name + "({id:'second',function:beforeCreate});"),
+      () => actual.evaluate("ToolPkg.registerChatLifecycleHook({id:'second',function:beforeCreate});"),
       /** Requires the precise owner-level registration error. */
       error => error.message === "Duplicate chat lifecycle hook owner: org.example.single",
     );
     assert.deepEqual(actual.hooks(), [{ id: "first", function: "beforeCreate" }]);
-  }
 });
 
 /** Statically checks all real Rust capture/parser/runtime fields; this is not Rust execution or generated-artifact completion. */

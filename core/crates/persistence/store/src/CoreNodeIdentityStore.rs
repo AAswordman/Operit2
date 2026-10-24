@@ -108,8 +108,16 @@ impl CoreNodeIdentityStore {
                 0 => Ok(()),
                 1 => {
                     let key = stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY);
-                    if let Some(encoded) = preferences.getTyped::<String>(&key)? {
-                        let record: serde_json::Value = serde_json::from_str(&encoded)?;
+                    if let Some(encoded) = preferences.get(&key).cloned() {
+                        // Version 1 shipped both a JSON string and, transiently,
+                        // the already-decoded object. Accept either shape so a
+                        // profile cannot fail Core startup during migration.
+                        let record = match encoded {
+                            serde_json::Value::String(text) => {
+                                serde_json::from_str::<serde_json::Value>(&text)?
+                            }
+                            value => value,
+                        };
                         decodeIdentity(&record).map_err(PreferencesDataStoreError::Message)?;
                         preferences.set(&key, record);
                     }

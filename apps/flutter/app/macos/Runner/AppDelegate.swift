@@ -8,6 +8,34 @@ class AppDelegate: FlutterAppDelegate, UNUserNotificationCenterDelegate {
   override func applicationDidFinishLaunching(_ notification: Notification) {
     super.applicationDidFinishLaunching(notification)
     UNUserNotificationCenter.current().delegate = self
+    installDataRescueMenuItem()
+  }
+
+  /// Adds a native menu command that starts a separate maintenance process.
+  private func installDataRescueMenuItem() {
+    let item = NSMenuItem(
+      title: "Operit2 Data Rescue",
+      action: #selector(openDataRescue),
+      keyEquivalent: ""
+    )
+    item.target = self
+    NSApp.mainMenu?.item(at: 0)?.submenu?.addItem(item)
+  }
+
+  /// Launches this bundle with the standalone rescue argument and no normal route.
+  @objc private func openDataRescue() {
+    guard let executable = Bundle.main.executableURL else {
+      NSApp.presentError(NSError(domain: "Operit2", code: 1, userInfo: [NSLocalizedDescriptionKey: "Operit executable is unavailable."]))
+      return
+    }
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = ["--data-rescue"]
+    do {
+      try process.run()
+    } catch {
+      NSApp.presentError(error)
+    }
   }
 
   /// Forwards a local-notification click to the Flutter notification activation receiver.

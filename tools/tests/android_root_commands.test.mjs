@@ -89,7 +89,8 @@ test('Root identity probing requires exit zero and exact UID zero, not root hint
 test('process collection drains both pipes and destroys processes on failed waits', () => {
   const process = source(system + 'AndroidCommandProcessRunner.kt');
   assert.match(process, /process\.outputStream\.close\(\)/);
-  assert.match(process, /newFixedThreadPool\(3\)/);
+  assert.match(process, /HostTaskScheduler\.executeServices\(arrayOf\(output, errors, exit\)\)/);
+  assert.doesNotMatch(process, /Executors|\bThread\(/);
   assert.match(process, /stdout\.use \{ it\.readBytes\(\) \}/);
   assert.match(process, /stderr\.use \{ it\.readBytes\(\) \}/);
   assert.match(process, /catch \(error: Exception\) \{\s*runCatching \{ destroy\(\) \}/);

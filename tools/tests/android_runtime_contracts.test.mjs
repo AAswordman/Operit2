@@ -220,7 +220,7 @@ test('Android crash process skips the relaunch handler and all Core lifecycle ev
   assert.ok(guard >= 0);
   assert.ok(guard < setup.indexOf('Thread.setDefaultUncaughtExceptionHandler'));
   assert.ok(guard < setup.indexOf('registerActivityLifecycleCallbacks'));
-  assert.match(application, /private fun emitLifecycleEvent\(topic: String, payload: JSONObject\)\s*\{\s*if \(isCrashProcess\) return\s*AndroidCoreRuntime/);
+  assert.match(application, /private fun emitLifecycleEvent\(topic: String, payload: JSONObject\)\s*\{\s*if \(isCrashProcess\) return\s*if \(isMaintenanceProcess\) return\s*AndroidCoreRuntime/);
 });
 
 /** A rejected crash-screen launch must still terminate the already-failed process. */

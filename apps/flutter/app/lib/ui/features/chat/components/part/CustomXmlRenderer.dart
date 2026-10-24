@@ -14,6 +14,7 @@ import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../common/interactions/MessagePressShield.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../common/markdown/Utf16Text.dart';
 import '../../../../common/markdown/XmlRenderPluginRegistry.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
 import '../../../packages/screens/ToolPkgUiLauncherScreen.dart';

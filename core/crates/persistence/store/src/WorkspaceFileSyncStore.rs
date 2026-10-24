@@ -151,7 +151,7 @@ impl WorkspaceFileSyncStore {
             if state.files.get(path) != Some(reference) {
                 // collect already stored the immutable blob. Do not rewrite the live file.
                 let bytes = files.readBlob(reference)?;
-                files.recordSnapshot(path, &bytes)?;
+                files.recordSnapshot(path, &bytes, false)?;
                 changes += 1;
             }
         }

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.subagents",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "子代理", "en": "Subagents" },
+  "description": {
+    "zh": "创建独立执行的子代理，在聊天输入框上方查看任务和执行过程，支持等待、打断对话和关闭。",
+    "en": "Run independent agents with composer status, execution details, bounded waits, interruption and closure."
+  },
+  "enabled_by_default": false,
+  "installation_scope": "space",
+  "subpackages": [
+    { "id": "subagents", "entry": "dist/tools.js" }
+  ]
+}

@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { AgentStatusResultData, AppListData, AppOperationData, AppUsageTimeResultData, BinaryFileContentData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, CatalogReadToolSourcesResultData, ChatCallResultData, ChatCancelResultData, ChatCreationResultData, ChatDeleteExtensionResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatObservationResultData, ChatReadExtensionResultData, ChatSendMessageResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, ChatWriteExtensionResultData, DeviceInfoResultData, DirectoryListingData, EdgePortResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData, FileApplyResultData, FileContentData, FileExistsData, FileInfoData, FileOperationData, FilePartContentData, FindFilesResultData, GrepResultData, HiddenTerminalCommandResultData, HttpResponseData, LocationData, MessageSendResultData, ModelsListSummariesResultData, MusicPlaybackResultData, NotificationData, SleepResultData, StorageRequestResultData, SttTranscribeResultData, SystemSettingData, TerminalCommandResultData, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, ThemeApplyConfigResultData, ThemeListConfigsResultData, ToolResultData, TtsGetCurrentConfigIdResultData, TtsListConfigsResultData, TtsSetCurrentConfigIdResultData, TtsSynthesizeResultData, VisitWebResultData } from "./results";
+import type { AgentStatusResultData, AppListData, AppOperationData, AppUsageTimeResultData, BinaryFileContentData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, CatalogReadToolSourcesResultData, ChatCallResultData, ChatCancelResultData, ChatCreationResultData, ChatDeleteExtensionResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatObservationResultData, ChatReadExtensionResultData, ChatSendMessageResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, ChatWriteExtensionResultData, DeviceInfoResultData, DirectoryListingData, EdgePortResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData, FileApplyResultData, FileContentData, FileExistsData, FileInfoData, FileOperationData, FilePartContentData, FindFilesResultData, GrepResultData, HiddenTerminalCommandResultData, HttpResponseData, LocationData, MediaRegistrationResultData, MessageSendResultData, ModelsListSummariesResultData, MusicPlaybackResultData, NotificationData, SleepResultData, StorageRequestResultData, SttTranscribeResultData, SystemSettingData, TerminalCommandResultData, TerminalInfoResultData, TerminalObservationResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, ThemeApplyConfigResultData, ThemeListConfigsResultData, ToolResultData, TtsGetCurrentConfigIdResultData, TtsListConfigsResultData, TtsSetCurrentConfigIdResultData, TtsSynthesizeResultData, VisitWebResultData } from "./results";
 
 /**
  * Maps every built-in tool name to its concrete public result type.
@@ -102,6 +102,8 @@ export interface ToolResultMap {
   tts_list_configs: TtsListConfigsResultData;
   tts_get_current_config_id: TtsGetCurrentConfigIdResultData;
   tts_set_current_config_id: TtsSetCurrentConfigIdResultData;
+  media_register: MediaRegistrationResultData;
+  media_register_from_path: MediaRegistrationResultData;
   theme_list_configs: ThemeListConfigsResultData;
   theme_apply_config: ThemeApplyConfigResultData;
   use_package: string;
@@ -112,6 +114,7 @@ export interface ToolResultMap {
   get_terminal_info: TerminalInfoResultData;
   execute_in_terminal_session: TerminalCommandResultData;
   execute_in_terminal_session_streaming: TerminalCommandResultData;
+  terminal_observe: TerminalObservationResultData;
   execute_hidden_terminal_command: HiddenTerminalCommandResultData;
   create_terminal_session: TerminalSessionCreationResultData;
   close_terminal_session: TerminalSessionCloseResultData;

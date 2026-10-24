@@ -1,16 +1,9 @@
 import GoalPanelScreen from "../ui/goal_panel/index.ui.js";
 import {
-  clearGoalAsync,
-  isGoalInputSlotEnabledAsync,
-  markGoalMessageReviewedAsync,
-  readGoalAsync,
+  GoalService,
   readSingleActiveChatViewAsync,
-  resolveGoalWorkspaceAsync,
   registerGoalModeIpc,
   removeTrackedChatViewAsync,
-  setGoalAsync,
-  setGoalInputSlotEnabledAsync,
-  setGoalStatusAsync,
   upsertTrackedChatViewAsync,
 } from "../shared/goal_mode_ipc.js";
 import { isGoalRuntime, type GoalTrackedChatView } from "../shared/goal_mode_state.js";
@@ -99,7 +92,7 @@ function sendGoalFollowup(chatId: string, message: string): void {
 /** Sends the next instruction that follows one goal review decision. */
 async function applyGoalReviewDecision(chatId: string, review: GoalReviewResult): Promise<void> {
   if (review.decision === "completed") {
-    await setGoalStatusAsync(chatId, "completed");
+    await GoalService.status(chatId, "completed");
     return;
   }
   if (review.decision === "incomplete") {
@@ -134,7 +127,7 @@ export async function onChatMessagePersisted(event: ToolPkg.ChatMessageHookEvent
   if (!response) {
     return;
   }
-  const goal = await readGoalAsync(payload.chatId);
+  const goal = await GoalService.read(payload.chatId);
   if (!goal || goal.status !== "active") {
     return;
   }
@@ -161,7 +154,7 @@ export async function onChatMessagePersisted(event: ToolPkg.ChatMessageHookEvent
     });
     const review = parseGoalReviewResult(result.text);
     await applyGoalReviewDecision(payload.chatId, review);
-    await markGoalMessageReviewedAsync(payload.chatId, payload.timestamp);
+    await GoalService.reviewed(payload.chatId, payload.timestamp);
   } finally {
     reviewedMessageTimestamps.delete(reviewKey);
   }
@@ -182,14 +175,16 @@ function isCommandResult(value: GoalTrackedChatView | ToolPkg.CoreCommandResult)
 }
 
 /** Builds the rejection result for an invalid one-message goal input. */
-function buildGoalInputValidationResult(objective: string): ToolPkg.ChatInputHookObjectResult | null {
+function buildGoalInputValidationResult(objective: string, useEnglish: boolean): ToolPkg.ChatInputHookObjectResult | null {
   if (!objective) {
-    return { action: "Block", message: "A task goal requires message text." };
+    return { action: "Block", message: useEnglish ? "A task goal requires message text." : "请填写任务目标。" };
   }
   if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
     return {
       action: "Block",
-      message: `Task goal exceeds ${MAX_GOAL_OBJECTIVE_LENGTH} characters.`,
+      message: useEnglish
+        ? `Task goal exceeds ${MAX_GOAL_OBJECTIVE_LENGTH} characters.`
+        : `任务目标不能超过 ${MAX_GOAL_OBJECTIVE_LENGTH} 个字符。`,
     };
   }
   return null;
@@ -203,11 +198,8 @@ export async function onGoalCommand(event: ToolPkg.CoreCommandHookEvent): Promis
     return viewOrResult;
   }
   const chatId = viewOrResult.chatId;
-  if (!viewOrResult.workspacePath) {
-    return { stderr: "A workspace is required for Goal Mode.", json: { ok: false, error: "workspace_required" } };
-  }
   if (args.length === 0) {
-    const goal = await readGoalAsync(chatId);
+    const goal = await GoalService.read(chatId);
     return {
       stdout: goal ? `Goal (${goal.status}): ${goal.objective}` : "No task goal is set.",
       json: { ok: true, chatId, goal },
@@ -215,18 +207,18 @@ export async function onGoalCommand(event: ToolPkg.CoreCommandHookEvent): Promis
   }
   const command = args[0].toLowerCase();
   if (command === "clear" && args.length === 1) {
-    await clearGoalAsync(chatId);
+    await GoalService.clear(chatId);
     return { stdout: "Task goal cleared.", json: { ok: true, action: "clear", chatId } };
   }
   if (command === "pause" && args.length === 1) {
-    const goal = await setGoalStatusAsync(chatId, "paused");
+    const goal = await GoalService.status(chatId, "paused");
     return {
       stdout: goal ? "Task goal paused." : "No task goal is set.",
       json: { ok: goal !== null, action: "pause", chatId, goal },
     };
   }
   if (command === "resume" && args.length === 1) {
-    const goal = await setGoalStatusAsync(chatId, "active");
+    const goal = await GoalService.status(chatId, "active");
     return {
       stdout: goal ? "Task goal resumed." : "No task goal is set.",
       json: { ok: goal !== null, action: "resume", chatId, goal },
@@ -242,7 +234,7 @@ export async function onGoalCommand(event: ToolPkg.CoreCommandHookEvent): Promis
       json: { ok: false, error: "objective_too_long" },
     };
   }
-  const goal = await setGoalAsync(chatId, objective);
+  const goal = await GoalService.set(chatId, objective);
   return {
     stdout: command === "edit" ? "Task goal updated." : "Task goal set.",
     json: { ok: true, action: command === "edit" ? "edit" : "set", chatId, goal },
@@ -262,13 +254,7 @@ export async function onChatViewEvent(event: ToolPkg.ChatViewHookEvent): Promise
     await removeTrackedChatViewAsync(runtime, viewId);
     return;
   }
-  const workspacePath = payload.workspacePath;
   const title = payload.title;
-  if (typeof workspacePath !== "string" || workspacePath.trim() === "") {
-    await removeTrackedChatViewAsync(runtime, viewId);
-    await setGoalInputSlotEnabledAsync(chatId, false);
-    return;
-  }
   if (typeof title !== "string") {
     return;
   }
@@ -276,8 +262,6 @@ export async function onChatViewEvent(event: ToolPkg.ChatViewHookEvent): Promise
     viewId,
     chatId,
     runtime,
-    workspacePath,
-    workspaceEnv: typeof payload.workspaceEnv === "string" ? payload.workspaceEnv : undefined,
     title,
     updatedAt: Date.now(),
   });
@@ -290,21 +274,19 @@ export async function onInputMenuToggle(
   const payload = event.eventPayload;
   const action = payload.action;
   const chatId = payload.chatId;
-  const runtime = payload.runtime === "main" || payload.runtime === "floating" ? payload.runtime : undefined;
   if ((action !== "create" && action !== "toggle") || chatId === undefined) {
     return null;
   }
-  const enabled = await isGoalInputSlotEnabledAsync(chatId);
+  const enabled = await GoalService.inputEnabled(chatId);
   if (action === "create") {
-    const workspace = await resolveGoalWorkspaceAsync(chatId, runtime);
     return {
       toggles: [
         {
           id: GOAL_INPUT_SLOT_TOGGLE_ID,
-          title: "Task goal",
-          description: workspace
+          title: payload.useEnglish === true ? "Task goal" : "任务目标",
+          description: payload.useEnglish === true
             ? "Use the next message as this chat's task goal."
-            : "A workspace is required before Goal Mode can be enabled.",
+            : "将下一条消息作为当前聊天的任务目标。",
           icon: Icons.Assignment,
           isChecked: enabled,
           slot: "general",
@@ -313,11 +295,7 @@ export async function onInputMenuToggle(
     };
   }
   if (payload.toggleId === GOAL_INPUT_SLOT_TOGGLE_ID) {
-    if (!enabled && !(await resolveGoalWorkspaceAsync(chatId, runtime))) {
-      await Tools.System.toast("当前聊天未绑定工作区，不能开启目标模式。");
-      return null;
-    }
-    await setGoalInputSlotEnabledAsync(chatId, !enabled);
+    await GoalService.setInput(chatId, !enabled);
   }
   return null;
 }
@@ -331,23 +309,20 @@ export async function onChatInput(
   if (
     (event.eventName !== "submit_requested" && event.eventName !== "submitted") ||
     chatId === undefined ||
-    !(await isGoalInputSlotEnabledAsync(chatId))
+    !(await GoalService.inputEnabled(chatId))
   ) {
     return null;
   }
   const objective = (payload.text ?? "").trim();
   if (event.eventName === "submit_requested") {
-    const validation = buildGoalInputValidationResult(objective);
+    const validation = buildGoalInputValidationResult(objective, payload.useEnglish === true);
     if (validation) {
       return validation;
     }
-    if (!(await resolveGoalWorkspaceAsync(chatId))) {
-      return { action: "Block", message: "当前聊天未绑定工作区，不能设置目标。" };
-    }
   }
   if (event.eventName === "submitted") {
-    await setGoalAsync(chatId, objective);
-    await setGoalInputSlotEnabledAsync(chatId, false);
+    await GoalService.set(chatId, objective);
+    await GoalService.setInput(chatId, false);
   }
   return null;
 }
@@ -361,7 +336,7 @@ export async function onPromptFinalize(
   if (stage !== "before_send_to_model" || payload.chatId === undefined || payload.preparedHistory === undefined) {
     return null;
   }
-  const goal = await readGoalAsync(payload.chatId);
+  const goal = await GoalService.read(payload.chatId);
   if (!goal || goal.status !== "active") {
     return null;
   }

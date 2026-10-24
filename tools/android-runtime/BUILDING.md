@@ -10,7 +10,7 @@ Docker is not used.
 - talloc 2.4.3
 - Bash 5.2.37
 - Android NDK r29-beta4
-- Alpine latest-stable minirootfs
+- Alpine v3.23 minirootfs
 
 The Operit PRoot changes are stored in:
 
@@ -47,7 +47,7 @@ records the upstream URL and SHA-256 for each fixed source archive:
 | Fedora WSL | 43 | FedoraLinux-43 distribution | commands in this document |
 
 `fetch_sources.ps1` is the source of truth for the fixed archive checksums.
-The Alpine rootfs script uses the `latest-stable` branch at
+The Alpine rootfs script uses the `v3.23` branch at
 `https://dl-cdn.alpinelinux.org/alpine` and reads the release version, archive
 name, and SHA-256 from that branch's `latest-releases.yaml` for each target
 architecture. Record the resolved Alpine release in build logs when producing

@@ -11,6 +11,8 @@ import UserNotifications
 import Vision
 
 final class AppleRuntimeChannel: NSObject {
+  /// Captures a maintenance launch before Dart starts normal application initialization.
+  static var dataRescueRequested = false
   private static var shared: AppleRuntimeChannel?
   private static var pendingNotificationActivations: [[String: Any]] = []
   private static var notificationActivationReceiverReady = false
@@ -114,6 +116,27 @@ final class AppleRuntimeChannel: NSObject {
       restartApplication(result: result)
     case "localRuntimeStorageDefaults":
       localRuntimeStorageDefaults(result: result)
+    case "dataRescue":
+      guard let request = call.arguments as? String else {
+        result(FlutterError(code: "INVALID_ARGS", message: "dataRescue expects JSON text", details: nil))
+        return
+      }
+      do {
+        let command = try JSONSerialization.jsonObject(with: Data(request.utf8)) as? [String: Any]
+        if command?["operation"] as? String == "launchMode" {
+          let requested = Self.dataRescueRequested || ProcessInfo.processInfo.arguments.contains("--data-rescue")
+          result("{\"ok\":true,\"value\":{\"rescue\":\(requested)}}")
+          return
+        }
+      } catch {
+        result(FlutterError(code: "INVALID_ARGS", message: error.localizedDescription, details: nil))
+        return
+      }
+      let root = defaultStorageRoots().runtime.path
+      workQueue.async {
+        let response = self.takeString(operit_flutter_bridge_data_rescue(root, request))
+        DispatchQueue.main.async { result(response) }
+      }
     case "runtimeBootstrapRead":
       runtimeBootstrapRead(result: result)
     case "runtimeBootstrapWrite":
@@ -455,7 +478,10 @@ final class AppleRuntimeChannel: NSObject {
       try FolderAccessStore.shared.ensureAccess(to: runtimeRoot)
       try FolderAccessStore.shared.ensureAccess(to: workspaceRoot)
       if handle != nil {
-        if configuredRuntimeRoot == runtimeRoot && configuredWorkspaceRoot == workspaceRoot {
+        // URL equality keeps a trailing slash that appears only after the
+        // directory exists, so the same roots look changed on a second apply.
+        if configuredRuntimeRoot?.path == runtimeRoot.path &&
+            configuredWorkspaceRoot?.path == workspaceRoot.path {
           result(nil)
           return
         }

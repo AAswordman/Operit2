@@ -184,7 +184,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
             _ = routePoll.tick() => {
                 let scope = operit_node_runtime::NodeSpaceService::NodeSpaceContext::spaceStore(spaceService.as_ref()).space()?;
                 let preferences = operit_store::DevicePreferencesStore::DevicePreferencesStore::new(storage.clone()).read(&scope.spaceId, &nodeId)?.values();
-                if let Err(message) = standalone_chat::configure(hostManager.httpHost.clone(), preferences.get("chat")) {
+                if let Err(message) = standalone_chat::configure(hostManager.httpHost.clone(), &scope.spaceId, preferences.get("chat")) {
                     *error.lock().unwrap() = message;
                 }
                 chatRoute.poll(services.clone());

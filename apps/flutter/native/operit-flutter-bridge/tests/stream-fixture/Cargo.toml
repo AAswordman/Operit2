@@ -1,0 +1,20 @@
+[package]
+name = "operit-bridge-stream-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+path = "../stream_session_fixture.rs"
+
+[dependencies]
+operit-host-api = { path = "../../../../../../core/crates/foundation/host-api" }
+operit-link = { path = "../../../../../../core/crates/foundation/link" }
+async-trait = "0.1"
+futures-util = "0.3"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+
+jni = "0.21"
+operit-host-native-common = { path = "../../../../../../hosts/common/operit-host-native-common" }

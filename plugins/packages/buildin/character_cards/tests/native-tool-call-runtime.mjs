@@ -3,6 +3,7 @@ import { productionBootstrap, bootstrapLibrarySource } from '../../../../../tool
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
@@ -74,6 +75,7 @@ export function createNativeToolRuntime(globals, dispatchIpc) {
     );
   });
   context.__operitNativePrepareComposeModule = compileComposeModule;
+  vm.runInContext("globalThis.__operitNativeCompileModuleFactory = body => new Function('module','exports','require','__operit_call_runtime',body);", context);
   vm.runInContext(productionBootstrap(),context);
 
   /** Invokes the production engine entry point with exactly the supplied converted native parameters. */
@@ -83,7 +85,9 @@ export function createNativeToolRuntime(globals, dispatchIpc) {
       /** Registers the sole terminal receiver before the real module and target function execute. */
       (resolve, reject) => pending.set(callId, { resolve, reject }),
     );
-    context.__operitExecuteScriptFunction(callId, params, script, name, 10, 10000);
+    const sourceId = callId + ":" + createHash("sha256").update(script).digest("hex");
+    context.__operitRegisterScriptSource(sourceId, script);
+    context.__operitExecuteScriptFunction(callId, params, sourceId, name, 10, 10000);
     return result;
   }
   return { invoke, terminal };

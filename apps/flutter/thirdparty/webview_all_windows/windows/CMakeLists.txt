@@ -116,7 +116,9 @@ add_library(${PLUGIN_NAME} SHARED ${PLUGIN_SOURCES})
 add_dependencies(${PLUGIN_NAME} ${DEPS_TARGET_NAME})
 
 if(MSVC)
-  target_compile_options(${PLUGIN_NAME} PRIVATE "/await")
+  # Parallel CL processes share the compiler PDB in Debug builds.
+  # Serialize those writes through mspdbsrv to avoid MSVC C1041.
+  target_compile_options(${PLUGIN_NAME} PRIVATE "/await" "/FS")
 endif()
 
 apply_standard_settings(${PLUGIN_NAME})
@@ -132,6 +134,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
   flutter
   flutter_wrapper_plugin
   windowscodecs
+  comctl32
   ole32
   shlwapi
 )

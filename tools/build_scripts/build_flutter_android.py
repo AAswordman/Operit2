@@ -9,6 +9,7 @@ from common import (
     DIST_DIR,
     FLUTTER_APP_DIR,
     RELEASE_DIR,
+    release_asset_name,
     copy_required_file,
     flutter_command,
     flutter_pub_get,
@@ -97,6 +98,14 @@ def verify_android_runtime_assets(apk_path: Path, abi: str) -> None:
         )
 
 
+# Publishes the APK with the shared full release version in its filename.
+def publish_android_apk(apk_path: Path, dist_dir: Path) -> Path:
+    destination = dist_dir / release_asset_name("app", "android", "arm64-v8a", "apk")
+    copy_required_file(apk_path, destination)
+    print(f"Android APK: {destination}", flush=True)
+    return destination
+
+
 # Builds and verifies the ABI-specific Android release before publishing it.
 def main() -> int:
     args = parse_args()
@@ -130,10 +139,7 @@ def main() -> int:
     apk_dir = FLUTTER_APP_DIR / "build" / "app" / "outputs" / "flutter-apk"
     apk_path = apk_dir / "app-arm64-v8a-release.apk"
     verify_android_runtime_assets(apk_path, "arm64-v8a")
-    copy_required_file(
-        apk_path,
-        args.dist_dir / "operit2-app-android-arm64-v8a.apk",
-    )
+    publish_android_apk(apk_path, args.dist_dir)
     return 0
 
 

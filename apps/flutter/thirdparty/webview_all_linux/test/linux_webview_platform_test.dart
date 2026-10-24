@@ -1314,15 +1314,21 @@ void main() {
     },
   );
 
-  test('Linux console bridge script safely stringifies non-json values', () {
-    final String source = File(
-      'linux/src/webview/webview_javascript.cc',
-    ).readAsStringSync();
+  test(
+    'Linux console bridge script safely stringifies non-json values',
+    () async {
+      final String source = File(
+        '../thirdparty/webview_all_linux/linux/src/webview/webview_javascript.cc',
+      ).readAsStringSync();
 
-    expect(source, contains('function stringifyArg'));
-    expect(source, contains('return json === undefined ? String(arg) : json'));
-    expect(source, contains('Array.from(arguments).map(stringifyArg)'));
-  });
+      expect(source, contains('function stringifyArg'));
+      expect(
+        source,
+        contains('return json === undefined ? String(arg) : json'),
+      );
+      expect(source, contains('Array.from(arguments).map(stringifyArg)'));
+    },
+  );
 
   test('completes JavaScript dialog requests from Linux events', () async {
     final List<MethodCall> calls = <MethodCall>[];
@@ -1897,6 +1903,72 @@ void main() {
       <String, Object?>{'requestId': 35, 'action': 'cancel', 'text': null},
     );
   });
+
+  test(
+    'serves local resources through the operit-vfs bridge protocol',
+    () async {
+      _mockLinuxWebViewCreation(instanceIds: <int>[77]);
+      final List<MethodCall> resourceCalls = <MethodCall>[];
+      final TestDefaultBinaryMessenger messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(WebViewLocalResourceBridge.channel, (
+        MethodCall call,
+      ) async {
+        resourceCalls.add(call);
+        return null;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(
+          WebViewLocalResourceBridge.channel,
+          null,
+        );
+      });
+      final LinuxWebViewController controller = LinuxWebViewController(
+        const PlatformWebViewControllerCreationParams(),
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.localResourceScheme, 'operit-vfs');
+      await controller.setLocalResourceHandler((
+        WebViewLocalResourceRequest request,
+      ) async {
+        expect(request.url, 'operit-vfs://p-test.operit.invalid/resource.html');
+        expect(request.isMainFrame, isTrue);
+        return WebViewLocalResourceResponse(
+          body: Uint8List.fromList(<int>[1, 2, 3]),
+          mimeType: 'text/html',
+        );
+      });
+      expect(resourceCalls.single.method, 'configure');
+      expect(resourceCalls.single.arguments, <String, Object?>{
+        'identifier': 77,
+        'enabled': true,
+      });
+
+      ByteData? reply;
+      await messenger.handlePlatformMessage(
+        WebViewLocalResourceBridge.channel.name,
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('request', <String, Object?>{
+            'identifier': 77,
+            'url': 'operit-vfs://p-test.operit.invalid/resource.html',
+            'method': 'GET',
+            'headers': <String, String>{},
+            'isMainFrame': true,
+          }),
+        ),
+        (ByteData? data) {
+          reply = data;
+        },
+      );
+      final Map<Object?, Object?> result =
+          const StandardMethodCodec().decodeEnvelope(reply!)
+              as Map<Object?, Object?>;
+      expect(result['statusCode'], 200);
+      expect(result['mimeType'], 'text/html');
+      expect(result['body'], <int>[1, 2, 3]);
+    },
+  );
 }
 
 void _mockLinuxWebViewCreation({

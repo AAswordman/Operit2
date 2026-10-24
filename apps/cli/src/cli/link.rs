@@ -222,6 +222,9 @@ async fn execute_link_session_command(application: &operit_core_application::Cor
             emit_cli_json(serde_json::Value::Object(snapshots));
             Ok(())
         }
+        Some("call") if args.len() == 4 => {
+            execute_link_local_call_command(application, &args[1..]).await
+        }
         Some("core") if args.len() > 1 => {
             let mut proxy = operit_proxy_local::GeneratedCoreProxy::new(crate::core_proxy::SharedLocalCore(application.localClient()));
             let mut command = args[1..].to_vec();
@@ -231,8 +234,28 @@ async fn execute_link_session_command(application: &operit_core_application::Cor
             if !output.stderr.is_empty() { eprint!("{}", output.stderr); }
             Ok(())
         }
-        _ => Err("session commands: pair-start|pair-finish|pair-cancel|unpair|prompts|peers|space|control|core|chat-watch <chat-id>|quit".into()),
+        _ => Err("session commands: pair-start|pair-finish|pair-cancel|unpair|prompts|peers|space|control|core|call <schema> <method> <JSON>|chat-watch <chat-id>|quit".into()),
     }
+}
+
+/// Calls one generated local Core schema through the same routed client used by interactive commands.
+async fn execute_link_local_call_command(
+    application: &operit_core_application::CoreApplication,
+    args: &[String],
+) -> Result<(), String> {
+    let target = operit_proxy_local::LocalCoreProxy::generatedTargetForSchema(&args[0])
+        .ok_or_else(|| format!("Unknown Core schema: {}", args[0]))?;
+    let arguments: serde_json::Value = serde_json::from_str(&args[2])
+        .map_err(|error| error.to_string())?;
+    let response = application.localClient().call(CoreCallRequest::new(
+        operit_link::nextCoreRouteRequestId("cliCall"), target, &args[1],
+        operit_link::toCoreValue(arguments).map_err(|error| error.to_string())?,
+    )).await;
+    let value: serde_json::Value = operit_link::fromCoreValue(
+        response.result.map_err(|error| error.to_string())?,
+    ).map_err(|error| error.to_string())?;
+    emit_cli_json(value);
+    Ok(())
 }
 
 /// Executes pairing and listener commands through the shared node service.

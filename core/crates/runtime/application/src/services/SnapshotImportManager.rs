@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use operit_host_api::{
     HostManager::{defaultHostRuntimeTaskSchedulerHost, HostManager},
-    HostRuntimeTaskSchedulerHost, RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost,
+    HostRuntimeTaskSchedulerHost, HostSecretStore, RuntimeSqliteHost, RuntimeStorageHost,
+    RuntimeStorageWriteHost,
 };
 use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
@@ -27,6 +28,7 @@ pub struct SnapshotImportManager {
     storageHost: Arc<dyn RuntimeStorageHost>,
     storageWriteHost: Arc<dyn RuntimeStorageWriteHost>,
     sqliteHost: Arc<dyn RuntimeSqliteHost>,
+    secretStore: Option<Arc<dyn HostSecretStore>>,
 }
 
 impl SnapshotImportManager {
@@ -35,6 +37,7 @@ impl SnapshotImportManager {
     pub fn getInstance(hostManager: &HostManager) -> Result<Self, String> {
         Ok(Self {
             archiveTransferManager: ArchiveTransferManager::getInstance(hostManager)?,
+            secretStore: hostManager.hostSecretStore.clone(),
             storageHost: hostManager.runtimeStorageHost.clone().ok_or_else(|| {
                 "RuntimeStorageHost is not registered for snapshot operations".to_string()
             })?,
@@ -51,8 +54,11 @@ impl SnapshotImportManager {
     #[allow(non_snake_case)]
     pub async fn exportRawSnapshot(&self) -> Result<StagedArchiveFile, String> {
         let transfer = self.archiveTransferManager.clone();
-        let backup =
-            RawSnapshotBackupManager::new(self.storageHost.clone(), self.storageWriteHost.clone());
+        let backup = RawSnapshotBackupManager::new(
+            self.storageHost.clone(),
+            self.storageWriteHost.clone(),
+            self.secretStore.clone(),
+        );
         let (sender, receiver) = tokio::sync::oneshot::channel();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
@@ -84,8 +90,12 @@ impl SnapshotImportManager {
         &self,
         archive: StagedArchive,
     ) -> Result<RawSnapshotManifest, String> {
-        RawSnapshotBackupManager::new(self.storageHost.clone(), self.storageWriteHost.clone())
-            .inspectSnapshotSource(self.archiveTransferManager.openStagedArchive(&archive)?)
+        RawSnapshotBackupManager::new(
+            self.storageHost.clone(),
+            self.storageWriteHost.clone(),
+            self.secretStore.clone(),
+        )
+        .inspectSnapshotSource(self.archiveTransferManager.openStagedArchive(&archive)?)
     }
 
     /// Restores one sealed raw snapshot after closing the active database handle.
@@ -93,8 +103,12 @@ impl SnapshotImportManager {
     pub fn restoreRawSnapshot(&self, archive: StagedArchive) -> Result<(), String> {
         let source = self.archiveTransferManager.openStagedArchive(&archive)?;
         AppDatabase::closeDatabase();
-        RawSnapshotBackupManager::new(self.storageHost.clone(), self.storageWriteHost.clone())
-            .restoreSnapshotSource(source)
+        RawSnapshotBackupManager::new(
+            self.storageHost.clone(),
+            self.storageWriteHost.clone(),
+            self.secretStore.clone(),
+        )
+        .restoreSnapshotSource(source)
     }
 
     /// Previews an Operit1 model-configuration snapshot from a sealed archive.

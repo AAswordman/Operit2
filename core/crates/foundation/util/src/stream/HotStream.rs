@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, Weak};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::AppLogger::AppLogger;
 
@@ -100,6 +100,32 @@ where
     Close,
 }
 
+/// Receives values emitted after a subscriber attached.
+pub(crate) struct SharedStreamTail<T>
+where
+    T: Clone,
+{
+    _subscription: Option<SharedStreamSubscription<T>>,
+    receiver: Option<UnboundedReceiver<SharedEvent<T>>>,
+}
+
+impl<T> SharedStreamTail<T>
+where
+    T: Clone,
+{
+    /// Reads the next live value. `None` means the producer has closed.
+    pub(crate) async fn recv(&mut self) -> Option<T> {
+        let receiver = self.receiver.as_mut()?;
+        match receiver.recv().await {
+            Some(SharedEvent::Value(value)) => Some(value),
+            Some(SharedEvent::Close) | None => {
+                self.receiver = None;
+                None
+            }
+        }
+    }
+}
+
 /// Removes an asynchronous collector registration when its future is dropped.
 struct SharedStreamSubscription<T>
 where
@@ -194,7 +220,7 @@ where
         }
     }
 
-    /// Emits one value to active collectors.
+    /// Emits one value to active collectors and retains it for a later subscriber.
     pub fn emit(&self, value: T) {
         if let Ok(mut guard) = self.inner.lock() {
             if guard.closed {
@@ -203,9 +229,55 @@ where
             Self::append_to_replay_buffer(&mut guard, value.clone());
             let subscribers = guard.subscribers.clone();
             drop(guard);
-            for (_, sender) in subscribers {
-                let _ = sender.send(SharedEvent::Value(value.clone()));
+            Self::deliver_live(&subscribers, value);
+        }
+    }
+
+    /// Emits one value to subscribers already attached. The retained state lives elsewhere.
+    pub fn emit_live(&self, value: T) {
+        if let Ok(guard) = self.inner.lock() {
+            if guard.closed {
+                return;
             }
+            let subscribers = guard.subscribers.clone();
+            drop(guard);
+            Self::deliver_live(&subscribers, value);
+        }
+    }
+
+    fn deliver_live(subscribers: &[(usize, UnboundedSender<SharedEvent<T>>)], value: T) {
+        for (_, sender) in subscribers {
+            let _ = sender.send(SharedEvent::Value(value.clone()));
+        }
+    }
+
+    /// Attaches one subscriber to values emitted after this call.
+    pub(crate) fn listen_tail(&self) -> SharedStreamTail<T> {
+        match self.inner.lock() {
+            Ok(mut state) => {
+                if state.closed {
+                    return SharedStreamTail {
+                        _subscription: None,
+                        receiver: None,
+                    };
+                }
+                let (sender, receiver) = unbounded_channel::<SharedEvent<T>>();
+                let subscriberId = state.next_subscriber_id;
+                state.next_subscriber_id += 1;
+                state.subscribers.push((subscriberId, sender));
+                state.subscription_count = state.subscribers.len();
+                SharedStreamTail {
+                    _subscription: Some(SharedStreamSubscription {
+                        inner: Arc::downgrade(&self.inner),
+                        subscriberId,
+                    }),
+                    receiver: Some(receiver),
+                }
+            }
+            Err(_) => SharedStreamTail {
+                _subscription: None,
+                receiver: None,
+            },
         }
     }
 
@@ -493,19 +565,21 @@ fn scheduleSharedStreamCollection<S>(
                     if matches!(started, StreamStart::Lazily)
                         && retryShared.subscription_count() == 0
                     {
-                        AppLogger::d(
+                        AppLogger::v_with_level(
                             STREAM_DISPATCH_LOG_TAG,
                             "shared stream collection deferred until a subscriber is attached",
+                            crate::AppLogger::VERBOSE_LEVEL_4,
                         );
                         scheduleSharedStreamCollectionAfterDelay(retrySource, retryShared, started);
                         return;
                     }
-                    AppLogger::d(
+                    AppLogger::v_with_level(
                         STREAM_DISPATCH_LOG_TAG,
                         &format!(
                             "shared stream collection started subscribers={}",
                             retryShared.subscription_count()
                         ),
+                        crate::AppLogger::VERBOSE_LEVEL_4,
                     );
                     let mut stream = retrySource
                         .lock()
@@ -517,9 +591,10 @@ fn scheduleSharedStreamCollection<S>(
                         stream.collect(&mut move |value| target.emit(value)).await;
                     }
                     retryShared.close();
-                    AppLogger::d(
+                    AppLogger::v_with_level(
                         STREAM_DISPATCH_LOG_TAG,
                         "shared stream collection completed",
+                        crate::AppLogger::VERBOSE_LEVEL_4,
                     );
                 })
             }),

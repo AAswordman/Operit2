@@ -20,6 +20,9 @@ use operit_tools::tools::defaultTool::standard::StandardFileSystemTools::{
 use operit_tools::tools::defaultTool::standard::StandardHttpTools::{
     HttpToolExecutor, HttpToolOperation, StandardHttpTools,
 };
+use operit_tools::tools::defaultTool::standard::StandardMediaTools::{
+    RegisterMediaExecutor, RegisterMediaFromPathExecutor,
+};
 use operit_tools::tools::defaultTool::standard::StandardMusicTools::{
     MusicToolExecutor, MusicToolOperation, StandardMusicTools,
 };
@@ -615,8 +618,19 @@ fn registerSystemOperationTool(
     );
 }
 
+/// Registers terminal tools with the same host execution and scheduling context.
 #[allow(non_snake_case)]
 fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTerminalTools) {
+    handler.registerBuiltinTool(
+        BuiltinToolName::TerminalObserve,
+        operit_tools::ToolExecutionManager::RegisteredToolExecutor::Shared(Arc::new(
+            operit_tools::tools::defaultTool::standard::StandardTerminalStreaming::TerminalStreamExecutor::new(
+                terminalTools.terminalHost.clone(),
+                handler.getContext().hostRuntimeTaskSchedulerHost.clone(),
+            ),
+        )),
+        ToolRegistrationVisibility::PUBLIC,
+    );
     registerTerminalTool(
         handler,
         &terminalTools,
@@ -1093,6 +1107,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
         ToolRegistrationVisibility::INTERNAL,
     );
     registerModelTools(handler);
+    registerMediaTools(handler);
     registerTtsTools(handler);
     registerThemeTools(handler);
     registerCatalogTools(handler);
@@ -1103,6 +1118,20 @@ fn registerModelTools(handler: &mut AIToolHandler) {
     handler.registerBuiltinTool(
         BuiltinToolName::ModelsListSummaries,
         RegisteredToolExecutor::Shared(Arc::new(ModelToolExecutor)),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerMediaTools(handler: &mut AIToolHandler) {
+    handler.registerBuiltinTool(
+        BuiltinToolName::MediaRegister,
+        RegisteredToolExecutor::Shared(Arc::new(RegisterMediaExecutor)),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::MediaRegisterFromPath,
+        RegisteredToolExecutor::Shared(Arc::new(RegisterMediaFromPathExecutor)),
         ToolRegistrationVisibility::INTERNAL,
     );
 }
@@ -1389,10 +1418,10 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
     );
     handler.registerBuiltinTool(
         BuiltinToolName::ApplyFile,
-        Box::new(FileSystemToolExecutor {
-            tools: fileSystemTools,
+        RegisteredToolExecutor::Asynchronous(Box::new(FileSystemToolExecutor {
+            tools: fileSystemTools.clone(),
             operation: FileSystemToolOperation::ApplyFile,
-        }),
+        })),
         ToolRegistrationVisibility::INTERNAL,
     );
     handler.registerBuiltinTool(
@@ -1400,22 +1429,55 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
         RegisteredToolExecutor::Shared(Arc::new(StorageToolExecutor)),
         ToolRegistrationVisibility::INTERNAL,
     );
+    registerFileTransferTools(handler, &fileSystemTools);
 
 }
 
+/// Registers the internal cross-node transfer endpoints. They are transport
+/// plumbing for `node:` copies and never appear in any model-facing catalog.
 #[allow(non_snake_case)]
+fn registerFileTransferTools(
+    handler: &mut AIToolHandler,
+    fileSystemTools: &StandardFileSystemTools,
+) {
+    use crate::tools::transfer::FileTransferTools::{
+        FileTransferExecutor, FileTransferOperation, FS_PUSH_FILE_TOOL, FS_READ_CHUNK_TOOL,
+        FS_TRANSFER_BEGIN_TOOL, FS_TRANSFER_CHUNK_TOOL, FS_TRANSFER_COMMIT_TOOL,
+    };
+    let endpoints = [
+        (FS_TRANSFER_BEGIN_TOOL, FileTransferOperation::Begin),
+        (FS_TRANSFER_CHUNK_TOOL, FileTransferOperation::Chunk),
+        (FS_TRANSFER_COMMIT_TOOL, FileTransferOperation::Commit),
+        (FS_READ_CHUNK_TOOL, FileTransferOperation::ReadChunk),
+        (FS_PUSH_FILE_TOOL, FileTransferOperation::PushFile),
+    ];
+    for (name, operation) in endpoints {
+        handler.registerInternalAsyncTool(
+            name.to_string(),
+            Box::new(FileTransferExecutor {
+                tools: fileSystemTools.clone(),
+                operation,
+            }),
+        );
+    }
+}
+
+#[allow(non_snake_case)]
+/// Registers file tools through the asynchronous Host execution contract.
 fn registerFileSystemTool(
     handler: &mut AIToolHandler,
     fileSystemTools: &StandardFileSystemTools,
     name: BuiltinToolName,
     operation: FileSystemToolOperation,
 ) {
+    // File tools own an asynchronous execution contract: qualified `node:` paths
+    // dispatch to the target device through the device-tool transport.
     handler.registerBuiltinTool(
         name,
-        Box::new(FileSystemToolExecutor {
+        RegisteredToolExecutor::Asynchronous(Box::new(FileSystemToolExecutor {
             tools: fileSystemTools.clone(),
             operation,
-        }),
+        })),
         ToolRegistrationVisibility::PUBLIC,
     );
 }

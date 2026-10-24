@@ -109,6 +109,20 @@ fn expand_core_route(
     let permission = arguments.permission;
     let permission_value = permission.value();
     let argument_names = function_argument_names(&function)?;
+    let reverse_arguments = function.sig.inputs.iter().filter_map(|argument| {
+        let FnArg::Typed(argument) = argument else { return None };
+        let Type::Path(path) = argument.ty.as_ref() else { return None };
+        if path.path.segments.last()?.ident != "ReverseStream" { return None }
+        let Pat::Ident(pattern) = argument.pat.as_ref() else { return None };
+        Some(pattern.ident.clone())
+    }).collect::<Vec<_>>();
+    if reverse_arguments.len() > 1 {
+        return Err(Error::new_spanned(&function.sig, "routed methods accept one ReverseStream input"));
+    }
+    let reverse_argument = reverse_arguments.first();
+    if reverse_argument.is_some() && function.sig.asyncness.is_none() {
+        return Err(Error::new_spanned(&function.sig, "ReverseStream routes require an async method"));
+    }
     if !argument_names.iter().any(|name| name == &binding_argument) {
         return Err(Error::new(
             binding_argument.span(),
@@ -154,6 +168,7 @@ fn expand_core_route(
     let watch_helper_name = format_ident!("__operit_core_route_watch_{}", original_name);
     let route_arg_entries = argument_names
         .iter()
+        .filter(|name| reverse_argument != Some(*name))
         .map(|name| {
             quote! {
                 operit_rslink_runtime::core_arg_entry(stringify!(#name), &#name)
@@ -165,7 +180,21 @@ fn expand_core_route(
         operit_rslink_runtime::core_route_args(vec![#(#route_arg_entries),*])
     };
     let route_call_decode = route_call_decode(&function.sig.output);
-    let route_wrapper_body = if return_type_is_state_flow(&function.sig.output) {
+    let route_wrapper_body = if let Some(input) = reverse_argument {
+        quote! {
+            if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {
+                let __core_route_args_value = #route_args_value;
+                if __core_route_runtime.shouldRoute(stringify!(#original_name), &__core_route_args_value)
+                    .expect("annotated route resolution failed") {
+                    return operit_rslink_runtime::core_route_reverse_stream(
+                        __core_route_runtime.as_ref(), stringify!(#original_name),
+                        __core_route_args_value, #input,
+                    ).await.map_err(|error| error.message);
+                }
+            }
+            #call_expression
+        }
+    } else if return_type_is_state_flow(&function.sig.output) {
         let remote_flow = quote! {
             match operit_rslink_runtime::core_route_state_flow(
                 __core_route_runtime.clone(),
@@ -243,13 +272,23 @@ fn expand_core_route(
         }
     };
 
-    let route_helpers = render_route_helpers(
+    let route_helpers = if reverse_argument.is_some() {
+        quote! {
+            /// Rejects value calls to a service whose input is a ReverseStream.
+            #[doc(hidden)]
+            #visibility async fn #call_helper_name(
+                &mut self, _request: &operit_link::CoreCallRequest,
+            ) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {
+                Err(operit_link::CoreLinkError::new("REVERSE_STREAM_REQUIRES_PUSH", "ReverseStream requires the Push transport"))
+            }
+        }
+    } else { render_route_helpers(
         &function,
         &local_name,
         &call_helper_name,
         &watch_snapshot_helper_name,
         &watch_helper_name,
-    );
+    ) };
 
     function.sig = local_signature.clone();
     function.block = local_body;

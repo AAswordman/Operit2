@@ -1,7 +1,7 @@
 import { dispatchDomain, runMemoryJobs } from "../service-runtime";
 import { assertInteger, assertString, requireId } from "../validation";
 
-/** Enqueues the persisted assistant revision whose saved message snapshot owns the memory destination. */
+/** Enqueues the persisted assistant revision whose current author settings authorize the memory destination. */
 export async function onMemoryMessagePersisted(event: ToolPkg.ChatMessageHookEvent): Promise<void> {
   const payload = event.eventPayload;
   assertString(payload.sender, "persisted message sender");

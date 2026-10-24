@@ -5,7 +5,12 @@ edition = "2021"
 license = "MIT"
 publish = false
 
+[features]
+default = []
+daemon = ["dep:tokio", "operit-host-native-common/daemon", "windows-sys/Win32_Security_Authorization", "windows-sys/Win32_System_Console"]
+
 [dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"], optional = true }
 base64 = "0.22"
 globset = "0.4.18"
 grep-regex = "0.1.14"

@@ -25,10 +25,13 @@ impl SharedToolExecutor for StorageToolExecutor {
     ) -> Result<PreparedToolInvocation<'a>, String> {
         let args: RequestArguments<StorageRequest> = decodeArguments(request)?;
         let effect = match &args.request {
-            StorageRequest::Query { .. }
+            StorageRequest::PreferencesData { .. }
+            | StorageRequest::PreferencesBeginEdit { .. }
+            | StorageRequest::PreferencesCancelEdit { .. }
+            | StorageRequest::GetMany { .. }
+            | StorageRequest::Query { .. }
             | StorageRequest::Get { .. }
             | StorageRequest::List { .. }
-            | StorageRequest::Changes { .. }
             | StorageRequest::Close { .. } => ToolEffect::READ,
             _ => ToolEffect::WRITE,
         };
@@ -51,23 +54,21 @@ pub(crate) async fn executePluginStorage(
 ) -> Result<StorageRequestResultData, String> {
     context.requirePluginOwner()?;
     let hosts = context.host().getContext();
-    let sqlite = hosts
-        .runtimeSqliteHost
-        .ok_or("RuntimeSqliteHost is not registered")?;
     let storage = hosts
         .runtimeStorageHost
         .ok_or("RuntimeStorageHost is not registered")?;
-    if let StorageRequest::Open { path, .. } = &mut request {
+    if let StorageRequest::Open { path, .. } | StorageRequest::OpenPreferences { path, .. } = &mut request {
         *path = resolve_plugin_storage_path(path, &RuntimeStorePaths::default())?;
     }
-    let deviceId = SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH)
-        .localDeviceId()
-        .map_err(|error| error.to_string())?;
-    let response = context
-        .host()
-        .storageSession
-        .request(sqlite, storage, request, &deviceId)
-        .map_err(|error| error.to_string())?;
+    let session = &context.host().storageSession;
+    let response = if session.isPreferencesRequest(&request).map_err(|error| error.to_string())? {
+        session.requestPreferences(storage, request)
+    } else {
+        let sqlite = hosts.runtimeSqliteHost.ok_or("RuntimeSqliteHost is not registered")?;
+        let deviceId = SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH)
+            .localDeviceId().map_err(|error| error.to_string())?;
+        session.request(sqlite, storage, request, &deviceId)
+    }.map_err(|error| error.to_string())?;
     Ok(StorageRequestResultData::from(response))
 }
 

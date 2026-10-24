@@ -40,18 +40,20 @@ class _DetachedChatWindowAppState extends State<DetachedChatWindowApp> {
   }
 
   Future<void> _bindChat() async {
-    ClientLogger.i(
+    ClientLogger.v(
       'bind detached chat start slotId=${widget.arguments.slotId} chatId=${widget.arguments.chatId}',
       tag: 'DetachedChatWindow',
+      verboseLevel: VerboseLevel.level4,
     );
     try {
       await _chatCore.switchChatLocal(chatId: widget.arguments.chatId);
       if (!mounted) {
         return;
       }
-      ClientLogger.i(
+      ClientLogger.v(
         'bind detached chat done slotId=${widget.arguments.slotId} chatId=${widget.arguments.chatId}',
         tag: 'DetachedChatWindow',
+        verboseLevel: VerboseLevel.level4,
       );
       setState(() {
         _ready = true;

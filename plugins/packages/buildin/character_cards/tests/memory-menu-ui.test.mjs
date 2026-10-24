@@ -19,6 +19,7 @@ function texts(tree) { return composeNodes(tree, node => node.type === "Text").m
 // Compare the actual registered plugin tree with main's group geometry, labels and persisted preferences.
 test("plugin memory section retains main's exact collapsed and expanded controls and four summaries", async t => {
   const clock = timers(), runtime = await selectorEnvironment(t, {}, clock.globals);
+  await runtime.seedBinding("selector-chat", { version: 1, selection: "card:default" });
   const entries = runtime.navigation.filter(entry => entry.surface === "chat_input_menu_sections");
   assert.equal(entries.length, 1); assert.equal(entries[0].route, "toolpkg:com.operit.character_cards:ui:chat-input-memory");
   const ui = menu(runtime, "selector-chat"); await ui.load(); let tree = ui.render().tree;
@@ -45,6 +46,31 @@ test("plugin memory section retains main's exact collapsed and expanded controls
   assert.deepEqual(plain(await runtime.web({ action: "readGlobalMemoryPreferences" })), { userDescriptionEnabled: false, autoUpdateEnabled: true });
   const next = menu(runtime, "selector-chat"); await next.load(); assert.equal(texts(next.render().tree)[1], "记忆库更新");
   assert.deepEqual(clock.pending, []);
+});
+
+for (const selection of [null, "model:chat", "group:controlled-group"]) {
+  /** Keeps conversations without a single character owner out of the role-memory controls. */
+  test(`memory menu omits role-memory controls for selection ${selection}`, async t => {
+    const clock = timers(), runtime = await selectorEnvironment(t, {}, clock.globals);
+    if (selection !== null) await runtime.seedBinding("selector-chat", { version: 1, selection });
+    const ui = menu(runtime, "selector-chat"); await ui.load();
+    const tree = ui.render().tree;
+    assert.equal(tree.props.key, "memory-menu-unavailable");
+    assert.deepEqual(texts(tree), []);
+    assert.deepEqual(composeNodes(tree,
+      /** Finds actions that must not be exposed without a character memory owner. */
+      node => node.props.onClick !== undefined || node.props.onLoad !== undefined,
+    ), []);
+    assert.deepEqual(clock.pending, []);
+  });
+}
+
+/** Preserves genuine ownership errors instead of hiding a broken character binding. */
+test("memory menu reports a missing selected character", async t => {
+  const runtime = await selectorEnvironment(t);
+  await runtime.seedBinding("selector-chat", { version: 1, selection: "card:missing-character" });
+  const ui = menu(runtime, "selector-chat");
+  await assert.rejects(ui.load(), /missing-character/);
 });
 
 test("memory info reads fresh queue status on demand without background polling", async t => {
@@ -95,7 +121,9 @@ test("new-session memory menu keeps the original disabled manual action and no q
 });
 
 test("memory section refuses retained actions and status reads after host chat ownership changes", async t => {
-  const clock = timers(), runtime = await selectorEnvironment(t, {}, clock.globals), ui = menu(runtime, "selector-chat"); await ui.load();
+  const clock = timers(), runtime = await selectorEnvironment(t, {}, clock.globals);
+  await runtime.seedBinding("selector-chat", { version: 1, selection: "card:default" });
+  const ui = menu(runtime, "selector-chat"); await ui.load();
   const action = keyedNode(ui.render().tree, "memory-section-header").props.onClick;
   const info = keyedNode(ui.render().tree, "memory-info").props.onClick;
   assert.throws(() => ui.updateHostState({ chatId: "another-chat" }), /Memory menu chat owner changed/);

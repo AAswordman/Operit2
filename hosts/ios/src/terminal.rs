@@ -9,7 +9,7 @@ use operit_host_api::{
 use operit_host_native_common::NativePtyTerminalHost;
 use serde_json::{json, Value};
 
-use crate::bridge::callIshTerminal;
+use crate::bridge::{callIshTerminal, callIshTerminalStreaming};
 
 const SHELL_TERMINAL_TYPE: &str = "shell";
 const PLATFORM: &str = "ios";
@@ -451,6 +451,25 @@ impl TerminalHost for IosTerminalHost {
             command,
             timeoutMs,
         )
+    }
+
+    /// Observes the real backend command loop without draining the terminal screen separately.
+    fn executeInSessionStreaming(&self, sessionId: &str, command: &str, timeoutMs: u64,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>) -> HostResult<TerminalCommandOutput> {
+        match self.sessionBackend(sessionId)? {
+            IosTerminalBackend::Ish => {
+                let command = requiredText(command, "command")?;
+                let response = callIshTerminalStreaming(json!({
+                    "sessionId": requiredText(sessionId, "session_id")?, "command": command, "timeoutMs": timeoutMs,
+                }), onOutput)?;
+                Ok(TerminalCommandOutput {
+                    command, output: requiredString(&response, "output")?, exitCode: requiredI32(&response, "exitCode")?,
+                    sessionId: requiredString(&response, "sessionId")?, platform: PLATFORM.into(), terminal: ISH_TERMINAL.into(),
+                    terminalType: shellTerminalType(&requiredString(&response, "terminalType")?)?, timedOut: requiredBool(&response, "timedOut")?,
+                })
+            }
+            IosTerminalBackend::SystemShell => systemCommandOutput(self.systemShell.executeInSessionStreaming(sessionId, command, timeoutMs, onOutput)?),
+        }
     }
 
     /// Executes a hidden command through the Host-selected persistent terminal backend.

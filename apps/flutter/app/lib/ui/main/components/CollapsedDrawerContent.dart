@@ -55,6 +55,7 @@ class CollapsedDrawerContent extends StatelessWidget {
       ).chatRuntimeHolderMain.createNewChat(
         setAsCurrentChat: true,
         sourceChatId: sourceChatId,
+        parentChatId: null,
         input: null,
       );
       onConversationActivated();
@@ -347,6 +348,7 @@ class ConversationDrawerItem extends StatefulWidget {
     required this.onDetach,
     this.nested = false,
     this.workspaceStyle = false,
+    this.childrenToggle,
   });
 
   final core_proxy.ChatHistoryListItem history;
@@ -369,6 +371,9 @@ class ConversationDrawerItem extends StatefulWidget {
   final VoidCallback onDetach;
   final bool nested;
   final bool workspaceStyle;
+
+  /// Expands native child conversations independently of activation and execution.
+  final Widget? childrenToggle;
 
   @override
   State<ConversationDrawerItem> createState() => _ConversationDrawerItemState();
@@ -423,7 +428,8 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
     final platform = Theme.of(context).platform;
     final touchPlatform =
         platform == TargetPlatform.android || platform == TargetPlatform.iOS;
-    final showActions = active || selected || touchPlatform;
+    final showActions =
+        active || selected || touchPlatform || widget.childrenToggle != null;
 
     return DragTarget<core_proxy.ChatHistoryListItem>(
       onWillAcceptWithDetails: (details) =>
@@ -518,18 +524,24 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
                 ),
               ),
             ),
-            action: _ConversationMoreMenuButton(
-              history: history,
-              selected: selected,
-              appearance: appearance,
-              compact: workspaceStyle,
-              onRename: widget.onRename,
-              onTogglePinned: widget.onTogglePinned,
-              onToggleLocked: widget.onToggleLocked,
-              onDelete: widget.onDelete,
-              onMenuOpenChanged: (open) {
-                if (mounted) setState(() => _menuOpen = open);
-              },
+            action: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.childrenToggle != null) widget.childrenToggle!,
+                _ConversationMoreMenuButton(
+                  history: history,
+                  selected: selected,
+                  appearance: appearance,
+                  compact: workspaceStyle,
+                  onRename: widget.onRename,
+                  onTogglePinned: widget.onTogglePinned,
+                  onToggleLocked: widget.onToggleLocked,
+                  onDelete: widget.onDelete,
+                  onMenuOpenChanged: (open) {
+                    if (mounted) setState(() => _menuOpen = open);
+                  },
+                ),
+              ],
             ),
           ),
         );

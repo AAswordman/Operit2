@@ -67,23 +67,18 @@ export function equal(left: unknown, right: unknown): boolean {
   );
 }
 
-/** Uses domain identities and bounded ordered slots for derived embeddings whose full input stays in the value. */
-function recordKey(
-  collection: string,
-  value: Storage.Value,
-  index: number,
-): string {
-  if (collection === "embeddings") return String(index).padStart(20, "0");
+/** Uses stable domain identities for every independently persisted memory object. */
+function recordKey(value: Storage.Value): string {
   assertObject(value, "stored record");
   return requireId(value.id, "stored record id");
 }
 
-/** Marks a domain record for the schema codec, which validates every declared field before SQL writes. */
+/** Marks a domain record for the host JSON codec without splitting nested configuration into SQL tables. */
 export function storedValue<T extends object>(record: T): Storage.Value {
   return record as Storage.Value;
 }
 
-/** Projects individual domain records for the typed SQL tables shared with migration. */
+/** Projects individual domain records for the complete JSON documents and independently addressable memory objects. */
 export function records(state: CharacterState): StoredRecord[] {
   const result: StoredRecord[] = [];
   for (const collection of [
@@ -111,13 +106,13 @@ export function records(state: CharacterState): StoredRecord[] {
       version: null,
     });
     for (const collection of ownerCollections)
-      for (const [index, record] of owner[collection].entries())
+      for (const record of owner[collection])
         result.push({
           collection,
           key:
             owner.ownerKey +
             "/" +
-            recordKey(collection, storedValue(record), index),
+            recordKey(storedValue(record)),
           value: storedValue({ ownerKey: owner.ownerKey, record }),
           version: null,
         });
@@ -125,17 +120,16 @@ export function records(state: CharacterState): StoredRecord[] {
   return result;
 }
 
-/** Reconstructs a validated operation snapshot from separately persisted host records. */
-export function stateFromRecords(
+/** Assembles stored records so migrations can repair released references before business validation. */
+export function decodeStateFromRecords(
   metadata: Storage.Value,
   rows: StoredRecord[],
-): CharacterState {
+) {
   assertObject(metadata, "character database metadata");
-  if (metadata.migrationStatus === "writing")
+  if (metadata.migrationStatus === "writing" || metadata.legacyImportPending === true)
     throw new Error("Character migration has not completed");
   const state = {
     version: metadata.version,
-    nextId: metadata.nextId,
     active: metadata.active === null ? { Model: { id: "chat" } } : metadata.active,
     memoryPreferences: metadata.memoryPreferences,
     cards: [] as Storage.Value[],
@@ -188,12 +182,18 @@ export function stateFromRecords(
       row.key !==
       ownerKey +
         "/" +
-        recordKey(row.collection, row.value.record, entries.length)
+        recordKey(row.value.record)
     ) {
       throw new Error("Invalid owner-scoped record: " + row.key);
     }
     entries.push(row.value.record);
   }
+  return state;
+}
+
+/** Reconstructs and validates the current business snapshot after any released-data migration. */
+export function stateFromRecords(metadata: Storage.Value, rows: StoredRecord[]): CharacterState {
+  const state = decodeStateFromRecords(metadata, rows);
   assertCharacterState(state);
   return state;
 }

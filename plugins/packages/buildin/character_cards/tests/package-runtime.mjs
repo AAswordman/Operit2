@@ -29,6 +29,7 @@ export function packageRuntime(modules, globals = {}, registrationOnly = false) 
   // Built screen functions close over their defining realm, just like the real
   // engine. Supply the production runtime in that realm, not a second VM.
   vm.runInContext(sdkScript("ToolPkgComposeDslBridge.rs"), context);
+  vm.runInContext("globalThis.__operitNativeCompileModuleFactory = body => new Function('module','exports','require','__operit_call_runtime',body);", context);
   const cache = new Map();
   function load(modulePath) {
     const normalized = path.posix.normalize(modulePath);

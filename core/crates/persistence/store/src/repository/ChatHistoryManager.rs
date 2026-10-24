@@ -11,14 +11,14 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::dao::ChatDao::ChatDao;
-use crate::dao::MessageDao::MessageDao;
+use crate::dao::MessageDao::{insertMessageParams, insertMessageSql, mapMessageEntity, MessageDao};
 use crate::dao::MessagePartDao::MessagePartDao;
-use crate::dao::MessageVariantDao::MessageVariantDao;
+use crate::dao::MessageVariantDao::{insertVariantParams, insertVariantSql, MessageVariantDao};
 use crate::db::AppDatabase::{AppDatabase, AppDatabaseError};
 use crate::repository::WorkspacePreferenceStore::WorkspacePreferenceStore;
 use crate::sqliteParams;
 use crate::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
-use crate::SqliteStore::SqliteStore;
+use crate::SqliteStore::{SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue};
 use operit_model::ChatEntity::ChatEntity;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
@@ -210,7 +210,6 @@ pub struct ChatHistoryManager {
     chatDao: ChatDao,
     workspaceStore: WorkspacePreferenceStore,
     messageDao: MessageDao,
-    messagePartDao: MessagePartDao,
     messageVariantDao: MessageVariantDao,
     syncStore: SqlChatSyncStore,
     bindingStore: CoreNodeBindingStore,
@@ -270,7 +269,6 @@ impl ChatHistoryManager {
         let chatDao = database.chatDao();
         let workspaceStore = WorkspacePreferenceStore::new(paths.clone());
         let messageDao = database.messageDao();
-        let messagePartDao = database.messagePartDao();
         let messageVariantDao = database.messageVariantDao();
         let syncStore = SqlChatSyncStore::new(paths.clone(), &database)?;
         let bindingStore =
@@ -303,7 +301,6 @@ impl ChatHistoryManager {
             chatDao,
             workspaceStore,
             messageDao,
-            messagePartDao,
             messageVariantDao,
             syncStore,
             bindingStore,
@@ -391,26 +388,15 @@ impl ChatHistoryManager {
             .collect()
     }
 
-    /// Hydrates one display window with only its messages' variants and parts.
-    fn hydrateMessagesForChat(
+    /// Loads and hydrates a message query from one consistent SQLite snapshot.
+    fn loadMessagesSnapshot(
         &self,
         chatId: &str,
-        messageEntities: Vec<MessageEntity>,
+        sql: &str,
+        params: Vec<SqliteValue>,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        if messageEntities.is_empty() {
-            return Ok(Vec::new());
-        }
-        let visibleTimestamps = messageEntities
-            .iter()
-            .map(|message| message.timestamp)
-            .collect::<Vec<_>>();
-        let variants = self
-            .messageVariantDao
-            .getVariantsForMessages(chatId, visibleTimestamps.clone())?;
-        let parts = self
-            .messagePartDao
-            .getPartsForMessages(chatId, visibleTimestamps)?;
-        self.hydrateMessages(messageEntities, variants, parts)
+        let snapshot = self.messageDao.getSnapshot(chatId, sql, params)?;
+        self.hydrateMessages(snapshot.messages, snapshot.variants, snapshot.parts)
     }
 
     /// Loads a chat history row with display-ready messages.
@@ -442,10 +428,11 @@ impl ChatHistoryManager {
         &self,
         chatHistory: ChatHistory,
     ) -> ChatHistoryManagerResult<OperitArchivedChat> {
-        let messageEntities = self.messageDao.getMessagesForChat(&chatHistory.id)?;
-        let mut partsByRevision = self
-            .messagePartDao
-            .getPartsForChat(&chatHistory.id)?
+        let snapshot = self.messageDao.getSnapshot(&chatHistory.id,
+            "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp ASC",
+            sqliteParams![chatHistory.id])?;
+        let messageEntities = snapshot.messages;
+        let mut partsByRevision = snapshot.parts
             .into_iter()
             .fold(
                 HashMap::<(i64, i32), Vec<MessagePart>>::new(),
@@ -464,7 +451,7 @@ impl ChatHistoryManager {
             .iter()
             .map(|message| (message.timestamp, Vec::<MessageVariantEntity>::new()))
             .collect::<HashMap<_, _>>();
-        for variant in self.messageVariantDao.getVariantsForChat(&chatHistory.id)? {
+        for variant in snapshot.variants {
             variantsByTimestamp
                 .get_mut(&variant.messageTimestamp)
                 .expect("every variant must reference a base message")
@@ -778,42 +765,64 @@ impl ChatHistoryManager {
         Ok(())
     }
 
+    /// Persists message metadata, revision parts, chat ordering, and sync state atomically.
     fn persistMessageLocked(
         &self,
         chatId: &str,
         messageToPersist: ChatMessage,
     ) -> ChatHistoryManagerResult<ChatMessage> {
-        // Only a newly persisted user message promotes the conversation. Re-saving
-        // or editing an existing message must not change the sidebar order.
-        let shouldMoveToFront = messageToPersist.sender == "user"
-            && self
-                .messageDao
-                .getMessageByTimestamp(chatId, messageToPersist.timestamp)?
-                .is_none();
-        let messageEntity =
-            MessageEntity::fromChatMessage(chatId.to_string(), messageToPersist.clone(), 0, 0);
-        self.messageDao.insertMessage(messageEntity)?;
-        self.messagePartDao.replaceParts(
-            chatId,
-            messageToPersist.timestamp,
-            0,
-            messagePartEntities(
-                chatId,
-                messageToPersist.timestamp,
-                0,
-                &messageToPersist.parts,
-            ),
-        )?;
-        if shouldMoveToFront {
-            self.chatDao.moveChatToFront(chatId, currentTimeMillis())?;
-            self.recordChatMetadata(chatId)?;
-        } else {
-            self.touchChatMetadata(chatId)?;
+        if messageToPersist.selectedVariantIndex < 0 {
+            return Err(ChatHistoryManagerError::IllegalArgument(
+                "Variant index must be nonnegative".to_string(),
+            ));
         }
-        self.recordMessageSnapshot(chatId, messageToPersist.timestamp)?;
+        let timestamp = messageToPersist.timestamp;
+        let variantIndex = messageToPersist.selectedVariantIndex;
+        let updatedAt = currentTimeMillis();
+        self.syncStore.mutateMessage(chatId, timestamp, |transaction| {
+            let existing = transaction.queryOne(
+                "SELECT * FROM messages WHERE chatId = ?1 AND timestamp = ?2",
+                sqliteParams![chatId, timestamp],
+            )?.as_ref().map(mapMessageEntity).transpose()?;
+            if variantIndex > 0 {
+                transaction.queryOne(
+                    "SELECT variantId FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                    sqliteParams![chatId, timestamp, variantIndex],
+                )?.ok_or_else(|| SqliteStoreError::Message(format!("Variant {variantIndex} does not exist for message {chatId}:{timestamp}")))?;
+                let variant = MessageVariantEntity::fromChatMessage(
+                    chatId.to_string(), timestamp, variantIndex, messageToPersist.clone(), 0,
+                );
+                transaction.execute(insertVariantSql(false), insertVariantParams(&variant, false)?)?;
+                let changed = transaction.execute(
+                    "UPDATE messages SET selectedVariantIndex = ?3 WHERE chatId = ?1 AND timestamp = ?2",
+                    sqliteParams![chatId, timestamp, variantIndex],
+                )?;
+                if changed != 1 {
+                    return Err(SqliteStoreError::Message(format!("Message {chatId}:{timestamp} does not exist")));
+                }
+            } else {
+                let orderIndex = existing.as_ref().map_or(0, |message| message.orderIndex);
+                let entity = MessageEntity::fromChatMessage(chatId.to_string(), messageToPersist.clone(), orderIndex, 0);
+                transaction.execute(insertMessageSql(false), insertMessageParams(&entity, false)?)?;
+            }
+            MessagePartDao::replacePartsInTransaction(
+                transaction, chatId, timestamp, variantIndex,
+                messagePartEntities(chatId, timestamp, variantIndex, &messageToPersist.parts),
+            )?;
+            if existing.is_none() && messageToPersist.sender == "user" {
+                transaction.execute(
+                    "UPDATE chats SET displayOrder = MIN(-?2, (SELECT MIN(displayOrder) FROM chats) - 1), updatedAt = ?2 WHERE id = ?1",
+                    sqliteParams![chatId, updatedAt],
+                )?;
+            } else if existing.is_none() || messageToPersist.sender != "ai" || messageToPersist.completedAt > 0 || variantIndex > 0 {
+                transaction.execute("UPDATE chats SET updatedAt = ?2 WHERE id = ?1", sqliteParams![chatId, updatedAt])?;
+            }
+            Ok(())
+        })?;
         Ok(messageToPersist)
     }
 
+    /// Resolves an anchored message timestamp against the current stored neighbors.
     fn resolveAnchoredMessageLocked(
         &self,
         chatId: &str,
@@ -1007,14 +1016,7 @@ impl ChatHistoryManager {
 
     /// Deletes one message and records sync deletion state.
     pub fn deleteMessage(&self, chatId: String, timestamp: i64) -> ChatHistoryManagerResult<()> {
-        self.messagePartDao
-            .deletePartsForMessageTimestamp(&chatId, timestamp)?;
-        self.messageVariantDao
-            .deleteVariantsForMessage(&chatId, timestamp)?;
-        self.messageDao
-            .deleteMessageByTimestamp(&chatId, timestamp)?;
-        self.touchChatMetadata(&chatId)?;
-        self.recordMessageDeletion(&chatId, timestamp)?;
+        self.syncStore.recordMessageDeletion(&chatId, timestamp)?;
         Ok(())
     }
 
@@ -1048,73 +1050,7 @@ impl ChatHistoryManager {
         chatId: String,
         message: ChatMessage,
     ) -> ChatHistoryManagerResult<()> {
-        let existingMessage = self
-            .messageDao
-            .getMessageByTimestamp(&chatId, message.timestamp)?;
-
-        if let Some(existingMessage) = existingMessage {
-            if message.selectedVariantIndex > 0 {
-                let messageTimestamp = message.timestamp;
-                let parts = message.parts.clone();
-                let existingVariant = self
-                    .messageVariantDao
-                    .getVariantForMessage(&chatId, message.timestamp, message.selectedVariantIndex)?
-                    .ok_or_else(|| {
-                        ChatHistoryManagerError::IllegalState(format!(
-                            "Missing variant {} for message {}",
-                            message.selectedVariantIndex, message.timestamp
-                        ))
-                    })?;
-                let selectedVariantIndex = message.selectedVariantIndex;
-                self.messageVariantDao
-                    .updateVariant(MessageVariantEntity::fromChatMessage(
-                        chatId.clone(),
-                        message.timestamp,
-                        selectedVariantIndex,
-                        message,
-                        existingVariant.variantId,
-                    ))?;
-                self.messagePartDao.replaceParts(
-                    &chatId,
-                    messageTimestamp,
-                    selectedVariantIndex,
-                    messagePartEntities(&chatId, messageTimestamp, selectedVariantIndex, &parts),
-                )?;
-                self.messageDao.updateSelectedVariantIndex(
-                    &chatId,
-                    existingMessage.timestamp,
-                    selectedVariantIndex,
-                )?;
-                self.touchChatMetadata(&chatId)?;
-                self.recordMessageSnapshot(&chatId, messageTimestamp)?;
-                return Ok(());
-            }
-
-            let messageTimestamp = message.timestamp;
-            let shouldUpdateChatMetadata = message.sender != "ai" || message.completedAt > 0;
-            let parts = message.parts.clone();
-            let updatedMessageEntity = MessageEntity::fromChatMessage(
-                chatId.clone(),
-                message,
-                existingMessage.orderIndex,
-                existingMessage.messageId,
-            );
-            self.messageDao.updateMessage(updatedMessageEntity)?;
-            self.messagePartDao.replaceParts(
-                &chatId,
-                messageTimestamp,
-                0,
-                messagePartEntities(&chatId, messageTimestamp, 0, &parts),
-            )?;
-            if shouldUpdateChatMetadata {
-                self.touchChatMetadata(&chatId)?;
-            }
-            self.recordMessageSnapshot(&chatId, messageTimestamp)?;
-        } else {
-            // Background sends also enter through updateMessage, so share the
-            // insertion path and its new-user-message ordering behavior.
-            self.persistMessageLocked(&chatId, message)?;
-        }
+        self.persistMessageLocked(&chatId, message)?;
         Ok(())
     }
 
@@ -1192,48 +1128,31 @@ impl ChatHistoryManager {
         messageTimestamp: i64,
         message: ChatMessage,
     ) -> ChatHistoryManagerResult<i32> {
-        let baseMessage = self
-            .messageDao
-            .getMessageByTimestamp(&chatId, messageTimestamp)?
-            .ok_or_else(|| {
-                ChatHistoryManagerError::IllegalArgument(format!(
-                    "Message {messageTimestamp} does not exist in chat {chatId}"
-                ))
-            })?;
-        if baseMessage.sender != "ai" {
-            return Err(ChatHistoryManagerError::IllegalArgument(
-                "Only AI messages can have regenerated variants".to_string(),
-            ));
-        }
-        let nextVariantIndex = self
-            .messageVariantDao
-            .getVariantsForMessage(&chatId, messageTimestamp)?
-            .len() as i32
-            + 1;
-        let parts = message.parts.clone();
-        self.messageVariantDao
-            .insertVariant(MessageVariantEntity::fromChatMessage(
-                chatId.clone(),
-                messageTimestamp,
-                nextVariantIndex,
-                ChatMessage {
-                    selectedVariantIndex: nextVariantIndex,
-                    variantCount: 1,
-                    ..message
-                },
-                0,
-            ))?;
-        self.messagePartDao.replaceParts(
-            &chatId,
-            messageTimestamp,
-            nextVariantIndex,
-            messagePartEntities(&chatId, messageTimestamp, nextVariantIndex, &parts),
-        )?;
-        self.messageDao
-            .updateSelectedVariantIndex(&chatId, messageTimestamp, nextVariantIndex)?;
-        self.touchChatMetadata(&chatId)?;
-        self.recordMessageSnapshot(&chatId, messageTimestamp)?;
-        Ok(nextVariantIndex)
+        let updatedAt = currentTimeMillis();
+        Ok(self.syncStore.mutateMessage(&chatId, messageTimestamp, |transaction| {
+            let row = transaction.queryOne(
+                "SELECT sender FROM messages WHERE chatId = ?1 AND timestamp = ?2",
+                sqliteParams![chatId, messageTimestamp],
+            )?.ok_or_else(|| SqliteStoreError::Message(format!("Message {chatId}:{messageTimestamp} does not exist")))?;
+            if row.get::<_, String>(0)? != "ai" {
+                return Err(SqliteStoreError::Message("Only AI messages can have regenerated variants".to_string()));
+            }
+            let row = transaction.queryOne(
+                "SELECT COUNT(*) + 1 FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2",
+                sqliteParams![chatId, messageTimestamp],
+            )?.expect("aggregate variant count must return one row");
+            let nextVariantIndex: i32 = row.get(0)?;
+            let parts = messagePartEntities(&chatId, messageTimestamp, nextVariantIndex, &message.parts);
+            let variant = MessageVariantEntity::fromChatMessage(chatId.clone(), messageTimestamp, nextVariantIndex, message, 0);
+            transaction.execute(insertVariantSql(false), insertVariantParams(&variant, false)?)?;
+            MessagePartDao::replacePartsInTransaction(transaction, &chatId, messageTimestamp, nextVariantIndex, parts)?;
+            transaction.execute(
+                "UPDATE messages SET selectedVariantIndex = ?3 WHERE chatId = ?1 AND timestamp = ?2",
+                sqliteParams![chatId, messageTimestamp, nextVariantIndex],
+            )?;
+            transaction.execute("UPDATE chats SET updatedAt = ?2 WHERE id = ?1", sqliteParams![chatId, updatedAt])?;
+            Ok(nextVariantIndex)
+        })?)
     }
 
     /// Selects the active variant for one message.
@@ -1248,28 +1167,22 @@ impl ChatHistoryManager {
                 "Variant index must be nonnegative".to_string(),
             ));
         }
-        self.messageDao
-            .getMessageByTimestamp(&chatId, messageTimestamp)?
-            .ok_or_else(|| {
-                ChatHistoryManagerError::IllegalArgument(format!(
-                    "Message {messageTimestamp} does not exist in chat {chatId}"
-                ))
-            })?;
-        if selectedVariantIndex > 0 {
-            self.messageVariantDao
-                .getVariantForMessage(&chatId, messageTimestamp, selectedVariantIndex)?
-                .ok_or_else(|| {
-                    ChatHistoryManagerError::IllegalArgument(format!(
-                        "Variant {selectedVariantIndex} does not exist for message {messageTimestamp}"
-                    ))
-                })?;
-        }
-        self.messageDao.updateSelectedVariantIndex(
-            &chatId,
-            messageTimestamp,
-            selectedVariantIndex,
-        )?;
-        self.recordMessageSnapshot(&chatId, messageTimestamp)?;
+        self.syncStore.mutateMessage(&chatId, messageTimestamp, |transaction| {
+            if selectedVariantIndex > 0 {
+                transaction.queryOne(
+                    "SELECT variantId FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                    sqliteParams![chatId, messageTimestamp, selectedVariantIndex],
+                )?.ok_or_else(|| SqliteStoreError::Message(format!("Variant {selectedVariantIndex} does not exist for message {chatId}:{messageTimestamp}")))?;
+            }
+            let changed = transaction.execute(
+                "UPDATE messages SET selectedVariantIndex = ?3 WHERE chatId = ?1 AND timestamp = ?2",
+                sqliteParams![chatId, messageTimestamp, selectedVariantIndex],
+            )?;
+            if changed != 1 {
+                return Err(SqliteStoreError::Message(format!("Message {chatId}:{messageTimestamp} does not exist")));
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -1279,22 +1192,13 @@ impl ChatHistoryManager {
         chatId: String,
         timestamp: i64,
     ) -> ChatHistoryManagerResult<()> {
-        self.messagePartDao.deletePartsFrom(&chatId, timestamp)?;
-        self.messageVariantDao
-            .deleteVariantsFrom(&chatId, timestamp)?;
-        self.messageDao.deleteMessagesFrom(&chatId, timestamp)?;
-        self.touchChatMetadata(&chatId)?;
-        self.recordMessagesFromDeletion(&chatId, timestamp)?;
+        self.syncStore.recordMessagesFromDeletion(&chatId, timestamp)?;
         Ok(())
     }
 
     /// Deletes every message and variant in a chat.
     pub fn clearChatMessages(&self, chatId: String) -> ChatHistoryManagerResult<()> {
-        self.messagePartDao.deleteAllPartsForChat(&chatId)?;
-        self.messageVariantDao.deleteAllVariantsForChat(&chatId)?;
-        self.messageDao.deleteAllMessagesForChat(&chatId)?;
-        self.touchChatMetadata(&chatId)?;
-        self.recordAllMessagesForChatDeletion(&chatId)?;
+        self.syncStore.recordAllMessagesForChatDeletion(&chatId)?;
         Ok(())
     }
 
@@ -1326,6 +1230,19 @@ impl ChatHistoryManager {
             self.recordChatMetadata(&chatId)?;
         }
         Ok(())
+    }
+
+    /// Persists summary compaction without overwriting totals recorded by a concurrent reply.
+    pub fn updateChatContextWindow(
+        &self,
+        chatId: String,
+        currentWindowSize: i64,
+    ) -> ChatHistoryManagerResult<ChatHistory> {
+        self.chatDao.updateChatContextWindow(&chatId, currentWindowSize, currentTimeMillis())?;
+        self.recordChatMetadata(&chatId)?;
+        self.loadChatHistory(chatId.clone())?.ok_or_else(|| {
+            ChatHistoryManagerError::IllegalArgument(format!("Chat does not exist: {chatId}"))
+        })
     }
 
     /// Persists the active chat id.
@@ -1601,8 +1518,11 @@ impl ChatHistoryManager {
 
     /// Loads all hydrated messages for one chat.
     pub fn loadChatMessages(&self, chatId: &str) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let messageEntities = self.messageDao.getMessagesForChat(chatId)?;
-        self.hydrateMessagesForChat(chatId, messageEntities)
+        self.loadMessagesSnapshot(
+            chatId,
+            "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp ASC",
+            sqliteParams![chatId],
+        )
     }
 
     /// Loads hydrated messages with optional summary-message filtering.
@@ -1613,26 +1533,15 @@ impl ChatHistoryManager {
         limit: Option<i32>,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
         let normalizedOrder = order.map(|order| order.trim().to_lowercase());
-        let effectiveLimit = limit.map(|limit| limit.max(1));
-        let messageEntities = match normalizedOrder.as_deref() {
-            Some("desc") => {
-                if let Some(limit) = effectiveLimit {
-                    self.messageDao.getMessagesForChatDesc(&chatId, limit)?
-                } else {
-                    let mut messages = self.messageDao.getMessagesForChat(&chatId)?;
-                    messages.reverse();
-                    messages
-                }
-            }
-            _ => {
-                if let Some(limit) = effectiveLimit {
-                    self.messageDao.getMessagesForChatAsc(&chatId, limit)?
-                } else {
-                    self.messageDao.getMessagesForChat(&chatId)?
-                }
-            }
+        let direction = match normalizedOrder.as_deref() {
+            Some("desc") => "DESC",
+            _ => "ASC",
         };
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        let (sql, params) = match limit {
+            Some(limit) => (format!("SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp {direction} LIMIT ?2"), sqliteParams![chatId, limit.max(1)]),
+            None => (format!("SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp {direction}"), sqliteParams![chatId]),
+        };
+        self.loadMessagesSnapshot(&chatId, &sql, params)
     }
 
     /// Loads hydrated messages inside an inclusive zero-based index range.
@@ -1656,20 +1565,17 @@ impl ChatHistoryManager {
                     "range length exceeds supported integer limits".to_string(),
                 )
             })?;
-        let messageEntities = match order.trim().to_lowercase().as_str() {
-            "asc" => self
-                .messageDao
-                .getMessagesForChatAscRange(&chatId, start, limit)?,
-            "desc" => self
-                .messageDao
-                .getMessagesForChatDescRange(&chatId, start, limit)?,
+        let direction = match order.trim().to_lowercase().as_str() {
+            "asc" => "ASC",
+            "desc" => "DESC",
             value => {
                 return Err(ChatHistoryManagerError::IllegalArgument(format!(
                     "order must be asc/desc, got {value}"
                 )))
             }
         };
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        let sql = format!("SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp {direction} LIMIT ?2 OFFSET ?3");
+        self.loadMessagesSnapshot(&chatId, &sql, sqliteParams![chatId, limit, start])
     }
 
     /// Searches message content and returns matching chat ids.
@@ -1725,23 +1631,24 @@ impl ChatHistoryManager {
         beforeTimestampExclusive: Option<i64>,
         upToTimestampInclusive: Option<i64>,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let latestSummaryTimestamp =
-            if let Some(beforeTimestampExclusive) = beforeTimestampExclusive {
-                self.messageDao
-                    .getLatestSummaryTimestampBefore(&chatId, beforeTimestampExclusive)?
-            } else if let Some(upToTimestampInclusive) = upToTimestampInclusive {
-                self.messageDao
-                    .getLatestSummaryTimestampUpTo(&chatId, upToTimestampInclusive)?
-            } else {
-                self.messageDao.getLatestSummaryTimestamp(&chatId)?
-            };
-        let messageEntities = self.messageDao.getMessagesForChatInRangeAsc(
+        self.loadMessagesSnapshot(
             &chatId,
-            latestSummaryTimestamp,
-            beforeTimestampExclusive,
-            upToTimestampInclusive,
-        )?;
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+            r#"
+            WITH latest AS (
+                SELECT MAX(timestamp) AS timestamp FROM messages
+                WHERE chatId = ?1 AND sender = 'summary'
+                    AND (?2 IS NULL OR timestamp < ?2)
+                    AND (?2 IS NOT NULL OR ?3 IS NULL OR timestamp <= ?3)
+            )
+            SELECT messages.* FROM messages, latest
+            WHERE chatId = ?1
+                AND (latest.timestamp IS NULL OR messages.timestamp > latest.timestamp)
+                AND (?2 IS NULL OR messages.timestamp < ?2)
+                AND (?3 IS NULL OR messages.timestamp <= ?3)
+            ORDER BY messages.timestamp ASC
+            "#,
+            sqliteParams![chatId, beforeTimestampExclusive, upToTimestampInclusive],
+        )
     }
 
     /// Returns whether a chat contains at least one user message.
@@ -1754,14 +1661,16 @@ impl ChatHistoryManager {
         &self,
         chatId: String,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let latestSummaryTimestamp = self.messageDao.getLatestSummaryTimestamp(&chatId)?;
-        let messageEntities = if let Some(latestSummaryTimestamp) = latestSummaryTimestamp {
-            self.messageDao
-                .getMessagesForChatFromTimestampAsc(&chatId, latestSummaryTimestamp)?
-        } else {
-            self.messageDao.getMessagesForChat(&chatId)?
-        };
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        self.loadMessagesSnapshot(&chatId,
+            r#"
+            WITH latest AS (
+                SELECT MAX(timestamp) AS timestamp FROM messages WHERE chatId = ?1 AND sender = 'summary'
+            )
+            SELECT messages.* FROM messages, latest
+            WHERE chatId = ?1 AND (latest.timestamp IS NULL OR messages.timestamp >= latest.timestamp)
+            ORDER BY messages.timestamp ASC
+            "#,
+            sqliteParams![chatId])
     }
 
     /// Loads lightweight message previews for locator search UI.
@@ -1789,10 +1698,11 @@ impl ChatHistoryManager {
         chatId: String,
         startTimestampInclusive: i64,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let messageEntities = self
-            .messageDao
-            .getMessagesForChatFromTimestampAsc(&chatId, startTimestampInclusive)?;
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        self.loadMessagesSnapshot(
+            &chatId,
+            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp >= ?2 ORDER BY timestamp ASC",
+            sqliteParams![chatId, startTimestampInclusive],
+        )
     }
 
     /// Loads hydrated messages inside an inclusive timestamp window.
@@ -1802,12 +1712,9 @@ impl ChatHistoryManager {
         startTimestampInclusive: i64,
         endTimestampInclusive: i64,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let messageEntities = self.messageDao.getMessagesForChatWindowAsc(
-            &chatId,
-            startTimestampInclusive,
-            endTimestampInclusive,
-        )?;
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        self.loadMessagesSnapshot(&chatId,
+            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp >= ?2 AND timestamp <= ?3 ORDER BY timestamp ASC",
+            sqliteParams![chatId, startTimestampInclusive, endTimestampInclusive])
     }
 
     /// Loads hydrated messages after a timestamp in ascending order.
@@ -1817,14 +1724,9 @@ impl ChatHistoryManager {
         afterTimestampExclusive: i64,
         limit: i32,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let messageEntities = self
-            .messageDao
-            .getMessagesForChatAfterTimestampExclusiveAsc(
-                &chatId,
-                afterTimestampExclusive,
-                limit,
-            )?;
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        self.loadMessagesSnapshot(&chatId,
+            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp > ?2 ORDER BY timestamp ASC LIMIT ?3",
+            sqliteParams![chatId, afterTimestampExclusive, limit])
     }
 
     /// Loads older messages before a timestamp for paged history views.
@@ -1834,15 +1736,11 @@ impl ChatHistoryManager {
         beforeTimestampExclusive: i64,
         limit: i32,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let mut messageEntities = self
-            .messageDao
-            .getMessagesForChatBeforeTimestampExclusiveDesc(
-                &chatId,
-                beforeTimestampExclusive,
-                limit,
-            )?;
-        messageEntities.reverse();
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        let mut messages = self.loadMessagesSnapshot(&chatId,
+            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp < ?2 ORDER BY timestamp DESC LIMIT ?3",
+            sqliteParams![chatId, beforeTimestampExclusive, limit])?;
+        messages.reverse();
+        Ok(messages)
     }
 
     /// Returns whether a chat has messages before a timestamp.
@@ -1874,17 +1772,14 @@ impl ChatHistoryManager {
         limit: i32,
         beforeTimestampExclusive: Option<i64>,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let messageEntities = if let Some(beforeTimestampExclusive) = beforeTimestampExclusive {
-            self.messageDao
-                .getMessagesForChatBeforeTimestampExclusiveDesc(
-                    &chatId,
-                    beforeTimestampExclusive,
-                    limit,
-                )?
-        } else {
-            self.messageDao.getMessagesForChatDesc(&chatId, limit)?
-        };
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        match beforeTimestampExclusive {
+            Some(timestamp) => self.loadMessagesSnapshot(&chatId,
+                "SELECT * FROM messages WHERE chatId = ?1 AND timestamp < ?2 ORDER BY timestamp DESC LIMIT ?3",
+                sqliteParams![chatId, timestamp, limit]),
+            None => self.loadMessagesSnapshot(&chatId,
+                "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp DESC LIMIT ?2",
+                sqliteParams![chatId, limit]),
+        }
     }
 
     /// Loads messages in descending order up to an inclusive timestamp.
@@ -1894,12 +1789,9 @@ impl ChatHistoryManager {
         maxTimestampInclusive: i64,
         limit: i32,
     ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let messageEntities = self.messageDao.getMessagesForChatBeforeTimestampDesc(
-            &chatId,
-            maxTimestampInclusive,
-            limit,
-        )?;
-        self.hydrateMessagesForChat(&chatId, messageEntities)
+        self.loadMessagesSnapshot(&chatId,
+            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp <= ?2 ORDER BY timestamp DESC LIMIT ?3",
+            sqliteParams![chatId, maxTimestampInclusive, limit])
     }
 
     /// Renames role names stored in message rows.
@@ -1961,25 +1853,6 @@ impl ChatHistoryManager {
         Ok(())
     }
 
-    fn recordMessageDeletion(&self, chatId: &str, timestamp: i64) -> ChatHistoryManagerResult<()> {
-        self.syncStore.recordMessageDeletion(chatId, timestamp)?;
-        Ok(())
-    }
-
-    fn recordMessagesFromDeletion(
-        &self,
-        chatId: &str,
-        timestamp: i64,
-    ) -> ChatHistoryManagerResult<()> {
-        self.syncStore
-            .recordMessagesFromDeletion(chatId, timestamp)?;
-        Ok(())
-    }
-
-    fn recordAllMessagesForChatDeletion(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
-        self.syncStore.recordAllMessagesForChatDeletion(chatId)?;
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

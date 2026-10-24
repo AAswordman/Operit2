@@ -11,10 +11,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::CoreNodeIdentityStore::CoreNodeIdentityStore;
-use crate::PreferencesDataStore::{emptyPreferences, stringPreferencesKey, CoreNodeStateStore, PreferencesDataStore};
+use crate::PreferencesDataStore::{emptyPreferences, stringPreferencesKey, CoreNodeStateStore, Preferences, PreferencesDataStore, PreferencesDataStoreError, PreferencesSyncedEntry};
 use crate::RuntimeStorageHost::defaultRuntimeStorageHost;
 
 const CORE_SPACE_RECORD_KEY: &str = "record";
+const CORE_SPACE_RECORD_VERSION: u32 = 3;
 const UNMEASURED_DIRECT_PEER_COST: u64 = 1_000_000_000;
 /// Identifies adjacency announcements that carry no measured link quality yet.
 const LOCAL_DIRECT_PEER_EPOCH: &str = "direct-adjacency";
@@ -1097,6 +1098,11 @@ impl CoreSpaceStore {
             if entry.isDirectory {
                 continue;
             }
+            // The atomic writer stages private dot-prefixed siblings; a killed
+            // process leaves them behind and they are never member records.
+            if entry.path.rsplit('/').next().is_some_and(|name| name.starts_with('.')) {
+                continue;
+            }
             let preferences =
                 self.recordStore(entry.path.clone())
                     .data()
@@ -1282,17 +1288,46 @@ impl CoreSpaceStore {
         } else {
             (*CoreNodeStateStore::newWithStorage(self.storage.clone(), path)).clone()
         };
-        store.withSchema(2, |version, preferences| match version {
-            0 => Ok(()),
-            1 => {
-                let key = stringPreferencesKey(CORE_SPACE_RECORD_KEY);
-                if let Some(encoded) = preferences.getTyped::<String>(&key)? {
-                    let record: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&encoded)?;
-                    preferences.set(&key, serde_json::Value::Object(record));
-                }
-                Ok(())
-            }
-            from => Err(crate::PreferencesDataStore::PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        store.withSchema(CORE_SPACE_RECORD_VERSION, Self::migrateRecord)
+    }
+
+    /// Declares the codec for complete records owned by Space, including archived string values.
+    pub fn preferenceSyncStore(path: &str) -> Option<crate::PreferenceMerge::PreferenceMergeStore> {
+        let (directory, name) = path.rsplit_once('/')?;
+        if ![RUNTIME_SPACE_MEMBERS_DIR_PATH, RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
+            RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH, RUNTIME_SPACE_TOPOLOGY_DIR_PATH].contains(&directory) {
+            return None;
+        }
+        let node = name.strip_suffix(".preferences.json")?;
+        if node.starts_with('.') || validateNodeId(node).is_err() { return None; }
+        Some(crate::PreferenceMerge::PreferenceMergeStore::values(
+            path, false, CORE_SPACE_RECORD_VERSION, Self::decodeSyncedRecord,
+        ))
+    }
+
+    /// Repairs schema-2 snapshots overwritten by unconverted history as well as older encodings.
+    fn migrateRecord(version: u32, values: &mut Preferences) -> Result<(), PreferencesDataStoreError> {
+        if version >= CORE_SPACE_RECORD_VERSION {
+            return Err(PreferencesDataStoreError::SchemaVersionTooNew {
+                actual: version, expected: CORE_SPACE_RECORD_VERSION,
+            });
+        }
+        let key = stringPreferencesKey(CORE_SPACE_RECORD_KEY);
+        if let Some(value) = values.get(&key) {
+            let record: serde_json::Map<String, serde_json::Value> = match value {
+                serde_json::Value::String(encoded) => serde_json::from_str(encoded)?,
+                value => serde_json::from_value(value.clone())?,
+            };
+            values.set(&key, serde_json::Value::Object(record));
+        }
+        Ok(())
+    }
+
+    /// Uses the same owner codec for local upgrades and historical operations; current values stay typed.
+    fn decodeSyncedRecord(entry: &mut PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+        entry.decodeHistoricalValues(|version, values| {
+            if version == CORE_SPACE_RECORD_VERSION { return Ok(()); }
+            Self::migrateRecord(version, values)
         })
     }
 
@@ -1594,12 +1629,44 @@ mod tests {
     use crate::SyncOperationStore::SyncOperationStore;
     use crate::SyncOperationStore::{NewSyncOperation, SyncOperationSemantics};
 
+    /// Schema 2 could be overwritten by raw historical JSON; reopening must repair it once.
+    #[test]
+    fn schema_two_space_records_recover_without_changing_membership() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let record = serde_json::json!({"spaceId":"old-space","spaceName":"ios-aarch64",
+            "spaceRevision":12,"nodeId":"old-peer","joinedAt":1,"updatedAt":2});
+        let path = format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/old-peer.preferences.json");
+        let corrupted = serde_json::json!({"record":record.to_string(),
+            "__operit_preferences_schema_version":2});
+        host.writeBytesAtomically(&path, &serde_json::to_vec(&corrupted).unwrap()).unwrap();
+        for _ in 0..2 {
+            let store = CoreSpaceStore::new(host.clone());
+            store.initialize().unwrap();
+            assert_eq!(serde_json::to_value(&store.memberRecords().unwrap()["old-peer"]).unwrap(), record);
+            assert_eq!(store.recordStore(&path).schemaVersion().unwrap(), CORE_SPACE_RECORD_VERSION);
+        }
+        let malformed = serde_json::json!({"record":"broken-json","__operit_preferences_schema_version":2});
+        let badPath = format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/broken-peer.preferences.json");
+        let bytes = serde_json::to_vec(&malformed).unwrap();
+        host.writeBytesAtomically(&badPath, &bytes).unwrap();
+        assert!(CoreSpaceStore::new(host.clone()).initialize().is_err());
+        assert_eq!(host.readBytes(&badPath).unwrap(), bytes);
+    }
+
     #[derive(Clone, Default)]
     struct MemoryStorageHost {
         files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     }
 
     impl RuntimeStorageHost for MemoryStorageHost {
+        /// Confirms synchronous in-memory publication without copying or rewriting bytes.
+        fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+            if !self.exists(path)? {
+                return Err(operit_host_api::HostError::new("runtime storage entry not found"));
+            }
+            Ok(())
+        }
+
         /// Returns no physical runtime root for the in-memory test host.
         fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
             None
@@ -1638,6 +1705,11 @@ mod tests {
                 .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
                 .min(content.len());
             Ok(content[start..end].to_vec())
+        }
+
+        /// Atomically publishes one complete in-memory test entry.
+        fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+            self.writeBytes(path, content)
         }
 
         /// Writes one complete virtual file to the in-memory test host.
@@ -1795,6 +1867,36 @@ mod tests {
                 None,
             )
             .expect("test device profile must initialize");
+    }
+
+    /// A killed process leaves an atomic-write staging sibling in the members
+    /// directory; Space initialization must skip it instead of panicking.
+    #[test]
+    fn initialize_ignores_leftover_partial_staging_files_in_members_directory() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        initializeTestDeviceProfile(&store);
+        store
+            .initializeNamed("local-space".to_string())
+            .expect("test space must initialize");
+        host.writeBytes(
+            &format!(
+                "{RUNTIME_SPACE_MEMBERS_DIR_PATH}/.core-staging.preferences.json.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial"
+            ),
+            b"uncommitted",
+        )
+        .expect("test staging file must write");
+
+        let space = store
+            .initialize()
+            .expect("leftover staging files must not break Space initialization");
+        assert!(
+            space
+                .members
+                .iter()
+                .all(|member| !member.contains("staging")),
+            "the staging sibling must not surface as a member"
+        );
     }
 
     /// Verifies remote member ejection rewrites the member as a standalone
@@ -2309,6 +2411,7 @@ mod tests {
         assert_eq!(*host.files.lock().unwrap(), before);
     }
 
+    /// Keeps business clocks separate from authority projection and checks explicit storage revocation.
     #[test]
     fn authority_projection_does_not_skip_older_business_operations_after_storage_grant() {
         let source = Arc::new(MemoryStorageHost::default());
@@ -2359,7 +2462,12 @@ mod tests {
             "a storage member cannot forge an unknown command attributed to the administrator");
         assert_eq!(receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap(), before);
         receiverPolicy.projectPeerControlOperations(&admin, std::slice::from_ref(&next)).unwrap();
-        let revoke = sourcePolicy.clearIdentity("projection-member".into()).unwrap();
+        let reset = sourcePolicy.clearIdentity("projection-member".into()).unwrap();
+        receiverPolicy.projectPeerControlOperations(&admin, std::slice::from_ref(&reset)).unwrap();
+        assert!(receiverPolicy.nodeHasCapability("projection-member", "storage.provide", None).unwrap());
+        let revoke = sourcePolicy.setIdentity(NetworkControlIdentityAssignment {
+            nodeId: "projection-member".into(), roleId: "edge".into(),
+        }).unwrap();
         receiverPolicy.projectPeerControlOperations(&admin, std::slice::from_ref(&revoke)).unwrap();
         assert!(!receiverPolicy.nodeHasCapability("projection-member", "storage.provide", None).unwrap());
         sourcePolicy.defineRole(NetworkControlRole { roleId: "limited-manager".into(), displayName: "Limited manager".into(),
@@ -2374,8 +2482,9 @@ mod tests {
         assert_eq!(SyncOperationStore::new(receiver, RUNTIME_SYNC_DIR_PATH).localClock().unwrap().sequenceFor(&admin), 0);
     }
 
+    /// Gives ordinary admitted members the declared shared storage capability.
     #[test]
-    fn network_control_admission_assigns_the_default_user_capabilities_without_storage() {
+    fn network_control_admission_assigns_the_default_user_capabilities_with_storage() {
         let host = Arc::new(MemoryStorageHost::default());
         let spaceStore = CoreSpaceStore::new(host.clone());
         initializeTestDeviceProfile(&spaceStore);
@@ -2392,10 +2501,10 @@ mod tests {
         assert!(control
             .nodeHasCapability("peer-member", "network.devices.view", None)
             .expect("default user device view capability must materialize"));
-        assert!(!control
+        assert!(control
             .nodeHasCapability("peer-member", "storage.provide", None)
             .expect("default user storage capability must be evaluated"),
-            "ordinary membership must not grant Space storage by default");
+            "ordinary membership must grant its declared Space storage capability");
         assert!(control
             .nodeHasCapability("peer-member", "network.relay", None)
             .expect("default user relay capability must materialize"));

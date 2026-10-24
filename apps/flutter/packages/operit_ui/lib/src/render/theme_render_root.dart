@@ -3,6 +3,27 @@ import 'package:flutter/material.dart';
 import '../model/theme_preference_snapshot.dart';
 import 'theme_data.dart';
 
+/// Orders independent application roots before their own localized traversal groups.
+class ThemeRenderStack extends StatelessWidget {
+  /// Creates the retained application and startup-status rendering boundary.
+  const ThemeRenderStack({super.key, required this.children});
+
+  final List<Widget> children;
+
+  /// Keeps sibling MaterialApp groups out of reading-order sorting above their localizations.
+  @override
+  Widget build(BuildContext context) {
+    return FocusTraversalGroup(
+      policy: WidgetOrderTraversalPolicy(),
+      child: Stack(
+        alignment: Alignment.topLeft,
+        fit: StackFit.expand,
+        children: children,
+      ),
+    );
+  }
+}
+
 /// Same Material rendering entry for the application and the standalone preview.
 /// The caller owns lifecycle, localization, environment, and the prepared fonts.
 class ThemeRenderRoot extends StatelessWidget {

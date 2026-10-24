@@ -39,7 +39,7 @@ class Session:
         }))
         self.bind, self.node, self.process = '127.0.0.1:0', None, None
         self.lock, self.paused = asyncio.Lock(), False
-        self.log = (self.directory / 'session.jsonl').open('a')
+        self.log = (self.directory / 'session.jsonl').open('a', encoding='utf-8')
         self.stderr = (self.directory / 'stderr.log').open('ab')
 
     async def start(self, bind=None):

@@ -19,7 +19,7 @@ use crate::chat::llmprovider::AIService::{
     SendMessageRequest, SharedAiResponseStream, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
-use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
+use crate::chat::llmprovider::MediaLinkParser::{MediaLink, MediaLinkParser};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
@@ -660,12 +660,13 @@ impl OpenAIProvider {
         let provider_model = self.provider_model();
         let endpoint = self.diagnosticEndpoint()?;
         let started_at = currentTimeMillis();
-        AppLogger::i(
+        AppLogger::v_with_level(
             PROVIDER_TRANSPORT_LOG_TAG,
             &format!(
                 "provider.http.request.start providerModel={} endpoint={}",
                 provider_model, endpoint
             ),
+            operit_util::AppLogger::VERBOSE_LEVEL_3,
         );
         let receiver = self.cancel_receiver();
         let observedGeneration = *receiver.borrow();
@@ -677,7 +678,7 @@ impl OpenAIProvider {
             _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
         };
         match &result {
-            Ok(response) => AppLogger::i(
+            Ok(response) => AppLogger::v_with_level(
                 PROVIDER_TRANSPORT_LOG_TAG,
                 &format!(
                     "provider.http.response.headers providerModel={} endpoint={} status={} elapsedMs={}",
@@ -686,6 +687,7 @@ impl OpenAIProvider {
                     response.status(),
                     currentTimeMillis().saturating_sub(started_at),
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             ),
             Err(error) => AppLogger::e(
                 PROVIDER_TRANSPORT_LOG_TAG,
@@ -1085,35 +1087,129 @@ impl OpenAIProvider {
     /// Builds the OpenAI-compatible content field for one provider message.
     fn build_content_field(&self, text: &str, role: &str) -> Value {
         let text = self.input_content_text(text);
-        if !MediaLinkParser::has_image_links(&text) {
+        let has_images = MediaLinkParser::has_image_links(&text);
+        let has_media = MediaLinkParser::has_media_links(&text);
+        if !has_images && !has_media {
             return json!(text);
         }
 
-        let image_links = MediaLinkParser::extract_image_links(&text);
-        let text_without_links = MediaLinkParser::remove_image_links(&text).trim().to_string();
-        let can_carry_images = self.supports_vision
-            && (canCarryUserRichContent(role) || self.canCarryToolImages(role));
+        let allow_user_rich_content = canCarryUserRichContent(role);
+        let allow_responses_tool_images = self.canCarryToolImages(role);
 
-        if !can_carry_images || image_links.is_empty() {
-            return json!(imageLinkTextWhenNotSent(
-                &text_without_links,
-                !image_links.is_empty(),
-            ));
+        let media_links = if has_media {
+            MediaLinkParser::extract_media_links(&text)
+        } else {
+            Vec::new()
+        };
+        let image_links = if has_images {
+            MediaLinkParser::extract_image_links(&text)
+        } else {
+            Vec::new()
+        };
+
+        let audio_links: Vec<_> = media_links
+            .iter()
+            .filter(|link| link.link_type == "audio")
+            .cloned()
+            .collect();
+        let video_links: Vec<_> = media_links
+            .iter()
+            .filter(|link| link.link_type == "video")
+            .cloned()
+            .collect();
+        let file_links: Vec<_> = media_links
+            .iter()
+            .filter(|link| link.link_type == "file")
+            .cloned()
+            .collect();
+
+        let has_supported_media = (self.supports_audio && !audio_links.is_empty())
+            || (self.supports_video && !video_links.is_empty());
+
+        let mut text_without_links = text.clone();
+        if has_media {
+            text_without_links = MediaLinkParser::remove_media_links(&text_without_links);
+        }
+        if has_images {
+            text_without_links = MediaLinkParser::remove_image_links(&text_without_links);
+        }
+        let text_without_links = text_without_links.trim().to_string();
+
+        let has_any_supported_rich_content = (allow_user_rich_content && has_supported_media)
+            || ((allow_user_rich_content || allow_responses_tool_images)
+                && self.supports_vision
+                && !image_links.is_empty());
+
+        if !has_any_supported_rich_content {
+            if !text_without_links.is_empty() {
+                return json!(text_without_links);
+            }
+            if !audio_links.is_empty() || !video_links.is_empty() {
+                return json!("[Audio/Video omitted]");
+            }
+            if !image_links.is_empty() {
+                return json!("[Image omitted]");
+            }
+            if !file_links.is_empty() {
+                return json!("[File omitted]");
+            }
+            return json!("[Empty]");
         }
 
         let mut content_array = Vec::new();
-        for link in image_links {
-            content_array.push(json!({
-                "type": "image_url",
-                "image_url": {
-                    "url": format!("data:{};base64,{}", link.mime_type, link.base64_data),
-                },
-            }));
+
+        if allow_user_rich_content && self.supports_audio {
+            for link in audio_links {
+                content_array.push(json!({
+                    "type": "input_audio",
+                    "input_audio": self.build_input_audio_payload(&link),
+                }));
+            }
         }
+
+        if allow_user_rich_content && self.supports_video {
+            for link in video_links {
+                content_array.push(json!({
+                    "type": "video_url",
+                    "video_url": {
+                        "url": format!("data:{};base64,{}", link.mime_type, link.base64_data),
+                    },
+                }));
+            }
+        }
+
+        if (allow_user_rich_content || allow_responses_tool_images) && self.supports_vision {
+            for link in image_links {
+                content_array.push(json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": format!("data:{};base64,{}", link.mime_type, link.base64_data),
+                    },
+                }));
+            }
+        }
+
         if !text_without_links.is_empty() {
             content_array.push(json!({"type": "text", "text": text_without_links}));
         }
+
         Value::Array(content_array)
+    }
+
+    /// Encodes registered audio using the provider's request payload format.
+    pub fn build_input_audio_payload(&self, link: &MediaLink) -> Value {
+        let format = audio_format_from_mime(&link.mime_type);
+        if self.provider_type == "ALIYUN" || self.provider_type == "QWEN" {
+            json!({
+                "data": format!("data:{};base64,{}", link.mime_type, link.base64_data),
+                "format": format,
+            })
+        } else {
+            json!({
+                "data": link.base64_data,
+                "format": format,
+            })
+        }
     }
 
     /// Reports whether a tool message can carry image content for this provider mode.
@@ -1201,13 +1297,14 @@ impl OpenAIProvider {
                 received_byte_count += bytes.len();
                 if !received_first_byte {
                     received_first_byte = true;
-                    AppLogger::i(
+                    AppLogger::v_with_level(
                         PROVIDER_TRANSPORT_LOG_TAG,
                         &format!(
                             "provider.http.response.firstByte providerModel={} elapsedMs={}",
                             provider_model,
                             currentTimeMillis().saturating_sub(stream_started_at),
                         ),
+                        operit_util::AppLogger::VERBOSE_LEVEL_3,
                     );
                 }
                 state.pending_bytes.extend_from_slice(&bytes);
@@ -1249,7 +1346,7 @@ impl OpenAIProvider {
 
             self.set_estimated_output_tokens(&emitter.received_content);
             self.apply_token_counts(state.usage.clone());
-            AppLogger::i(
+            AppLogger::v_with_level(
                 PROVIDER_TRANSPORT_LOG_TAG,
                 &format!(
                     "provider.http.response.stream.done providerModel={} elapsedMs={} bytes={} chunks={} contentDeltas={} contentBytes={} nativeToolCallDeltas={}",
@@ -1261,6 +1358,7 @@ impl OpenAIProvider {
                     state.regularContentBytes,
                     state.nativeToolCallDeltaCount,
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
             Ok(())
         }
@@ -1378,7 +1476,7 @@ impl OpenAIProvider {
                 accumulated["function"]["name"] = json!(name);
             }
             if state.toolCallState.nameEmitted.get(&index).copied() != Some(true) {
-                AppLogger::d(
+                AppLogger::v_with_level(
                     PROVIDER_TRANSPORT_LOG_TAG,
                     &format!(
                         "provider.stream.tool_call.start providerModel={} index={} tool={} precedingContentDeltas={} precedingContentBytes={}",
@@ -1388,6 +1486,7 @@ impl OpenAIProvider {
                         state.regularContentDeltaCount,
                         state.regularContentBytes,
                     ),
+                    operit_util::AppLogger::VERBOSE_LEVEL_3,
                 );
                 if let Some(callback) = on_tool_invocation {
                     callback(name.to_string());
@@ -2421,6 +2520,7 @@ impl AIService for OpenAIProvider {
 }
 
 impl OpenAIProvider {
+    /// Runs one prepared request and preserves terminal failures on the shared response stream.
     pub async fn send_prepared_request(
         &mut self,
         request: SendMessageRequest,
@@ -2447,15 +2547,16 @@ impl OpenAIProvider {
                         let mut emitter = StreamEmitter::new(producer.clone());
                         emitter.emit_savepoint(&request_savepoint_id);
                         let mut retryCount = 0;
-                        loop {
+                        let result = loop {
                             let attempt = retryCount + 1;
-                            AppLogger::i(
+                            AppLogger::v_with_level(
                                 PROVIDER_TRANSPORT_LOG_TAG,
                                 &format!(
                                     "provider.stream.attempt.start providerModel={} attempt={}",
                                     provider.provider_model(),
                                     attempt,
                                 ),
+                                operit_util::AppLogger::VERBOSE_LEVEL_3,
                             );
                             let response = provider
                                 .sendHttpRequest(
@@ -2474,15 +2575,18 @@ impl OpenAIProvider {
                                         &mut emitter,
                                     )
                                     .await,
-                                Ok(response) => Err(AiServiceError::RequestFailed(format!(
-                                    "{}: {}",
-                                    response.status(),
-                                    provider.readResponseText(response).await.unwrap_or_default()
-                                ))),
+                                Ok(response) => {
+                                    let status = response.status();
+                                    match provider.readResponseText(response).await {
+                                        Ok(body) => Err(AiServiceError::RequestFailed(format!("{status}: {body}"))),
+                                        Err(error) => Err(error),
+                                    }
+                                }
                                 Err(error) => Err(error),
                             };
                             match result {
-                                Ok(()) | Err(AiServiceError::RequestCancelled) => break,
+                                Ok(()) => break Ok(()),
+                                Err(AiServiceError::RequestCancelled) => break Err(AiServiceError::RequestCancelled),
                                 Err(error) => {
                                     retryCount += 1;
                                     AppLogger::e(
@@ -2498,25 +2602,19 @@ impl OpenAIProvider {
                                         || retryCount
                                             > super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS
                                     {
-                                        if let Some(callback) = on_non_fatal_error.as_ref() {
-                                            callback(format!(
-                                                "provider request failed after {} attempt(s): {}",
-                                                attempt, error
-                                            ));
-                                        }
-                                        break;
+                                        break Err(error);
                                     }
                                     let _ = emitter.emit_rollback(&request_savepoint_id);
                                     if let Some(callback) = on_non_fatal_error.as_ref() {
                                         callback(retry_message(&retry_error_text(&error), retryCount));
                                     }
-                                    if provider.delayRetryOrCancel(retryCount).await.is_err() {
-                                        break;
+                                    if let Err(error) = provider.delayRetryOrCancel(retryCount).await {
+                                        break Err(error);
                                     }
                                 }
                             }
-                        }
-                        producer.close();
+                        };
+                        finish_response_stream(&producer, result);
                     })),
                 )
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
@@ -2538,7 +2636,7 @@ impl OpenAIProvider {
                 "openai-response",
                 Box::new(move || {
                     Box::pin(async move {
-                        if let Ok(chunks) = provider
+                        let result = provider
                             .sendNonStreamingPreparedRequest(
                                 api_endpoint,
                                 headers,
@@ -2547,12 +2645,12 @@ impl OpenAIProvider {
                                 on_non_fatal_error,
                             )
                             .await
-                        {
-                            for chunk in chunks {
-                                producer.emit_chunk(chunk);
-                            }
-                        }
-                        producer.close();
+                            .map(|chunks| {
+                                for chunk in chunks {
+                                    producer.emit_chunk(chunk);
+                                }
+                            });
+                        finish_response_stream(&producer, result);
                     })
                 }),
             )
@@ -2665,14 +2763,14 @@ fn canCarryUserRichContent(role: &str) -> bool {
     role.eq_ignore_ascii_case("user") || role.eq_ignore_ascii_case("summary")
 }
 
-/// Returns text for an image-link message that is not represented as rich content.
-fn imageLinkTextWhenNotSent(text: &str, has_image_data: bool) -> String {
-    if !text.is_empty() {
-        text.to_string()
-    } else if has_image_data {
-        "[Image omitted]".to_string()
-    } else {
-        "[Empty]".to_string()
+/// Maps a media MIME type to the audio format used in provider request payloads.
+fn audio_format_from_mime(mime_type: &str) -> &str {
+    match mime_type.to_ascii_lowercase().as_str() {
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/ogg" => "ogg",
+        "audio/webm" => "webm",
+        _ => mime_type.rsplit_once('/').map(|(_, ext)| ext).unwrap_or("wav"),
     }
 }
 
@@ -2800,6 +2898,15 @@ fn emit_new_chunks(
     for chunk in state.chunks.iter().skip(before_len) {
         callback(chunk.clone());
     }
+}
+
+/// Records a final request failure before closing channels; cancellation remains a separate lifecycle.
+fn finish_response_stream(output: &SharedAiResponseStream, result: Result<(), AiServiceError>) {
+    match result {
+        Ok(()) | Err(AiServiceError::RequestCancelled) => {}
+        Err(error) => output.set_terminal_failure(error.to_string()),
+    }
+    output.close();
 }
 
 #[cfg(test)]

@@ -170,7 +170,7 @@ windows_control.toolpkg (ZIP 压缩包)
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | `schema_version` | number | 是 | 清单格式版本，当前为 `1`；不是 ToolPkg API 版本 |
-| `api_version` | string | 否 | ToolPkg API 契约版本。Operit2 新建包显式填写 `2.0.0`；省略时当前解析器按 `2.0.0` 处理。`1.0.0`、`1.0.1` 的兼容加载支持并不完整 |
+| `api_version` | string | 否 | ToolPkg API 契约版本。Operit2 新建包显式填写 `2.0.0`；省略时按旧版 `1.0.0` 契约加载，启用对应适配和运行依赖。`1.0.0`、`1.0.1` 的兼容加载支持并不完整 |
 | `toolpkg_id` | string | 是 | 包的唯一标识符，建议使用反向域名格式（如 `com.operit.windows_bundle`） |
 | `version` | string | 否 | 插件自身的发布版本，建议使用语义化版本（如 `0.2.0`）；与 `api_version`、`schema_version` 分别声明 |
 | `author` | string \| string[] | 否 | 作者信息，支持单个作者字符串或作者字符串数组 |

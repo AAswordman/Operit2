@@ -744,6 +744,8 @@ core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
       manifestExtensions: const {},
       author: const ['Operit'],
       mainEntry: 'dist/main.js',
+      themes: const [],
+      license: null,
       sourceType: core_proxy.ToolPkgSourceType.externalValue,
       sourcePath: 'test',
       subpackages: const [],

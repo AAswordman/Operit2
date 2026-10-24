@@ -40,6 +40,99 @@ class RunnerTests: XCTestCase {
     return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
   }
 
+  private class TerminalOutputCapture {
+    var data = Data()
+    var firstOutputAt: Date?
+  }
+
+  func testIshTerminalStreamsOutputBeforeCompletion() throws {
+    let finished = expectation(description: "iSH terminal delivers live output")
+    DispatchQueue.global(qos: .userInitiated).async {
+      defer { finished.fulfill() }
+      do {
+        let created = try self.terminalCall("terminalCreateOrGet",
+          json: "{\"sessionName\":\"ios-live-stream-test\",\"terminalType\":\"shell\"}")
+        let session = try XCTUnwrap((created["result"] as? [String: Any])?["sessionId"] as? String)
+        defer { _ = try? self.terminalCall("terminalClose", json: "{\"sessionId\":\"\(session)\"}") }
+        typealias Output = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, Int) -> Bool
+        typealias StreamCall = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?, Output?) -> UnsafeMutablePointer<CChar>?
+        typealias Release = @convention(c) (UnsafeMutablePointer<CChar>?) -> Void
+        let process = try XCTUnwrap(dlopen(nil, RTLD_NOW))
+        defer { dlclose(process) }
+        let call = unsafeBitCast(try XCTUnwrap(dlsym(process, "operit_ios_ish_terminal_call_stream")), to: StreamCall.self)
+        let release = unsafeBitCast(try XCTUnwrap(dlsym(process, "operit_ios_ish_terminal_free")), to: Release.self)
+        let capture = TerminalOutputCapture()
+        let output: Output = { context, bytes, length in
+          guard let context else { return false }
+          let capture = Unmanaged<TerminalOutputCapture>.fromOpaque(context).takeUnretainedValue()
+          if let bytes, length > 0 { capture.data.append(bytes, count: length) }
+          let visible = String(decoding: capture.data, as: UTF8.self).replacingOccurrences(of: "\r", with: "")
+          if capture.firstOutputAt == nil && visible.contains("\nLIVE_A\n") { capture.firstOutputAt = Date() }
+          return true
+        }
+        let request: [String: Any] = ["sessionId": session,
+          "command": "printf '\\nLIVE_A\\n'; sleep 1; printf '\\nLIVE_B\\n'", "timeoutMs": 15000]
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
+        let response = try XCTUnwrap("terminalExecute".withCString { command in
+          json.withCString { call(command, $0, Unmanaged.passUnretained(capture).toOpaque(), output) }
+        })
+        defer { release(response) }
+        let returnedAt = Date()
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(String(cString: response).utf8)) as? [String: Any])
+        XCTAssertNil(envelope["error"], "\(envelope)")
+        let result = try XCTUnwrap(envelope["result"] as? [String: Any])
+        XCTAssertEqual(result["exitCode"] as? Int, 0)
+        XCTAssertEqual(result["timedOut"] as? Bool, false)
+        XCTAssertTrue((result["output"] as? String)?.contains("LIVE_B") == true)
+        XCTAssertGreaterThan(returnedAt.timeIntervalSince(try XCTUnwrap(capture.firstOutputAt)), 0.2)
+      } catch { XCTFail("\(error)") }
+    }
+    wait(for: [finished], timeout: 90)
+  }
+
+  func testIshTerminalCancellationKeepsSession() throws {
+    let finished = expectation(description: "cancelled iSH stream keeps its session")
+    DispatchQueue.global().async {
+      defer { finished.fulfill() }
+      do {
+        let created = try self.terminalCall("terminalCreateOrGet",
+          json: "{\"sessionName\":\"ios-cancel-stream-test\",\"terminalType\":\"shell\"}")
+        let session = try XCTUnwrap((created["result"] as? [String: Any])?["sessionId"] as? String)
+        defer { _ = try? self.terminalCall("terminalClose", json: "{\"sessionId\":\"\(session)\"}") }
+        typealias Output = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, Int) -> Bool
+        typealias StreamCall = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?, Output?) -> UnsafeMutablePointer<CChar>?
+        typealias Release = @convention(c) (UnsafeMutablePointer<CChar>?) -> Void
+        let process = try XCTUnwrap(dlopen(nil, RTLD_NOW))
+        defer { dlclose(process) }
+        let call = unsafeBitCast(try XCTUnwrap(dlsym(process, "operit_ios_ish_terminal_call_stream")), to: StreamCall.self)
+        let release = unsafeBitCast(try XCTUnwrap(dlsym(process, "operit_ios_ish_terminal_free")), to: Release.self)
+        let cancelAt = NSDate(timeIntervalSinceNow: 0.2)
+        let output: Output = { context, _, _ in
+          guard let context else { return false }
+          return Unmanaged<NSDate>.fromOpaque(context).takeUnretainedValue().timeIntervalSinceNow > 0
+        }
+        let request: [String: Any] = ["sessionId": session, "command": "sleep 5", "timeoutMs": 15000]
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
+        let response = try XCTUnwrap("terminalExecute".withCString { command in
+          json.withCString { call(command, $0, Unmanaged.passUnretained(cancelAt).toOpaque(), output) }
+        })
+        defer { release(response) }
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(String(cString: response).utf8)) as? [String: Any])
+        XCTAssertNotNil(envelope["error"], "\(envelope)")
+        XCTAssertGreaterThan(cancelAt.timeIntervalSinceNow, -3)
+        let nextRequest: [String: Any] = ["sessionId": session, "command": "printf 'AFTER_CANCEL\\n'", "timeoutMs": 3000]
+        let nextJson = String(decoding: try JSONSerialization.data(withJSONObject: nextRequest), as: UTF8.self)
+        let next = try self.terminalCall("terminalExecute", json: nextJson)
+        XCTAssertNil(next["error"], "\(next)")
+        let result = try XCTUnwrap(next["result"] as? [String: Any])
+        XCTAssertEqual(result["exitCode"] as? Int, 0)
+        XCTAssertEqual(result["timedOut"] as? Bool, false)
+        XCTAssertTrue((result["output"] as? String)?.contains("AFTER_CANCEL") == true)
+      } catch { XCTFail("\(error)") }
+    }
+    wait(for: [finished], timeout: 90)
+  }
+
   func testIshShellExecutesCommand() throws {
     let finished = expectation(description: "iSH shell executes a command")
     DispatchQueue.global(qos: .userInitiated).async {

@@ -192,6 +192,12 @@ impl TestRuntimeStorageHost {
 
 #[cfg(test)]
 impl RuntimeStorageHost for TestRuntimeStorageHost {
+    /// Flushes the existing test file through its backing filesystem.
+    fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+        std::fs::OpenOptions::new().write(true).open(self.resolve(path)?)?.sync_all()?;
+        Ok(())
+    }
+
     /// Returns the runtime root used by root-backed registry tests.
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         self.runtimeRoot.clone()
@@ -207,7 +213,21 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
         Ok(fs::read(self.resolve(path)?)?)
     }
 
+    /// Atomically publishes one complete in-memory test entry.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        self.writeBytes(path, content)
+    }
+
     /// Writes bytes to a virtual runtime storage path.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = fs::File::open(self.resolve(path)?).map_err(|error| HostError::new(error.to_string()))?;
+        file.seek(SeekFrom::Start(offset)).map_err(|error| HostError::new(error.to_string()))?;
+        let mut bytes = Vec::new();
+        file.take(length as u64).read_to_end(&mut bytes).map_err(|error| HostError::new(error.to_string()))?;
+        Ok(bytes)
+    }
+
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         let path = self.resolve(path)?;
         if let Some(parent) = path.parent() {

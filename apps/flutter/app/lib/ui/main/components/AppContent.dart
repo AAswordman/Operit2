@@ -333,6 +333,7 @@ class _AppContentState extends State<AppContent> {
                         enableNavigationAnimation:
                             widget.enableNavigationAnimation,
                         allowCrossfade: _transitionAllowsCrossfade,
+                        preserveBackdrop: transparentSurface,
                         duration: _activeTransitionDuration,
                         pageOffset: widget.useTabletLayout
                             ? _tabletPageTransitionOffset
@@ -377,6 +378,7 @@ class _AnimatedScreenSlot extends StatefulWidget {
     required this.isNavigatingBack,
     required this.enableNavigationAnimation,
     required this.allowCrossfade,
+    required this.preserveBackdrop,
     required this.duration,
     required this.pageOffset,
     required this.child,
@@ -390,6 +392,7 @@ class _AnimatedScreenSlot extends StatefulWidget {
   final bool isNavigatingBack;
   final bool enableNavigationAnimation;
   final bool allowCrossfade;
+  final bool preserveBackdrop;
   final Duration duration;
   final double pageOffset;
   final Widget child;
@@ -439,9 +442,10 @@ class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
     _visible = false;
   }
 
-  /// Limits freezing to this page's drawer motion or outgoing page transition.
+  /// Keeps backdrop-dependent surfaces live throughout drawer and page motion.
   bool get _shouldSnapshot =>
-      widget.snapshotDuringExit || widget.snapshotDuringDrawerMotion;
+      !widget.preserveBackdrop &&
+      (widget.snapshotDuringExit || widget.snapshotDuringDrawerMotion);
 
   /// Starts entrance motion on the first frame after mounting a page.
   void _scheduleShow() {

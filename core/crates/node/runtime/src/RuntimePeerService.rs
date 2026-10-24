@@ -20,6 +20,10 @@ pub trait RuntimePeerService: Send + Sync {
     /// Selects an admitted entry together with its volatile identity for UI reconnection.
     fn spaceConnection(&self) -> Option<super::NodeServices::SpaceClientConnection> { None }
 
+    /// Largest encoded Link message this endpoint accepts or sends on one
+    /// connection. Callers that assemble their own payloads must stay below it.
+    fn maxMessageBytes(&self) -> usize { operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES }
+
     /// Returns unpaired local-discovery candidates for every application using this Core.
     /// Excludes local and paired node IDs in either authorization direction, including offline peers.
     /// Discovery is not authentication or Space membership proof; candidates still require pairing.
@@ -112,8 +116,7 @@ pub trait RuntimePeerService: Send + Sync {
     /// 多个传输渠道属于同一个身份；调用方看不到端点、会话或密钥。
     fn outboundPeerNodeIds(&self) -> Result<std::collections::BTreeSet<String>, CoreLinkError>;
 
-    /// 当前有已认证在线证据的相邻节点，不包含匿名连接。
-    /// 同空间回连通过独立的空间凭证建立，不修改普通配对方向。
+    /// Returns neighbors reachable through the sole authenticated channel, excluding anonymous connections.
     fn activePeerNodeIds(&self) -> Result<std::collections::BTreeSet<String>, CoreLinkError>;
 
     /// 订阅待确认配对、授权或可用性变化；先订阅再读取快照，避免启动时漏掉变化。
@@ -125,6 +128,21 @@ pub trait RuntimePeerService: Send + Sync {
 
     /// 关闭该节点所有渠道的当前连接，保留配对授权；由统一连接所有者执行。
     async fn disconnectPeer(&self, peerNodeId: &str) -> Result<(), CoreLinkError>;
+
+    /// Updates the existing outbound pairing endpoint and probes the single authenticated channel.
+    /// Preserves pairing direction and credentials; rejects peers without outbound authorization.
+    async fn updatePeerEndpoint(
+        &self,
+        peerNodeId: &str,
+        endpoint: &str,
+        transport: Option<PeerTransport>,
+    ) -> Result<(), CoreLinkError> {
+        let _ = (peerNodeId, endpoint, transport);
+        Err(CoreLinkError::new(
+            "PEER_OUTBOUND_NOT_AUTHORIZED",
+            "No current outbound authorization for node",
+        ))
+    }
 
     /// 按设备撤销全部入站/出站授权、所有传输渠道及关联凭证；不让用户选择方向。
     /// 这是需要本地管理权限的单向本地操作，不通知对端，不属于匿名配对入口。

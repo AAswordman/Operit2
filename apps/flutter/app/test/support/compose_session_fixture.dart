@@ -1,3 +1,6 @@
+import 'compose_buffer_writer.dart';
+import 'package:operit2/core/compose/compose_program_buffer.dart'
+    as compose_buffer;
 import 'dart:async';
 
 import 'package:operit2/core/link/CoreLinkCodec.dart';
@@ -55,7 +58,7 @@ class ComposeSessionFixture {
     commands.add(command);
     _requestSessions[command.requestId] = session;
     try {
-      core.ToolPkgComposeDslNodeUpdate? update;
+      core.ToolPkgComposeDslTransaction? update;
       Object? result;
       switch (command.operation) {
         case 'render':
@@ -71,7 +74,12 @@ class ComposeSessionFixture {
           update = composeFixtureUpdate(
             render(session.state),
             ++session.revision,
+            reset: session.revision == 1,
+            previousIds: session.sourceIds,
           );
+          session.sourceIds = compose_buffer.ComposeProgramBuffer(
+            update.buffer,
+          ).transaction.instances.map((instance) => instance.id).toSet();
         case 'action':
           result = await action(session.state, command.actionId!);
         default:
@@ -116,11 +124,20 @@ class ComposeSessionFixture {
   /// Publishes a real incremental commit after its initiating command has completed.
   void publishDetachedUpdate(String requestId, Map<String, Object?> tree) {
     final session = _requestSessions[requestId]!;
+    final update = composeFixtureUpdate(
+      tree,
+      ++session.revision,
+      reset: false,
+      previousIds: session.sourceIds,
+    );
+    session.sourceIds = compose_buffer.ComposeProgramBuffer(
+      update.buffer,
+    ).transaction.instances.map((instance) => instance.id).toSet();
     session.emit(
       core.ToolPkgComposeDslEvent(
         requestId: requestId,
         phase: 'intermediate',
-        update: composeFixtureUpdate(tree, ++session.revision, reset: false),
+        update: update,
         actionResult: null,
         navigationCommands: const [],
         error: null,
@@ -141,6 +158,7 @@ class _FixtureSession {
   final updates = StreamController<core.ToolPkgComposeDslEvent>.broadcast();
   Map<String, Object?> state = {};
   int revision = 0;
+  Set<String> sourceIds = {};
 
   /// Drops delivery after the page has closed its command stream.
   void emit(core.ToolPkgComposeDslEvent event) {
@@ -165,47 +183,79 @@ class _FixtureCommandSink implements CorePushSink {
   Future<void> close() => session.updates.close();
 }
 
-/// Converts explicit test nodes into the production retained node update shape.
-core.ToolPkgComposeDslNodeUpdate composeFixtureUpdate(
+/// Encodes fixture layouts as stable dynamic instances on the sole production program ABI.
+core.ToolPkgComposeDslTransaction composeFixtureUpdate(
   Map<String, Object?> tree,
   int revision, {
   bool reset = true,
+  Set<String> previousIds = const {},
 }) {
-  final records = <core.ToolPkgComposeDslNodeRecord>[];
+  final instances = <compose_buffer.ToolPkgComposeDslInstance>[];
 
-  /// Assigns stable structural IDs while preserving all declared props and slots.
-  String visit(Map raw, String id) {
-    final children = <String>[], slots = <String, List<String>>{};
-    final rawChildren = raw['children'] as List;
-    for (var index = 0; index < rawChildren.length; index++) {
-      children.add(visit(rawChildren[index] as Map, '$id/child-$index'));
-    }
+  /// Encodes children at stable keyed or positional mount paths for native regression tests.
+  Map<String, Object?> emit(Map raw, String path) {
+    final props = Map<String, Object?>.from(raw['props'] as Map);
+
+    /// Preserves sibling keys across reorder without coupling identity to a transaction revision.
+    List<Object?> group(List children, String slot) => [
+      for (var i = 0; i < children.length; i++)
+        emit(
+          children[i] as Map,
+          '$path/$slot/${(children[i] as Map)['props']['key'] ?? i}',
+        ),
+    ];
     for (final entry in (raw['slots'] as Map).entries) {
-      final slot = entry.value;
-      final nodes = slot is List ? slot : [slot];
-      slots[entry.key as String] = [
-        for (var index = 0; index < nodes.length; index++)
-          visit(nodes[index] as Map, '$id/slot-${entry.key}-$index'),
-      ];
+      props[entry.key as String] = group(
+        entry.value is List ? entry.value as List : [entry.value],
+        entry.key as String,
+      );
     }
-    records.add(
-      core.ToolPkgComposeDslNodeRecord(
-        id: id,
-        nodeType: raw['type'] as String,
-        props: Map<String, Object?>.from(raw['props'] as Map),
-        children: children,
-        slots: slots,
+    final children = group(raw['children'] as List, 'children');
+    instances.add(
+      compose_buffer.ToolPkgComposeDslInstance(
+        id: path,
+        programId: 'fixture:node',
+        values: [props, children],
+        patches: [
+          compose_buffer.ToolPkgComposeDslPatch(
+            node: 0,
+            field: 'type',
+            value: raw['type'],
+          ),
+        ],
       ),
     );
-    return id;
+    return {
+      '__composeRef': [path, 0],
+    };
   }
 
-  final rootId = visit(tree, 'root');
-  return core.ToolPkgComposeDslNodeUpdate(
+  emit(tree, 'fixture:root');
+  final ids = instances.map((instance) => instance.id).toSet();
+  return composeBufferTransaction(
     reset: reset,
     revision: revision,
-    rootId: rootId,
-    upserts: records,
-    removed: const [],
+    root: const compose_buffer.ToolPkgComposeDslReference(
+      instanceId: 'fixture:root',
+      node: 0,
+    ),
+    programs: reset
+        ? [
+            const compose_buffer.ToolPkgComposeDslProgram(
+              id: 'fixture:node',
+              root: 0,
+              nodes: [
+                compose_buffer.ToolPkgComposeDslInstruction(
+                  nodeType: 'Box',
+                  props: [1, 0],
+                  children: [1, 1],
+                  explicitChildren: true,
+                ),
+              ],
+            ),
+          ]
+        : const [],
+    instances: instances,
+    removed: reset ? const [] : previousIds.difference(ids).toList(),
   );
 }

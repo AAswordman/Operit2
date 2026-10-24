@@ -1,0 +1,15 @@
+[package]
+name = "operit-plugin-sdk-macros"
+version = "2.0.0-preview.17"
+edition.workspace = true
+license.workspace = true
+publish = true
+description = "Declaration metadata for canonical Rust plugin SDK models."
+repository = "https://github.com/AAswordman/Operit2"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1"
+syn = { version = "2", features = ["full"] }

@@ -27,41 +27,6 @@ function extensionRuntime(native) {
 /** Normalizes values returned from the isolated VM without changing their JSON payload. */
 function plain(value) { return JSON.parse(JSON.stringify(value)); }
 
-/** Checks actual schemas and native registration do not route metadata through a user-controlled tool parameter map. */
-test("typed extensions require exact targets and a native engine-bound actual owner", () => {
-  const sdk = source("core/crates/plugin/sdk/src/js_sdk/chat.rs");
-  const engine = source("core/crates/plugin/javascript-bridge/src/javascript/JsEngine.rs");
-  const handler = source("core/crates/tool/services/src/tools/AIToolHandler.rs");
-  const bindings = source("core/crates/plugin/sdk/src/js_sdk/runtime_bindings.rs");
-  const generator = source("core/crates/plugin/codegen/src/runtime_bindings.rs");
-  assert.match(sdk, /#\[serde\(tag = "kind", deny_unknown_fields\)\]/);
-  assert.match(sdk, /Message\s*\{\s*chatId: String,\s*messageTimestamp: i64,\s*variantIndex: i32,/);
-  for (const method of ["readExtension", "writeExtension", "deleteExtension"]) {
-    assert.match(bindings, new RegExp('namespace: "Chat",\\s*method: "' + method + '"'));
-  }
-  assert.match(generator, /Tools\[\\"Chat\\"\] = __operitToolPkgApi\.namespace\(\\"Tools\.Chat\\"/);
-  assert.match(generator, /return toolCall\(/);
-  assert.match(engine, /host\.for_toolpkg_execution_context\(context\)\?/);
-  assert.match(engine, /"__operitNativeCallToolStructured"/);
-  assert.doesNotMatch(engine, /__operitNativeChatExtensionAsync/);
-  assert.doesNotMatch(handler, /RuntimeToolExecutor|RuntimeToolRequest|executeRuntimeOperation/);
-  const binding = handler.slice(handler.indexOf("fn for_toolpkg_execution_context("), handler.indexOf("fn get_tool_catalog("));
-  assert.match(binding, /getToolPkgContainerRuntime\(&context\.container_package_name\)/);
-  assert.match(binding, /getEnabledToolPkgContainerRuntimes\(\)\.iter\(\)[\s\S]*?runtime\.packageName == context\.container_package_name/);
-  assert.match(binding, /let mut host = self\.clone\(\)/);
-  assert.match(binding, /host\.authenticatedExtensionOwner = Some\(context\.container_package_name\.clone\(\)\)/);
-  assert.doesNotMatch(binding, /request\.parameters|parameters\.get\(|namespace.*get\(/);
-  const registration = source("core/crates/tool/services/src/tools/ToolRegistration.rs");
-  const execution = source("core/crates/tool/services/src/ToolExecutionManager.rs");
-  const direct = execution.slice(execution.indexOf("pub fn requirePluginOwner("), execution.indexOf("/// Borrows the exact captured model turn"));
-  for (const method of ["read", "write", "delete"]) {
-    assert.match(registration, new RegExp("runtimeSupport\\(\\)\\." + method + "ChatExtension\\(&context\\.requirePluginOwner\\(\\)\\?"));
-  }
-  assert.doesNotMatch(direct, /execute_tool_call|ToolParameter|unwrap_or_default|SoftwareSettings\.exec/);
-  assert.match(direct, /getToolPkgContainerRuntime\(owner\)/);
-  assert.match(direct, /getEnabledToolPkgContainerRuntimes\(\)\.iter\(\)[\s\S]*?runtime\.packageName == owner/);
-});
-
 /** Checks the actual package tool executor releases its registry mutex before native per-engine context authentication. */
 test("package engine creation authenticates outside the original registry lock", () => {
   const runtime = source("core/crates/tool/services/src/tools/ToolJsRuntime.rs");
@@ -196,14 +161,14 @@ test("configuration resolves owner-scoped extensions and requires a native-owned
   const request = schema.slice(schema.indexOf("pub struct ChatConfigurationRequest"), schema.indexOf("pub struct ChatResourceRoute"));
   assert.doesNotMatch(request, /pub selection\s*:|ChatConfigurationBinding/);
   assert.match(request, /chatExtension: Option<JsonObject>/);
-  assert.match(request, /messageExtension: Option<JsonObject>/);
+  assert.doesNotMatch(request, /messageExtension:|executionData:/);
   const result = schema.slice(schema.indexOf("pub struct ChatConfigurationResult"), schema.indexOf("impl ChatConfigurationResult"));
-  assert.match(result, /pub messageExtension: JsonObject/);
+  assert.match(result, /pub executionData: JsonObject/);
   assert.match(result, /#\[serde\(skip\)\]\s*pub extensionOwner: String/);
   assert.doesNotMatch(runtime, /ChatConfigurationBinding|chat\.configuration\.binding|pub async fn (?:readBinding|writeBinding|deleteBinding)/);
   const normal = runtime.slice(runtime.indexOf("pub async fn resolve("), runtime.indexOf("pub async fn resolveDraft("));
   const draft = runtime.slice(runtime.indexOf("pub async fn resolveDraft("), runtime.indexOf("async fn invokeResolve("));
-  assert.match(normal, /readChatExtension\(&self\.ownerPackage, &target\)/);
+  assert.match(normal, /self\.invokeResolve\(request\)\.await/);
   assert.doesNotMatch(normal, /resolveDraft|unwrap_or_default/);
   assert.doesNotMatch(draft, /readChatExtension|ChatHistoryManager/);
   assert.match(runtime, /result\.extensionOwner = owner\.to_string\(\)/);
@@ -211,7 +176,7 @@ test("configuration resolves owner-scoped extensions and requires a native-owned
   assert.match(schema, /fn authenticated_descriptor\(raw: Value\)/);
 });
 /** Checks the shared route schema against its actual production constructor and target-side configuration consumer. */
-test("Core route resumes the exact native-owned snapshot with matching generic fields", () => {
+test("Core route resumes its author through current configuration without carrying frozen settings", () => {
   const support = source("core/crates/tool/services/src/runtime_support.rs");
   const processing = source("core/crates/runtime/application/src/services/core/MessageProcessingDelegate.rs");
   const core = source("core/crates/runtime/application/src/services/ChatServiceCore.rs");
@@ -225,8 +190,8 @@ test("Core route resumes the exact native-owned snapshot with matching generic f
   assert.doesNotMatch(declaration[1], /roleCardId|roleName|groupOrchestrationMode|groupParticipantNamesText|enableMemoryAutoUpdate/);
   assert.match(constructor[1], /participantId:\s*completionContextConfiguration\.profile\.id\.clone\(\)/);
   assert.match(constructor[1], /extensionOwner:\s*completionContextConfiguration\.extensionOwner\.clone\(\)/);
-  assert.match(constructor[1], /messageExtension:\s*completionContextConfiguration\.messageExtension\.clone\(\)/);
+  assert.doesNotMatch(constructor[1], /messageExtension:|executionData:/);
   assert.match(core, /api\.extensionOwner\(\) != resumeContext\.extensionOwner/);
-  assert.match(core, /messageExtension:\s*Some\(resumeContext\.messageExtension\.clone\(\)\)/);
+  assert.doesNotMatch(core, /resumeContext\.(messageExtension|executionData)/);
   assert.match(core, /participantId:\s*Some\(resumeContext\.participantId\.clone\(\)\)/);
 });

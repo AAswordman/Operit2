@@ -22,7 +22,7 @@ function strictCapability(name, members) {
 
 /** Creates explicit Chat/AI fixtures around real temporary disk IO, never a substitute domain backend. */
 export async function createMemoryJobsHarness(testContext) {
-  const disk = await createDiskHarness(testContext), modelCalls = [], rangeCalls = [], findCalls = [], outcomes = [];
+  const disk = await createDiskHarness(testContext, { legacyIdentity: "default" }), modelCalls = [], rangeCalls = [], findCalls = [], outcomes = [];
   const history = [];
   for (let index = 0; index < 32; index += 1) {
     history.push({ sender: index % 2 === 0 ? "user" : "ai", content: "Controlled conversation fact " + index,
@@ -32,16 +32,10 @@ export async function createMemoryJobsHarness(testContext) {
   const chat = { id: CONTROLLED_CHAT_ID, title: "Explicit controlled memory conversation", messageCount: history.length,
     createdAt: String(SOURCE_TIME), updatedAt: String(SOURCE_TIME + 1000), isCurrent: true, inputTokens: 0, outputTokens: 0 };
   let nextRangeEffect = null, chatExtension = null;
-  const extensionCalls = [], messageExtensions = new Map();
-  /** Supplies one explicitly controlled complete send snapshot for the fixture's original assistant identity. */
-  function messageMarker() {
-    const profile = { id: "default", name: "Controlled historical participant", avatarUri: null, introPrompt: "Controlled role prompt", userPreferencesText: "Controlled USER snapshot", openingStatement: "Controlled opening",
-      modelBinding: { providerId: "controlled-fixture-provider", modelId: "controlled-fixture-model" }, ttsConfigId: "controlled-fixture-voice",
-      toolAccess: { enabled: true, allowedBuiltinTools: ["read_file"], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] },
-      resources: [{ key: CONTROLLED_OWNER, readable: true, writable: true }] };
-    return { version: 1, selection: "card:default", promptFunctionType: "CHAT", primaryOwnerKey: CONTROLLED_OWNER, profile, participants: [plain(profile)] };
-  }
-  for (const message of history) if (message.sender === "ai") messageExtensions.set(JSON.stringify([message.timestamp, message.variantIndex]), messageMarker());
+  const extensionCalls = [], executionDatas = new Map();
+  /** Models the minimal author marker Core writes alongside each message. */
+  function messageMarker() { return { participantId: "default" }; }
+  for (const message of history) if (message.sender === "ai") executionDatas.set(JSON.stringify([message.timestamp, message.variantIndex]), messageMarker());
   /** Requires an exact existing generic record revision rather than fabricating an absent record's namespace. */
   function extensionTarget(target) {
     assert.equal(target.chatId, chat.id);
@@ -77,20 +71,20 @@ export async function createMemoryJobsHarness(testContext) {
       extensionCalls.push({ method: "readExtension", target: plain(target) });
       const key = extensionTarget(target);
       if (key === null) return { extension: chatExtension === null ? null : plain(chatExtension) };
-      return { extension: messageExtensions.has(key) ? plain(messageExtensions.get(key)) : null };
+      return { extension: executionDatas.has(key) ? plain(executionDatas.get(key)) : null };
     },
     /** Writes the exact supplied namespace object without implementing any plugin-domain association rules. */
     async writeExtension(target, value) {
       extensionCalls.push({ method: "writeExtension", target: plain(target), value: plain(value) });
       const key = extensionTarget(target);
-      if (key === null) chatExtension = plain(value); else messageExtensions.set(key, plain(value));
+      if (key === null) chatExtension = plain(value); else executionDatas.set(key, plain(value));
       return { extension: plain(value) };
     },
     /** Deletes only the controlled owner namespace and does not synthesize a missing-record success. */
     async deleteExtension(target) {
       extensionCalls.push({ method: "deleteExtension", target: plain(target) });
       const key = extensionTarget(target);
-      if (key !== null) return { deleted: messageExtensions.delete(key) };
+      if (key !== null) return { deleted: executionDatas.delete(key) };
       const existed = chatExtension !== null; chatExtension = null; return { deleted: existed };
     },
     /** Implements only the exact ID lookup used by production, with the current real SDK result fields. */
@@ -126,7 +120,7 @@ export async function createMemoryJobsHarness(testContext) {
       const outcome = outcomes.shift();
       switch (outcome.kind) {
         case "error": throw outcome.error;
-        case "error-and-status-write": disk.failNext("storage.transaction", outcome.statusError); throw outcome.error;
+        case "error-and-status-write": disk.failNext("storage.commit", outcome.statusError); throw outcome.error;
         case "output": return { text: outcome.text, turns: [{ kind: "ASSISTANT", content: outcome.text, metadata: { fixture: "controlled" } }],
           finishReason: "stop", metadata: { fixture: "controlled-chat-ai" }, receivedAt: SOURCE_TIME + 5000,
           /** Formats only the explicitly queued controlled response. */
@@ -138,10 +132,10 @@ export async function createMemoryJobsHarness(testContext) {
   });
   const tools = strictCapability("Tools", { Files: disk.files, Storage: disk.storage, Chat: controlledChat });
   const statePath = path.join(disk.directory, "character-memory", "state.json");
-  const snapshotStorage = loadModule("src/chat-storage.ts", { ...disk.globals, Tools: tools });
-  /** Writes a real typed snapshot before assigning its generic Core reference. */
-  async function saveMessageSnapshot(timestamp, variantIndex) {
-    messageExtensions.set(JSON.stringify([timestamp, variantIndex]), await snapshotStorage.storeSnapshot(messageMarker()));
+  const chatStorage = loadModule("src/chat-storage.ts", { ...disk.globals, Tools: tools });
+  /** Assigns only the real author identity; no plugin record is written. */
+  async function saveMessageAuthor(timestamp, variantIndex) {
+    executionDatas.set(JSON.stringify([timestamp, variantIndex]), messageMarker());
   }
 
   /** Opens a fresh production main module against the same real disk after the previous runtime is retired. */
@@ -155,12 +149,7 @@ export async function createMemoryJobsHarness(testContext) {
         assert.equal(plugin.lifecycle.length, 1); assert.equal(plugin.lifecycle[0].id, "service-initialize");
         assert.equal(plugin.lifecycle[0].event, "application_on_create");
         await plugin.lifecycle[0].function({ event: "application_on_create", eventName: "application_on_create", eventPayload: {} });
-        for (const message of history) {
-          const key = JSON.stringify([message.timestamp, message.variantIndex]);
-          if (message.sender === "ai" && messageExtensions.get(key)?.schemaVersion !== 1) {
-            await saveMessageSnapshot(message.timestamp, message.variantIndex);
-          }
-        }
+
       },
       /** Writes the real plugin chat selection through its registered typed API. */
       async bind() { return plugin.api("chat.configuration.binding.write", { chatId: chat.id, selection: "card:default" }); },
@@ -215,10 +204,10 @@ export async function createMemoryJobsHarness(testContext) {
     assertOutputsConsumed() { assert.equal(outcomes.length, 0, "A controlled model response was scheduled but never invoked"); },
     /** Returns an explicitly present source message for registered callback input. */
     message(index) { assert.ok(Number.isInteger(index) && index >= 0 && index < history.length); return plain(history[index]); },
-    /** Removes one explicitly saved assistant snapshot while leaving the actual message revision present. */
-    removeMessageMarker(timestamp, variantIndex) { assert.equal(messageExtensions.delete(JSON.stringify([timestamp, variantIndex])), true); },
-    /** Removes the current chat marker to prove background assistant work uses only immutable message snapshots. */
-    async removeChatMarker() { await snapshotStorage.deleteChatBinding(chat.id); },
+    /** Removes one explicitly saved assistant author identity while leaving the actual message revision present. */
+    removeExecutionData(timestamp, variantIndex) { assert.equal(executionDatas.delete(JSON.stringify([timestamp, variantIndex])), true); },
+    /** Removes the current chat marker to prove background assistant work uses only the author identity and current role settings. */
+    async removeChatMarker() { await chatStorage.deleteChatBinding(chat.id); },
     /** Selects a genuinely present controlled variant and changes source metadata before the next scheduled read. */
     async selectNewVariant(timestamp) {
       const messages = history.filter(
@@ -227,7 +216,7 @@ export async function createMemoryJobsHarness(testContext) {
       );
       assert.equal(messages.length, 1); const message = messages[0];
       message.variantCount += 1; message.variantIndex = message.variantCount - 1; message.content += " [Controlled selected variant]";
-      await saveMessageSnapshot(timestamp, message.variantIndex); historyChanged();
+      await saveMessageAuthor(timestamp, message.variantIndex); historyChanged();
     },
     /** Deletes exactly one claimed source and updates the controlled host's actual summary metadata. */
     deleteMessage(timestamp) {

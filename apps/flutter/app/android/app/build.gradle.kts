@@ -280,7 +280,9 @@ androidComponents {
                 val bindgenClangArgs =
                     "--target=${target.rustTarget} --sysroot=${ndkToolchain.parentFile.resolve("sysroot").clangPath()} -resource-dir=${clangResourceDir.clangPath()}"
                 val ccEnvTarget = target.rustTarget.replace("-", "_")
+                environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
                 environment("CC_$ccEnvTarget", linker.absolutePath)
+                environment("CXX_$ccEnvTarget", ndkToolchain.resolve("${linkerPrefix}${apiLevel}-clang++${if (operitIsWindows) ".cmd" else ""}").absolutePath)
                 environment("AR_$ccEnvTarget", ar.absolutePath)
                 environment("CARGO_TARGET_${target.envTarget}_LINKER", linker.absolutePath)
                 environment("CARGO_TARGET_${target.envTarget}_AR", ar.absolutePath)

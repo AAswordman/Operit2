@@ -8,7 +8,7 @@ use serde_json::Value;
 /// Defines the complete wire value and ordinary preference encoding for one theme field.
 #[derive(Clone, Copy)]
 pub(crate) struct SnapshotField {
-    json_key: &'static str,
+    pub(crate) json_key: &'static str,
     pub(crate) preference_key: &'static str,
     pub(crate) kind: FieldKind,
 }
@@ -586,39 +586,103 @@ pub(crate) fn readThemePreferenceSnapshot(
     Ok(snapshot)
 }
 
-/// Projects the released role-scoped keys and global user avatar into the ordinary snapshot codec.
+/// Converts released string scalars and signed ARGB integers through the current field schema.
+pub(crate) fn decodeLegacyThemePreference(
+    field: &SnapshotField,
+    value: Value,
+) -> Result<Value, PreferencesDataStoreError> {
+    let mut decoded = match (field.kind, value) {
+        (
+            FieldKind::Boolean | FieldKind::OptionalColor | FieldKind::Number { .. },
+            Value::String(encoded),
+        ) => serde_json::from_str::<Value>(&encoded)?,
+        (_, value) => value,
+    };
+    if matches!(field.kind, FieldKind::OptionalColor) && !decoded.is_null() {
+        let number = decoded.as_i64().ok_or_else(|| {
+            invalidSnapshot(
+                field.json_key,
+                &format!("invalid legacy ARGB value: {decoded}"),
+            )
+        })?;
+        if number < i32::MIN as i64 || number > u32::MAX as i64 {
+            return Err(invalidSnapshot(
+                field.json_key,
+                &format!("legacy ARGB value outside 32-bit range: {decoded}"),
+            ));
+        }
+        decoded = Value::from(number as u32);
+    }
+    validateField(field, &decoded)?;
+    Ok(decoded)
+}
+
+/// Converts ordinary appearance preferences before publishing the new user schema version.
+pub(crate) fn migrateLegacyThemePreferences(
+    preferences: &mut Preferences,
+) -> Result<(), PreferencesDataStoreError> {
+    for field in snapshotFields() {
+        let key = stringPreferencesKey(field.preference_key);
+        if let Some(value) = preferences.get(&key).cloned() {
+            preferences.set(&key, decodeLegacyThemePreference(field, value)?);
+        }
+    }
+    Ok(())
+}
+
+/// Converts historical snapshots at the migration boundary and removes fields the current schema no longer owns.
+pub(crate) fn migrateLegacyThemeSnapshot(
+    snapshot: &mut BTreeMap<String, Value>,
+) -> Result<(), PreferencesDataStoreError> {
+    snapshot.retain(|key, _| snapshotFields().any(|field| field.json_key == key));
+    for field in snapshotFields() {
+        if let Some(value) = snapshot.get_mut(field.json_key) {
+            *value = decodeLegacyThemePreference(field, value.clone())?;
+        }
+    }
+    validateThemePreferenceSnapshot(snapshot)
+}
+
+/// Collects exact cleanup inputs and converts only legacy settings supported by the current theme schema.
 pub(crate) fn readLegacyCharacterThemeSnapshot(
     preferences: &Preferences,
     prefix: &str,
-) -> Result<(BTreeMap<String, Value>, Vec<(String, String)>), PreferencesDataStoreError> {
+) -> Result<(BTreeMap<String, Value>, Vec<(String, Value)>), PreferencesDataStoreError> {
     let mut scoped = operit_store::PreferencesDataStore::emptyPreferences();
     let mut source_entries = Vec::new();
     for (key, value) in preferences.iterEntries() {
         if let Some(field) = key.strip_prefix(prefix) {
-            if !SNAPSHOT_FIELDS.iter().any(|entry| entry.preference_key == field)
-                && !matches!(field, "use_system_theme" | "custom_ai_avatar_uri")
-            {
-                return Err(invalidSnapshot(key, "unknown legacy role appearance preference"));
+            source_entries.push((key.to_string(), value.clone()));
+            // The released resolver reads the user avatar globally and does not apply scoped AI avatars.
+            if matches!(field, "custom_user_avatar_uri" | "custom_ai_avatar_uri") {
+                continue;
             }
-            let encoded = serde_json::from_value::<String>(value.clone())?;
-            source_entries.push((key.to_string(), encoded.clone()));
-            // The released resolver always reads the user avatar globally, even when a scoped key exists.
-            if field != "custom_user_avatar_uri" && field != "custom_ai_avatar_uri" {
-                let descriptor = SNAPSHOT_FIELDS.iter().find(|entry| entry.preference_key == field);
-                let decoded = match descriptor.map(|entry| entry.kind) {
-                    Some(FieldKind::Boolean | FieldKind::OptionalColor | FieldKind::Number { .. }) => serde_json::from_str::<Value>(&encoded)?,
-                    _ if field == "use_system_theme" => serde_json::to_value(serde_json::from_str::<bool>(&encoded)?)?,
-                    _ => Value::String(encoded),
-                };
-                scoped.set(&stringPreferencesKey(field), decoded);
-            }
+            let descriptor = match field {
+                "use_system_theme" => SnapshotField {
+                    json_key: "useSystemTheme",
+                    preference_key: "use_system_theme",
+                    kind: FieldKind::Boolean,
+                },
+                _ => {
+                    let Some(descriptor) = snapshotFields().find(|entry| entry.preference_key == field) else {
+                        continue;
+                    };
+                    *descriptor
+                }
+            };
+            let decoded = decodeLegacyThemePreference(&descriptor, value.clone())?;
+            scoped.set(&stringPreferencesKey(field), decoded);
         }
     }
     if let Some(avatar) = preferences.get(&stringPreferencesKey("custom_user_avatar_uri")) {
-        scoped.set(&stringPreferencesKey("custom_user_avatar_uri"), avatar.clone());
+        scoped.set(
+            &stringPreferencesKey("custom_user_avatar_uri"),
+            avatar.clone(),
+        );
     }
     // These are the released resolver's declared initial fields, independent of current global appearance.
-    let initial: BTreeMap<String, Value> = serde_json::from_str(r#"{
+    let initial: BTreeMap<String, Value> = serde_json::from_str(
+        r#"{
   "themeMode": "system",
   "useCustomColors": false,
   "customPrimaryColor": null,
@@ -697,8 +761,12 @@ pub(crate) fn readLegacyCharacterThemeSnapshot(
   "showMessageTimingStats": false,
   "showMessageTimestamp": false,
   "showInputProcessingStatus": true
-}"#)?;
-    Ok((readThemePreferenceSnapshot(&scoped, &initial)?, source_entries))
+}"#,
+    )?;
+    Ok((
+        readThemePreferenceSnapshot(&scoped, &initial)?,
+        source_entries,
+    ))
 }
 
 /// Validates exact ordinary appearance keys before staging a partial configuration edit.

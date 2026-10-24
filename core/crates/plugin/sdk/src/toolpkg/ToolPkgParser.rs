@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::package::{LocalizedText, ToolPackage};
 use crate::toolpkg::ToolPkgApiVersion::{
-    currentToolPkgApiVersionText, requireSupportedToolPkgApiVersion, ToolPkgApiVersion,
+    defaultToolPkgApiVersionText, requireSupportedToolPkgApiVersion, ToolPkgApiVersion,
 };
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgTemplateModels::{
@@ -633,7 +633,7 @@ pub struct ToolPkgManifest {
     pub toolpkgId: String,
     #[serde(default)]
     pub version: String,
-    #[serde(rename = "api_version", default = "currentToolPkgApiVersionText")]
+    #[serde(rename = "api_version", default = "defaultToolPkgApiVersionText")]
     pub apiVersion: String,
     /// Names the self-contained TypeScript client distributed to dependent packages.
     #[serde(rename = "public_api", default)]
@@ -657,6 +657,9 @@ pub struct ToolPkgManifest {
     pub enabledByDefault: bool,
     #[serde(rename = "market_only", default)]
     pub marketOnly: bool,
+    /// Restricts installation to one explicit device or space scope.
+    #[serde(rename = "installation_scope", default)]
+    pub installationScope: Option<crate::javascript::ToolPkgConfigScope>,
     #[serde(default)]
     pub subpackages: Vec<ToolPkgManifestSubpackage>,
     /// Declares theme templates alongside the other ToolPkg capabilities.
@@ -782,6 +785,17 @@ pub struct ToolPkgParser;
 pub struct ToolPkgArchiveParser;
 
 impl ToolPkgArchiveParser {
+    /// Reads installation restrictions before any registration script can create scoped data.
+    #[allow(non_snake_case)]
+    pub fn readInstallationScope(archiveBytes: &[u8]) -> Result<Option<crate::javascript::ToolPkgConfigScope>, String> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(archiveBytes))
+            .map_err(|error| error.to_string())?;
+        let index = Self::buildZipEntryIndex(&mut archive);
+        let entry = findManifestEntry(&index.entryNames).ok_or("ToolPkg manifest is missing")?;
+        let text = Self::readZipEntryText(&mut archive, &index, &entry).ok_or("Cannot read ToolPkg manifest")?;
+        Ok(parseToolPkgManifest(&text, &entry)?.installationScope)
+    }
+
     /// Resolves ordinary ToolPkg metadata once and validates its declared theme templates.
     #[allow(non_snake_case)]
     pub fn readThemeTemplates(archiveBytes: &[u8]) -> Result<Vec<operit_plugin_theme::ValidatedThemeTemplate>, String> {
@@ -1253,6 +1267,10 @@ impl ToolPkgArchiveParser {
         }
 
         let mut manifestExtensions = manifest.extensionFields.clone();
+        if let Some(scope) = manifest.installationScope {
+            manifestExtensions.insert("installation_scope".to_string(), serde_json::to_value(scope)
+                .map_err(|error| error.to_string())?);
+        }
         if !manifest.workspaceTemplates.is_empty() {
             manifestExtensions.insert(
                 "workspace_templates".to_string(),
@@ -2611,17 +2629,24 @@ mod logo_tests {
 mod api_compatibility_tests {
     use super::*;
 
-    /// Verifies archive loading preserves the declared API contract through registration and runtime metadata.
+    /// Verifies omitted and explicit API contracts reach registration, runtime metadata, and prerequisites.
     #[test]
-    fn loads_explicit_legacy_and_current_contracts() {
-        for version in ["1.0.0", "1.0.1", "2.0.0"] {
-            let manifest = serde_json::json!({
+    fn loads_omitted_and_explicit_api_contracts() {
+        for (declared, version) in [
+            (None, "1.0.0"),
+            (Some("1.0.0"), "1.0.0"),
+            (Some("1.0.1"), "1.0.1"),
+            (Some("2.0.0"), "2.0.0"),
+        ] {
+            let mut manifest = serde_json::json!({
                 "schema_version": 1,
                 "toolpkg_id": "compat_fixture",
-                "api_version": version,
                 "main": "main.js"
-            })
-            .to_string();
+            });
+            if let Some(declared) = declared {
+                manifest["api_version"] = serde_json::json!(declared);
+            }
+            let manifest = manifest.to_string();
             let entries = BTreeMap::from([
                 ("manifest.json".to_string(), manifest),
                 ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
@@ -2825,15 +2850,15 @@ mod api_compatibility_tests {
         assert!(templates[0].file_bytes("main.js").is_none());
     }
 
-    /// Keeps the existing current-contract default explicit and rejects undeclared future contracts.
+    /// Defaults omitted manifest versions to the original contract and rejects unadmitted future versions.
     #[test]
-    fn preserves_manifest_default_and_rejects_future_contracts() {
+    fn defaults_manifest_to_v1_and_rejects_future_contracts() {
         let manifest = parseToolPkgManifest(
-            r#"{"toolpkg_id":"current_fixture","main":"main.js"}"#,
+            r#"{"toolpkg_id":"legacy_fixture","main":"main.js"}"#,
             "manifest.json",
         )
-        .expect("current manifest must parse");
-        assert_eq!(manifest.apiVersion, "2.0.0");
+        .expect("legacy manifest must parse");
+        assert_eq!(manifest.apiVersion, "1.0.0");
         for version in ["1.0.2", "2.0.1", "3.0.0"] {
             assert!(requireSupportedToolPkgApiVersion(version).is_err());
         }
@@ -3068,4 +3093,20 @@ mod navigation_registration_tests {
         assert!(load_sidebar_navigation(vec![invalid], entry).unwrap_err().contains("route must use compose_dsl for chat_input_menu_sections"));
     }
 
+}
+
+#[cfg(test)]
+mod installation_scope_tests {
+    use super::*;
+    /// Accepts exactly the declared device and space installation scopes.
+    #[test]
+    fn installation_scope_uses_the_strict_rust_scope_enum() {
+        for (text, expected) in [("device", crate::javascript::ToolPkgConfigScope::Device), ("space", crate::javascript::ToolPkgConfigScope::Space)] {
+            let manifest = parseToolPkgManifest(&serde_json::json!({"toolpkg_id":"scope.fixture", "main":"main.js", "installation_scope":text}).to_string(), "manifest.json").unwrap();
+            assert_eq!(manifest.installationScope, Some(expected));
+        }
+        for scope in [serde_json::json!("workspace"), serde_json::json!("local"), serde_json::json!("SPACE"), serde_json::json!(true), serde_json::json!(1)] {
+            assert!(parseToolPkgManifest(&serde_json::json!({"toolpkg_id":"scope.fixture", "main":"main.js", "installation_scope":scope}).to_string(), "manifest.json").is_err());
+        }
+    }
 }

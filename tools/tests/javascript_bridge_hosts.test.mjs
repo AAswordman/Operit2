@@ -10,7 +10,7 @@ function source(path) { return readFileSync(new URL(path, root), 'utf8'); }
 
 /** Installs the actual Web host registry and records its structured Rust submission ABI. */
 function runtime() {
-  const context = vm.createContext({});
+  const context = vm.createContext({structuredClone});
   vm.runInContext(source('hosts/web/src/javascript_promises.js'), context);
   const calls = [];
   const binding = context.__operitHostPromiseRegistry.binding((...args) => calls.push(args));
@@ -18,7 +18,7 @@ function runtime() {
   return { context, calls, registry: context.__operitHostPromiseRegistry };
 }
 
-/** Confirms Web host requests preserve JSON value semantics without a text transport. */
+/** Confirms Web host requests preserve direct data fields without a text transport. */
 test('Web host snapshot handles nested data and immutable captured intrinsics', async () => {
   const { context, calls, registry } = runtime();
   const pending = vm.runInContext(`
@@ -27,18 +27,20 @@ test('Web host snapshot handles nested data and immutable captured intrinsics', 
       text: '中\\n"', integer: 7, large: 1e16,
       date: new Date('2020-01-01T00:00:00Z'),
       nested: { x: true, omit: undefined }, array: [undefined, , NaN, 2],
-      boxed: new Boolean(false), ['__proto__']: { polluted: true },
-      custom: { toJSON: function(key) { return { key: key }; } }
+      boxed: new Boolean(false), bigBoxed: Object(1n), ['__proto__']: { polluted: true },
+      custom: { value: 3, toJSON: function() { throw Error('hook used'); } }
     });
   `, context);
   const [id, value] = calls[0];
   assert.equal(value.text, '中\n"');
   assert.equal(value.integer, 7);
   assert.equal(value.large, 1e16);
-  assert.equal(value.date, '2020-01-01T00:00:00.000Z');
+  assert.equal(Object.keys(value.date).length, 0);
   assert.deepEqual([...value.array], [null, null, null, 2]);
-  assert.equal(value.boxed, false);
-  assert.equal(value.custom.key, 'custom');
+  assert.equal(Object.keys(value.boxed).length, 0);
+  assert.equal(Object.keys(value.bigBoxed).length, 0);
+  assert.equal(value.custom.value, 3);
+  assert.equal(Object.hasOwn(value.custom, 'toJSON'), false);
   assert.equal(Object.hasOwn(value.nested, 'omit'), false);
   assert.equal(Object.hasOwn(value, '__proto__'), true);
   assert.equal(value.polluted, undefined);
@@ -93,14 +95,48 @@ test('Web host Promise cancellation is scoped and settlements are exact once', a
   const first = context.request('first', {});
   const second = context.request('second', {});
   let cancelledCompleted = false;
-  first.then(() => { cancelledCompleted = true; });
+  const cancelled = first.then(() => { cancelledCompleted = true; });
+  const rejected = assert.rejects(cancelled, reason => reason === 'JavaScript execution was cancelled');
   registry.cancel('first');
   registry.settle(calls[0][0], 'cancelled', false);
   registry.settle(calls[1][0], 'second', false);
   registry.settle(calls[1][0], 'duplicate', false);
   assert.equal(await second, 'second');
-  await Promise.resolve();
+  await rejected;
   assert.equal(cancelledCompleted, false);
+});
+
+/** Ensures cancellation unwinds a suspended operation and releases an already waiting successor. */
+test('Web host cancellation runs finally and releases the next lifecycle operation', async () => {
+  const { context, calls, registry } = runtime();
+  const first = vm.runInContext(`
+    globalThis.completed = [];
+    globalThis.release = null;
+    globalThis.available = new Promise(resolve => { release = resolve; });
+    (async function() {
+      try {
+        await request('weather', {});
+        completed.push('weather');
+      } finally {
+        completed.push('released');
+        release();
+      }
+    })();
+  `, context);
+  const rejected = assert.rejects(first, reason => reason === 'JavaScript execution was cancelled');
+  const next = vm.runInContext(`
+    (async function() {
+      await available;
+      completed.push('before_create');
+      return 'new chat';
+    })();
+  `, context);
+  registry.cancel('weather');
+  await rejected;
+  assert.equal(await next, 'new chat');
+  registry.settle(calls[0][0], 'late weather result', false);
+  await Promise.resolve();
+  assert.deepEqual([...context.completed], ['released', 'before_create']);
 });
 
 /** Ensures submission exceptions release their pending slot and later requests remain usable. */
@@ -117,7 +153,7 @@ test('Web host validates conversion before retaining completion handles', () => 
   const { context, calls } = runtime();
   vm.runInContext(`
     var cycle = {}; cycle.self = cycle;
-    var invalid = [cycle, { bigint: 1n }, Object(1n), undefined, function() {}, Symbol('value'),
+    var invalid = [cycle, { bigint: 1n }, undefined, function() {}, Symbol('value'),
       { get value() { throw new Error('getter failure'); } }];
   `, context);
   for (const value of context.invalid) assert.throws(() => context.request('scope', value));
@@ -142,6 +178,8 @@ function timerRuntime() {
   const callTimers = new Set();
   const failures = [];
   const context = vm.createContext({
+    /** Receives the exact native execution owner. */
+    __operitNativeActivateCall() {},
     __operitCurrentCallId: 'owner',
     /** Records each native timer Promise under its explicit cancellation scope. */
     __operitNativeScheduleJavaScriptTimer(scope, delay) {
@@ -263,9 +301,9 @@ test('bridge source exposes only mandatory structured asynchronous transports', 
     assert.doesNotMatch(source(path), /callToolAsync|callToolSerialized|JsAsyncCallback::Legacy|SdkCallback|JsCallbackDelivery|__operitNativeInvokeToolPkgIpcAsync|__operitParseToolResult|NativeInterface/);
   }
   for (const path of ['hosts/web/src/javascript_runtime.rs',
-    'hosts/common/operit-host-native-scheduler/src/javascript_runtime.rs']) {
+    'hosts/common/operit-host-native-scheduler/src/javascript_engine.rs']) {
     assert.match(source(path), /fn registerHostJavaScriptAsyncJsonFunction\(/);
-    assert.match(source(path), /fn registerHostJavaScriptJsonFunction\(/);
+    assert.match(source(path), /fn registerHostJavaScriptFunction\(/);
     assert.doesNotMatch(source(path), /registerHostJavaScriptStringFunction|registerHostJavaScriptVoidFunction/);
     assert.match(source(path), /fn settleHostJavaScriptPromise\(/);
     assert.match(source(path), /fn cancelHostJavaScriptPromises\(/);
@@ -280,6 +318,8 @@ function ipcRuntime(native) {
   let retained = 0;
   const activations = [];
   const context = vm.createContext({
+    /** Receives the exact native execution owner. */
+    __operitNativeActivateCall() {},
     ipcApi: {}, packageTarget: 'fixture', callId: 'owner', __operitCurrentCallId: 'owner',
     /** Preserves empty routing options without guessing at transport results. */
     __operitText(value) { return value == null ? '' : String(value); },
@@ -335,4 +375,52 @@ test('cross-context IPC releases ownership for business, native and synchronous 
     await Promise.resolve();
     assert.equal(retained(), 0);
   }
+});
+
+
+/** SDK data transfer never consults serialization hooks and preserves its own property shape. */
+test('Web SDK data binding transfers fields without toJSON or JSON codecs', () => {
+  const {context, registry} = runtime();
+  let calls = 0;
+  context.sendData = registry.syncBinding(value => { calls++; return value; });
+  const result = vm.runInContext(`
+    JSON.parse = JSON.stringify = function() { throw Error('JSON codec used'); };
+    Object.defineProperty(Object.prototype, 'toJSON', {get() { throw Error('Inherited hook used'); }, configurable:true});
+    var props = {text:'角色卡', enabled:true};
+    Object.defineProperty(props, 'toJSON', {get() { throw Error('Own hook used'); }});
+    sendData({revision:2, instances:[{id:'row', values:[props, 7, null]}], omitted:undefined, ['__proto__']:{safe:true}});
+  `, context);
+  assert.equal(calls, 1);
+  assert.equal(result.revision, 2);
+  assert.equal(result.instances[0].values[0].text, '角色卡');
+  assert.equal(result.instances[0].values[0].enabled, true);
+  assert.equal(result.instances[0].values[1], 7);
+  assert.equal(result.instances[0].values[2], null);
+  assert.equal(Object.hasOwn(result, 'omitted'), false);
+  assert.equal(Object.hasOwn(result, '__proto__'), true);
+  assert.equal(result.safe, undefined);
+  assert.throws(() => vm.runInContext('var cycle={};cycle.self=cycle;sendData(cycle)', context), /cycle/);
+  assert.throws(() => vm.runInContext('sendData({value:1n})', context), /BigInt/);
+  assert.equal(calls, 1);
+});
+
+/** Consumes a byte allocation once while retaining the callback's independent ownership. */
+test('Web host binary arguments use the existing binding and detach every producer alias', () => {
+  const {context, registry} = runtime();
+  let bytes;
+  context.submitBytes = registry.syncBinding(value => { bytes = value; return null; });
+  vm.runInContext('var storage=new Uint8Array([2,5,11,17]);var alias=storage.subarray(1,3);submitBytes(alias)',context);
+  assert.deepEqual([...bytes],[5,11]);
+  assert.equal(vm.runInContext('storage.byteLength+alias.byteLength',context),0);
+});
+
+/** Keeps nested application byte values under the ordinary structured-data contract. */
+test('Web host transfers only top-level binary arguments', () => {
+  const {context, registry} = runtime();
+  let result;
+  context.submitNested = registry.syncBinding(value => { result = value; return null; });
+  vm.runInContext('var nestedBytes=new Uint8Array([7,13]);submitNested({data:nestedBytes})', context);
+  assert.equal(result.data[0],7);
+  assert.equal(result.data[1],13);
+  assert.equal(vm.runInContext('nestedBytes.byteLength',context),2);
 });

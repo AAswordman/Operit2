@@ -54,7 +54,7 @@ test("native preview reads saved content in one page and expands named configura
     characterSetting: "你是一位可靠、温和的助手。\n认真倾听，给出清楚、具体的回答；遇到不确定的事情，坦诚说明。",
     openingStatement: "你好，今天有什么想一起聊聊的？", otherContentChat: "保持自然的交流节奏，用简洁的语言表达。",
     otherContentVoice: "", advancedCustomPrompt: "", marks: "记录每次对话中值得记住的细节。", attachedTagIds: [tag.id],
-    chatModelBindingMode: "FIXED_MODEL", chatModelId: "qwen-plus", ttsConfigId: "tts-one", memoryBindingMode: "SHARED", sharedMemoryId: store.id,
+    chatModelBindingMode: "FIXED_MODEL", chatModelId: "qwen-plus", chatProviderId: "dashscope", ttsConfigId: "tts-one", memoryBindingMode: "SHARED", sharedMemoryId: store.id,
     sharedMemoryMounts: [{ sharedMemoryId: store.id, readable: true, writable: false }],
     toolAccessConfig: { enabled: true, allowedBuiltinTools: ["fixture-builtin"], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] },
   } });
@@ -390,7 +390,7 @@ test("the sole native editor retains model TTS shared-memory and four-category t
   };
   const store = await plugin.api("memory.shared.create", { name: "原生共享库" });
   const ui = management(plugin); await ui.load(); await ui.open("edit", "card", card.id); await loadManagementModal(ui);
-  await click(ui, "entity-model-switch", "onCheckedChange", true); await click(ui, "entity-model-picker"); await click(ui, "entity-picker-qwen-plus");
+  await click(ui, "entity-model-switch", "onCheckedChange", true); await click(ui, "entity-model-picker"); await click(ui, "entity-picker-" + JSON.stringify(["dashscope", "qwen-plus"]));
   await click(ui, "entity-tts-switch", "onCheckedChange", true); await click(ui, "entity-picker-tts-one");
   await click(ui, "entity-memory-switch", "onCheckedChange", true); await click(ui, "entity-store-picker"); await click(ui, "entity-picker-" + store.id);
   await click(ui, "entity-tool-switch", "onCheckedChange", true); await click(ui, "entity-tool-configure");
@@ -408,7 +408,7 @@ test("the sole native editor retains model TTS shared-memory and four-category t
   await click(ui, "entity-primary");
   assert.equal(composeNodes(ui.render().tree, node => node.props.key === "entity-error").map(node => node.props.text).join(" "), "");
   const saved = plain(await plugin.api("character.get", { id: card.id }));
-  assert.equal(saved.chatModelBindingMode, "FIXED_MODEL"); assert.equal(saved.chatModelId, "qwen-plus"); assert.equal(saved.ttsConfigId, "tts-one");
+  assert.equal(saved.chatModelBindingMode, "FIXED_MODEL"); assert.equal(saved.chatModelId, "qwen-plus"); assert.equal(saved.chatProviderId, "dashscope"); assert.equal(saved.ttsConfigId, "tts-one");
   assert.equal(saved.memoryBindingMode, "SHARED"); assert.equal(saved.sharedMemoryId, store.id); assert.equal(saved.toolAccessConfig.enabled, true);
   for (let tab = 0; tab < 4; tab++) assert.deepEqual(saved.toolAccessConfig[keys[tab]], tab === 0 ? [names[tab], "use_package"] : [names[tab]]);
 });
@@ -432,4 +432,106 @@ test("native entity content and cancellation are available while its default ava
   const result = await click(ui, "entity-close");
   assert.equal(result.actionResult.type, "toolpkg.presentation.complete");
   complete();
+});
+
+/** Reopens already installed invalid records through the real registered UI and persists an explicit fixed selection. */
+test("installed invalid model bindings keep preview content edits and rebinding accessible", async t => {
+  for (const binding of [
+    { chatModelBindingMode: "UNRECOGNIZED_MODE", chatModelId: "old-model", chatProviderId: "old-provider" },
+    { chatModelBindingMode: "FIXED_CONFIG", chatModelId: "old-model", chatProviderId: null },
+    { chatModelBindingMode: "FIXED_MODEL", chatModelId: null, chatProviderId: null },
+  ]) {
+    const plugin = await environment(t);
+    plugin.disk.storage.inspectPreferences("cards", values => Object.assign(values.record_default, binding));
+    const before = plugin.disk.stateBytes(), ui = mount(plugin, "preview", "card", "default");
+    await ui.load(); await click(ui, "entity-preview-config-toggle");
+    assert.ok(composeNodes(ui.render().tree, node => node.type === "Text" && /请重新绑定/.test(node.props.text)).length);
+    assert.deepEqual(plugin.disk.stateBytes(), before);
+    await click(ui, "entity-primary");
+    assert.ok(keyedNode(ui.render().tree, "entity-model-binding-error"));
+    await click(ui, "entity-field-description", "onValueChange", "Edited without losing the stored model choice");
+    await click(ui, "entity-primary");
+    const edited = await plugin.api("character.get", { id: "default" });
+    assert.equal(edited.description, "Edited without losing the stored model choice");
+    for (const [key, value] of Object.entries(binding)) assert.equal(edited[key], value);
+    await click(ui, "entity-primary");
+    if (!keyedNode(ui.render().tree, "entity-model-switch").props.checked) await click(ui, "entity-model-switch", "onCheckedChange", true);
+    await click(ui, "entity-model-picker"); await click(ui, "entity-picker-" + JSON.stringify(["dashscope", "qwen-plus"]));
+    await click(ui, "entity-primary");
+    const repaired = await plugin.api("character.get", { id: "default" });
+    assert.equal(repaired.chatModelBindingMode, "FIXED_MODEL");
+    assert.equal(repaired.chatProviderId, "dashscope"); assert.equal(repaired.chatModelId, "qwen-plus");
+    const preview = mount(plugin, "preview", "card", "default", "repaired-preview");
+    await preview.load(); await click(preview, "entity-preview-config-toggle");
+    assert.ok(composeNodes(preview.render().tree, node => node.props.text === "DashScope · qwen-plus").length);
+  }
+});
+
+/** Exposes an explicit global choice without requiring an invalid stored mode to pass validation first. */
+test("unknown model binding can be explicitly replaced with follow global in one action", async t => {
+  const plugin = await environment(t);
+  plugin.disk.storage.inspectPreferences("cards", values => Object.assign(values.record_default, {
+    chatModelBindingMode: "UNRECOGNIZED_MODE", chatModelId: "old-model", chatProviderId: "old-provider",
+  }));
+  const ui = mount(plugin, "edit", "card", "default"); await ui.load();
+  await click(ui, "entity-model-follow-global"); await click(ui, "entity-primary");
+  const repaired = await plugin.api("character.get", { id: "default" });
+  assert.equal(repaired.chatModelBindingMode, "FOLLOW_GLOBAL");
+  assert.equal(repaired.chatProviderId, null); assert.equal(repaired.chatModelId, null);
+});
+
+/** Recognizes a complete legacy binding without changing its stored mode or hiding the fixed model picker. */
+test("complete legacy FIXED_CONFIG appears as its exact fixed model in preview and editor", async t => {
+  const plugin = await environment(t);
+  plugin.disk.storage.inspectPreferences("cards", values => Object.assign(values.record_default, {
+    chatModelBindingMode: "FIXED_CONFIG", chatModelId: "qwen-plus", chatProviderId: "dashscope",
+  }));
+  const before = plugin.disk.stateBytes(), ui = mount(plugin, "preview", "card", "default");
+  await ui.load(); await click(ui, "entity-preview-config-toggle");
+  assert.ok(composeNodes(ui.render().tree, node => node.props.text === "DashScope · qwen-plus").length);
+  await click(ui, "entity-primary");
+  assert.equal(keyedNode(ui.render().tree, "entity-model-switch").props.checked, true);
+  assert.ok(keyedNode(ui.render().tree, "entity-model-picker"));
+  assert.deepEqual(plugin.disk.stateBytes(), before);
+});
+
+/** Preserves damaged primary selections through preview and ordinary edits before an explicit library repair. */
+test("native editor opens missing shared libraries and saves content without changing the memory choice", async t => {
+  for (const sharedId of [null, "", "  ", "deleted-store"]) {
+    const plugin = await environment(t);
+    plugin.disk.storage.inspectPreferences("cards", values => Object.assign(values.record_default, {
+      memoryBindingMode: "SHARED", sharedMemoryId: sharedId,
+    }));
+    const before = plugin.disk.stateBytes(), ui = mount(plugin, "preview", "card", "default");
+    await ui.load(); await click(ui, "entity-preview-config-toggle");
+    assert.ok(composeNodes(ui.render().tree, node => node.props.text === "共享记忆库已不可用").length);
+    assert.deepEqual(plugin.disk.stateBytes(), before);
+    await click(ui, "entity-primary");
+    assert.equal(keyedNode(ui.render().tree, "entity-memory-switch").props.enabled, true);
+    await click(ui, "entity-field-description", "onValueChange", "Saved while retaining the missing library");
+    await click(ui, "entity-primary");
+    const saved = await plugin.api("character.get", { id: "default" });
+    assert.equal(saved.description, "Saved while retaining the missing library");
+    assert.equal(saved.memoryBindingMode, "SHARED"); assert.equal(saved.sharedMemoryId, sharedId);
+    const store = await plugin.api("memory.shared.create", { name: "User selected library" });
+    const editor = mount(plugin, "preview", "card", "default", "memory-rebind");
+    await editor.load(); await click(editor, "entity-primary");
+    await click(editor, "entity-store-picker"); await click(editor, "entity-picker-" + store.id);
+    await click(editor, "entity-primary");
+    const repaired = await plugin.api("character.get", { id: "default" });
+    assert.equal(repaired.memoryBindingMode, "SHARED"); assert.equal(repaired.sharedMemoryId, store.id);
+  }
+});
+
+/** Allows the user to explicitly leave a deleted shared library even when the store directory is empty. */
+test("native memory binding can explicitly switch to character memory with no shared libraries", async t => {
+  const plugin = await environment(t);
+  plugin.disk.storage.inspectPreferences("cards", values => Object.assign(values.record_default, {
+    memoryBindingMode: "SHARED", sharedMemoryId: "deleted-store",
+  }));
+  const ui = mount(plugin, "preview", "card", "default"); await ui.load(); await click(ui, "entity-primary");
+  assert.equal(keyedNode(ui.render().tree, "entity-memory-switch").props.enabled, true);
+  await click(ui, "entity-memory-switch", "onCheckedChange", false); await click(ui, "entity-primary");
+  const repaired = await plugin.api("character.get", { id: "default" });
+  assert.equal(repaired.memoryBindingMode, "CHARACTER"); assert.equal(repaired.sharedMemoryId, null);
 });

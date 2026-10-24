@@ -635,9 +635,9 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 capture.publicApis.push(normalizeSpec(normalized));
             },
             callDependency: toolPkgApi.callDependency,
-            registerToolboxUiModule: registerScreen('toolboxUiModules', 'registerToolPkgToolboxUiModule'),
-            registerUiRoute: registerScreen('uiRoutes', 'registerToolPkgUiRoute'),
-            registerChatComposerSlot: registerScreen('chatComposerSlots', 'registerToolPkgChatComposerSlot'),
+            registerToolboxUiModule: registerScreen('toolboxUiModules', 'ToolPkg.registerToolboxUiModule'),
+            registerUiRoute: registerScreen('uiRoutes', 'ToolPkg.registerUiRoute'),
+            registerChatComposerSlot: registerScreen('chatComposerSlots', 'ToolPkg.registerChatComposerSlot'),
             /** Captures validated navigation metadata, opaque route input, and durable optional callbacks. */
             registerNavigationEntry: function(definition) {
                 if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
@@ -659,7 +659,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 var normalized = copyObject(definition, '');
                 if (definition && typeof definition.action === 'function') {
                     var ref = resolveDurableFunctionRef(
-                        definition.action, definition, 'registerToolPkgNavigationEntry'
+                        definition.action, definition, 'ToolPkg.registerNavigationEntry'
                     );
                     normalized.action = { function: ref.name };
                     if (ref.source) {
@@ -732,57 +732,6 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerManifestExtension: registerFunction('manifestExtensions', 'registerManifestExtension')
         });
 
-        root.registerToolPkgToolboxUiModule = api.registerToolboxUiModule;
-        root.registerToolPkgUiRoute = api.registerUiRoute;
-        root.registerToolPkgChatComposerSlot = api.registerChatComposerSlot;
-        root.registerToolPkgNavigationEntry = api.registerNavigationEntry;
-        root.registerToolPkgDesktopWidget = api.registerDesktopWidget;
-        root.registerToolPkgAppLifecycleHook = api.registerAppLifecycleHook;
-        root.registerToolPkgMessageProcessingPlugin = api.registerMessageProcessingPlugin;
-        root.registerToolPkgXmlRenderPlugin = api.registerXmlRenderPlugin;
-        root.registerToolPkgInputMenuTogglePlugin = api.registerInputMenuTogglePlugin;
-        root.registerToolPkgChatInputHook = api.registerChatInputHook;
-        root.registerToolPkgChatViewHook = api.registerChatViewHook;
-        root.registerToolPkgChatMessageHook = api.registerChatMessageHook;
-        root.registerToolPkgChatLifecycleHook = api.registerChatLifecycleHook;
-        root.registerToolPkgChatMessageMenuItem = api.registerChatMessageMenuItem;
-        root.registerToolPkgChatRuntimeHook = api.registerChatRuntimeHook;
-        root.registerToolPkgHostEventHook = api.registerHostEventHook;
-        root.registerToolPkgToolLifecycleHook = api.registerToolLifecycleHook;
-        root.registerToolPkgPromptInputHook = api.registerPromptInputHook;
-        root.registerToolPkgPromptHistoryHook = api.registerPromptHistoryHook;
-        root.registerToolPkgPromptEstimateHistoryHook = api.registerPromptEstimateHistoryHook;
-        root.registerToolPkgSystemPromptComposeHook = api.registerSystemPromptComposeHook;
-        root.registerToolPkgToolPromptComposeHook = api.registerToolPromptComposeHook;
-        root.registerToolPkgPromptFinalizeHook = api.registerPromptFinalizeHook;
-        root.registerToolPkgPromptEstimateFinalizeHook = api.registerPromptEstimateFinalizeHook;
-        root.registerToolPkgSummaryGenerateHook = api.registerSummaryGenerateHook;
-        root.registerToolPkgCoreCommand = api.registerCoreCommand;
-        root.registerToolPkgAiProvider = api.registerAiProvider;
-        root.registerToolPkgManifestExtension = api.registerManifestExtension;
-
-        root.registerAppLifecycleHook = api.registerAppLifecycleHook;
-        root.registerMessageProcessingPlugin = api.registerMessageProcessingPlugin;
-        root.registerXmlRenderPlugin = api.registerXmlRenderPlugin;
-        root.registerInputMenuTogglePlugin = api.registerInputMenuTogglePlugin;
-        root.registerChatInputHook = api.registerChatInputHook;
-        root.registerChatViewHook = api.registerChatViewHook;
-        root.registerChatMessageHook = api.registerChatMessageHook;
-        root.registerChatLifecycleHook = api.registerChatLifecycleHook;
-        root.registerChatMessageMenuItem = api.registerChatMessageMenuItem;
-        root.registerChatRuntimeHook = api.registerChatRuntimeHook;
-        root.registerHostEventHook = api.registerHostEventHook;
-        root.registerToolLifecycleHook = api.registerToolLifecycleHook;
-        root.registerPromptInputHook = api.registerPromptInputHook;
-        root.registerPromptHistoryHook = api.registerPromptHistoryHook;
-        root.registerPromptEstimateHistoryHook = api.registerPromptEstimateHistoryHook;
-        root.registerSystemPromptComposeHook = api.registerSystemPromptComposeHook;
-        root.registerToolPromptComposeHook = api.registerToolPromptComposeHook;
-        root.registerPromptFinalizeHook = api.registerPromptFinalizeHook;
-        root.registerPromptEstimateFinalizeHook = api.registerPromptEstimateFinalizeHook;
-        root.registerSummaryGenerateHook = api.registerSummaryGenerateHook;
-        root.registerCoreCommand = api.registerCoreCommand;
-
         installGlobal('ToolPkg', api);
     })();
     "#
@@ -793,17 +742,17 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
 mod tests {
     use super::buildToolPkgRegistrationBridgeScript;
     use crate::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
-    use rquickjs::{Context, Runtime};
+    use operit_host_api::HostJavaScriptRuntime;
 
     /// Verifies runtime marketplace markers can be evaluated repeatedly without capture side effects.
     #[test]
     fn runtime_marketplace_marker_is_repeatable_noop() {
-        let runtime = Runtime::new().expect("QuickJS runtime should start");
-        let context = Context::full(&runtime).expect("QuickJS context should start");
+        let mut context = crate::javascript_test::runtime();
 
-        context.with(|context| {
+        {
             context
-                .eval::<(), _>(
+                .evaluateHostJavaScriptVoid(
+                    "test",
                     r#"
                     globalThis.__operitExpose = function(name, value) {
                         globalThis[name] = value;
@@ -812,33 +761,34 @@ mod tests {
                 )
                 .expect("runtime expose should evaluate");
             context
-                .eval::<(), _>(buildToolPkgApiRuntimeScript())
+                .evaluateHostJavaScriptVoid("test", &buildToolPkgApiRuntimeScript())
                 .expect("toolpkg api runtime should evaluate");
             context
-                .eval::<(), _>(buildToolPkgRegistrationBridgeScript(false))
+                .evaluateHostJavaScriptVoid("test", &buildToolPkgRegistrationBridgeScript(false))
                 .expect("runtime bridge should evaluate");
             context
-                .eval::<(), _>("ToolPkg._m([], 0); ToolPkg._m([], 0);")
+                .evaluateHostJavaScriptVoid("test", "ToolPkg._m([], 0); ToolPkg._m([], 0);")
                 .expect("runtime marker calls should not throw");
             let capturedOrigin = context
-                .eval::<String, _>(
+                .evaluateHostJavaScriptString(
+                    "test",
                     "String(globalThis.__operitToolPkgRegistrationCapture.marketOrigin)",
                 )
                 .expect("runtime capture should be readable");
 
             assert_eq!(capturedOrigin, "null");
-        });
+        }
     }
 
     /// Verifies Core command registrations retain their metadata and durable callback reference.
     #[test]
     fn captures_core_command_registration() {
-        let runtime = Runtime::new().expect("QuickJS runtime should start");
-        let context = Context::full(&runtime).expect("QuickJS context should start");
+        let mut context = crate::javascript_test::runtime();
 
-        context.with(|context| {
+        {
             context
-                .eval::<(), _>(
+                .evaluateHostJavaScriptVoid(
+                    "test",
                     r#"
                     globalThis.__operitExpose = function(name, value) {
                         globalThis[name] = value;
@@ -847,13 +797,14 @@ mod tests {
                 )
                 .expect("runtime expose should evaluate");
             context
-                .eval::<(), _>(buildToolPkgApiRuntimeScript())
+                .evaluateHostJavaScriptVoid("test", &buildToolPkgApiRuntimeScript())
                 .expect("toolpkg api runtime should evaluate");
             context
-                .eval::<(), _>(buildToolPkgRegistrationBridgeScript(false))
+                .evaluateHostJavaScriptVoid("test", &buildToolPkgRegistrationBridgeScript(false))
                 .expect("runtime bridge should evaluate");
             context
-                .eval::<(), _>(
+                .evaluateHostJavaScriptVoid(
+                    "test",
                     r#"
                     function runHello(event) {
                         return { stdout: event.eventPayload.commandName };
@@ -873,18 +824,18 @@ mod tests {
                 )
                 .expect("Core command registration should evaluate");
             let command_name = context
-                .eval::<String, _>(
+                .evaluateHostJavaScriptString("test",
                     "JSON.parse(globalThis.__operitToolPkgRegistrationCapture.coreCommands[0]).name",
                 )
                 .expect("captured command should be readable");
             let function_name = context
-                .eval::<String, _>(
+                .evaluateHostJavaScriptString("test",
                     "JSON.parse(globalThis.__operitToolPkgRegistrationCapture.coreCommands[0]).function",
                 )
                 .expect("captured function should be readable");
 
             assert_eq!(command_name, "hello");
             assert_eq!(function_name, "runHello");
-        });
+        }
     }
 }

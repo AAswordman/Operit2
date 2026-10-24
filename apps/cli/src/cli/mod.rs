@@ -40,7 +40,6 @@ use operit_util::stream::Stream::Stream;
 use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
 };
-use sha2::{Digest, Sha256};
 use tar::Archive;
 use zip::ZipArchive;
 
@@ -126,6 +125,12 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
     if args.len() >= 2 && matches!(args[1].as_str(), "help" | "-h" | "--help") {
         return print_cli_help(Some(&args[0])).await;
     }
+    // Version reporting is local metadata; do not claim a Core owner for it.
+    if args.len() == 1 && args[0].as_str() == "version" {
+        print_local_version();
+        return Ok(());
+    }
+
     if args[0].as_str() == "link" {
         return run_link_command(&args[1..]).await;
     }
@@ -147,6 +152,9 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
     }
 
     let localArgs = scope_cli_storage_command_args(args)?;
+    if let Some(result) = crate::daemon::try_run_cli_command(&localArgs, cli_json_mode()).await {
+        return result;
+    }
     let mut core = local_cli_core().await?;
     let pluginCommands = read_cli_plugin_commands(&mut core).await?;
 
@@ -155,7 +163,6 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
             run_codex_login_command(&mut core, &localArgs[2..]).await
         }
         "model" => run_core_command_and_print(&mut core, &localArgs).await,
-        "version" => run_version_core_command(&mut core).await,
         "prefs" => run_core_command_and_print(&mut core, &args).await,
         "host" => run_core_command_and_print(&mut core, &args).await,
         "log" => run_core_command_and_print(&mut core, &args).await,
@@ -869,6 +876,7 @@ pub(crate) enum CliInstallProgress {
     Complete,
 }
 
+/// Installs the executable and the runtime assets declared by the host.
 fn install_cli_from_source(
     source: &Path,
     mode: InstallMode,
@@ -893,6 +901,9 @@ fn install_cli_from_source(
         return Ok(());
     }
 
+    for library in host_ops::cli_runtime_libraries() {
+        copy_cli_binary(&source.with_file_name(library), &install_dir.join(library))?;
+    }
     on_progress(CliInstallProgress::CopyOperit);
     copy_cli_binary(source, &operit)?;
     on_progress(CliInstallProgress::CopyOperit2);
@@ -972,6 +983,9 @@ fn uninstall_cli() -> Result<(), String> {
 
     remove_file_if_exists(&operit)?;
     remove_file_if_exists(&operit2)?;
+    for library in host_ops::cli_runtime_libraries() {
+        remove_file_if_exists(&install_dir.join(library))?;
+    }
     remove_cli_install_dir_from_path(&install_dir)?;
 
     if cli_json_mode() {
@@ -1356,19 +1370,21 @@ fn extract_cli_binary_from_package(
     }
 }
 
+/// Extracts the Windows executable together with its required runtime libraries.
 fn extract_cli_binary_from_zip(package_path: &Path, extract_dir: &Path) -> Result<PathBuf, String> {
     let file = fs::File::open(package_path).map_err(|error| error.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
-    let mut entry = archive.by_name("operit2.exe").map_err(|error| {
-        format!(
-            "operit2.exe not found in {}: {error}",
-            package_path.display()
-        )
-    })?;
-    let destination = extract_dir.join("operit2.exe");
-    let mut output = fs::File::create(&destination).map_err(|error| error.to_string())?;
-    io::copy(&mut entry, &mut output).map_err(|error| error.to_string())?;
-    Ok(destination)
+    for name in std::iter::once("operit2.exe")
+        .chain(host_ops::WINDOWS_CLI_RUNTIME_LIBRARIES.iter().copied())
+    {
+        let mut entry = archive.by_name(name).map_err(|error| {
+            format!("{name} not found in {}: {error}", package_path.display())
+        })?;
+        let destination = extract_dir.join(name);
+        let mut output = fs::File::create(&destination).map_err(|error| error.to_string())?;
+        io::copy(&mut entry, &mut output).map_err(|error| error.to_string())?;
+    }
+    Ok(extract_dir.join("operit2.exe"))
 }
 
 fn extract_cli_binary_from_tar_gz(
@@ -1729,7 +1745,7 @@ async fn run_local_core_command_and_print(
     Ok(())
 }
 
-fn rewrite_core_command_usage_message(message: String) -> String {
+pub(crate) fn rewrite_core_command_usage_message(message: String) -> String {
     let ends_with_newline = message.ends_with('\n');
     let lines = message
         .lines()
@@ -1762,23 +1778,18 @@ fn core_command_error_message(error: CoreLinkError) -> String {
     }
 }
 
-async fn run_version_core_command(core: &mut crate::core_proxy::CliCore) -> Result<(), String> {
-    let core_version = core
-        .application()
-        .coreVersion()
-        .await
-        .map_err(|error| error.to_string())?;
+fn print_local_version() {
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({
             "cliVersion": env!("CARGO_PKG_VERSION"),
-            "coreVersion": core_version,
+            "coreVersion": operit_runtime::CORE_VERSION,
             "linkVersion": operit_link::LINK_VERSION,
             "targetOs": std::env::consts::OS,
             "targetArch": std::env::consts::ARCH,
         }));
     } else {
         println!("CLI version: {}", env!("CARGO_PKG_VERSION"));
-        println!("Core version: {core_version}");
+        println!("Core version: {}", operit_runtime::CORE_VERSION);
         println!("Link version: {}", operit_link::LINK_VERSION);
         println!(
             "Target: {} {}",
@@ -1786,17 +1797,20 @@ async fn run_version_core_command(core: &mut crate::core_proxy::CliCore) -> Resu
             std::env::consts::ARCH
         );
     }
-    Ok(())
 }
 
 pub(crate) fn print_root_usage() {
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 [tui|cli|install|uninstall]" }));
+        emit_cli_json(
+            serde_json::json!({ "usage": "operit2 [tui|cli|daemon|install|uninstall]" }),
+        );
         return;
     }
     println!("operit2                       Start the interactive TUI");
     println!("operit2 tui [options]         Start the TUI ('operit2 tui --help' for options)");
     println!("operit2 cli <command> [args]  Run a CLI command");
+    println!("operit2 daemon <command>      Run or control the headless Core daemon");
+    println!("operit2 rescue <command>      Export, inspect, import, or resume data rescue");
     println!("operit2 install [--source <path>]");
     println!("operit2 uninstall");
     println!();
@@ -2180,6 +2194,57 @@ fn currentTimeMillis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Creates an isolated Windows package with an optional inference runtime.
+    fn windows_cli_package_fixture(include_runtime: bool) -> (PathBuf, PathBuf) {
+        use std::io::Write;
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!("operit-cli-package-{}-{unique}", std::process::id()));
+        let extract_dir = root.join("extracted");
+        fs::create_dir_all(&extract_dir).unwrap();
+        let package = root.join("cli.zip");
+        let mut archive = zip::ZipWriter::new(fs::File::create(&package).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        archive.start_file("operit2.exe", options).unwrap();
+        archive.write_all(b"cli executable").unwrap();
+        if include_runtime {
+            for name in host_ops::WINDOWS_CLI_RUNTIME_LIBRARIES {
+                archive.start_file(*name, options).unwrap();
+                archive.write_all(b"native inference runtime").unwrap();
+            }
+        }
+        archive.finish().unwrap();
+        (package, extract_dir)
+    }
+
+    /// Keeps Windows runtime files beside the extracted executable for installation.
+    #[test]
+    fn windows_cli_package_extracts_its_native_runtime() {
+        let (package, extract_dir) = windows_cli_package_fixture(true);
+        let binary = extract_cli_binary_from_zip(&package, &extract_dir).unwrap();
+        assert_eq!(binary, extract_dir.join("operit2.exe"));
+        assert_eq!(fs::read(binary).unwrap(), b"cli executable");
+        for name in host_ops::WINDOWS_CLI_RUNTIME_LIBRARIES {
+            assert_eq!(
+                fs::read(extract_dir.join(name)).unwrap(),
+                b"native inference runtime"
+            );
+        }
+        fs::remove_dir_all(package.parent().unwrap()).unwrap();
+    }
+
+    /// Rejects Windows packages that cannot load the required native runtime.
+    #[test]
+    fn windows_cli_package_requires_its_native_runtime() {
+        let (package, extract_dir) = windows_cli_package_fixture(false);
+        let error = extract_cli_binary_from_zip(&package, &extract_dir).unwrap_err();
+        assert!(error.starts_with("operit_local_llm.dll not found in "));
+        fs::remove_dir_all(package.parent().unwrap()).unwrap();
+    }
 
     /// Verifies the level-1 help table has unique, described command names.
     #[test]

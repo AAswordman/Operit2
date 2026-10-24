@@ -1043,6 +1043,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
+            padding: const EdgeInsets.only(top: 12, bottom: 8),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4853,7 +4854,7 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
     _enableSummary = summary.enableSummary;
     final rawContext = widget.initialConfig.context.maxContextLength;
     final normalizedContext = rawContext >= 10000
-        ? (rawContext / 1024).roundToDouble()
+        ? (rawContext / 1000).roundToDouble()
         : rawContext;
     _maxContextLengthController = TextEditingController(
       text: normalizedContext > 0
@@ -7164,7 +7165,6 @@ String _providerTypeLocalName(AppLocalizations l10n, String providerTypeId) {
     'DEEPSEEK' => l10n.settingsModelProviderTypeDeepseek,
     'MISTRAL' => l10n.settingsModelProviderTypeMistral,
     'SILICONFLOW' => l10n.settingsModelProviderTypeSiliconflow,
-    'IFLOW' => l10n.settingsModelProviderTypeIflow,
     'OPENROUTER' => l10n.settingsModelProviderTypeOpenrouter,
     'OPENCODE' => l10n.settingsModelProviderTypeOpencode,
     'FOUR_ROUTER' => l10n.settingsModelProviderTypeFourRouter,

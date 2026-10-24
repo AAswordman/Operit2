@@ -57,6 +57,8 @@ test('all former Runtime operations invoke toolCall and the ordinary structured 
     ["Tools.Theme.listConfigs()", 'theme_list_configs', {}, []],
     ["Tools.Theme.applyConfig('theme')", 'theme_apply_config', {id:'theme'}, {id:'theme'}],
     ["Tools.Catalog.readToolSources()", 'catalog_read_tool_sources', {}, {builtinTools:[],packages:[],skills:[],mcpServers:[]}],
+    ["Tools.Media.register({type:'image', base64:'abc', mimeType:'image/png'})", 'media_register', {type:'image', base64:'abc', mimeType:'image/png'}, {id:'img', mimeType:'image/png', link:'<link type="image" id="img"></link>', width:2, height:3}],
+    ["Tools.Media.registerFromPath({type:'audio', path:'/sdcard/a.mp3'})", 'media_register_from_path', {type:'audio', path:'/sdcard/a.mp3'}, {id:'aud', mimeType:'audio/mpeg', link:'<link type="audio" id="aud"></link>'}],
     ["Tools.Chat.sendMessage({chatId:'chat',input:{text:'message',attachments:[]}})", 'chat_send_message', {request:{chatId:'chat',input:{text:'message',attachments:[]}}}, {chatId:'chat'}],
     ["Tools.Chat.cancel('chat')", 'chat_cancel', {chatId:'chat'}, {chatId:'chat',cancelRequested:true}],
     ["Tools.Chat.readExtension({kind:'chat',chatId:'chat'})", 'chat_read_extension', {target:{kind:'chat',chatId:'chat'}}, null],

@@ -1,71 +1,91 @@
-//! Host 回调到 async receive 的有界缓冲；不包含业务消息或配对状态。
+//! Bounded byte-stream buffering between synchronous Host callbacks and async readers.
 use operit_host_api::{HostResult, HostRuntimeTaskSchedulerHost};
-use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use std::sync::{Arc, Mutex as StdMutex};
+use tokio::sync::{oneshot, Mutex, Notify};
+
+#[derive(Default)]
+struct InboxState {
+    bytes: Vec<u8>,
+    terminal: Option<Result<(), String>>,
+}
 
 pub(super) struct Inbox {
-    maxMessageBytes: usize,
-    sender: mpsc::Sender<Vec<u8>>,
-    receiver: Mutex<mpsc::Receiver<Vec<u8>>>,
-    terminal: watch::Sender<Option<Result<(), String>>>,
+    maxBufferedBytes: usize,
+    state: StdMutex<InboxState>,
+    reader: Mutex<()>,
+    available: Notify,
 }
+
 impl Inbox {
+    /// Reserves a byte budget for one maximum-sized length-prefixed frame.
     pub fn new(maxMessageBytes: usize) -> Arc<Self> {
-        let (sender, receiver) = mpsc::channel(32);
         Arc::new(Self {
-            maxMessageBytes,
-            sender,
-            receiver: Mutex::new(receiver),
-            terminal: watch::channel(None).0,
+            maxBufferedBytes: maxMessageBytes + 4,
+            state: StdMutex::new(InboxState::default()),
+            reader: Mutex::new(()),
+            available: Notify::new(),
         })
     }
+
+    /// Preserves the first terminal result and wakes the serialized reader.
     pub fn finish(&self, result: Result<(), String>) {
-        self.terminal.send_if_modified(|state| {
-            if state.is_none() {
-                *state = Some(result);
-                true
-            } else {
-                false
-            }
-        });
+        let mut state = self.state.lock().unwrap();
+        if state.terminal.is_none() {
+            state.terminal = Some(result);
+            self.available.notify_one();
+        }
     }
+
+    /// Buffers Host byte fragments without treating callback boundaries as messages.
     pub fn put(&self, bytes: Vec<u8>) {
-        // 回调不能阻塞 Host 的网络线程；超限终止连接，不丢包后继续。
-        if bytes.len() > self.maxMessageBytes + 4
-            || self.sender.try_send(bytes).is_err()
-        {
-            self.finish(Err("Peer receive queue exceeded limit".into()));
+        let mut state = self.state.lock().unwrap();
+        if state.terminal.is_some() {
+            return;
         }
+        if bytes.len() > self.maxBufferedBytes - state.bytes.len() {
+            state.terminal = Some(Err(format!(
+                "Peer receive buffer exceeded byte limit: buffered={} incoming={} limit={}",
+                state.bytes.len(),
+                bytes.len(),
+                self.maxBufferedBytes,
+            )));
+        } else {
+            state.bytes.extend(bytes);
+        }
+        self.available.notify_one();
     }
+
+    /// Returns buffered bytes in order, preserving errors and draining a clean close.
     pub async fn read(&self) -> Result<Option<Vec<u8>>, String> {
-        let mut rx = self.receiver.lock().await;
-        let mut end = self.terminal.subscribe();
+        let _reader = self.reader.lock().await;
         loop {
-            if let Some(Err(error)) = end.borrow().clone() {
-                return Err(error);
+            {
+                let mut state = self.state.lock().unwrap();
+                if let Some(Err(error)) = &state.terminal {
+                    return Err(error.clone());
+                }
+                if !state.bytes.is_empty() {
+                    return Ok(Some(std::mem::take(&mut state.bytes)));
+                }
+                if state.terminal.is_some() {
+                    return Ok(None);
+                }
             }
-            if let Ok(bytes) = rx.try_recv() {
-                return Ok(Some(bytes));
-            }
-            if let Some(result) = end.borrow().clone() {
-                return result.map(|_| None);
-            }
-            tokio::select! {
-                biased;
-                _ = end.changed() => {},
-                value = rx.recv() => return Ok(value),
-            }
+            self.available.notified().await;
         }
     }
+
+    /// Reports terminal transport status without consuming buffered bytes.
     pub fn status(&self) -> Result<(), String> {
-        match self.terminal.borrow().clone() {
+        match &self.state.lock().unwrap().terminal {
             None => Ok(()),
-            Some(Err(e)) => Err(e),
+            Some(Err(error)) => Err(error.clone()),
             Some(Ok(())) => Err("Peer connection closed".into()),
         }
     }
 }
-/// 同步 Host 能力由 Host 的任务调度执行，不能阻塞 runtime executor。
+
+/// Runs synchronous Host I/O on the installed scheduler without blocking the executor.
 pub(super) async fn hostTask<T: Send + 'static>(
     scheduler: &Arc<dyn HostRuntimeTaskSchedulerHost>,
     task: impl FnOnce() -> HostResult<T> + Send + 'static,
@@ -83,3 +103,7 @@ pub(super) async fn hostTask<T: Send + 'static>(
         .map_err(|_| "Host transport task cancelled".to_string())?
         .map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+#[path = "inbox_tests.rs"]
+mod tests;

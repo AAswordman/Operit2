@@ -129,6 +129,7 @@ class MarkdownEventNodeBuilder {
       <int, _ReplayStringStream>{};
   final Map<int, _ReplayObjectStream> _xmlMarkdownControllers =
       <int, _ReplayObjectStream>{};
+  final Map<int, int> _xmlMarkdownStreamOwners = <int, int>{};
   final Map<String, _MarkdownEventNodeBuilderSnapshot> _savepoints =
       <String, _MarkdownEventNodeBuilderSnapshot>{};
   int _pendingHtmlBreakCount = 0;
@@ -152,6 +153,7 @@ class MarkdownEventNodeBuilder {
     _pendingBlockBreaks.clear();
     _xmlControllers.clear();
     _xmlMarkdownControllers.clear();
+    _xmlMarkdownStreamOwners.clear();
     xmlNodeStreams.clear();
     xmlMarkdownEventStreams.clear();
     _savepoints.clear();
@@ -237,6 +239,7 @@ class MarkdownEventNodeBuilder {
       final markdownController = _ReplayObjectStream();
       _xmlControllers[blockId] = controller;
       _xmlMarkdownControllers[blockId] = markdownController;
+      _xmlMarkdownStreamOwners[blockId] = blockId;
       xmlNodeStreams[nodes.length - 1] = controller.stream;
       xmlMarkdownEventStreams[nodes.length - 1] = markdownController.stream;
     }
@@ -301,15 +304,26 @@ class MarkdownEventNodeBuilder {
     node.xmlIsClosed = xml.isClosed;
   }
 
+  /// Resolves the immediate child stream that owns a flattened descendant event.
+  int xmlMarkdownStreamOwner(int parentBlockId) {
+    final owner = _xmlMarkdownStreamOwners[parentBlockId];
+    if (owner == null) {
+      throw StateError('Missing XML markdown stream for block $parentBlockId');
+    }
+    return owner;
+  }
+
+  /// Routes descendants through their owning XML stream and records nested blocks.
   void appendXmlMarkdownEvent({
     required int parentBlockId,
     required Object event,
+    int? xmlBlockId,
   }) {
-    final controller = _xmlMarkdownControllers[parentBlockId];
-    if (controller == null) {
-      throw StateError('Missing XML markdown stream for block $parentBlockId');
+    final owner = xmlMarkdownStreamOwner(parentBlockId);
+    if (xmlBlockId != null) {
+      _xmlMarkdownStreamOwners[xmlBlockId] = owner;
     }
-    controller.add(event);
+    _xmlMarkdownControllers[owner]!.add(event);
   }
 
   void startInline({
@@ -393,6 +407,7 @@ class MarkdownEventNodeBuilder {
     }
     _xmlControllers.clear();
     _xmlMarkdownControllers.clear();
+    _xmlMarkdownStreamOwners.clear();
     xmlNodeStreams.clear();
     xmlMarkdownEventStreams.clear();
   }
@@ -702,6 +717,7 @@ class _MarkdownEventNodeBuilderSnapshot {
     required this.xmlMarkdownControllerHistories,
     required this.xmlStreamIndexes,
     required this.xmlMarkdownStreamIndexes,
+    required this.xmlMarkdownStreamOwners,
     required this.pendingHtmlBreakCount,
   });
 
@@ -749,6 +765,7 @@ class _MarkdownEventNodeBuilderSnapshot {
             if (identical(streamEntry.value, controllerEntry.value.stream))
               controllerEntry.key: streamEntry.key,
       },
+      xmlMarkdownStreamOwners: <int, int>{...builder._xmlMarkdownStreamOwners},
       pendingHtmlBreakCount: builder._pendingHtmlBreakCount,
     );
   }
@@ -767,6 +784,7 @@ class _MarkdownEventNodeBuilderSnapshot {
   final Map<int, List<Object>> xmlMarkdownControllerHistories;
   final Map<int, int> xmlStreamIndexes;
   final Map<int, int> xmlMarkdownStreamIndexes;
+  final Map<int, int> xmlMarkdownStreamOwners;
   final int pendingHtmlBreakCount;
 
   void restore(MarkdownEventNodeBuilder builder) {
@@ -822,6 +840,9 @@ class _MarkdownEventNodeBuilderSnapshot {
     }
     builder._xmlControllers.clear();
     builder._xmlMarkdownControllers.clear();
+    builder._xmlMarkdownStreamOwners
+      ..clear()
+      ..addAll(xmlMarkdownStreamOwners);
     builder.xmlNodeStreams.clear();
     builder.xmlMarkdownEventStreams.clear();
     for (final entry in xmlControllerHistories.entries) {

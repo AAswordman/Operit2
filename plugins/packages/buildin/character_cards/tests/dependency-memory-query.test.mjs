@@ -11,7 +11,7 @@ const ts = require("typescript");
 
 /** Connects the copied dependency client to actual registered provider handlers and real SQLite storage. */
 async function environment(t) {
-  const disk = await createDiskHarness(t), registrations = new Map(), calls = [];
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), registrations = new Map(), calls = [];
   const provider = loadModule("src/public-api.ts", { ...disk.globals, ToolPkg: { ...disk.globals.ToolPkg,
     /** Captures only the public registry; production callbacks implement all business behavior. */
     registerApi(definition) { registrations.set(definition.name, definition.function); },
@@ -62,7 +62,7 @@ test("copied SDK memory queries retain owner-scoped deduplication in the provide
   await assert.rejects(env.client.memory.query({ ...request, limit: 1.5 }), /Expected a nonnegative integer/);
   await assert.rejects(env.client.memory.query({ ...request, participantId: "missing-participant" }));
   const beforeFailure = env.disk.stateBytes();
-  const failure = new Error("query-storage-original"); env.disk.failNext("storage.query", failure);
+  const failure = new Error("query-storage-original"); env.disk.failNext("storage.preferences.data", failure);
   await assert.rejects(env.client.memory.query({ ...request, snapshotId: null }), error => error === failure);
   assert.deepEqual(env.disk.stateBytes(), beforeFailure);
 });

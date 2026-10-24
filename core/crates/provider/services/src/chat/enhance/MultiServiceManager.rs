@@ -548,6 +548,11 @@ impl MultiServiceManager {
         spec: ProviderServiceSpec,
     ) -> Result<Box<dyn AIService>, AiServiceError> {
         match spec.params {
+            ProviderCreateParams::LocalModelProvider { model_binding, settings } => Ok(Box::new(
+                crate::chat::llmprovider::LocalModelProvider::LocalChatAIProvider::new(
+                    model_binding, settings, inner.runtime_context.clone(),
+                ),
+            )),
             ProviderCreateParams::OpenAIProvider {
                 api_endpoint,
                 api_key_provider,

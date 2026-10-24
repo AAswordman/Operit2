@@ -30,10 +30,25 @@ fn requiredPreferenceString<'a>(
         .ok_or_else(|| format!("Operit1 DataStore 键不是字符串：{key}"))
 }
 
+/// Decodes Kotlin's textual parameter values using their declared types without interpreting text as JSON.
 #[allow(non_snake_case)]
-fn parseCustomParameterValue(value: &str) -> Result<Value, String> {
-    serde_json::from_str(value)
-        .map_err(|error| format!("Operit1 自定义参数值不是合法 JSON：{error}"))
+fn parseCustomParameterValue(
+    value: &str,
+    valueType: &operit_model::ModelParameter::ParameterValueType,
+) -> Result<Value, String> {
+    use operit_model::ModelParameter::ParameterValueType;
+
+    match valueType {
+        ParameterValueType::INT => serde_json::from_str::<i32>(value).map(Value::from),
+        ParameterValueType::FLOAT => {
+            serde_json::from_str::<f32>(value).and_then(serde_json::to_value)
+        }
+        ParameterValueType::BOOLEAN => serde_json::from_str::<bool>(value).map(Value::from),
+        ParameterValueType::STRING | ParameterValueType::OBJECT => {
+            Ok(Value::String(value.to_string()))
+        }
+    }
+    .map_err(|error| format!("Operit1 自定义参数值与声明类型 {valueType:?} 不匹配：{error}"))
 }
 
 #[allow(non_snake_case)]

@@ -1757,7 +1757,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryLocalModelsSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Downloads, engines, STT / TTS'**
+  /// **'LLMs, downloads, STT / TTS'**
   String get settingsCategoryLocalModelsSubtitle;
 
   /// No description provided for @settingsCategoryLocalModelsDescription.
@@ -2605,12 +2605,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'SiliconFlow'**
   String get settingsModelProviderTypeSiliconflow;
-
-  /// No description provided for @settingsModelProviderTypeIflow.
-  ///
-  /// In en, this message translates to:
-  /// **'iFlow'**
-  String get settingsModelProviderTypeIflow;
 
   /// No description provided for @settingsModelProviderTypeOpenrouter.
   ///
@@ -5204,6 +5198,12 @@ abstract class AppLocalizations {
   /// **'Bubble preview with 9-slice guides'**
   String get settingsAppearanceBubbleImagePreviewText;
 
+  /// No description provided for @settingsAppearanceBubbleImageImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Bubble image was not applied: {error}'**
+  String settingsAppearanceBubbleImageImportFailed(String error);
+
   /// No description provided for @settingsAppearanceBubbleImageCrop.
   ///
   /// In en, this message translates to:
@@ -6598,6 +6598,12 @@ abstract class AppLocalizations {
   /// **'Package'**
   String get pluginLoadingKindPackage;
 
+  /// No description provided for @pluginLoadingKindPlugin.
+  ///
+  /// In en, this message translates to:
+  /// **'Plugin'**
+  String get pluginLoadingKindPlugin;
+
   /// No description provided for @pluginLoadingKindMcp.
   ///
   /// In en, this message translates to:
@@ -6651,6 +6657,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Execution device status unknown'**
   String get chatRouteUnknown;
+
+  /// No description provided for @chatRouteClaimHostPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'The device host for this chat was not found. Switch it to this device?'**
+  String get chatRouteClaimHostPrompt;
+
+  /// No description provided for @chatRouteClaimHostYes.
+  ///
+  /// In en, this message translates to:
+  /// **'Yes'**
+  String get chatRouteClaimHostYes;
+
+  /// No description provided for @chatRouteClaimHostNo.
+  ///
+  /// In en, this message translates to:
+  /// **'No'**
+  String get chatRouteClaimHostNo;
 
   /// No description provided for @edgePairingCodeTitle.
   ///
@@ -7154,6 +7178,30 @@ abstract class AppLocalizations {
   /// **'This device is already a Space member. Pairing it adds a direct link without joining again; pairing shows a six-digit code on the other device for you to enter.'**
   String get deviceSpaceConnectDirectHint;
 
+  /// No description provided for @deviceSpaceUpdateEndpoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Update direct address'**
+  String get deviceSpaceUpdateEndpoint;
+
+  /// No description provided for @deviceSpaceUpdateEndpointLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct address'**
+  String get deviceSpaceUpdateEndpointLabel;
+
+  /// No description provided for @deviceSpaceUpdateEndpointHint.
+  ///
+  /// In en, this message translates to:
+  /// **'For example ws://192.168.1.20:37195/link'**
+  String get deviceSpaceUpdateEndpointHint;
+
+  /// No description provided for @deviceSpaceUpdateEndpointSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct address updated'**
+  String get deviceSpaceUpdateEndpointSaved;
+
   /// No description provided for @deviceSpaceDirectLinkEstablished.
   ///
   /// In en, this message translates to:
@@ -7411,6 +7459,216 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reset appearance'**
   String get settingsAppearanceResetAfterError;
+
+  /// No description provided for @backgroundWorkIdle.
+  ///
+  /// In en, this message translates to:
+  /// **'No work is running'**
+  String get backgroundWorkIdle;
+
+  /// No description provided for @backgroundWorkRunningCount.
+  ///
+  /// In en, this message translates to:
+  /// **'work items running'**
+  String get backgroundWorkRunningCount;
+
+  /// No description provided for @backgroundWorkWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for your confirmation'**
+  String get backgroundWorkWaiting;
+
+  /// No description provided for @backgroundWorkWaitingCount.
+  ///
+  /// In en, this message translates to:
+  /// **'awaiting confirmation'**
+  String get backgroundWorkWaitingCount;
+
+  /// No description provided for @backgroundWorkCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Completed'**
+  String get backgroundWorkCompleted;
+
+  /// No description provided for @backgroundWorkFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed — open to view details'**
+  String get backgroundWorkFailed;
+
+  /// No description provided for @backgroundWorkCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped'**
+  String get backgroundWorkCancelled;
+
+  /// No description provided for @backgroundWorkProcessing.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing'**
+  String get backgroundWorkProcessing;
+
+  /// No description provided for @backgroundWorkConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting'**
+  String get backgroundWorkConnecting;
+
+  /// No description provided for @backgroundWorkReceiving.
+  ///
+  /// In en, this message translates to:
+  /// **'Writing a response'**
+  String get backgroundWorkReceiving;
+
+  /// No description provided for @backgroundWorkTool.
+  ///
+  /// In en, this message translates to:
+  /// **'Running a tool'**
+  String get backgroundWorkTool;
+
+  /// No description provided for @backgroundWorkToolResult.
+  ///
+  /// In en, this message translates to:
+  /// **'Processing tool results'**
+  String get backgroundWorkToolResult;
+
+  /// No description provided for @backgroundWorkSummarizing.
+  ///
+  /// In en, this message translates to:
+  /// **'Organizing context'**
+  String get backgroundWorkSummarizing;
+
+  /// No description provided for @backgroundWorkPlan.
+  ///
+  /// In en, this message translates to:
+  /// **'Executing a plan'**
+  String get backgroundWorkPlan;
+
+  /// No description provided for @backgroundWorkOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'View conversation'**
+  String get backgroundWorkOpen;
+
+  /// No description provided for @backgroundWorkReview.
+  ///
+  /// In en, this message translates to:
+  /// **'Review'**
+  String get backgroundWorkReview;
+
+  /// No description provided for @backgroundWorkStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get backgroundWorkStop;
+
+  /// No description provided for @localModelsDeviceOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Stored on this device'**
+  String get localModelsDeviceOnly;
+
+  /// No description provided for @localModelsDeviceOnlyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Weights, download progress and installation records stay on this device and are excluded from Space sync. Chats can route inference to the device with the model.'**
+  String get localModelsDeviceOnlyDescription;
+
+  /// No description provided for @localModelsRunChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Run and configure'**
+  String get localModelsRunChat;
+
+  /// No description provided for @localModelsUseForChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Use for chat'**
+  String get localModelsUseForChat;
+
+  /// No description provided for @localModelsChatActivated.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected as the chat model'**
+  String get localModelsChatActivated;
+
+  /// No description provided for @localModelsPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a prompt'**
+  String get localModelsPrompt;
+
+  /// No description provided for @localModelsGenerate.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate'**
+  String get localModelsGenerate;
+
+  /// No description provided for @localModelsGenerating.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating…'**
+  String get localModelsGenerating;
+
+  /// No description provided for @localModelsThreads.
+  ///
+  /// In en, this message translates to:
+  /// **'CPU threads'**
+  String get localModelsThreads;
+
+  /// No description provided for @localModelsContextSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Context size (tokens)'**
+  String get localModelsContextSize;
+
+  /// No description provided for @localModelsBatchSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Batch size'**
+  String get localModelsBatchSize;
+
+  /// No description provided for @localModelsUnload.
+  ///
+  /// In en, this message translates to:
+  /// **'Unload model'**
+  String get localModelsUnload;
+
+  /// No description provided for @localModelsCpuBackend.
+  ///
+  /// In en, this message translates to:
+  /// **'On-device CPU inference'**
+  String get localModelsCpuBackend;
+
+  /// No description provided for @localModelsLlmDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Download a GGUF model for llama.cpp or an MNN model bundle. After installation, try it here or select it for chat.'**
+  String get localModelsLlmDescription;
+
+  /// No description provided for @localModelsInvalidSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Check the thread count, context size and batch size.'**
+  String get localModelsInvalidSettings;
+
+  /// No description provided for @localModelsFilterAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All models'**
+  String get localModelsFilterAll;
+
+  /// No description provided for @localModelsFilterInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed only'**
+  String get localModelsFilterInstalled;
+
+  /// No description provided for @localModelsSearchCatalog.
+  ///
+  /// In en, this message translates to:
+  /// **'Search by name or inference engine'**
+  String get localModelsSearchCatalog;
 }
 
 class _AppLocalizationsDelegate

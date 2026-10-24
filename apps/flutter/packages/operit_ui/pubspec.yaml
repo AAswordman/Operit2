@@ -21,7 +21,13 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  licenses:
+    - assets/licenses/liquid/LICENSE
+    - assets/licenses/liquid/NOTICE
+  shaders:
+    - shaders/liquid_glass.frag
   assets:
     - assets/fixtures/theme-v1.json
     - assets/fonts/
     - assets/licenses/
+    - assets/licenses/liquid/

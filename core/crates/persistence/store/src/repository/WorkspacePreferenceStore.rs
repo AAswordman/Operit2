@@ -15,6 +15,23 @@ pub struct WorkspacePreferenceStore {
 impl WorkspacePreferenceStore {
     const PREFERENCES_VERSION: u32 = 2;
 
+    /// Registers the workspace owner's wire decoder independently of opening a local workspace store.
+    pub fn preferenceSyncStore() -> crate::PreferenceMerge::PreferenceMergeStore {
+        crate::PreferenceMerge::PreferenceMergeStore::values(operit_util::RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH,
+            false, Self::PREFERENCES_VERSION, Self::decodeSyncedEntry)
+    }
+
+    /// Imports historical complete workspace records without running initialization migrations.
+    fn decodeSyncedEntry(entry: &mut crate::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+        entry.decodeHistoricalValues(|version, values| {
+            if version > Self::PREFERENCES_VERSION {
+                return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
+            }
+            if version < 2 { Self::migratePreferences(1, values)?; }
+            Ok(())
+        })
+    }
+
     /// Creates a workspace preference store from explicit runtime paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {

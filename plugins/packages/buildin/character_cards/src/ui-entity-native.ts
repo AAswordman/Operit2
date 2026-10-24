@@ -7,6 +7,7 @@ import { createUiScreenSession } from "./ui-contributions";
 import { createCharacterDraft, createGroupDraft } from "./drafts";
 import { readAvatarImport, pickedImagePath } from "./image-source";
 import { renderEntityPreview } from "./ui-entity-preview";
+import { characterModelBindingMode, characterModelBindingStatus, sameCharacterModelBinding } from "./model-binding";
 
 interface ExpandedField { key: string; label: string; value: string; apply: (value: string) => void }
 interface NativePicker { title: string; key: string; value: string | null; choices: readonly { id: string; label: string; subtitle?: string }[]; apply: (id: string | null) => void; query: string }
@@ -160,8 +161,17 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
       let snapshot: Snapshot;
       if (input.entity === "card") {
         const draft = card(); if (draft.name.trim() === "") throw new Error("角色名称不能为空");
-        if (draft.chatModelBindingMode === "FIXED_MODEL" && !live.current.snapshot?.models.some(model => model.modelId === draft.chatModelId)) throw new Error("请选择有效的固定聊天模型");
-        if (draft.memoryBindingMode === "SHARED" && !live.current.snapshot?.stores.some(store => store.id === draft.sharedMemoryId)) throw new Error("请选择有效的共享记忆库");
+        let bindingChanged = input.mode === "create";
+        let memoryBindingChanged = input.mode === "create";
+        if (input.mode !== "create") {
+          const original = live.current.snapshot!.cards.find(value => value.id === input.id);
+          if (original === undefined) throw new Error("角色卡已不存在");
+          bindingChanged = !sameCharacterModelBinding(original, draft);
+          memoryBindingChanged = original.memoryBindingMode !== draft.memoryBindingMode || original.sharedMemoryId !== draft.sharedMemoryId;
+        }
+        const bindingStatus = characterModelBindingStatus(draft, live.current.snapshot!.models);
+        if (bindingChanged && bindingStatus.needsRebind) throw new Error(bindingStatus.label);
+        if (memoryBindingChanged && draft.memoryBindingMode === "SHARED" && !live.current.snapshot?.stores.some(store => store.id === draft.sharedMemoryId)) throw new Error("请选择有效的共享记忆库");
         snapshot = await request({ action: "saveCharacter", card: copy(draft), create: input.mode === "create", tagChanges: copy(live.current.tagChanges) });
       } else {
         const draft = group(); if (draft.name.trim() === "") throw new Error("群组名称不能为空");
@@ -373,13 +383,18 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
           ]),
         );
         for (const [key, label, lines] of [["otherContentChat", "聊天附加内容", 4], ["otherContentVoice", "语音附加内容", 4], ["advancedCustomPrompt", "高级自定义 Prompt", 4], ["marks", "备注", 3]] as const) pages[1].push(field(key, label, draft[key], value => changeCard({ [key]: value }), lines));
+        const modelStatus = characterModelBindingStatus(draft, snapshot.models);
         const tts = snapshot.ttsConfigs.find(config => config.id === draft.ttsConfigId);
         const policy = draft.toolAccessConfig, count = policy.allowedBuiltinTools.length + policy.allowedPackages.length + policy.allowedSkills.length + policy.allowedMcpServers.length;
         pages[2].push(
-          binding("entity-model", "聊天模型", "跟随全局模型配置", "使用固定模型配置", draft.chatModelBindingMode === "FIXED_MODEL", checked => changeCard({ chatModelBindingMode: checked ? "FIXED_MODEL" : "FOLLOW_GLOBAL", chatModelId: checked ? card().chatModelId : null }), [select("entity-model-picker", "聊天模型配置", draft.chatModelId, snapshot.models.map(value => ({ id: value.modelId, label: value.modelId, subtitle: value.providerName })), chatModelId => changeCard({ chatModelId }), "请选择聊天模型")]),
+          ...(modelStatus.needsRebind ? [
+            ctx.UI.Text({ key: "entity-model-binding-error", text: modelStatus.label, color: colors.error, style: "bodyMedium" }),
+            standardButton("entity-model-follow-global", "跟随全局模型", () => changeCard({ chatModelBindingMode: "FOLLOW_GLOBAL", chatProviderId: null, chatModelId: null })),
+          ] : []),
+          binding("entity-model", "聊天模型", modelStatus.label, "使用固定模型配置", characterModelBindingMode(draft.chatModelBindingMode) === "FIXED_MODEL", checked => changeCard({ chatModelBindingMode: checked ? "FIXED_MODEL" : "FOLLOW_GLOBAL", chatModelId: checked ? card().chatModelId : null, chatProviderId: checked ? card().chatProviderId : null }), [select("entity-model-picker", "聊天模型配置", draft.chatProviderId === null || draft.chatModelId === null ? null : JSON.stringify([draft.chatProviderId, draft.chatModelId]), snapshot.models.map(value => ({ id: JSON.stringify([value.providerId, value.modelId]), label: value.modelId, subtitle: value.providerName })), selected => { const model = snapshot.models.find(value => JSON.stringify([value.providerId, value.modelId]) === selected); if (model === undefined) throw new Error("请选择有效的提供商与模型"); changeCard({ chatModelBindingMode: "FIXED_MODEL", chatProviderId: model.providerId, chatModelId: model.modelId }); }, "请选择聊天模型")]),
           binding("entity-theme", "主题配置", "不改变当前独立主题", "使用角色卡主题配置", draft.themeConfigId !== null, checked => { if (!checked) changeCard({ themeConfigId: null }); else update({ picker: { title: "选择主题配置", key: "theme", value: draft.themeConfigId, choices: state.themes ?? [], apply: themeConfigId => changeCard({ themeConfigId }), query: "" } }); }, [select("entity-theme-picker", "主题配置", draft.themeConfigId, state.themes ?? [], themeConfigId => changeCard({ themeConfigId }))]),
           binding("entity-tts", "TTS 配置", "跟随全局 TTS 配置", "使用角色卡 TTS 配置", draft.ttsConfigId !== null, checked => { if (!checked) changeCard({ ttsConfigId: null }); else update({ picker: { title: "选择 TTS 配置", key: "tts", value: draft.ttsConfigId, choices: snapshot.ttsConfigs.map(config => ({ id: config.id, label: config.name, subtitle: config.providerType + " · " + config.voice })), apply: ttsConfigId => changeCard({ ttsConfigId }), query: "" } }); }, [select("entity-tts-picker", "TTS 配置", draft.ttsConfigId, snapshot.ttsConfigs.map(config => ({ id: config.id, label: config.name, subtitle: config.providerType + " · " + config.voice })), ttsConfigId => changeCard({ ttsConfigId }), tts?.name ?? "请选择 TTS 配置")]),
-          binding("entity-memory", "记忆绑定", "使用角色记忆", "使用共享记忆", draft.memoryBindingMode === "SHARED", checked => changeCard({ memoryBindingMode: checked ? "SHARED" : "CHARACTER", sharedMemoryId: checked ? card().sharedMemoryId : null }), [snapshot.stores.length === 0 ? caption("还没有共享记忆库") : select("entity-store-picker", "共享记忆库", draft.sharedMemoryId, snapshot.stores.map(store => ({ id: store.id, label: store.name })), sharedMemoryId => changeCard({ sharedMemoryId }), "请选择共享记忆库")], snapshot.stores.length !== 0),
+          binding("entity-memory", "记忆绑定", "使用角色记忆", "使用共享记忆", draft.memoryBindingMode === "SHARED", checked => changeCard({ memoryBindingMode: checked ? "SHARED" : "CHARACTER", sharedMemoryId: checked ? card().sharedMemoryId : null }), [snapshot.stores.length === 0 ? caption("还没有共享记忆库") : select("entity-store-picker", "共享记忆库", draft.sharedMemoryId, snapshot.stores.map(store => ({ id: store.id, label: store.name })), sharedMemoryId => changeCard({ sharedMemoryId }), "请选择共享记忆库")], snapshot.stores.length !== 0 || draft.memoryBindingMode === "SHARED"),
           binding("entity-tool", "工具访问", "跟随全局工具配置", "自定义允许使用的工具", policy.enabled, checked => changeCard({ toolAccessConfig: { ...card().toolAccessConfig, enabled: checked } }), [configure("entity-tool-configure", "配置允许使用的工具", "已配置 " + count + " 个工具来源", () => { assertOwner(); update({ toolDraft: copy(card().toolAccessConfig), toolTab: 0, toolQuery: "" }); })]),
         );
         // References introduced by the plugin stay visible, without replacing main's sections.
@@ -406,7 +421,7 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
     const title = state.editing ? input.mode === "create" ? input.entity === "card" ? "创建角色卡" : "创建群组" : input.entity === "card" ? "编辑角色卡" : "编辑群组" : input.entity === "card" ? "角色卡" : "角色群组";
     panel = shell(title, page, [
       ...(state.editing && input.mode !== "create" ? [
-        ...(state.card?.isDefault ? [] : [standardButton("entity-delete", "删除", () => { assertOwner(); update({ deleting: true }); })]),
+        standardButton("entity-delete", "删除", () => { assertOwner(); update({ deleting: true }); }),
         standardButton("entity-export", "导出", () => { assertOwner(); update({ exporting: true }); }),
       ] : []),
       standardButton("entity-cancel", state.editing ? "取消" : "关闭", close),

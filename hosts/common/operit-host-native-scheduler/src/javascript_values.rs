@@ -1,378 +1,342 @@
-//! Owned JSON-compatible values at the native engine boundary. No JSON text is
-//! generated on the ordinary path. Only JS handles on the owner thread are used.
-use rquickjs::{
-    convert::Coerced, function::This, object::Property, qjs, Array, Ctx, Exception, FromJs,
-    Function, IntoJs, Object, Persistent, Value,
-};
+//! Bounded, direct V8 value conversion for the Host JavaScript boundary.
+use operit_host_api::{HostError, HostResult, HostJavaScriptValue};
 use serde_json::{Map, Number, Value as JsonValue};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
 
+mod snapshot;
+#[cfg(test)]
+mod tests;
+mod writer;
+
+pub(crate) use writer::to_js;
 const MAX_DEPTH: usize = 128;
 const MAX_NODES: usize = 1_000_000;
 
-/// Captured intrinsics implement JSON's toJSON/unboxing rules even when globals
-/// are subsequently replaced by a plugin. Class ids are discovered, not hardcoded.
+type Snapshots = Rc<RefCell<BTreeMap<usize, Box<snapshot::OwnedJson>>>>;
+
+/// Keeps conversion primitives and private request capsules local to one isolate.
 pub(crate) struct JsonIntrinsics {
-    prepare: Persistent<Function<'static>>,
-    boolean_value: Persistent<Function<'static>>,
-    bigint_value: Persistent<Function<'static>>,
-    classes: [qjs::JSClassID; 5],
-    is_array: Persistent<Function<'static>>,
+    is_array: v8::Global<v8::Function>,
+    plain_prototype: v8::Global<v8::Value>,
+    capsule_key: v8::Global<v8::Private>,
+    snapshots: Snapshots,
 }
 
 impl JsonIntrinsics {
-    /// Captures the original conversion intrinsics before any plugin executes.
-    pub(crate) fn new(ctx: &Ctx<'_>) -> rquickjs::Result<Self> {
-        let wrappers: Array = ctx.eval(
-            "[new Number(0), new String(''), new Boolean(false), Object(0n), new Proxy({}, {})]",
-        )?;
-        let mut classes = [0; 5];
-        for (index, class) in classes.iter_mut().enumerate() {
-            let value: Value = wrappers.get(index)?;
-            // SAFETY: live object values belong to this context; GetClassID only
-            // reads the object's class and neither consumes nor retains the value.
-            *class = unsafe { qjs::JS_GetClassID(value.as_raw()) };
-        }
-        let prepare: Function = ctx.eval("(function(apply) { return function(value, key) { var f = value.toJSON; return typeof f === 'function' ? apply(f, value, [key]) : value; }; })(Reflect.apply)")?;
-        let boolean_value: Function = ctx.eval("Boolean.prototype.valueOf")?;
-        let bigint_value: Function = ctx.eval("BigInt.prototype.valueOf")?;
-        let is_array: Function = ctx.eval("Array.isArray")?;
+    /// Captures immutable intrinsic handles before any plugin executes.
+    pub(crate) fn new(scope: &mut v8::PinScope<'_, '_>) -> HostResult<Self> {
+        let is_array = function(scope, "Array.isArray")?;
+        let prototype = evaluate(scope, "Object.prototype")?;
+        let plain_prototype = v8::Global::new(scope, prototype);
+        let key = v8::Private::new(scope, None);
         Ok(Self {
-            prepare: Persistent::save(ctx, prepare),
-            boolean_value: Persistent::save(ctx, boolean_value),
-            bigint_value: Persistent::save(ctx, bigint_value),
-            is_array: Persistent::save(ctx, is_array),
-            classes,
+            is_array,
+            plain_prototype,
+            capsule_key: v8::Global::new(scope, key),
+            snapshots: Default::default(),
         })
     }
 
-    /// Converts one standalone JSON-compatible argument using bounded value semantics.
-    pub(crate) fn from_js<'js>(
+    /// Reads lifecycle result fields directly with a bounded traversal.
+    pub(crate) fn from_js<'s>(
         &self,
-        ctx: &Ctx<'js>,
-        value: Value<'js>,
-    ) -> rquickjs::Result<Option<JsonValue>> {
-        let mut nodes = 0;
-        self.convert(ctx, value, "", &mut Vec::new(), &mut nodes, 0)
+        scope: &mut v8::PinScope<'s, '_>,
+        value: v8::Local<'s, v8::Value>,
+    ) -> HostResult<Option<JsonValue>> {
+        self.convert(scope, value, &mut Vec::new(), &mut 0, 0)
     }
 
-    /// Converts a complete host argument list under one shared depth and node budget.
-    pub(crate) fn arguments_from_js<'js>(
+    /// Applies one shared resource budget to a complete Host argument list.
+    pub(crate) fn arguments_from_js<'s>(
         &self,
-        ctx: &Ctx<'js>,
-        arguments: Vec<Value<'js>>,
-    ) -> rquickjs::Result<Vec<JsonValue>> {
+        scope: &mut v8::PinScope<'s, '_>,
+        arguments: impl Iterator<Item = v8::Local<'s, v8::Value>>,
+    ) -> HostResult<Vec<HostJavaScriptValue>> {
         let mut nodes = 0;
         arguments
-            .into_iter()
             .map(|value| {
-                self.convert(ctx, value, "", &mut Vec::new(), &mut nodes, 0)?
+                if value.is_uint8_array() {
+                    return transfer_buffer(scope, value).map(HostJavaScriptValue::Buffer);
+                }
+                self.convert(scope, value, &mut Vec::new(), &mut nodes, 0)?
                     .ok_or_else(|| {
-                        Exception::throw_type(ctx, "Host arguments must be JSON-compatible values")
-                    })
+                        type_error(scope, "Host arguments must be JSON-compatible values")
+                    }).map(HostJavaScriptValue::Json)
             })
             .collect()
     }
 
-    /// Recursively normalizes an owned argument without using JSON text or evaluating callback source.
-    fn convert<'js>(
+    /// Recursively reads fields under the binding's explicit data contract without JSON text.
+    fn convert<'s>(
         &self,
-        ctx: &Ctx<'js>,
-        mut value: Value<'js>,
-        key: &str,
-        stack: &mut Vec<Value<'js>>,
+        scope: &mut v8::PinScope<'s, '_>,
+        value: v8::Local<'s, v8::Value>,
+        ancestors: &mut Vec<v8::Local<'s, v8::Value>>,
         nodes: &mut usize,
         depth: usize,
-    ) -> rquickjs::Result<Option<JsonValue>> {
-        *nodes += 1;
-        if depth > MAX_DEPTH || *nodes > MAX_NODES {
-            return Err(Exception::throw_range(
-                ctx,
-                "Tool parameters exceed structured bridge depth/node limit",
-            ));
-        }
-        // SerializeJSONProperty: toJSON is called once, before unboxing and
-        // before detecting an ancestor cycle. Primitive BigInts can have toJSON.
-        if value.is_object() || value.is_big_int() {
-            value = self.prepare.clone().restore(ctx)?.call((value, key))?;
-        }
-        let mut proxy_array = false;
-        if value.is_object() {
-            // SAFETY: GetClassID receives a live object and does not retain it.
-            let class = unsafe { qjs::JS_GetClassID(value.as_raw()) };
-            if class == self.classes[4] {
-                proxy_array = self.is_array.clone().restore(ctx)?.call((value.clone(),))?;
-            }
-            if class == self.classes[0] {
-                value = Coerced::<f64>::from_js(ctx, value)?.0.into_js(ctx)?;
-            } else if class == self.classes[1] {
-                value = Coerced::<String>::from_js(ctx, value)?.0.into_js(ctx)?;
-            } else if class == self.classes[2] {
-                value = self
-                    .boolean_value
-                    .clone()
-                    .restore(ctx)?
-                    .call((This(value),))?;
-            } else if class == self.classes[3] {
-                value = self
-                    .bigint_value
-                    .clone()
-                    .restore(ctx)?
-                    .call((This(value),))?;
-            }
+    ) -> HostResult<Option<JsonValue>> {
+        check_budget(scope, nodes, depth)?;
+        if let Some((owned, _)) = self.take_owned(scope, value, nodes, depth)? {
+            return Ok(Some(owned));
         }
         if value.is_null() {
             return Ok(Some(JsonValue::Null));
         }
-        if let Some(flag) = value.as_bool() {
-            return Ok(Some(JsonValue::Bool(flag)));
+        if value.is_boolean() {
+            return Ok(Some(JsonValue::Bool(value.boolean_value(scope))));
         }
-        if let Some(number) = value.as_number() {
-            // JSON text represented integral JS numbers as integer tokens. Keep
-            // that distinction for SDK tools using Value::as_u64/as_i64.
-            let number = if number.is_finite() && number.fract() == 0.0 {
-                if number.abs() <= 9_007_199_254_740_991.0 {
-                    Some(if number < 0.0 {
-                        Number::from(number as i64)
-                    } else {
-                        Number::from(number as u64)
-                    })
-                } else {
-                    // Beyond JS's exact integer range, the old text protocol
-                    // parsed the shortest decimal spelling, not an f64->u64
-                    // cast. Preserve that rare scalar case without serializing
-                    // the request tree or invoking a mutable JSON global.
-                    let decimal = Coerced::<String>::from_js(ctx, value.clone())?.0;
-                    Some(
-                        decimal
-                            .parse::<Number>()
-                            .map_err(|error| Exception::throw_type(ctx, &error.to_string()))?,
-                    )
-                }
-            } else {
-                Number::from_f64(number)
-            };
-            return Ok(Some(
-                number.map(JsonValue::Number).unwrap_or(JsonValue::Null),
-            ));
+        if value.is_number() {
+            return Ok(Some(number(scope, value, false)?));
         }
-        if let Some(text) = value.as_string() {
-            return Ok(Some(JsonValue::String(text.to_string()?)));
+        if value.is_string() {
+            return Ok(Some(JsonValue::String(value.to_rust_string_lossy(scope))));
         }
         if value.is_big_int() {
-            return Err(Exception::throw_type(
-                ctx,
-                "BigInt cannot be serialized in tool parameters",
+            return Err(type_error(
+                scope,
+                "BigInt is not supported in Host data",
             ));
         }
         if value.is_undefined() || value.is_symbol() || value.is_function() {
             return Ok(None);
         }
-        let object = Object::from_js(ctx, value.clone())?;
-        if stack.iter().any(|ancestor| ancestor == &value) {
-            return Err(Exception::throw_type(
-                ctx,
+        if ancestors
+            .iter()
+            .any(|ancestor| ancestor.strict_equals(value))
+        {
+            return Err(type_error(
+                scope,
                 "Converting circular structure to tool parameters",
             ));
         }
-        stack.push(value.clone());
-        let result = if value.is_array() || proxy_array {
-            let array = value.as_array();
-            let len = if let Some(array) = array {
-                array.len()
-            } else {
-                // JSON's IsArray follows proxies; the low-level JS_IsArray does
-                // not. Proxy length uses ToLength and may execute a get trap.
-                let length: Coerced<f64> = object.get("length")?;
-                if length.0.is_nan() || length.0 <= 0.0 {
-                    0
-                } else if length.0 > MAX_NODES as f64 {
-                    MAX_NODES + 1
-                } else {
-                    length.0.floor() as usize
-                }
-            };
-            if len > MAX_NODES.saturating_sub(*nodes) {
-                return Err(Exception::throw_range(
-                    ctx,
+        let object = v8::Local::<v8::Object>::try_from(value).map_err(|_| engine_error())?;
+        ancestors.push(value);
+        let array = self.array(scope, value)?;
+        let result = if array {
+            let length = array_length(scope, object)?;
+            if length > MAX_NODES.saturating_sub(*nodes) {
+                return Err(range_error(
+                    scope,
                     "Tool parameters exceed structured bridge node limit",
                 ));
             }
-            let mut items = Vec::with_capacity(len);
-            for index in 0..len {
-                let element: Value = if let Some(array) = array {
-                    array.get(index)?
-                } else {
-                    object.get(index.to_string())?
-                };
+            let mut items = Vec::with_capacity(length);
+            for index in 0..length {
+                let element = object
+                    .get_index(scope, index as u32)
+                    .ok_or_else(engine_error)?;
                 items.push(
-                    self.convert(ctx, element, &index.to_string(), stack, nodes, depth + 1)?
-                        .unwrap_or(JsonValue::Null),
+                    self.convert(
+                        scope,
+                        element,
+                        ancestors,
+                        nodes,
+                        depth + 1,
+                    )?
+                    .unwrap_or(JsonValue::Null),
                 );
             }
             JsonValue::Array(items)
         } else {
-            // Snapshot enumerable own keys before invoking getters. This matches
-            // JSON.stringify when a getter mutates sibling properties.
             let keys = object
-                .keys::<String>()
-                .collect::<rquickjs::Result<Vec<_>>>()?;
+                .get_own_property_names(
+                    scope,
+                    v8::GetPropertyNamesArgs {
+                        mode: v8::KeyCollectionMode::OwnOnly,
+                        key_conversion: v8::KeyConversionMode::ConvertToString,
+                        ..Default::default()
+                    },
+                )
+                .ok_or_else(engine_error)?;
             let mut items = Map::new();
-            for key in keys {
-                let element: Value = object.get(key.as_str())?;
-                if let Some(element) = self.convert(ctx, element, &key, stack, nodes, depth + 1)? {
-                    items.insert(key, element);
+            for index in 0..keys.length() {
+                let key = keys.get_index(scope, index).ok_or_else(engine_error)?;
+                let name = key.to_rust_string_lossy(scope);
+                let element = object.get(scope, key).ok_or_else(engine_error)?;
+                if let Some(element) =
+                    self.convert(scope, element, ancestors, nodes, depth + 1)?
+                {
+                    items.insert(name, element);
                 }
             }
             JsonValue::Object(items)
         };
-        stack.pop();
+        ancestors.pop();
         Ok(Some(result))
     }
+
+    /// Uses the captured IsArray intrinsic for proxy arrays as well as ordinary arrays.
+    fn array<'s>(
+        &self,
+        scope: &mut v8::PinScope<'s, '_>,
+        value: v8::Local<'s, v8::Value>,
+    ) -> HostResult<bool> {
+        if !value.is_proxy() {
+            return Ok(value.is_array());
+        }
+        let function = v8::Local::new(scope, &self.is_array);
+        let receiver = v8::undefined(scope).into();
+        Ok(function
+            .call(scope, receiver, &[value])
+            .ok_or_else(engine_error)?
+            .boolean_value(scope))
+    }
 }
 
-/// Creates JS data properties, not assignments: a JSON key such as __proto__
-/// must not invoke an inherited setter or change the result object's prototype.
-pub(crate) fn to_js<'js>(ctx: &Ctx<'js>, value: &JsonValue) -> rquickjs::Result<Value<'js>> {
-    to_js_inner(ctx, value, 0, &mut 0)
+/// Evaluates trusted intrinsic source inside the current isolate and context.
+fn evaluate<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    source: &str,
+) -> HostResult<v8::Local<'s, v8::Value>> {
+    let source = text(scope, source)?;
+    v8::Script::compile(scope, source, None)
+        .ok_or_else(engine_error)?
+        .run(scope)
+        .ok_or_else(engine_error)
 }
 
-fn to_js_inner<'js>(
-    ctx: &Ctx<'js>,
-    value: &JsonValue,
-    depth: usize,
+/// Persists one captured intrinsic function for this isolate.
+fn function(
+    scope: &mut v8::PinScope<'_, '_>,
+    source: &str,
+) -> HostResult<v8::Global<v8::Function>> {
+    let value = evaluate(scope, source)?;
+    let function = v8::Local::<v8::Function>::try_from(value).map_err(|_| engine_error())?;
+    Ok(v8::Global::new(scope, function))
+}
+
+/// Allocates one V8 string and reports allocation failure explicitly.
+pub(crate) fn text<'s>(
+    scope: &v8::PinScope<'s, '_>,
+    value: &str,
+) -> HostResult<v8::Local<'s, v8::String>> {
+    v8::String::new(scope, value).ok_or_else(engine_error)
+}
+
+/// Identifies an engine operation whose actual exception is read by the enclosing TryCatch.
+pub(crate) fn engine_error() -> HostError {
+    HostError::new("V8 JavaScript operation failed")
+}
+
+/// Raises a JavaScript TypeError while retaining its message for Rust callers.
+pub(crate) fn type_error(scope: &mut v8::PinScope<'_, '_>, message: &str) -> HostError {
+    let text = v8::String::new(scope, message).expect("static JavaScript error message");
+    let exception = v8::Exception::type_error(scope, text);
+    scope.throw_exception(exception);
+    HostError::new(message)
+}
+
+/// Raises a JavaScript RangeError for a boundary resource limit.
+pub(crate) fn range_error(scope: &mut v8::PinScope<'_, '_>, message: &str) -> HostError {
+    let text = v8::String::new(scope, message).expect("static JavaScript error message");
+    let exception = v8::Exception::range_error(scope, text);
+    scope.throw_exception(exception);
+    HostError::new(message)
+}
+
+/// Enforces the common structured bridge traversal budget.
+fn check_budget(
+    scope: &mut v8::PinScope<'_, '_>,
     nodes: &mut usize,
-) -> rquickjs::Result<Value<'js>> {
+    depth: usize,
+) -> HostResult<()> {
     *nodes += 1;
-    if depth > MAX_DEPTH || *nodes > MAX_NODES {
-        return Err(Exception::throw_range(
-            ctx,
-            "Tool result exceeds structured bridge depth/node limit",
+    if *nodes > MAX_NODES || depth > MAX_DEPTH {
+        return Err(range_error(
+            scope,
+            "Tool request exceeds structured depth/node limit",
         ));
     }
-    match value {
-        JsonValue::Null => Ok(Value::new_null(ctx.clone())),
-        JsonValue::Bool(value) => value.into_js(ctx),
-        JsonValue::Number(value) => value.as_f64().unwrap_or(f64::NAN).into_js(ctx),
-        JsonValue::String(value) => value.into_js(ctx),
-        JsonValue::Array(values) => {
-            let array = Array::new(ctx.clone())?;
-            for (index, value) in values.iter().enumerate() {
-                array.prop(
-                    index as u32,
-                    Property::from(to_js_inner(ctx, value, depth + 1, nodes)?)
-                        .writable()
-                        .enumerable()
-                        .configurable(),
-                )?;
-            }
-            Ok(array.into_value())
+    Ok(())
+}
+
+/// Preserves integral JSON numbers and JavaScript's decimal spelling for large integers.
+fn number(
+    scope: &mut v8::PinScope<'_, '_>,
+    value: v8::Local<'_, v8::Value>,
+    strict: bool,
+) -> HostResult<JsonValue> {
+    let number = value.number_value(scope).ok_or_else(engine_error)?;
+    if !number.is_finite() {
+        return if strict {
+            Err(type_error(scope, "Tool request contains a non-JSON value"))
+        } else {
+            Ok(JsonValue::Null)
+        };
+    }
+    if number.fract() == 0.0 {
+        if number.abs() <= 9_007_199_254_740_991.0 {
+            return Ok(JsonValue::Number(if number < 0.0 {
+                Number::from(number as i64)
+            } else {
+                Number::from(number as u64)
+            }));
         }
-        JsonValue::Object(values) => {
-            let object = Object::new(ctx.clone())?;
-            for (key, value) in values {
-                object.prop(
-                    key.as_str(),
-                    Property::from(to_js_inner(ctx, value, depth + 1, nodes)?)
-                        .writable()
-                        .enumerable()
-                        .configurable(),
-                )?;
-            }
-            Ok(object.into_value())
-        }
+        let decimal = value
+            .to_string(scope)
+            .ok_or_else(engine_error)?
+            .to_rust_string_lossy(scope);
+        return decimal
+            .parse::<Number>()
+            .map(JsonValue::Number)
+            .map_err(|error| HostError::new(error.to_string()));
+    }
+    Ok(JsonValue::Number(
+        Number::from_f64(number).expect("finite JSON number"),
+    ))
+}
+
+/// Applies JavaScript ToLength and rejects arrays exceeding the traversal budget.
+fn array_length(
+    scope: &mut v8::PinScope<'_, '_>,
+    value: v8::Local<'_, v8::Object>,
+) -> HostResult<usize> {
+    let key = text(scope, "length")?;
+    let length = value
+        .get(scope, key.into())
+        .ok_or_else(engine_error)?
+        .number_value(scope)
+        .ok_or_else(engine_error)?;
+    if length.is_nan() || length <= 0.0 {
+        return Ok(0);
+    }
+    if length > MAX_NODES as f64 {
+        return Err(range_error(
+            scope,
+            "Tool request exceeds structured node limit",
+        ));
+    }
+    Ok(length.floor() as usize)
+}
+
+/// Retains detached V8 storage until its final Rust or Dart owner releases it.
+struct TransferredBuffer(v8::SharedRef<v8::BackingStore>);
+
+impl AsRef<[u8]> for TransferredBuffer {
+    /// Exposes storage only after every JavaScript view has been detached.
+    fn as_ref(&self) -> &[u8] {
+        let length = self.0.byte_length();
+        if length == 0 { return &[]; }
+        // SAFETY: the retained backing store owns this initialized allocation and
+        // detachment removes all JavaScript writers before this owner is created.
+        unsafe { std::slice::from_raw_parts(self.0.data().expect("nonempty backing store").as_ptr().cast(), length) }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rquickjs::{Context, Runtime};
-
-    #[test]
-    fn structured_parameters_match_json_stringify_semantics() {
-        let runtime = Runtime::new().unwrap();
-        let context = Context::full(&runtime).unwrap();
-        context.with(|ctx| {
-            let intrinsics = JsonIntrinsics::new(&ctx).unwrap();
-            for expression in [
-                "({text:'引号\\\"\\n\\u2028', flag:true, nil:null, integer:42, large:1e16})",
-                "({rounded:18446744073709550000, negative:-9223372036854775808, exp:1e21, huge:1.79e308})",
-                "({drop:undefined, fn:function(){}, symbol:Symbol('x'), nan:NaN, inf:Infinity})",
-                "({array:[undefined, function(){}, Symbol('x'), NaN, , 5], nested:{a:1}})",
-                "({date:new Date('2020-01-01T00:00:00Z'), n:new Number(3), s:new String('x'), b:new Boolean(false)})",
-                "({value:{toJSON(key){return {key:key, text:'done'};}}})",
-                "({value: (()=>{ var f=function(k){return k;}; f.call=null; return {toJSON:f}; })()})",
-                "({a:1, get b(){delete this.a; this.c=3; return 2;}})",
-                "({shared:(()=>{var a={v:2};return [a,a];})()})",
-                "({__proto__:null, ['__proto__']:{polluted:true}, ['constructor']:'plain'})",
-                "({boxed:(()=>{var n=new Number(3);n.valueOf=()=>5;return n;})()})",
-                "({array:new Proxy([1,,3],{})})",
-                "({array:new Proxy([1,2,3],{get(t,k){return k==='length'?2.9:Reflect.get(t,k);}})})",
-                "({typed:new Uint8Array([1,2,3]), map:new Map([['x',1]])})",
-                "({get a(){return undefined;}, get b(){return null;}})",
-                "({value:{toJSON(){return function(){};}}})",
-            ] {
-                // Evaluate separately because getters can mutate the object.
-                let expected: String = ctx.eval(format!("JSON.stringify({expression})")).unwrap();
-                let value: Value = ctx.eval(expression).unwrap();
-                let actual = intrinsics.from_js(&ctx, value).unwrap().unwrap();
-                let expected: JsonValue = serde_json::from_str(&expected).unwrap();
-                assert_eq!(actual, expected, "{expression}");
-            }
-        });
+/// Detaches one bounded byte view and moves its backing allocation without reading its payload.
+fn transfer_buffer<'s>(scope: &mut v8::PinScope<'s, '_>, value: v8::Local<'s, v8::Value>) -> HostResult<bytes::Bytes> {
+    let view = v8::Local::<v8::Uint8Array>::try_from(value).map_err(|_| engine_error())?;
+    let offset = view.byte_offset();
+    let length = view.byte_length();
+    let buffer = view.buffer(scope).ok_or_else(engine_error)?;
+    let store = buffer.get_backing_store();
+    if store.is_shared() || store.is_resizable_by_user_javascript() || buffer.was_detached() {
+        return Err(type_error(scope, "Host transfer requires an attached fixed ArrayBuffer"));
     }
-
-    #[test]
-    fn cycles_bigints_getters_and_depth_are_rejected_without_poisoning_context() {
-        let runtime = Runtime::new().unwrap();
-        let context = Context::full(&runtime).unwrap();
-        context.with(|ctx| {
-            let intrinsics = JsonIntrinsics::new(&ctx).unwrap();
-            for source in [
-                "(()=>{let x={};x.self=x;return x;})()",
-                "({value:1n})",
-                "({value:Object(1n)})",
-                "({get value(){throw new Error('getter failure');}})",
-                "(()=>{let x={};for(let i=0;i<140;i++)x={x};return x;})()",
-                "({value:new Array(1000001)})",
-            ] {
-                let value: Value = ctx.eval(source).unwrap();
-                assert!(intrinsics.from_js(&ctx, value).is_err(), "{source}");
-                ctx.catch();
-                assert_eq!(ctx.eval::<i32, _>("1+1").unwrap(), 2);
-            }
-            let value: Value = ctx.eval("({value:{toJSON(){return 4;}}})").unwrap();
-            assert_eq!(
-                intrinsics.from_js(&ctx, value).unwrap(),
-                Some(serde_json::json!({"value":4}))
-            );
-        });
-    }
-
-    #[test]
-    fn result_arrays_do_not_invoke_inherited_index_setters() {
-        let runtime = Runtime::new().unwrap();
-        let context = Context::full(&runtime).unwrap();
-        context.with(|ctx| {
-            ctx.eval::<(), _>("globalThis.setterCalls=0; Object.defineProperty(Array.prototype,'0',{set(){setterCalls++;},configurable:true});").unwrap();
-            let result = to_js(&ctx, &serde_json::json!([7, {"nested":[8]}])).unwrap();
-            ctx.globals().set("result", result).unwrap();
-            assert_eq!(ctx.eval::<i32, _>("setterCalls").unwrap(), 0);
-            assert!(ctx.eval::<bool, _>("Object.hasOwn(result,'0') && Object.hasOwn(result[1].nested,'0')").unwrap());
-            assert_eq!(ctx.eval::<String, _>("JSON.stringify(result)").unwrap(), "[7,{\"nested\":[8]}]");
-        });
-    }
-
-    #[test]
-    fn results_preserve_proto_keys_as_own_data_properties() {
-        let runtime = Runtime::new().unwrap();
-        let context = Context::full(&runtime).unwrap();
-        context.with(|ctx| {
-            let value = serde_json::json!({"__proto__":{"polluted":true}, "text":"\"\n\u{2028}中"});
-            ctx.globals().set("result", to_js(&ctx, &value).unwrap()).unwrap();
-            assert!(ctx.eval::<bool,_>("Object.getPrototypeOf(result)===Object.prototype && Object.hasOwn(result,'__proto__') && result.polluted===undefined").unwrap());
-            let serialized: String = ctx.eval("JSON.stringify(result)").unwrap();
-            assert_eq!(serde_json::from_str::<JsonValue>(&serialized).unwrap(), value);
-        });
-    }
+    let end = offset.checked_add(length).filter(|end| *end <= store.byte_length())
+        .ok_or_else(|| type_error(scope, "Host byte view exceeds its backing storage"))?;
+    if buffer.detach(None) != Some(true) { return Err(type_error(scope, "Host buffer cannot be detached")); }
+    Ok(bytes::Bytes::from_owner(TransferredBuffer(store)).slice(offset..end))
 }

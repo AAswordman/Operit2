@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 type Error = de::value::Error;
 pub(crate) fn to_value(value: impl Serialize) -> Result<CoreValue, Error> {
-    value.serialize(ValueSerializer)
+    crate::codec::captureLinkBuffers(|| value.serialize(ValueSerializer)).0
 }
 pub(crate) fn from_value<T: de::DeserializeOwned>(value: CoreValue) -> Result<T, Error> {
     T::deserialize(value)
@@ -89,7 +89,12 @@ impl Serializer for ValueSerializer {
         v: &T,
     ) -> Result<CoreValue, Error> {
         if name == "_ExtStruct" {
-            return Err(error("MessagePack extensions are not Link values"));
+            let CoreValue::List(parts) = v.serialize(ValueSerializer)? else { return Err(error("Invalid shared buffer extension")); };
+            let [tag, CoreValue::Bytes(reference)] = parts.as_slice() else { return Err(error("Invalid shared buffer extension")); };
+            if !matches!(tag, CoreValue::Signed(0x42) | CoreValue::Unsigned(0x42)) || reference.len() != 24 { return Err(error("Invalid shared buffer extension")); }
+            let number = |offset| usize::try_from(u64::from_be_bytes(reference[offset..offset + 8].try_into().unwrap())).map_err(|_| error("Shared buffer address overflow"));
+            return crate::codec::retain_encoded_buffer(number(0)?, number(8)?, number(16)?)
+                .map(CoreValue::Bytes).map_err(error);
         }
         v.serialize(self)
     }

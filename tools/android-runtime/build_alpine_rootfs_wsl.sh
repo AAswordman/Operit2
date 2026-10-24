@@ -10,13 +10,13 @@ work_dir="$cache_dir/work"
 apk_static_dir="$cache_dir/apk-static"
 
 mirror="https://dl-cdn.alpinelinux.org/alpine"
-branch="latest-stable"
+branch="v3.23"
 host_arch="x86_64"
 
 packages=(
     bash
     python3
-    nodejs
+    "nodejs~24"
     npm
     uv
     pnpm
@@ -197,6 +197,8 @@ build_rootfs_for_abi() {
         --no-scripts \
         --initdb \
         add "${packages[@]}"
+
+    python3 "$repo_dir/tools/runtime/verify_alpine_node24.py" "$root_dir/lib/apk/db/installed"
 
     rm -rf "$root_dir/var/cache/apk"
     mkdir -p "$root_dir/var/cache/apk"

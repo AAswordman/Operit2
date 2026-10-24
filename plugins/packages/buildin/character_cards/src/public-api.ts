@@ -2,9 +2,7 @@ import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, C
 import { parseDomainPayload, parseMemoryQueryRequest } from "./domain";
 import { MemoryTools } from "./runtime-tools/memory";
 import { dispatchDomain } from "./service-runtime";
-import { findChatBinding, readStoredSnapshot, storeSnapshot, readDraftBinding, commitDraftBinding, abortDraftBinding } from "./chat-storage";
-import type { SnapshotReference } from "./chat-storage";
-import type { MessageMarker } from "./chat-markers";
+import { findChatBinding, readDraftBinding, commitDraftBinding, abortDraftBinding } from "./chat-storage";
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
 
 const memoryQueries = new MemoryTools(dispatchDomain);
@@ -13,7 +11,7 @@ const memoryQueries = new MemoryTools(dispatchDomain);
 export async function chatConfigurationResolveApi(event: ToolPkg.PublicApiEvent<ChatConfigurationRequest>): Promise<ChatConfigurationResult> {
   if (event.callerPackage !== "host") throw new Error("chat.configuration.resolve requires an authenticated host caller");
   const request = parseDomainPayload("chat.configuration.resolve", event.payload);
-  if (request.chatId !== null && request.messageExtension === null) {
+  if (request.chatId !== null) {
     const binding = await findChatBinding(request.chatId);
     // A conversation without a role association explicitly uses the ordinary model mode.
     request.chatExtension = { version: 1, selection: binding === null ? "model:chat" : binding.selection };
@@ -48,17 +46,6 @@ export async function chatConfigurationDeleteApi(event: ToolPkg.PublicApiEvent<{
   const result = await dispatchDomain("chat.configuration.binding.delete", input);
   if (result.chatId !== input.chatId || !result.deleted) throw new Error("Character binding deletion was not acknowledged");
   return { deleted: true };
-}
-
-/** Persists a frozen snapshot under the authenticated owner's SQL tables. */
-export async function chatConfigurationSnapshotStoreApi(event: ToolPkg.PublicApiEvent<MessageMarker>): Promise<SnapshotReference> {
-  if (event.callerPackage !== "host") throw new Error("Snapshot storage requires the host caller");
-  return storeSnapshot(event.payload);
-}
-/** Resolves an immutable reference without reading current role settings. */
-export async function chatConfigurationSnapshotReadApi(event: ToolPkg.PublicApiEvent<SnapshotReference>): Promise<MessageMarker> {
-  if (event.callerPackage !== "host") throw new Error("Snapshot reads require the host caller");
-  return readStoredSnapshot(event.payload);
 }
 
 /** Reads the actual binding without changing the current global selection. */
@@ -105,6 +92,11 @@ export async function memoryChatUpdateApi(event: ToolPkg.PublicApiEvent<DomainIn
   return dispatchDomain("memory.chat.update", parseDomainPayload("memory.chat.update", event.payload));
 }
 
+/** Executes memory.chat.pruneMissing through the sole private database-backed service. */
+export async function memoryChatPruneMissingApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.chat.pruneMissing">>): Promise<DomainOutput<"memory.chat.pruneMissing">> {
+  return dispatchDomain("memory.chat.pruneMissing", parseDomainPayload("memory.chat.pruneMissing", event.payload));
+}
+
 /** Executes memory.categorize through the sole private database-backed service. */
 export async function memoryCategorizeApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.categorize">>): Promise<DomainOutput<"memory.categorize">> {
   return dispatchDomain("memory.categorize", parseDomainPayload("memory.categorize", event.payload));
@@ -133,6 +125,11 @@ export async function memoryEmbeddingsRebuildApi(event: ToolPkg.PublicApiEvent<D
 /** Executes memory.candidate.enqueue through the sole private database-backed service. */
 export async function memoryCandidateEnqueueApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.candidate.enqueue">>): Promise<DomainOutput<"memory.candidate.enqueue">> {
   return dispatchDomain("memory.candidate.enqueue", parseDomainPayload("memory.candidate.enqueue", event.payload));
+}
+
+/** Queries document chunks through the same persisted repository and scoring implementation. */
+export async function memoryChunksApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.chunks">>): Promise<DomainOutput<"memory.chunks">> {
+  return dispatchDomain("memory.chunks", parseDomainPayload("memory.chunks", event.payload));
 }
 
 /** Executes full-filter search through the sole file service and its real embedding cache. */
@@ -178,11 +175,6 @@ export async function characterSetActiveApi(event: ToolPkg.PublicApiEvent<Domain
 /** Validates and executes the character.combine public domain method. */
 export async function characterCombineApi(event: ToolPkg.PublicApiEvent<DomainInput<"character.combine">>): Promise<DomainOutput<"character.combine">> {
   return dispatchDomain("character.combine", parseDomainPayload("character.combine", event.payload));
-}
-
-/** Validates and executes the character.resetDefault public domain method. */
-export async function characterResetDefaultApi(event: ToolPkg.PublicApiEvent<DomainInput<"character.resetDefault">>): Promise<DomainOutput<"character.resetDefault">> {
-  return dispatchDomain("character.resetDefault", parseDomainPayload("character.resetDefault", event.payload));
 }
 
 /** Validates and executes the character.export public domain method. */
@@ -455,10 +447,9 @@ export function registerDomainApis(): void {
   ToolPkg.registerApi({ name: "chat.configuration.draft.resolve", function: chatConfigurationDraftResolveApi });
   ToolPkg.registerApi({ name: "chat.configuration.draft.commit", function: chatConfigurationDraftCommitApi });
   ToolPkg.registerApi({ name: "chat.configuration.draft.abort", function: chatConfigurationDraftAbortApi });
-  ToolPkg.registerApi({ name: "chat.configuration.snapshot.store", function: chatConfigurationSnapshotStoreApi });
-  ToolPkg.registerApi({ name: "chat.configuration.snapshot.read", function: chatConfigurationSnapshotReadApi });
   ToolPkg.registerApi<MemoryQueryRequest, MemoryQueryResult>({ name: "memory.query", function: memoryQueryApi });
   ToolPkg.registerApi<DomainInput<"memory.searchWithOptions">, DomainOutput<"memory.searchWithOptions">>({ name: "memory.searchWithOptions", function: memorySearchWithOptionsApi });
+  ToolPkg.registerApi<DomainInput<"memory.chunks">, DomainOutput<"memory.chunks">>({ name: "memory.chunks", function: memoryChunksApi });
   ToolPkg.registerApi<DomainInput<"memory.candidate.enqueue">, DomainOutput<"memory.candidate.enqueue">>({ name: "memory.candidate.enqueue", function: memoryCandidateEnqueueApi });
   ToolPkg.registerApi<DomainInput<"memory.embeddings.rebuild">, DomainOutput<"memory.embeddings.rebuild">>({ name: "memory.embeddings.rebuild", function: memoryEmbeddingsRebuildApi });
   ToolPkg.registerApi<DomainInput<"memory.rebuild.cancel">, DomainOutput<"memory.rebuild.cancel">>({ name: "memory.rebuild.cancel", function: memoryRebuildCancelApi });
@@ -466,6 +457,7 @@ export function registerDomainApis(): void {
   ToolPkg.registerApi<DomainInput<"memory.rebuild.start">, DomainOutput<"memory.rebuild.start">>({ name: "memory.rebuild.start", function: memoryRebuildStartApi });
   ToolPkg.registerApi<DomainInput<"memory.categorize">, DomainOutput<"memory.categorize">>({ name: "memory.categorize", function: memoryCategorizeApi });
   ToolPkg.registerApi<DomainInput<"memory.chat.update">, DomainOutput<"memory.chat.update">>({ name: "memory.chat.update", function: memoryChatUpdateApi });
+  ToolPkg.registerApi<DomainInput<"memory.chat.pruneMissing">, DomainOutput<"memory.chat.pruneMissing">>({ name: "memory.chat.pruneMissing", function: memoryChatPruneMissingApi });
   ToolPkg.registerApi<DomainInput<"memory.chat.list">, DomainOutput<"memory.chat.list">>({ name: "memory.chat.list", function: memoryChatListApi });
   registerChatConfigurationApis();
   ToolPkg.registerApi<DomainInput<"snapshot">, DomainOutput<"snapshot">>({ name: "snapshot", function: snapshotApi });
@@ -476,7 +468,6 @@ export function registerDomainApis(): void {
   ToolPkg.registerApi<DomainInput<"character.delete">, DomainOutput<"character.delete">>({ name: "character.delete", function: characterDeleteApi });
   ToolPkg.registerApi<DomainInput<"character.setActive">, DomainOutput<"character.setActive">>({ name: "character.setActive", function: characterSetActiveApi });
   ToolPkg.registerApi<DomainInput<"character.combine">, DomainOutput<"character.combine">>({ name: "character.combine", function: characterCombineApi });
-  ToolPkg.registerApi<DomainInput<"character.resetDefault">, DomainOutput<"character.resetDefault">>({ name: "character.resetDefault", function: characterResetDefaultApi });
   ToolPkg.registerApi<DomainInput<"character.export">, DomainOutput<"character.export">>({ name: "character.export", function: characterExportApi });
   ToolPkg.registerApi<DomainInput<"character.import">, DomainOutput<"character.import">>({ name: "character.import", function: characterImportApi });
   ToolPkg.registerApi<DomainInput<"character.exportBackup">, DomainOutput<"character.exportBackup">>({ name: "character.exportBackup", function: characterExportBackupApi });

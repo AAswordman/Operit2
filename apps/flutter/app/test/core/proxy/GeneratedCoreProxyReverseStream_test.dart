@@ -141,7 +141,7 @@ void main() {
       expect(await secondStream.map((event) => event.value).toList(), <String?>[
         'hello',
       ]);
-      expect(proxy.embeddedWatchOpenCount, 1);
+      expect(proxy.embeddedWatchOpenCount, 2);
     },
   );
 
@@ -372,6 +372,12 @@ class _GeneratedFlowCoreProxy extends CoreProxy {
     _markdownStreamEventValue('hello'),
   );
   var embeddedWatchOpenCount = 0;
+
+  /// Rejects offline rescue calls because this test only exercises watch streams.
+  @override
+  Future<Object?> dataRescue(Map<String, Object?> request) {
+    throw UnimplementedError();
+  }
 
   /// Rejects storage default reads because this test only exercises watch streams.
   @override

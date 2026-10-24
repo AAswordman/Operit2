@@ -1,12 +1,8 @@
 import { installScopedHostRuntime, installGeneratedToolsRuntime } from "../../../../../tools/tests/fixtures/scoped_host_runtime.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-const root = new URL("../../../../../", import.meta.url);
-/** Reads current production code, not an emitted runtime artifact. */
-function source(path) { return readFileSync(new URL(path, root), "utf8"); }
 const submitted = { kind: "submit", chatId: "chat-a", runtime: "main", input: { text: "Original", attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute", participantId: "participant-a" }, notifyReply: false };
 const receipt = { chatId: "chat-a", message: "Original", aiResponse: "Visible text", receivedAt: 30, sentAt: 10,
   outcome: { type: "committed", status: "completed", userMessageTimestamp: 11, assistant: { messageTimestamp: 22, variantIndex: 0 } } };
@@ -180,30 +176,4 @@ test("cancel: returns the exact native owner/chat cancellation acknowledgement",
   assert.deepEqual(env.calls, [{ method: "cancel", value: "chat-a" }]); assertCallReleased(env.context);
 });
 
-/** Audits the mounted native/SDK path without claiming this source assertion is a Rust execution test. */
-test("static: only three send controls are public and native snapshots use the existing parser", () => {
-  const sdk = source("core/crates/plugin/sdk/src/js_sdk/chat.rs");
-  const transport = source("core/crates/runtime/application/src/services/core/ChatTurnTransport.rs");
-  const runtime = source("core/crates/runtime/application/src/services/ToolRuntimeSupportService.rs");
-  const parser = source("core/crates/runtime/application/src/services/core/MessageProcessingDelegate.rs");
-  const observation = source("core/crates/runtime/application/src/services/core/ChatSendStream.rs");
-  const engine = source("core/crates/plugin/javascript-bridge/src/javascript/JsEngine.rs");
-  assert.match(sdk, /fn sendMessage\(&self, request: ChatSendRequest\) -> JsFuture<MessageSendResultData>/);
-  assert.match(sdk, /fn sendMessageStreaming\(&self, request: ChatSendRequest\) -> JsAsyncIterable<ChatSendEvent>/);
-  assert.match(sdk, /fn cancel\(&self, chatId: String\)/);
-  assert.doesNotMatch(sdk, /fn (startTurn|waitTurn|cancelTurn|finishSequence)\(|onIntermediateResult|ChatSendMessageStreamingOptions/);
-  assert.match(transport, /sequence\.owner == owner && sequence\.chatId == chatId/);
-  assert.match(runtime, /ownedActiveExecution\(owner, chatId\)/);
-  assert.match(runtime, /cancelNativeChatExecution\(&capturedChatId, &executionId\)/);
-  assert.match(parser, /parser\.resetToSnapshot\(&snapshot\)/);
-  assert.match(parser, /parser\.pushSnapshot\(&snapshot\)/);
-  assert.match(parser, /observer\.snapshot\(workerAiMessage\.timestamp, &parts\)/);
-  assert.match(observation, /MAX_CHAT_SNAPSHOT_BYTES: usize = 8 \* 1024 \* 1024/);
-  assert.match(observation, /watch::channel\(ObservationState::default\(\)\)/);
-  assert.doesNotMatch(observation, /unbounded|VecDeque|cancelNativeChatExecution/);
-  assert.match(engine, /"__operitNativeCallToolStructured"/);
-  assert.doesNotMatch(engine, /__operitNativeChatAsync/);
-  assert.match(source("core/crates/tool/services/src/tools/ToolRegistration.rs"), /runtimeSupport\(\)\.requestPluginChatCancellation\(&context\.requirePluginOwner\(\)\?, &args\.chat_id\)/);
-});
-
-console.log("SCOPE: actual JavaScript iterator execution with a controlled native ABI plus source checks; no Rust compilation or live AI generation");
+console.log("SCOPE: actual JavaScript iterator execution with a controlled native ABI; no Rust compilation or live AI generation");

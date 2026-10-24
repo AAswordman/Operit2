@@ -1,8 +1,10 @@
-//! ABI dispatch only: preserves the existing C, JNI, and JavaScript wire contracts.
+//! Runtime lifecycle and host exports, plus the browser MessagePack ABI.
+//! Native Core calls and streams are owned exclusively by FfiTransport ABI v2.
 
 use crate::BridgeCodec::*;
 use crate::OperitFlutterBridge;
-use operit_link::{CoreEvent, CoreEventKind, CoreLinkError};
+#[cfg(target_arch = "wasm32")]
+use operit_link::{CoreEvent, CoreLinkError};
 use std::any::Any;
 use std::ffi::{c_char, CStr, CString};
 use std::path::PathBuf;
@@ -34,22 +36,6 @@ pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
                 panic_payload_message(payload.as_ref())
             ));
             std::ptr::null_mut()
-        }
-    }
-}
-
-#[repr(C)]
-pub struct OperitByteBuffer {
-    pub ptr: *mut u8,
-    pub len: usize,
-}
-
-impl OperitByteBuffer {
-    /// Creates an empty byte buffer for a failed or closed native operation.
-    fn empty() -> Self {
-        Self {
-            ptr: std::ptr::null_mut(),
-            len: 0,
         }
     }
 }
@@ -259,47 +245,6 @@ pub unsafe extern "C" fn operit_flutter_bridge_destroy(handle: *mut OperitFlutte
     }
 }
 
-/// Dispatches one compact native CoreProxy call for every native platform channel.
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_native_call(
-    handle: *const OperitFlutterBridge,
-    request_ptr: *const u8,
-    request_len: usize,
-) -> OperitByteBuffer {
-    if handle.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-null",
-            "runtime bridge is not initialized",
-        ));
-    }
-    if request_ptr.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-null-request",
-            "runtime request pointer is null",
-        ));
-    }
-    let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        bridge_native_call(&*handle, request_bytes)
-    })) {
-        Ok(response) => bytes_to_buffer(response),
-        Err(payload) => bytes_to_buffer(native_core_panic_result(payload.as_ref())),
-    }
-}
-
-/// Serializes one captured Core panic into the standard native Link result envelope.
-#[cfg(not(target_arch = "wasm32"))]
-fn native_core_panic_result(payload: &(dyn Any + Send)) -> Vec<u8> {
-    native_result_vec(Err::<operit_link::CoreValue, _>(CoreLinkError {
-        code: "FATAL_CORE_PANIC".to_string(),
-        message: format!("Core runtime panic: {}", panic_payload_message(payload)),
-        details: None,
-        location: None,
-        backtrace: Some(std::backtrace::Backtrace::force_capture().to_string()),
-    }))
-}
-
 /// Converts a Rust panic payload into the stable text carried by crash reports.
 pub(crate) fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
@@ -309,174 +254,6 @@ pub(crate) fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
         return message.clone();
     }
     "non-string panic payload".to_string()
-}
-
-/// Decodes and dispatches one compact native CoreProxy call.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn bridge_native_call(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let request = match decode_native_call_request(request_bytes) {
-        Ok(request) => request,
-        Err(error) => return native_result_vec(Err::<operit_link::CoreValue, _>(error)),
-    };
-    native_result_vec(handle.call(request).result)
-}
-
-#[cfg(test)]
-mod native_call_codec_tests {
-    use super::*;
-
-    /// Verifies the compact request tuple decodes without a Link envelope map.
-    #[test]
-    fn decodes_compact_request_tuple() {
-        let bytes = operit_link::encodeLink((
-            "request-1",
-            "6",
-            "getCards",
-            operit_link::CoreValue::Bool(true),
-        ))
-        .expect("compact request must encode");
-
-        let request = decode_native_call_request(&bytes).expect("compact request must decode");
-
-        assert_eq!(request.requestId.0, "request-1");
-        assert_eq!(request.target, "6");
-        assert_eq!(request.methodName, "getCards");
-        assert_eq!(request.args, operit_link::CoreValue::Bool(true));
-    }
-
-    /// Verifies every local stream request decodes from a compact tuple.
-    #[test]
-    fn decodes_compact_push_and_watch_tuples() {
-        let push_open = operit_link::encodeLink((
-            "push-1",
-            "7",
-            "interact",
-            operit_link::CoreValue::Null,
-        ))
-        .expect("compact push open must encode");
-        let push_request =
-            decode_native_push_open_request(&push_open).expect("compact push open must decode");
-        assert_eq!(push_request.requestId.0, "push-1");
-        assert_eq!(push_request.target, "7");
-        assert_eq!(push_request.methodName, "interact");
-
-        let push_item = operit_link::encodeLink((
-            "push-1",
-            2u64,
-            operit_link::CoreValue::String("click".to_string()),
-        ))
-        .expect("compact push item must encode");
-        let item = decode_native_push_item(&push_item).expect("compact push item must decode");
-        assert_eq!(item.pushId, "push-1");
-        assert_eq!(item.sequence, 2);
-        assert_eq!(
-            item.args,
-            operit_link::CoreValue::String("click".to_string())
-        );
-
-        let snapshot =
-            operit_link::encodeLink(("watch-1", "8", "cards", operit_link::CoreValue::Null))
-                .expect("compact watch snapshot must encode");
-        let snapshot_request = decode_native_watch_snapshot_request(&snapshot)
-            .expect("compact watch snapshot must decode");
-        assert_eq!(snapshot_request.requestId.0, "watch-1");
-        assert_eq!(snapshot_request.propertyName, "cards");
-
-        let stream = operit_link::encodeLink((
-            "subscription-1",
-            "watch-1",
-            "8",
-            "cards",
-            operit_link::CoreValue::Null,
-        ))
-        .expect("compact watch stream must encode");
-        let (subscription_id, stream_request) =
-            decode_native_watch_stream_request(&stream).expect("compact watch stream must decode");
-        assert_eq!(subscription_id, "subscription-1");
-        assert_eq!(stream_request.requestId.0, "watch-1");
-        assert_eq!(stream_request.propertyName, "cards");
-    }
-
-    /// Verifies the compact success response retains its status and value fields.
-    #[test]
-    fn encodes_compact_success_tuple() {
-        let bytes = native_result_vec(Ok(operit_link::CoreValue::String("ready".to_string())));
-
-        let (status, value): (u8, operit_link::CoreValue) =
-            operit_link::decodeLink(&bytes).expect("compact success must decode");
-
-        assert_eq!(status, 0);
-        assert_eq!(value, operit_link::CoreValue::String("ready".to_string()));
-    }
-
-    /// Verifies the compact error response retains every error field without a map envelope.
-    #[test]
-    fn encodes_compact_error_tuple() {
-        let bytes = native_result_vec(Err::<(), _>(CoreLinkError {
-            code: "CARD_NOT_FOUND".to_string(),
-            message: "Card does not exist".to_string(),
-            details: Some(operit_link::CoreValue::String("card-1".to_string())),
-            location: Some(operit_link::protocol::CoreLinkErrorLocation {
-                file: "CharacterCardManager.rs".to_string(),
-                line: 28,
-                column: 7,
-            }),
-            backtrace: Some("native backtrace".to_string()),
-        }));
-
-        let (status, code, message, details, location, backtrace): (
-            u8,
-            String,
-            String,
-            Option<operit_link::CoreValue>,
-            Option<(String, u32, u32)>,
-            Option<String>,
-        ) = operit_link::decodeLink(&bytes).expect("compact error must decode");
-
-        assert_eq!(status, 1);
-        assert_eq!(code, "CARD_NOT_FOUND");
-        assert_eq!(message, "Card does not exist");
-        assert_eq!(
-            details,
-            Some(operit_link::CoreValue::String("card-1".to_string()))
-        );
-        assert_eq!(
-            location,
-            Some(("CharacterCardManager.rs".to_string(), 28, 7))
-        );
-        assert_eq!(backtrace.as_deref(), Some("native backtrace"));
-    }
-
-    /// Verifies watch snapshots and channel events keep fixed tuple field order.
-    #[test]
-    fn encodes_compact_watch_tuples() {
-        let event = CoreEvent {
-            requestId: Some(operit_link::CoreRequestId::new("watch-1")),
-            target: "core/test8".into(),
-            propertyName: "cards".to_string(),
-            kind: CoreEventKind::Snapshot,
-            value: operit_link::CoreValue::String("card-1".to_string()),
-        };
-        let snapshot = native_result_vec(Ok(native_watch_event_payload(event.clone())));
-        let (status, payload): (
-            u8,
-            (Option<String>, String, String, String, operit_link::CoreValue),
-        ) = operit_link::decodeLink(&snapshot).expect("compact watch snapshot must decode");
-        assert_eq!(status, 0);
-        assert_eq!(payload.0.as_deref(), Some("watch-1"));
-        assert_eq!(payload.1, "core/test8");
-        assert_eq!(payload.2, "cards");
-        assert_eq!(payload.3, "Snapshot");
-
-        let frame = native_watch_event_vec("subscription-1", event);
-        let (subscription_id, frame_payload): (
-            String,
-            (Option<String>, String, String, String, operit_link::CoreValue),
-        ) = operit_link::decodeLink(&frame).expect("compact watch frame must decode");
-        assert_eq!(subscription_id, "subscription-1");
-        assert_eq!(frame_payload.0.as_deref(), Some("watch-1"));
-        assert_eq!(frame_payload.3, "Snapshot");
-    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -489,16 +266,6 @@ async fn bridge_native_call_async(handle: &OperitFlutterBridge, request_bytes: &
     native_result_vec(handle.call(request).await.result)
 }
 
-/// Decodes and opens one compact native CoreProxy push stream.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn bridge_push_open(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let request = match decode_native_push_open_request(request_bytes) {
-        Ok(request) => request,
-        Err(error) => return native_result_vec(Err::<String, _>(error)),
-    };
-    native_result_vec(handle.pushOpen(request))
-}
-
 /// Decodes and opens one compact wasm CoreProxy push stream.
 #[cfg(target_arch = "wasm32")]
 async fn bridge_push_open_async(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
@@ -506,17 +273,7 @@ async fn bridge_push_open_async(handle: &OperitFlutterBridge, request_bytes: &[u
         Ok(request) => request,
         Err(error) => return native_result_vec(Err::<String, _>(error)),
     };
-    native_result_vec(handle.pushOpen(request))
-}
-
-/// Decodes and dispatches one compact native CoreProxy push item.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn bridge_push_item(handle: &OperitFlutterBridge, item_bytes: &[u8]) -> Vec<u8> {
-    let item = match decode_native_push_item(item_bytes) {
-        Ok(item) => item,
-        Err(error) => return native_result_vec(Err::<(), _>(error)),
-    };
-    native_result_vec(handle.pushItem(item))
+    native_result_vec(handle.pushOpen(request).await)
 }
 
 /// Decodes and dispatches one compact wasm CoreProxy push item.
@@ -527,124 +284,6 @@ async fn bridge_push_item_async(handle: &OperitFlutterBridge, item_bytes: &[u8])
         Err(error) => return native_result_vec(Err::<(), _>(error)),
     };
     native_result_vec(handle.pushItem(item).await)
-}
-
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_push_open(
-    handle: *mut OperitFlutterBridge,
-    request_ptr: *const u8,
-    request_len: usize,
-) -> OperitByteBuffer {
-    if handle.is_null() || request_ptr.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-invalid-request",
-            "runtime push open arguments are invalid",
-        ));
-    }
-    bytes_to_buffer(bridge_push_open(
-        &*handle,
-        std::slice::from_raw_parts(request_ptr, request_len),
-    ))
-}
-
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_push_item(
-    handle: *mut OperitFlutterBridge,
-    item_ptr: *const u8,
-    item_len: usize,
-) -> OperitByteBuffer {
-    if handle.is_null() || item_ptr.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-invalid-request",
-            "runtime push item arguments are invalid",
-        ));
-    }
-    bytes_to_buffer(bridge_push_item(
-        &*handle,
-        std::slice::from_raw_parts(item_ptr, item_len),
-    ))
-}
-
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_push_close(
-    handle: *mut OperitFlutterBridge,
-    push_id_ptr: *const c_char,
-) -> OperitByteBuffer {
-    if handle.is_null() || push_id_ptr.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-invalid-request",
-            "runtime push close arguments are invalid",
-        ));
-    }
-    let pushId = match CStr::from_ptr(push_id_ptr).to_str() {
-        Ok(value) => value,
-        Err(error) => {
-            return bytes_to_buffer(native_result_error_vec(
-                "flutter-bridge-invalid-request",
-                error.to_string(),
-            ));
-        }
-    };
-    bytes_to_buffer(native_result_vec((*handle).pushClose(pushId)))
-}
-
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_watch_snapshot(
-    handle: *mut OperitFlutterBridge,
-    request_ptr: *const u8,
-    request_len: usize,
-) -> OperitByteBuffer {
-    if handle.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-null",
-            "runtime bridge is not initialized",
-        ));
-    }
-    if request_ptr.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-null-request",
-            "runtime request pointer is null",
-        ));
-    }
-    let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
-    bytes_to_buffer(bridge_watch_snapshot(&*handle, request_bytes))
-}
-
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_watch_stream(
-    handle: *mut OperitFlutterBridge,
-    request_ptr: *const u8,
-    request_len: usize,
-) -> OperitByteBuffer {
-    if handle.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-null",
-            "runtime bridge is not initialized",
-        ));
-    }
-    if request_ptr.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-null-request",
-            "runtime request pointer is null",
-        ));
-    }
-    let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
-    bytes_to_buffer(bridge_watch_stream(&*handle, request_bytes))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-/// Decodes and opens one compact native CoreProxy watch stream.
-pub(crate) fn bridge_watch_stream(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let (subscription_id, request) = match decode_native_watch_stream_request(request_bytes) {
-        Ok(request) => request,
-        Err(error) => return native_result_vec(Err::<String, _>(error)),
-    };
-    native_result_vec(handle.watchStream(subscription_id, request))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -659,75 +298,6 @@ async fn bridge_watch_stream_wasm(
         Err(error) => return native_result_vec(Err::<String, _>(error)),
     };
     native_result_vec(handle.watchStream(subscription_id, request, onEvent).await)
-}
-
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_next_watch_channel_event(
-    handle: *mut OperitFlutterBridge,
-) -> OperitByteBuffer {
-    if handle.is_null() {
-        return OperitByteBuffer::empty();
-    }
-    match (*handle).nextWatchChannelEvent() {
-        Ok(event) => bytes_to_buffer(event),
-        Err(_) => OperitByteBuffer::empty(),
-    }
-}
-
-/// Wakes the native watch-channel reader during host shutdown.
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_close_watch_channel(
-    handle: *mut OperitFlutterBridge,
-) {
-    if !handle.is_null() {
-        (*handle).platform.watchChannel.close();
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_close_watch_stream(
-    handle: *mut OperitFlutterBridge,
-    subscription_ptr: *const c_char,
-) -> OperitByteBuffer {
-    if handle.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-null",
-            "runtime bridge is not initialized",
-        ));
-    }
-    if subscription_ptr.is_null() {
-        return bytes_to_buffer(native_result_error_vec(
-            "flutter-bridge-null-request",
-            "watch subscription pointer is null",
-        ));
-    }
-    let subscription_id = match CStr::from_ptr(subscription_ptr).to_str() {
-        Ok(value) => value,
-        Err(error) => {
-            return bytes_to_buffer(native_result_error_vec(
-                "flutter-bridge-invalid-request",
-                error.to_string(),
-            ));
-        }
-    };
-    (*handle).closeWatchStream(subscription_id);
-    bytes_to_buffer(native_result_vec(Ok::<(), CoreLinkError>(())))
-}
-
-/// Decodes and reads one compact native CoreProxy watch snapshot.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn bridge_watch_snapshot(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let request = match decode_native_watch_snapshot_request(request_bytes) {
-        Ok(request) => request,
-        Err(error) => return native_result_vec(Err::<CoreEvent, _>(error)),
-    };
-    native_result_vec(
-        handle
-            .watchSnapshot(request)
-            .map(native_watch_event_payload),
-    )
 }
 
 /// Decodes and reads one compact wasm CoreProxy watch snapshot.
@@ -853,28 +423,7 @@ impl OperitFlutterBridgeWasm {
 
     #[allow(non_snake_case)]
     pub fn closeWatchStream(&self, subscriptionId: &str) -> Vec<u8> {
-        self.inner.closeWatchStream(subscriptionId);
-        native_result_vec(Ok::<(), CoreLinkError>(()))
-    }
-}
-
-/// Transfers ownership of a Rust byte vector to the C ABI.
-fn bytes_to_buffer(value: Vec<u8>) -> OperitByteBuffer {
-    let mut value = value.into_boxed_slice();
-    let buffer = OperitByteBuffer {
-        ptr: value.as_mut_ptr(),
-        len: value.len(),
-    };
-    std::mem::forget(value);
-    buffer
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_free_bytes(value: OperitByteBuffer) {
-    if !value.ptr.is_null() {
-        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-            value.ptr, value.len,
-        )));
+        native_result_vec(self.inner.closeWatchStream(subscriptionId))
     }
 }
 
@@ -896,4 +445,39 @@ pub(crate) fn set_last_create_error(value: String) {
     *last_create_error()
         .lock()
         .expect("Create error lock must not be poisoned") = value;
+}
+
+/// Runs offline data rescue without allocating or starting an OperitFlutterBridge.
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_data_rescue(
+    default_runtime_root: *const c_char,
+    request: *const c_char,
+) -> *mut c_char {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if default_runtime_root.is_null() || request.is_null() {
+            return serde_json::json!({"ok": false, "error": "Data rescue arguments must not be null"}).to_string();
+        }
+        let root = match CStr::from_ptr(default_runtime_root).to_str() {
+            Ok(value) => PathBuf::from(value),
+            Err(error) => return serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
+        };
+        let request = match CStr::from_ptr(request).to_str() {
+            Ok(value) => value,
+            Err(error) => return serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
+        };
+        crate::PlatformRuntimeAbi::NativeDataRescue::execute(root, request)
+    }));
+    let encoded = match result {
+        Ok(value) => value,
+        Err(payload) => serde_json::json!({"ok": false, "error": format!("Data rescue panic: {}", panic_payload_message(payload.as_ref()))}).to_string(),
+    };
+    CString::new(encoded).expect("JSON must not contain raw NUL").into_raw()
+}
+
+/// Exposes the independent browser storage engine without creating a Core tree.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = operitDataRescue)]
+pub fn operit_data_rescue(request: &str) -> String {
+    operit_host_web::executeDataRescue(request)
 }

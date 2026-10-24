@@ -245,6 +245,54 @@ fn isOperit1UnadoptedPreferenceKey(key: &str) -> bool {
         .any(|prefix| key.starts_with(prefix))
 }
 
+/// Matches the GitHub profile serialized by Operit1's Kotlin preferences.
+#[derive(Deserialize)]
+struct Operit1GitHubUser {
+    id: i64,
+    login: String,
+    name: Option<String>,
+    email: Option<String>,
+    #[serde(rename = "avatar_url")]
+    avatarUrl: String,
+    bio: Option<String>,
+    #[serde(rename = "public_repos")]
+    publicRepos: Option<i32>,
+    followers: Option<i32>,
+    following: Option<i32>,
+}
+
+/// Converts the legacy numeric GitHub ID before the target preference schema is applied.
+fn migrateOperit1GitHubUserInfo(
+    preferences: &mut operit_store::PreferencesDataStore::Preferences,
+) -> Result<(), String> {
+    use crate::data::preferences::GitHubAuthPreferences::GitHubUser;
+
+    let key = stringPreferencesKey("user_info");
+    let Some(encoded) = preferences
+        .getTyped::<String>(&key)
+        .map_err(|error| format!("Operit1 GitHub user_info 读取失败：{error}"))?
+    else {
+        return Ok(());
+    };
+    let source: Operit1GitHubUser = serde_json::from_str(&encoded)
+        .map_err(|error| format!("Operit1 GitHub user_info 格式不正确：{error}"))?;
+    let target = GitHubUser {
+        id: source.id.to_string(),
+        login: source.login,
+        name: source.name,
+        email: source.email,
+        avatarUrl: source.avatarUrl,
+        bio: source.bio,
+        publicRepos: source.publicRepos,
+        followers: source.followers,
+        following: source.following,
+    };
+    let encoded = serde_json::to_string(&target)
+        .map_err(|error| format!("Operit1 GitHub user_info 转换失败：{error}"))?;
+    preferences.set(&key, encoded);
+    Ok(())
+}
+
 /// Projects only adopted preferences through the real key and resource-path rewriter without modifying the legacy source map.
 #[allow(non_snake_case)]
 fn adoptedOperit1PreferenceEntries(

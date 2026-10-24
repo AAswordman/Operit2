@@ -9,6 +9,27 @@ class FileSaveService {
   /// Prevents instantiation of the file save service.
   FileSaveService._();
 
+  /// Saves generated data with progress supplied by the owning storage Host.
+  static Future<String?> saveGeneratedFileWithProgress({
+    required Future<XFile> Function() generate,
+    required void Function() onChooseDestination,
+    required Future<void> Function(XFile file, String destination) write,
+    required void Function(int completed, int total) onProgress,
+    required String name,
+    required List<XTypeGroup> acceptedTypeGroups,
+  }) async {
+    final location = await FileSelectorPlatform.instance
+        .saveGeneratedFileWithProgress(
+          generate: generate,
+          onChooseDestination: onChooseDestination,
+          write: write,
+          onProgress: onProgress,
+          acceptedTypeGroups: acceptedTypeGroups,
+          options: SaveDialogOptions(suggestedName: name),
+        );
+    return location?.path;
+  }
+
   /// Saves a generated host file without materializing its bytes in Flutter.
   static Future<String?> saveGeneratedFile({
     required Future<XFile> Function() generate,

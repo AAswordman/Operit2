@@ -6,7 +6,7 @@ Rust 的 `apps/esp32/src/ui.rs` 和 `main.rs` 负责状态与动作适配。
 重新构建 C/Wasm 预览与固件，再分别验证模拟器和物理设备。
 
 Core 上的 JS/TS 插件使用 `Tools.device(nodeId).Edge` 调用设备能力；
-可选 `display.scene` 服务支持像素素材、本地动画和事件。
+可选 `edge.scene` 服务支持像素素材、本地动画和事件。
 插件流程见 [Edge 插件指南](../../plugins/docs/edge-plugin-guide.md)，
 网页宿主与源码边界见 [FRONTEND.md](FRONTEND.md)。
 
@@ -27,7 +27,7 @@ Core 上的 JS/TS 插件使用 `Tools.device(nodeId).Edge` 调用设备能力；
 | GET | `/api/simulator/debug/snapshot` | 读取浏览器中当前 C/Wasm UI 的结构化屏幕状态 |
 | POST | `/api/simulator/debug/tap` | 使用 `{id}` 点击当前可用控件 |
 | POST | `/api/simulator/debug/swipe` | 使用 `{direction}` 向当前 UI 提交滑动 |
-| POST | `/api/simulator/send` | 使用 `{text}` 向模拟设备的当前 Core 对话发送文字 |
+| POST | `/api/simulator/send` | 使用 `{text}` 向模拟设备的当前对话发送文字 |
 | GET | `/api/deploy/ports` | 查询真机串口 |
 | GET | `/api/deploy/flash` | 查询固件安装状态 |
 | POST | `/api/deploy/flash` | 使用 `{port}` 安装已构建固件 |

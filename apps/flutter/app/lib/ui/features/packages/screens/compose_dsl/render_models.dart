@@ -9,7 +9,7 @@ parseComposeDslActionEventForTest(core_proxy.ToolPkgComposeDslEvent event) {
   if (event.error != null) throw StateError(event.error!);
   final update = event.update;
   if (update != null) {
-    final store = _ComposeDslNodeStore()..apply(update);
+    final store = _ComposeProgramStore()..apply(update);
     store.dispose();
   }
   return (
@@ -26,7 +26,7 @@ class _ComposeDslRenderResult {
     required this.actionResult,
   });
 
-  final _ComposeDslNode tree;
+  final _ComposeProgramNode tree;
   final Object? actionResult;
 }
 
@@ -156,103 +156,6 @@ const _composeNodeTypes = <String, String>{
   'widenavigationrailitem': 'WideNavigationRailItem',
 };
 
-class _ComposeDslNode extends ChangeNotifier {
-  /// Creates the compose dsl node instance.
-  _ComposeDslNode({
-    required String type,
-    required Map<String, Object?> props,
-    required List<_ComposeDslNode> children,
-    required Map<String, List<_ComposeDslNode>> slots,
-    this.id,
-  }) : _type = type,
-       _props = props,
-       _children = children,
-       _slots = slots;
-
-  final String? id;
-  String _type;
-  bool _disposed = false;
-  Map<String, Object?> _props;
-  List<_ComposeDslNode> _children;
-  Map<String, List<_ComposeDslNode>> _slots;
-
-  /// A modal route may briefly outlive its removed source node until frame cleanup.
-  bool get isDisposed => _disposed;
-
-  @override
-  void dispose() {
-    _disposed = true;
-    super.dispose();
-  }
-
-  /// Records a renderer's dependency before returning this node's type.
-  String get type {
-    _ComposeDslReadScope.read(this);
-    return _type;
-  }
-
-  /// Records a renderer's dependency before returning this node's properties.
-  Map<String, Object?> get props {
-    _ComposeDslReadScope.read(this);
-    return _props;
-  }
-
-  /// Returns retained child handles without reconstructing a recursive tree.
-  List<_ComposeDslNode> get children {
-    _ComposeDslReadScope.read(this);
-    return _children;
-  }
-
-  /// Returns retained slot handles without reconstructing their descendants.
-  Map<String, List<_ComposeDslNode>> get slots {
-    _ComposeDslReadScope.read(this);
-    return _slots;
-  }
-
-  /// Atomically replaces one flat node record after all new handles have been allocated.
-  void replace(
-    core_proxy.ToolPkgComposeDslNodeRecord record,
-    _ComposeDslNodeStore store,
-  ) {
-    final type = _composeNodeTypes[_normalizeToken(record.nodeType)];
-    if (type == null)
-      throw FormatException('Unknown Compose node type: ${record.nodeType}');
-    _type = type;
-    _props = record.props;
-    _children = record.children.map(store.node).toList(growable: false);
-    _slots = record.slots.map(
-      (name, ids) =>
-          MapEntry(name, ids.map(store.node).toList(growable: false)),
-    );
-  }
-
-  /// Invalidates only renderers that read this node during their latest build.
-  void publish() {
-    notifyListeners();
-  }
-
-  /// Reads structured nodes supplied directly by isolated renderer tests.
-  static _ComposeDslNode? parse(Object? raw) {
-    if (raw is! Map) {
-      return null;
-    }
-    final token = _normalizeToken((raw['type'] ?? '').toString());
-    if (token.isEmpty) {
-      return null;
-    }
-    final type = _composeNodeTypes[token];
-    if (type == null) {
-      throw FormatException('Unknown Compose node type: ${raw['type']}');
-    }
-    return _ComposeDslNode(
-      type: type,
-      props: _stringMap(raw['props']),
-      children: _nodeList(raw['children']),
-      slots: _slotMap(raw['slots']),
-    );
-  }
-}
-
 class _NoUiView extends StatelessWidget {
   /// Creates the no ui view instance.
   const _NoUiView();
@@ -285,4 +188,14 @@ bool _composeInputEquals(Object? left, Object? right) {
     return true;
   }
   return left == right;
+}
+
+/// Correlates a command's completion and side effects without one subscription per action.
+class _ComposeDslPendingCommand {
+  /// Records unfinished action ownership across host input updates.
+  _ComposeDslPendingCommand(this.generation);
+  final int generation;
+  final Completer<void> completion = Completer<void>();
+  Object? actionResult;
+  final List<({String routeId, Map<String, Object?> args})> navigationCommands = [];
 }

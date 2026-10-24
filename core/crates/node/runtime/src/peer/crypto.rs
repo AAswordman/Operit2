@@ -1,10 +1,12 @@
 //! Runtime 的密钥交换和 AEAD；PeerLink 始终只看到标准 Link Call。
 use operit_link::*;
 use operit_peer_link::{PeerConnection, PeerMessage};
+use rand_core::{CryptoRng, RngCore};
 use ring::{aead, agreement, digest, hkdf, hmac, rand::{SecureRandom, SystemRandom}};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex as StdMutex};
+use spake2::{Ed25519Group, Identity, Password, Spake2};
+use std::collections::BTreeMap;
+use std::sync::{atomic::Ordering, Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 pub(super) fn error(message: impl Into<String>) -> CoreLinkError {
@@ -47,7 +49,129 @@ pub(super) fn verify(key: &[u8], context: &[u8], role: &[u8], supplied: &[u8]) -
 }
 /// A receiver-only, fixed-width code; leading zeroes are significant.
 pub(super) fn pairingCode() -> Result<String, CoreLinkError> {
-    Ok(format!("{:06}", u32::from_be_bytes(random()?[..4].try_into().unwrap()) % 1_000_000))
+    // Reject the non-uniform tail instead of introducing a modulo bias in the
+    // only secret an online attacker gets to guess.
+    loop {
+        let value = u32::from_be_bytes(random()?[..4].try_into().unwrap());
+        if value < 4_294_000_000 {
+            return Ok(format!("{:06}", value % 1_000_000));
+        }
+    }
+}
+
+/// Supplies SPAKE2 with entropy derived from the Host-backed ring source.
+///
+/// SPAKE2 asks its RNG for one 64-byte scalar seed and cannot report an entropy
+/// failure from `fill_bytes`. Seeding an HMAC-SHA256 DRBG here keeps every
+/// platform (including ESP32 and WASM) on the same random source, turns an
+/// entropy failure into an ordinary error, and removes any length ceiling a
+/// fixed seed would impose on the caller.
+struct SeededRng {
+    key: [u8; 32],
+    counter: u64,
+    block: [u8; 32],
+    offset: usize,
+}
+impl SeededRng {
+    fn new() -> Result<Self, CoreLinkError> {
+        Ok(Self { key: random()?, counter: 0, block: [0; 32], offset: 32 })
+    }
+    fn refill(&mut self) {
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &self.key);
+        let message = self.counter.to_be_bytes();
+        self.block.copy_from_slice(hmac::sign(&key, &message).as_ref());
+        self.counter = self.counter.wrapping_add(1);
+        self.offset = 0;
+    }
+}
+impl RngCore for SeededRng {
+    fn next_u32(&mut self) -> u32 {
+        let mut bytes = [0; 4];
+        self.fill_bytes(&mut bytes);
+        u32::from_le_bytes(bytes)
+    }
+    fn next_u64(&mut self) -> u64 {
+        let mut bytes = [0; 8];
+        self.fill_bytes(&mut bytes);
+        u64::from_le_bytes(bytes)
+    }
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        for byte in dest {
+            if self.offset == self.block.len() { self.refill(); }
+            *byte = self.block[self.offset];
+            self.offset += 1;
+        }
+    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+impl CryptoRng for SeededRng {}
+
+/// Binds one SPAKE2 exchange to the exact X25519 transcript.
+///
+/// Both identities include the transcript hash, so messages cannot be replayed
+/// into a different session or spliced between pairing attempts.
+pub(super) fn pairingIdentities(context: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut client = b"operit-pairing-client-v2".to_vec();
+    client.extend_from_slice(context);
+    let mut server = b"operit-pairing-server-v2".to_vec();
+    server.extend_from_slice(context);
+    (client, server)
+}
+
+/// Starts one SPAKE2 exchange for the pairing confirmation code.
+///
+/// The code never appears on the wire and is never used as a MAC message. An
+/// active man in the middle that saw the earlier X25519 exchange can therefore
+/// only test one guessed code by completing a full online exchange, which the
+/// per-pairing attempt budget bounds.
+pub(super) fn spakeStart(
+    client: bool,
+    code: &[u8],
+    clientId: &[u8],
+    serverId: &[u8],
+) -> Result<(Spake2<Ed25519Group>, Vec<u8>), CoreLinkError> {
+    let password = Password::new(code);
+    let idA = Identity::new(clientId);
+    let idB = Identity::new(serverId);
+    let rng = SeededRng::new()?;
+    Ok(if client {
+        Spake2::start_a_with_rng(&password, &idA, &idB, rng)
+    } else {
+        Spake2::start_b_with_rng(&password, &idA, &idB, rng)
+    })
+}
+
+/// Completes SPAKE2 and returns the raw password-authenticated key.
+///
+/// A wrong code still produces a key, so callers must prove possession of the
+/// derived session secret before committing any credential.
+pub(super) fn spakeFinish(
+    state: Spake2<Ed25519Group>,
+    peerMessage: &[u8],
+) -> Result<Vec<u8>, CoreLinkError> {
+    state
+        .finish(peerMessage)
+        .map_err(|_| error("Pairing confirmation message rejected"))
+}
+
+/// Derives the long-lived session secret from the PAKE output.
+///
+/// The start-phase root and the finish transcript are both included so the
+/// secret is bound to the exact pairing transaction. The X25519 root alone is
+/// not a credential: an active man in the middle knows it, but does not know the
+/// SPAKE2 output without guessing the code online.
+pub(super) fn pairingSessionSecret(
+    spakeKey: &[u8],
+    startRoot: &[u8],
+    context: &[u8],
+) -> Result<[u8; 32], CoreLinkError> {
+    let mut salt = Vec::with_capacity(startRoot.len() + context.len());
+    salt.extend_from_slice(startRoot);
+    salt.extend_from_slice(context);
+    derive(spakeKey, &salt, b"operit-pairing-session-v2")
 }
 
 #[cfg(test)]
@@ -59,6 +183,50 @@ mod pairing_code_tests {
             assert_eq!(code.len(), 6);
             assert!(code.bytes().all(|b| b.is_ascii_digit()));
         }
+    }
+}
+
+#[cfg(test)]
+mod spake_tests {
+    use super::*;
+
+    /// Both sides of a matching code derive the same key even though the code
+    /// never appears on the wire.
+    #[test]
+    fn matching_codes_agree() {
+        let (client, clientMessage) = spakeStart(true, b"123456", b"client", b"server").unwrap();
+        let (server, serverMessage) = spakeStart(false, b"123456", b"client", b"server").unwrap();
+        let clientKey = spakeFinish(client, &serverMessage).unwrap();
+        let serverKey = spakeFinish(server, &clientMessage).unwrap();
+        assert_eq!(clientKey, serverKey);
+    }
+
+    /// A wrong guess still completes the PAKE but cannot produce the peer's key,
+    /// so every guess costs a full online exchange.
+    #[test]
+    fn mismatched_codes_diverge() {
+        let (client, clientMessage) = spakeStart(true, b"123456", b"client", b"server").unwrap();
+        let (server, serverMessage) = spakeStart(false, b"654321", b"client", b"server").unwrap();
+        let clientKey = spakeFinish(client, &serverMessage).unwrap();
+        let serverKey = spakeFinish(server, &clientMessage).unwrap();
+        assert_ne!(clientKey, serverKey);
+        let context = b"context";
+        assert_ne!(
+            pairingSessionSecret(&clientKey, b"root", context).unwrap(),
+            pairingSessionSecret(&serverKey, b"root", context).unwrap(),
+        );
+    }
+
+    /// The stored credential is bound to the pairing transcript and start root,
+    /// so a recorded PAKE message cannot be replayed into another session.
+    #[test]
+    fn session_secret_is_bound_to_transcript_and_root() {
+        let key = [7u8; 32];
+        let first = pairingSessionSecret(&key, b"root-a", b"context-a").unwrap();
+        let second = pairingSessionSecret(&key, b"root-b", b"context-a").unwrap();
+        let third = pairingSessionSecret(&key, b"root-a", b"context-b").unwrap();
+        assert_ne!(first, second);
+        assert_ne!(first, third);
     }
 }
 /// 整个 transcript 编码绑定版本、双方身份、两份公钥和服务端随机挑战。
@@ -101,50 +269,38 @@ pub(super) struct Channel {
     pub generation: u32,
     pub raw: Arc<dyn PeerConnection>,
     send: Mutex<Cipher>, receive: Mutex<Cipher>,
-    pub transaction: Mutex<()>,
-    duplex: std::sync::Mutex<Option<Arc<super::duplex::Duplex>>>,
-    pub returnScope: std::sync::Mutex<Option<String>>,
-    /// Whether the peer advertised that it accepts calls over this connection in
-    /// the reverse direction. Only a peer that advertised may be called on it.
-    peerDuplex: std::sync::atomic::AtomicBool,
-    /// Whether this channel was established under a Space grant, the only scope
-    /// that authorizes calls in both directions.
-    spaceScoped: std::sync::atomic::AtomicBool,
 }
 impl Channel {
     pub fn new(raw: Arc<dyn PeerConnection>, key: &[u8], context: &[u8], client: bool) -> Result<Arc<Self>, CoreLinkError> {
         let c2s = derive(key, context, b"operit-link-client-to-server-v1")?;
         let s2c = derive(key, context, b"operit-link-server-to-client-v1")?;
         Ok(Arc::new(Self { generation: CHANNEL_GENERATION.fetch_add(1, Ordering::Relaxed), raw, send: Mutex::new(Cipher::new(if client { c2s } else { s2c }, context)?),
-            receive: Mutex::new(Cipher::new(if client { s2c } else { c2s }, context)?), transaction: Mutex::new(()), duplex: std::sync::Mutex::new(None), returnScope: std::sync::Mutex::new(None),
-            peerDuplex: std::sync::atomic::AtomicBool::new(false),
-            spaceScoped: std::sync::atomic::AtomicBool::new(false) }))
+            receive: Mutex::new(Cipher::new(if client { s2c } else { c2s }, context)?) }))
     }
-    pub fn setPeerDuplex(&self, capable: bool) { self.peerDuplex.store(capable, Ordering::Relaxed); }
-    pub fn peerDuplex(&self) -> bool { self.peerDuplex.load(Ordering::Relaxed) }
-    pub fn setSpaceScoped(&self, scoped: bool) { self.spaceScoped.store(scoped, Ordering::Relaxed); }
-    pub fn spaceScoped(&self) -> bool { self.spaceScoped.load(Ordering::Relaxed) }
-    pub async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> {
+    /// Sends a single frame through the shared ordered writer.
+    pub async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> { self.sendBatch(vec![message]).await }
+
+    /// Holds the authenticated writer for an entire burst so other operations cannot interleave it.
+    pub async fn sendBatch(&self, messages: Vec<PeerMessage>) -> Result<(), CoreLinkError> {
         let mut cipher = self.send.lock().await;
-        let mut bytes = encodeLink(message).map_err(|e| error(e.to_string()))?;
-        let sequence = cipher.next;
-        cipher.seal(&mut bytes)?;
-        self.raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
-            sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes.into()))))).await.map_err(error)
+        for message in messages {
+            let mut bytes = encodeLink(message).map_err(|e| error(e.to_string()))?;
+            let sequence = cipher.next;
+            cipher.seal(&mut bytes)?;
+            self.raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
+                sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes.into()))))).await.map_err(|message| {
+                if message == operit_peer_link::MESSAGE_TOO_LARGE_ERROR {
+                    CoreLinkError::new("PEER_MESSAGE_TOO_LARGE", message)
+                } else { error(message) }
+            })?;
+        }
+        Ok(())
     }
-    pub fn setDuplex(&self, duplex: Arc<super::duplex::Duplex>) { *self.duplex.lock().unwrap() = Some(duplex); }
-    pub fn duplex(&self) -> Option<Arc<super::duplex::Duplex>> { self.duplex.lock().unwrap().clone() }
-    pub fn isOpen(&self) -> bool { self.duplex().is_some_and(|d| !d.closed.load(std::sync::atomic::Ordering::Acquire)) }
-    pub async fn close(&self) {
-        if let Some(d) = self.duplex() { d.finish(); }
-        self.raw.close().await;
-    }
-    pub async fn release(&self) { if self.duplex().is_none() { self.raw.close().await; } }
+    /// Closes the authenticated carrier without retaining another session implementation.
+    pub async fn close(&self) { self.raw.close().await; }
+
+    /// Receives the next authenticated frame in nonce order.
     pub async fn receive(&self) -> Result<Option<PeerMessage>, CoreLinkError> {
-        if let Some(d) = self.duplex() { return Ok(d.receive().await); }
-        self.receiveEncrypted().await
-    }
-    pub async fn receiveEncrypted(&self) -> Result<Option<PeerMessage>, CoreLinkError> {
         let mut cipher = self.receive.lock().await;
         let Some(message) = self.raw.receive().await.map_err(error)? else { return Ok(None); };
         let PeerMessage::Request(CoreLinkRequest::Call(request)) = message else { return Err(error("Encrypted Call required")); };
@@ -158,15 +314,6 @@ impl Channel {
             .map_err(|_| error("Session authentication tag rejected"))?;
         decodeLink(plaintext).map(Some).map_err(|e| error(e.to_string()))
     }
-    pub async fn exchange(&self, request: CoreLinkRequest) -> Result<CoreLinkResponse, CoreLinkError> {
-        if let Some(d) = self.duplex() { return d.exchange(self, request).await; }
-        let _guard = self.transaction.lock().await;
-        self.send(PeerMessage::Request(request)).await?;
-        match self.receive().await? {
-            Some(PeerMessage::Response(response)) => Ok(response),
-            _ => Err(error("Missing Link response")),
-        }
-    }
 }
 
 
@@ -176,14 +323,8 @@ pub(super) struct MultiplexedChannel {
     channel: Arc<super::LiveChannel>,
     pending: Mutex<BTreeMap<String, oneshot::Sender<Result<CoreLinkResponse, CoreLinkError>>>>,
     watches: Mutex<BTreeMap<String, mpsc::UnboundedSender<CoreEvent>>>,
-    spaceOffers: Mutex<BTreeSet<(String, String)>>,
     failure: StdMutex<Option<CoreLinkError>>,
-    activeLeases: AtomicUsize,
-    /// Present when this channel also carries the peer's calls back to us: a
-    /// Space grant that a peer issued lets it call us over the connection it
-    /// accepted, the same way it lets us call the peer. Requests are answered by
-    /// one dedicated dispatcher task, so this reader never blocks on a dispatch
-    /// and a call made while serving the peer can still be correlated here.
+    /// Routes peer requests independently while the shared reader correlates responses.
     inboundRequests: StdMutex<Option<mpsc::UnboundedSender<CoreLinkRequest>>>,
     /// Signals that this channel's reader has stopped, for the accept path that
     /// closes the connection as soon as its serve call returns.
@@ -192,55 +333,22 @@ pub(super) struct MultiplexedChannel {
     dispatchStopped: tokio::sync::Notify,
 }
 
-/// Keeps one leased multiplexed channel alive until its operation is released.
-pub(super) enum ChannelLease {
-    Pooled(Arc<MultiplexedChannel>),
-    Shared(Arc<Channel>),
-}
+static LAST_ERROR: StdMutex<Option<String>> = StdMutex::new(None);
 
-impl ChannelLease {
-    /// Returns the multiplexed channel selected for this operation.
-    pub(super) fn pooled(&self) -> Option<&Arc<MultiplexedChannel>> {
-        match self { Self::Pooled(channel) => Some(channel), Self::Shared(_) => None }
-    }
-    pub(super) fn shared(&self) -> Option<&Arc<Channel>> {
-        match self { Self::Shared(channel) => Some(channel), Self::Pooled(_) => None }
-    }
-    pub(super) async fn exchange(&self, request: CoreLinkRequest) -> Result<CoreLinkResponse, CoreLinkError> {
-        match self {
-            Self::Pooled(channel) => channel.exchange(request).await,
-            Self::Shared(channel) => channel.exchange(request).await,
-        }
-    }
-}
-
-impl Drop for ChannelLease {
-    /// Releases one pool lease without closing the shared channel.
-    fn drop(&mut self) {
-        if let Self::Pooled(channel) = self { channel.activeLeases.fetch_sub(1, Ordering::AcqRel); }
-    }
-}
+/// Reports the first terminal failure from the shared channel implementation.
+pub(super) fn diagnostic() -> Option<String> { LAST_ERROR.lock().unwrap().clone() }
 
 impl MultiplexedChannel {
-    /// Starts the reader that correlates this side's calls, plus the dispatcher
-    /// that answers the peer's when the channel carries both directions.
-    pub(super) fn start(channel: Arc<super::LiveChannel>, scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>, inbound: Option<super::dispatch::InboundSide>) -> Result<Arc<Self>, CoreLinkError> {
-        let (inboundRequests, dispatcher) = match inbound {
-            Some(side) => {
-                let (sender, requests) = mpsc::unbounded_channel();
-                (StdMutex::new(Some(sender)), Some((side, requests)))
-            }
-            None => (StdMutex::new(None), None),
-        };
+    /// Starts the common response reader and inbound dispatcher for both directions.
+    pub(super) fn start(channel: Arc<super::LiveChannel>, scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>, inbound: super::dispatch::InboundSide) -> Result<Arc<Self>, CoreLinkError> {
+        let (sender, requests) = mpsc::unbounded_channel();
         let multiplexed = Arc::new(Self {
             scheduler: scheduler.clone(),
             channel,
             pending: Mutex::new(BTreeMap::new()),
             watches: Mutex::new(BTreeMap::new()),
-            spaceOffers: Mutex::new(BTreeSet::new()),
             failure: StdMutex::new(None),
-            activeLeases: AtomicUsize::new(0),
-            inboundRequests,
+            inboundRequests: StdMutex::new(Some(sender)),
             stopped: tokio::sync::Notify::new(),
             dispatchStopped: tokio::sync::Notify::new(),
         });
@@ -248,35 +356,26 @@ impl MultiplexedChannel {
         scheduler.scheduleHostRuntimeAsyncTask("peer-multiplexed-reader", Box::new(move || Box::pin(async move {
             reader.readLoop().await;
         }))).map_err(|hostError| error(hostError.to_string()))?;
-        if let Some((side, requests)) = dispatcher {
-            let dispatch = multiplexed.clone();
-            scheduler.scheduleHostRuntimeAsyncTask("peer-multiplexed-dispatch", Box::new(move || Box::pin(async move {
-                dispatch.dispatchLoop(side, requests).await;
-            }))).map_err(|hostError| error(hostError.to_string()))?;
-        }
+        let dispatch = multiplexed.clone();
+        scheduler.scheduleHostRuntimeAsyncTask("peer-multiplexed-dispatch", Box::new(move || Box::pin(async move {
+            dispatch.dispatchLoop(inbound, requests).await;
+        }))).map_err(|hostError| error(hostError.to_string()))?;
         Ok(multiplexed)
     }
 
     /// Returns whether the underlying authenticated channel has failed.
     pub(super) fn isFailed(&self) -> bool { self.failure.lock().unwrap().is_some() || !self.channel.isAvailable() }
 
-    /// Returns the current number of logical operations assigned to this channel.
-    pub(super) fn activeLeases(&self) -> usize { self.activeLeases.load(Ordering::Acquire) }
+    /// Identifies the authenticated carrier used by a Space client.
+    pub(super) fn generation(&self) -> u32 { self.channel.channel().generation }
 
-    /// Acquires one logical operation lease without opening another socket.
-    pub(super) fn lease(self: &Arc<Self>) -> ChannelLease {
-        self.activeLeases.fetch_add(1, Ordering::AcqRel);
-        ChannelLease::Pooled(self.clone())
-    }
+    /// Reports the Host transport of this peer's sole carrier.
+    pub(super) fn transport(&self) -> operit_peer_link::PeerTransport { self.channel.raw.transport() }
 
-    /// Reports whether this pairing has already offered a return grant for this Space.
-    pub(super) async fn hasSpaceOffer(&self, pairingId: &str, spaceId: &str) -> bool {
-        self.spaceOffers.lock().await.contains(&(pairingId.to_string(), spaceId.to_string()))
-    }
-
-    /// Records a scoped offer so a surviving connection reoffers after a Space merge.
-    pub(super) async fn markSpaceOffer(&self, pairingId: &str, spaceId: &str) {
-        self.spaceOffers.lock().await.insert((pairingId.to_string(), spaceId.to_string()));
+    /// Terminates the carrier and all of its logical streams together.
+    pub(super) async fn close(&self) {
+        self.fail(error("Authenticated Link channel closed")).await;
+        self.channel.raw.close().await;
     }
 
     /// Sends one correlated Link request and waits for its matching response.
@@ -296,17 +395,16 @@ impl MultiplexedChannel {
     }
 
     /// Opens one Watch and routes its future events through the shared reader.
-    pub(super) async fn openWatch(self: &Arc<Self>, request: CoreWatchRequest) -> Result<(ChannelLease, CoreEventStream), CoreLinkError> {
+    pub(super) async fn openWatch(self: &Arc<Self>, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         let requestId = request.requestId.0.clone();
         let (sender, receiver) = mpsc::unbounded_channel();
         self.watches.lock().await.insert(requestId.clone(), sender);
-        let lease = self.lease();
         let response = self.exchange(CoreLinkRequest::Watch(CoreLinkWatchRequest::Open(request))).await;
         match response {
             Ok(CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Opened), .. }) => {
                 let stream = CoreEventStream::new(receiver)
                     .withOnClose(self.watchCloseCallback(requestId.clone()));
-                Ok((lease, stream))
+                Ok(stream)
             }
             Ok(CoreLinkResponse::Watch { result: Err(error), .. }) => {
                 self.watches.lock().await.remove(&requestId);
@@ -350,7 +448,12 @@ impl MultiplexedChannel {
 
     /// Fails all logical operations after the authenticated channel ends.
     async fn fail(&self, error: CoreLinkError) {
-        *self.failure.lock().unwrap() = Some(error.clone());
+        {
+            let mut failure = self.failure.lock().unwrap();
+            if failure.is_some() { return; }
+            *failure = Some(error.clone());
+        }
+        *LAST_ERROR.lock().unwrap() = Some(error.message.clone());
         let mut pending = self.pending.lock().await;
         let drained = std::mem::take(&mut *pending);
         for (_, sender) in drained { let _ = sender.send(Err(error.clone())); }
@@ -402,12 +505,15 @@ impl MultiplexedChannel {
         tokio::select! {
             _ = self.dispatchStopped.notified() => {},
             result = super::dispatch::serveIncoming(
-                side, self.channel.channel(),
+                side,
                 futures_util::stream::unfold(requests, |mut requests| async move {
                     requests.recv().await.map(|request| (Ok(PeerMessage::Request(request)), requests))
                 }),
-                |message| self.channel.send(message),
-            ) => if let Err(error) = result { self.fail(error).await; },
+                |messages| self.channel.sendBatch(messages),
+            ) => if let Err(error) = result {
+                self.fail(error).await;
+                self.channel.raw.close().await;
+            },
         }
     }
 

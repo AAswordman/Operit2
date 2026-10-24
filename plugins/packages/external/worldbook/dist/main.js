@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.systemPromptHook = systemPromptHook;
 exports.finalizeHook = finalizeHook;
+exports.onServiceInitialize = onServiceInitialize;
 exports.registerToolPkg = registerToolPkg;
 const index_ui_js_1 = __importDefault(require("./ui/worldbook_manager/index.ui.js"));
 const worldbook_storage_js_1 = require("./shared/worldbook_storage.js");
@@ -137,15 +138,48 @@ async function resolveCurrentCharacterCardId(event) {
     }
     return context.participantId;
 }
-async function readEnabledEntries() {
-    try {
-        const parsed = await (0, worldbook_storage_js_1.readWorldBookEntries)();
-        const enabledEntries = parsed.filter((entry) => entry && entry.enabled !== false);
-        enabledEntries.sort((left, right) => (right.priority || 50) - (left.priority || 50));
-        return enabledEntries;
+// Successful preparation consumes its snapshot at the final hook. Abandoned
+// sends are bounded, without caching by chat, message text or elapsed time.
+const preparations = new Map();
+const MAX_PENDING_PREPARATIONS = 32;
+async function readPreparation(event, consume) {
+    const callerCardId = await resolveCurrentCharacterCardId(event);
+    const chatId = String(event.eventPayload.chatId || "").trim();
+    const preparationId = event.eventPayload.metadata?.promptPreparationId;
+    const key = typeof preparationId === "string" && preparationId ? preparationId : undefined;
+    let snapshot = key ? preparations.get(key) : undefined;
+    if (snapshot && (snapshot.chatId !== chatId || snapshot.callerCardId !== callerCardId)) {
+        throw new Error("Worldbook preparation context does not match the prompt execution");
     }
-    catch (_error) {
-        return [];
+    if (!snapshot) {
+        snapshot = {
+            chatId,
+            callerCardId,
+            data: (async () => {
+                const allEntries = await (0, worldbook_storage_js_1.readWorldBookEntries)();
+                const enabledEntries = allEntries.filter((entry) => entry && entry.enabled !== false);
+                enabledEntries.sort((left, right) => (right.priority || 50) - (left.priority || 50));
+                // Variable patches and initialization still run even if no entry matches.
+                const variableContext = await resolveVariableContext(chatId, callerCardId, allEntries);
+                return { enabledEntries, variableContext };
+            })()
+        };
+        if (key && !consume) {
+            preparations.set(key, snapshot);
+            while (preparations.size > MAX_PENDING_PREPARATIONS) {
+                preparations.delete(preparations.keys().next().value);
+            }
+        }
+    }
+    if (key && consume)
+        preparations.delete(key);
+    try {
+        return { callerCardId, ...await snapshot.data };
+    }
+    catch (error) {
+        if (key && preparations.get(key) === snapshot)
+            preparations.delete(key);
+        throw error;
     }
 }
 function renderEntries(entries, variableContext) {
@@ -157,13 +191,10 @@ function renderEntries(entries, variableContext) {
         content: (0, worldbook_variables_js_1.renderWorldBookContent)(String(entry.content || ""), variableContext)
     }));
 }
-async function resolveVariableContext(event, callerCardId) {
-    const chatId = String(event?.eventPayload?.chatId || "").trim();
-    if (!chatId) {
+async function resolveVariableContext(chatId, callerCardId, allEntries) {
+    if (!chatId)
         return null;
-    }
     try {
-        const allEntries = await (0, worldbook_storage_js_1.readWorldBookEntries)();
         return await (0, worldbook_variables_js_1.syncWorldBookVariableContext)(chatId, allEntries, callerCardId);
     }
     catch (_error) {
@@ -175,9 +206,7 @@ async function systemPromptHook(event) {
     if (stage !== "after_compose_system_prompt") {
         return null;
     }
-    const enabledEntries = await readEnabledEntries();
-    const callerCardId = await resolveCurrentCharacterCardId(event);
-    const variableContext = await resolveVariableContext(event, callerCardId);
+    const { enabledEntries, callerCardId, variableContext } = await readPreparation(event, false);
     const hitEntries = enabledEntries.filter((entry) => entry.always_active &&
         entry.inject_target === "system" &&
         normalizeInjectPosition(entry) !== "at_depth" &&
@@ -195,13 +224,11 @@ async function finalizeHook(event) {
     if (stage !== "before_finalize_prompt") {
         return null;
     }
-    const enabledEntries = await readEnabledEntries();
+    const { enabledEntries, callerCardId, variableContext } = await readPreparation(event, true);
     const promptEntries = enabledEntries.filter((entry) => entry.inject_target === "user" || normalizeInjectPosition(entry) === "at_depth");
     const keywordEntries = enabledEntries.filter((entry) => !entry.always_active);
     const payload = event.eventPayload || {};
     const history = (payload.preparedHistory || payload.chatHistory || []);
-    const callerCardId = await resolveCurrentCharacterCardId(event);
-    const variableContext = await resolveVariableContext(event, callerCardId);
     const hitSystemEntries = [];
     const hitUserEntries = [];
     const hitChatEntries = [];
@@ -293,8 +320,15 @@ async function finalizeHook(event) {
         processedInput: nextProcessedInput
     };
 }
+async function onServiceInitialize(_event) {
+    await (0, worldbook_storage_js_1.initializeWorldBookStorage)();
+}
 function registerToolPkg() {
-    void (0, worldbook_storage_js_1.ensureWorldBookStorage)();
+    ToolPkg.registerAppLifecycleHook({
+        id: "service-initialize",
+        event: "application_on_create",
+        function: onServiceInitialize
+    });
     ToolPkg.registerUiRoute({
         id: "worldbook_manager",
         route: WORLDBOOK_ROUTE,

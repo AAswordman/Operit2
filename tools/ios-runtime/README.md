@@ -1,8 +1,9 @@
-# Deprecated iOS Runtime
+# iOS Runtime Tooling
 
-The legacy embedded Toybox, Node Mobile, and BeeWare CPython implementation is
-deprecated and is no longer invoked by any iOS build.
+The active iOS terminal runs an x86 Alpine Linux environment through
+[iSH](ish/), including Node.js 24, Python, and the shared app-storage mounts.
+Source preparation, patches, rootfs generation, and static-library builds live
+in `ish/`.
 
-The active iSH Alpine Linux terminal runtime follows the Android runtime
-layout in [`ish/`](ish/). Its source preparation and static-library build
-integration live there.
+The unused Toybox, Node Mobile, and BeeWare CPython build implementations have
+been removed. iOS builds use only the iSH runtime pipeline.

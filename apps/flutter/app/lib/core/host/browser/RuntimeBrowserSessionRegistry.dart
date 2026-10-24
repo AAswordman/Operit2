@@ -776,7 +776,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     final averageDispatchMs = dispatched == 0
         ? 0.0
         : queue.totalDispatchElapsedMs / dispatched;
-    ClientLogger.d(
+    ClientLogger.v(
       'summary reason=$reason session=$sessionId '
       'elapsedMs=${queue.lifetimeStopwatch.elapsedMilliseconds} '
       'accepted=${queue.acceptedCount} dispatched=${queue.dispatchedCount} '
@@ -785,6 +785,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
       'maxDispatchMs=${queue.maxDispatchElapsedMs} '
       'slowest=${queue.slowestDispatchType} errors=${queue.dispatchErrorCount}',
       tag: _interactionLogTag,
+      verboseLevel: VerboseLevel.level4,
     );
     queue.summaryStopwatch
       ..reset()

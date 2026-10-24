@@ -68,6 +68,12 @@
 			</array>
 		</dict>
 	</dict>
+	<key>UIApplicationShortcutItems</key>
+	<array><dict>
+		<key>UIApplicationShortcutItemType</key><string>app.operit.data-rescue</string>
+		<key>UIApplicationShortcutItemTitle</key><string>数据救援 / Data Rescue</string>
+		<key>UIApplicationShortcutItemIconType</key><string>UIApplicationShortcutIconTypeCloud</string>
+	</dict></array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

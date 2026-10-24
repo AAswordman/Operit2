@@ -2,7 +2,7 @@ package app.operit.core.tools.system
 
 import com.topjohnwu.superuser.Shell
 import java.util.concurrent.ExecutionException
-import java.util.concurrent.Executors
+import app.operit.HostTaskExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -29,15 +29,15 @@ object AndroidRootShell {
 /** Binds each command to the shell whose Root identity was actually verified. */
 private class LibsuRootCommandBackend : AndroidRootCommandBackend {
     private val shell = AtomicReference<Shell?>(null)
+    private val worker = HostTaskExecutor(serial = true, service = true)
 
     override fun executeProcess(arguments: List<String>, timeoutMillis: Long): AndroidPrivilegedCommandResult =
         AndroidCommandProcessRunner.execute(arguments, timeoutMillis)
 
     override fun executeLibsu(command: String, timeoutMillis: Long): AndroidPrivilegedCommandResult {
         val expired = AtomicBoolean(false)
-        val worker = Executors.newSingleThreadExecutor { task ->
-            Thread(task, "operit-root-libsu").apply { isDaemon = true }
-        }
+        val ownedSession = AtomicReference<Shell?>(null)
+        val closeOwnedSession = { ownedSession.getAndSet(null)?.let { session -> shell.compareAndSet(session, null); session.close() }; Unit }
         val future = worker.submit<AndroidPrivilegedCommandResult> {
             var session = shell.get()
             if (session == null || !session.isAlive || !session.isRoot) {
@@ -56,6 +56,7 @@ private class LibsuRootCommandBackend : AndroidRootCommandBackend {
                 }
                 shell.set(session)
             }
+            ownedSession.set(session)
             try {
                 check(!expired.get()) { "Root command deadline expired" }
                 val stdout = mutableListOf<String>()
@@ -68,8 +69,7 @@ private class LibsuRootCommandBackend : AndroidRootCommandBackend {
                 )
             } finally {
                 if (expired.get()) {
-                    shell.compareAndSet(session, null)
-                    session.close()
+                    closeOwnedSession()
                 }
             }
         }
@@ -78,13 +78,11 @@ private class LibsuRootCommandBackend : AndroidRootCommandBackend {
         } catch (error: Exception) {
             expired.set(true)
             // Closing this owned shell kills a stuck job; it is never reused after a timeout.
-            runCatching { shell.getAndSet(null)?.close() }
+            runCatching { closeOwnedSession() }
             future.cancel(true)
             if (error is InterruptedException) Thread.currentThread().interrupt()
             if (error is ExecutionException) throw (error.cause ?: error)
             throw error
-        } finally {
-            worker.shutdownNow()
         }
     }
 }

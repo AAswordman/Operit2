@@ -11,6 +11,7 @@ import 'package:flutter/scheduler.dart';
 /// callbacks and repaint boundaries. Pending widget updates are applied on wake.
 /// A page-local Material keeps ink features inside the same render boundary;
 /// live ancestors must not paint ink whose reference boxes have been parked.
+/// A page-local Overlay also parks portal layout callbacks with their anchors.
 /// Page-owned timers and subscriptions must also observe the ambient TickerMode
 /// notifier; retaining a widget cannot suspend arbitrary asynchronous Dart work.
 class RetainedPage extends StatefulWidget {
@@ -75,7 +76,12 @@ class _RetainedPageState extends State<RetainedPage> {
         excluding: !widget.active,
         child: _RetainedPageBody(
           active: _renderActive,
-          child: Material(type: MaterialType.transparency, child: widget.child),
+          child: Overlay.wrap(
+            child: Material(
+              type: MaterialType.transparency,
+              child: widget.child,
+            ),
+          ),
         ),
       ),
     );

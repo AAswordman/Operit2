@@ -5,6 +5,7 @@ members = [
     "crates/foundation/util",
     "crates/foundation/link",
     "crates/persistence/store",
+    "crates/persistence/rescue",
     "crates/provider/services",
     "crates/provider/local-model",
     "crates/tool/services",
@@ -12,6 +13,7 @@ members = [
     "crates/plugin/sdk-ipc",
     "crates/plugin/sdk-ipc-bridge",
     "crates/plugin/codegen",
+    "crates/plugin/sdk-macros",
     "crates/plugin/javascript-bridge",
     "crates/plugin/theme",
     "crates/runtime/application",
@@ -51,7 +53,6 @@ base64 = "0.22"
 regex = "1"
 json5 = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-rquickjs = "0.12.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
 thiserror = "1"
 tokio = { version = "1", default-features = false }

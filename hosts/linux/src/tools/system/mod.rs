@@ -34,16 +34,25 @@ impl SystemOperationHost for LinuxSystemOperationHost {
         } else {
             &request.title
         };
-        let status = Command::new("notify-send")
+        let output = Command::new("notify-send")
             .arg(title)
             .arg(&request.message)
-            .status()
+            .output()
             .map_err(|error| HostError::new(format!("Failed to send notification: {error}")))?;
-        if status.success() {
-            Ok(())
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            Err(HostError::new(format!(
+                "Notification command exited with {status}",
+                status = output.status
+            )))
         } else {
             Err(HostError::new(format!(
-                "Notification command exited with {status}"
+                "Notification command exited with {status}: {stderr}",
+                status = output.status
             )))
         }
     }
@@ -340,18 +349,24 @@ fn normalize_ocr_output(text: &str) -> String {
 }
 
 fn get_linux_system_language_code() -> HostResult<String> {
-    let lang = env::var("LANG").map_err(|error| {
-        HostError::new(format!("LANG is required to resolve language: {error}"))
-    })?;
-    let tag = lang
-        .split('.')
-        .next()
-        .ok_or_else(|| HostError::new("LANG did not contain a language tag"))?
-        .replace('_', "-");
-    if tag.trim().is_empty() {
-        return Err(HostError::new("LANG did not contain a language tag"));
+    // Locale precedence follows the C library: LC_ALL, then LC_MESSAGES, then LANG.
+    // Containers and minimal environments often set none of them, and "C"/"POSIX"
+    // carry no language of their own, so all of those report English instead of
+    // failing the whole startup that resolves the UI language.
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(|name| env::var(name).ok())
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty());
+    let Some(locale) = locale else {
+        return Ok("en".to_string());
+    };
+    let tag = locale.split('.').next().unwrap_or("").replace('_', "-");
+    let tag = tag.trim();
+    if tag.is_empty() || tag.eq_ignore_ascii_case("C") || tag.eq_ignore_ascii_case("POSIX") {
+        return Ok("en".to_string());
     }
-    Ok(tag)
+    Ok(tag.to_string())
 }
 
 fn get_linux_notifications(limit: i32) -> HostResult<NotificationData> {

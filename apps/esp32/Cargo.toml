@@ -60,6 +60,12 @@ extra_components = [
   { component_dirs = ["ui_port"] },
 ]
 
+# Remove duplicated code across the shared device runtime without changing the
+# fixed 4 MB board/partition layout or the package-specific Xtensa workarounds.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 # Xtensa LLVM cannot lower the vectorized UUID hex parser at opt-level 3.
 # Keep the workaround scoped to UUID; the firmware remains a release build.
 [profile.release.package.uuid]

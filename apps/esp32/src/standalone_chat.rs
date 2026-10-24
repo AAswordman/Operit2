@@ -50,6 +50,7 @@ struct State {
     result: Option<Result<(), String>>,
 }
 struct Chat {
+    spaceId: String,
     config: Config,
     http: Arc<dyn HttpHost>,
     state: Mutex<State>,
@@ -85,17 +86,36 @@ fn bound(messages: &mut Vec<Value>) {
     }
 }
 /// The application selects direct chat by providing a valid `chat` preference.
-/// Losing peers never resets this local conversation.
-pub fn configure(http: Option<Arc<dyn HttpHost>>, config: Option<&Value>) -> Result<(), String> {
+/// Losing peers never resets this local conversation; changing Space does.
+pub fn configure(
+    http: Option<Arc<dyn HttpHost>>,
+    spaceId: &str,
+    config: Option<&Value>,
+) -> Result<(), String> {
+    configureChat(&mut slot().lock().unwrap(), http, spaceId, config)
+}
+
+fn configureChat(
+    current: &mut Option<Arc<Chat>>,
+    http: Option<Arc<dyn HttpHost>>,
+    spaceId: &str,
+    config: Option<&Value>,
+) -> Result<(), String> {
+    // A Space transition retires the old session before parsing new settings,
+    // even when an old HTTP request is still running or the new settings fail.
+    // That worker retains its own Arc and cannot publish into the new session.
+    if current.as_ref().is_some_and(|old| old.spaceId != spaceId) {
+        *current = None;
+        changed();
+    }
     let Some(value) = config else {
-        if slot().lock().unwrap().take().is_some() {
+        if current.take().is_some() {
             changed();
         }
         return Ok(());
     };
     let config = Config::parse(value)?;
     let http = http.ok_or("This host does not provide HTTP")?;
-    let mut current = slot().lock().unwrap();
     if current.as_ref().is_some_and(|old| old.config == config) {
         return Ok(());
     }
@@ -107,6 +127,7 @@ pub fn configure(http: Option<Arc<dyn HttpHost>>, config: Option<&Value>) -> Res
         return Ok(());
     }
     *current = Some(Arc::new(Chat {
+        spaceId: spaceId.into(),
         config,
         http,
         state: Mutex::new(State {
@@ -119,6 +140,12 @@ pub fn configure(http: Option<Arc<dyn HttpHost>>, config: Option<&Value>) -> Res
     }));
     changed();
     Ok(())
+}
+/// Stop exposing a conversation when the application cannot read its scope/configuration.
+pub fn reset() {
+    if slot().lock().unwrap().take().is_some() {
+        changed();
+    }
 }
 pub fn active() -> bool {
     chat().is_some()
@@ -382,6 +409,7 @@ mod tests {
     }
     fn fixture() -> Chat {
         Chat {
+            spaceId: "space-a".into(),
             config: Config::parse(
                 &json!({"endpoint":"https://example.invalid/chat","model":"test"}),
             )
@@ -463,5 +491,54 @@ mod tests {
             &json!({"endpoint":"https://example.invalid","model":"test","apiKey":"bad\r\nheader"})
         )
         .is_err());
+    }
+    #[test]
+    fn direct_context_survives_same_space_polls_but_not_a_space_change() {
+        let config = json!({"endpoint":"https://example.invalid/chat","model":"test"});
+        let http: Option<Arc<dyn HttpHost>> = Some(Arc::new(UnusedHttp));
+        let mut current = None;
+        configureChat(&mut current, http.clone(), "space-a", Some(&config)).unwrap();
+        let previous = current.clone().unwrap();
+        {
+            let mut state = previous.state.lock().unwrap();
+            state
+                .messages
+                .push(json!({"sender":"ai","text":"private to space-a"}));
+            state.sending = true;
+        }
+        configureChat(&mut current, http.clone(), "space-a", Some(&config)).unwrap();
+        assert!(Arc::ptr_eq(current.as_ref().unwrap(), &previous));
+        configureChat(&mut current, http, "space-b", Some(&config)).unwrap();
+        let next = current.as_ref().unwrap();
+        assert!(!Arc::ptr_eq(next, &previous));
+        assert_eq!(next.spaceId, "space-b");
+        assert_ne!(
+            next.state.lock().unwrap().id,
+            previous.state.lock().unwrap().id
+        );
+        assert!(!next.state.lock().unwrap().sending);
+        let mut response = Response::default();
+        response.chunk(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"late reply\"}}]}\n",
+            &previous,
+        );
+        assert!(next.state.lock().unwrap().messages.is_empty());
+    }
+
+    #[test]
+    fn invalid_configuration_in_a_new_space_retires_the_previous_context() {
+        let config = json!({"endpoint":"https://example.invalid/chat","model":"test"});
+        let invalid = json!({"endpoint":"file:///invalid","model":"test"});
+        let http: Option<Arc<dyn HttpHost>> = Some(Arc::new(UnusedHttp));
+        let mut current = None;
+        configureChat(&mut current, http.clone(), "space-a", Some(&config)).unwrap();
+        assert!(configureChat(&mut current, http.clone(), "space-b", Some(&invalid)).is_err());
+        assert!(
+            current.is_none(),
+            "a new Space must not retain the old endpoint or context"
+        );
+        configureChat(&mut current, http, "space-a", Some(&config)).unwrap();
+        assert!(configureChat(&mut current, None, "space-b", Some(&config)).is_err());
+        assert!(current.is_none());
     }
 }

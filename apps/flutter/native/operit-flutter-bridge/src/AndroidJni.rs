@@ -8,6 +8,9 @@ use std::ffi::CStr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[path = "AndroidJniTaskScheduler.rs"]
+mod task_scheduler;
+
 /// Accepts the borrowed pipe descriptors delivered by the Android Binder endpoint.
 #[no_mangle]
 pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_acceptPluginSdkPipes(
@@ -87,14 +90,26 @@ pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_create(
             return 0;
         }
     };
-    if let Err(error) = operit_host_android_native::setAndroidHostSecretStoreBridge(java_vm, host) {
+    if let Err(error) =
+        operit_host_android_native::setAndroidHostSecretStoreBridge(java_vm, host.clone())
+    {
         set_last_create_error(error.to_string());
         return 0;
     }
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root, device_model)
     })) {
-        Ok(Ok(bridge)) => Arc::into_raw(Arc::new(bridge)) as jlong,
+        Ok(Ok(bridge)) => {
+            let installed = env
+                .get_java_vm()
+                .map_err(|error| error.to_string())
+                .and_then(|vm| install_work_presentation(vm, host));
+            if let Err(error) = installed {
+                set_last_create_error(error);
+                return 0;
+            }
+            Arc::into_raw(Arc::new(bridge)) as jlong
+        }
         Ok(Err(error)) => {
             operit_host_android_native::clearAndroidHostSecretStoreBridge();
             set_last_create_error(error);
@@ -280,4 +295,138 @@ fn new_java_string(mut env: JNIEnv, value: &str) -> jstring {
     env.new_string(value)
         .expect("JNI string allocation must succeed")
         .into_raw()
+}
+
+/// Runs offline maintenance with only the Android secret-store bridge installed.
+#[no_mangle]
+pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_dataRescue(
+    mut env: JNIEnv,
+    _class: JClass,
+    default_runtime_root: JString,
+    request: JString,
+    host: JObject,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        (|| -> Result<String, String> {
+            let root = PathBuf::from(String::from(
+                env.get_string(&default_runtime_root)
+                    .map_err(|error| error.to_string())?,
+            ));
+            let request = String::from(
+                env.get_string(&request)
+                    .map_err(|error| error.to_string())?,
+            );
+            let vm = env.get_java_vm().map_err(|error| error.to_string())?;
+            let host = env
+                .new_global_ref(host)
+                .map_err(|error| error.to_string())?;
+            operit_host_android_native::setAndroidHostSecretStoreBridge(vm, host)
+                .map_err(|error| error.to_string())?;
+            Ok(crate::PlatformRuntimeAbi::NativeDataRescue::execute(
+                root, &request,
+            ))
+        })()
+    }));
+    let response = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => serde_json::json!({"ok": false, "error": error}).to_string(),
+        Err(payload) => {
+            serde_json::json!({"ok": false, "error": panic_payload_message(payload.as_ref())})
+                .to_string()
+        }
+    };
+    new_java_string(env, &response)
+}
+
+/// Stops a service notification's exact execution without routing through a Flutter engine.
+#[no_mangle]
+pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_stopBackgroundWork(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    work_id: JString,
+) -> jstring {
+    let outcome = (|| -> Result<(), String> {
+        let bridge = (handle as *const OperitFlutterBridge)
+            .as_ref()
+            .ok_or_else(|| "Background work has no Core owner".to_string())?;
+        let work_id = String::from(
+            env.get_string(&work_id)
+                .map_err(|error| error.to_string())?,
+        );
+        let context = bridge.localCore.hostManager().clone();
+        bridge.runHostRuntimeAsyncTask("stop-background-work", move || async move {
+            operit_runtime::services::WorkActivityService::WorkActivityService::getInstance(
+                &context,
+            )
+            .stopWork(work_id)
+            .await
+        })?
+    })();
+    let encoded = match outcome {
+        Ok(()) => serde_json::json!({"ok": true}),
+        Err(error) => serde_json::json!({"ok": false, "error": error}),
+    };
+    new_java_string(env, &encoded.to_string())
+}
+
+/// Owns the process notification observer independently of any Flutter engine.
+static WORK_PRESENTATION_SUBSCRIPTION: std::sync::Mutex<Option<usize>> =
+    std::sync::Mutex::new(None);
+
+/// Delivers complete Core revisions to the Java service owner on every work transition.
+pub(crate) fn install_work_presentation(
+    vm: jni::JavaVM,
+    owner: jni::objects::GlobalRef,
+) -> Result<(), String> {
+    let mut subscription = WORK_PRESENTATION_SUBSCRIPTION
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if subscription.is_some() {
+        return Err("Android work presentation is already installed".to_string());
+    }
+    let id = operit_runtime::services::WorkActivityService::subscribeWorkUpdates(move |encoded| {
+        let delivery = (|| -> Result<(), String> {
+            let mut env = vm
+                .attach_current_thread()
+                .map_err(|error| error.to_string())?;
+            let encoded = env.new_string(encoded).map_err(|error| error.to_string())?;
+            let result = env.call_method(
+                owner.as_obj(),
+                "publishBackgroundWork",
+                "(Ljava/lang/String;)V",
+                &[jni::objects::JValue::Object(&jni::objects::JObject::from(
+                    encoded,
+                ))],
+            );
+            if let Err(error) = result {
+                if env.exception_check().map_err(|error| error.to_string())? {
+                    env.exception_describe()
+                        .map_err(|error| error.to_string())?;
+                    env.exception_clear().map_err(|error| error.to_string())?;
+                }
+                return Err(error.to_string());
+            }
+            Ok(())
+        })();
+        if let Err(error) = delivery {
+            operit_util::AppLogger::AppLogger::e(
+                "WorkPresentation",
+                &format!("Android work delivery failed: {error}"),
+            );
+        }
+    });
+    *subscription = Some(id);
+    Ok(())
+}
+
+/// Releases only the observer installed by this Android Core bridge.
+pub(crate) fn release_work_presentation() {
+    let id = WORK_PRESENTATION_SUBSCRIPTION
+        .lock()
+        .expect("Android work subscription mutex poisoned")
+        .take();
+    if let Some(id) = id {
+        operit_runtime::services::WorkActivityService::unsubscribeWorkUpdates(id);
+    }
 }

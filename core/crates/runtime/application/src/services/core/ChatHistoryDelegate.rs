@@ -235,7 +235,7 @@ pub struct ChatHistoryDelegate {
     pub chatConfigurationsFlow: MutableStateFlow<HashMap<String, ChatConfigurationDisplayResult>>,
     pub isInitialized: bool,
     pub allowAddMessage: bool,
-    pub beforeDestructiveHistoryMutation: Option<fn(String)>,
+    pub beforeDestructiveHistoryMutation: Option<Arc<dyn Fn(String) + Send + Sync>>,
     pub afterDestructiveHistoryMutation: Option<fn(String)>,
     pub pendingPersistChatOrderJob: Option<String>,
 }
@@ -303,7 +303,7 @@ impl ChatHistoryDelegate {
             chatConfigurationsFlow: self.chatConfigurationsFlow.clone(),
             isInitialized: self.isInitialized,
             allowAddMessage: self.allowAddMessage,
-            beforeDestructiveHistoryMutation: self.beforeDestructiveHistoryMutation,
+            beforeDestructiveHistoryMutation: self.beforeDestructiveHistoryMutation.clone(),
             afterDestructiveHistoryMutation: self.afterDestructiveHistoryMutation,
             pendingPersistChatOrderJob: self.pendingPersistChatOrderJob.clone(),
         }
@@ -658,8 +658,8 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     /// Registers a hook invoked before destructive history mutations.
-    pub fn setBeforeDestructiveHistoryMutation(&mut self, handler: fn(String)) {
-        self.beforeDestructiveHistoryMutation = Some(handler);
+    pub fn setBeforeDestructiveHistoryMutation(&mut self, handler: impl Fn(String) + Send + Sync + 'static) {
+        self.beforeDestructiveHistoryMutation = Some(Arc::new(handler));
     }
 
     #[allow(non_snake_case)]
@@ -671,7 +671,7 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Invokes the pre-mutation hook for a chat id.
     pub fn prepareChatForDestructiveMutation(&self, chatId: String) {
-        if let Some(handler) = self.beforeDestructiveHistoryMutation {
+        if let Some(handler) = self.beforeDestructiveHistoryMutation.as_ref() {
             handler(chatId);
         }
     }
@@ -1332,9 +1332,9 @@ impl ChatHistoryDelegate {
         chatId: &str,
         configuration: ChatConfigurationDisplayResult,
     ) {
-        let mut configurations = self.chatConfigurationsFlow.value();
-        configurations.insert(chatId.to_string(), configuration);
-        self.chatConfigurationsFlow.set_value(configurations);
+        self.chatConfigurationsFlow.update(|configurations| {
+            configurations.insert(chatId.to_string(), configuration.clone());
+        });
     }
 
     /// Initializes a new draft through awaited plugin hooks before any record or configuration is published.
@@ -1343,6 +1343,7 @@ impl ChatHistoryDelegate {
         service: &EnhancedAIService,
         setAsCurrentChat: bool,
         sourceChatId: Option<String>,
+        parentChatId: Option<String>,
         input: Option<Value>,
     ) -> Result<String, String> {
         self.createChatDraft(
@@ -1350,6 +1351,7 @@ impl ChatHistoryDelegate {
             ToolPkgChatCreationKind::New,
             setAsCurrentChat,
             sourceChatId,
+            parentChatId,
             None,
             input,
         )
@@ -1363,6 +1365,7 @@ impl ChatHistoryDelegate {
         creationKind: ToolPkgChatCreationKind,
         setAsCurrentChat: bool,
         sourceChatId: Option<String>,
+        parentChatId: Option<String>,
         sourceMessageTimestamp: Option<i64>,
         input: Option<Value>,
     ) -> Result<String, String> {
@@ -1388,7 +1391,11 @@ impl ChatHistoryDelegate {
             return Err("Branch creation requires a source chat".to_string());
         }
         let workspaceId = source.as_ref().and_then(|chat| chat.workspaceId.clone());
-        let parentChatId = if isBranch { sourceChatId.clone() } else { None };
+        if let Some(id) = &parentChatId {
+            self.chatHistoryManager.loadChatHistory(id.clone())
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("Parent chat does not exist: {id}"))?;
+        }
         let title = if isBranch {
             source
                 .as_ref()
@@ -1400,7 +1407,7 @@ impl ChatHistoryDelegate {
         };
         let mut draft = self
             .chatHistoryManager
-            .newChatDraft(title, BTreeMap::new(), workspaceId, parentChatId)
+            .newChatDraft(title, BTreeMap::new(), workspaceId, parentChatId.clone())
             .map_err(|error| error.to_string())?;
         let api = ChatConfigurationApi::ready(&service.tool_handler).await?;
         let hooks = ToolPkgChatLifecycleHookBridge::snapshot().await?;
@@ -1439,7 +1446,6 @@ impl ChatHistoryDelegate {
             purpose: ChatConfigurationPurpose::Display,
             chatId: Some(draft.id.clone()),
             chatExtension: None,
-            messageExtension: None,
             participantId: None,
             promptFunctionType: PromptFunctionType::CHAT,
             defaultModelBinding: support
@@ -1456,7 +1462,7 @@ impl ChatHistoryDelegate {
             })
             .transpose()?;
         let configuration = api.resolveDraft(request.clone(), ownerExtension).await?;
-        if !isBranch && setAsCurrentChat {
+        if !isBranch && setAsCurrentChat && parentChatId.is_none() {
             if let Some(currentId) = self.currentChatIdFlow.value() {
                 if sourceChatId.as_ref() == Some(&currentId) {
                     let current = self
@@ -1501,14 +1507,13 @@ impl ChatHistoryDelegate {
                 let mut opening =
                     ChatMessage::new_with_markdown("ai".to_string(), initial.content.clone());
                 opening.roleName = initial.displayName.clone();
-                if let Some(snapshot) = &initial.messageExtension {
-                    let reference = api.storeSnapshot(snapshot.clone()).await?;
-                    let execution = api.resolve(ChatConfigurationRequest { purpose: ChatConfigurationPurpose::Execution, messageExtension: Some(snapshot.clone()), ..request.clone() }).await?;
-                    opening.pluginExtensions.insert("host.chat.identity".into(), serde_json::json!({"title": execution.profile.name, "avatarUri": execution.profile.avatarUri}));
-                    opening.pluginExtensions.insert(
-                        configuration.extensionOwner.clone(),
-                        Value::Object(reference),
-                    );
+                if let Some(participantId) = &initial.participantId {
+                    let participant = configuration.participants.iter().find(|participant| &participant.id == participantId)
+                        .ok_or_else(|| "Initial message author is not a current chat participant".to_string())?;
+                    opening.pluginExtensions.insert("host.chat.identity".into(), serde_json::json!({
+                        "title": participant.name, "avatarUri": participant.avatarUri,
+                    }));
+                    opening.pluginExtensions.insert(configuration.extensionOwner.clone(), serde_json::json!({ "participantId": participant.id }));
                 }
                 draft.messages.push(opening);
             }
@@ -1554,9 +1559,9 @@ impl ChatHistoryDelegate {
     /// Opens a real history and marks its execution descriptor unresolved without inventing a configuration.
     pub fn openChatHistory(&mut self, chatId: String, syncToGlobal: bool) -> Result<(), String> {
         self.requireChatExists(&chatId)?;
-        let mut configurations = self.chatConfigurationsFlow.value();
-        configurations.remove(&chatId);
-        self.chatConfigurationsFlow.set_value(configurations);
+        self.chatConfigurationsFlow.update(|configurations| {
+            configurations.remove(&chatId);
+        });
         self.openChatRecord(chatId, syncToGlobal)
     }
 
@@ -1608,6 +1613,7 @@ impl ChatHistoryDelegate {
             service,
             ToolPkgChatCreationKind::Branch,
             true,
+            Some(sourceChatId.clone()),
             Some(sourceChatId),
             upToMessageTimestamp,
             None,
@@ -1659,25 +1665,13 @@ impl ChatHistoryDelegate {
             self.clearCurrentChatHistoryInMemory();
         }
         if deleted {
-            let mut configurations = self.chatConfigurationsFlow.value();
-            configurations.remove(&chatId);
-            self.chatConfigurationsFlow.set_value(configurations);
+            self.chatConfigurationsFlow.update(|configurations| {
+                configurations.remove(&chatId);
+            });
             self.clearChatFlow(&chatId);
             self.finishDestructiveHistoryMutation(chatId);
         }
         deleted
-    }
-
-    #[allow(non_snake_case)]
-    /// Removes the provisional assistant message for a failed response.
-    pub fn discardFailedAssistantMessage(&mut self, chatId: String, timestamp: i64) {
-        self.chatHistoryManager
-            .deleteMessage(chatId.clone(), timestamp)
-            .expect("ChatHistoryManager.deleteMessage must remove failed assistant message");
-        self.removeChatMessage(&chatId, timestamp);
-        if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
-            self.emitChatHistoryState();
-        }
     }
 
     #[allow(non_snake_case)]
@@ -2046,7 +2040,7 @@ impl ChatHistoryDelegate {
     /// Inserts or replaces an in-memory message in the current chat.
     pub fn upsertCurrentChatMessageInMemory(&mut self, message: ChatMessage) -> bool {
         let Some(chatId) = self.currentChatIdFlow.value() else {
-            AppLogger::trace(
+            AppLogger::trace_detail(
                 "ChatFlowTrace",
                 &format!(
                     "upsert_current.skipped_no_chat {}",
@@ -2069,7 +2063,7 @@ impl ChatHistoryDelegate {
             messages.sort_by_key(|item| item.timestamp);
             false
         };
-        AppLogger::trace(
+        AppLogger::trace_detail(
             "ChatFlowTrace",
             &format!(
                 "upsert_current chatId={} action={} count={} streamMessages={} {}",
@@ -2099,7 +2093,7 @@ impl ChatHistoryDelegate {
             .openedChatMessageFlowSnapshot(&targetChatId)
             .map(|messages| chat_flow_trace_summary(&messages))
             .unwrap_or_else(|| "none".to_string());
-        AppLogger::trace(
+        AppLogger::trace_detail(
             "ChatFlowTrace",
             &format!(
                 "add.start chatId={} current={} sender={} timestamp={} chars={} currentChat={}",
@@ -2114,7 +2108,7 @@ impl ChatHistoryDelegate {
         if message.isVariantPreview {
             if isCurrentChat {
                 self.upsertCurrentChatMessageInMemory(message);
-                ChainLogger::verbose(
+                ChainLogger::verbose_with_level(
                     MESSAGE_STORE_CHAIN,
                     "message.store.preview.memory",
                     &[
@@ -2123,6 +2117,7 @@ impl ChatHistoryDelegate {
                         ("timestamp", messageTimestamp.to_string()),
                         ("messageChars", messageChars),
                     ],
+                    operit_util::AppLogger::VERBOSE_LEVEL_6,
                 );
             }
             return;
@@ -2138,7 +2133,7 @@ impl ChatHistoryDelegate {
                 &persistedMessage,
             );
             self.publishChatMessage(&targetChatId, message);
-            ChainLogger::verbose(
+            ChainLogger::verbose_with_level(
                 MESSAGE_STORE_CHAIN,
                 "message.store.hidden.update",
                 &[
@@ -2147,8 +2142,9 @@ impl ChatHistoryDelegate {
                     ("timestamp", messageTimestamp.to_string()),
                     ("messageChars", messageChars),
                 ],
+                operit_util::AppLogger::VERBOSE_LEVEL_6,
             );
-            AppLogger::trace(
+            AppLogger::trace_detail(
                 "ChatFlowTrace",
                 &format!(
                     "add.hidden_update.done chatId={} current={}",
@@ -2171,7 +2167,7 @@ impl ChatHistoryDelegate {
                 &persistedMessage,
             );
             self.publishChatMessage(&targetChatId, message);
-            ChainLogger::verbose(
+            ChainLogger::verbose_with_level(
                 MESSAGE_STORE_CHAIN,
                 "message.store.background.update",
                 &[
@@ -2180,8 +2176,9 @@ impl ChatHistoryDelegate {
                     ("timestamp", messageTimestamp.to_string()),
                     ("messageChars", messageChars),
                 ],
+                operit_util::AppLogger::VERBOSE_LEVEL_6,
             );
-            AppLogger::trace(
+            AppLogger::trace_detail(
                 "ChatFlowTrace",
                 &format!(
                     "add.background.done chatId={} current={}",
@@ -2210,7 +2207,7 @@ impl ChatHistoryDelegate {
                 &targetChatId,
                 &persistedMessage,
             );
-            ChainLogger::verbose(
+            ChainLogger::verbose_with_level(
                 MESSAGE_STORE_CHAIN,
                 "message.store.visible.update",
                 &[
@@ -2219,8 +2216,9 @@ impl ChatHistoryDelegate {
                     ("timestamp", messageTimestamp.to_string()),
                     ("messageChars", messageChars),
                 ],
+                operit_util::AppLogger::VERBOSE_LEVEL_6,
             );
-            AppLogger::trace(
+            AppLogger::trace_detail(
                 "ChatFlowTrace",
                 &format!(
                     "add.visible_update chatId={} current={}",
@@ -2268,7 +2266,7 @@ impl ChatHistoryDelegate {
                 &targetChatId,
                 &persistedMessage,
             );
-            ChainLogger::verbose(
+            ChainLogger::verbose_with_level(
                 MESSAGE_STORE_CHAIN,
                 "message.store.window.update",
                 &[
@@ -2277,8 +2275,9 @@ impl ChatHistoryDelegate {
                     ("timestamp", messageTimestamp.to_string()),
                     ("messageChars", messageChars),
                 ],
+                operit_util::AppLogger::VERBOSE_LEVEL_6,
             );
-            AppLogger::trace(
+            AppLogger::trace_detail(
                 "ChatFlowTrace",
                 &format!(
                     "add.window_update chatId={} current={}",

@@ -758,4 +758,3 @@ async function updateWorldBookGroup(params) {
     await (0, worldbook_storage_js_1.writeWorldBookGroups)(groups);
     return groups[index];
 }
-void (0, worldbook_storage_js_1.ensureWorldBookStorage)();

@@ -235,7 +235,7 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
     let merged = service.networkControlStore().currentSpaceOperations()?;
     let state = service.networkControlStore().currentState()?;
     service.spaceStore().alignRemoteMemberRecord(peer.to_string(), state.memberNodeIds.contains(peer))?;
-    operit_util::AppLogger::AppLogger::d("SpaceReconcile", &format!(
+    operit_util::AppLogger::AppLogger::trace("SpaceReconcile", &format!(
         "shared Space reconciliation with {peer}: merged {applied} operations, members {}",
         state.memberNodeIds.len()
     ));
@@ -366,7 +366,7 @@ pub(crate) async fn reconcile(service: &dyn NodeSpaceContext, peer: &str) -> Res
     } else {
         space_join::leave(service)?;
     }
-    operit_util::AppLogger::AppLogger::d("SpaceReconcile", &format!(
+    operit_util::AppLogger::AppLogger::trace("SpaceReconcile", &format!(
         "shared Space reconciliation with {peer}: members {}, localIsMember={localIsMember}, converged={converged} in {rounds} round(s)",
         state.memberNodeIds.len()
     ));

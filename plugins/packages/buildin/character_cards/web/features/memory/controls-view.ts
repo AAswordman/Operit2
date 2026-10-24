@@ -41,13 +41,14 @@ export function ownerSettingsBody(dialog: OwnerSettingsDialog): string {
   const settings = dialog.settings, config = dialog.config;
   if (settings === null || config === null || dialog.chats === null) return header + button("reload-memory-settings", "重试", "refresh");
   const statusError = `<div data-memory-status-error class="error-banner" role="alert" ${dialog.statusError === "" ? "hidden" : ""}>${escapeHtml(dialog.statusError)}</div>`;
+  const missingBanner = dialog.missingChatIds.length === 0 ? "" : `<div class="error-banner" role="alert">检测到 ${dialog.missingChatIds.length} 条已失效的会话绑定（对应聊天已被删除），自动提取与历史重建会跳过它们。${button("prune-missing-chat-bindings", "清理失效绑定", "")}</div>`;
   switch (dialog.tab) {
-    case 0: return header + statusError + `<div data-memory-queue>${memoryQueueStatus(dialog)}</div>` + notice("至少积累 5 个候选后自动提取；提取结果写入此记忆库。")
+    case 0: return header + statusError + missingBanner + `<div data-memory-queue>${memoryQueueStatus(dialog)}</div>` + notice("至少积累 5 个候选后自动提取；提取结果写入此记忆库。")
       + numericField("检查间隔（分钟）", "interval", settings.autoSaveIntervalMinutes, 1, 30)
       + field("记忆提取自定义规则", "extractionRules", settings.memoryExtractionCustomRules, 5)
       + switchRow("自动更新 USER.md", "提取记忆时更新此记忆库的用户资料。", "profileAuto", settings.profileAutoUpdateEnabled, false)
       + switchRow("锁定 USER.md", "禁止模型覆盖用户资料。", "profileLocked", settings.profileAutoUpdateLocked, false);
-    case 1: return header + statusError
+    case 1: return header + statusError + missingBanner
       + numericField("关键词权重", "keywordWeight", config.keywordWeight, 0, undefined, "any")
       + numericField("标签权重", "tagWeight", config.tagWeight, 0, undefined, "any")
       + numericField("向量权重", "vectorWeight", config.vectorWeight, 0, undefined, "any")
@@ -66,7 +67,7 @@ export function ownerSettingsBody(dialog: OwnerSettingsDialog): string {
       const rebuilding = memoryRebuilding(dialog);
       let chats = "";
       for (const chat of dialog.chats) chats += `<label class="checkbox-row"><input type="checkbox" data-memory-chat="${escapeHtml(chat.id)}" aria-label="${escapeHtml(chat.title)}" ${dialog.selectedChatIds.includes(chat.id) ? "checked" : ""} ${rebuilding ? "disabled" : ""}><span>${escapeHtml(chat.title)}<span class="muted"> · ${chat.messageCount} 条消息</span></span></label>`;
-      return header + statusError + notice("从聊天历史重建记忆（追加／更新，不删除现有记忆）。")
+      return header + statusError + missingBanner + notice("从聊天历史重建记忆（追加／更新，不删除现有记忆）。")
         + numericField("窗口消息数", "windowMessageCount", dialog.windowMessageCount, 1)
         + `<div class="settings-grid">${field("开始时间", "from", dialog.from, 0, false, "包含所选日期", { type: "date" })}${field("结束时间", "to", dialog.to, 0, false, "包含所选日期", { type: "date" })}</div>`
         + '<h3>选择聊天</h3>' + (chats === "" ? '<p class="muted">此记忆库暂无绑定聊天</p>' : chats)

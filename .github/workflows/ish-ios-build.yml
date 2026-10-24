@@ -24,7 +24,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: apps/flutter/app/ios/Runner/ish-root.tar.gz
-          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh') }}
+          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh', 'tools/runtime/verify_alpine_node24.py') }}
 
       - name: Build iSH Alpine rootfs
         if: steps.ish-rootfs-cache.outputs.cache-hit != 'true'
@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: apps/flutter/app/ios/Runner/ish-root.tar.gz
-          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh') }}
+          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh', 'tools/runtime/verify_alpine_node24.py') }}
 
       - name: Upload iSH Alpine rootfs
         uses: actions/upload-artifact@v4

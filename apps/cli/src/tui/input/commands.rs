@@ -165,6 +165,18 @@ const COMMAND_SPECS: &[TuiCommandSpec] = &[
         options: &[],
     },
     TuiCommandSpec {
+        name: "network identity update",
+        usage: "/network identity update <identity> <name> [capability...]",
+        description_key: TuiTextKey::CommandNetworkIdentityUpdateDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network identity delete",
+        usage: "/network identity delete <identity>",
+        description_key: TuiTextKey::CommandNetworkIdentityDeleteDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
         name: "network identity set",
         usage: "/network identity set <device> <identity>",
         description_key: TuiTextKey::CommandNetworkIdentitySetDescription,
@@ -174,6 +186,12 @@ const COMMAND_SPECS: &[TuiCommandSpec] = &[
         name: "network identity clear",
         usage: "/network identity clear <device>",
         description_key: TuiTextKey::CommandNetworkIdentityClearDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network name",
+        usage: "/network name <name>",
+        description_key: TuiTextKey::CommandNetworkNameDescription,
         options: &[],
     },
     TuiCommandSpec {
@@ -441,12 +459,6 @@ const COMMAND_SPECS: &[TuiCommandSpec] = &[
         options: &[],
     },
     TuiCommandSpec {
-        name: "skill toggle",
-        usage: "/skill toggle <name>",
-        description_key: TuiTextKey::CommandSkillToggleDescription,
-        options: &[],
-    },
-    TuiCommandSpec {
         name: "package",
         usage: "/package",
         description_key: TuiTextKey::CommandPackageDescription,
@@ -480,6 +492,18 @@ const COMMAND_SPECS: &[TuiCommandSpec] = &[
         name: "mcp toggle",
         usage: "/mcp toggle <name>",
         description_key: TuiTextKey::CommandMcpToggleDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "status",
+        usage: "/status",
+        description_key: TuiTextKey::CommandStatusDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "log",
+        usage: "/log",
+        description_key: TuiTextKey::CommandLogDescription,
         options: &[],
     },
     TuiCommandSpec {
@@ -805,10 +829,6 @@ mod tests {
     #[test]
     fn network_linking_subcommands_are_suggested() {
         assert_eq!(
-            builtin_names("/network token"),
-            vec!["network token".to_string()]
-        );
-        assert_eq!(
             builtin_names("/network prompts"),
             vec!["network prompts".to_string()]
         );
@@ -824,6 +844,26 @@ mod tests {
             builtin_names("/network reject"),
             vec!["network reject".to_string()]
         );
+    }
+
+    #[test]
+    fn headless_panel_commands_are_suggested() {
+        assert_eq!(builtin_names("/sta"), vec!["status".to_string()]);
+        assert_eq!(builtin_names("/lo"), vec!["log".to_string()]);
+        assert_eq!(
+            builtin_names("/network na"),
+            vec!["network name".to_string()]
+        );
+        assert_eq!(
+            builtin_names("/network identity u"),
+            vec!["network identity update".to_string()]
+        );
+        assert_eq!(
+            builtin_names("/network identity del"),
+            vec!["network identity delete".to_string()]
+        );
+        assert!(!builtin_names("/skill ")
+            .contains(&"skill toggle".to_string()));
     }
 
     #[test]

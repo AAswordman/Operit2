@@ -443,7 +443,7 @@
   "settingsCategoryModelSubtitle": "模型、Key、上下文",
   "settingsCategoryModelDescription": "配置模型连接，选择聊天模型，并管理思考、上下文和多模态能力。",
   "settingsCategoryLocalModelsTitle": "本地模型",
-  "settingsCategoryLocalModelsSubtitle": "下载、引擎、STT / TTS",
+  "settingsCategoryLocalModelsSubtitle": "LLM、下载、STT / TTS",
   "settingsCategoryLocalModelsDescription": "管理按需安装的本地模型和推理引擎。",
   "settingsCategoryToolsTitle": "工具与权限",
   "settingsCategoryToolsSubtitle": "AI 能力、系统授权、扩展",
@@ -690,7 +690,6 @@
   "settingsModelProviderTypeDeepseek": "DeepSeek",
   "settingsModelProviderTypeMistral": "Mistral",
   "settingsModelProviderTypeSiliconflow": "硅基流动",
-  "settingsModelProviderTypeIflow": "心流",
   "settingsModelProviderTypeOpenrouter": "OpenRouter",
   "settingsModelProviderTypeOpencode": "OpenCode",
   "settingsModelProviderTypeFourRouter": "4Router",
@@ -1354,6 +1353,14 @@
   "settingsAppearanceBubbleImageAdjustAi": "调整 AI 气泡图片",
   "settingsAppearanceBubbleImagePreview": "预览",
   "settingsAppearanceBubbleImagePreviewText": "这是一条气泡预览，切线展示九宫格区域",
+  "settingsAppearanceBubbleImageImportFailed": "气泡图片没有生效：{error}",
+  "@settingsAppearanceBubbleImageImportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceBubbleImageCrop": "裁切",
   "settingsAppearanceBubbleImageRepeat": "重复区域",
   "settingsAppearanceBubbleImageScale": "图片缩放",
@@ -1813,6 +1820,7 @@
   "pluginLoadingFailed": "加载失败",
   "pluginLoadingWaiting": "等待中",
   "pluginLoadingKindPackage": "包",
+  "pluginLoadingKindPlugin": "插件",
   "pluginLoadingKindMcp": "MCP",
   "pluginLoadingCompleteSuccess": "包和插件已全部加载",
   "pluginLoadingCompleteWithFailures": "部分包或插件加载失败",
@@ -1822,6 +1830,9 @@
   "chatRouteRemoteOffline": "远程{platform} 离线",
   "chatRouteLoading": "正在读取运行设备",
   "chatRouteUnknown": "运行设备状态未知",
+  "chatRouteClaimHostPrompt": "当前设备宿主未找到，是否切换为当前设备？",
+  "chatRouteClaimHostYes": "是",
+  "chatRouteClaimHostNo": "否",
   "@chatRouteRemote": {
     "placeholders": {
       "platform": {
@@ -2102,6 +2113,10 @@
   "deviceSpaceManageDevice": "管理设备",
   "deviceSpaceConnectDirect": "建立直连",
   "deviceSpaceConnectDirectHint": "该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。",
+  "deviceSpaceUpdateEndpoint": "更新直连地址",
+  "deviceSpaceUpdateEndpointLabel": "直连地址",
+  "deviceSpaceUpdateEndpointHint": "例如 ws://192.168.1.20:37195/link",
+  "deviceSpaceUpdateEndpointSaved": "直连地址已更新",
   "deviceSpaceDirectLinkEstablished": "已建立直连：{device}",
   "@deviceSpaceDirectLinkEstablished": {
     "placeholders": {
@@ -2186,5 +2201,40 @@
   "settingsAppearanceLoadFailed": "无法加载外观设置",
   "settingsAppearanceRepairHint": "已保存的外观没有被替换。修复资源后可以重试，也可以主动重置外观。重置会保留头像和已保存的配置，并切换到自定义外观。",
   "settingsAppearanceRetry": "重试",
-  "settingsAppearanceResetAfterError": "重置外观"
+  "settingsAppearanceResetAfterError": "重置外观",
+  "backgroundWorkIdle": "当前没有正在运行的工作",
+  "backgroundWorkRunningCount": "项工作正在运行",
+  "backgroundWorkWaiting": "等待你确认",
+  "backgroundWorkWaitingCount": "项待确认",
+  "backgroundWorkCompleted": "已完成",
+  "backgroundWorkFailed": "执行失败，打开查看详情",
+  "backgroundWorkCancelled": "已停止",
+  "backgroundWorkProcessing": "正在准备",
+  "backgroundWorkConnecting": "正在连接",
+  "backgroundWorkReceiving": "正在生成回复",
+  "backgroundWorkTool": "正在执行工具",
+  "backgroundWorkToolResult": "正在处理工具结果",
+  "backgroundWorkSummarizing": "正在整理上下文",
+  "backgroundWorkPlan": "正在执行计划",
+  "backgroundWorkOpen": "查看会话",
+  "backgroundWorkReview": "查看并确认",
+  "backgroundWorkStop": "停止",
+  "localModelsDeviceOnly": "保存在此设备",
+  "localModelsDeviceOnlyDescription": "模型权重、下载进度和安装记录仅保存在当前设备，不参与设备空间同步。聊天可通过路由使用安装了模型的设备。",
+  "localModelsRunChat": "推理与设置",
+  "localModelsUseForChat": "用于聊天",
+  "localModelsChatActivated": "已设为聊天模型",
+  "localModelsPrompt": "输入提示词",
+  "localModelsGenerate": "开始推理",
+  "localModelsGenerating": "正在推理…",
+  "localModelsThreads": "CPU 线程数",
+  "localModelsContextSize": "上下文长度（token）",
+  "localModelsBatchSize": "批次大小",
+  "localModelsUnload": "释放模型内存",
+  "localModelsCpuBackend": "本机 CPU 推理",
+  "localModelsLlmDescription": "下载 GGUF 模型使用 llama.cpp，或下载 MNN 模型包。安装后可在这里试运行，或设为聊天模型。",
+  "localModelsInvalidSettings": "请检查线程数、上下文长度和批次大小。",
+  "localModelsFilterAll": "全部模型",
+  "localModelsFilterInstalled": "仅已安装",
+  "localModelsSearchCatalog": "搜索名称或推理引擎"
 }

@@ -1,4 +1,6 @@
 #![allow(non_snake_case)]
+use operit_host_api::PluginStorage::{StoragePreferencesMergeCatalog, StoragePreferencesMergeDescriptor, StoragePreferencesMergeKey, StoragePreferencesMergeReference};
+use operit_store::PreferenceMerge::PreferenceMergeStore;
 
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_local_models::LocalEngineManifest::LocalPlatformTarget;
@@ -22,12 +24,62 @@ pub struct SttConfigManager {
 }
 
 impl SttConfigManager {
+    /// Opens this owner's versioned store through the supplied runtime storage host.
+    pub(crate) fn preferenceStore(
+        storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
+        path: impl Into<String>,
+    ) -> PreferencesDataStore {
+        PreferencesDataStore::newEncryptedWithStorage(storage, path)
+            .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences)
+    }
+
+    /// Decodes historical record encodings without running new-store initialization.
+    fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+        entry.decodeHistoricalValues(|version, values| {
+            if version > Self::PREFERENCES_VERSION {
+                return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
+            }
+            for version in version.max(1)..Self::PREFERENCES_VERSION { Self::migratePreferences(version, values)?; }
+            Ok(())
+        })
+    }
+
+    /// Declares this owner's catalog and references using the shared merge contract.
+    pub(crate) fn spaceMergeStore() -> PreferenceMergeStore {
+        let path = operit_util::RuntimeStorageLayout::STT_CONFIGS_PREFERENCES_PATH;
+        PreferenceMergeStore {
+            path: path.to_string(),
+            encrypted: true,
+            storageVersion: Some(2),
+            decode: Some(Self::decodeSyncedEntry),
+            merge: StoragePreferencesMergeDescriptor {
+                version: 1,
+                catalog: Some(StoragePreferencesMergeCatalog {
+                    key_prefix: "stt_config_".to_string(),
+                    key_suffix: "_json".to_string(),
+                    identity_field: "id".to_string(),
+                    name_field: "name".to_string(),
+                    ignored_fields: vec!["createdAt".to_string(), "updatedAt".to_string()],
+                    retired_keys: vec!["stt_config_list".to_string()],
+                }),
+                references: vec![StoragePreferencesMergeReference {
+                    key: StoragePreferencesMergeKey::Exact { key: "current_stt_config_id".to_string() },
+                    path: vec![],
+                    target: path.to_string(),
+                }],
+                projection: None,
+            },
+        }
+    }
+
     const PREFERENCES_VERSION: u32 = 2;
     /// Creates an STT configuration manager backed by explicit runtime paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::newEncrypted(paths.stt_configs_preferences_path())
-                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
+            dataStore: Self::preferenceStore(
+                operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
+                operit_store::RuntimeStorageHost::runtimeStoragePath(&paths.stt_configs_preferences_path()),
+            ),
             paths,
         }
     }

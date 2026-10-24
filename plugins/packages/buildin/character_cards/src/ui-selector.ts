@@ -196,7 +196,7 @@ export function selectorView(ctx: ComposeDslContext, input: SelectorInput, state
   else if (state.data.options.length === 0) body = ctx.UI.Text({ text: input.kind === "group" ? "暂无群组" : "暂无角色卡", style: "bodySmall", color: colors.onSurfaceVariant, paddingStart: 16, paddingTop: 18, paddingEnd: 16, paddingBottom: 20, weight: 1 });
   else {
     const options = state.data.options;
-    const items = ctx.lazyItems({ key: "selector-records", itemCount: options.length, itemExtent: 56, initialItemCount: 12 },
+    const items = ctx.lazyItems({ key: "selector-records", itemCount: options.length, itemExtent: 56, initialItemCount: 24 },
       /** Builds one keyed row only when it enters the materialized viewport window. */
       index => ctx.UI.Column({ key: "selector-item:" + options[index].key, fillMaxWidth: true }, [
         selectorRow(ctx, options[index], state, controller),

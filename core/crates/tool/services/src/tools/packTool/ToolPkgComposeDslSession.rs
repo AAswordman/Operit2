@@ -10,27 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, Notify};
 
-/// Describes one retained node without embedding its descendants.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[allow(non_snake_case)]
-pub struct ToolPkgComposeDslNodeRecord {
-    pub id: String,
-    pub nodeType: String,
-    pub props: BTreeMap<String, Value>,
-    pub children: Vec<String>,
-    pub slots: BTreeMap<String, Vec<String>>,
-}
-
-/// Applies one atomic composition commit to the retained Flutter node store.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[allow(non_snake_case)]
-pub struct ToolPkgComposeDslNodeUpdate {
-    pub reset: bool,
-    pub revision: u64,
-    pub rootId: String,
-    pub upserts: Vec<ToolPkgComposeDslNodeRecord>,
-    pub removed: Vec<String>,
-}
+pub use super::ToolPkgComposeDslProtocol::ToolPkgComposeDslTransaction;
 
 /// Carries UI commands on the existing automatic ReverseStream proxy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -51,33 +31,10 @@ pub struct ToolPkgComposeDslCommand {
 pub struct ToolPkgComposeDslEvent {
     pub requestId: String,
     pub phase: String,
-    pub update: Option<ToolPkgComposeDslNodeUpdate>,
+    pub update: Option<crate::tools::packTool::ToolPkgComposeDslProtocol::ToolPkgComposeDslTransaction>,
     pub actionResult: Option<Value>,
     pub navigationCommands: Vec<Value>,
     pub error: Option<String>,
-}
-
-/// Reads the owned DSL result without parsing a JSON string or a recursive UI tree.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(non_snake_case)]
-struct ComposeResponse {
-    update: Option<ToolPkgComposeDslNodeUpdate>,
-    actionResult: Option<Value>,
-    navigationCommands: Vec<Value>,
-}
-
-/// Identifies commits published on the same synchronous JavaScript response channel.
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum ComposeResponsePhase { Intermediate, Final }
-
-/// Envelopes one already structured response without converting the retained tree to JSON text.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StreamedComposeResponse {
-    phase: ComposeResponsePhase,
-    response: ComposeResponse,
 }
 
 struct ComposeSessionState {
@@ -89,7 +46,6 @@ struct ComposeSessionState {
     closed: AtomicBool,
     cancellation: Notify,
     commandOwner: AtomicBool,
-    profileStages: AtomicBool,
 }
 
 /// Owns an application-level composition session over unchanged CoreLink streams.
@@ -128,7 +84,7 @@ impl ToolPkgComposeDslSession {
         let state = Arc::new(ComposeSessionState {
             id: uuid::Uuid::new_v4().to_string(), engine, resources,
             sender: Mutex::new(Some(sender)), receiver: Mutex::new(Some(receiver)),
-            closed: AtomicBool::new(false), cancellation: Notify::new(), commandOwner: AtomicBool::new(false), profileStages: AtomicBool::new(false),
+            closed: AtomicBool::new(false), cancellation: Notify::new(), commandOwner: AtomicBool::new(false),
         });
         sessionRegistry().lock().expect("Compose registry mutex poisoned").insert(state.id.clone(), Arc::downgrade(&state));
         Self { state }
@@ -192,13 +148,14 @@ impl ToolPkgComposeDslSession {
     }
 
     /// Forwards structured UI changes without exporting or comparing JS-owned state and memo.
-    fn deliver(&self, requestId: &str, value: Value) -> Result<(), String> {
-        let finish_profile = self.state.profileStages.load(Ordering::Relaxed).then(|| profileComposeResponse(requestId.to_owned()));
-        let streamed: StreamedComposeResponse = serde_json::from_value(value).map_err(|error| error.to_string())?;
-        let phase = match streamed.phase { ComposeResponsePhase::Intermediate => "intermediate", ComposeResponsePhase::Final => "final" };
-        let response = streamed.response;
-        if let Some(finish_profile) = finish_profile { finish_profile(&response); }
-        self.emit(ToolPkgComposeDslEvent { requestId: requestId.into(), phase: phase.into(), update: response.update, actionResult: response.actionResult, navigationCommands: response.navigationCommands, error: None });
+    fn deliver(&self, requestId: &str, value: operit_host_api::HostJavaScriptValue) -> Result<(), String> {
+        let operit_host_api::HostJavaScriptValue::Buffer(bytes) = value else { return Err("Compose responses require a transferred binary frame".into()); };
+        let arena = super::ToolPkgComposeDslProtocol::ComposeBuffer::new(&bytes)?;
+        let phase = if arena.is_final()? { "final" } else { "intermediate" };
+        let actionResult = arena.action_result()?;
+        let navigationCommands = arena.navigation()?;
+        let update = if arena.has_update()? { Some(ToolPkgComposeDslTransaction { buffer: bytes.into() }) } else { None };
+        self.emit(ToolPkgComposeDslEvent { requestId: requestId.into(), phase: phase.into(), update, actionResult, navigationCommands, error: None });
         Ok(())
     }
 
@@ -213,12 +170,11 @@ impl ToolPkgComposeDslSession {
         if self.state.closed.load(Ordering::Acquire) { return; }
         // The native engine may outlive a transport capability. Its JS retained
         // bundle must start a full document when a new session reuses that engine.
-        self.state.profileStages.store(command.runtimeOptions.get("__operit_profile_compose_stages") == Some(&Value::Bool(true)), Ordering::Relaxed);
         command.runtimeOptions.insert("__operit_compose_session_id".into(), Value::String(self.id()));
         let work = async {
             let session = self.clone();
             let requestId = command.requestId.clone();
-            let onResponse: Arc<dyn Fn(Value) + Send + Sync> = Arc::new(move |response| {
+            let onResponse: Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync> = Arc::new(move |response| {
                 if let Err(error) = session.deliver(&requestId, response) { session.fail(&requestId, error); }
             });
             let result = match command.operation.as_str() {
@@ -247,27 +203,6 @@ impl ToolPkgComposeDslSession {
     }
 }
 
-
-/// Uses native high-resolution clocks only in explicitly profiled native runs.
-#[cfg(not(target_arch = "wasm32"))]
-fn profileComposeResponse(request_id: String) -> impl FnOnce(&ComposeResponse) {
-    let started = std::time::Instant::now();
-    move |response: &ComposeResponse| {
-        let duration = started.elapsed().as_secs_f64() * 1000.0;
-        let (revision, nodes, string_bytes) = response.update.as_ref().map(|update| (
-            update.revision, update.upserts.len(),
-            update.upserts.iter().flat_map(|node| node.props.values()).filter_map(Value::as_str).map(str::len).sum::<usize>(),
-        )).unwrap_or_default();
-        let line = format!("event=compose_pipeline_stage stage=rust-typed-response durationMs={duration:.3} wallMicros={} request={request_id} revision={revision} nodes={nodes} directStringBytes={string_bytes}\n",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_micros());
-        let _ = std::io::Write::write_all(&mut std::io::stderr().lock(), line.as_bytes());
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn profileComposeResponse(_request_id: String) -> impl FnOnce(&ComposeResponse) {
-    |_: &ComposeResponse| {}
-}
 
 struct ComposeCommandOwner(ToolPkgComposeDslSession);
 

@@ -232,13 +232,13 @@ impl MarkdownRenderEventStream {
         }
     }
 
-    /// Creates a nested Markdown stream for the body of one XML block.
-    fn child(chatId: String, parentBlockId: u64) -> Self {
+    /// Creates a nested stream that continues the entire tree's block ID sequence.
+    fn child(chatId: String, parentBlockId: u64, nextBlockId: u64) -> Self {
         Self {
             chatId,
             parentBlockId: Some(parentBlockId),
             block: MarkdownGroupSession::block(),
-            nextBlockId: 0,
+            nextBlockId,
             activeBlock: None,
         }
     }
@@ -377,12 +377,15 @@ impl MarkdownRenderEventStream {
                             block.xmlMarkdown = Some(Box::new(MarkdownRenderEventStream::child(
                                 self.chatId.clone(),
                                 block.id,
+                                self.nextBlockId,
                             )));
                         }
                         let bodyChunk = xml.takeBodyChunk();
                         if let Some(child) = block.xmlMarkdown.as_mut() {
                             if !bodyChunk.is_empty() {
                                 events.extend(child.pushChunk(&bodyChunk));
+                                // Flattened child events must never reuse another level's block IDs.
+                                self.nextBlockId = child.nextBlockId;
                             }
                         }
                     }
@@ -665,6 +668,76 @@ mod tests {
                 .collect::<String>();
             assert_eq!(raw, content);
         }
+    }
+
+    /// Flattened nested streams must use unique IDs at every input boundary.
+    #[test]
+    fn nested_thinking_uses_unique_block_ids_at_every_stream_split() {
+        let content = "<think>outer:<thinking>middle:<think>inner";
+        for boundary in content
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(content.len()))
+        {
+            let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+            let mut events = stream.pushChunk(&content[..boundary]);
+            events.extend(stream.pushChunk(&content[boundary..]));
+            assert_unique_nested_block_ids(&events);
+        }
+        let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+        let mut events = Vec::new();
+        for ch in content.chars() {
+            events.extend(stream.pushChunk(&ch.to_string()));
+        }
+        assert_unique_nested_block_ids(&events);
+    }
+
+    /// Sibling XML streams must continue the sequence after nested body blocks.
+    #[test]
+    fn sibling_thinking_streams_do_not_reuse_descendant_ids() {
+        let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+        let mut events = Vec::new();
+        for chunk in [
+            "<think>",
+            "first",
+            "</think>",
+            "<thinking>",
+            "second",
+            "</thinking>",
+        ] {
+            events.extend(stream.pushChunk(chunk));
+        }
+        let mut ids = std::collections::HashSet::new();
+        let starts: Vec<_> = events
+            .iter()
+            .filter(|event| event.eventType == "markdownBlockStart")
+            .collect();
+        assert!(starts.len() >= 4);
+        for event in starts {
+            assert!(
+                ids.insert(event.blockId.unwrap()),
+                "duplicate block ID: {event:?}"
+            );
+        }
+    }
+
+    /// Checks that every nested parent has already been declared as an XML block.
+    fn assert_unique_nested_block_ids(events: &[MarkdownStreamEvent]) {
+        let mut ids = std::collections::HashSet::new();
+        let mut xml_ids = std::collections::HashSet::new();
+        for event in events {
+            if let Some(parent) = event.parentBlockId {
+                assert!(xml_ids.contains(&parent), "unknown XML parent: {event:?}");
+            }
+            if event.eventType == "markdownBlockStart" {
+                let id = event.blockId.unwrap();
+                assert!(ids.insert(id), "duplicate block ID: {event:?}");
+                if event.nodeType.as_deref() == Some("XmlBlock") {
+                    xml_ids.insert(id);
+                }
+            }
+        }
+        assert_eq!(xml_ids.len(), 3);
     }
 
     #[test]

@@ -37,7 +37,7 @@ async fn members_forget_a_removed_device_after_applying_the_removal() {
         routers[2].clone(),
         routers[2].spaceStore.clone(),
     );
-    sync.synchronizeReachablePeer(routers[0].localNodeId(), 512, false)
+    sync.synchronizeReachablePeer(routers[0].localNodeId(), 512)
         .await
         .unwrap();
     assert!(!routers[2]
@@ -327,7 +327,7 @@ async fn readmitted_device_survives_its_own_removal_record_in_history() {
 /// replay of the historical removal. The old `RemoveMember` stays in the shared
 /// history forever, so a synchronization round that re-delivers it must not
 /// delete the fresh pairing — otherwise the re-applicant's own core refuses the
-/// submission ("Join request requires a current directional pairing") while
+/// submission ("Join request requires a current pairing") while
 /// the paired peer never sees a request.
 #[tokio::test]
 async fn historical_removal_replay_keeps_the_fresh_pairing_of_a_reapplicant() {
@@ -353,7 +353,7 @@ async fn historical_removal_replay_keeps_the_fresh_pairing_of_a_reapplicant() {
         routers[member].spaceStore.clone(),
     );
     memberSync
-        .synchronizeReachablePeer(routers[remover].localNodeId(), 512, false)
+        .synchronizeReachablePeer(routers[remover].localNodeId(), 512)
         .await
         .unwrap();
     assert!(!routers[member]
@@ -381,7 +381,7 @@ async fn historical_removal_replay_keeps_the_fresh_pairing_of_a_reapplicant() {
     // The next synchronization window replays the same history. The removal
     // took effect before this pairing existed, so the pairing must survive.
     memberSync
-        .synchronizeReachablePeer(routers[remover].localNodeId(), 512, false)
+        .synchronizeReachablePeer(routers[remover].localNodeId(), 512)
         .await
         .unwrap();
     assert!(
@@ -426,7 +426,7 @@ async fn readmitted_device_survives_replayed_history_on_every_replica() {
         routers[member].spaceStore.clone(),
     );
     memberSync
-        .synchronizeReachablePeer(routers[remover].localNodeId(), 512, false)
+        .synchronizeReachablePeer(routers[remover].localNodeId(), 512)
         .await
         .unwrap();
     assert!(!routers[member]
@@ -464,7 +464,7 @@ async fn readmitted_device_survives_replayed_history_on_every_replica() {
         routers[remover].spaceStore.clone(),
     );
     removerSync
-        .synchronizeReachablePeer(routers[member].localNodeId(), 512, false)
+        .synchronizeReachablePeer(routers[member].localNodeId(), 512)
         .await
         .unwrap();
     assert!(
@@ -488,7 +488,7 @@ async fn readmitted_device_survives_replayed_history_on_every_replica() {
 
     // The member learns the re-admission and keeps it too.
     memberSync
-        .synchronizeReachablePeer(routers[remover].localNodeId(), 512, false)
+        .synchronizeReachablePeer(routers[remover].localNodeId(), 512)
         .await
         .unwrap();
     assert!(routers[member]
@@ -559,7 +559,7 @@ async fn a_late_learner_keeps_the_pairing_made_after_the_removal() {
         .await
         .unwrap();
     memberSync
-        .synchronizeReachablePeer(routers[remover].localNodeId(), 512, false)
+        .synchronizeReachablePeer(routers[remover].localNodeId(), 512)
         .await
         .unwrap();
     assert!(!routers[member]
@@ -629,7 +629,7 @@ async fn a_member_forgets_the_removed_device_when_the_snapshot_arrives_first() {
         .await
         .unwrap();
     memberSync
-        .synchronizeReachablePeer(routers[remover].localNodeId(), 512, false)
+        .synchronizeReachablePeer(routers[remover].localNodeId(), 512)
         .await
         .unwrap();
 
@@ -713,7 +713,7 @@ async fn a_member_that_missed_multiple_removals_forgets_the_latest_generation() 
         .await
         .unwrap();
     memberSync
-        .synchronizeReachablePeer(routers[remover].localNodeId(), 512, false)
+        .synchronizeReachablePeer(routers[remover].localNodeId(), 512)
         .await
         .unwrap();
 

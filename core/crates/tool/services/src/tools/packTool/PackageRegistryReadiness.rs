@@ -68,7 +68,9 @@ impl PackageRegistryReadiness {
     /// Publishes a completed catalog. Individual package issues belong to that catalog,
     /// and must not prevent commands from using its healthy packages.
     pub fn complete_scan(&self) {
-        self.inner.state.send_replace(PackageRegistryLoadState::Ready);
+        self.inner
+            .state
+            .send_replace(PackageRegistryLoadState::Ready);
     }
 
     /// Publishes the original startup scheduler or loader error to every waiting command.

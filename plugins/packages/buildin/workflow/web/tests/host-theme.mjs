@@ -1,6 +1,7 @@
 export const hostTheme = {
   brightness: "light",
   colors: {
+    background: "#00000000",
     primary: "#6750a4", onPrimary: "#ffffff",
     primaryContainer: "#eaddff", onPrimaryContainer: "#21005d",
     secondary: "#625b71", onSecondary: "#ffffff",

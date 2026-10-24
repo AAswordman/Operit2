@@ -297,6 +297,29 @@ struct Operit1ModelConfig {
     maxConcurrentRequests: i32,
 }
 
+/// Matches custom parameter records emitted by Operit1's Kotlin serializer.
+#[derive(Deserialize)]
+struct Operit1CustomParameterData {
+    id: String,
+    name: String,
+    apiName: String,
+    #[serde(default)]
+    description: String,
+    defaultValue: String,
+    currentValue: String,
+    isEnabled: bool,
+    valueType: String,
+    minValue: Option<String>,
+    maxValue: Option<String>,
+    #[serde(default = "defaultOperit1ParameterCategory")]
+    category: String,
+}
+
+/// Reproduces the category omitted by Operit1 when it has its declared default.
+fn defaultOperit1ParameterCategory() -> String {
+    "OTHER".to_string()
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[allow(non_snake_case)]
 struct Operit1ApiKeyInfo {
@@ -389,7 +412,7 @@ impl Operit1ModelConfig {
         }
         match providerTypeId.to_ascii_uppercase().as_str() {
             "MNN" | "LLAMA_CPP" => {
-                AppLogger::i(
+                AppLogger::trace_detail(
                     "Operit1SnapshotImport",
                     &format!(
                         "legacy local provider mapped to LOCAL_MODEL configId={} providerType={providerTypeId}",
@@ -453,6 +476,7 @@ fn buildModelProfile(modelId: &str, config: &Operit1ModelConfig) -> Result<Model
     Ok(model)
 }
 
+/// Projects legacy standard and custom parameters using each parameter's declared value type.
 #[allow(non_snake_case)]
 fn buildModelParameters(config: &Operit1ModelConfig) -> Result<Vec<ModelParameter<Value>>, String> {
     let mut parameters = Vec::new();
@@ -499,27 +523,28 @@ fn buildModelParameters(config: &Operit1ModelConfig) -> Result<Vec<ModelParamete
         serde_json::json!(config.repetitionPenalty),
     )?;
     if config.hasCustomParameters && config.customParameters.trim() != "[]" {
-        let customParameters: Vec<CustomParameterData> =
+        let customParameters: Vec<Operit1CustomParameterData> =
             serde_json::from_str(&config.customParameters)
                 .map_err(|error| format!("Operit1 自定义模型参数格式不正确：{error}"))?;
         for parameter in customParameters {
+            let valueType = parseParameterValueType(&parameter.valueType)?;
             parameters.push(ModelParameter {
                 id: parameter.id,
                 name: parameter.name,
                 apiName: parameter.apiName,
                 description: parameter.description,
-                defaultValue: parseCustomParameterValue(&parameter.defaultValue)?,
-                currentValue: parseCustomParameterValue(&parameter.currentValue)?,
+                defaultValue: parseCustomParameterValue(&parameter.defaultValue, &valueType)?,
+                currentValue: parseCustomParameterValue(&parameter.currentValue, &valueType)?,
                 isEnabled: parameter.isEnabled,
-                valueType: parseParameterValueType(&parameter.valueType)?,
                 minValue: parameter
                     .minValue
-                    .map(|value| parseCustomParameterValue(&value))
+                    .map(|value| parseCustomParameterValue(&value, &valueType))
                     .transpose()?,
                 maxValue: parameter
                     .maxValue
-                    .map(|value| parseCustomParameterValue(&value))
+                    .map(|value| parseCustomParameterValue(&value, &valueType))
                     .transpose()?,
+                valueType,
                 category: parseParameterCategory(&parameter.category)?,
                 isCustom: true,
             });

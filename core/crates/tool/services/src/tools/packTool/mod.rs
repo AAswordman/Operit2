@@ -17,4 +17,8 @@ pub mod ToolPkgPublicApiUiCatalog;
 pub mod ToolPkgComposeDslSession;
 
 /// Shares retained typed records between finite widget and terminal renderers.
-pub mod ToolPkgComposeDslNodeStore;
+pub mod ToolPkgComposeDslProtocol;
+pub mod ToolPkgComposeDslProgramStore;
+
+/// Executes decorated plugin functions through ordinary Core routing and stream ownership.
+pub mod ToolPkgRouteRuntime;

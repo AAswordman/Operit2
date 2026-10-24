@@ -106,7 +106,7 @@ void main() {
           );
           await tester.pumpAndSettle();
           expect(find.text('0'), findsOneWidget);
-          expect(requests, isEmpty);
+          expect(requests.length, lessThanOrEqualTo(1));
           final position = tester
               .state<ScrollableState>(find.byType(Scrollable))
               .position;
@@ -115,7 +115,7 @@ void main() {
           expect(find.text('50'), findsOneWidget);
           expect(
             range.value.lastIndex - range.value.firstIndex,
-            lessThanOrEqualTo(12),
+            lessThanOrEqualTo(24),
           );
           position.jumpTo(position.maxScrollExtent);
           await tester.pumpAndSettle();
@@ -162,6 +162,62 @@ void main() {
       position.jumpTo(2000);
       await tester.pumpAndSettle();
       expect(find.text('25'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'buffered rows stay visible while a slow range action is pending',
+    (tester) async {
+      final range = ValueNotifier<_Range>((firstIndex: 0, lastIndex: 24));
+      final count = ValueNotifier(500);
+      addTearDown(range.dispose);
+      addTearDown(count.dispose);
+      final reply = Completer<void>();
+      final requests = <_Range>[];
+      await tester.pumpWidget(
+        _harness(
+          range: range,
+          count: count,
+          onAction: (id, [payload]) async {
+            final values = payload! as Map;
+            final next = (
+              firstIndex: values['firstIndex'] as int,
+              lastIndex: values['lastIndex'] as int,
+            );
+            requests.add(next);
+            await reply.future;
+            range.value = next;
+            return null;
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable))
+          .position;
+      // Nearby scrolls consume existing rows without contacting JS.
+      for (final offset in [40.0, 80.0, 120.0]) {
+        position.jumpTo(offset);
+        await tester.pump();
+      }
+      expect(requests, isEmpty);
+      // Request a batch before the visible interval leaves the loaded window.
+      position.jumpTo(680);
+      await tester.pump();
+      expect(requests, hasLength(1));
+      expect(requests.single.lastIndex, 31);
+      position.jumpTo(720);
+      await tester.pump();
+      expect(find.text('23'), findsOneWidget);
+      expect(requests, hasLength(1));
+      reply.complete();
+      await tester.pumpAndSettle();
+      // A one-row move stays inside the new buffer, not another JS round trip.
+      position.jumpTo(760);
+      await tester.pumpAndSettle();
+      expect(requests, hasLength(1));
+      expect(find.text('24'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

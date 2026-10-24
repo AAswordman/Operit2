@@ -30,10 +30,11 @@ impl PluginRegistry {
         let mut guard = plugins.lock().expect("plugin registry mutex poisoned");
         guard.retain(|registered| registered.id() != plugin.id());
         guard.push(plugin);
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             PLUGIN_CHAIN,
             "plugin.registry.register",
             &[("pluginId", pluginId)],
+            operit_util::AppLogger::VERBOSE_LEVEL_4,
         );
     }
 
@@ -70,10 +71,11 @@ impl PluginRegistry {
             .lock()
             .expect("plugin registry mutex poisoned")
             .clone();
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             PLUGIN_CHAIN,
             "plugin.registry.install.scan",
             &[("pluginCount", plugins.len().to_string())],
+            operit_util::AppLogger::VERBOSE_LEVEL_4,
         );
         let installedPluginIds = INSTALLED_PLUGIN_IDS.get_or_init(|| Mutex::new(BTreeSet::new()));
         for plugin in plugins {
@@ -83,16 +85,18 @@ impl PluginRegistry {
             if installed.insert(plugin.id().to_string()) {
                 let pluginId = plugin.id().to_string();
                 drop(installed);
-                ChainLogger::info(
+                ChainLogger::verbose_with_level(
                     PLUGIN_CHAIN,
                     "plugin.registry.install.start",
                     &[("pluginId", pluginId.clone())],
+                    operit_util::AppLogger::VERBOSE_LEVEL_4,
                 );
                 plugin.register();
-                ChainLogger::info(
+                ChainLogger::verbose_with_level(
                     PLUGIN_CHAIN,
                     "plugin.registry.install.done",
                     &[("pluginId", pluginId)],
+                    operit_util::AppLogger::VERBOSE_LEVEL_4,
                 );
             }
         }

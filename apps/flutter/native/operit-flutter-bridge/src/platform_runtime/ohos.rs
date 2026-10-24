@@ -14,8 +14,7 @@ use operit_link::LinkDeviceInfo;
 use super::{install_owner_media, BridgeStartup, StartupMetadata};
 use crate::FlutterHostAdapters::FlutterWebVisitBridge;
 use crate::FlutterOwnerCapabilities::{
-    ownerBluetooth, ownerFileOpen, ownerFileShare, ownerRecognizeText, ownerScreenshot,
-    ownerSystemOperation,
+    ownerBluetooth, ownerFileOpen, ownerFileShare, ownerScreenshot, ownerSystemOperation,
 };
 
 /// Creates OpenHarmony hosts with every owner callback fixed during assembly.
@@ -35,6 +34,8 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
         terminal.clone(),
         startup.workspaceRoot.clone(),
     ));
+    let ocrTerminal = terminal.clone();
+    let ocrRoot = startup.runtimeRoot.clone();
     let context = createRuntimeHostManager(
         startup.runtimeRoot.clone(),
         startup.workspaceRoot.clone(),
@@ -43,7 +44,15 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
         Arc::new(ownerFileShare),
         Arc::new(move || Ok(language.clone())),
         Arc::new(ownerScreenshot),
-        Arc::new(ownerRecognizeText),
+        Arc::new(move |path, language, quality| {
+            operit_host_ohos_native::documents::recognizeText(
+                ocrTerminal.as_ref(),
+                &ocrRoot,
+                path,
+                language,
+                quality,
+            )
+        }),
         Arc::new(ownerSystemOperation::<serde_json::Value>),
         managed,
     )
@@ -69,8 +78,8 @@ pub(crate) fn startup_device_info(
             .getDeviceInfo()
             .map_err(|error| error.to_string())?
             .model,
-    pairingIncarnation: None,
-})
+        pairingIncarnation: None,
+    })
 }
 
 /// OpenHarmony receives storage roots from its application owner.
@@ -94,4 +103,75 @@ impl crate::OperitFlutterBridge {
             metadata: StartupMetadata::OpenHarmonyLanguage { code },
         })
     }
+}
+
+/// Creates only the platform secret-store adapter without starting Core or owner services.
+pub(crate) fn rescue_secret_store(
+    default_runtime: &std::path::Path,
+) -> Result<Option<std::sync::Arc<dyn operit_host_api::HostSecretStore>>, String> {
+    Ok(None)
+}
+
+/// Retains the OHOS owner handle before a platform worker starts blocking document work.
+#[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_ohos_retain(
+    handle: *const crate::OperitFlutterBridge,
+) -> *const crate::OperitFlutterBridge {
+    if !handle.is_null() {
+        Arc::increment_strong_count(handle);
+    }
+    handle
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PdfRenderRequest {
+    input: PathBuf,
+    outputDirectory: PathBuf,
+    pages: Option<Vec<u32>>,
+    scale: f64,
+}
+
+/// Renders PDF pages on the N-API worker through the runtime's existing terminal host.
+#[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_ohos_render_pdf(
+    handle: *const crate::OperitFlutterBridge,
+    request: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> Result<Vec<String>, String> {
+            let bridge = handle.as_ref().ok_or("OHOS runtime handle is null")?;
+            if request.is_null() {
+                return Err("PDF request is null".to_string());
+            }
+            let request: PdfRenderRequest = serde_json::from_str(
+                std::ffi::CStr::from_ptr(request)
+                    .to_str()
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let terminal = bridge
+                .localCore
+                .hostManager()
+                .terminalHost
+                .as_ref()
+                .ok_or("OHOS terminal host is missing")?;
+            operit_host_ohos_native::documents::renderPdf(
+                terminal.as_ref(),
+                &request.input,
+                &request.outputDirectory,
+                request.pages,
+                request.scale,
+            )
+            .map_err(|error| error.message)
+        },
+    ));
+    let response = match result {
+        Ok(Ok(pages)) => serde_json::json!({"ok": true, "pages": pages}),
+        Ok(Err(error)) => serde_json::json!({"ok": false, "error": error}),
+        Err(_) => serde_json::json!({"ok": false, "error": "PDF renderer panicked"}),
+    };
+    std::ffi::CString::new(response.to_string())
+        .expect("JSON contains no raw NUL")
+        .into_raw()
 }

@@ -1,0 +1,65 @@
+/* Material graph workspace: app bar, search, filter chips, canvas FAB and inspector. */
+.dialog.graph-dialog{border-radius:28px;background:var(--surface);border:0}
+.graph-dialog .dialog-layout{min-height:0}
+.graph-dialog .dialog-header{position:relative;z-index:2;min-height:80px;padding:12px 16px;gap:12px}
+.graph-dialog .icon-button{width:48px;height:48px;padding:12px;flex:none}
+.graph-dialog .icon-button .icon{width:24px;height:24px}
+.graph-dialog .graph-heading{flex:1;min-width:0}
+.graph-dialog .graph-heading h2{font-size:22px;line-height:28px;font-weight:500;white-space:nowrap}
+.graph-dialog .graph-heading>span{display:block;margin-top:2px;color:var(--onSurfaceVariant);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.graph-overflow{position:relative;flex:none}
+.graph-overflow>summary{list-style:none;cursor:pointer}
+.graph-overflow>summary::-webkit-details-marker{display:none}
+.graph-overflow>summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.graph-overflow[open]>summary{background:var(--surfaceContainerHigh)}
+.graph-menu{position:absolute;right:0;top:calc(100% + 4px);width:220px;padding:8px 0;border-radius:12px;background:var(--surfaceContainerHigh);box-shadow:0 4px 8px #0003,0 8px 24px #0002}
+.graph-menu .button{display:flex;justify-content:flex-start;gap:12px;width:100%;min-height:48px;border-radius:0;padding:12px 16px;font-size:14px;font-weight:400;color:var(--onSurface)}
+.graph-menu .button .icon{color:var(--onSurfaceVariant)}
+.graph-menu hr{margin:8px 0;border:0;border-top:1px solid var(--outlineVariant)}
+.graph-dialog .graph-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:0 24px 16px;flex:none;border:0}
+.graph-dialog .graph-search{display:flex;align-items:center;gap:4px;width:100%;height:56px;padding:4px 8px;border-radius:28px;background:var(--surfaceContainerHigh)}
+.graph-search:focus-within{outline:2px solid var(--primary);outline-offset:2px}
+.graph-dialog .graph-search input{flex:1;min-width:0;width:100%;height:100%;padding:0 4px;border:0;outline:none;background:transparent;color:var(--onSurface);font-size:16px;appearance:none}
+.graph-search input::placeholder{color:var(--onSurfaceVariant);opacity:1}
+.graph-search input::-webkit-search-cancel-button{display:none}
+.graph-search:has(input:placeholder-shown) [data-action="clear-search"]{visibility:hidden}
+.graph-filters{display:flex;align-items:center;gap:8px;min-width:0}
+.graph-folder{display:flex;align-items:center;position:relative;min-width:0;max-width:calc(100% - 96px);height:40px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant)}
+.graph-folder>.icon:first-child{position:absolute;left:12px;width:18px;height:18px;pointer-events:none}
+.graph-folder>.icon:last-child{position:absolute;right:10px;width:18px;height:18px;pointer-events:none}
+.graph-folder select{width:100%;min-width:0;max-width:260px;height:100%;padding:0 34px 0 38px;border:0;border-radius:8px;appearance:none;background:transparent;color:var(--onSurface);font-size:14px;text-overflow:ellipsis;cursor:pointer}
+.graph-folder select:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.graph-folder select option{color:var(--onSurface);background:var(--surfaceContainerHigh)}
+.graph-dialog .graph-link-chip{flex:none;min-height:40px;gap:8px;padding:0 12px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant);font-size:14px;font-weight:500}
+.graph-dialog .graph-link-chip .icon{width:18px;height:18px}
+.graph-dialog .graph-link-chip[aria-pressed="true"]{border-color:transparent;background:var(--primaryContainer);color:var(--onPrimaryContainer)}
+.graph-link-hint{color:var(--primary);font-size:12px;line-height:18px}
+.graph-dialog .graph-layout{gap:0;overflow:hidden;border-top:1px solid var(--outlineVariant)}
+.graph-dialog .graph-canvas{min-height:0;background-color:var(--surface);background-image:radial-gradient(color-mix(in srgb,var(--outlineVariant) 65%,transparent) 1px,transparent 1px);background-size:24px 24px}
+.graph-dialog .graph-canvas>svg{display:block}
+.graph-dialog .graph-tools{bottom:20px;left:20px;gap:0;padding:4px;border:0;border-radius:16px;background:var(--surfaceContainerHigh);box-shadow:0 2px 6px #0002}
+.graph-dialog .graph-fab{position:absolute;right:20px;bottom:20px;min-height:56px;padding:0 20px;gap:12px;border-radius:16px;background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:0 3px 6px #0003,0 6px 12px #0001;font-size:14px;font-weight:500}
+.graph-dialog .graph-fab .icon{width:24px;height:24px}
+.graph-dialog .graph-fab:hover{background:color-mix(in srgb,var(--onPrimaryContainer) 8%,var(--primaryContainer));box-shadow:0 4px 8px #0003,0 8px 16px #0001}
+.graph-dialog .graph-sidebar{width:304px;padding:16px 12px;overscroll-behavior:contain;background:var(--surfaceContainer)}
+.graph-dialog .graph-sidebar>h3{padding:0 12px;margin:0 0 12px;font-size:14px;line-height:24px;font-weight:500;color:var(--onSurfaceVariant)}
+.graph-dialog .memory-item{padding:12px;border-radius:12px;margin:0 0 4px;cursor:pointer}
+.graph-dialog .memory-item strong{font-size:14px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
+.graph-dialog .memory-item small{font-size:12px;line-height:18px;color:var(--onSurfaceVariant);opacity:1;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.graph-dialog .memory-item.selected{box-shadow:none}
+.graph-dialog .memory-item.selected small{color:var(--onPrimaryContainer)}
+.graph-dialog .graph-detail{padding:16px 12px}
+@media(max-width:840px){
+  .graph-dialog .graph-layout{flex-direction:column}
+  .graph-dialog .graph-sidebar{width:100%;height:30%;min-height:120px;max-height:240px;padding:12px;border-left:0;border-top:1px solid var(--outlineVariant);border-radius:20px 20px 0 0}
+  .graph-dialog .graph-sidebar>h3{margin-bottom:8px}
+}
+@media(max-width:600px){
+  .dialog.graph-dialog{width:100vw;height:100dvh;max-height:100dvh;max-width:none;margin:0;border-radius:0}
+  .graph-dialog .dialog-layout{max-height:100dvh}
+  .graph-dialog .dialog-header{min-height:72px;padding:8px 12px;gap:8px}
+  .graph-dialog .graph-heading h2{font-size:20px;line-height:26px}
+  .graph-dialog .graph-toolbar{padding:0 16px 12px;gap:12px}
+  .graph-dialog .graph-tools{left:16px;bottom:16px}
+  .graph-dialog .graph-fab{right:16px;bottom:16px;padding:0 16px;gap:8px}
+}

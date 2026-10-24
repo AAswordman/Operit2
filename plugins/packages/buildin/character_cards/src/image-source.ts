@@ -1,3 +1,5 @@
+import { hostFilePath } from "./host-path";
+
 /** Reads a picked file once for import; display code passes paths to its image host. */
 export async function readAvatarImport(path: string): Promise<string> {
   const file = await Tools.Files.readBinary(path);
@@ -11,11 +13,8 @@ export async function readAvatarImport(path: string): Promise<string> {
 }
 /** Maps only an explicitly picked host file using its actual platform's documented VFS mount. */
 export function pickedImagePath(path: string, platform: string): string {
-  const normalized = path.replace(/\\/g, "/");
-  if (normalized.startsWith("/app/") || normalized.startsWith("/mnt/")) return normalized;
-  if (platform === "windows" && /^[a-z]:\//i.test(normalized)) return `/mnt/windows/${normalized[0].toLowerCase()}/${normalized.slice(3)}`;
-  if (!normalized.startsWith("/")) throw new Error("选择器没有返回可读取的文件路径");
-  if (platform === "macos" || platform === "linux") return `/mnt/${platform}${normalized}`;
-  if (platform === "android") return `/mnt/android/root${normalized}`;
+  const mapped = hostFilePath(path, platform);
+  if (mapped !== null) return mapped;
+  if (!path.replace(/\\/g, "/").startsWith("/")) throw new Error("选择器没有返回可读取的文件路径");
   throw new Error("当前平台不支持导入此图片路径");
 }

@@ -26,6 +26,7 @@ function runtime(native = {}) {
       context.__operitCurrentCallId = id;
     },
   });
+  vm.runInContext(readFileSync(new URL('../../hosts/web/src/javascript_promises.js', import.meta.url), 'utf8'), context);
   vm.runInContext(source, context);
   return { context, references, activations };
 }

@@ -38,7 +38,7 @@ function independentConfigurations() {
 
 /** Initializes actual plugin files and a complete record whose independent references are explicitly declared. */
 async function environment(t, themeConfigId = "theme-two", ttsConfigId = "tts-two") {
-  const disk = await createDiskHarness(t), owner = await loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
   const card = await owner.run(
     /** Persists a real plugin role record while keeping the product initial active selection unchanged. */
     repository => repository.createCharacter({ ...plain(drafts.createCharacterDraft()), name: "Actual file application role", themeConfigId, ttsConfigId }),
@@ -155,7 +155,7 @@ test("group application uses only its own independent theme and never infers fir
 
 /** A selection owner error is propagated unchanged; no independent application is allowed without confirmation. */
 test("failed real selection publication propagates the original IO error and performs zero config apply", async t => {
-  const env = await environment(t), original = new Error("Actual selection file write rejected"); env.disk.failNext("storage.transaction", original);
+  const env = await environment(t), original = new Error("Actual selection file write rejected"); env.disk.failNext("storage.preferences.edit", original);
   await assert.rejects(commitActive(env),
     /** Preserves the genuine file-owner rejection instead of inventing a successful selection receipt. */
     failure => failure === original,

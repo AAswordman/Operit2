@@ -121,6 +121,63 @@ async function openCharacterGraph(page) {
   return graph;
 }
 
+/** Checks graph space, nonoverlapping controls and dismissible secondary actions across viewport sizes. */
+test("Material graph keeps the canvas prominent and secondary actions in overflow", async () => {
+  const ui = await page(390, 844), graph = await openCharacterGraph(ui.page);
+  try {
+    for (const width of [320, 390, 600, 840, 1100]) {
+      await ui.page.setViewportSize({ width, height: 844 });
+      const bounds = await graph.boundingBox(), canvas = await graph.locator("[data-graph-surface]").boundingBox();
+      const title = await graph.getByRole("heading", { name: "记忆图谱", exact: true }).boundingBox();
+      const search = await graph.getByRole("search").boundingBox();
+      const fab = await graph.getByRole("button", { name: "创建记忆", exact: true }).boundingBox();
+      const tools = await graph.getByRole("group", { name: "画布缩放", exact: true }).boundingBox();
+      assert.ok(canvas.height >= bounds.height * 0.45, `Canvas is squeezed at ${width}px`);
+      assert.ok(title.height <= 28, `Title wraps at ${width}px`);
+      assert.ok(search.y > title.y + title.height);
+      assert.ok(fab.x >= tools.x + tools.width + 8, `Canvas controls overlap at ${width}px`);
+      assert.ok(fab.x + fab.width <= canvas.x + canvas.width);
+      assert.ok(await graph.evaluate(
+        /** Rejects horizontal overflow in the graph workspace. */
+        element => element.scrollWidth <= element.clientWidth,
+      ));
+      if (width <= 600) { assert.equal(bounds.x, 0); assert.equal(bounds.width, width); assert.equal(bounds.height, 844); }
+      await ui.page.screenshot({ path: output + `memory-graph-material-${width}.png` });
+    }
+    await ui.page.setViewportSize({ width: 390, height: 844 });
+    await applyDarkHostTheme(ui.page);
+    await ui.page.screenshot({ path: output + "memory-graph-material-dark.png" });
+    const more = graph.getByRole("button", { name: "更多操作", exact: true });
+    await more.click();
+    await graph.getByRole("button", { name: "导出记忆 JSON", exact: true }).waitFor();
+    await ui.page.screenshot({ path: output + "memory-graph-material-menu.png" });
+    await ui.page.keyboard.press("Escape");
+    assert.equal(await graph.isVisible(), true);
+    assert.equal(await graph.getByRole("button", { name: "导出记忆 JSON", exact: true }).isVisible(), false);
+    assert.equal(await more.evaluate(
+      /** Confirms Escape restores keyboard focus to the overflow trigger. */
+      element => element === document.activeElement,
+    ), true);
+    await more.click();
+    await graph.getByLabel("搜索记忆", { exact: true }).click({ position: { x: 8, y: 20 } });
+    assert.equal(await graph.getByRole("button", { name: "导出记忆 JSON", exact: true }).isVisible(), false);
+    await more.click();
+    await graph.getByRole("button", { name: "刷新", exact: true }).click();
+    assert.equal(await graph.getByRole("button", { name: "导出记忆 JSON", exact: true }).isVisible(), false);
+    await graph.getByRole("button", { name: "链接", exact: true }).click();
+    assert.equal(await graph.getByRole("button", { name: "链接", exact: true }).getAttribute("aria-pressed"), "true");
+    await graph.getByText("选择两条记忆以建立链接", { exact: true }).waitFor();
+    await graph.getByRole("button", { name: "链接", exact: true }).click();
+    await more.click();
+    await graph.getByRole("button", { name: "记忆设置", exact: true }).click();
+    const settings = ui.page.getByRole("dialog", { name: "记忆设置", exact: true });
+    await settings.waitFor();
+    await settings.locator(".dialog-header").getByRole("button", { name: "关闭", exact: true }).click();
+    assert.equal(await graph.isVisible(), true);
+    assert.equal(await graph.getByRole("button", { name: "导出记忆 JSON", exact: true }).isVisible(), false);
+  } finally { await ui.context.close(); }
+});
+
 /** Verifies shared-bound memory operations retain the card's actual owner identity. */
 test("independent memory page USER.md and graph use the selected character shared binding", async () => {
   const ui = await page();
@@ -633,8 +690,8 @@ function plain(value) { return JSON.parse(JSON.stringify(value)); }
 
 /** Runs the current main bundle with native file IO and explicit readonly directory fixtures, never fixture storage. */
 async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = null) {
-  const disk = await createDiskHarness(t), readonly = fixture(), native = createNativeChatHost(new Map([["chat-dom", { extension: null }]])), hostCalls = native.calls, records = native.records;
-  const apis = new Map(), channels = new Map(), commands = new Map(), routes = [], navigation = [], appHooks = [], messageHooks = [], hostHooks = [], chatLifecycleHooks = [], toolLifecycleHooks = [], toolPromptHooks = [];
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), readonly = fixture(), native = createNativeChatHost(new Map([["chat-dom", { extension: null }]])), hostCalls = native.calls, records = native.records;
+  const apis = new Map(), channels = new Map(), commands = new Map(), routes = [], navigation = [], appHooks = [], messageHooks = [], hostHooks = [], chatLifecycleHooks = [], chatViewHooks = [], toolLifecycleHooks = [], toolPromptHooks = [];
   const tools = { Files: disk.files, Storage: disk.storage, Models: {
     /** Supplies only the explicitly labelled readonly model directory required by the actual service. */
     async listSummaries() { return { models: plain(readonly.snapshot.models) }; }
@@ -676,6 +733,8 @@ async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = nul
     registerHostEventHook(value) { hostHooks.push(value); },
     /** Captures the genuine pre-create hook without creating a chat or providing a replacement initializer. */
     registerChatLifecycleHook(value) { chatLifecycleHooks.push(value); },
+    /** Captures the bound-theme view callback without emitting navigation during registration. */
+    registerChatViewHook(value) { chatViewHooks.push(value); },
     /** Requires the actual group input callback to remain exported and uniquely registered. */
     registerChatInputHook(value) { assert.equal(value.id, "group-input-submit"); assert.equal(value.function.name, "onGroupInputSubmit"); },
     /** Captures the real tool-execution policy without calling it during registration. */
@@ -714,6 +773,8 @@ async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = nul
   assert.equal(hostHooks.length, 1); assert.equal(hostHooks[0].id, "memory-jobs-interval");
   assert.equal(hostHooks[0].source, "interval"); assert.deepEqual(plain(hostHooks[0].trigger), { kind: "interval", intervalMs: 60000 });
   assert.equal(hostHooks[0].function, module.exports.onMemoryInterval);
+  assert.equal(chatViewHooks.length, 1); assert.equal(chatViewHooks[0].id, "character-bound-theme");
+  assert.equal(chatViewHooks[0].function, module.exports.onChatViewTheme);
   assert.equal(chatLifecycleHooks.length, 1); assert.equal(chatLifecycleHooks[0].id, "chat-initialization");
   assert.equal(chatLifecycleHooks[0].function, module.exports.beforeChatCreate);
   assert.equal(toolLifecycleHooks.length, 1); assert.equal(toolLifecycleHooks[0].id, "participant-tool-execution");
@@ -927,7 +988,9 @@ test("current plugin routes connect selector and memory attachment to the actual
     await ui.page.getByRole("button", { name: "真实选择角色", exact: true }).click();
     await ui.page.getByRole("button", { name: "附件根", exact: true }).click();
     const content = await ui.page.getByLabel("记忆附件正文", { exact: true }).textContent();
-    assert.equal(content, "# 真实选择角色 / 附件根\n\n## 真实附件第一条\n\n真实文件中的完整记忆内容\n\n## 真实附件第二条\n\n第二条完整内容");
+    const [heading, ...sections] = content.split("\n\n## ");
+    assert.equal(heading, "# 真实选择角色 / 附件根");
+    assert.deepEqual(sections.sort(), ["真实附件第一条\n\n真实文件中的完整记忆内容", "真实附件第二条\n\n第二条完整内容"].sort());
     await ui.page.getByRole("button", { name: "添加记忆附件", exact: true }).click(); await ui.page.getByText("当前视图已结束。", { exact: true }).waitFor();
     assert.deepEqual(ui.completed, [{ type: "toolpkg.presentation.complete", requestId: "attachment-native", value: { type: "text", name: "记忆附件", content, mediaType: "text/plain" } }]);
     assert.equal(ui.calls.some(
@@ -1028,7 +1091,7 @@ test("installed plugin artifacts launch management and the independent V1 text a
 /** Both management pages use the full viewport for scrolling without an inner title or refresh header. */
 test("character and memory scroll use the full viewport without a title or refresh header", async () => {
   const data = fixture();
-  for (let i = 0; i < 24; i++) data.snapshot.cards.push({ ...data.snapshot.cards[1], id: "scroll-" + i, name: "滚动角色 " + i, isDefault: false });
+  for (let i = 0; i < 24; i++) data.snapshot.cards.push({ ...data.snapshot.cards[1], id: "scroll-" + i, name: "滚动角色 " + i });
   const ui = await page(800, 500, data);
   for (const document of [origin, origin + "/memory"]) {
     await ui.page.goto(document);
@@ -1065,4 +1128,159 @@ test("management create and edit entrypoints use the one native dialog bridge wi
   await ui.page.evaluate(() => window.dispatchEvent(new CustomEvent("character-entity-closed", { detail: { operation: "saved", id: "travel" } })));
   await ui.page.waitForFunction(() => window.testCalls.some(call => call.action === "snapshot"));
   await ui.context.close();
+});
+
+
+/** Supplies explicit presentation-only history; SQL persistence is checked in chat-storage.test.mjs. */
+function bindingFixture() {
+  const data = fixture();
+  data.bindingChats = [
+    { id: "binding-one", title: "周末的旅行计划", selection: null, messageCount: 12, updatedAt: "2026-10-18T10:00:00Z", isCurrent: true },
+    { id: "binding-two", title: "学习与日常记录", selection: "card:" + data.snapshot.cards[1].id, messageCount: 28, updatedAt: "2026-10-17T10:00:00Z", isCurrent: false },
+    { id: "binding-three", title: "已经绑定的对话", selection: "card:" + data.snapshot.cards[0].id, messageCount: 6, updatedAt: "2026-10-16T10:00:00Z", isCurrent: false },
+  ];
+  return data;
+}
+
+test("batch binding picker preserves hidden selections, excludes existing bindings and commits only on submit", async () => {
+  const data = bindingFixture(), { page: p, context } = await page(1100, 850, data);
+  try {
+    await p.locator('[data-action="bind-card-chats"]').first().click();
+    const dialog = p.getByRole("dialog", { name: "批量绑定对话" });
+    await dialog.locator('[data-binding-chat="binding-one"]').check();
+    assert.match(await dialog.locator(".binding-selection-count").innerText(), /已选择 1 条/);
+    await dialog.getByRole("textbox", { name: "搜索对话或当前角色" }).fill("学习");
+    assert.equal(await dialog.locator(".binding-chat").count(), 1);
+    await dialog.getByRole("button", { name: "全选结果" }).click();
+    assert.match(await dialog.locator(".binding-selection-count").innerText(), /已选择 2 条/);
+    await dialog.getByRole("textbox", { name: "搜索对话或当前角色" }).fill("");
+    assert.equal(await dialog.locator('[data-binding-chat="binding-one"]').isChecked(), true);
+    const composition = await dialog.getByRole("textbox", { name: "搜索对话或当前角色" }).evaluate(input => {
+      input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      input.value = "学习";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true, data: "学习" }));
+      const retained = input.isConnected;
+      input.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "学习" }));
+      return { retained, finalQuery: document.querySelector("[data-binding-query]").value };
+    });
+    assert.deepEqual(composition, { retained: true, finalQuery: "学习" });
+    assert.equal(await dialog.locator(".binding-chat").count(), 1);
+    await dialog.getByRole("textbox", { name: "搜索对话或当前角色" }).fill("");
+    assert.equal(await dialog.locator('[data-binding-chat="binding-three"]').isDisabled(), true);
+    assert.equal(await p.evaluate(() => window.testCalls.filter(call => call.action === "writeChatBinding").length), 0);
+    await dialog.getByRole("button", { name: "绑定 2 条对话" }).click();
+    await dialog.waitFor({ state: "hidden" });
+    const writes = await p.evaluate(() => window.testCalls.filter(call => call.action === "writeChatBinding"));
+    assert.deepEqual(writes, ["binding-one", "binding-two"].map(chatId => ({ action: "writeChatBinding", chatId, selection: "card:" + data.snapshot.cards[0].id })));
+  } finally { await context.close(); }
+});
+
+test("batch binding picker retains failed rows for retry and cancellation performs no extra writes", async () => {
+  const data = bindingFixture(), { page: p, context } = await page(1100, 850, data);
+  try {
+    await p.locator('[data-action="bind-chats"]').click();
+    const dialog = p.getByRole("dialog", { name: "批量绑定对话" });
+    assert.equal(await dialog.getByRole("button", { name: "绑定对话", exact: true }).isDisabled(), true);
+    await dialog.getByRole("combobox", { name: "绑定到角色卡" }).selectOption(data.snapshot.cards[0].id);
+    await dialog.getByRole("button", { name: "全选结果" }).click();
+    await p.evaluate(() => { window.testBindingFailure = "binding-two"; });
+    await dialog.getByRole("button", { name: "绑定 2 条对话" }).click();
+    await dialog.locator(".dialog-error").filter({ hasText: "1 条未完成" }).waitFor();
+    assert.equal(await dialog.locator('[data-binding-chat="binding-two"]').isChecked(), true);
+    assert.equal(await dialog.locator('[data-binding-chat="binding-one"]').isChecked(), false);
+    assert.equal(await dialog.locator('[data-binding-chat="binding-one"]').isDisabled(), true);
+    await p.evaluate(() => { window.testBindingFailure = null; });
+    await dialog.getByRole("button", { name: "绑定 1 条对话" }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal(await p.evaluate(() => window.testCalls.filter(call => call.action === "writeChatBinding").length), 3);
+    await p.locator('[data-action="bind-chats"]').click();
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(await p.evaluate(() => window.testCalls.filter(call => call.action === "writeChatBinding").length), 3);
+  } finally { await context.close(); }
+});
+
+test("batch binding picker fits phone and desktop in both host palettes with scrollable history", async () => {
+  for (const width of [360, 1100]) {
+    const data = bindingFixture();
+    for (let index = 0; index < 35; index++) data.bindingChats.push({ ...data.bindingChats[0], id: "extra-" + index, title: "更多对话 " + index, isCurrent: false });
+    const { page: p, context } = await page(width, width === 360 ? 740 : 850, data);
+    try {
+      await p.locator('[data-action="bind-card-chats"]').first().click();
+      const dialog = p.getByRole("dialog", { name: "批量绑定对话" });
+      await dialog.locator('[data-binding-chat="binding-one"]').check();
+      for (const palette of ["light", "dark"]) {
+        if (palette === "dark") await applyDarkHostTheme(p);
+        const geometry = await dialog.evaluate(element => {
+          const bounds = element.getBoundingClientRect(), list = element.querySelector(".binding-chat-list"), footer = element.querySelector(".dialog-footer").getBoundingClientRect();
+          return { left: bounds.left, right: bounds.right, bottom: bounds.bottom, viewportWidth: innerWidth, viewportHeight: innerHeight, scrolls: list.scrollHeight > list.clientHeight, listHeight: list.clientHeight, footerBottom: footer.bottom, overflows: element.scrollWidth > element.clientWidth };
+        });
+        assert.ok(geometry.left >= 0 && geometry.right <= geometry.viewportWidth, JSON.stringify(geometry));
+        assert.ok(geometry.bottom <= geometry.viewportHeight && geometry.footerBottom <= geometry.viewportHeight, JSON.stringify(geometry));
+        assert.equal(geometry.overflows, false, JSON.stringify(geometry));
+        assert.ok(geometry.scrolls && geometry.listHeight > 100, JSON.stringify(geometry));
+        await p.screenshot({ path: path.join(output, `batch-binding-${width}-${palette}.png`) });
+      }
+    } finally { await context.close(); }
+  }
+});
+
+/** Exercises browser -> actual registered Compose bridge -> main IPC -> real SQLite publication. */
+test("batch binding management writes actual SQL through the registered bridge without changing global role", async t => {
+  const plugin = await fileBackedPlugin(t, mainScript);
+  const role = await plugin.api("character.create", { values: { name: "批量绑定目标" } });
+  const originalActive = await plugin.api("activePrompt.get", {});
+  const summaries = ["chat-dom", "chat-second"].map(id => ({ id, title: "真实接口测试对话 " + id, messageCount: 0, createdAt: "2026-10-18T10:00:00Z", updatedAt: "2026-10-18T10:00:00Z", isCurrent: id === "chat-dom", inputTokens: 0, outputTokens: 0 }));
+  plugin.tools.Chat.listAll = async () => ({ totalCount: summaries.length, currentChatId: "chat-dom", chats: plain(summaries) });
+  plugin.tools.Chat.findChat = async input => ({ matchedCount: 1, chat: plain(summaries.find(chat => chat.id === input.query)) });
+  const ui = await registeredPage(t, plugin, "main", null, origin);
+  await ui.page.getByRole("button", { name: "绑定对话", exact: true }).first().click();
+  const dialog = ui.page.getByRole("dialog", { name: "批量绑定对话" });
+  await dialog.getByRole("combobox", { name: "绑定到角色卡" }).selectOption(role.id);
+  await dialog.getByRole("button", { name: "全选结果", exact: true }).click();
+  await dialog.getByRole("button", { name: "绑定 2 条对话", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  for (const summary of summaries) assert.deepEqual(await plugin.api("chat.configuration.binding.read", { chatId: summary.id }), { chatId: summary.id, selection: "card:" + role.id });
+  assert.deepEqual(await plugin.api("activePrompt.get", {}), originalActive);
+  assert.deepEqual(ui.errors, []);
+});
+
+/** Reads a real composited browser pixel without depending on a PNG decoding package. */
+async function screenshotPixel(page, x, y) {
+  const png = await page.screenshot();
+  return page.evaluate(
+    /** Decodes the captured host and iframe composition into its exact RGBA pixel. */
+    async ({ bytes, x, y }) => {
+      const image = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width; canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0); image.close();
+      return Array.from(context.getImageData(x, y, 1, 1).data);
+    },
+    { bytes: Array.from(png), x, y },
+  );
+}
+
+/** Verifies actual iframe compositing for the source and packaged documents in both host palettes. */
+test("hosted pages reveal the global background across live theme changes", async () => {
+  for (const route of ["/", "/installed"]) {
+    const context = await browser.newContext({ viewport: { width: 1100, height: 950 } });
+    try {
+      await context.addInitScript({ content: `(${installBrowserFixture.toString()})(${JSON.stringify(fixture())}); (${installManagementPresentation.toString()})();` });
+      const host = await context.newPage();
+      await host.setContent(`<body style="margin:0;background:rgb(7,91,143)"><iframe src="${origin}${route}" style="border:0;display:block;width:100vw;height:100vh;color-scheme:light"></iframe></body>`);
+      await host.frameLocator("iframe").getByRole("heading", { name: "角色卡", exact: true }).waitFor();
+      const frame = host.frames().find(frame => frame.parentFrame() !== null);
+      assert.ok(frame);
+      await frame.evaluate(() => { window.retainedBackgroundDocument = document; });
+      assert.deepEqual(await screenshotPixel(host, 1, 1), [7, 91, 143, 255], route + " light page must reveal its host");
+      await host.locator("iframe").evaluate(element => { element.style.colorScheme = "dark"; });
+      await applyDarkHostTheme(frame);
+      assert.deepEqual(await screenshotPixel(host, 1, 1), [7, 91, 143, 255], route + " dark page must reveal its host");
+      assert.equal(await frame.evaluate(() => window.retainedBackgroundDocument === document), true);
+      assert.equal(await frame.evaluate(() => getComputedStyle(document.body).color), "rgb(224, 227, 229)");
+      await host.locator("body").evaluate(element => { element.style.background = "rgb(143, 61, 7)"; });
+      assert.deepEqual(await screenshotPixel(host, 1, 1), [143, 61, 7, 255], route + " must reveal live global background updates");
+    } finally { await context.close(); }
+  }
 });

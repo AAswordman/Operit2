@@ -49,7 +49,7 @@ impl SyncBlobTransferManager {
         let mut writer = self
             .storageWriteHost
             .createWriteSession(&blobPath)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| format!("synchronization blob create failed: path={blobPath}: {error}"))?;
 
         let mut received = 0usize;
         let mut hasher = Sha256::new();
@@ -66,9 +66,9 @@ impl SyncBlobTransferManager {
                     "synchronization blob exceeds declared size {expectedSize}"
                 ));
             }
-            writer
-                .writeChunk(&chunk)
-                .map_err(|error| error.to_string())?;
+            writer.writeChunk(&chunk).map_err(|error| {
+                format!("synchronization blob write failed: path={blobPath} offset={received}: {error}")
+            })?;
             hasher.update(&chunk);
             received += chunk.len();
         }
@@ -90,6 +90,8 @@ impl SyncBlobTransferManager {
                 reference.contentHash
             ));
         }
-        writer.commitFast().map_err(|error| error.to_string())
+        writer.commitFast().map_err(|error| {
+            format!("synchronization blob commit failed: path={blobPath} size={received}: {error}")
+        })
     }
 }

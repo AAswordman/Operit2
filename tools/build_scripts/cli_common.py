@@ -12,14 +12,17 @@ from cli_macos_signing import sign_cli_macos
 
 from common import (
     DIST_DIR,
+    release_asset_name,
     REPO_ROOT,
     copy_required_file,
     compress_tar_gz,
     compress_zip,
     host_platform,
+    prepare_plugin_assets,
     require_command,
     reset_dir,
     run,
+    verify_cli_plugin_assets,
 )
 
 
@@ -79,8 +82,8 @@ def cli_package_dir(target: CliBuildTarget) -> Path:
 
 # Returns the release archive path for one packaged CLI target.
 def cli_package_path(target: CliBuildTarget) -> Path:
-    return DIST_DIR / (
-        f"operit2-cli-{target.platform}-{target.arch}.{cli_archive_extension(target.platform)}"
+    return DIST_DIR / release_asset_name(
+        "cli", target.platform, target.arch, cli_archive_extension(target.platform)
     )
 
 
@@ -292,11 +295,13 @@ def linux_cross_target_env(target: CliBuildTarget) -> dict[str, str]:
     raise RuntimeError(f"Unsupported Linux cross target: {target.rust_target}")
 
 
+# Builds and packages the CLI together with its required native runtime assets.
 def build_cli_target(
     target: CliBuildTarget,
     use_default_target: bool = False,
 ) -> Path:
     require_command("cargo")
+    prepare_plugin_assets()
     binary_name = cli_binary_name(target.platform)
     package_dir = cli_package_dir(target)
     package_path = cli_package_path(target)
@@ -324,6 +329,7 @@ def build_cli_target(
         )
         binary_source = cli_target_binary_path(target)
 
+    verify_cli_plugin_assets(binary_source)
     reset_dir(package_dir)
     copy_required_file(binary_source, package_dir / binary_name)
     write_cli_installer_files(package_dir, target.platform)
@@ -331,6 +337,10 @@ def build_cli_target(
         sign_cli_macos(package_dir / binary_name)
 
     if target.platform == "windows":
+        copy_required_file(
+            binary_source.with_name("operit_local_llm.dll"),
+            package_dir / "operit_local_llm.dll",
+        )
         compress_zip(package_dir, package_path)
     else:
         os.chmod(package_dir / binary_name, 0o755)

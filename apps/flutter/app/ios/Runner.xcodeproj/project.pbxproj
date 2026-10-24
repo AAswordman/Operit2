@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D1C021260001000000000001 /* AppleTextRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C021260001000000000002 /* AppleTextRecognizer.swift */; };
+		D1C021260001000000000003 /* AppleTextRecognizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C021260001000000000004 /* AppleTextRecognizerTests.swift */; };
 		011C84738C7022D3E34452AA /* libPods-Runner.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 16312C53B2BD4BB3A1EA8E0A /* libPods-Runner.a */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
@@ -53,6 +55,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		D1C021260001000000000002 /* AppleTextRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleTextRecognizer.swift; sourceTree = "<group>"; };
+		D1C021260001000000000004 /* AppleTextRecognizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleTextRecognizerTests.swift; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		16312C53B2BD4BB3A1EA8E0A /* libPods-Runner.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Runner.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -118,6 +122,7 @@
 			isa = PBXGroup;
 			children = (
 				331C807B294A618700263BE5 /* RunnerTests.swift */,
+				D1C021260001000000000004 /* AppleTextRecognizerTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -179,6 +184,7 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				AABBCC012026092600000002 /* SceneDelegate.swift */,
 				3D2A10002D000001003D2A10 /* AppleRuntimeChannel.swift */,
+				D1C021260001000000000002 /* AppleTextRecognizer.swift */,
 				3D2A10122D000001003D2A10 /* AppleSnapshotImportInputChannel.swift */,
 				3D2A10042D000001003D2A10 /* AppleLocalInferenceRunner.swift */,
 				3D2A10062D000001003D2A10 /* AppleLocalInferenceBridge.mm */,
@@ -465,6 +471,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */,
+				D1C021260001000000000003 /* AppleTextRecognizerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -475,6 +482,7 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				AABBCC012026092600000001 /* SceneDelegate.swift in Sources */,
 				3D2A10012D000001003D2A10 /* AppleRuntimeChannel.swift in Sources */,
+				D1C021260001000000000001 /* AppleTextRecognizer.swift in Sources */,
 				3D2A10112D000001003D2A10 /* AppleSnapshotImportInputChannel.swift in Sources */,
 				3D2A10032D000001003D2A10 /* AppleLocalInferenceRunner.swift in Sources */,
 				3D2A10052D000001003D2A10 /* AppleLocalInferenceBridge.mm in Sources */,

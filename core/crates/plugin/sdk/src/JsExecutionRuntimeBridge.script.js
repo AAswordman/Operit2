@@ -1,49 +1,63 @@
 /** Installs the structured tool transport and its owning-call lifecycle. */
 (function() {
     var root = globalThis;
+    // Capture the ownership primitives before plugin code can replace them.
+    var ownKeys = Reflect.ownKeys;
+    var getPrototypeOf = Object.getPrototypeOf;
+    var setPrototypeOf = Object.setPrototypeOf;
+    var getDescriptor = Object.getOwnPropertyDescriptor;
+    var createObject = Object.create;
+    var isArray = Array.isArray;
+    var isFiniteNumber = Number.isFinite;
+    var objectPrototype = Object.prototype;
+    var arrayPrototype = Array.prototype;
+    var hasOwn = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
 
     /** Converts tool identity and error fields to text. */
     function asString(value) {
         return value == null ? '' : String(value);
     }
 
-    /** Snapshots complete structured requests without invoking accessors or changing JSON value types. */
+    /** Snapshots plain data once without per-field output descriptor allocations. */
     function snapshotJsonObject(value) {
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Tool parameters must be a JSON object');
+        if (value === null || typeof value !== 'object' || isArray(value)) throw new TypeError('Tool parameters must be a JSON object');
         var ancestors = [], nodes = 0;
-        /** Copies each own JSON data property and rejects unsupported or excessive request data. */
+        /** Builds into a private null-prototype target so assignments cannot invoke inherited setters. */
         function copy(entry, depth) {
             if (++nodes > 1000000 || depth > 128) throw new TypeError('Tool request exceeds structured depth/node limit');
             if (entry === null || typeof entry === 'string' || typeof entry === 'boolean') return entry;
-            if (typeof entry === 'number' && Number.isFinite(entry)) return entry;
-            if (typeof entry !== 'object' || (!Array.isArray(entry) && Object.getPrototypeOf(entry) !== Object.prototype && Object.getPrototypeOf(entry) !== null)) throw new TypeError('Tool request contains a non-JSON value');
-            if (ancestors.indexOf(entry) !== -1) throw new TypeError('Tool request contains a cyclic value');
-            ancestors.push(entry);
-            var array = Array.isArray(entry), result = array ? [] : {};
-            var keys = Reflect.ownKeys(entry);
-            if (array) {
-                if (keys.length !== entry.length + 1) throw new TypeError('Tool request contains non-JSON array properties');
-                for (var offset = 0; offset < entry.length; offset++) {
-                    if (!Object.prototype.hasOwnProperty.call(entry, offset)) throw new TypeError('Tool request contains a non-JSON array hole');
-                }
+            if (typeof entry === 'number' && isFiniteNumber(entry)) return entry;
+            var array = isArray(entry);
+            if (typeof entry !== 'object' || (!array && getPrototypeOf(entry) !== objectPrototype && getPrototypeOf(entry) !== null)) throw new TypeError('Tool request contains a non-JSON value');
+            for (var ancestor = 0; ancestor < ancestors.length; ancestor++) {
+                if (ancestors[ancestor] === entry) throw new TypeError('Tool request contains a cyclic value');
             }
-            keys.forEach(function(key) {
-                if (array && key === 'length') return;
+            // The traversal stack is private too; inherited Array setters must
+            // not intercept writes after a plugin changes Array.prototype.
+            ancestors[ancestors.length] = entry;
+            var result = array ? setPrototypeOf([], null) : createObject(null);
+            var keys = ownKeys(entry), length = array ? entry.length : 0;
+            if (array && keys.length !== length + 1) throw new TypeError('Tool request contains non-JSON array properties');
+            for (var index = 0; index < keys.length; index++) {
+                var key = keys[index];
+                if (array && key === 'length') continue;
                 if (typeof key !== 'string') throw new TypeError('Tool request contains a non-JSON key');
-                var descriptor = Object.getOwnPropertyDescriptor(entry, key);
-                if (!descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) throw new TypeError('Tool request contains a non-JSON property');
-                Object.defineProperty(result, key, { value: copy(descriptor.value, depth + 1), enumerable: true, writable: true, configurable: true });
-            });
-            ancestors.pop();
-            return result;
+                var descriptor = getDescriptor(entry, key);
+                if (!descriptor || !descriptor.enumerable || !hasOwn(descriptor, 'value')) throw new TypeError('Tool request contains a non-JSON property');
+                if (array && ((key >>> 0) >= length || '' + (key >>> 0) !== key)) throw new TypeError('Tool request contains a non-JSON array hole or property');
+                result[key] = copy(descriptor.value, depth + 1);
+            }
+            ancestors.length--;
+            return setPrototypeOf(result, array ? arrayPrototype : objectPrototype);
         }
+        setPrototypeOf(ancestors, null);
         return copy(value, 0);
     }
 
-    /** Copies optional public parameters through the sole structured request validator. */
+    /** Captures the request once in its final host-owned representation. */
     function clonePlainObject(value) {
         if (value === undefined) return {};
-        return snapshotJsonObject(value);
+        return root.__operitHostSnapshotJsonObject(value);
     }
 
     /** Rejects callback streaming that the tool execution host does not implement. */

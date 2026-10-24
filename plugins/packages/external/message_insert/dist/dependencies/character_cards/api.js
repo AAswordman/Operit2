@@ -39,8 +39,6 @@ exports.characterCards = {
         setActive: (payload) => call("character.setActive", payload),
         /** Combines the character prompt and selected tags. */
         combine: (payload) => call("character.combine", payload),
-        /** Resets the built-in character. */
-        resetDefault: () => call("character.resetDefault", {}),
         /** Exports an explicitly selected character format. */
         export: (payload) => call("character.export", payload),
         /** Imports an explicitly selected character format. */
@@ -104,8 +102,10 @@ exports.characterCards = {
         /** Queries participant-bound memories using provider-owned snapshots and document matching. */
         query: (payload) => ToolPkg.callDependency("com.operit.character_cards", "memory.query", payload),
         chats: {
-            /** Lists actual generic chat summaries selected by persisted plugin bindings. */
+            /** Lists actual generic chat summaries selected by persisted plugin bindings, including missing-binding ids. */
             list: (payload) => call("memory.chat.list", payload),
+            /** Deletes bindings whose Core conversation no longer exists. */
+            pruneMissing: (payload) => call("memory.chat.pruneMissing", payload),
             /** Applies genuine functional MEMORY extraction to the selected real chat. */
             update: (payload) => call("memory.chat.update", payload),
         },

@@ -19,7 +19,7 @@ static TOOL_LIFECYCLE_HOOKS: OnceLock<Mutex<Vec<ToolPkgToolLifecycleHookRegistra
 pub struct ToolPkgToolLifecycleBridge;
 
 impl ToolPkgToolLifecycleBridge {
-    /// Requires the exact registered, enabled package identity before exposing any execution snapshot.
+    /// Requires the exact registered, enabled package identity before exposing any execution data.
     fn requireExecutionOwner(manager: &RuntimePackageManager, owner: &str) -> Result<(), String> {
         if owner.trim().is_empty() || owner.trim() != owner {
             return Err("Tool execution owner must be exact nonblank text".to_string());
@@ -38,16 +38,16 @@ impl ToolPkgToolLifecycleBridge {
         }
     }
 
-    /// Validates the native configuration snapshot even when this registry has no tool-policy hooks.
-    pub fn validateExecutionSnapshot(
+    /// Validates the native execution data even when this registry has no tool-policy hooks.
+    pub fn validateExecutionContext(
         manager: &RuntimePackageManager,
         context: Option<&ToolRuntimeContext>,
     ) -> Result<(), String> {
         if let Some(context) = context {
-            context.validateSnapshot()?;
+            context.validateExecutionContext()?;
             if context.extensionOwner == crate::services::ProviderRuntimeSupportService::MODEL_CONFIGURATION_OWNER {
-                crate::services::ProviderRuntimeSupportService::validateNativeModelExecutionSnapshot(
-                    &context.messageExtension, context.callerParticipantId.as_deref(),
+                crate::services::ProviderRuntimeSupportService::validateNativeModelExecutionData(
+                    &context.executionData, context.callerParticipantId.as_deref(),
                 )?;
             } else {
                 Self::requireExecutionOwner(manager, &context.extensionOwner)?;
@@ -63,11 +63,11 @@ impl ToolPkgToolLifecycleBridge {
         registeredOwner: &str,
     ) -> Result<Value, String> {
         Self::requireExecutionOwner(manager, registeredOwner)?;
-        Self::validateExecutionSnapshot(manager, context)?;
+        Self::validateExecutionContext(manager, context)?;
         match context {
             Some(context) => {
-                let messageExtension = if context.extensionOwner == registeredOwner {
-                    Value::Object(context.messageExtension.clone())
+                let executionData = if context.extensionOwner == registeredOwner {
+                    Value::Object(context.executionData.clone())
                 } else {
                     Value::Null
                 };
@@ -75,7 +75,7 @@ impl ToolPkgToolLifecycleBridge {
                     "chatId": context.callerChatId,
                     "participantId": context.callerParticipantId,
                     "extensionOwner": registeredOwner,
-                    "messageExtension": messageExtension,
+                    "executionData": executionData,
                 }))
             }
             None => Ok(Value::Null),
@@ -137,9 +137,13 @@ impl AIToolHook for ToolLifecycleBridge {
         Box::pin(async move {
             let manager = RuntimePackageManager::readySnapshot(
                 self.runtime.tool_handler().getOrCreatePackageManager(),
-            ).await?;
-            ToolPkgToolLifecycleBridge::validateExecutionSnapshot(&manager, executionContext.as_ref())?;
-            let budget = super::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout::fromPreferences();
+            )
+            .await?;
+            ToolPkgToolLifecycleBridge::validateExecutionContext(
+                &manager,
+                executionContext.as_ref(),
+            )?;
+            let budget = super::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout::fromPreferences()?;
             for container in manager.getEnabledToolPkgContainerRuntimes() {
                 let ownerContext = ToolPkgToolLifecycleBridge::executionContextForOwner(
                     &manager, executionContext.as_ref(), &container.packageName,
@@ -147,17 +151,11 @@ impl AIToolHook for ToolLifecycleBridge {
                 for hook in container.toolLifecycleHooks {
                     let mut payload = build_base_payload(tool);
                     payload["runtimeContext"] = ownerContext.clone();
-                    let timeoutMillis = budget.remainingTimeoutMillis().ok_or_else(|| format!(
-                        "Tool interception timed out before handler {}:{}", container.packageName, hook.id,
-                    ))?;
-                    let raw = manager.runToolPkgMainHookWithTimeoutMillis(
-                        &container.packageName, &hook.function, TOOLPKG_EVENT_TOOL_LIFECYCLE,
-                        Some("tool_call_intercept"), Some(&hook.id), hook.functionSource.as_deref(),
-                        payload, None, None, None, timeoutMillis,
+                    let raw = super::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout::runHook(
+                        Some(&budget), &manager, &container.packageName, &hook.function,
+                        TOOLPKG_EVENT_TOOL_LIFECYCLE, "tool_call_intercept", &hook.id,
+                        hook.functionSource.as_deref(), payload,
                     ).await?;
-                    if budget.hasExpired() {
-                        return Err(format!("Tool interception timed out after handler {}:{}", container.packageName, hook.id));
-                    }
                     let decision = decode_intercept_result(raw)?;
                     if let AIToolHookDecision::Block(_) = decision {
                         return Ok(decision);
@@ -276,7 +274,7 @@ fn deliver(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value)
                     };
                     let mut payload = eventPayload.clone();
                     payload["runtimeContext"] = ownerContext;
-                    ChainLogger::info(
+                    ChainLogger::verbose_with_level(
                         PLUGIN_CHAIN,
                         "plugin.toolpkg.tool_lifecycle.run.start",
                         &[
@@ -285,6 +283,7 @@ fn deliver(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value)
                             ("hookId", hook.hookId.clone()),
                             ("function", hook.functionName.clone()),
                         ],
+                        operit_util::AppLogger::VERBOSE_LEVEL_3,
                     );
                     match manager
                         .runToolPkgMainHook(
@@ -301,7 +300,7 @@ fn deliver(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value)
                         )
                         .await
                     {
-                        Ok(_) => ChainLogger::info(
+                        Ok(_) => ChainLogger::verbose_with_level(
                             PLUGIN_CHAIN,
                             "plugin.toolpkg.tool_lifecycle.run.done",
                             &[
@@ -309,6 +308,7 @@ fn deliver(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value)
                                 ("package", hook.containerPackageName.clone()),
                                 ("hookId", hook.hookId.clone()),
                             ],
+                            operit_util::AppLogger::VERBOSE_LEVEL_3,
                         ),
                         Err(error) => ChainLogger::error(
                             PLUGIN_CHAIN,
@@ -390,25 +390,22 @@ impl ToolPkgToolLifecycleBridge {
             };
             available.push(serde_json::json!({ "catalogEntryId": index.to_string(), "name": entry.target_tool_name, "categoryName": "Hidden tool catalog", "description": entry.description, "parameters": entry.parameter_hints.join("\n"), "activationSource": activation }));
         }
-        Self::validateExecutionSnapshot(manager, Some(context))?;
+        Self::validateExecutionContext(manager, Some(context))?;
         let originalDescriptors = available.clone();
-        let budget = super::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout::fromPreferences();
+        let budget = super::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout::fromPreferences()?;
         for container in manager.getEnabledToolPkgContainerRuntimes() {
-            let ownerContext = Self::executionContextForOwner(manager, Some(context), &container.packageName)?;
+            let ownerContext =
+                Self::executionContextForOwner(manager, Some(context), &container.packageName)?;
             for hook in container.toolPromptComposeHooks {
                 let payload = serde_json::json!({ "stage": "filter_tool_call_tools", "chatId": context.callerChatId, "availableTools": available, "metadata": { "executionContext": ownerContext } });
-                let timeoutMillis = budget.remainingTimeoutMillis().ok_or_else(|| format!(
-                    "Tool catalog policy timed out before handler {}:{}", container.packageName, hook.id,
-                ))?;
-                let raw = manager.runToolPkgMainHookWithTimeoutMillis(
-                    &container.packageName, &hook.function, TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE,
-                    Some("filter_tool_call_tools"), Some(&hook.id), hook.functionSource.as_deref(),
-                    payload, None, None, None, timeoutMillis,
+                let raw = super::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout::runHook(
+                    Some(&budget), manager, &container.packageName, &hook.function,
+                    TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE, "filter_tool_call_tools", &hook.id,
+                    hook.functionSource.as_deref(), payload,
                 ).await?;
-                if budget.hasExpired() {
-                    return Err(format!("Tool catalog policy timed out after handler {}:{}", container.packageName, hook.id));
-                }
-                if let Some(mutation) = super::ToolPkgPromptHookBridge::decode_tool_prompt_policy_result(raw)? {
+                if let Some(mutation) =
+                    super::ToolPkgPromptHookBridge::decode_tool_prompt_policy_result(raw)?
+                {
                     if let Some(items) = mutation.available_tools {
                         let descriptors = items.into_iter().map(serde_json::to_value)
                             .collect::<Result<Vec<Value>, _>>().map_err(|error| error.to_string())?;

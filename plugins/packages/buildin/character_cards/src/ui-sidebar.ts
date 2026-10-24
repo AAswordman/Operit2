@@ -10,7 +10,7 @@ export interface SidebarInput { view: "characters" | "groups" }
 /** Contains only the neutral chat metadata supplied by the existing native history source. */
 export interface SidebarChatSummary {
   id: string; title: string; updatedAt: string; displayOrder: number;
-  workspaceId: string | null; workspaceName: string | null; locked: boolean; pinned: boolean; group: string | null;
+  workspaceId: string | null; workspaceName: string | null; locked: boolean; pinned: boolean; group: string | null; parentChatId: string | null;
 }
 /** Describes the exact live host context of an embedded chat sidebar. */
 export interface ChatSidebarContext { chats: SidebarChatSummary[]; currentChatId: string | null; activeStreamingChatIds: string[] }
@@ -97,15 +97,16 @@ export function parseSidebarInput(value: unknown): SidebarInput {
 }
 /** Validates a neutral host history summary and rejects plugin role-binding fields. */
 export function parseSidebarChat(value: unknown): SidebarChatSummary {
-  const chat = exactFields(value, ["id", "title", "updatedAt", "displayOrder", "workspaceId", "workspaceName", "locked", "pinned", "group"], "sidebar chat");
+  const chat = exactFields(value, ["id", "title", "updatedAt", "displayOrder", "workspaceId", "workspaceName", "locked", "pinned", "group", "parentChatId"], "sidebar chat");
   if (chat.group !== null && typeof chat.group !== "string") throw new Error("sidebar chat.group must be a string or null");
+  if (chat.parentChatId !== null) sidebarIdentity(chat.parentChatId, "sidebar chat.parentChatId");
   const id = sidebarIdentity(chat.id, "sidebar chat.id");
   if (typeof chat.title !== "string" || typeof chat.updatedAt !== "string") throw new Error("sidebar chat title and updatedAt must be strings");
   if (typeof chat.displayOrder !== "number" || !Number.isSafeInteger(chat.displayOrder)) throw new Error("sidebar chat.displayOrder must be a safe integer");
   if (chat.workspaceId !== null && typeof chat.workspaceId !== "string") throw new Error("sidebar chat.workspaceId must be a string or null");
   if (chat.workspaceName !== null && typeof chat.workspaceName !== "string") throw new Error("sidebar chat.workspaceName must be a string or null");
   if (typeof chat.locked !== "boolean" || typeof chat.pinned !== "boolean") throw new Error("sidebar chat locked and pinned must be booleans");
-  return { id, title: chat.title, updatedAt: chat.updatedAt, displayOrder: chat.displayOrder, workspaceId: chat.workspaceId, workspaceName: chat.workspaceName, locked: chat.locked, pinned: chat.pinned, group: chat.group };
+  return { id, title: chat.title, updatedAt: chat.updatedAt, displayOrder: chat.displayOrder, workspaceId: chat.workspaceId, workspaceName: chat.workspaceName, locked: chat.locked, pinned: chat.pinned, group: chat.group, parentChatId: chat.parentChatId as string | null };
 }
 /** Validates the live generic host state without defaulting missing state to a management screen. */
 export function parseChatSidebarContext(value: unknown): ChatSidebarContext {
@@ -167,7 +168,7 @@ export function characterSidebarSections(directory: Pick<SnapshotRecord, "cards"
   for (const chat of chats) {
     const state = selectionByChat.get(chat.id);
     if (state === undefined) throw new Error("Sidebar has no explicit namespace selection state for chat: " + chat.id);
-    if (state.selection === null) { unbound.chats.push(chat); continue; }
+    if (state.selection === null || decodeSelection(state.selection, directory).entity === "model") { unbound.chats.push(chat); continue; }
     const section = bySelection.get(state.selection);
     if (section === undefined) throw new Error("Plugin selection has no real category: " + state.selection);
     section.chats.push(chat);

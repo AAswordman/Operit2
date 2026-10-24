@@ -78,6 +78,16 @@ def check_command(name: str, version_args: list[str] | None = None) -> CheckResu
     return ok(name, f"{path} :: {version_text[0] if version_text else 'version reported'}")
 
 
+def check_node24() -> CheckResult:
+    result = check_command("node", ["--version"])
+    if not result.ok:
+        return result
+    version = result.detail.rsplit(" :: ", 1)[-1]
+    if not version.startswith("v24."):
+        return missing("Node.js 24", f"found {version}; install Node.js 24")
+    return ok("Node.js 24", result.detail)
+
+
 # Checks whether one required file exists.
 def check_file(name: str, path: Path) -> CheckResult:
     if path.is_file():
@@ -145,7 +155,7 @@ def check_common_tools(products: str) -> list[CheckResult]:
             check_command("git", ["--version"]),
             check_command("cargo", ["--version"]),
             check_command("rustup", ["--version"]),
-            check_command("node", ["--version"]),
+            check_node24(),
             check_command("npm", ["--version"]),
         ]
     results = [
@@ -154,8 +164,9 @@ def check_common_tools(products: str) -> list[CheckResult]:
         check_command("rustup", ["--version"]),
         check_command("fvm", ["--version"]),
         check_command("dart", ["--version"]),
-        check_command("node", ["--version"]),
+        check_node24(),
         check_command("npm", ["--version"]),
+        check_command("corepack", ["--version"]),
         check_file("Flutter FVM pin", FLUTTER_APP_DIR / ".fvmrc"),
         check_file("Flutter pubspec lock", FLUTTER_APP_DIR / "pubspec.lock"),
     ]
@@ -195,6 +206,7 @@ def check_native_app_tools(include_ios: bool) -> list[CheckResult]:
                 check_command("pkg-config", ["--version"]),
                 check_command("clang", ["--version"]),
                 check_pkg_config_package("gtk+-3.0"),
+                check_pkg_config_package("ayatana-appindicator3-0.1"),
                 check_pkg_config_package("gstreamer-1.0"),
                 check_pkg_config_package("gstreamer-app-1.0"),
                 check_pkg_config_package("gstreamer-audio-1.0"),

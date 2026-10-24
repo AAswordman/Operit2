@@ -2,7 +2,8 @@ package app.operit.core.tools.system
 
 import java.io.InputStream
 import java.util.concurrent.ExecutionException
-import java.util.concurrent.Executors
+import app.operit.HostTaskScheduler
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
@@ -13,6 +14,7 @@ internal class AndroidCommandDeadline(timeoutMillis: Long) {
 
     init { require(timeoutMillis > 0) { "command timeout must be positive" } }
 
+    /** Returns the remaining shared process deadline. */
     fun remainingMillis(): Long {
         val remaining = budgetNanos - (System.nanoTime() - startNanos)
         if (remaining <= 0) throw TimeoutException("privileged command timed out")
@@ -22,6 +24,7 @@ internal class AndroidCommandDeadline(timeoutMillis: Long) {
 
 /** Drains both pipes concurrently, bounds all waits, and reaps failed processes. */
 internal object AndroidCommandProcessRunner {
+    /** Starts a process and collects its output within one deadline. */
     fun execute(arguments: List<String>, timeoutMillis: Long): AndroidPrivilegedCommandResult {
         val deadline = AndroidCommandDeadline(timeoutMillis)
         val process = ProcessBuilder(arguments).start()
@@ -38,6 +41,7 @@ internal object AndroidCommandProcessRunner {
         }
     }
 
+    /** Atomically reserves every blocking stage before starting pipe collection. */
     fun collect(
         stdout: InputStream,
         stderr: InputStream,
@@ -46,13 +50,11 @@ internal object AndroidCommandProcessRunner {
         timeoutMillis: Long,
     ): AndroidPrivilegedCommandResult {
         val deadline = AndroidCommandDeadline(timeoutMillis)
-        val workers = Executors.newFixedThreadPool(3) { task ->
-            Thread(task, "operit-command-pipe").apply { isDaemon = true }
-        }
+        val output = FutureTask<ByteArray> { stdout.use { it.readBytes() } }
+        val errors = FutureTask<ByteArray> { stderr.use { it.readBytes() } }
+        val exit = FutureTask<Int> { awaitExit() }
         try {
-            val output = workers.submit<ByteArray> { stdout.use { it.readBytes() } }
-            val errors = workers.submit<ByteArray> { stderr.use { it.readBytes() } }
-            val exit = workers.submit<Int> { awaitExit() }
+            HostTaskScheduler.executeServices(arrayOf(output, errors, exit))
             val code = exit.get(deadline.remainingMillis(), TimeUnit.MILLISECONDS)
             return AndroidPrivilegedCommandResult(
                 output.get(deadline.remainingMillis(), TimeUnit.MILLISECONDS),
@@ -70,7 +72,9 @@ internal object AndroidCommandProcessRunner {
             // Closing pipes after destroy also unblocks readers when a descendant holds a pipe.
             runCatching { stdout.close() }
             runCatching { stderr.close() }
-            workers.shutdownNow()
+            output.cancel(true)
+            errors.cancel(true)
+            exit.cancel(true)
         }
     }
 }

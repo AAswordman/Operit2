@@ -69,20 +69,19 @@ impl ChatHistoryManager {
         target
             .validate()
             .map_err(ChatHistoryManagerError::IllegalArgument)?;
-        let base = self
-            .messageDao
-            .getMessageByTimestamp(chatId, messageTimestamp)?
-            .ok_or_else(|| {
-                ChatHistoryManagerError::IllegalArgument(format!(
-                    "Message does not exist: {chatId}:{messageTimestamp}"
-                ))
-            })?;
-        let variants = self
-            .messageVariantDao
-            .getVariantsForMessage(chatId, messageTimestamp)?;
-        let parts = self
-            .messagePartDao
-            .getPartsForMessages(chatId, vec![messageTimestamp])?
+        let snapshot = self.messageDao.getSnapshot(
+            chatId,
+            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp = ?2",
+            sqliteParams![chatId, messageTimestamp],
+        )?;
+        let base = snapshot.messages.into_iter().next().ok_or_else(|| {
+            ChatHistoryManagerError::IllegalArgument(format!(
+                "Message does not exist: {chatId}:{messageTimestamp}"
+            ))
+        })?;
+        let variants = snapshot.variants;
+        let parts: Vec<_> = snapshot
+            .parts
             .into_iter()
             .filter(|part| part.variantIndex == variantIndex)
             .map(|part| part.toMessagePart())

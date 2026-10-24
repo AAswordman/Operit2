@@ -158,27 +158,6 @@ test('operit_editor preserves executor failure and never retries or falls back t
   assert.equal(await editor(async () => output).operit_editor({ args: [] }), output);
 });
 
-/** Guards the SDK-to-core-command route so the wrapper cannot use an invented tool. */
-test('editor host binding routes to the real core command executor', () => {
-  assert.match(source('core/crates/plugin/sdk/src/js_sdk/runtime_bindings.rs'),
-    /namespace: "SoftwareSettings", method: "exec", tool: BuiltinToolName::ExecuteCliCommand/u);
-  const registration = source('core/crates/tool/services/src/tools/ToolRegistration.rs');
-  const start = registration.indexOf('BuiltinToolName::ExecuteCliCommand,');
-  const end = registration.indexOf('BuiltinToolName::ReadEnvironmentVariable,', start);
-  assert.ok(start >= 0 && end > start);
-  const executor = registration.slice(start, end);
-  assert.match(executor, /serde_json::from_str::<Vec<String>>/u);
-  assert.match(executor, /context\.coreCommandExecutor/u);
-  assert.match(executor, /executor\(args\)\.await/u);
-  assert.match(executor, /Err\(error\) => toolErrorResult\(&tool, error\)/u);
-  const proxy = source('core/crates/proxy/local/src/lib.rs');
-  assert.match(proxy, /Self::installCoreCommandExecutor\(&mut application\)/u);
-  assert.match(proxy, /application\.toolHandler\.setCoreCommandExecutor\(executor\)/u);
-  assert.match(proxy, /operit_command_core::run_core_command\(/u);
-  assert.match(proxy, /runtime\.sharedCoreCommandRuntime\(\)/u);
-  assert.doesNotMatch(proxy, /run_core_command_with_context\(/u);
-});
-
 /** Checks documented editor command arity against the current core command surface. */
 test('editor command examples include current required arguments', async () => {
   const listed = commands(source(guideDirectory + 'PLUGIN_CREATION_WORKFLOW.md'));

@@ -21,10 +21,13 @@ function assertDirectoryCalls(settings, methods) {
 
 /** Compares the complete returned snapshot with independently read authoritative disk state and explicit host-test inputs. */
 function assertCompleteSnapshot(snapshot, state) {
-  assert.deepEqual(plain(snapshot), {
-    cards: state.cards, groups: state.groups, stores: state.stores, tags: state.tags, active: state.active, memoryPreferences: state.memoryPreferences,
-    models: directoryInput.models, ttsConfigs: directoryInput.ttsConfigs, toolCatalog: directoryInput.toolCatalog,
-  });
+  const byId = values => [...values].sort((left, right) => left.id.localeCompare(right.id));
+  const actual = plain(snapshot);
+  assert.deepEqual(
+    { ...actual, cards: byId(actual.cards), groups: byId(actual.groups), stores: byId(actual.stores), tags: byId(actual.tags) },
+    { cards: byId(state.cards), groups: byId(state.groups), stores: byId(state.stores), tags: byId(state.tags), active: state.active,
+      memoryPreferences: state.memoryPreferences, models: directoryInput.models, ttsConfigs: directoryInput.ttsConfigs, toolCatalog: directoryInput.toolCatalog },
+  );
 }
 
 /** Rejects every file mutation rather than counting only successful state publications. */
@@ -37,7 +40,7 @@ function assertNoMutations(disk) {
 
 /** Publishes through actual registered providers, reads through actual Web IPC, and reopens a separate runtime owner. */
 test("registered API command and Web IPC share actual file-backed character records across restart", async t => {
-  const disk = await createDiskHarness(t), plugin = openPlugin(disk);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), plugin = openPlugin(disk);
   assert.equal(disk.calls.length, 0, "Registration must not initialize or synthesize business data");
   const created = await plugin.api("character.create", { values: { name: "真实 API 创建", description: "完整描述", otherContentVoice: "语音附加内容", advancedCustomPrompt: "完整高级提示", marks: "完整备注", toolAccessConfig: { enabled: true, allowedBuiltinTools: ["explicit-builtin", "use_package"], allowedPackages: ["explicit-package"], allowedSkills: ["explicit-skill"], allowedMcpServers: ["explicit-mcp"] } } });
   const read = await plugin.web({ action: "getCharacter", id: created.id });
@@ -57,24 +60,41 @@ test("registered API command and Web IPC share actual file-backed character reco
   assert.deepEqual(plain(await reopened.web({ action: "getCharacter", id: created.id })), plain(viaApi));
 });
 
-/** Executes actual retained initialization errors through all entrypoints without a successful domain Host or fixture. */
-test("registered API command and Web IPC preserve a bad-file initialization failure without partial writes", async t => {
-  const disk = await createDiskHarness(t), files = loadModule("src/storage/database.ts", disk.globals);
+/** Keeps partial synchronized domain state out of the retained storage initialization result. */
+test("registered service reads current data after an alias source disappears without restarting", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" });
+  await loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
+  disk.storage.inspectPreferences("cards", values => {
+    values.record_pending = { ...values.record_default, id: "pending" };
+  });
+  disk.clearCalls();
+  const plugin = openPlugin(disk);
+  assert.deepEqual(plain(await plugin.api("character.list", {})).map(card => card.id).sort(), ["default", "pending"]);
+  await assert.rejects(plugin.api("character.update", { id: "default", changes: { name: "Blocked" } }), /missing an owner memory space/);
+  assertNoMutations(disk);
+  disk.storage.inspectPreferences("cards", values => { delete values.record_pending; });
+  assert.deepEqual(plain(await plugin.api("character.list", {})).map(card => card.id), ["default"]);
+  assert.equal((await plugin.api("character.update", { id: "default", changes: { name: "Synchronized" } })).name, "Synchronized");
+});
+
+/** Validates malformed current records through each entrypoint without publishing changes. */
+test("registered API command and Web IPC reject malformed current records without partial writes", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), files = loadModule("src/storage/database.ts", disk.globals);
   await files.DatabaseCharacterRepository.open();
-  disk.storage.inspect(sql => sql.prepare('UPDATE cards SET "memoryBindingMode"=? WHERE "_key"=?').run("BROKEN", "default"));
+  disk.storage.inspectPreferences("cards", values => { values.record_default.memoryBindingMode = "BROKEN"; });
   disk.clearCalls(); const plugin = openPlugin(disk); let original;
   await assert.rejects(plugin.api("character.list", {}),
-    /** Captures the actual rejected initialization error from the real provider path. */
+    /** Captures the actual validation error from the real provider path. */
     error => { original = error; return error.message === "Invalid memory binding mode"; },
   );
   await assert.rejects(plugin.web({ action: "getCharacter", id: "default" }),
-    /** Requires the same retained service initialization failure on the actual IPC handler. */
-    error => error === original,
+    /** Requires the same record validation on the actual IPC handler. */
+    error => error.message === original.message,
   );
   const command = await plugin.command("character", ["list"]);
   assert.equal(command.json.ok, false); assert.equal(command.json.error.code, "domain_operation_failed");
   assert.equal(command.json.error.message, original.message);
-  assert.equal(disk.storage.inspect(sql => sql.prepare('SELECT "memoryBindingMode" FROM cards WHERE "_key"=?').get("default").memoryBindingMode), "BROKEN");
+  assert.equal(disk.storage.inspectPreferences("cards", values => values.record_default.memoryBindingMode), "BROKEN");
   assert.equal(disk.calls.filter(
     /** Rejects any repair or new-install publication during bad-file provider calls. */
     call => call.method === "write" || call.method === "move" || call.method === "mkdir",
@@ -83,7 +103,7 @@ test("registered API command and Web IPC preserve a bad-file initialization fail
 
 /** Executes real main and file-backed snapshot logic with explicit SDK directory inputs, not native-host integration. */
 test("registered management Web IPC preserves a full file-backed snapshot with explicit host directory test inputs", async t => {
-  const disk = await createDiskHarness(t), settings = createHostDirectoriesFixture(disk, directoryInput), plugin = openPlugin(settings.harness);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directoryInput), plugin = openPlugin(settings.harness);
   assert.equal(settings.calls.length, 0, "Registration must not read configured directories");
   assert.equal(disk.calls.length, 0, "Registration must not open plugin files");
   const managementRoute = "toolpkg:com.operit.character_cards:ui:main", attachmentRoute = "toolpkg:com.operit.character_cards:ui:memory-attachment";
@@ -139,16 +159,19 @@ test("registered management Web IPC preserves a full file-backed snapshot with e
 
 /** Executes actual staged Web save with explicit SDK directory inputs and one real state-file publication. */
 test("actual Web card save commits the complete staged tag change set once", async t => {
-  const disk = await createDiskHarness(t), settings = createHostDirectoriesFixture(disk, directoryInput), plugin = openPlugin(settings.harness);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directoryInput), plugin = openPlugin(settings.harness);
   assert.equal(settings.calls.length, 0, "Actual main registration must remain lazy");
   const card = await plugin.api("character.create", { values: { name: "Web 原角色" } });
   const removed = await plugin.api("tag.create", { values: { name: "旧标签", description: "", promptContent: "旧提示", tagType: "CUSTOM" } });
   const updated = await plugin.api("tag.create", { values: { name: "保留标签", description: "", promptContent: "旧提示", tagType: "TONE" } });
   const before = path.join(disk.directory, "character-memory", "state.json"); disk.clearCalls();
   const snapshot = await plugin.web({ action: "saveCharacter", create: false, card: { ...plain(card), description: "Web 更新", ttsConfigId: directoryInput.ttsConfigs[0].id, attachedTagIds: ["draft-created", updated.id] }, tagChanges: { created: [{ draftId: "draft-created", values: { name: "新标签", description: "新描述", promptContent: "新提示", tagType: "CUSTOM" } }], updated: [{ id: updated.id, name: updated.name, description: "修改描述", promptContent: "修改提示", tagType: updated.tagType }], deleted: [removed.id] } });
-  assert.equal(disk.calls.filter(call => call.method === "storage.transaction").length, 1);
+  const configurationWrites = disk.calls.filter(call => call.method === "storage.preferences.edit" && /\/(?:cards|tags)\.preferences\.json$/u.test(call.args[0]));
+  assert.equal(configurationWrites.length, 2);
+  assert.equal(new Set(configurationWrites.map(call => call.args[0])).size, 2);
   const state = JSON.parse(await disk.stateBytes().toString("utf8"));
-  assert.deepEqual(state.cards, plain(snapshot.cards)); assert.deepEqual(state.tags, plain(snapshot.tags));
+  const byId = values => [...values].sort((left, right) => left.id.localeCompare(right.id));
+  assert.deepEqual(byId(state.cards), byId(plain(snapshot.cards))); assert.deepEqual(byId(state.tags), byId(plain(snapshot.tags)));
   assertCompleteSnapshot(snapshot, state);
   assertDirectoryCalls(settings, ["Tts.listConfigs", ...snapshotDirectoryMethods]);
   const newTags = snapshot.tags.filter(
@@ -179,7 +202,7 @@ test("actual Web card save commits the complete staged tag change set once", asy
 
 /** Preserves the original IO-only harness capability boundary even after opt-in directory fixtures are available. */
 test("IO-only file entrypoints reject undeclared SoftwareSettings instead of supplying an empty snapshot", async t => {
-  const disk = await createDiskHarness(t), plugin = openPlugin(disk);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), plugin = openPlugin(disk);
   await plugin.api("character.list", {});
   const file = path.join(disk.directory, "character-memory", "state.json"), before = await disk.stateBytes();
   disk.clearCalls();
@@ -228,7 +251,7 @@ test("explicit host directory test inputs preserve values and reject undeclared 
 for (const method of snapshotDirectoryMethods) {
   /** Propagates one exact SDK directory rejection through real API/Web service calls and aborts staged business writes. */
   test("actual entrypoints propagate " + method + " read errors without publishing staged card or tags", async t => {
-    const disk = await createDiskHarness(t), settings = createHostDirectoriesFixture(disk, directoryInput), plugin = openPlugin(settings.harness);
+    const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directoryInput), plugin = openPlugin(settings.harness);
     const card = await plugin.api("character.create", { values: { name: "失败读取前角色", description: "保存前描述" } });
     const updated = await plugin.api("tag.create", { values: { name: "错误前保留标签", description: "保留描述", promptContent: "保留提示", tagType: "TONE" } });
     const removed = await plugin.api("tag.create", { values: { name: "错误前删除标签", description: "删除前描述", promptContent: "删除前提示", tagType: "CUSTOM" } });
@@ -281,7 +304,7 @@ for (const method of snapshotDirectoryMethods) {
 
 /** The native main runtime evaluates the bundle independently of registration-only capture. */
 test("independently evaluated main API connects lazy directory readers without calling registerToolPkg", async t => {
-  const disk = await createDiskHarness(t), calls = [];
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), calls = [];
   const failure = new Error("EXACT_NATIVE_DIRECTORY_REJECTION");
   const globals = {
     ...disk.globals,
@@ -321,7 +344,7 @@ test("independently evaluated main API connects lazy directory readers without c
 
 /** Public API invocation evaluates a fresh module, not the old registration runtime's globals. */
 test("fresh exported chat UI APIs retain package routes without replaying registration", async t => {
-  const disk = await createDiskHarness(t);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" });
   const settings = createHostDirectoriesFixture(disk, directoryInput);
   const registered = openPlugin(settings.harness);
   await registered.api("character.list", {});
@@ -345,7 +368,7 @@ test("fresh exported chat UI APIs retain package routes without replaying regist
 
 
 test("sidebar preparation supplies avatar paths without binary reads or opening a UI", async t => {
-  const disk = await createDiskHarness(t), settings = createHostDirectoriesFixture(disk, directoryInput);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directoryInput);
   const avatar = path.join(disk.directory, "prepared-avatar.png");
   await writeFile(avatar, Buffer.from("iVBORw0KGgo=", "base64"));
   const extensionReads = [];
@@ -360,7 +383,7 @@ test("sidebar preparation supplies avatar paths without binary reads or opening 
   assert.equal(disk.calls.length, 0, "Registration must stay lazy");
   await assert.rejects(plugin.apis.get("chat.sidebar.prepare").function({ callerPackage: "other", payload: { chats: [] } }), /authenticated host/);
   const chats = [{ id: "prepared-chat", title: "提前加载", updatedAt: "1", displayOrder: 0,
-    workspaceId: null, workspaceName: null, locked: false, pinned: false, group: null }];
+    workspaceId: null, workspaceName: null, locked: false, pinned: false, group: null, parentChatId: null }];
   const result = plain(await plugin.api("chat.sidebar.prepare", { chats }));
   assert.equal(result.entries.length, 1);
   assert.equal(result.entries[0].entryId, "sidebar-characters");

@@ -47,7 +47,7 @@ verify(/getEnabledToolPkgContainerRuntimes\(\)/.test(ready) && /runtime\.publicA
 verify(!/com\.operit\.character_cards|character_cards|HostProvider|PluginStore|callDependency/.test(support), "Native configuration calls must not name a plugin or withdrawn framework");
 verify(/match candidates\.len\(\)/.test(support) && /Duplicate chat\.configuration\.resolve/.test(support), "Duplicate registered owners must be explicit errors");
 verify(/0 => Ok\(MODEL_CONFIGURATION_OWNER\.to_string\(\)\)/.test(support), "An empty enabled catalog must select ordinary native model conversations");
-verify(/fn modelExecution\(/.test(support) && /fn modelDisplay\(/.test(support) && /validateModelSnapshot/.test(support), "Standalone model display, execution and immutable snapshots must be owned by the native runtime");
+verify(/fn modelExecution\(/.test(support) && /fn modelDisplay\(/.test(support) && /validateModelExecutionData/.test(support), "Standalone model display, execution and current runtime data must be owned by the native runtime");
 verify(support.includes('"chat.configuration.resolve"'), "Missing registered resolve API");
 verify(!/chat\.configuration\.binding|readBinding|writeBinding|deleteBinding/.test(support + history + core), "Core must not maintain plugin binding mirrors");
 verify(/invokeToolPkgPublicApi/.test(support) && !/SoftwareSettings\.exec|execCore|callDependency/.test(support), "Typed native invocations must use the authenticated existing public API bridge");
@@ -60,7 +60,7 @@ verify(/sourceChatId: sourceChatId\.clone\(\)/.test(create) && /sourceMessageTim
 verify(!/inheritGroup|\.selection\b|contextKey\.(?:split|strip_prefix|starts_with)/.test(create), "Core must not interpret plugin inheritance markers");
 verify(/existingConfiguration\.contextKey == configuration\.contextKey/.test(create) && /current\.workspaceId == draft\.workspaceId/.test(create) && /hasUserMessage/.test(create), "Empty-chat reuse must compare provider-resolved opaque context identity and workspace");
 verify(/for \(initial of configuration/.test(create) || /for initial in &configuration\.initialMessages/.test(create), "Creation must persist exactly the ordered initialMessages explicitly declared by the plugin");
-verify(/if let Some\(snapshot\) = &initial\.messageExtension/.test(create) && /opening\.pluginExtensions\.insert/.test(create), "Only explicit optional initial-message snapshots may be persisted under the authenticated owner");
+verify(/if let Some\(participantId\) = &initial\.participantId/.test(create) && /opening\.pluginExtensions\.insert/.test(create) && !/storeSnapshot|messageExtension|executionData/.test(create), "Opening messages persist author identity without execution configuration");
 verify(!/profile\.openingStatement|participants\.first|configuration\.profile/.test(create), "Core must not infer opening statements or select an execution participant during draft display");
 verify(/purpose: ChatConfigurationPurpose::Display/.test(create) && /resolveDraft/.test(create), "Drafts must resolve the explicit display purpose");
 verify(!/switchConfiguredChat|publishChatConfiguration/.test(processor), "Message execution must not publish an execution descriptor into the presentation cache");
@@ -78,7 +78,7 @@ for (const [start, end] of [["pub async fn switchChat(", "pub async fn switchCha
   const navigation = section(core, start, end);
   verify(/openChatHistory/.test(navigation) && !/enhancedAiService|switchConfiguredChat|\.resolve\(/.test(navigation), "Both public history switch routes must work without configuration or an AI runtime");
 }
-const explicitConfiguration = section(core, "pub async fn chatConfiguration(", "/// Resolves the exact persisted message");
+const explicitConfiguration = section(core, "pub async fn chatConfiguration(", "/// Resolves the message author through the current chat configuration");
 verify(/resolveDisplay/.test(explicitConfiguration) && /purpose: ChatConfigurationPurpose::Display/.test(explicitConfiguration) && /\.await\?/.test(explicitConfiguration), "Public presentation resolve must propagate real display API errors without requiring an execution profile");
 verify(/ChatConfigurationDisplayResult/.test(explicitConfiguration) && !/resolveChatConfigurationForOptions|\.profile/.test(explicitConfiguration), "Public display results must remain independently typed");
 verify(/pub purpose: ChatConfigurationPurpose/.test(runtime) && !/serde\(default\)[^;]*purpose/s.test(runtime), "Every request must carry an explicit required purpose");
@@ -96,8 +96,9 @@ verify(/\"attachments\": context\.attachments/.test(inputBridge) && /\"replyToMe
 const branch = section(history, "pub async fn createBranch(", "/// Loads branches");
 verify(/ToolPkgChatCreationKind::Branch/.test(branch) && /createChatDraft/.test(branch), "Branches must use the same real lifecycle and draft transaction");
 verify(/pub async fn currentChatIdFlow/.test(core) && /self\.initializeChatConfiguration\(\)\.await\?/.test(core), "Startup flow must await initialization");
-verify(/pub async fn chatConfigurationForMessage/.test(core) && /PluginExtensionTarget::Message/.test(core) && /messageExtension: Some\(snapshot\)/.test(core), "Historical profiles must read the exact persisted message revision snapshot");
-verify(/applyConfigurationSnapshot\(&mut aiMessage, &configuration, &request\.enhancedAiService\.tool_handler\)\.await/.test(processor), "Every generated revision must await authenticated storage of its fresh execution snapshot before persistence");
+const messageConfiguration = section(core, "pub async fn chatConfigurationForMessage(", "pub async fn currentChatIdFlow");
+verify(/PluginExtensionTarget::Message/.test(messageConfiguration) && /participantId/.test(messageConfiguration) && /api\.resolve/.test(messageConfiguration) && !/readSnapshot|messageExtension|executionData/.test(messageConfiguration), "Message execution must resolve current configuration using only its real author ID");
+verify(/applyConfigurationIdentity\(&mut aiMessage, &configuration\)/.test(processor) && !/applyConfigurationSnapshot|storeSnapshot/.test(processor + support), "Sending persists only the author identity without a snapshot API or storage call");
 verify(/beginChatExecution\(&chatId\)/.test(coordinator) && /executionLease: Option<ChatExecutionLease>/.test(processor), "Generation protection must be acquired and retained by the real streaming runtime");
 verify(/runtime\.executionLease\.take\(\)/.test(processor) && /protectRevision/.test(processor), "Completion/cancel must release guards protecting exact dirty revisions");
 verify(/runtime\.chatConfiguration\.profile\.id/.test(enhanced) && /"executionContext"/.test(enhanced), "Prompt hooks must receive the resolved execution participant");

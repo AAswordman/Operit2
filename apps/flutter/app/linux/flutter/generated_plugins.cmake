@@ -9,6 +9,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   desktop_widgets_linux
   dynamic_color
   file_selector_linux
+  operit_keep_alive
   printing
   record_linux
   url_launcher_linux

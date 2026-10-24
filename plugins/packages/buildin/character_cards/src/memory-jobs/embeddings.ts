@@ -1,10 +1,11 @@
+import { uuid } from "../identity";
 import type { CharacterRepository } from "../canonical";
 import type { MemoryEmbedding, MemorySettings, MemorySpace } from "../model";
-import { assertInteger, assertNumber, assertObject, assertString, requireName } from "../validation";
+import { assertInteger, assertNumber, assertObject, assertString, requireId, requireName } from "../validation";
 
 /** Validates one persisted real embedding rather than accepting a placeholder vector. */
 export function assertEmbedding(value: unknown): asserts value is MemoryEmbedding {
-  assertObject(value, "embedding"); requireName(value.endpoint, "embedding endpoint"); requireName(value.model, "embedding model"); assertString(value.text, "embedding text");
+  assertObject(value, "embedding"); requireId(value.id, "embedding id"); requireName(value.endpoint, "embedding endpoint"); requireName(value.model, "embedding model"); assertString(value.text, "embedding text");
   assertInteger(value.updatedAt, "embedding timestamp", 0);
   if (!Array.isArray(value.vector) || value.vector.length === 0) throw new Error("Embedding must contain a nonempty vector");
   let norm = 0;
@@ -34,7 +35,7 @@ async function requestEmbedding(text: string, settings: MemorySettings): Promise
   const payload: unknown = JSON.parse(response.content); assertObject(payload, "embedding response");
   if (!Array.isArray(payload.data) || payload.data.length !== 1) throw new Error("Embedding response must contain exactly one input vector");
   const record = payload.data[0]; assertObject(record, "embedding response item");
-  const embedding = { ...source, text, vector: record.embedding, updatedAt: Date.now() }; assertEmbedding(embedding); return embedding;
+  const embedding = { id: uuid(), ...source, text, vector: record.embedding, updatedAt: Date.now() }; assertEmbedding(embedding); return embedding;
 }
 
 /** Reads an exact cache entry or performs its first real computation, never replacing a failed provider result. */

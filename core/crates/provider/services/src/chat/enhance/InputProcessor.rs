@@ -1,7 +1,6 @@
 use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Preprocesses user input before it enters the chat pipeline.
 pub struct InputProcessor;
@@ -12,13 +11,11 @@ pub struct ProcessUserInputRequest {
     pub input: String,
     pub chat_id: Option<String>,
     pub participant_id: Option<String>,
-    /// Host callback used to surface a timed-out Prompt Input Hook.
-    pub on_hook_timeout: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl InputProcessor {
     /// Applies input preprocessing hooks for one chat request.
-    pub async fn process_user_input(request: ProcessUserInputRequest) -> String {
+    pub async fn process_user_input(request: ProcessUserInputRequest) -> Result<String, String> {
         let metadata = HashMap::<String, Value>::from([(
             "executionContext".to_string(),
             serde_json::json!({
@@ -33,10 +30,9 @@ impl InputProcessor {
             raw_input: Some(request.input.clone()),
             processed_input: Some(request.input.clone()),
             metadata,
-            on_hook_timeout: request.on_hook_timeout.clone(),
             ..PromptHookContext::default()
         })
-        .await;
+        .await?;
 
         let processed_input = before_context
             .processed_input
@@ -52,8 +48,8 @@ impl InputProcessor {
             metadata: before_context.metadata.clone(),
             ..before_context
         })
-        .await;
+        .await?;
 
-        after_context.processed_input.unwrap_or(processed_input)
+        Ok(after_context.processed_input.unwrap_or(processed_input))
     }
 }

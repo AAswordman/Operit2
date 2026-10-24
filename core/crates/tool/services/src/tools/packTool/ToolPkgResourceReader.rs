@@ -333,7 +333,10 @@ impl ToolPkgResourceReader {
         let signature = self
             .buildToolPkgCacheSignatureForRuntime(runtime)
             .ok_or_else(|| {
-                format!("ToolPkg package source is unavailable: {}", runtime.packageName)
+                format!(
+                    "ToolPkg package source is unavailable: {}",
+                    runtime.packageName
+                )
             })?;
         let (text, _) = self.toolPkgTextResourceCache.get_or_load_text(
             &runtime.packageName,
@@ -384,13 +387,18 @@ impl ToolPkgResourceReader {
                         .readFileBytes(&hostPath(&resource))
                         .map_err(|error| format!("Cannot read ToolPkg resource {path}: {error}"))?;
                     return operit_plugin_sdk::toolpkg::ToolPkgProtection::decodeUtf8(&bytes)
-                        .map_err(|error| format!("Cannot decode ToolPkg resource {path}: {error}"));
+                        .map_err(|error| {
+                            format!("Cannot decode ToolPkg resource {path}: {error}")
+                        });
                 }
                 let bytes = self
                     .fileSystemHost
                     .readFileBytes(&runtime.sourcePath)
                     .map_err(|error| {
-                        format!("Cannot read ToolPkg archive {}: {error}", runtime.sourcePath)
+                        format!(
+                            "Cannot read ToolPkg archive {}: {error}",
+                            runtime.sourcePath
+                        )
                     })?;
                 Self::readArchiveText(Cursor::new(bytes), path)
             }
@@ -402,10 +410,12 @@ impl ToolPkgResourceReader {
     fn readArchiveText<R: Read + Seek>(reader: R, path: &str) -> Result<String, String> {
         let mut archive = zip::ZipArchive::new(reader)
             .map_err(|error| format!("Cannot open ToolPkg archive: {error}"))?;
-        let mut entry = archive.by_name(path)
+        let mut entry = archive
+            .by_name(path)
             .map_err(|error| format!("Cannot open ToolPkg resource {path}: {error}"))?;
         let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes)
+        entry
+            .read_to_end(&mut bytes)
             .map_err(|error| format!("Cannot read ToolPkg resource {path}: {error}"))?;
         operit_plugin_sdk::toolpkg::ToolPkgProtection::decodeUtf8(&bytes)
             .map_err(|error| format!("Cannot decode ToolPkg resource {path}: {error}"))

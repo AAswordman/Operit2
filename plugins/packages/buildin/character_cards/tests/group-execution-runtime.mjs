@@ -25,7 +25,7 @@ export function controlledReceipt(input, userMessageTimestamp, assistant, status
 
 /** Opens real disk domain records while injecting explicitly controlled, owner-isolated Chat, AI and turn-transport boundaries. */
 export async function groupEnvironment(t, transport) {
-  const disk = await createDiskHarness(t), settings = createHostDirectoriesFixture(disk, directoryInput), chatId = "controlled-real-chat";
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directoryInput), chatId = "controlled-real-chat";
   const records = new Map(), planReplies = [], planningStarted = deferred(), calls = [], modelCalls = [], extensionCalls = [];
   const chat = {
     /** Requires an actual fixture chat and reads only the authenticated owner namespace; unknown targets are errors. */

@@ -9,8 +9,8 @@
     "en": "Plan Mode"
   },
   "description": {
-    "zh": "为聊天注入计划模式开关、PLAN.md 计划协作工具，以及 <plantodo> 计划渲染与一键开始实施流程。",
-    "en": "Adds a planning-mode toggle, PLAN.md collaboration tools, and <plantodo> rendering with one-tap implementation handoff."
+    "zh": "为聊天注入计划模式开关、插件计划协作工具，以及 <plantodo> 计划渲染与一键开始实施流程。",
+    "en": "Adds a planning-mode toggle, plugin-owned chat plans, and <plantodo> rendering with implementation handoff."
   },
   "enabled_by_default": true,
   "subpackages": [
@@ -22,9 +22,10 @@
         "en": "Plan Mode Tools"
       },
       "description": {
-        "zh": "读取和完成当前工作区里的 PLAN.md。",
-        "en": "Read and complete the current workspace PLAN.md."
+        "zh": "读取和完成当前聊天的插件计划。",
+        "en": "Read and complete the current chat plan in plugin storage."
       }
     }
-  ]
+  ],
+  "installation_scope": "space"
 }

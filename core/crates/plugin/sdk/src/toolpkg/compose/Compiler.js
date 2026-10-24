@@ -1,4 +1,4 @@
-/// Compiles existing UI calls into internal generation scopes without changing plugin source APIs.
+/// Compiles JavaScript UI regions into shared host-executed layout programs.
 var OperitComposeCompiler = function () {
   /// Lowers source inputs and validates already lowered artifacts through the same ABI.
   function prepare(source, identity) {
@@ -38,38 +38,6 @@ var OperitComposeCompiler = function () {
     return registry.object.type === 'Identifier' ? registry.object : null;
   }
 
-  /// Classifies side-effect-free value expressions and records their lexical value dependencies.
-  function dependencies(node, names) {
-    switch (node.type) {
-      case 'Literal':
-        return true;
-      case 'Identifier':
-        names.add(node.name);
-        return true;
-      case 'ArrayExpression':
-        return node.elements.every(function (item) {
-          return item === null || dependencies(item, names);
-        });
-      case 'ObjectExpression':
-        return node.properties.every(function (property) {
-          return property.type === 'Property' && property.kind === 'init' && !property.method && (!property.computed || dependencies(property.key, names)) && dependencies(property.value, names);
-        });
-      case 'UnaryExpression':
-        return node.operator !== 'delete' && dependencies(node.argument, names);
-      case 'BinaryExpression':
-      case 'LogicalExpression':
-        return dependencies(node.left, names) && dependencies(node.right, names);
-      case 'ConditionalExpression':
-        return dependencies(node.test, names) && dependencies(node.consequent, names) && dependencies(node.alternate, names);
-      case 'TemplateLiteral':
-        return node.expressions.every(function (item) {
-          return dependencies(item, names);
-        });
-      default:
-        return false;
-    }
-  }
-
   /// Transforms only parsed UI construction calls and leaves user control flow and side effects intact.
   function compile(source, identity) {
     var compiled = OperitComposeArtifact.read(source);
@@ -79,6 +47,105 @@ var OperitComposeCompiler = function () {
       sourceType: 'script',
       allowReturnOutsideFunction: true
     });
+    var programs = [];
+    var programPrefix = '__operitUiPrograms_';
+    while (source.indexOf(programPrefix) !== -1) programPrefix += '_';
+    var hash = 2166136261;
+    for (var offset = 0; offset < source.length; offset += 1) hash = Math.imul(hash ^ source.charCodeAt(offset), 16777619);
+    var moduleId = identity + ':' + (hash >>> 0).toString(36);
+
+    /// Retains observable property enumeration and accessor evaluation in JavaScript.
+    function fixedObject(node) {
+      var keys = new Set();
+      return node.properties.every(
+      /// Accepts only ordinary fields with an unambiguous enumeration order.
+      function (property) {
+        if (property.type !== 'Property' || property.computed || property.kind !== 'init' || property.method) return false;
+        var key = property.key.type === 'Identifier' ? property.key.name : String(property.key.value);
+        if (key === '__proto__' || keys.has(key) || String(Number(key) >>> 0) === key && Number(key) < 4294967295) return false;
+        keys.add(key);
+        return true;
+      });
+    }
+
+    /// Recognizes SDK modifier calls without changing foreign receiver semantics.
+    function modifierOperations(node, context) {
+      var operations = [];
+      var current = node;
+      while (current.type === 'CallExpression' && !current.optional && current.callee.type === 'MemberExpression' && !current.callee.computed && !current.callee.optional) {
+        if (current.callee.property.name === 'toJSON' || current.callee.property.name === '__modifierOps' || current.arguments.some(
+        /// Preserves spread iteration in the original JavaScript expression.
+        function (argument) { return argument.type === 'SpreadElement'; })) return null;
+        operations.unshift({ name: current.callee.property.name, args: current.arguments });
+        current = current.callee.object;
+      }
+      return operations.length && current.type === 'MemberExpression' && !current.computed && !current.optional && current.object.type === 'Identifier' && current.object.name === context && current.property.name === 'Modifier' ? operations : null;
+    }
+
+    /// Extracts a whole nested layout into immutable data and evaluates only its dynamic leaves.
+    function lowerRegion(root, plan) {
+      var values = [];
+      var instructions = [];
+      var context = uiCall(root).name;
+      /// Records an ordinary JavaScript expression at its exact source evaluation position.
+      function parameter(node) {
+        var index = values.length;
+        values.push(emit(node, plan));
+        return [1, index];
+      }
+      /// Encodes literals, fixed containers, modifiers and internal nodes without runtime node objects.
+      function operand(node) {
+        if (node.type === 'Literal' && !node.regex && typeof node.value !== 'bigint') return [0, node.value];
+        var receiver = uiCall(node);
+        if (receiver && receiver.name === context && node.arguments.length <= 2 && !node.arguments.some(
+        /// Keeps observable argument spreading in JavaScript.
+        function (argument) { return argument.type === 'SpreadElement'; })) return [4, instruction(node)];
+        if (node.type === 'ObjectExpression' && fixedObject(node)) {
+          var keys = [], members = [];
+          node.properties.forEach(
+          /// Extracts fields in their original source order.
+          function (property) {
+            keys.push(property.key.type === 'Identifier' ? property.key.name : String(property.key.value));
+            members.push(operand(property.value));
+          });
+          return [2, keys, members];
+        }
+        if (node.type === 'ArrayExpression' && node.elements.every(
+        /// Retains spread evaluation as an ordinary dynamic value.
+        function (element) { return !element || element.type !== 'SpreadElement'; })) return [3, node.elements.map(
+        /// Represents holes as null because they cannot contribute UI children.
+        function (element) { return element ? operand(element) : [0, null]; })];
+        var operations = modifierOperations(node, context);
+        if (operations) {
+          var expression = 'OperitComposeNodes.modifierBase(' + context + '.Modifier)';
+          operations.forEach(
+          /// Freezes each fluent receiver at its original call boundary before later arguments run.
+          function (operation) {
+            expression += '.concat([{name:' + JSON.stringify(operation.name) + ',args:[' + operation.args.map(
+            /// Preserves argument side effects without allocating modifier proxy chains.
+            function (argument) { return emit(argument, plan); }).join(',') + ']}])';
+          });
+          var modifierIndex = values.length;
+          values.push('({__modifierOps:' + expression + '})');
+          return [1, modifierIndex];
+        }
+        return parameter(node);
+      }
+      /// Allocates a local instruction index, never a runtime source or mounted identity.
+      function instruction(node) {
+        var index = instructions.length;
+        instructions.push(null);
+        var props = node.arguments[0] ? operand(node.arguments[0]) : [0, {}];
+        var children = node.arguments[1] ? operand(node.arguments[1]) : [0, null];
+        instructions[index] = { type: node.callee.property.name, props: props, children: children, explicitChildren: node.arguments.length === 2 };
+        return index;
+      }
+      var rootIndex = instruction(root);
+      var index = programs.length;
+      programs.push({ id: moduleId + ':' + root.start, root: rootIndex, nodes: instructions });
+      return { program: programPrefix + '[' + index + ']', values: '[' + values.join(',') + ']' };
+    }
+
     /// Recognizes a statically keyed state binding whose lexical value can be refreshed independently.
     function stateBinding(declaration, context) {
       var call = declaration.init;
@@ -144,7 +211,7 @@ var OperitComposeCompiler = function () {
 
     /// Finds lexical reads used by this execution unit, excluding independently registered UI expressions and callbacks.
     function reads(node, plan, output) {
-      if (!node || uiCall(node) || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') return;
+      if (!node || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') return;
       if (node.type === 'Identifier') {
         if (plan.variables.has(node.name)) output.add(node.name);
         return;
@@ -213,28 +280,20 @@ var OperitComposeCompiler = function () {
       if (receiver) {
         var context = source.slice(receiver.start, receiver.end);
         var site = JSON.stringify(identity + ':' + node.start);
-        var callee = source.slice(node.callee.start, node.callee.end);
-        var args = '[' + node.arguments.map(function (argument) {
-          return emit(argument, plan);
-        }).join(',') + ']';
-        var factory = '(...__operitArgs)=>' + callee + '(...__operitArgs)';
-        if (plan) {
-          var names = new Set();
-          node.arguments.forEach(function (argument) {
-            reads(argument, plan, names);
-          });
-          var keys = '[' + Array.from(names).map(function (name) {
-            return plan.frame + '.key+' + JSON.stringify(':value:' + name);
-          }).join(',') + ']';
-          return 'OperitComposeReactive.expression(' + plan.frame + ',' + site + ',' + keys + ',()=>' + args + ',' + factory + ')';
+        if (node.arguments.length > 2 || node.arguments.some(
+        /// Leaves dynamic argument iteration in the public construction API.
+        function (argument) { return argument.type === 'SpreadElement'; })) {
+          var args = node.arguments.map(
+          /// Lowers nested UI without changing the surrounding call contract.
+          function (argument) { return emit(argument, plan); }).join(',');
+          var dynamic = source.slice(node.callee.start, node.callee.end) + '(' + args + ')';
+          return plan ? 'OperitComposeReactive.expressionDynamic(' + plan.frame + ',' + site + ',' + readKeys(node, plan) + ',()=>(' + dynamic + '))' : dynamic;
         }
-        var names = new Set();
-        var pure = node.arguments.every(function (arg) {
-          return dependencies(arg, names);
-        });
-        if (pure) return 'OperitComposeGeneration.leaf(' + context + ',' + site + ',[' + Array.from(names).join(',') + '],()=>' + args + ',' + factory + ')';
-        return 'OperitComposeGeneration.node(' + context + ',' + site + ',' + args + ',' + factory + ')';
+        var region = lowerRegion(node, plan);
+        if (plan) return 'OperitComposeReactive.expressionProgram(' + plan.frame + ',' + site + ',' + readKeys(node, plan) + ',()=>'+ region.values + ',' + region.program + ')';
+        return 'OperitComposeComposition.evaluate(' + context + ',' + site + ',' + region.program + ',' + region.values + ')';
       }
+
       var cursor = node.start;
       var visitedEnd = node.start;
       var output = null;
@@ -249,7 +308,11 @@ var OperitComposeCompiler = function () {
       });
       return output === null ? null : output + source.slice(cursor, node.end);
     }
-    return emit(ast);
+    var lowered = emit(ast);
+    var prologueEnd = 0;
+    for (var statementIndex = 0; statementIndex < ast.body.length && ast.body[statementIndex].directive; statementIndex += 1) prologueEnd = ast.body[statementIndex].end;
+    var prefix = 'var ' + programPrefix + '=' + JSON.stringify(programs) + ';\n';
+    return lowered.slice(0, prologueEnd) + '\n' + prefix + lowered.slice(prologueEnd);
   }
   return {
     compile: compile,

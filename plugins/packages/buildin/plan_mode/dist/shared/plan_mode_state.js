@@ -2,23 +2,12 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.readPlanModeStateSnapshot = readPlanModeStateSnapshot;
 exports.readPlanModeStateAsync = readPlanModeStateAsync;
-exports.isPlanModeEnabledInState = isPlanModeEnabledInState;
-exports.setPlanModeEnabledForChatAsync = setPlanModeEnabledForChatAsync;
-exports.isPlanStartRecorded = isPlanStartRecorded;
-exports.recordPlanStart = recordPlanStart;
-exports.forgetPlanStart = forgetPlanStart;
 exports.readActiveChatViewForRuntime = readActiveChatViewForRuntime;
 exports.readTrackedChatViewByChatId = readTrackedChatViewByChatId;
 exports.readSingleActiveChatView = readSingleActiveChatView;
 exports.upsertTrackedChatViewAsync = upsertTrackedChatViewAsync;
 exports.removeTrackedChatViewAsync = removeTrackedChatViewAsync;
-/** Builds the in-memory handoff key for one chat and one normalized plan. */
-function buildPlanStartStateKey(planKey, chatId) {
-    return `${chatId}\u0000${planKey}`;
-}
 const state = {
-    enabledChatIds: {},
-    startedPlanKeys: {},
     trackedViewsByChatId: {},
 };
 /** Clones a tracked view before it crosses the state boundary. */
@@ -27,8 +16,6 @@ function cloneTrackedChatView(view) {
         viewId: view.viewId,
         runtime: view.runtime,
         chatId: view.chatId,
-        workspacePath: view.workspacePath,
-        workspaceEnv: view.workspaceEnv,
         title: view.title,
         updatedAt: view.updatedAt,
     };
@@ -44,38 +31,12 @@ function cloneTrackedViewsByChatId() {
 /** Returns an isolated snapshot of all in-memory plan state. */
 function readPlanModeStateSnapshot() {
     return {
-        enabledChatIds: { ...state.enabledChatIds },
-        startedPlanKeys: { ...state.startedPlanKeys },
         trackedViewsByChatId: cloneTrackedViewsByChatId(),
     };
 }
 /** Reads plan state through the async shared-state contract. */
 async function readPlanModeStateAsync() {
     return readPlanModeStateSnapshot();
-}
-/** Reports whether a chat is currently marked as planning. */
-function isPlanModeEnabledInState(chatId) {
-    return state.enabledChatIds[chatId] === true;
-}
-/** Sets or clears the planning flag for a chat. */
-async function setPlanModeEnabledForChatAsync(chatId, enabled) {
-    if (enabled) {
-        state.enabledChatIds[chatId] = true;
-        return;
-    }
-    delete state.enabledChatIds[chatId];
-}
-/** Reports whether implementation handoff was recorded for a plan. */
-function isPlanStartRecorded(planKey, chatId) {
-    return state.startedPlanKeys[buildPlanStartStateKey(planKey, chatId)] === true;
-}
-/** Records implementation handoff for a normalized plan. */
-function recordPlanStart(planKey, chatId) {
-    state.startedPlanKeys[buildPlanStartStateKey(planKey, chatId)] = true;
-}
-/** Removes the implementation handoff record for a plan. */
-function forgetPlanStart(planKey, chatId) {
-    delete state.startedPlanKeys[buildPlanStartStateKey(planKey, chatId)];
 }
 /** Returns the tracked chat view active in one runtime. */
 function readActiveChatViewForRuntime(runtime) {

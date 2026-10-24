@@ -51,8 +51,6 @@ export interface CharacterRepository {
   updateCharacter(card: Card): Promise<Card>;
   /** Removes the character and its owned memory space without changing the active actor. */
   deleteCharacter(id: string): Promise<void>;
-  /** Restores the explicit product default character, not a recovery record. */
-  resetDefaultCharacter(): Promise<Card>;
   /** Lists complete groups. */
   listGroups(): Promise<Group[]>;
   /** Requires an exact existing group. */
@@ -141,6 +139,8 @@ export interface CharacterRepository {
     id: string,
     values: MemoryValues,
   ): Promise<Memory>;
+  /** Combines all exact source-title matches into a new textual record and redirects their relationships. */
+  mergeMemories(ownerKey: string, sourceTitles: string[], values: MemoryValues): Promise<Memory>;
   /** Deletes a memory together with its chunks and links. */
   deleteMemory(ownerKey: string, id: string): Promise<void>;
   /** Moves selected memories in the same operation. */
@@ -192,15 +192,28 @@ export interface CharacterRepository {
   restoreGroups(groups: Group[]): Promise<import("./model").BackupImportResult>;
 }
 
-/** Serializes service operations against the one plugin-owned file repository. */
+/** Separates indexed reads from full-state editing transactions. */
 export interface CharacterRepositoryOwner extends Pick<
   CharacterRepository,
   | "readGlobalMemoryPreferences"
+  | "readActive"
+  | "listCharacters"
+  | "listGroups"
+  | "getCharacter"
+  | "getGroup"
+  | "getTag"
+  | "getStore"
+  | "listModels"
+  | "listTtsConfigs"
+  | "listTags"
+  | "listStores"
   | "readMemorySettings"
   | "readMemorySearchConfig"
   | "readUser"
   | "readUserPath"
 > {
+  /** Reads the configuration directory without loading memory bodies or job relations. */
+  readConfigurationSnapshot(): Promise<import("./model").Snapshot>;
   /** Reads role presentation records without loading unrelated memory relations. */
   readSidebarDirectory(): Promise<
     Pick<import("./model").Snapshot, "cards" | "groups">

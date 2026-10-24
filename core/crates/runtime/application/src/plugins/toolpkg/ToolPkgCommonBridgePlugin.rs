@@ -76,7 +76,6 @@ fn syncToolPkgRegistrations(
     ToolPkgPromptHookBridge::syncToolPkgRegistrations(activeContainers);
     ToolPkgSummaryHookBridge::syncToolPkgRegistrations(activeContainers);
     ToolPkgToolLifecycleBridge::syncToolPkgRegistrations(activeContainers);
-    ToolPkgChatInputHookBridge::syncToolPkgRegistrations(activeContainers);
     ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(runtime, activeContainers);
     ToolPkgChatMessageHookBridge::syncToolPkgRegistrations(activeContainers);
     ToolPkgChatRuntimeHookBridge::syncToolPkgRegistrations(activeContainers);

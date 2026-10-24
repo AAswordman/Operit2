@@ -7,7 +7,7 @@ This directory prepares the Android phone runtime binaries:
 - talloc 2.4.3 for PRoot
 - Bash 5.3 source archive
 - Android NDK r29-beta4 for WSL builds
-- Alpine latest-stable minirootfs with bash, python3, nodejs, npm, uv, pnpm, and ca-certificates
+- Alpine v3.23 minirootfs with bash, python3, Node.js 24, npm, uv, pnpm, and ca-certificates
 
 Build instructions are in [BUILDING.md](BUILDING.md).
 

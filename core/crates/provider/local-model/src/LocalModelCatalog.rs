@@ -28,9 +28,51 @@ const SHERPA_ONNX_WEB_ASSET_BASE_URL: &str = "https://models.operit.app/sherpa-o
 pub struct LocalModelCatalog;
 
 impl LocalModelCatalog {
+    /// A pinned, complete small instruct model available for on-device download.
+    pub fn qwen3LlamaCpp() -> LocalModelManifest {
+        LocalModelManifest {
+            id: "qwen3-0.6b-gguf".to_string(), version: "23749fefcc72300e3a2ad315e1317431b06b590a".to_string(),
+            displayName: "Qwen3 0.6B (llama.cpp)".to_string(),
+            description: "Qwen3 0.6B local chat model; weights remain on this device.".to_string(),
+            kind: LocalModelKind::Chat, engine: LocalEngineKind::LlamaCpp,
+            license: "apache-2.0".to_string(), homepage: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF".to_string(),
+            languages: vec!["zh".to_string(), "en".to_string()], tags: vec!["llm".to_string(), "offline".to_string()],
+            engineRequirement: Some(LocalEngineRequirement { engineId: "llama-cpp".to_string(), version: "b11829".to_string() }),
+            driver: Some(LocalModelDriver::LlamaCpp { model: "Qwen3-0.6B-Q8_0.gguf".to_string() }),
+            sources: vec![LocalModelSource { id: "huggingface".to_string(), kind: LocalModelSourceKind::HuggingFace,
+                repository: "Qwen/Qwen3-0.6B-GGUF".to_string(), revision: "23749fefcc72300e3a2ad315e1317431b06b590a".to_string(), baseUrl: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/23749fefcc72300e3a2ad315e1317431b06b590a".to_string() }],
+            installSource: LocalModelInstallSource::Files,
+            files: vec![LocalModelFile { relativePath: "Qwen3-0.6B-Q8_0.gguf".to_string(), sha256: "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031".to_string(), byteSize: 639446688, sourceId: "huggingface".to_string() }],
+        }
+    }
+
+    /// A pinned, complete small instruct model available for on-device download.
+    pub fn qwen3Mnn() -> LocalModelManifest {
+        LocalModelManifest {
+            id: "qwen3-0.6b-mnn".to_string(), version: "34dfccda1187ded6e07ea06426da576b0b793c6b".to_string(),
+            displayName: "Qwen3 0.6B (MNN)".to_string(),
+            description: "Qwen3 0.6B local chat model; weights remain on this device.".to_string(),
+            kind: LocalModelKind::Chat, engine: LocalEngineKind::Mnn,
+            license: "apache-2.0".to_string(), homepage: "https://huggingface.co/taobao-mnn/Qwen3-0.6B-MNN".to_string(),
+            languages: vec!["zh".to_string(), "en".to_string()], tags: vec!["llm".to_string(), "offline".to_string()],
+            engineRequirement: Some(LocalEngineRequirement { engineId: "mnn".to_string(), version: "3.6.1".to_string() }),
+            driver: Some(LocalModelDriver::Mnn { config: "config.json".to_string() }),
+            sources: vec![LocalModelSource { id: "huggingface".to_string(), kind: LocalModelSourceKind::HuggingFace,
+                repository: "taobao-mnn/Qwen3-0.6B-MNN".to_string(), revision: "34dfccda1187ded6e07ea06426da576b0b793c6b".to_string(), baseUrl: "https://huggingface.co/taobao-mnn/Qwen3-0.6B-MNN/resolve/34dfccda1187ded6e07ea06426da576b0b793c6b".to_string() }],
+            installSource: LocalModelInstallSource::Files,
+            files: vec![LocalModelFile { relativePath: "config.json".to_string(), sha256: "d74912484c7f0527494c9184d8d6806554be501e15ca559a1610370b80839ef7".to_string(), byteSize: 403, sourceId: "huggingface".to_string() },
+LocalModelFile { relativePath: "llm.mnn".to_string(), sha256: "d426c65a5159c938ccc237cdfbd982137f276804f27b414ca0ecf3fc0a660f8c".to_string(), byteSize: 461520, sourceId: "huggingface".to_string() },
+LocalModelFile { relativePath: "llm.mnn.weight".to_string(), sha256: "953afb7e0165818add34a7a6caf0af5d0ed9428da102eb22c9b98ee9da292e9f".to_string(), byteSize: 450810338, sourceId: "huggingface".to_string() },
+LocalModelFile { relativePath: "llm_config.json".to_string(), sha256: "63f9a2f67ec2ae98b4c2363b46355040c34ca5c87a740ab3c94e08288a53225a".to_string(), byteSize: 4880, sourceId: "huggingface".to_string() },
+LocalModelFile { relativePath: "tokenizer.txt".to_string(), sha256: "77009625db0b18e74315dd89557c76feaab57e1d54e3240b442649a3c16ec4fb".to_string(), byteSize: 3193569, sourceId: "huggingface".to_string() }],
+        }
+    }
+
     /// Returns all local model manifests bundled as built-in catalog entries.
     pub fn manifests() -> Vec<LocalModelManifest> {
         vec![
+            Self::qwen3LlamaCpp(),
+            Self::qwen3Mnn(),
             Self::sherpaOnnxStreamingStt(),
             Self::sherpaOnnxVitsTts(),
             Self::sherpaOnnxVitsZhLlTts(),
@@ -786,7 +828,7 @@ mod tests {
     #[test]
     fn activeCatalogDeclaresSpeechDrivers() {
         let manifests = LocalModelCatalog::manifests();
-        assert_eq!(manifests.len(), 7);
+        assert_eq!(manifests.len(), 9);
         assert!(manifests.iter().all(|manifest| manifest.driver.is_some()));
         assert!(manifests
             .iter()

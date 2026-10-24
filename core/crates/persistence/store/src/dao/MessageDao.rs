@@ -1,9 +1,20 @@
+use crate::dao::MessagePartDao::mapMessagePartEntity;
+use crate::dao::MessageVariantDao::mapMessageVariantEntity;
 use crate::sqliteParams;
 use crate::PluginExtensions::{decodePluginExtensions, encodePluginExtensions};
 use crate::SqliteStore::{SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue};
 
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use operit_model::MessageEntity::{ChatMessageCount, MessageEntity};
+use operit_model::MessagePartEntity::MessagePartEntity;
+use operit_model::MessageVariantEntity::MessageVariantEntity;
+
+/// Message records and their revisions read from one SQLite snapshot.
+pub(crate) struct MessageSnapshot {
+    pub messages: Vec<MessageEntity>,
+    pub variants: Vec<MessageVariantEntity>,
+    pub parts: Vec<MessagePartEntity>,
+}
 
 #[derive(Clone)]
 pub struct MessageDao {
@@ -14,6 +25,34 @@ impl MessageDao {
     /// Processes the exact persisted message record with explicit storage errors.
     pub fn new(store: SqliteStore) -> Self {
         Self { store }
+    }
+
+    /// Reads metadata, variants, and parts under one transaction and connection lock.
+    pub(crate) fn getSnapshot(
+        &self,
+        chatId: &str,
+        sql: &str,
+        params: Vec<SqliteValue>,
+    ) -> Result<MessageSnapshot, SqliteStoreError> {
+        self.store.transaction(|transaction| {
+            let messages = transaction.queryRows(sql, params)?
+                .iter().map(mapMessageEntity).collect::<Result<Vec<_>, _>>()?;
+            if messages.is_empty() {
+                return Ok(MessageSnapshot { messages, variants: Vec::new(), parts: Vec::new() });
+            }
+            let placeholders = messages.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let mut params = sqliteParams![chatId];
+            params.extend(messages.iter().map(|message| crate::SqliteStore::toSqliteValue(&message.timestamp)));
+            let variants = transaction.queryRows(
+                &format!("SELECT * FROM message_variants WHERE chatId = ? AND messageTimestamp IN ({placeholders}) ORDER BY messageTimestamp, variantIndex"),
+                params.clone(),
+            )?.iter().map(mapMessageVariantEntity).collect::<Result<_, _>>()?;
+            let parts = transaction.queryRows(
+                &format!("SELECT * FROM message_parts WHERE chatId = ? AND messageTimestamp IN ({placeholders}) ORDER BY messageTimestamp, variantIndex, sequence"),
+                params,
+            )?.iter().map(mapMessagePartEntity).collect::<Result<_, _>>()?;
+            Ok(MessageSnapshot { messages, variants, parts })
+        })
     }
 
     /// Processes the exact persisted message record with explicit storage errors.

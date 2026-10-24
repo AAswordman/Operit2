@@ -101,7 +101,7 @@ export async function buildRuntimeToolsScript() {
 /** Creates the exact offline document from current TypeScript sources for packaging and UI tests. */
 export async function createHtmlDocument() {
   const script = await buildBrowserScript();
-  const styles = ["web/style.css", "web/shared/ui/presentation.css"];
+  const styles = ["web/style.css", "web/shared/ui/presentation.css", "web/features/graph/style.css"];
   const sections = [];
   for (const style of styles) sections.push(await readFile(path.join(root, style), "utf8"));
   const css = sections.join("\n");

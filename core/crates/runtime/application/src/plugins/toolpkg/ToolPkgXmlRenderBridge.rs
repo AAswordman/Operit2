@@ -64,7 +64,7 @@ impl ToolPkgXmlRenderBridge {
     /// Synchronizes active XML render hook registrations from enabled ToolPkg containers.
     #[allow(non_snake_case)]
     pub fn syncToolPkgRegistrations(activeContainers: &[ToolPkgContainerRuntime]) {
-        let mut hooks = activeContainers
+        let hooks = activeContainers
             .iter()
             .flat_map(|container| {
                 container
@@ -79,12 +79,6 @@ impl ToolPkgXmlRenderBridge {
                     })
             })
             .collect::<Vec<_>>();
-        hooks.sort_by(|left, right| {
-            left.tag
-                .cmp(&right.tag)
-                .then(left.containerPackageName.cmp(&right.containerPackageName))
-                .then(left.pluginId.cmp(&right.pluginId))
-        });
         xmlRenderRegistry().replace(hooks);
     }
 
@@ -133,7 +127,7 @@ async fn renderXml(
     }
     let manager = runtime.package_manager();
     for hook in hooks {
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             PLUGIN_CHAIN,
             "plugin.toolpkg.xml_render.run.start",
             &[
@@ -142,6 +136,7 @@ async fn renderXml(
                 ("hookId", hook.pluginId.clone()),
                 ("function", hook.functionName.clone()),
             ],
+            operit_util::AppLogger::VERBOSE_LEVEL_3,
         );
         let result = manager
             .runToolPkgMainHook(
@@ -181,7 +176,7 @@ async fn renderXml(
         let Some(rendered) = parseXmlRenderResult(decoded, &hook.containerPackageName) else {
             continue;
         };
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             PLUGIN_CHAIN,
             "plugin.toolpkg.xml_render.run.done",
             &[
@@ -189,6 +184,7 @@ async fn renderXml(
                 ("package", hook.containerPackageName.clone()),
                 ("hookId", hook.pluginId.clone()),
             ],
+            operit_util::AppLogger::VERBOSE_LEVEL_3,
         );
         return rendered;
     }

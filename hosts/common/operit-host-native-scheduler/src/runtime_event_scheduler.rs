@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Condvar, Mutex, Weak};
-use std::thread;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use operit_host_api::{
@@ -23,7 +22,7 @@ struct SchedulerState {
 
 struct SchedulerShared {
     state: Mutex<SchedulerState>,
-    changed: Condvar,
+    changed: tokio::sync::watch::Sender<()>,
 }
 
 impl Drop for SchedulerShared {
@@ -33,11 +32,11 @@ impl Drop for SchedulerShared {
             .get_mut()
             .expect("native event scheduler state lock must not be poisoned")
             .stopped = true;
-        self.changed.notify_all();
+        self.changed.send_replace(());
     }
 }
 
-/// Schedules host events on one native process coordinator thread.
+/// Schedules host events on one asynchronous task in the shared Host coordinator.
 #[derive(Clone)]
 pub struct NativeHostRuntimeEventSchedulerHost {
     shared: Arc<SchedulerShared>,
@@ -46,15 +45,18 @@ pub struct NativeHostRuntimeEventSchedulerHost {
 impl NativeHostRuntimeEventSchedulerHost {
     /// Creates and starts the native host event schedule coordinator.
     pub fn new() -> Self {
+        let (changed, updates) = tokio::sync::watch::channel(());
         let shared = Arc::new(SchedulerShared {
             state: Mutex::new(SchedulerState::default()),
-            changed: Condvar::new(),
+            changed,
         });
         let workerShared = Arc::downgrade(&shared);
-        thread::Builder::new()
-            .name("operit-host-event-scheduler".to_string())
-            .spawn(move || runScheduler(workerShared))
-            .expect("native host event scheduler thread must start");
+        operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeBlockingAsyncTask(
+            &crate::NativeHostRuntimeTaskSchedulerHost::new(),
+            "operit-host-event-scheduler",
+            Box::new(move || Box::pin(runScheduler(workerShared, updates))),
+        )
+        .expect("native Host event scheduler must start");
         Self { shared }
     }
 }
@@ -109,7 +111,7 @@ impl HostRuntimeEventSchedulerHost for NativeHostRuntimeEventSchedulerHost {
         state.schedules = next;
         state.sink = Some(sink);
         drop(state);
-        self.shared.changed.notify_all();
+        self.shared.changed.send_replace(());
         Ok(())
     }
 }
@@ -151,7 +153,10 @@ fn validateSchedule(schedule: &HostRuntimeEventSchedule) -> HostResult<()> {
 
 /// Runs the single native schedule coordinator until its owning host is released.
 #[allow(non_snake_case)]
-fn runScheduler(shared: Weak<SchedulerShared>) {
+async fn runScheduler(
+    shared: Weak<SchedulerShared>,
+    mut changed: tokio::sync::watch::Receiver<()>,
+) {
     loop {
         let Some(shared) = shared.upgrade() else {
             return;
@@ -163,29 +168,27 @@ fn runScheduler(shared: Weak<SchedulerShared>) {
         if state.stopped {
             return;
         }
-        let Some(nextFireAtMillis) = state
+        let nextFireAtMillis = state
             .schedules
             .values()
             .map(|schedule| schedule.nextFireAtMillis)
-            .min()
-        else {
-            drop(
-                shared
-                    .changed
-                    .wait(state)
-                    .expect("native host event scheduler lock must not be poisoned"),
-            );
-            continue;
-        };
+            .min();
         let nowMillis = unixMillis();
-        if nextFireAtMillis > nowMillis {
-            let waitDuration = Duration::from_millis(nextFireAtMillis - nowMillis);
-            drop(
-                shared
-                    .changed
-                    .wait_timeout(state, waitDuration)
-                    .expect("native host event scheduler lock must not be poisoned"),
-            );
+        if nextFireAtMillis.is_none() || nextFireAtMillis.is_some_and(|next| next > nowMillis) {
+            let delay = nextFireAtMillis.map(|next| Duration::from_millis(next - nowMillis));
+            drop(state);
+            drop(shared);
+            match delay {
+                Some(delay) => tokio::select! {
+                    update = changed.changed() => { if update.is_err() { return; } },
+                    _ = tokio::time::sleep(delay) => {},
+                },
+                None => {
+                    if changed.changed().await.is_err() {
+                        return;
+                    }
+                }
+            }
             continue;
         }
         let firedAtMillis = unixMillis();

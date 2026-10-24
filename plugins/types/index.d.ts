@@ -68,7 +68,6 @@ import {
     ComposeNode as ComposeNodeType,
     ComposeCanvasCommand as ComposeCanvasCommandType
 } from './compose-dsl';
-import { ToolPkg as ToolPkgType } from './toolpkg';
 import {
     OkHttp as OkHttpValue,
     OkHttpClientBuilder as OkHttpClientBuilderClass,
@@ -107,6 +106,7 @@ import { Tts as TtsType } from './tts';
 import { Stt as SttType } from './stt';
 import { Theme as ThemeType } from './theme';
 import { Catalog as CatalogType } from './catalog';
+import { Media as MediaType } from './media';
 import { UI as UIType } from './ui';
 import { Chat as ChatType } from './chat';
 import { Storage as StorageType } from './storage';
@@ -119,6 +119,7 @@ export { Tts } from './tts';
 export { Stt } from './stt';
 export { Theme } from './theme';
 export { Catalog } from './catalog';
+export { Media } from './media';
 export { UI, UINode } from './ui';
 export { ToolPkg } from './toolpkg';
 export { Chat } from './chat';
@@ -208,7 +209,6 @@ declare global {
     type EnvironmentVariableReadResultData = _EnvironmentVariableReadResultData;
     type EnvironmentVariableWriteResultData = _EnvironmentVariableWriteResultData;
 
-    export import ToolPkg = ToolPkgType;
 
     // Global interface definitions
     interface ToolParams {
@@ -300,6 +300,7 @@ declare global {
         Stt: typeof SttType;
         Theme: typeof ThemeType;
         Catalog: typeof CatalogType;
+        Media: typeof MediaType;
         Storage: typeof StorageType;
         transport: DeviceTransport;
         Edge: DeviceEdge;
@@ -322,6 +323,7 @@ declare global {
         Stt: typeof SttType;
         Theme: typeof ThemeType;
         Catalog: typeof CatalogType;
+        Media: typeof MediaType;
         UI: typeof UIType;
         Chat: typeof ChatType;
         Storage: typeof StorageType;

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.image_display",
+  "version": "1.0.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "图片展示", "en": "Image Display" },
+  "description": {
+    "zh": "指导 AI 将图片保存到共享空间，并通过标准 Markdown 图片语法展示 VFS 图片。",
+    "en": "Guides the AI to save images in shared storage and display VFS images using standard Markdown."
+  },
+  "installation_scope": "space",
+  "enabled_by_default": true,
+  "subpackages": []
+}

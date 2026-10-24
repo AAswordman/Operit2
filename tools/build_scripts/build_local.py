@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from build_esp32 import build_esp32
-from common import DIST_DIR, host_arch, host_platform, run
+from common import DIST_DIR, host_arch, host_platform, release_asset_name, run
 
 
 BUILD_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,11 +34,11 @@ def build_script(name: str, platform_name: str) -> str:
 # Returns the native App archive path under the release dist directory.
 def local_app_archive_path(platform_name: str, architecture: str) -> Path:
     if platform_name == "windows":
-        return DIST_DIR / f"operit2-app-windows-{architecture}.zip"
+        return DIST_DIR / release_asset_name("app", "windows", architecture, "zip")
     if platform_name == "linux":
-        return DIST_DIR / f"operit2-app-linux-{architecture}.tar.gz"
+        return DIST_DIR / release_asset_name("app", "linux", architecture, "tar.gz")
     if platform_name == "macos":
-        return DIST_DIR / "operit2-app-macos-universal.zip"
+        return DIST_DIR / release_asset_name("app", "macos", "universal", "zip")
     raise RuntimeError(f"Unsupported local App platform: {platform_name}")
 
 

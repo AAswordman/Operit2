@@ -2,6 +2,7 @@
 use super::results::*;
 use super::{JsDate, JsFuture, JsObject, JsUndefined};
 use serde::{Deserialize, Serialize};
+use operit_plugin_sdk_macros::js_declaration;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -208,6 +209,7 @@ pub struct UINodeSearchOptions {
     pub caseSensitive: Option<bool>,
 }
 /// Stores one Android UI element together with its hierarchy and geometry.
+#[js_declaration(kind = "class")]
 pub struct UINode {
     ///
     ///The class name of the node

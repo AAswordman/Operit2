@@ -173,6 +173,7 @@ LRESULT CALLBACK Win32Window::WndProc(HWND const window,
   return DefWindowProc(window, message, wparam, lparam);
 }
 
+/// Handles window lifecycle messages without reclaiming focus on deactivation.
 LRESULT
 Win32Window::MessageHandler(HWND hwnd,
                             UINT const message,
@@ -208,7 +209,7 @@ Win32Window::MessageHandler(HWND hwnd,
     }
 
     case WM_ACTIVATE:
-      if (child_content_ != nullptr) {
+      if (LOWORD(wparam) != WA_INACTIVE && child_content_ != nullptr) {
         SetFocus(child_content_);
       }
       return 0;

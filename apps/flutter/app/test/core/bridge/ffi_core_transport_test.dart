@@ -24,6 +24,18 @@ typedef _FixtureSendNative =
       UintPtr,
     );
 
+final class _BatchFrame extends Struct {
+  external Pointer<Uint8> bytes;
+  @UintPtr()
+  external int length;
+  external Pointer<Pointer<Void>> handles;
+  @UintPtr()
+  external int count;
+}
+
+late bool Function(Pointer<Void>, int, Pointer<_BatchFrame>, int)
+_fixtureSendBatch;
+
 late Pointer<Uint8> Function(int) _fixtureAllocate;
 late bool Function(
   Pointer<Void>,
@@ -131,6 +143,11 @@ Future<void> _loadPortFixture() async {
           int,
         )
       >('fixture_send');
+  _fixtureSendBatch = native
+      .lookupFunction<
+        Bool Function(Pointer<Void>, Int64, Pointer<_BatchFrame>, UintPtr),
+        bool Function(Pointer<Void>, int, Pointer<_BatchFrame>, int)
+      >('fixture_send_batch');
   _fixtureLiveAllocations = native
       .lookupFunction<UintPtr Function(), int Function()>(
         'fixture_live_allocations',
@@ -153,7 +170,7 @@ class _HostConnection {
 
   /// Publishes function pointers using the same versioned descriptor as the Rust host.
   String descriptor() => jsonEncode({
-    'version': 2,
+    'version': 3,
     'session': token.address.toString(),
     'attach':
         Pointer.fromFunction<
@@ -233,6 +250,40 @@ class _HostConnection {
       );
     } finally {
       calloc.free(handles);
+    }
+  }
+
+  /// Posts a batch whose binary table starts independently at zero for every frame.
+  void batch(List<(int, int, CoreLinkMessage)> values) {
+    final entries = calloc<_BatchFrame>(values.length);
+    final tables = <Pointer<Pointer<Void>>>[];
+    try {
+      for (var i = 0; i < values.length; i++) {
+        final (kind, id, message) = values[i];
+        final shared = message.share(_shareFixture);
+        final bytes = _fixtureAllocate(9 + shared.bytes.length);
+        final frame = bytes.asTypedList(9 + shared.bytes.length);
+        frame[0] = kind;
+        ByteData.sublistView(frame).setInt64(1, id, Endian.little);
+        frame.setRange(9, frame.length, shared.bytes);
+        final handles = calloc<Pointer<Void>>(shared.buffers.length + 1);
+        tables.add(handles);
+        for (var j = 0; j < shared.buffers.length; j++) {
+          handles[j] = Pointer<Void>.fromAddress(
+            shared.buffers[j].buffer.token as int,
+          );
+        }
+        entries[i].bytes = bytes;
+        entries[i].length = frame.length;
+        entries[i].handles = handles;
+        entries[i].count = shared.buffers.length;
+      }
+      expect(_fixtureSendBatch(post, port, entries, values.length), isTrue);
+    } finally {
+      for (final handles in tables) {
+        calloc.free(handles);
+      }
+      calloc.free(entries);
     }
   }
 
@@ -364,7 +415,12 @@ void _submit(
           connection.send(3, id, Uint8List(0));
         }
       case 6:
-        connection.closedWatches.add(utf8.decode(bytes));
+        final closing = decodeCoreLink<List<Object?>>(bytes);
+        final subscription = closing[0] as String;
+        final generation = closing[1] as int;
+        if (connection.watches[subscription] == generation) {
+          connection.closedWatches.add(subscription);
+        }
         connection.reply(id, null);
     }
   });
@@ -615,6 +671,53 @@ void main() {
   });
 
   test(
+    'one batch preserves independent binary tables and watch identities',
+    () async {
+      final firstValues = <Object?>[];
+      final secondValues = <Object?>[];
+      final firstDone = Completer<void>();
+      final secondDone = Completer<void>();
+      proxy
+          .watchStream(_watch('firstBatch'))
+          .listen(
+            (event) => firstValues.add(event.value),
+            onDone: firstDone.complete,
+          );
+      proxy
+          .watchStream(_watch('secondBatch'))
+          .listen(
+            (event) => secondValues.add(event.value),
+            onDone: secondDone.complete,
+          );
+      while (host.watches.length != 2) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final watches = host.watches.entries.toList();
+      CoreLinkMessage value(String id, List<int> bytes) =>
+          encodeCoreLinkMessage([
+            id,
+            [null, 'core/test7', 'items', 'Changed', Uint8List.fromList(bytes)],
+          ]);
+      host.batch([
+        (1, watches[0].value, value(watches[0].key, [1, 2, 3])),
+        (1, watches[1].value, value(watches[1].key, [9, 8, 7, 6])),
+        (3, watches[0].value, CoreLinkMessage.bytes(Uint8List(0))),
+        (3, watches[1].value, CoreLinkMessage.bytes(Uint8List(0))),
+      ]);
+      await Future.wait([firstDone.future, secondDone.future]);
+      expect(firstValues, [
+        'early',
+        [1, 2, 3],
+      ]);
+      expect(secondValues, [
+        'early',
+        [9, 8, 7, 6],
+      ]);
+      expect(host.closedWatches, hasLength(2));
+    },
+  );
+
+  test(
     'early events survive open acknowledgement and finite sources close',
     () async {
       final events = await proxy.watchStream(_watch('finite')).toList();
@@ -648,7 +751,7 @@ void main() {
   });
 
   test(
-    'cancellation during opening waits for acknowledgement and releases native state',
+    'cancellation releases native state before the open acknowledgement',
     () async {
       final received = Completer<void>();
       final subscription = proxy
@@ -657,9 +760,9 @@ void main() {
       await received.future;
       final cancelling = subscription.cancel();
       final watch = host.watches.entries.single;
-      host.reply(watch.value, watch.key);
       await cancelling;
       expect(host.closedWatches, [watch.key]);
+      host.reply(watch.value, watch.key);
     },
   );
 
@@ -745,7 +848,7 @@ void _receiveOneEnvelope(List<Object> arguments) {
   final port = ReceivePort();
   parent.send(port.sendPort);
   port.listen((dynamic message) {
-    final envelope = message as List;
+    final envelope = (message as List).single as List;
     if (envelope.length != 5 || (envelope[2] as Uint8List).length != 1) {
       throw StateError('Invalid fixture ownership receipt');
     }

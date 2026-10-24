@@ -19,9 +19,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 
 object OCRUtils {
     private const val TAG = "OCRUtils"
@@ -137,6 +135,7 @@ object OCRUtils {
     }
 
     @WorkerThread
+    /** Reads the image on the caller Host worker and resumes within the same coroutine context. */
     suspend fun recognizeTextFromUri(
         context: Context,
         uri: Uri,
@@ -157,7 +156,7 @@ object OCRUtils {
             }
         }
 
-        return withContext(Dispatchers.IO) {
+        return run {
             try {
                 context.contentResolver.openInputStream(uri)?.use { inputStream ->
                     val originalBitmap = BitmapFactory.decodeStream(inputStream)
@@ -264,8 +263,9 @@ object OCRUtils {
     }
 
     @WorkerThread
+    /** Writes on the calling Host worker while preserving the caller coroutine context. */
     suspend fun saveBitmapToTempFile(context: Context, bitmap: Bitmap): File? =
-        withContext(Dispatchers.IO) {
+        run {
             val cacheDir = context.cacheDir
             val tempFile = File(cacheDir, "ocr_temp_${System.currentTimeMillis()}.jpg")
 
@@ -273,10 +273,10 @@ object OCRUtils {
                 FileOutputStream(tempFile).use { out ->
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
                 }
-                return@withContext tempFile
+                return@run tempFile
             } catch (e: IOException) {
                 AppLogger.e(TAG, "Failed to save bitmap to temp file", e)
-                return@withContext null
+                return@run null
             }
         }
 

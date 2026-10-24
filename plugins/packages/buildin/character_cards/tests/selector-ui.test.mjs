@@ -12,7 +12,7 @@ function presentation(requestId, chatId, kind = "card", selected = null) { retur
 /** Counts actual host writes rather than declaring any successful plugin operation in a fixture. */
 function writes(runtime) { return runtime.disk.calls.filter(
   /** Audits the exact generic record-extension method. */
-  call => call.method === "storage.transaction" && call.args[0].some(statement => /^(INSERT INTO|UPDATE) "chat_bindings" /.test(statement.sql)),
+  call => call.method === "storage.preferences.edit" && call.args[0].endsWith("/chats.preferences.json") && Object.keys(call.args[1]).some(key => key.startsWith("binding_")),
 ); }
 /** Reads genuine file-owned state for cancellation and persistence assertions independently from the service. */
 async function stateBytes(runtime) { return runtime.disk.stateBytes(); }
@@ -167,7 +167,7 @@ test("native selector disables clicks and close during the one actual pending bi
 test("failed native binding commit stays in the same modal and permits explicit cancellation", async t => {
   const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "Failure visible role" } });
   const ui = await ready(runtime, presentation("native-error", "selector-chat")), original = new Error("Controlled original native namespace write failure");
-  runtime.failNext("storage.transaction", original);
+  runtime.failNext("storage.preferences.edit", original);
   await assert.rejects(ui.dispatch(keyedNode(ui.render().tree, "card:" + card.id).props.onClick),
     /** Requires original error identity rather than replacing it with a successful or lossy response. */
     failure => failure === original,

@@ -1,4 +1,6 @@
 #![allow(non_snake_case)]
+mod data_rescue;
+pub use data_rescue::executeDataRescue;
 
 use std::sync::Arc;
 

@@ -129,6 +129,7 @@ class _ClaudeSettingsBridge extends OperitRuntimeBridge {
     summaryMessageCountThreshold: 0,
   );
   static const localRuntime = core.LocalModelRuntimeSettings(
+    inferenceBindingKey: '',
     mnnForwardType: 0,
     mnnThreadCount: 4,
     llamaThreadCount: 4,

@@ -6,9 +6,11 @@ import { WebViewPlatformView } from './WebViewPlatformView';
 /** Routes document-start registration to the native ArkWeb component. */
 export class WebViewUserScripts implements MethodCallHandler {
   private channel: MethodChannel;
+  private instanceManager: InstanceManager;
 
   /** Registers the per-engine script channel separately from resource interception. */
-  constructor(messenger: BinaryMessenger, private instanceManager: InstanceManager) {
+  constructor(messenger: BinaryMessenger, instanceManager: InstanceManager) {
+    this.instanceManager = instanceManager;
     this.channel = new MethodChannel(messenger, 'operit/webview_user_scripts');
     this.channel.setMethodCallHandler(this);
   }

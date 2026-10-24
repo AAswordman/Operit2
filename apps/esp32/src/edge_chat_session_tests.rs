@@ -133,7 +133,7 @@ impl RuntimePeerService for Peers {
     async fn startPairing(
         &self,
         _: PeerEndpoint,
-        _: PeerTransport,
+        _: Option<PeerTransport>,
     ) -> Result<PendingPairing, CoreLinkError> {
         panic!("unused")
     }

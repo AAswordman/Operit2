@@ -17,6 +17,7 @@ const List<String> _userCapabilities = <String>[
   'network.devices.view',
   'network.relay',
   'runtime.execute',
+  'storage.provide',
 ];
 
 const List<String> _administratorCapabilities = <String>['*'];
@@ -68,7 +69,11 @@ Map<String, Object?> _topology({
         relayHops: 1,
         relayPath: <String>['relay'],
         identityName: 'Relay',
-        capabilities: <String>['network.devices.view', 'network.relay'],
+        capabilities: <String>[
+          'network.devices.view',
+          'network.relay',
+          'storage.provide',
+        ],
       ),
       _member(deviceId: 'relay', deviceName: 'relay-linux'),
     ],
@@ -76,7 +81,7 @@ Map<String, Object?> _topology({
   };
 }
 
-/// Builds one synchronized control state with the two built-in identities.
+/// Builds one synchronized control state with all four built-in identities.
 Map<String, Object?> _control({List<String> disconnectedNodeIds = const []}) {
   return <String, Object?>{
     'spaceId': 'space',
@@ -92,6 +97,20 @@ Map<String, Object?> _control({List<String> disconnectedNodeIds = const []}) {
         'roleId': 'user',
         'displayName': 'User',
         'capabilities': _userCapabilities,
+      },
+      'relay': <String, Object?>{
+        'roleId': 'relay',
+        'displayName': 'Relay',
+        'capabilities': <String>[
+          'network.devices.view',
+          'network.relay',
+          'storage.provide',
+        ],
+      },
+      'edge': <String, Object?>{
+        'roleId': 'edge',
+        'displayName': 'Edge',
+        'capabilities': <String>['network.devices.view', 'runtime.execute'],
       },
     },
     'deviceIdentityIds': <String, String>{
@@ -143,6 +162,8 @@ class DeviceSpacePanelBridge extends OperitRuntimeBridge {
         return encodeCoreLink([0, <Object?>[]]);
       case 'discoverPeers':
         return encodeCoreLink([0, <Object?>[]]);
+      case 'updatePairedDeviceEndpoint':
+        return encodeCoreLink([0, null]);
       default:
         throw StateError('Unexpected ${request.methodName}');
     }
@@ -197,6 +218,32 @@ class DeviceSpacePanelBridge extends OperitRuntimeBridge {
       ),
     );
   }
+
+  /// Publishes the synchronized space-plus-topology snapshot the page
+  /// subscribes to.
+  void emitDeviceSpaceSnapshot() {
+    final devices = topology['devices']! as List<Map<String, Object?>>;
+    prompts.add(
+      CoreEvent.raw(
+        requestId: 'device-space-snapshot-watch',
+        target: 'core/server.runtimeRemoteLinkService',
+        propertyName: 'deviceSpaceSnapshotFlow',
+        kind: 'Snapshot',
+        valueBytes: encodeCoreLink(<String, Object?>{
+          'space': <String, Object?>{
+            'spaceId': 'space',
+            'spaceName': '测试空间',
+            'spaceRevision': 3,
+            'members': <String>[
+              for (final device in devices) device['deviceId'] as String,
+            ],
+          },
+          'topology': topology,
+        }),
+        decodeValue: decodeCoreLink<Object?>,
+      ),
+    );
+  }
 }
 
 void main() {
@@ -242,6 +289,7 @@ void main() {
     double width = 800,
     double textScale = 1,
     Brightness brightness = Brightness.light,
+    TargetPlatform platform = TargetPlatform.android,
   }) async {
     tester.view.physicalSize = Size(width, 1200);
     tester.view.devicePixelRatio = 1;
@@ -250,6 +298,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(
+          platform: platform,
           colorScheme: ColorScheme.fromSeed(
             seedColor: Colors.blue,
             brightness: brightness,
@@ -330,7 +379,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('当前身份: 中继节点'), findsOneWidget);
-    expect(find.text('可用权限: 查看设备与当前身份、中继网络流量'), findsOneWidget);
+    expect(find.text('可用权限: 查看设备与当前身份、中继网络流量、保存共享数据副本'), findsOneWidget);
     expect(find.text('设备 ID: tablet'), findsOneWidget);
     expect(find.textContaining('在线 · 经中继 1 跳'), findsWidgets);
     expect(find.textContaining('路径: 本机 → relay-linux'), findsWidgets);
@@ -416,7 +465,9 @@ void main() {
           ]
           ..statuses = <String, String>{'tablet': 'Online'};
     await mountPanel(tester, bridge);
-    expect(find.text('android-elish'), findsOneWidget);
+    // The synchronized Space profile name wins over the pairing-time record.
+    expect(find.text('android-tablet'), findsOneWidget);
+    expect(find.text('android-elish'), findsNothing);
     expect(find.textContaining('空间成员 · 已直连'), findsOneWidget);
     final menus = find.byIcon(Icons.more_vert_outlined);
     expect(menus, findsWidgets);
@@ -429,9 +480,222 @@ void main() {
     expect(find.widgetWithText(MenuItemButton, '解除配对'), findsOneWidget);
     // A paired member already has its edge; the pairing entry would be noise.
     expect(find.widgetWithText(MenuItemButton, '建立直连'), findsNothing);
+    // A working direct link never offers rewriting its endpoint by hand.
+    expect(find.widgetWithText(MenuItemButton, '更新直连地址'), findsNothing);
     expect(tester.takeException(), isNull);
     await unmount(tester, bridge);
   });
+
+  testWidgets(
+    'a relayed paired member reads online despite a dead direct link',
+    (tester) async {
+      // The direct Peer Link died with the peer's old LAN address while the
+      // routed topology still reaches the member through a relay. The row
+      // must follow the route (as list_core_nodes does) and the renamed
+      // synchronized profile, not the direct probe or the pairing record.
+      final bridge = DeviceSpacePanelBridge(
+        topology: <String, Object?>{
+          'currentDeviceId': 'self',
+          'devices': <Map<String, Object?>>[
+            _member(
+              deviceId: 'self',
+              deviceName: 'this-linux',
+              identityName: 'Administrator',
+              capabilities: _administratorCapabilities,
+            ),
+            _member(
+              deviceId: 'tablet',
+              deviceName: 'tablet-renamed',
+              online: true,
+              relayHops: 2,
+              relayPath: <String>['relay', 'bridge'],
+              identityName: 'Relay',
+              capabilities: <String>[
+                'network.devices.view',
+                'network.relay',
+                'storage.provide',
+              ],
+            ),
+            _member(deviceId: 'relay', deviceName: 'relay-linux'),
+          ],
+          'connections': <Object?>[],
+        },
+        control: _control(),
+      )
+        ..paired = <Map<String, Object?>>[
+          <String, Object?>{
+            'deviceId': 'tablet',
+            'deviceInfo': <String, Object?>{
+              'platform': 'android',
+              'model': 'elish',
+            },
+            'inbound': true,
+            'outbound': true,
+          },
+        ]
+        ..statuses = <String, String>{'tablet': 'Offline'};
+      await mountPanel(tester, bridge);
+      // The synchronized profile name wins over the pairing-time record.
+      expect(find.text('tablet-renamed'), findsOneWidget);
+      expect(find.text('android-elish'), findsNothing);
+      // The route-based state wins over the offline direct-link probe.
+      expect(find.textContaining('在线 · 经中继 2 跳'), findsWidgets);
+      expect(find.byIcon(Icons.cloud_off_outlined), findsNothing);
+      expect(tester.takeException(), isNull);
+      await unmount(tester, bridge);
+    },
+  );
+
+  testWidgets(
+    'a failed direct link offers updating the stored address',
+    (tester) async {
+      // The direct link died with the peer's old address. The entry is
+      // offered regardless of relay reachability, feeds the operator address
+      // to the runtime, and reports the save without waiting for the dial.
+      final bridge = DeviceSpacePanelBridge(
+        topology: <String, Object?>{
+          'currentDeviceId': 'self',
+          'devices': <Map<String, Object?>>[
+            _member(
+              deviceId: 'self',
+              deviceName: 'this-linux',
+              identityName: 'Administrator',
+              capabilities: _administratorCapabilities,
+            ),
+            _member(
+              deviceId: 'tablet',
+              deviceName: 'tablet-renamed',
+              online: false,
+              identityName: 'Relay',
+              capabilities: <String>[
+                'network.devices.view',
+                'network.relay',
+                'storage.provide',
+              ],
+            ),
+          ],
+          'connections': <Object?>[],
+        },
+        control: _control(),
+      )
+        ..paired = <Map<String, Object?>>[
+          <String, Object?>{
+            'deviceId': 'tablet',
+            'deviceInfo': <String, Object?>{
+              'platform': 'android',
+              'model': 'elish',
+            },
+            'inbound': false,
+            'outbound': true,
+          },
+        ]
+        ..statuses = <String, String>{'tablet': 'Offline'};
+      await mountPanel(tester, bridge);
+      final menus = find.byIcon(Icons.more_vert_outlined);
+      expect(menus, findsWidgets);
+      await tester.tap(menus.first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.widgetWithText(MenuItemButton, '更新直连地址'), findsOneWidget);
+      await tester.tap(find.widgetWithText(MenuItemButton, '更新直连地址'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.enterText(
+        find.byType(TextField).last,
+        'ws://10.0.0.9:37195/link',
+      );
+      await tester.tap(find.byType(TextButton).last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(bridge.calls.contains('updatePairedDeviceEndpoint'), isTrue);
+      expect(find.text('直连地址已更新'), findsOneWidget);
+      // Let the feedback SnackBar's auto-dismiss timer run out before unmount.
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+      await unmount(tester, bridge);
+    },
+  );
+
+  testWidgets(
+    'snapshot events refresh the open page without re-entering it',
+    (tester) async {
+      // 直连在中途建立：状态流翻转 + 同步快照推送，页面必须实时跟上，
+      // 而不是停留在旧投影上等待重新进入。
+      final bridge = DeviceSpacePanelBridge(
+        topology: <String, Object?>{
+          'currentDeviceId': 'self',
+          'devices': <Map<String, Object?>>[
+            _member(
+              deviceId: 'self',
+              deviceName: 'this-linux',
+              identityName: 'Administrator',
+              capabilities: _administratorCapabilities,
+            ),
+            _member(
+              deviceId: 'tablet',
+              deviceName: 'tablet-renamed',
+              online: false,
+              identityName: 'Relay',
+              capabilities: <String>[
+                'network.devices.view',
+                'network.relay',
+                'storage.provide',
+              ],
+            ),
+          ],
+          'connections': <Object?>[],
+        },
+        control: _control(),
+      )
+        ..paired = <Map<String, Object?>>[
+          <String, Object?>{
+            'deviceId': 'tablet',
+            'deviceInfo': <String, Object?>{
+              'platform': 'android',
+              'model': 'elish',
+            },
+            'inbound': true,
+            'outbound': true,
+          },
+        ]
+        ..statuses = <String, String>{'tablet': 'Offline'};
+      await mountPanel(tester, bridge);
+      expect(find.text('tablet-renamed'), findsOneWidget);
+      expect(find.textContaining('离线'), findsWidgets);
+      // 对端直连建立：可用性翻转，同步快照携带新拓扑。
+      bridge.statuses = <String, String>{'tablet': 'Online'};
+      bridge.topology = <String, Object?>{
+        'currentDeviceId': 'self',
+        'devices': <Map<String, Object?>>[
+          _member(
+            deviceId: 'self',
+            deviceName: 'this-linux',
+            identityName: 'Administrator',
+            capabilities: _administratorCapabilities,
+          ),
+          _member(
+            deviceId: 'tablet',
+            deviceName: 'tablet-renamed',
+            online: true,
+            identityName: 'Relay',
+            capabilities: <String>[
+              'network.devices.view',
+              'network.relay',
+              'storage.provide',
+            ],
+          ),
+        ],
+        'connections': <Object?>[],
+      };
+      bridge.emitPairedStatuses();
+      bridge.emitDeviceSpaceSnapshot();
+      await tester.pump();
+      await tester.pump();
+      expect(find.textContaining('在线 · 直连'), findsWidgets);
+      expect(tester.takeException(), isNull);
+      await unmount(tester, bridge);
+    },
+  );
 
   testWidgets(
     'paired devices outside the Space keep local pairing actions only',
@@ -472,6 +736,48 @@ void main() {
     },
   );
 
+  testWidgets(
+    'an inbound-only paired device outside the Space still offers joining',
+    (tester) async {
+      // The pairing direction is transport history: this device answered the
+      // pairing, so only the inbound credential exists, and the join entry
+      // must not depend on holding the outbound side.
+      final bridge =
+          DeviceSpacePanelBridge(
+              topology: _topology(
+                selfCapabilities: _administratorCapabilities,
+                selfIdentityName: 'Administrator',
+              ),
+              control: _control(),
+            )
+            ..paired = <Map<String, Object?>>[
+              <String, Object?>{
+                'deviceId': 'stranger',
+                'deviceInfo': <String, Object?>{
+                  'platform': 'android',
+                  'model': 'stranger',
+                },
+                'inbound': true,
+                'outbound': false,
+              },
+            ]
+            ..statuses = <String, String>{'stranger': 'Online'};
+      await mountPanel(tester, bridge);
+      expect(find.text('android-stranger'), findsOneWidget);
+      expect(find.textContaining('已配对'), findsWidgets);
+      final menus = find.byIcon(Icons.more_vert_outlined);
+      await tester.tap(menus.first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.widgetWithText(MenuItemButton, '加入设备空间'), findsOneWidget);
+      expect(find.widgetWithText(MenuItemButton, '解除配对'), findsOneWidget);
+      expect(find.widgetWithText(MenuItemButton, '断开设备'), findsNothing);
+      expect(find.widgetWithText(MenuItemButton, '移除设备'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await unmount(tester, bridge);
+    },
+  );
+
   testWidgets('the identity panel never repeats the device list', (
     tester,
   ) async {
@@ -504,7 +810,7 @@ void main() {
     expect(find.text('设置设备身份'), findsNothing);
     // Both long lists start collapsed and only advertise their size.
     expect(find.text('身份权限'), findsOneWidget);
-    expect(find.text('2 个身份'), findsOneWidget);
+    expect(find.text('4 个身份'), findsOneWidget);
     expect(find.text('新建身份'), findsOneWidget);
     expect(find.byKey(const ValueKey('space-role-admin')), findsNothing);
     expect(find.text('操作记录'), findsOneWidget);
@@ -515,6 +821,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('管理员'), findsNWidgets(2));
     expect(find.byType(Card), findsNothing);
+    for (final role in <String>['admin', 'user', 'relay', 'edge']) {
+      final row = find.byKey(ValueKey('space-role-$role'));
+      expect(row, findsOneWidget);
+      expect(
+        find.descendant(of: row, matching: find.byType(IconButton)),
+        findsNothing,
+      );
+    }
     expect(
       tester.getSize(find.byKey(const ValueKey('space-role-admin'))).height,
       lessThan(64),
@@ -527,6 +841,42 @@ void main() {
     await unmount(tester, bridge);
   });
 
+  for (final platform in <TargetPlatform>[
+    TargetPlatform.android,
+    TargetPlatform.windows,
+  ]) {
+    testWidgets('custom identity actions stay compact on ${platform.name}', (
+      tester,
+    ) async {
+      final bridge = DeviceSpacePanelBridge(
+        topology: _topology(
+          selfCapabilities: _administratorCapabilities,
+          selfIdentityName: 'Administrator',
+        ),
+        control: _control(),
+      );
+      final roles = bridge.control['roles']! as Map<String, Object?>;
+      roles['custom'] = <String, Object?>{
+        'roleId': 'custom',
+        'displayName': 'Custom identity',
+        'capabilities': _userCapabilities,
+      };
+      await mountNetworkPanel(tester, bridge, width: 360, platform: platform);
+      await tester.tap(find.text('身份权限'));
+      await tester.pumpAndSettle();
+      final actions = find.descendant(
+        of: find.byKey(const ValueKey('space-role-custom')),
+        matching: find.byType(IconButton),
+      );
+      expect(actions, findsNWidgets(2));
+      for (var index = 0; index < 2; index++) {
+        expect(tester.getSize(actions.at(index)), const Size(32, 32));
+      }
+      expect(tester.takeException(), isNull);
+      await unmount(tester, bridge);
+    });
+  }
+
   testWidgets('members without capabilities only see their own identity', (
     tester,
   ) async {
@@ -537,11 +887,7 @@ void main() {
     await mountNetworkPanel(tester, bridge);
     expect(find.text('本机身份'), findsOneWidget);
     expect(find.text('普通用户'), findsOneWidget);
-    for (final label in <String>[
-      '查看设备与当前身份',
-      '中继网络流量',
-      '承载 Core 执行',
-    ]) {
+    for (final label in <String>['查看设备与当前身份', '中继网络流量', '承载 Core 执行']) {
       expect(find.text(label), findsOneWidget);
     }
     expect(find.text('身份权限'), findsNothing);
@@ -670,6 +1016,17 @@ void main() {
           width: 360,
           textScale: 1.5,
           brightness: brightness,
+        );
+        final refresh = find.byKey(const ValueKey('space-identity-refresh'));
+        final heading = find.text('本机身份');
+        expect(tester.getSize(refresh), const Size(32, 32));
+        expect(
+          tester.getTopLeft(refresh).dx,
+          greaterThan(tester.getTopRight(heading).dx),
+        );
+        expect(
+          (tester.getTopLeft(refresh).dy - tester.getTopLeft(heading).dy).abs(),
+          lessThan(12),
         );
         await tester.tap(find.text('身份权限'));
         await tester.pumpAndSettle();

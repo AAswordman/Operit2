@@ -1,6 +1,10 @@
 #![allow(non_snake_case)]
 
 #[cfg(feature = "javascript")]
+mod javascript_engine;
+#[cfg(feature = "javascript")]
+mod javascript_interrupt;
+#[cfg(feature = "javascript")]
 mod javascript_runtime;
 #[cfg(feature = "javascript")]
 mod javascript_values;
@@ -14,3 +18,9 @@ pub use runtime_task_scheduler::NativeHostRuntimeTaskSchedulerHost;
 
 mod local_task_scheduler;
 pub use local_task_scheduler::LocalHostRuntimeTaskSchedulerHost;
+
+mod task_handle;
+pub use task_handle::{
+    scheduleNativeBlockingTask, scheduleNativeServiceTask, scheduleNativeServiceTasks,
+    NativeTaskHandle,
+};

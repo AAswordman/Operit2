@@ -24,3 +24,8 @@ operit-edge-scene = { path = "../../../hosts/common/operit-edge-scene" }
 mdns-sd = "0.12"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros", "net", "sync", "time", "io-util", "io-std"] }
+
+# The protocol fixtures share firmware async code and its 32 KiB worker stack.
+# Optimize the fixture's nested futures without increasing the device budget.
+[profile.test.package.operit-esp32-simulator]
+opt-level = 1

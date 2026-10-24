@@ -1,23 +1,19 @@
 /** Creates the Web host's private structured Promise registry and captured value intrinsics. */
 (function() {
     var NativePromise = Promise;
+    var ByteArray = Uint8Array;
+    var transferValue = globalThis.structuredClone;
+    var bufferGetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'buffer').get;
     var NativeMap = Map;
     var keys = Object.keys;
     var defineProperty = Object.defineProperty;
     var isArray = Array.isArray;
     var isFiniteNumber = Number.isFinite;
-    var NumberObject = Number, StringObject = String, BooleanObject = Boolean;
-    var numberValue = Number.prototype.valueOf;
-    var stringValue = String.prototype.valueOf;
-    var booleanValue = Boolean.prototype.valueOf;
-    var bigintValue = BigInt.prototype.valueOf;
-    var BigIntObject = BigInt;
     var apply = Reflect.apply;
     var mapGet = Map.prototype.get, mapSet = Map.prototype.set;
     var mapDelete = Map.prototype.delete, mapForEach = Map.prototype.forEach;
     var mapSize = Object.getOwnPropertyDescriptor(Map.prototype, 'size').get;
     var arrayIndexOf = Array.prototype.indexOf;
-    var StringValue = String;
     var pending = new NativeMap();
     var nextId = 0;
     var maxPending = 4096;
@@ -25,26 +21,16 @@
     var maxNodes = 1000000;
 
     /** Copies JSON-compatible data without generating text or invoking property setters. */
-    function snapshot(value, key, ancestors, budget, depth) {
+    function snapshot(value, ancestors, budget, depth) {
         budget.nodes++;
         if (depth > maxDepth || budget.nodes > maxNodes) {
             throw new RangeError('Host arguments exceed structured bridge depth/node limit');
-        }
-        if ((value !== null && typeof value === 'object') || typeof value === 'bigint') {
-            var toJSON = value.toJSON;
-            if (typeof toJSON === 'function') value = apply(toJSON, value, [key]);
-        }
-        if (value instanceof NumberObject) value = apply(numberValue, value, []);
-        else if (value instanceof StringObject) value = apply(stringValue, value, []);
-        else if (value instanceof BooleanObject) value = apply(booleanValue, value, []);
-        else if (value instanceof BigIntObject) {
-            value = apply(bigintValue, value, []);
         }
         if (value === null) return null;
         switch (typeof value) {
             case 'string': case 'boolean': return value;
             case 'number': return isFiniteNumber(value) ? value : null;
-            case 'bigint': throw new TypeError('BigInt host arguments require a toJSON conversion');
+            case 'bigint': throw new TypeError('BigInt is not supported in Host data');
             case 'undefined': case 'function': case 'symbol': return undefined;
         }
         if (apply(arrayIndexOf, ancestors, [value]) !== -1) throw new TypeError('Host arguments contain a cycle');
@@ -55,7 +41,7 @@
             if (length > maxNodes - budget.nodes) throw new RangeError('Host array exceeds node limit');
             result = [];
             for (var index = 0; index < length; index++) {
-                var element = snapshot(value[index], StringValue(index), ancestors, budget, depth + 1);
+                var element = snapshot(value[index], ancestors, budget, depth + 1);
                 defineProperty(result, index, {
                     value: element === undefined ? null : element,
                     enumerable: true, writable: true, configurable: true
@@ -66,7 +52,7 @@
             var properties = keys(value);
             for (var position = 0; position < properties.length; position++) {
                 var property = properties[position];
-                var item = snapshot(value[property], property, ancestors, budget, depth + 1);
+                var item = snapshot(value[property], ancestors, budget, depth + 1);
                 if (item !== undefined) {
                     defineProperty(result, property, {
                         value: item, enumerable: true, writable: true, configurable: true
@@ -81,7 +67,7 @@
     /** Normalizes lifecycle return values with the same captured host value semantics. */
     function snapshotResult(value) {
         if (value === undefined) return null;
-        var result = snapshot(value, '', [], { nodes: 0 }, 0);
+        var result = snapshot(value, [], { nodes: 0 }, 0);
         if (result === undefined) throw new TypeError('Host lifecycle result must be a JSON-compatible value');
         return result;
     }
@@ -93,7 +79,10 @@
             var owned = [];
             var budget = { nodes: 0 };
             for (var index = 0; index < arguments.length; index++) {
-                var value = snapshot(arguments[index], '', [], budget, 0);
+                var argument = arguments[index];
+                var value = argument instanceof ByteArray
+                    ? apply(transferValue, undefined, [argument, {transfer:[apply(bufferGetter, argument, [])]}])
+                    : snapshot(argument, [], budget, 0);
                 if (value === undefined) throw new TypeError('Host arguments must be JSON-compatible values');
                 defineProperty(owned, index, { value: value, enumerable: true, writable: true, configurable: true });
             }
@@ -110,7 +99,10 @@
             var owned = [];
             var budget = { nodes: 0 };
             for (var index = 1; index < arguments.length; index++) {
-                var value = snapshot(arguments[index], '', [], budget, 0);
+                var argument = arguments[index];
+                var value = argument instanceof ByteArray
+                    ? apply(transferValue, undefined, [argument, {transfer:[apply(bufferGetter, argument, [])]}])
+                    : snapshot(argument, [], budget, 0);
                 if (value === undefined) throw new TypeError('Host arguments must be JSON-compatible values');
                 defineProperty(owned, index - 1, { value: value, enumerable: true, writable: true, configurable: true });
             }
@@ -142,12 +134,22 @@
         else request.resolve(value);
     }
 
-    /** Releases every pending completion belonging to the cancelled scope. */
+    /** Rejects cancelled requests so suspended JavaScript can release shared resources. */
     function cancel(scope) {
         apply(mapForEach, pending, [function(request, id) {
-            if (request.scope === scope) apply(mapDelete, pending, [id]);
+            if (request.scope === scope) {
+                apply(mapDelete, pending, [id]);
+                request.reject('JavaScript execution was cancelled');
+            }
         }]);
     }
+
+    // Web owns its request snapshot in the engine; native hosts own the same
+    // request as a Rust tree behind an opaque transport capsule.
+    defineProperty(globalThis, '__operitHostSnapshotJsonObject', {
+        value: function(value) { return globalThis.__operitSnapshotJsonObject(value); },
+        writable: false, configurable: false, enumerable: false
+    });
 
     defineProperty(globalThis, '__operitHostPromiseRegistry', {
         value: Object.freeze({ binding: binding, syncBinding: syncBinding, snapshotResult: snapshotResult, settle: settle, cancel: cancel }),

@@ -1,6 +1,6 @@
 import type {
   Memory, MemoryGraphResult, MemorySettings, MemorySearchConfig, MemoryAutoSaveStatus, MemoryRebuildProgress, MemoryChat, Snapshot,
-  Request, RequestResults, StoreValues, Theme,
+  Request, RequestResults, StoreValues, Theme, BindableChat,
 } from "../../src/model";
 import type { EntityKind, PresentationCancel, PresentationComplete, ScreenResult } from "./screens";
 import type { ScreenBootstrap } from "../../src/presentation";
@@ -8,7 +8,7 @@ import type { GraphCamera, NodeSize, Point } from "../features/graph/layout";
 import type { ComposeFileSaveResult } from "../../../../../types/compose-dsl";
 
 /** Describes actual service results used by this finite editor bridge. */
-export type WebResponses = Pick<RequestResults, "snapshot" | "writeGlobalMemoryPreference" | "searchMemoryDebug" | "readMemoryLink" | "exportMemory" | "importMemory" | "activate" | "saveStore" | "deleteStore" | "readUser" | "writeUser" | "graph" | "searchMemory" | "listMemories" | "listMemoryFolders" | "saveMemory" | "deleteMemory" | "createLink" | "deleteLink" | "updateLink" | "readMemorySettings" | "readMemorySearchConfig" | "writeMemorySettings" | "writeMemorySearchConfig" | "writeMemoryOwnerSettings" | "readMemoryAutoSaveStatus" | "listMemoryChats" | "startMemoryRebuild" | "readMemoryRebuildProgress" | "cancelMemoryRebuild" | "rebuildMemoryEmbeddings" | "updateChatMemory" | "autoCategorizeMemory" | "importCharacter" | "importGroup">;
+export type WebResponses = Pick<RequestResults, "listBindableChats" | "writeChatBinding" | "snapshot" | "writeGlobalMemoryPreference" | "searchMemoryDebug" | "readMemoryLink" | "exportMemory" | "importMemory" | "activate" | "saveStore" | "deleteStore" | "readUser" | "writeUser" | "graph" | "searchMemory" | "listMemories" | "listMemoryFolders" | "saveMemory" | "deleteMemory" | "createLink" | "deleteLink" | "updateLink" | "readMemorySettings" | "readMemorySearchConfig" | "writeMemorySettings" | "writeMemorySearchConfig" | "writeMemoryOwnerSettings" | "readMemoryAutoSaveStatus" | "listMemoryChats" | "pruneMissingChatBindings" | "startMemoryRebuild" | "readMemoryRebuildProgress" | "cancelMemoryRebuild" | "rebuildMemoryEmbeddings" | "updateChatMemory" | "autoCategorizeMemory" | "importCharacter" | "importGroup">;
 export type WebAction = keyof WebResponses;
 export type WebRequest<A extends WebAction> = Extract<Request, { action: A }>;
 
@@ -42,7 +42,7 @@ export interface StoreDialog extends DialogState { type: "store"; store: StoreVa
 export interface OwnerSettingsDialog extends DialogState {
   type: "owner-settings"; ownerKey: string; name: string; tab: number;
   loading: boolean; settings: MemorySettings | null; config: MemorySearchConfig | null;
-  chats: MemoryChat[] | null; queue: MemoryAutoSaveStatus | null; progress: MemoryRebuildProgress | null;
+  chats: MemoryChat[] | null; missingChatIds: string[]; queue: MemoryAutoSaveStatus | null; progress: MemoryRebuildProgress | null;
   searchQuery: string; searchThreshold: number; searchResult: import("../../src/model").MemorySearchDebug | null;
   statusError: string; selectedChatIds: string[]; windowMessageCount: number; from: string; to: string;
 }
@@ -70,7 +70,12 @@ export interface GraphDialog extends DialogState {
   sizes: Map<string, NodeSize>; positions: Map<string, Point>; camera: GraphCamera;
   query: string; appliedQuery: string; searchIds: Set<string> | null; folder: string;
 }
-export type Dialog = StoreDialog | OwnerSettingsDialog | UserDialog | MemoryEditDialog | LinkDialog | LinkEditDialog | ConfirmDialog | ExportDialog | ImportDialog | TextDialog | InfoDialog | GraphDialog;
+export interface ChatBindingDialog extends DialogState {
+  type: "chat-binding"; cardId: string; query: string; filter: "all" | "unbound";
+  loading: boolean; chats: BindableChat[]; selectedIds: string[];
+  failures: Record<string, string>; completed: number; total: number;
+}
+export type Dialog = ChatBindingDialog | StoreDialog | OwnerSettingsDialog | UserDialog | MemoryEditDialog | LinkDialog | LinkEditDialog | ConfirmDialog | ExportDialog | ImportDialog | TextDialog | InfoDialog | GraphDialog;
 export type DialogType = Dialog["type"];
 export type DialogOf<T extends DialogType> = Extract<Dialog, { type: T }>;
 export type DialogInput = {

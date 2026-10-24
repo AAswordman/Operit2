@@ -38,6 +38,48 @@ Widget _harness(Widget child) => MaterialApp(
 
 /// Verifies natural viewport geometry without depending on runtime or theme modules.
 void main() {
+  testWidgets('honors and updates the requested viewport cache extent', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    for (final cache in [0.0, 320.0, 0.0]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 180,
+                height: 240,
+                child: ComposeDslLazyListView(
+                  controller: controller,
+                  scrollDirection: Axis.vertical,
+                  reverse: false,
+                  shrinkWrap: false,
+                  itemExtent: 40,
+                  cacheExtent: cache,
+                  childrenDelegate: SliverChildBuilderDelegate(
+                    (context, index) => Text('Cached $index'),
+                    childCount: 200,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Cached 0'), findsOneWidget);
+      expect(
+        find.text('Cached 13', skipOffstage: false),
+        cache > 0 ? findsOneWidget : findsNothing,
+      );
+      expect(find.text('Cached 100'), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   for (final axis in Axis.values) {
     for (final reverse in [false, true]) {
       for (final shrinkWrap in [false, true]) {

@@ -123,6 +123,7 @@ impl ServerWebSocket for Socket {
 
 #[cfg(test)]
 mod tests {
+    use tokio_tungstenite::tungstenite;
     use super::*;
     use axum::body::Bytes;
     use http_body_util::Full;

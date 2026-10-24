@@ -30,7 +30,7 @@ We hope to gradually deliver an experience like this: start a task on a phone, l
 Each CoreNode can run its own Agent workflow independently. Its capabilities depend on the platform Host, model Provider, and local configuration. The current repository already includes:
 
 - Conversations, session branches, message management, attachments, character cards, character groups, and prompt configuration;
-- Provider configuration, model parameters, tool calls, request queues, and local model directories;
+- Provider configuration, model parameters, tool calls, request queues, and downloadable local chat models using embedded llama.cpp and MNN CPU inference;
 - Workspaces, file operations, project templates, commands, and backup/import/export;
 - Terminal sessions, PTY input, and output streams;
 - Web access, browser automation, workspace browsers, and runtime WebView session projections;
@@ -99,7 +99,7 @@ The exact scope of snapshots, configuration, and identity data is determined by 
 | Web Access | Browser entry point for accessing a running CoreNode | Not a browser node that automatically joins the Space, and not a centralized Agent Server |
 | WebAssembly/browser Host | Local capability boundary of the browser runtime | Separate from the Web Access surface; exact capabilities depend on the browser and current Web build mode |
 | Linux cloud device | Ordinary CoreNode in a Space | Can handle more tasks when it is always online, but does not thereby gain a central identity |
-| ESP32 Edge Node | Device-side Edge Service capability node | Not a complete CoreNode; keeps node-local identity, pairing and Space control state, without Chat/Store execution or business-data replication |
+| [ESP32 Edge Node](docs/edge-architecture.md) | Native device applications and Edge Services | Owns local configuration and bounded operation, participates in Space control and can consume Core services; no full business replica |
 | Server | Future deployment form and Host direction | The current repository does not yet contain a complete Server product that can be published directly |
 
 The repository contains Host adaptation paths for multiple platforms, but "can build" does not mean that cross-device interoperability has been validated. Follow [`BUILDING.md`](BUILDING.md) and the corresponding workflows for platform build, signing, and release conditions.

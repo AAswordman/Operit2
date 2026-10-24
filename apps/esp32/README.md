@@ -1,4 +1,9 @@
-# ESP32 Edge pairing
+# ESP32 Edge firmware
+
+Space responsibilities are defined in [Edge architecture](../../docs/edge-architecture.md).
+This document covers the ESP32-2432S028 implementation and firmware build.
+Tooling and acceptance commands are maintained in the
+[editor README](../../tools/esp32-editor/README.md).
 
 The ESP32 advertises `_operit-edge._tcp` over mDNS. Use the Core application's
 device scan to discover it, start pairing, and enter the code displayed on the
@@ -38,7 +43,10 @@ The native application chooses its data: encrypted configuration persists;
 chat context is an eight-message / 6144-text-byte RAM window, with at most 2048
 bytes per message. No chat database, ToolPkg or business replica journal is
 created. Reboot retains configuration and starts a fresh local conversation.
-Other members disconnecting does not clear a direct conversation.
+Other members disconnecting does not clear a direct conversation in the same
+Space. A Space change retires the old context before validating new settings,
+even when both Spaces use identical model configuration. Late responses from a
+retired context cannot enter the new conversation.
 
 Set the device's `chat` preference with `endpoint`, `model`, optional `apiKey`
 and `systemPrompt`. The endpoint is a complete OpenAI-compatible streaming chat
@@ -53,7 +61,7 @@ native `edge.preferences/read|set|remove` through the existing generic device
 API from a configuration ToolPkg. Preferences are scoped to the target device
 and Space, at most 24 keys and a 6144-byte plaintext file. The protocol exchanges
 only the current per-key state and deletion markers, not unbounded history.
-See [CLI commands](../../../docs/cli-network-control.md).
+See [CLI commands](../../docs/cli-network-control.md).
 
 Without a `chat` configuration, the optional remote Core mode below remains
 available. Existing STT/TTS Stream/ReverseStream processing is retained. The
@@ -95,16 +103,18 @@ chat business replica is persisted on the device.
 
 ## Verification and current limitations
 
-Native scheduler regression tests cover socket reuse across requests, receiver
-survival after request completion, and non-Send request futures. On the
-ESP32-2432S028, three consecutive PairStart requests completed after flashing
-the stack/mirror fix without rebooting. This is **not** verification of complete
-correct-code pairing, Space admission, reconnect, or chat.
+The fixed UI provides pairing-code input, status, Space admission, a bounded
+chat view and conversation metadata list, plugin diagnostics, unpair
+confirmation and local Space-exit confirmation. Text drafts can be supplied by
+the host/editor; a full on-device text keyboard is not implemented. Images use
+text placeholders on the physical device, and arbitrary dynamic layouts are
+not supported.
 
-The fixed self-drawn UI handles pairing, status, Space admission, a bounded
-chat text view, unpair confirmation, and local Space-exit confirmation. In remote mode Core owns full chat history; direct mode uses only the device RAM window. A paired device remains in chat when offline. The host/computer
-composer can send drafts; an on-device keyboard, images, conversation lists,
-animations and dynamic layouts are not currently implemented.
+The simulator compiles actual firmware modules and runs protocol/session tests;
+C/Wasm tests exercise the same renderer. Build the preview before those tests.
+The hardware smoke tool requires an already paired/admitted device and does not
+complete first-pairing or full-chat acceptance. See the editor's verification
+commands and distinguish simulator, build and physical-device results.
 
 ## Recovering from an unavailable Space administrator
 
@@ -147,6 +157,13 @@ The display has a 1024-byte static text buffer for the 640-byte payload plus
 sender labels. Cursor history is bounded; it does not retain past page text.
 UART `device:screen` exposes `chatCachedBytes`, `chatCachedLines`, and
 `chatScrollLine` for checking the real device without a screenshot request.
+
+### Conversation metadata
+
+The list subscribes only when opened and retains at most 24 metadata entries.
+The C UI shows three rows per page. Selecting an entry changes only this Edge's
+view, not the Core application's selected conversation. Viewing and display
+caches remain volatile; no conversation database is replicated to the device.
 
 ### Tool-call cards
 
@@ -231,8 +248,19 @@ These are dependency-source overlays, not an unmodified upstream build, and
 must be reviewed when updating the pinned versions or compiler. Desktop
 builds do not use them.
 
+The firmware release uses Thin LTO to fit the existing 4 MB board and application
+partition. A single codegen unit keeps the Windows linker command within its
+length limit; package-specific Tokio and UUID optimization settings remain.
+
+On Xtensa, the overlays keep the Tokio constructor and ring seal/open as named,
+non-inlined functions so LTO cannot erase the ABI inspection boundaries. These
+attributes do not change their Rust signatures or cryptographic operations.
+The prepared ring files are checked against the expected pinned patch, including
+these boundaries; edited or incomplete overlays fail the build.
+
 `npm run build:firmware` runs `check-xtensa-tokio.py` against the final ELF to
-check the Tokio current-thread constructor and ring seal/open stack frames.
+check those functions' stack frames and incoming stack argument offsets. Missing
+symbols, stack realignment and incorrect offsets remain build failures.
 A successful build alone is not a replacement for hardware pairing and chat
 regression tests.
 

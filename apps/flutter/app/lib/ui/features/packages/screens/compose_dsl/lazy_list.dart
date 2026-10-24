@@ -2,6 +2,10 @@
 
 part of '../ToolPkgUiLauncherScreen.dart';
 
+/// Keeps enough materialized rows ahead of a fast scroll to hide JS round-trip latency.
+const int _composeLazyPrefetchItems = 8;
+const int _composeLazyRefillItems = 2;
+
 /// Describes the fixed-extent window delivered by the page's lazyItems helper.
 class _ComposeLazyWindow {
   /// Retains validated viewport metadata and its existing action identity.
@@ -10,12 +14,38 @@ class _ComposeLazyWindow {
     this.itemCount,
     this.itemExtent,
     this.actionId,
+    this.staticItemCount,
   );
 
   final int firstIndex;
   final int itemCount;
   final double itemExtent;
   final String actionId;
+  final int staticItemCount;
+
+  /// Refills in batches while keeping nearby scrolling inside the delivered nodes.
+  ({int firstIndex, int lastIndex})? rangeToRequest(
+    int first,
+    int last,
+    int loadedCount, {
+    bool rangeIncludesCache = false,
+  }) {
+    // SliverConstraints already include the viewport's cache. Buffering that
+    // interval again requests rows that Flutter will not instantiate yet.
+    final refill = rangeIncludesCache ? 0 : _composeLazyRefillItems;
+    final prefetch = rangeIncludesCache
+        ? _composeLazyRefillItems
+        : _composeLazyPrefetchItems;
+    final neededFirst = math.max(0, first - refill);
+    final neededLast = math.min(itemCount, last + refill);
+    if (neededFirst >= firstIndex && neededLast <= firstIndex + loadedCount) {
+      return null;
+    }
+    return (
+      firstIndex: math.max(0, first - prefetch),
+      lastIndex: math.min(itemCount, last + prefetch),
+    );
+  }
 
   /// Rejects inconsistent window metadata before constructing a Flutter sliver.
   factory _ComposeLazyWindow.parse(Object? raw, int childCount) {
@@ -25,6 +55,7 @@ class _ComposeLazyWindow {
     final first = raw['firstIndex'];
     final count = raw['itemCount'];
     final extent = raw['itemExtent'];
+    final staticCount = raw['staticItemCount'] ?? 0;
     if (first is! num ||
         !first.isFinite ||
         first != first.toInt() ||
@@ -32,7 +63,14 @@ class _ComposeLazyWindow {
         count is! num ||
         !count.isFinite ||
         count != count.toInt() ||
-        count < first + childCount ||
+        count < 0 ||
+        first > count ||
+        staticCount is! num ||
+        !staticCount.isFinite ||
+        staticCount != staticCount.toInt() ||
+        staticCount < 0 ||
+        staticCount > childCount ||
+        count < first + childCount - staticCount ||
         extent is! num ||
         !extent.isFinite ||
         extent <= 0) {
@@ -45,6 +83,7 @@ class _ComposeLazyWindow {
       count.toInt(),
       extent.toDouble(),
       _requiredActionId(raw['onRangeChanged'], 'viewport.onRangeChanged'),
+      staticCount.toInt(),
     );
   }
 }
@@ -69,7 +108,7 @@ class _ComposeLazyList extends StatefulWidget {
   final bool autoScrollToEnd;
   final double spacing;
   final Alignment alignment;
-  final List<_ComposeDslNode> nodes;
+  final List<_ComposeProgramNode> nodes;
   final _ComposeLazyWindow? window;
   final Future<Object?> Function(String, [Object?]) onAction;
   final IndexedWidgetBuilder itemBuilder;
@@ -98,7 +137,8 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.window?.itemCount != widget.window?.itemCount ||
         oldWidget.window?.actionId != widget.window?.actionId ||
-        oldWidget.window?.itemExtent != widget.window?.itemExtent) {
+        oldWidget.window?.itemExtent != widget.window?.itemExtent ||
+        oldWidget.window?.staticItemCount != widget.window?.staticItemCount) {
       _lastRequested = null;
     }
   }
@@ -126,7 +166,7 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
   double _itemExtent(_ComposeLazyWindow window) =>
       window.itemExtent * MediaQuery.textScalerOf(context).scale(14) / 14;
 
-  /// Serializes range actions and preloads two items on either side of the visible interval.
+  /// Serializes range actions and preloads a buffered interval around the viewport.
   Future<void> _requestRange() async {
     final window = widget.window;
     if (window == null || _rangeInFlight || window.itemCount == 0) return;
@@ -135,24 +175,20 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
     final offset = position.pixels.clamp(0.0, position.maxScrollExtent);
     final first = math.min(
       window.itemCount,
-      math.max(0, (offset / extent).floor() - 2),
+      math.max(0, (offset / extent).floor()),
     );
     final last = math.min(
       window.itemCount,
-      ((offset + position.viewportDimension) / extent).ceil() + 2,
+      ((offset + position.viewportDimension) / extent).ceil(),
     );
-    if (first >= window.firstIndex &&
-        last <= window.firstIndex + widget.nodes.length) {
-      return;
-    }
-    final range = (firstIndex: first, lastIndex: last);
-    if (range == _lastRequested) return;
+    final range = window.rangeToRequest(first, last, widget.nodes.length);
+    if (range == null || range == _lastRequested) return;
     _lastRequested = range;
     _rangeInFlight = true;
     try {
       await widget.onAction(window.actionId, {
-        'firstIndex': first,
-        'lastIndex': last,
+        'firstIndex': range.firstIndex,
+        'lastIndex': range.lastIndex,
       });
     } finally {
       _rangeInFlight = false;
@@ -197,6 +233,11 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
   Widget build(BuildContext context) {
     _scheduleLayout();
     final window = widget.window;
+    if ((window?.staticItemCount ?? 0) > 0) {
+      throw StateError(
+        'Compose lazy lists with a static prefix must use the sliver host.',
+      );
+    }
     final itemCount = window == null ? widget.nodes.length : window.itemCount;
     final firstIndex = window == null ? 0 : window.firstIndex;
     final indices = <Object, int>{};
@@ -230,7 +271,9 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
             reverse: widget.reverse,
             shrinkWrap: !bounded,
             itemExtent: window == null ? null : _itemExtent(window),
-            cacheExtent: window == null ? null : 0,
+            cacheExtent: window == null
+                ? null
+                : _itemExtent(window) * _composeLazyPrefetchItems,
             childrenDelegate: SliverChildBuilderDelegate(
               (context, index) => _item(context, index, itemCount),
               childCount: itemCount,

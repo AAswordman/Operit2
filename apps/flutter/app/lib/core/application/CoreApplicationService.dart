@@ -2,9 +2,10 @@
 
 import 'dart:async';
 import 'PluginHotReload.dart';
+import 'WorkActivityPresentationService.dart';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
+import 'package:operit_keep_alive/operit_keep_alive.dart';
 import 'package:flutter/widgets.dart';
 
 import '../bridge/ProxyCoreRuntimeBridge.dart';
@@ -21,7 +22,6 @@ class CoreApplicationService with WidgetsBindingObserver {
 
   static final CoreApplicationService instance = CoreApplicationService._();
   static const String _logTag = 'CoreApplication';
-  static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
   static const GeneratedCoreProxyClients _coreClients =
       GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
@@ -32,7 +32,7 @@ class CoreApplicationService with WidgetsBindingObserver {
 
   bool _initialized = false;
   AppLifecycleState? _lastEmittedLifecycleState;
-  bool _localBackgroundServiceStartAttempted = false;
+  KeepAliveLease? _coreResidency;
   Future<void>? _runtimeServicesStart;
   Object? _pendingStartupError;
 
@@ -48,22 +48,29 @@ class CoreApplicationService with WidgetsBindingObserver {
   /// Installs process-level Core lifecycle listeners.
   void initialize() {
     if (_initialized) {
-      ClientLogger.d(
+      ClientLogger.v(
         'initialize skipped alreadyInitialized=true',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level1,
       );
       return;
     }
     final stopwatch = Stopwatch()..start();
-    ClientLogger.i('initialize start', tag: _logTag);
+    ClientLogger.v(
+      'initialize start',
+      tag: _logTag,
+      verboseLevel: VerboseLevel.level1,
+    );
     _initialized = true;
+    OperitKeepAlive.instance.report.addListener(_handleResidencyChanged);
     PluginHotReload.register(_coreClients);
     WidgetsBinding.instance.addObserver(this);
     _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
     unawaited(_startRuntimeServices());
-    ClientLogger.i(
+    ClientLogger.v(
       'initialize done elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
+      verboseLevel: VerboseLevel.level1,
     );
   }
 
@@ -73,6 +80,7 @@ class CoreApplicationService with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed &&
         _runtimeManager.runtimeConfigured) {
       unawaited(_syncHostSubscriber());
+      unawaited(WorkActivityPresentationService.instance.refreshCapabilities());
     }
     unawaited(_emitLifecycleEvent(state));
   }
@@ -155,10 +163,18 @@ class CoreApplicationService with WidgetsBindingObserver {
   Future<void> _startRuntimeServices() {
     final activeStart = _runtimeServicesStart;
     if (activeStart != null) {
-      ClientLogger.d('runtime services start already active', tag: _logTag);
+      ClientLogger.v(
+        'runtime services start already active',
+        tag: _logTag,
+        verboseLevel: VerboseLevel.level1,
+      );
       return activeStart;
     }
-    ClientLogger.i('runtime services start scheduled', tag: _logTag);
+    ClientLogger.v(
+      'runtime services start scheduled',
+      tag: _logTag,
+      verboseLevel: VerboseLevel.level1,
+    );
     final start = _startRuntimeServicesOnce();
     _runtimeServicesStart = start;
     return start.whenComplete(() {
@@ -180,13 +196,15 @@ class CoreApplicationService with WidgetsBindingObserver {
     }
     try {
       ClientLogger.attachPersistentStorage();
-      ClientLogger.i(
+      ClientLogger.v(
         'runtime services start localConfirmed=${_runtimeManager.config.confirmed}',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level1,
       );
-      await _startLocalBackgroundService();
+      await _retainCoreRuntime();
       await _syncHostSubscriber();
       AppNotificationService.instance.initialize();
+      await WorkActivityPresentationService.instance.initialize();
       if (!_runtimeManager.config.confirmed) {
         ClientLogger.i(
           'runtime services start done localStorageConfirmed=false elapsedMs=${stopwatch.elapsedMilliseconds}',
@@ -236,23 +254,27 @@ class CoreApplicationService with WidgetsBindingObserver {
     }
   }
 
-  /// Starts the Android foreground Core service for a local runtime.
-  Future<void> _startLocalBackgroundService() async {
-    if (_localBackgroundServiceStartAttempted ||
-        kIsWeb ||
-        defaultTargetPlatform != TargetPlatform.android) {
-      ClientLogger.d(
-        'local background service not started attempted=$_localBackgroundServiceStartAttempted isWeb=$kIsWeb platform=$defaultTargetPlatform',
-        tag: _logTag,
-      );
-      return;
-    }
-    final stopwatch = Stopwatch()..start();
-    ClientLogger.i('local background service start', tag: _logTag);
-    _localBackgroundServiceStartAttempted = true;
-    await _runtimeChannel.invokeMethod<void>('startLocalCoreService');
+  /// Retains the process-owned Core independently of pages and window visibility.
+  Future<void> _retainCoreRuntime() async {
+    if (_coreResidency != null) return;
+    final lease = await OperitKeepAlive.instance.acquire(
+      reason: 'Core runtime',
+    );
+    _coreResidency = lease;
     ClientLogger.i(
-      'local background service done elapsedMs=${stopwatch.elapsedMilliseconds}',
+      'Core residency protection=${lease.report.protection.name} '
+      'closeToTray=${lease.report.closeToTray} detail=${lease.report.detail}',
+      tag: _logTag,
+    );
+  }
+
+  /// Records actual host protection changes, including expiration and native resource loss.
+  void _handleResidencyChanged() {
+    final report = OperitKeepAlive.instance.report.value;
+    if (report == null) return;
+    ClientLogger.i(
+      'Core residency changed protection=${report.protection.name} '
+      'leases=${report.activeLeases} detail=${report.detail}',
       tag: _logTag,
     );
   }
@@ -263,21 +285,31 @@ class CoreApplicationService with WidgetsBindingObserver {
     final installed = RuntimeHostInteractionSubscriber.isInstalled;
     if (shouldInstall && !installed) {
       final subscriberStopwatch = Stopwatch()..start();
-      ClientLogger.i('host subscriber install start', tag: _logTag);
+      ClientLogger.v(
+        'host subscriber install start',
+        tag: _logTag,
+        verboseLevel: VerboseLevel.level1,
+      );
       RuntimeHostInteractionSubscriber.install();
-      ClientLogger.i(
+      ClientLogger.v(
         'host subscriber install done elapsedMs=${subscriberStopwatch.elapsedMilliseconds}',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level1,
       );
       return;
     }
     if (!shouldInstall && installed) {
       final subscriberStopwatch = Stopwatch()..start();
-      ClientLogger.i('host subscriber uninstall start', tag: _logTag);
+      ClientLogger.v(
+        'host subscriber uninstall start',
+        tag: _logTag,
+        verboseLevel: VerboseLevel.level1,
+      );
       await RuntimeHostInteractionSubscriber.uninstall();
-      ClientLogger.i(
+      ClientLogger.v(
         'host subscriber uninstall done elapsedMs=${subscriberStopwatch.elapsedMilliseconds}',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level1,
       );
     }
   }

@@ -7,7 +7,6 @@ import 'PackageGrid.dart';
 String extensionScopeLabel(String scope) => switch (scope) {
   'space' => '设备空间',
   'device' => '仅本设备',
-  'builtin' => '内置',
   _ => throw StateError('未知扩展位置：$scope'),
 };
 
@@ -81,7 +80,7 @@ Future<bool> changeExtensionScope({
   return true;
 }
 
-/// Shows a location switch for portable extensions and a fixed label for built-ins.
+/// Shows the owner scope and respects declared installation restrictions.
 class ExtensionScopeAction extends StatelessWidget {
   /// Creates a location action without inferring scope from filenames.
   const ExtensionScopeAction({
@@ -89,19 +88,30 @@ class ExtensionScopeAction extends StatelessWidget {
     required this.scope,
     required this.onMove,
     this.localMcp = false,
+    this.requiredScope,
   });
   final String scope;
   final VoidCallback onMove;
   final bool localMcp;
+  final String? requiredScope;
 
   /// Builds the portable move button or the immutable location label.
   @override
   Widget build(BuildContext context) {
-    if (scope == 'builtin' || localMcp) {
+    if (requiredScope != null) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Text(
-          localMcp ? '仅本设备 · 本地部署' : '内置',
+          '仅${extensionScopeLabel(requiredScope!)}',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+      );
+    }
+    if (localMcp) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Text(
+          '仅本设备 · 本地部署',
           style: Theme.of(context).textTheme.labelSmall,
         ),
       );
@@ -133,7 +143,7 @@ class ScopedExtensionSliver<T> extends StatelessWidget {
   /// Builds one header and lazy list for each nonempty explicit scope.
   @override
   Widget build(BuildContext context) {
-    final grouped = <String, List<T>>{'space': [], 'device': [], 'builtin': []};
+    final grouped = <String, List<T>>{'space': [], 'device': []};
     for (final item in items) {
       final scope = scopes[identity(item)];
       if (!grouped.containsKey(scope)) {

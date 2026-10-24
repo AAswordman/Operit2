@@ -10,12 +10,14 @@ import subprocess
 import sys
 import tarfile
 import time
+import zipfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 from common import (
     DIST_DIR,
+    release_asset_name,
     FLUTTER_APP_DIR,
     REPO_ROOT,
     copy_required_file,
@@ -24,6 +26,7 @@ from common import (
     flutter_command,
     flutter_pub_get,
     read_properties,
+    require_command,
     run,
 )
 
@@ -81,7 +84,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=DIST_DIR / "operit2-app-ohos-arm64.hap",
+        default=DIST_DIR / release_asset_name("app", "ohos", "arm64", "hap"),
     )
     parser.add_argument("--build-name")
     parser.add_argument("--build-number")
@@ -103,6 +106,7 @@ def main() -> int:
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
     prepare_ohos_package_dependencies()
     build_unsigned_ohos_hap(args, env)
+    package_ohos_terminal_hnp()
     sign_ohos_hap()
     copy_required_file(OHOS_HAP_PATH, args.output)
     print(f"OpenHarmony HAP: {args.output}", flush=True)
@@ -126,9 +130,36 @@ def build_unsigned_ohos_hap(args: argparse.Namespace, env: dict[str, str]) -> No
         + (["--build-name", args.build_name] if args.build_name else [])
         + (["--build-number", args.build_number] if args.build_number else [])
     )
-    run([flutter_command(), *command], cwd=FLUTTER_APP_DIR, env=env)
+    run([require_command("fvm"), "flutter", *command], cwd=FLUTTER_APP_DIR, env=env)
     if not OHOS_UNSIGNED_HAP_PATH.is_file():
         raise RuntimeError(f"OpenHarmony unsigned HAP was not produced: {OHOS_UNSIGNED_HAP_PATH}")
+
+
+# Packages mandatory terminal HNPs that the installed Hvigor plugin does not collect.
+def package_ohos_terminal_hnp() -> None:
+    """Adds the declared ARM64 terminal runtime before signing and verifies its payload."""
+    directory = OHOS_PROJECT_DIR / "entry" / "hnp" / "arm64-v8a"
+    names = ("harmonix-public.hnp", "harmonix-private.hnp")
+    for name in names:
+        path = directory / name
+        if not path.is_file():
+            raise RuntimeError(f"Required OHOS terminal HNP is missing: {path}")
+        with zipfile.ZipFile(path) as package:
+            executable = package.read("sysroot/bin/qemu-harmonix-aarch64")
+            if executable[:4] != b"\x7fELF" or int.from_bytes(executable[18:20], "little") != 183:
+                raise RuntimeError(f"OHOS terminal executable is not an ARM64 ELF: {path}")
+    with zipfile.ZipFile(OHOS_UNSIGNED_HAP_PATH, "a") as hap:
+        for name in names:
+            destination = f"hnp/arm64-v8a/{name}"
+            if destination in hap.namelist():
+                raise RuntimeError(f"OHOS HNP is already packaged by another build step: {destination}")
+            hap.write(directory / name, destination, compress_type=zipfile.ZIP_STORED)
+    with zipfile.ZipFile(OHOS_UNSIGNED_HAP_PATH) as hap:
+        declared = json.loads(hap.read("module.json"))["module"]["hnpPackages"]
+        for entry in declared:
+            destination = f"hnp/arm64-v8a/{entry['package']}"
+            if destination not in hap.namelist():
+                raise RuntimeError(f"Declared OHOS terminal runtime was not packaged: {destination}")
 
 
 # Signs the unsigned OpenHarmony HAP with project release signing material.
@@ -368,80 +399,6 @@ def patch_ohos_flutter_embedding_har(har_path: Path) -> None:
 # Returns source patches for Flutter OHOS embedding files that reference newer SDK APIs.
 def ohos_flutter_embedding_replacements() -> dict[str, list[tuple[str, str]]]:
     return {
-        "package/src/main/ets/plugin/editing/OhosAutoFillHelper.ets": [
-            ("  autoFillType: autoFillManager.AutoFillType;", "  autoFillType: number;"),
-            (
-                "  private static toSdkAutoFillType(value: number): autoFillManager.AutoFillType {\n"
-                "    return value as autoFillManager.AutoFillType;\n"
-                "  }",
-                "  private static toSdkAutoFillType(value: number): number {\n"
-                "    return value;\n"
-                "  }",
-            ),
-            (
-                "  private static toManagerViewData(viewData: OhosViewData): autoFillManager.ViewData {",
-                "  private static toManagerViewData(viewData: OhosViewData): OhosViewData {",
-            ),
-            (
-                "    return managerViewData as autoFillManager.ViewData;",
-                "    return managerViewData as OhosViewData;",
-            ),
-            (
-                "  static parseFillResult(viewData: autoFillManager.ViewData): Map<number, string> {",
-                "  static parseFillResult(viewData: OhosViewData): Map<number, string> {",
-            ),
-            (
-                "      triggerType: AUTOFILL_TRIGGER_AUTO_REQUEST as autoFillManager.AutoFillTriggerType,\n"
-                "    } as autoFillManager.FillRequest;\n"
-                "    const callback: autoFillManager.AutoFillCallback = {\n"
-                "      onSuccess: (filledViewData: autoFillManager.ViewData): void => {",
-                "      triggerType: AUTOFILL_TRIGGER_AUTO_REQUEST,\n"
-                "    };\n"
-                "    const callback = {\n"
-                "      onSuccess: (filledViewData: OhosViewData): void => {",
-            ),
-            (
-                "      onFailure: (result: autoFillManager.FillFailureResult): void => {",
-                "      onFailure: (result: FillFailureResult): void => {",
-            ),
-            (
-                "      autoFillManager.requestAutoFill(uiContext, fillRequest, callback);",
-                "      (autoFillManager as ESObject).requestAutoFill(uiContext, fillRequest, callback);",
-            ),
-            (
-                "      const businessError = error as BusinessError;",
-                "      const businessError = error as ErrorPayload;",
-            ),
-            (
-                "    const saveRequest: autoFillManager.SaveRequest = {\n"
-                "      viewData: OhosAutoFillHelper.toManagerViewData(viewData),\n"
-                "    };",
-                "    const saveRequest = {\n"
-                "      viewData: OhosAutoFillHelper.toManagerViewData(viewData),\n"
-                "    };",
-            ),
-            (
-                "      autoFillManager.requestAutoSave(uiContext, saveRequest, napiCallback);",
-                "      (autoFillManager as ESObject).requestAutoSave(uiContext, saveRequest, napiCallback);",
-            ),
-            (
-                "interface AutoFillCustomData {\n"
-                "  data: Record<string, string>;\n"
-                "}",
-                "interface AutoFillCustomData {\n"
-                "  data: Record<string, string>;\n"
-                "}\n"
-                "\n"
-                "interface FillFailureResult {\n"
-                "  errCode: number;\n"
-                "}\n"
-                "\n"
-                "interface ErrorPayload {\n"
-                "  code?: number;\n"
-                "  message?: string;\n"
-                "}",
-            ),
-        ],
         "package/src/main/ets/embedding/ohos/KeyEventHandler.ets": [
             (
                 "      // Use event.isCapsLockOn to check CapsLock state\n"
@@ -454,16 +411,6 @@ def ohos_flutter_embedding_replacements() -> dict[str, list[tuple[str, str]]]:
                 "          const isNumLockOn = event.isNumLockOn !== undefined ? event.isNumLockOn : true; // Default to true if not available",
                 "          // Uses the ArkUI modifier state API for NumLock.\n"
                 "          const isNumLockOn = this.getModifierKeyStateSafe(event, ['NumLock']);",
-            ),
-        ],
-        "package/src/main/ets/embedding/ohos/EmbeddingNodeController.ets": [
-            (
-                "      (this.builderNode as ESObject)?.postInputEventWithStrategy(event, CompetitionStrategy.DEFAULT);",
-                "      (this.builderNode as ESObject)?.postInputEventWithStrategy(event, 0);",
-            ),
-            (
-                "      return (this.builderNode as ESObject)?.postInputEventWithStrategy(event, CompetitionStrategy.DEFAULT) as boolean;",
-                "      return (this.builderNode as ESObject)?.postInputEventWithStrategy(event, 0) as boolean;\n"
             ),
         ],
         "package/src/main/ets/embedding/ohos/PiPVisibilityBridge.ets": [
@@ -494,7 +441,7 @@ def stage_ohos_flutter_plugins() -> list[str]:
     ohos_plugins = graph.get("plugins", {}).get("ohos", [])
     plugin_names: list[str] = []
     for plugin in ohos_plugins:
-        if plugin.get("dev_dependency") is True or plugin.get("native_build") is False:
+        if plugin.get("native_build") is False:
             continue
         name = plugin["name"]
         source = Path(plugin["path"]) / "ohos"
@@ -686,6 +633,7 @@ def build_ohos_rust_bridge() -> None:
                 f"-C link-arg=--target={OHOS_CLANG_TARGET} "
                 f"-C link-arg=--sysroot={sysroot_arg}"
             ),
+            "OHOS_NATIVE_HOME": str(native_dir),
             "CC_aarch64_unknown_linux_ohos": str(clang),
             "CXX_aarch64_unknown_linux_ohos": str(executable_path(llvm_bin / "clang++")),
             "AR_aarch64_unknown_linux_ohos": str(llvm_ar),

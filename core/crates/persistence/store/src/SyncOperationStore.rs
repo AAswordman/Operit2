@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::NetworkControlStore::NETWORK_CONTROL_SYNC_DOMAIN;
 use crate::PreferencesEncryption::PreferencesEncryption;
 use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, runtimeStoragePath};
 use crate::RuntimeStorePaths::RuntimeStorePaths;
@@ -25,6 +26,11 @@ pub enum SyncOperationStoreError {
     #[error("{0}")]
     Message(String),
 }
+
+/// Largest serialized operation page one synchronization exchange materializes.
+/// The page stays far below the Link message ceiling so peak memory is bounded
+/// by policy instead of by how much a device has pending.
+pub const DEFAULT_SYNC_PAGE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncClock {
@@ -61,11 +67,122 @@ impl SyncClock {
     }
 }
 
+/// Supplies operation membership independently of an application's materialization clock.
+pub trait SyncOperationKnowledge {
+    /// Returns the prefix below which every source sequence is already known.
+    fn sequenceFor(&self, origin: &str) -> i64;
+    /// Reports whether this exact source operation is already durably known.
+    fn containsSequence(&self, origin: &str, sequence: i64) -> bool;
+    /// Finds the next missing sequence after a cursor, skipping known intervals.
+    fn nextMissingSequence(&self, origin: &str, after: i64) -> Option<i64>;
+}
+
+impl SyncOperationKnowledge for SyncClock {
+    /// Reads the contiguous observation boundary used by store callers.
+    fn sequenceFor(&self, origin: &str) -> i64 {
+        SyncClock::sequenceFor(self, origin)
+    }
+    /// Tests membership in a complete observed prefix.
+    fn containsSequence(&self, origin: &str, sequence: i64) -> bool {
+        sequence <= self.sequenceFor(origin)
+    }
+    /// Skips the complete observed prefix before scanning source records.
+    fn nextMissingSequence(&self, origin: &str, after: i64) -> Option<i64> {
+        after.max(self.sequenceFor(origin)).checked_add(1)
+    }
+}
+
+/// Advertises exact durable receipts, including gaps between independent stores.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncReceipt {
+    pub ranges: BTreeMap<String, Vec<[i64; 2]>>,
+}
+
+impl SyncReceipt {
+    /// Rejects malformed ranges rather than acknowledging an ambiguous interval.
+    pub fn validate(&self) -> Result<(), String> {
+        for (origin, ranges) in &self.ranges {
+            if origin.is_empty() || origin.len() > 256 {
+                return Err("Invalid synchronization receipt origin".into());
+            }
+            let mut previous = 0i64;
+            for [start, end] in ranges {
+                if *start <= 0 || end < start || *start <= previous {
+                    return Err(format!(
+                        "Invalid synchronization receipt ranges for {origin}"
+                    ));
+                }
+                previous = *end;
+            }
+        }
+        Ok(())
+    }
+    /// Adds one committed operation without acknowledging any missing predecessor.
+    pub fn observe(&mut self, origin: &str, sequence: i64) {
+        self.observeRange(origin, sequence, sequence);
+    }
+    /// Unions one durable source interval with the existing exact intervals.
+    pub fn observeRange(&mut self, origin: &str, start: i64, end: i64) {
+        let ranges = self.ranges.entry(origin.to_owned()).or_default();
+        let first = ranges.partition_point(|range| range[1].saturating_add(1) < start);
+        let mut merged = [start, end];
+        let mut last = first;
+        while last < ranges.len() && ranges[last][0] <= merged[1].saturating_add(1) {
+            merged[0] = merged[0].min(ranges[last][0]);
+            merged[1] = merged[1].max(ranges[last][1]);
+            last += 1;
+        }
+        ranges.splice(first..last, [merged]);
+    }
+    /// Combines receipts from journals and transactional storage engines.
+    pub fn merge(&mut self, other: Self) {
+        for (origin, ranges) in other.ranges {
+            for [start, end] in ranges {
+                self.observeRange(&origin, start, end);
+            }
+        }
+    }
+}
+
+impl SyncOperationKnowledge for SyncReceipt {
+    /// Returns only an actually received prefix, leaving sparse gaps requestable.
+    fn sequenceFor(&self, origin: &str) -> i64 {
+        match self.ranges.get(origin).and_then(|ranges| ranges.first()) {
+            Some([1, end]) => *end,
+            _ => 0,
+        }
+    }
+    /// Tests exact membership even when later operations have already arrived.
+    fn containsSequence(&self, origin: &str, sequence: i64) -> bool {
+        let Some(ranges) = self.ranges.get(origin) else {
+            return false;
+        };
+        let index = ranges.partition_point(|range| range[0] <= sequence);
+        index > 0 && sequence <= ranges[index - 1][1]
+    }
+    /// Skips an exact known interval without skipping its missing predecessor.
+    fn nextMissingSequence(&self, origin: &str, after: i64) -> Option<i64> {
+        let next = after.checked_add(1)?;
+        let Some(ranges) = self.ranges.get(origin) else {
+            return Some(next);
+        };
+        let index = ranges.partition_point(|range| range[0] <= next);
+        if index > 0 && next <= ranges[index - 1][1] {
+            ranges[index - 1][1].checked_add(1)
+        } else {
+            Some(next)
+        }
+    }
+}
+
 /// Declares whether one operation is a replaceable entity state or an ordered transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncOperationSemantics {
+    /// Replaces one declared entity state according to its owner's conflict order.
     EntityState,
+    /// Preserves an immutable ordered mutation for replay and commits the owner's resolved plan atomically.
+    /// Conflict resolution belongs to the owner; this flag does not declare cross-dataset atomicity.
     Transaction,
 }
 
@@ -158,7 +275,19 @@ impl SyncOperationOrder {
     /// Builds the conflict order carried by one synchronization operation.
     pub fn fromOperation(operation: &SyncOperation) -> Self {
         Self {
-            createdAt: operation.createdAt,
+            createdAt: match (
+                operation.domain.as_str(),
+                operation
+                    .payload
+                    .get("contractVersion")
+                    .and_then(Value::as_u64),
+            ) {
+                ("preferences", Some(1)) => operation.payload["logicalTime"]
+                    .as_i64()
+                    .expect("validated preference logical time"),
+                ("runtime_file", _) if operation.payload["initial"] == true => 1,
+                _ => operation.createdAt,
+            },
             originDeviceId: operation.originDeviceId.clone(),
             sequence: operation.sequence,
         }
@@ -255,6 +384,18 @@ struct SyncOperationStoreSharedState {
     exportFloors: Mutex<SyncOperationCachedValue<BTreeMap<String, i64>>>,
     localDeviceId: Mutex<SyncOperationCachedValue<Option<String>>>,
     operationLogs: Mutex<HashMap<String, Arc<Mutex<SyncOperationLogIndex>>>>,
+    receiveState: Mutex<SyncOperationCachedValue<SyncReceiveState>>,
+    application: Mutex<()>,
+    preferenceOutboxes: Mutex<SyncOperationCachedValue<BTreeMap<String, bool>>>,
+}
+
+/// Keeps durable receipt membership after completed native history is compacted.
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct SyncReceiveState {
+    receipt: SyncReceipt,
+    pending: BTreeMap<String, SyncOperation>,
+    #[serde(default)]
+    fingerprints: BTreeMap<String, String>,
 }
 
 struct SyncOperationCachedValue<T> {
@@ -283,6 +424,7 @@ struct SyncOperationLogIndex {
     sequenceOffsets: BTreeMap<i64, u64>,
     highestSequence: i64,
     encodedByteLength: u64,
+    needsSeparator: bool,
     findings: Vec<OperationLogLineFinding>,
 }
 
@@ -337,6 +479,65 @@ impl SyncOperationStore {
         )
     }
 
+    /// Registers a dataset before its first durable state-and-outbox commit.
+    pub(crate) fn registerPreferenceOutbox(
+        &self,
+        path: &str,
+        encrypted: bool,
+    ) -> Result<(), SyncOperationStoreError> {
+        let mut cached =
+            lockSyncState(&self.sharedState.preferenceOutboxes, "preference outboxes")?;
+        let registryPath = format!("{}/preference_outboxes.json", self.rootPath);
+        let mut registry = self.loadCachedJson(&mut cached, &registryPath)?.clone();
+        match registry.get(path) {
+            Some(previous) if *previous != encrypted => {
+                return Err(SyncOperationStoreError::Message(
+                    "Conflicting preference outbox encryption policy".into(),
+                ))
+            }
+            Some(_) => return Ok(()),
+            None => {}
+        }
+        registry.insert(path.into(), encrypted);
+        self.storageHost
+            .writeBytesAtomically(&registryPath, &serde_json::to_vec(&registry)?)?;
+        cached.value = registry;
+        Ok(())
+    }
+
+    /// Publishes only immutable operations whose owning business snapshot has already committed.
+    pub fn publishPreferenceOutboxes(&self) -> Result<Vec<String>, SyncOperationStoreError> {
+        let registry = {
+            let mut cached =
+                lockSyncState(&self.sharedState.preferenceOutboxes, "preference outboxes")?;
+            self.loadCachedJson(
+                &mut cached,
+                &format!("{}/preference_outboxes.json", self.rootPath),
+            )?
+            .clone()
+        };
+        let mut errors = Vec::new();
+        for (path, encrypted) in registry {
+            let store = if encrypted {
+                crate::PreferencesDataStore::PreferencesDataStore::newEncryptedWithStorage(
+                    self.storageHost.clone(),
+                    path.clone(),
+                )
+            } else {
+                crate::PreferencesDataStore::PreferencesDataStore::newWithStorage(
+                    self.storageHost.clone(),
+                    path.clone(),
+                )
+            };
+            if let Err(error) = store.publishOutbox(self) {
+                let error = format!("preference outbox path={path}: {error}");
+                operit_util::AppLogger::AppLogger::w("CoreSyncTrace", &error);
+                errors.push(error);
+            }
+        }
+        Ok(errors)
+    }
+
     /// Appends a local operation and advances the local device sequence.
     pub fn appendLocalOperation(
         &self,
@@ -367,8 +568,8 @@ impl SyncOperationStore {
             createdAt: currentTimeMillis()?,
             schemaVersion: 1,
         };
-        let operationOffset = operationLog.encodedByteLength;
-        let writtenBytes = self.appendOperationLine(&op)?;
+        let operationOffset = operationLog.encodedByteLength + u64::from(operationLog.needsSeparator);
+        let writtenBytes = self.appendOperationLine(&op, &mut operationLog)?;
         if let Some(operations) = operationLog.domainOperations.get_mut(&op.domain) {
             operations.push(op.clone());
         }
@@ -387,93 +588,6 @@ impl SyncOperationStore {
         self.recordAppliedOperation(&op)?;
         publishSyncMutation();
         Ok(op)
-    }
-
-    /// Reuses the last identical state for one local entity when recovering a
-    /// record publication. Transaction commands must never use this shortcut.
-    #[allow(non_snake_case)]
-    pub fn appendLocalStateIfChanged(
-        &self,
-        originDeviceId: &str,
-        mutation: NewSyncOperation,
-    ) -> Result<SyncOperation, SyncOperationStoreError> {
-        if mutation.semantics != SyncOperationSemantics::EntityState {
-            return Err(SyncOperationStoreError::Message(
-                "Idempotent state append requires EntityState semantics".into(),
-            ));
-        }
-        let content = self.readOperationLog(originDeviceId)?;
-        let mut latest = None;
-        for line in content.lines().filter(|line| !line.trim().is_empty()) {
-            let operation: SyncOperation = serde_json::from_str(line)?;
-            if operation.domain == mutation.domain
-                && operation.entityType == mutation.entityType
-                && operation.entityId == mutation.entityId
-            {
-                latest = Some(self.decodeOperationPayload(operation)?);
-            }
-        }
-        if let Some(operation) = latest {
-            if operation.operation == mutation.operation
-                && operation.semantics == mutation.semantics
-                && operation.payload == mutation.payload
-            {
-                self.recoverAppendedOperation(&operation)?;
-                return Ok(operation);
-            }
-        }
-        self.appendLocalOperation(originDeviceId, mutation)
-    }
-
-    /// Reuses an identical final preference transaction when retrying journal publication.
-    /// Later edits to the same file make a transaction a new business event.
-    #[allow(non_snake_case)]
-    pub fn appendLocalPreferencesTransactionIfChanged(
-        &self,
-        originDeviceId: &str,
-        mutation: NewSyncOperation,
-    ) -> Result<SyncOperation, SyncOperationStoreError> {
-        if mutation.domain != "preferences"
-            || mutation.operation != "transaction"
-            || mutation.semantics != SyncOperationSemantics::Transaction
-        {
-            return Err(SyncOperationStoreError::Message(
-                "Preference transaction recovery requires an atomic preferences operation".into(),
-            ));
-        }
-        let path = mutation
-            .payload
-            .get("storagePath")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                SyncOperationStoreError::Message(
-                    "Preference transaction is missing its storage path".into(),
-                )
-            })?;
-        let content = self.readOperationLog(originDeviceId)?;
-        let mut latest = None;
-        for line in content.lines().filter(|line| !line.trim().is_empty()) {
-            let operation: SyncOperation = serde_json::from_str(line)?;
-            if operation.domain != "preferences" {
-                continue;
-            }
-            let decoded = self.decodeOperationPayload(operation)?;
-            if decoded.payload.get("storagePath").and_then(Value::as_str) == Some(path) {
-                latest = Some(decoded);
-            }
-        }
-        if let Some(operation) = latest {
-            if operation.entityType == mutation.entityType
-                && operation.entityId == mutation.entityId
-                && operation.operation == mutation.operation
-                && operation.semantics == mutation.semantics
-                && operation.payload == mutation.payload
-            {
-                self.recoverAppendedOperation(&operation)?;
-                return Ok(operation);
-            }
-        }
-        self.appendLocalOperation(originDeviceId, mutation)
     }
 
     /// Completes metadata after an acknowledged log append but failed later
@@ -539,6 +653,18 @@ impl SyncOperationStore {
         if operations.is_empty() {
             return Ok(());
         }
+        let mut identities = BTreeMap::new();
+        for operation in operations {
+            if let Some(previous) = identities.insert(&operation.opId, operation) {
+                if previous != operation {
+                    return Err(SyncOperationStoreError::Message(format!(
+                        "Conflicting immutable operation {}",
+                        operation.opId
+                    )));
+                }
+            }
+            self.containsIdenticalOperation(operation)?;
+        }
         let encryption = if operations.iter().any(encryptedPreferenceSyncOperation) {
             Some(
                 PreferencesEncryption::load_or_create(self.storageHost.as_ref())
@@ -559,6 +685,7 @@ impl SyncOperationStore {
         let mut clock = self
             .loadCachedJson(&mut clockState, &self.clockPath())?
             .clone();
+        self.registerDevices(&operationsByOrigin.keys().cloned().collect())?;
         let mut clockChanged = false;
         let mut appendedOrigins = BTreeSet::new();
         for (originDeviceId, originOperations) in operationsByOrigin {
@@ -568,7 +695,7 @@ impl SyncOperationStore {
             let mut content = Vec::new();
             let mut appendedOperations = Vec::new();
             let mut appendedOperationIds = BTreeSet::new();
-            let mut nextOffset = operationLog.encodedByteLength;
+            let mut nextOffset = operationLog.encodedByteLength + u64::from(operationLog.needsSeparator);
             for operation in originOperations {
                 if operationLog.operationIds.contains(&operation.opId)
                     || appendedOperationIds.contains(&operation.opId)
@@ -577,9 +704,6 @@ impl SyncOperationStore {
                         clock.setSequence(originDeviceId.clone(), operation.sequence);
                         clockChanged = true;
                     }
-                    continue;
-                }
-                if operation.sequence <= clock.sequenceFor(&originDeviceId) {
                     continue;
                 }
                 let storedOperation =
@@ -595,13 +719,14 @@ impl SyncOperationStore {
                 appendedOperationIds.insert(operation.opId.clone());
                 appendedOperations.push((operation, nextOffset, lineLength));
                 nextOffset += lineLength;
-                clock.setSequence(originDeviceId.clone(), operation.sequence);
-                clockChanged = true;
+                if operation.sequence > clock.sequenceFor(&originDeviceId) {
+                    clock.setSequence(originDeviceId.clone(), operation.sequence);
+                    clockChanged = true;
+                }
             }
             if !content.is_empty() {
-                self.storageHost
-                    .appendBytes(&self.operationsPath(&originDeviceId), &content)?;
-                for (operation, offset, lineLength) in appendedOperations {
+                self.appendOperationBytes(&originDeviceId, content, &mut operationLog)?;
+                for (operation, offset, _) in appendedOperations {
                     if let Some(operations) =
                         operationLog.domainOperations.get_mut(&operation.domain)
                     {
@@ -613,8 +738,8 @@ impl SyncOperationStore {
                         .insert(operation.sequence, offset);
                     operationLog.highestSequence =
                         operationLog.highestSequence.max(operation.sequence);
-                    operationLog.encodedByteLength += lineLength;
                 }
+                operationLog.encodedByteLength = nextOffset;
                 appendedOrigins.insert(originDeviceId);
             }
         }
@@ -624,9 +749,22 @@ impl SyncOperationStore {
         }
         drop(clockState);
         let didMutate = clockChanged || !appendedOrigins.is_empty();
-        self.registerDevices(&appendedOrigins)?;
         if didMutate {
             publishSyncMutation();
+        }
+        Ok(())
+    }
+
+    /// Flushes original journals before a committed preference outbox can be acknowledged.
+    pub(crate) fn flushOperations(
+        &self,
+        operations: &[SyncOperation],
+    ) -> Result<(), SyncOperationStoreError> {
+        let origins = operations.iter().map(|operation| &operation.originDeviceId).collect::<BTreeSet<_>>();
+        for origin in origins {
+            let log = self.operationLog(origin)?;
+            let _log = lockSyncState(&log, "operation log")?;
+            self.storageHost.flushFile(&self.operationsPath(origin))?;
         }
         Ok(())
     }
@@ -643,8 +781,8 @@ impl SyncOperationStore {
         if operationLog.operationIds.contains(&operation.opId) {
             return Ok(());
         }
-        let operationOffset = operationLog.encodedByteLength;
-        let writtenBytes = self.appendOperationLine(operation)?;
+        let operationOffset = operationLog.encodedByteLength + u64::from(operationLog.needsSeparator);
+        let writtenBytes = self.appendOperationLine(operation, &mut operationLog)?;
         if let Some(operations) = operationLog.domainOperations.get_mut(&operation.domain) {
             operations.push(operation.clone());
         }
@@ -661,13 +799,26 @@ impl SyncOperationStore {
     }
 
     /// Returns operations whose sequence is newer than the provided clock.
-    pub fn operationsSince(
+    pub fn operationsSince<K: SyncOperationKnowledge>(
         &self,
-        clock: &SyncClock,
+        clock: &K,
         domains: &[String],
         limit: usize,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        self.operationsSinceWithExportPolicy(clock, domains, limit, true)
+        self.operationsSinceWithBudget(clock, domains, limit, usize::MAX, |_| true)
+    }
+
+    /// Exports eligible missing operations, filtering before compaction and page limits.
+    /// Keeps the first operation even when it exceeds the byte budget so transport can report it.
+    pub fn operationsSinceWithBudget<K: SyncOperationKnowledge>(
+        &self,
+        clock: &K,
+        domains: &[String],
+        limit: usize,
+        maxBytes: usize,
+        retain: impl Fn(&SyncOperation) -> bool,
+    ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.operationsSinceWithExportPolicy(clock, domains, limit, true, maxBytes, retain)
     }
 
     /// Reads local preference provenance without treating an export boundary as a conflict boundary.
@@ -677,16 +828,77 @@ impl SyncOperationStore {
             &["preferences".to_owned()],
             usize::MAX,
             false,
+            usize::MAX,
+            |_| true,
+        )
+    }
+
+    /// Reads only cross-dataset merge context; each owner reads its own business history under its lock.
+    pub fn preferenceMergeHistory(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.operationsSinceWithExportPolicy(
+            &SyncClock::empty(),
+            &["preferences".to_owned()],
+            usize::MAX,
+            false,
+            usize::MAX,
+            crate::PreferenceMerge::isMergeMetadata,
         )
     }
 
     /// Uses the shared journal cache for exports and internal deterministic state replay.
-    fn operationsSinceWithExportPolicy(
+    fn operationsSinceWithExportPolicy<K: SyncOperationKnowledge>(
         &self,
-        clock: &SyncClock,
+        clock: &K,
         domains: &[String],
         limit: usize,
         applyExportFloors: bool,
+        maxBytes: usize,
+        retain: impl Fn(&SyncOperation) -> bool,
+    ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.publishPreferenceOutboxes()?;
+        self.archivedOperationsSinceWithExportPolicy(
+            clock,
+            domains,
+            limit,
+            applyExportFloors,
+            maxBytes,
+            None,
+            retain,
+        )
+    }
+
+    /// Reads archived originals without publishing outboxes or acquiring any preference dataset lock.
+    pub(crate) fn archivedPreferenceHistory(
+        &self,
+        path: &str,
+    ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.archivedOperationsSinceWithExportPolicy(
+            &SyncClock::empty(),
+            &["preferences".to_owned()],
+            usize::MAX,
+            false,
+            usize::MAX,
+            Some(path),
+            |operation| {
+                operation
+                    .payload
+                    .get("storagePath")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(path)
+            },
+        )
+    }
+
+    /// Reads committed journal entries without invoking dataset publication during locked replay.
+    fn archivedOperationsSinceWithExportPolicy<K: SyncOperationKnowledge>(
+        &self,
+        clock: &K,
+        domains: &[String],
+        limit: usize,
+        applyExportFloors: bool,
+        maxBytes: usize,
+        preferencePath: Option<&str>,
+        retain: impl Fn(&SyncOperation) -> bool,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
         let domainSet = domains.iter().cloned().collect::<BTreeSet<_>>();
         let exportFloors = if applyExportFloors {
@@ -698,6 +910,32 @@ impl SyncOperationStore {
         };
         let mut out = Vec::new();
         for deviceId in self.devices()? {
+            let exportFloor = exportFloors.get(&deviceId).copied().unwrap_or(0);
+            let businessMinimum = clock.sequenceFor(&deviceId).max(exportFloor);
+            // A complete source prefix covers every domain; control acknowledgements cover only control operations.
+            let controlMinimum = clock
+                .sequenceFor(&networkControlClockKey(&deviceId))
+                .max(businessMinimum);
+            // Checks the appropriate domain floor and exact receipt membership for both export paths.
+            let isMissing = |operation: &SyncOperation| {
+                let minimum = if operation.domain == NETWORK_CONTROL_SYNC_DOMAIN {
+                    controlMinimum
+                } else {
+                    businessMinimum
+                };
+                operation.sequence > minimum
+                    && !clock.containsSequence(&deviceId, operation.sequence)
+                    && preferencePath.map_or(true, |path| {
+                        // Encrypted history keeps the dataset in its canonical entity identity.
+                        // Select that dataset before opening any encrypted business payload.
+                        if storedEncryptedSyncPayload(&operation.payload) {
+                            serde_json::from_str::<Vec<Value>>(&operation.entityId)
+                                .is_ok_and(|identity| identity.first().and_then(Value::as_str) == Some(path))
+                        } else {
+                            operation.payload.get("storagePath").and_then(Value::as_str) == Some(path)
+                        }
+                    })
+            };
             let operationLog = self.operationLog(&deviceId)?;
             if !domainSet.is_empty() {
                 let selected = {
@@ -729,19 +967,17 @@ impl SyncOperationStore {
                             operit_util::AppLogger::AppLogger::w(
                                 "SyncOperationStore",
                                 &format!(
-                                "skipped {skipped} corrupt operation-log line(s) for {deviceId}"
-                            ),
+                                    "skipped {skipped} corrupt operation-log line(s) for {deviceId}"
+                                ),
                             );
                         }
                         index.domainOperations.extend(domains);
                     }
-                    let minimumSequence = clock
-                        .sequenceFor(&deviceId)
-                        .max(exportFloors.get(&deviceId).copied().unwrap_or(0));
                     domainSet
                         .iter()
                         .flat_map(|domain| index.domainOperations[domain].iter())
-                        .filter(|operation| operation.sequence > minimumSequence)
+                        .filter(|operation| isMissing(operation))
+                        .filter(|operation| storedEncryptedSyncPayload(&operation.payload) || retain(operation))
                         .cloned()
                         .collect::<Vec<_>>()
                 };
@@ -753,20 +989,17 @@ impl SyncOperationStore {
             let content = {
                 let mut operationLog = lockSyncState(&operationLog, "operation log")?;
                 self.loadOperationLogIndex(&deviceId, &mut operationLog)?;
-                let minimumSequence = clock
-                    .sequenceFor(&deviceId)
-                    .max(exportFloors.get(&deviceId).copied().unwrap_or(0));
-                if operationLog.highestSequence <= minimumSequence {
+                if operationLog.highestSequence <= businessMinimum {
                     String::new()
                 } else {
                     let startOffset = operationLog
                         .sequenceOffsets
-                        .range((minimumSequence + 1)..)
-                        .next()
+                        .range((businessMinimum + 1)..)
                         .map(|(_, offset)| *offset)
+                        .min()
                         .ok_or_else(|| {
                             SyncOperationStoreError::Message(format!(
-                                "sync operation log index is missing sequence after {minimumSequence} for {deviceId}"
+                                "sync operation log index is missing sequence after {businessMinimum} for {deviceId}"
                             ))
                         })?;
                     let byteLength = usize::try_from(
@@ -787,32 +1020,191 @@ impl SyncOperationStore {
                     self.readOperationLogRange(&deviceId, startOffset, byteLength)?
                 }
             };
-            for operation in self.decodeOperationLog(&content)? {
-                if operation.sequence <= clock.sequenceFor(&deviceId) {
-                    continue;
-                }
-                if operation.sequence <= exportFloors.get(&deviceId).copied().unwrap_or(0) {
-                    continue;
-                }
-                if !domainSet.is_empty() && !domainSet.contains(&operation.domain) {
-                    continue;
-                }
-                out.push(operation);
-            }
+            out.extend(
+                self.decodeOperationLog(&content)?
+                    .into_iter()
+                    .filter(isMissing),
+            );
         }
-        out.sort_by(|left, right| {
-            left.createdAt
-                .cmp(&right.createdAt)
-                .then(left.originDeviceId.cmp(&right.originDeviceId))
-                .then(left.sequence.cmp(&right.sequence))
-        });
+        out.retain(retain);
+        out.sort_by_key(SyncOperationOrder::fromOperation);
         let mut out = compactSyncOperations(out);
         out.truncate(limit);
-        Ok(out)
+        Ok(boundSyncOperationPage(out, maxBytes))
+    }
+
+    /// Serializes receipt and materialization so concurrent peers cannot replay one transaction.
+    pub fn lockApplication(&self) -> Result<MutexGuard<'_, ()>, SyncOperationStoreError> {
+        lockSyncState(&self.sharedState.application, "sync application")
+    }
+
+    /// Persists originals and exact receipt membership before acknowledging delivery.
+    pub fn receiveOperations(
+        &self,
+        operations: &[SyncOperation],
+    ) -> Result<(), SyncOperationStoreError> {
+        let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
+        let mut state = self
+            .loadCachedJson(&mut cached, &self.receiveStatePath())?
+            .clone();
+        let mut changed = false;
+        for operation in operations {
+            if operation.originDeviceId.is_empty()
+                || operation.originDeviceId.len() > 256
+                || operation.sequence <= 0
+                || operation.opId != format!("{}:{}", operation.originDeviceId, operation.sequence)
+            {
+                return Err(SyncOperationStoreError::Message(
+                    "Invalid received operation identity".into(),
+                ));
+            }
+            use sha2::{Digest, Sha256};
+            let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(operation)?));
+            if let Some(previous) = state.fingerprints.get(&operation.opId) {
+                if previous != &fingerprint {
+                    return Err(SyncOperationStoreError::Message(format!(
+                        "Conflicting immutable operation {}",
+                        operation.opId
+                    )));
+                }
+            } else {
+                state
+                    .fingerprints
+                    .insert(operation.opId.clone(), fingerprint);
+                changed = true;
+            }
+            if let Some(existing) = state.pending.get(&operation.opId) {
+                if self.decodeOperationPayload(existing.clone())? != *operation {
+                    return Err(SyncOperationStoreError::Message(format!(
+                        "Conflicting immutable operation {}",
+                        operation.opId
+                    )));
+                }
+                continue;
+            }
+            let journaled = self.containsIdenticalOperation(operation)?;
+            if state
+                .receipt
+                .containsSequence(&operation.originDeviceId, operation.sequence)
+            {
+                continue;
+            }
+            if !journaled {
+                state.pending.insert(
+                    operation.opId.clone(),
+                    self.encodeOperationPayload(operation)?,
+                );
+            }
+            state
+                .receipt
+                .observe(&operation.originDeviceId, operation.sequence);
+            changed = true;
+        }
+        if changed {
+            self.writeJson(&self.receiveStatePath(), &state)?;
+            cached.value = state;
+        }
+        drop(cached);
+        if changed {
+            publishSyncMutation();
+        }
+        Ok(())
+    }
+
+    /// Reads unapplied original operations after restarts or partial application.
+    pub fn pendingOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
+        let mut operations = self
+            .loadCachedJson(&mut cached, &self.receiveStatePath())?
+            .pending
+            .values()
+            .cloned()
+            .map(|operation| self.decodeOperationPayload(operation))
+            .collect::<Result<Vec<_>, _>>()?;
+        operations.sort_by(|left, right| {
+            (&left.originDeviceId, left.sequence).cmp(&(&right.originDeviceId, right.sequence))
+        });
+        Ok(operations)
+    }
+
+    /// Clears completed replay intent while retaining its receipt independently of native logs.
+    pub fn completeOperations(
+        &self,
+        operations: &[SyncOperation],
+    ) -> Result<(), SyncOperationStoreError> {
+        let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
+        let mut state = self
+            .loadCachedJson(&mut cached, &self.receiveStatePath())?
+            .clone();
+        let mut changed = false;
+        for operation in operations {
+            changed |= state.pending.remove(&operation.opId).is_some();
+        }
+        if changed {
+            self.writeJson(&self.receiveStatePath(), &state)?;
+            cached.value = state;
+        }
+        Ok(())
+    }
+
+    /// Combines retained receipts with exact journal sequences without acknowledging gaps.
+    pub fn receipt(&self) -> Result<SyncReceipt, SyncOperationStoreError> {
+        let mut receipt = {
+            let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
+            self.loadCachedJson(&mut cached, &self.receiveStatePath())?
+                .receipt
+                .clone()
+        };
+        for origin in self.devices()? {
+            let log = self.operationLog(&origin)?;
+            let mut log = lockSyncState(&log, "operation log")?;
+            self.loadOperationLogIndex(&origin, &mut log)?;
+            for sequence in log.sequenceOffsets.keys() {
+                receipt.observe(&origin, *sequence);
+            }
+        }
+        Ok(receipt)
+    }
+
+    /// Verifies immutable content before recognizing an already journaled operation.
+    fn containsIdenticalOperation(
+        &self,
+        operation: &SyncOperation,
+    ) -> Result<bool, SyncOperationStoreError> {
+        let log = self.operationLog(&operation.originDeviceId)?;
+        let mut log = lockSyncState(&log, "operation log")?;
+        self.loadOperationLogIndex(&operation.originDeviceId, &mut log)?;
+        let Some(offset) = log.sequenceOffsets.get(&operation.sequence).copied() else {
+            return Ok(false);
+        };
+        let end = log
+            .sequenceOffsets
+            .values()
+            .copied()
+            .filter(|value| *value > offset)
+            .min()
+            .unwrap_or(log.encodedByteLength);
+        let length = usize::try_from(end - offset)
+            .map_err(|_| SyncOperationStoreError::Message("Operation length overflows usize".into()))?;
+        let content = self.readOperationLogRange(&operation.originDeviceId, offset, length)?;
+        let existing = self.decodeOperationPayload(serde_json::from_str(content.lines().next().unwrap_or("").trim())?)?;
+        if existing != *operation {
+            return Err(SyncOperationStoreError::Message(format!(
+                "Conflicting immutable operation {}",
+                operation.opId
+            )));
+        }
+        Ok(true)
+    }
+
+    /// Locates durable receipts and replay intents beside the operation journal.
+    fn receiveStatePath(&self) -> String {
+        format!("{}/receive_state.json", self.rootPath)
     }
 
     /// Reads the local vector clock from storage.
     pub fn localClock(&self) -> Result<SyncClock, SyncOperationStoreError> {
+        self.publishPreferenceOutboxes()?;
         let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
         Ok(self
             .loadCachedJson(&mut clockState, &self.clockPath())?
@@ -838,8 +1230,13 @@ impl SyncOperationStore {
     #[allow(non_snake_case)]
     pub fn markLocalOperationsUnexportable(&self) -> Result<(), SyncOperationStoreError> {
         let deviceId = self.localDeviceId()?;
-        let sequence = self.localClock()?.sequenceFor(&deviceId);
-        self.setExportFloor(&deviceId, sequence)
+        let clock = self.localClock()?;
+        for (origin, sequence) in &clock.sequences {
+            if origin == &deviceId || origin.starts_with(&format!("{deviceId}:preferences:")) {
+                self.setExportFloor(origin, *sequence)?;
+            }
+        }
+        Ok(())
     }
 
     /// Sets the highest sequence excluded from future synchronization exports.
@@ -912,6 +1309,13 @@ impl SyncOperationStore {
             entityVersionsState.value.insert(entityKey, order);
         }
         Ok(())
+    }
+
+    /// Reports known entity state, including synchronized deletion tombstones.
+    pub(crate) fn hasEntityVersion(&self, domain: &str, entityType: &str, entityId: &str) -> Result<bool, SyncOperationStoreError> {
+        let mut state = lockSyncState(&self.sharedState.entityVersions, "entity versions")?;
+        let key = serde_json::to_string(&(domain, entityType, entityId))?;
+        Ok(self.loadCachedEntityVersions(&mut state)?.contains_key(&key))
     }
 
     /// Returns whether an entity operation is newer than the last operation applied locally.
@@ -1036,6 +1440,34 @@ impl SyncOperationStore {
         Ok(false)
     }
 
+    /// Acknowledges one received control operation on its own per-origin clock.
+    ///
+    /// Control operations are replayed into every peer but must not advance the
+    /// origin's business sequence: a later authority command would otherwise
+    /// hide an earlier chat or file operation that this device still needs.
+    pub fn observeNetworkControlOperation(
+        &self,
+        operation: &SyncOperation,
+    ) -> Result<(), SyncOperationStoreError> {
+        if operation.domain != NETWORK_CONTROL_SYNC_DOMAIN {
+            return Err(SyncOperationStoreError::Message(format!(
+                "network-control acknowledgement requires a {NETWORK_CONTROL_SYNC_DOMAIN} operation"
+            )));
+        }
+        let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
+        let mut clock = self
+            .loadCachedJson(&mut clockState, &self.clockPath())?
+            .clone();
+        let key = networkControlClockKey(&operation.originDeviceId);
+        if operation.sequence <= clock.sequenceFor(&key) {
+            return Ok(());
+        }
+        clock.setSequence(key, operation.sequence);
+        self.writeLocalClockValue(&clock)?;
+        clockState.value = clock;
+        Ok(())
+    }
+
     /// Reads one origin operation-log byte snapshot while its per-origin lock is held.
     #[allow(non_snake_case)]
     fn readOperationLog(&self, deviceId: &str) -> Result<String, SyncOperationStoreError> {
@@ -1113,6 +1545,7 @@ impl SyncOperationStore {
             return Ok(());
         }
         let content = self.readOperationLog(deviceId)?;
+        index.needsSeparator = !content.is_empty() && !content.ends_with('\n');
         let mut byteOffset = 0u64;
         let mut lineNumber = 0u64;
         for line in content.split_inclusive('\n') {
@@ -1166,17 +1599,32 @@ impl SyncOperationStore {
     fn appendOperationLine(
         &self,
         operation: &SyncOperation,
+        index: &mut SyncOperationLogIndex,
     ) -> Result<u64, SyncOperationStoreError> {
         let storedOperation = self.encodeOperationPayload(operation)?;
         let mut content = serde_json::to_vec(&storedOperation)?;
         content.push(b'\n');
+        self.appendOperationBytes(&operation.originDeviceId, content, index)
+    }
+
+    /// Separates an interrupted tail from the next intact operation and reloads after uncertain writes.
+    fn appendOperationBytes(
+        &self,
+        origin: &str,
+        mut content: Vec<u8>,
+        index: &mut SyncOperationLogIndex,
+    ) -> Result<u64, SyncOperationStoreError> {
+        if index.needsSeparator { content.insert(0, b'\n'); }
         let writtenBytes = u64::try_from(content.len()).map_err(|_| {
             SyncOperationStoreError::Message(
                 "sync operation line length does not fit u64".to_string(),
             )
         })?;
-        self.storageHost
-            .appendBytes(&self.operationsPath(&operation.originDeviceId), &content)?;
+        if let Err(error) = self.storageHost.appendBytes(&self.operationsPath(origin), &content) {
+            *index = SyncOperationLogIndex::default();
+            return Err(error.into());
+        }
+        index.needsSeparator = false;
         Ok(writtenBytes)
     }
 
@@ -1238,7 +1686,10 @@ impl SyncOperationStore {
                 &encryptedPreferenceSyncPayloadAad(&operation),
                 &payloadBytes,
             )
-            .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
+            .map_err(|error| SyncOperationStoreError::Message(format!(
+                "Cannot decrypt preference history op={} entity={}: {error}",
+                operation.opId, operation.entityId,
+            )))?;
         let mut decodedOperation = operation;
         decodedOperation.payload = serde_json::from_slice(&decryptedPayload)?;
         Ok(decodedOperation)
@@ -1420,7 +1871,7 @@ impl SyncOperationStore {
         T: serde::Serialize,
     {
         let content = serde_json::to_vec_pretty(value)?;
-        self.storageHost.writeBytes(path, &content)?;
+        self.storageHost.writeBytesAtomically(path, &content)?;
         Ok(())
     }
 
@@ -1648,9 +2099,30 @@ struct SyncEntityKey {
     entityId: String,
 }
 
-/// Compacts replaceable entity states while preserving every transaction operation.
-/// A later JSON-parent replacement supersedes earlier descendant edits from the
-/// same origin; edits after the replacement and other origins remain independent.
+/// Cuts one ordered operation page at a serialized-byte budget.
+///
+/// Callers pass an already compacted, count-bounded page; this bounds what one
+/// store contributes to a merged synchronization page. The first operation is
+/// always kept so one oversized record cannot stall the export.
+pub fn boundSyncOperationPage(    operations: Vec<SyncOperation>,
+    maxBytes: usize,
+) -> Vec<SyncOperation> {
+    let mut page = Vec::new();
+    let mut bytes = 0usize;
+    for operation in operations {
+        let size = serde_json::to_vec(&operation)
+            .map(|encoded| encoded.len())
+            .unwrap_or(0);
+        if !page.is_empty() && bytes.saturating_add(size) > maxBytes {
+            break;
+        }
+        bytes = bytes.saturating_add(size);
+        page.push(operation);
+    }
+    page
+}
+
+/// Preserves preference history for identity replay and compacts other replaceable entity states.
 #[allow(non_snake_case)]
 pub fn compactSyncOperations(operations: Vec<SyncOperation>) -> Vec<SyncOperation> {
     let mut latestSequences = BTreeMap::<SyncEntityKey, i64>::new();
@@ -1665,32 +2137,11 @@ pub fn compactSyncOperations(operations: Vec<SyncOperation>) -> Vec<SyncOperatio
     operations
         .into_iter()
         .filter(|operation| {
-            operation.semantics == SyncOperationSemantics::Transaction
-                || (latestSequences.get(&syncEntityKey(operation)) == Some(&operation.sequence)
-                    && !hasNewerPreferenceAncestor(operation, &latestSequences))
+            operation.domain == "preferences"
+                || operation.semantics == SyncOperationSemantics::Transaction
+                || latestSequences.get(&syncEntityKey(operation)) == Some(&operation.sequence)
         })
         .collect()
-}
-
-/// Prevents exporting a model leaf edit after its creation has been compacted
-/// away by a later model deletion or replacement.
-#[allow(non_snake_case)]
-fn hasNewerPreferenceAncestor(
-    operation: &SyncOperation,
-    latestSequences: &BTreeMap<SyncEntityKey, i64>,
-) -> bool {
-    let Some(ancestors) =
-        crate::PreferencesDataStore::preferenceMutationAncestorEntityIds(operation)
-    else {
-        return false;
-    };
-    let mut key = syncEntityKey(operation);
-    ancestors.into_iter().any(|entityId| {
-        key.entityId = entityId;
-        latestSequences
-            .get(&key)
-            .is_some_and(|sequence| *sequence > operation.sequence)
-    })
 }
 
 /// Builds the origin-scoped identity used for operation-log compaction.
@@ -1713,6 +2164,12 @@ fn syncEntityVersionKey(operation: &SyncOperation) -> Result<String, SyncOperati
         operation.entityId.as_str(),
     ))
     .map_err(SyncOperationStoreError::from)
+}
+
+/// Builds the per-origin clock key that acknowledges network-control operations.
+#[allow(non_snake_case)]
+fn networkControlClockKey(originDeviceId: &str) -> String {
+    format!("{originDeviceId}:control")
 }
 
 #[cfg(test)]

@@ -123,9 +123,10 @@ class AppNotificationService with WidgetsBindingObserver {
     required String? chatId,
   }) async {
     if (await _isApplicationForeground()) {
-      ClientLogger.d(
+      ClientLogger.v(
         'notification suppressed applicationForeground=true',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level5,
       );
       return;
     }

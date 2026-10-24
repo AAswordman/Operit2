@@ -13,6 +13,7 @@ import '../../common/contributions/ChatSidebarTabHost.dart'
 import '../../../core/notifications/NotificationActivationService.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../features/chat/components/NewChatIntro.dart';
 import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
 import '../components/AppContent.dart';
 import '../components/DrawerConversationState.dart';
@@ -27,6 +28,24 @@ import '../navigation/AppRouteCatalog.dart';
 import '../navigation/ToolPkgCatalogChangeBus.dart';
 import 'OperitScreens.dart';
 import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
+
+/// Decides whether startup already has a conversation to show.
+enum StartupConversationResolution { keep, create, openExisting }
+
+/// Keeps a real selection, creates one when the list is empty, or opens one.
+StartupConversationResolution resolveStartupConversation({
+  required Iterable<String> historyIds,
+  required String? currentChatId,
+}) {
+  final selected = currentChatId?.trim() ?? '';
+  if (selected.isNotEmpty && historyIds.contains(selected)) {
+    return StartupConversationResolution.keep;
+  }
+  if (historyIds.isEmpty) {
+    return StartupConversationResolution.create;
+  }
+  return StartupConversationResolution.openExisting;
+}
 
 class OperitMainScreen extends StatefulWidget {
   const OperitMainScreen({super.key});
@@ -184,13 +203,67 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     }
   }
 
-  /// Loads drawer data before subscribing to its live updates.
+  /// Loads drawer data, opens a usable conversation, then subscribes to updates.
   Future<void> _initializeDrawerData() async {
     await _loadDrawerConversations();
     if (!mounted) {
       return;
     }
+    await _ensureStartupConversation();
+    if (!mounted) {
+      return;
+    }
+    await _loadDrawerConversations();
+    if (!mounted) {
+      return;
+    }
     _watchDrawerConversations();
+  }
+
+  /// Creates the default conversation when this identity has none.
+  ///
+  /// An empty selection leaves the composer in its initial loading state, so
+  /// a fresh identity always opens one new chat before the first frame settles.
+  Future<void> _ensureStartupConversation() async {
+    final state = _drawerConversationState.value;
+    if (state.errorMessage != null) {
+      return;
+    }
+    final resolution = resolveStartupConversation(
+      historyIds: state.histories.map((history) => history.id),
+      currentChatId: state.currentChatId,
+    );
+    switch (resolution) {
+      case StartupConversationResolution.keep:
+        return;
+      case StartupConversationResolution.create:
+        newChatIntroArmed.value = true;
+        try {
+          await _clients.chatRuntimeHolderMain.createNewChat(
+            setAsCurrentChat: true,
+            sourceChatId: null,
+            parentChatId: null,
+            input: null,
+          );
+        } catch (error, stackTrace) {
+          newChatIntroArmed.value = false;
+          debugPrint(
+            'Failed to create the startup conversation: $error\n$stackTrace',
+          );
+        }
+        return;
+      case StartupConversationResolution.openExisting:
+        try {
+          await _clients.chatRuntimeHolderMain.switchChat(
+            chatId: state.histories.first.id,
+          );
+        } catch (error, stackTrace) {
+          debugPrint(
+            'Failed to open the startup conversation: $error\n$stackTrace',
+          );
+        }
+        return;
+    }
   }
 
   @override

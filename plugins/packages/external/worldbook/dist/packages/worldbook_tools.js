@@ -348,7 +348,6 @@
 */
 Object.defineProperty(exports, "__esModule", { value: true });
 const worldbook_service_js_1 = require("../shared/worldbook_service.js");
-const worldbook_storage_js_1 = require("../shared/worldbook_storage.js");
 async function wrap(handler, params) {
     try {
         const result = await handler(params);
@@ -409,4 +408,3 @@ exports.delete_entry = (params) => wrap(deleteEntry, params);
 exports.toggle_entry = (params) => wrap(toggleEntry, params);
 exports.import_entries = (params) => wrap(importEntries, params);
 exports.list_character_cards_proxy = (params) => wrap(listCharacterCardsProxy, params);
-void (0, worldbook_storage_js_1.ensureWorldBookStorage)();

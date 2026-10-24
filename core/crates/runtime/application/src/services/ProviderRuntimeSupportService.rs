@@ -66,15 +66,9 @@ impl ChatConfigurationApi {
         })
     }
 
-    /// Returns the authenticated catalog owner for Core record operations and snapshot validation.
+    /// Returns the authenticated catalog owner for Core record operations and execution validation.
     pub fn extensionOwner(&self) -> &str {
         &self.ownerPackage
-    }
-
-    /// Selects the native owner for a saved model revision regardless of the current plugin catalog.
-    pub fn forModelSnapshot(mut self) -> Self {
-        self.ownerPackage = MODEL_CONFIGURATION_OWNER.into();
-        self
     }
 
     /// Resolves generic presentation through the selected model or registered configuration mode.
@@ -104,57 +98,33 @@ impl ChatConfigurationApi {
         self.invokeResolve(request).await
     }
 
-    /// Validates a native snapshot or stores a registered owner snapshot before Core commits its reference.
-    pub async fn storeSnapshot(
+    /// Resolves every currently bound participant for a conversation-wide context estimate.
+    pub async fn resolveContextParticipants(
         &self,
-        snapshot: operit_providers::runtime_support::JsonObject,
-    ) -> Result<operit_providers::runtime_support::JsonObject, String> {
-        if self.ownerPackage == MODEL_CONFIGURATION_OWNER {
-            validateModelSnapshot(&snapshot)?;
-            return Ok(snapshot);
+        mut request: ChatConfigurationRequest,
+    ) -> Result<Vec<ChatConfigurationResult>, String> {
+        request.requirePurpose(ChatConfigurationPurpose::Execution)?;
+        if request.participantId.is_some() {
+            return Ok(vec![self.resolve(request).await?]);
         }
-        let value = self
-            .manager
-            .invokeToolPkgPublicApi(
-                &self.ownerPackage,
-                "chat.configuration.snapshot.store",
-                Value::Object(snapshot),
-            )
-            .await?;
-        let reference = value
-            .as_object()
-            .ok_or("Plugin snapshot storage did not return a reference")?;
-        if reference.len() != 2
-            || reference.get("schemaVersion") != Some(&serde_json::json!(1))
-            || !reference
-                .get("recordId")
-                .and_then(Value::as_str)
-                .is_some_and(|id| !id.trim().is_empty())
-        {
-            return Err("Invalid plugin snapshot reference".into());
+        request.purpose = ChatConfigurationPurpose::Display;
+        let display = self.resolveDisplay(request.clone()).await?;
+        if display.participants.is_empty() {
+            return Err("Conversation context requires a current bound participant".to_string());
         }
-        Ok(reference.clone())
-    }
-
-    /// Reads an immutable native snapshot or the selected registered owner reference.
-    pub async fn readSnapshot(
-        &self,
-        reference: operit_providers::runtime_support::JsonObject,
-    ) -> Result<operit_providers::runtime_support::JsonObject, String> {
-        if self.ownerPackage == MODEL_CONFIGURATION_OWNER {
-            validateModelSnapshot(&reference)?;
-            return Ok(reference);
+        request.purpose = ChatConfigurationPurpose::Execution;
+        let mut configurations = Vec::with_capacity(display.participants.len());
+        for participant in display.participants {
+            request.participantId = Some(participant.id.clone());
+            let configuration = self.resolve(request.clone()).await?;
+            if display.contextKey.as_ref() != Some(&configuration.contextKey)
+                || configuration.profile.id != participant.id
+            {
+                return Err("Conversation binding changed during context estimation".to_string());
+            }
+            configurations.push(configuration);
         }
-        self.manager
-            .invokeToolPkgPublicApi(
-                &self.ownerPackage,
-                "chat.configuration.snapshot.read",
-                Value::Object(reference),
-            )
-            .await?
-            .as_object()
-            .cloned()
-            .ok_or("Plugin snapshot reader did not return an object".into())
+        Ok(configurations)
     }
 
     /// Resolves display data for a creation draft without requiring a nonexistent conversation or execution participant.
@@ -272,22 +242,16 @@ impl ChatConfigurationApi {
         Ok(result)
     }
 
-    /// Resolves a built-in model execution or its immutable native snapshot without invoking plugin APIs.
+    /// Resolves model execution from the current application model and voice defaults.
     fn modelExecution(&self, request: ChatConfigurationRequest) -> Result<ChatConfigurationResult, String> {
-        let snapshot = match request.messageExtension.clone() {
-            Some(snapshot) => snapshot,
-            None => {
-                let profile = self.modelProfile(&request)?;
-                serde_json::json!({ "schemaVersion": 1, "contextKey": "model:chat", "profile": profile, "participants": [profile] })
-                    .as_object().cloned().ok_or("Model snapshot is not an object")?
-            }
-        };
-        let saved = validateModelSnapshot(&snapshot)?;
-        if request.participantId.as_ref().is_some_and(|id| id != &saved.profile.id) {
-            return Err("Model execution participant does not match its snapshot".into());
+        let profile = self.modelProfile(&request)?;
+        if request.participantId.as_ref().is_some_and(|id| id != &profile.id) {
+            return Err("Model execution participant does not match the current model configuration".into());
         }
-        let result = ChatConfigurationResult { contextKey: saved.contextKey, profile: saved.profile, participants: saved.participants,
-            messageExtension: snapshot, extensionOwner: MODEL_CONFIGURATION_OWNER.into() };
+        let executionData = serde_json::json!({ "schemaVersion": 1, "contextKey": "model:chat", "profile": profile, "participants": [profile] })
+            .as_object().cloned().ok_or("Model execution data is not an object")?;
+        let result = ChatConfigurationResult { contextKey: "model:chat".into(), profile: profile.clone(), participants: vec![profile],
+            executionData, extensionOwner: MODEL_CONFIGURATION_OWNER.into() };
         result.validate()?;
         Ok(result)
     }
@@ -342,7 +306,7 @@ fn decodeDisplayConfigurationResult(
     Ok(result)
 }
 
-/// Rejects plugin-supplied runtime identity and validates the exact selected owner's execution snapshot.
+/// Rejects plugin-supplied runtime identity and validates the exact selected owner's current execution data.
 fn decodeConfigurationResult(raw: Value, owner: &str) -> Result<ChatConfigurationResult, String> {
     if owner.trim().is_empty() {
         return Err("Chat configuration owner is not authenticated".to_string());
@@ -380,37 +344,37 @@ fn selectChatConfigurationOwner(mut candidates: Vec<String>) -> Result<String, S
     }
 }
 
-/// Defines the immutable native snapshot for plugin-independent model conversations.
+/// Defines the current native execution data for plugin-independent model conversations.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(non_snake_case)]
-struct ModelConfigurationSnapshot {
+struct ModelExecutionData {
     schemaVersion: u32,
     contextKey: String,
     profile: ChatParticipantProfile,
     participants: Vec<ChatParticipantProfile>,
 }
 
-/// Validates native snapshots without reading the current provider catalog or optional plugin storage.
-fn validateModelSnapshot(snapshot: &operit_providers::runtime_support::JsonObject) -> Result<ModelConfigurationSnapshot, String> {
-    let saved: ModelConfigurationSnapshot = serde_json::from_value(Value::Object(snapshot.clone())).map_err(|error| error.to_string())?;
+/// Validates native execution data without reading the current provider catalog or optional plugin storage.
+fn validateModelExecutionData(snapshot: &operit_providers::runtime_support::JsonObject) -> Result<ModelExecutionData, String> {
+    let saved: ModelExecutionData = serde_json::from_value(Value::Object(snapshot.clone())).map_err(|error| error.to_string())?;
     if saved.schemaVersion != 1 || saved.contextKey != "model:chat" || saved.profile.id != "model:chat"
         || saved.profile.name != saved.profile.modelBinding.modelId || saved.participants != vec![saved.profile.clone()]
         || !saved.profile.resources.is_empty() || !saved.profile.introPrompt.is_empty()
         || !saved.profile.userPreferencesText.is_empty() || !saved.profile.openingStatement.is_empty() {
-        return Err("Invalid native model configuration snapshot".into());
+        return Err("Invalid native model execution data".into());
     }
     Ok(saved)
 }
 
-/// Authenticates the complete native model snapshot supplied to generic tool policy hooks.
-pub(crate) fn validateNativeModelExecutionSnapshot(snapshot: &operit_providers::runtime_support::JsonObject, participantId: Option<&str>) -> Result<(), String> {
-    let saved = validateModelSnapshot(snapshot)?;
+/// Authenticates the complete native model execution data supplied to generic tool policy hooks.
+pub(crate) fn validateNativeModelExecutionData(snapshot: &operit_providers::runtime_support::JsonObject, participantId: Option<&str>) -> Result<(), String> {
+    let saved = validateModelExecutionData(snapshot)?;
     if participantId != Some(saved.profile.id.as_str()) {
         return Err("Native model tool participant differs from its saved profile".into());
     }
     let result = ChatConfigurationResult { contextKey: saved.contextKey, profile: saved.profile, participants: saved.participants,
-        messageExtension: snapshot.clone(), extensionOwner: MODEL_CONFIGURATION_OWNER.into() };
+        executionData: snapshot.clone(), extensionOwner: MODEL_CONFIGURATION_OWNER.into() };
     result.validate()
 }
 
@@ -428,6 +392,57 @@ struct RuntimeProviderSupport {
 }
 
 impl ProviderRuntimeSupport for RuntimeProviderSupport {
+    fn generateLocalLlm(
+        &self,
+        bindingKey: String,
+        modelBinding: String,
+        request: Value,
+        settings: Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + '_>>
+    {
+        let context = self.tool_handler.getContext();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let scheduled = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "local-llm-inference",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let result = async {
+                            let storage = context
+                                .runtimeStorageHost
+                                .clone()
+                                .ok_or("Local inference requires runtime storage")?;
+                            let key = if bindingKey.is_empty() {
+                                super::LocalLlmService::ensureLocalLlmBinding(
+                                    storage.clone(),
+                                    &modelBinding,
+                                )?
+                            } else {
+                                bindingKey
+                            };
+                            let response = super::LocalLlmService::generateRoutedLocalLlm(
+                                storage,
+                                key,
+                                modelBinding,
+                                request.to_string(),
+                                settings.to_string(),
+                            )
+                            .await?;
+                            serde_json::to_value(response).map_err(|error| error.to_string())
+                        }
+                        .await;
+                        let _ = sender.send(result);
+                    })
+                }),
+            );
+        Box::pin(async move {
+            scheduled.map_err(|error| error.to_string())?;
+            receiver
+                .await
+                .map_err(|error| format!("Local inference task ended: {error}"))?
+        })
+    }
+
     /// Returns the root directory used by runtime data.
     fn dataDir(&self) -> Result<PathBuf, String> {
         let context = self.tool_handler.getContext();
@@ -681,7 +696,7 @@ fn providerRegistrationToProvider(
 mod chat_configuration_contract_tests {
     use super::{
         decodeConfigurationResult, decodeDisplayConfigurationResult, requireChatId,
-        selectChatConfigurationOwner, validateNativeModelExecutionSnapshot, MODEL_CONFIGURATION_OWNER,
+        selectChatConfigurationOwner, validateNativeModelExecutionData, MODEL_CONFIGURATION_OWNER,
     };
 
     /// Selects arbitrary uniquely registered owners without a built-in identity whitelist.
@@ -706,9 +721,9 @@ mod chat_configuration_contract_tests {
         );
     }
 
-    /// Verifies that an ordinary model snapshot is valid without any plugin declaration or datastore.
+    /// Verifies that an ordinary model execution context is valid without any plugin declaration or datastore.
     #[test]
-    fn native_model_snapshots_do_not_require_a_plugin_owner() {
+    fn native_model_execution_data_does_not_require_a_plugin_owner() {
         let profile = serde_json::json!({
             "id":"model:chat", "name":"actual-model", "avatarUri":"provider-logo:OPENAI",
             "introPrompt":"", "userPreferencesText":"", "openingStatement":"",
@@ -717,12 +732,12 @@ mod chat_configuration_contract_tests {
             "resources":[]
         });
         let snapshot = serde_json::json!({"schemaVersion":1, "contextKey":"model:chat", "profile":profile, "participants":[profile]}).as_object().unwrap().clone();
-        validateNativeModelExecutionSnapshot(&snapshot, Some("model:chat")).unwrap();
-        assert!(validateNativeModelExecutionSnapshot(&snapshot, Some("different-participant")).is_err());
-        assert!(validateNativeModelExecutionSnapshot(&snapshot, None).is_err());
+        validateNativeModelExecutionData(&snapshot, Some("model:chat")).unwrap();
+        assert!(validateNativeModelExecutionData(&snapshot, Some("different-participant")).is_err());
+        assert!(validateNativeModelExecutionData(&snapshot, None).is_err());
         let mut changed = snapshot;
         changed.get_mut("profile").unwrap()["introPrompt"] = serde_json::json!("unexpected role prompt");
-        assert!(validateNativeModelExecutionSnapshot(&changed, Some("model:chat")).is_err());
+        assert!(validateNativeModelExecutionData(&changed, Some("model:chat")).is_err());
     }
 
     /// Keeps registered packages from impersonating the native configuration mode.
@@ -731,7 +746,7 @@ mod chat_configuration_contract_tests {
         assert!(selectChatConfigurationOwner(vec![MODEL_CONFIGURATION_OWNER.into()]).is_err());
     }
 
-    /// Injects only the exact selected registration owner while preserving the plugin's complete opaque execution snapshot.
+    /// Injects only the exact selected registration owner while preserving the plugin's complete opaque execution data.
     #[test]
     fn injects_owner_without_exposing_it_to_javascript_results() {
         let profile = serde_json::json!({
@@ -743,14 +758,14 @@ mod chat_configuration_contract_tests {
         });
         let raw = serde_json::json!({
             "contextKey":"opaque/context", "profile":profile, "participants":[profile],
-            "messageExtension":{"actor":{"id":"participant"}, "voice":"voice", "revision":"7"}
+            "executionData":{"actor":{"id":"participant"}, "voice":"voice", "revision":"7"}
         });
         for owner in ["org.example.owner-a", "org.example.owner-b"] {
             let configuration = decodeConfigurationResult(raw.clone(), owner).unwrap();
             assert_eq!(configuration.extensionOwner, owner);
             assert_eq!(
-                configuration.messageExtension,
-                raw["messageExtension"].as_object().unwrap().clone()
+                configuration.executionData,
+                raw["executionData"].as_object().unwrap().clone()
             );
             assert_eq!(serde_json::to_value(configuration).unwrap(), raw);
         }

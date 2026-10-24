@@ -126,11 +126,39 @@ impl GitHubAuthPreferences {
         tokenType: &str,
         grantedScope: Option<&str>,
     ) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.replace(buildAccessTokenPreferences(
-            accessToken,
-            tokenType,
-            grantedScope,
-        ))
+        self.dataStore
+            .try_edit_result(|preferences| -> Result<(), PreferencesDataStoreError> {
+                let loggedIn = matches!(
+                    preferences.getTyped::<bool>(&stringPreferencesKey("is_logged_in"))?,
+                    Some(true)
+                );
+                let hasUser = preferences
+                    .getTyped::<GitHubUser>(&stringPreferencesKey("user_info"))?
+                    .is_some();
+                // A token refresh must not promote a partial or logged-out
+                // record into a logged-in session without a user profile.
+                if !loggedIn || !hasUser {
+                    return Ok(());
+                }
+                preferences.set(
+                    &stringPreferencesKey("access_token"),
+                    accessToken.to_string(),
+                );
+                preferences.set(&stringPreferencesKey("token_type"), tokenType.to_string());
+                preferences.set(
+                    &stringPreferencesKey("last_login_time"),
+                    currentTimeMillis(),
+                );
+                preferences.set(
+                    &stringPreferencesKey("auth_version"),
+                    Self::REQUIRED_AUTH_VERSION,
+                );
+                preferences.set(
+                    &stringPreferencesKey("granted_scope"),
+                    grantedScope.unwrap_or(Self::GITHUB_SCOPE).to_string(),
+                );
+                Ok(())
+            })
     }
 
     #[allow(non_snake_case)]
@@ -322,12 +350,61 @@ mod tests {
         assert_eq!(auth.getCurrentAccessToken().unwrap(), None);
     }
 
+    /// Refreshing a token must not create a logged-in session without a profile.
+    #[test]
+    fn update_access_token_preserves_an_existing_profile_session() {
+        let auth = manager();
+        auth.updateAccessToken(
+            "orphan-token",
+            "bearer",
+            Some(GitHubAuthPreferences::GITHUB_SCOPE),
+        )
+        .unwrap();
+        assert!(!auth.isLoggedIn().unwrap());
+        assert!(auth.getCurrentUserInfo().unwrap().is_none());
+
+        let user = GitHubUser {
+            id: "test-id".into(),
+            login: "test-user".into(),
+            ..Default::default()
+        };
+        auth.saveAuthInfo(
+            "old-token",
+            "bearer",
+            Some(&user),
+            Some(GitHubAuthPreferences::GITHUB_SCOPE),
+        )
+        .unwrap();
+        auth.updateAccessToken(
+            "new-token",
+            "bearer",
+            Some(GitHubAuthPreferences::GITHUB_SCOPE),
+        )
+        .unwrap();
+        assert!(auth.isLoggedIn().unwrap());
+        assert_eq!(auth.getCurrentUserInfo().unwrap(), Some(user));
+        assert_eq!(
+            auth.getCurrentAccessToken().unwrap(),
+            Some("new-token".into())
+        );
+    }
+
     /// Propagates malformed native auth values instead of reporting an unauthenticated session.
     #[test]
     fn malformed_native_login_fields_are_reported() {
         let auth = manager();
-        auth.updateAccessToken("token", "bearer", Some(GitHubAuthPreferences::GITHUB_SCOPE))
-            .unwrap();
+        let user = GitHubUser {
+            id: "test-id".into(),
+            login: "test-user".into(),
+            ..Default::default()
+        };
+        auth.saveAuthInfo(
+            "token",
+            "bearer",
+            Some(&user),
+            Some(GitHubAuthPreferences::GITHUB_SCOPE),
+        )
+        .unwrap();
         auth.dataStore
             .edit(|p| {
                 p.set(&stringPreferencesKey("access_token"), 17);

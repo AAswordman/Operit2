@@ -1,11 +1,13 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:convert';
 
 import '../bridge/PlatformCoreProxy.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import 'ClientLogLevel.dart';
+import 'ClientLogTrimmer.dart';
 
 const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
   ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
@@ -18,6 +20,9 @@ bool _persistentStorageRequested = false;
 final List<String> _pendingLines = <String>[];
 Future<void> _writeQueue = Future<void>.value();
 String? _lastWriteError;
+
+/// Tracked size of the persistent log in bytes; drives oldest-first eviction.
+int _fileBytes = 0;
 
 /// Initializes the memory-backed logger backend.
 Future<void> initialize() async {
@@ -77,6 +82,7 @@ Future<void> clear() async {
   _requireInitialized();
   _writeQueue = _writeQueue.then((_) async {
     _pendingLines.clear();
+    _fileBytes = 0;
     final path = _logPath;
     if (path != null) {
       await _clients.repositoryRuntimeStorageRepository.writeText(
@@ -127,6 +133,13 @@ Future<void> _attachPersistentStorageNow() async {
   final path = await _clients.repositoryRuntimeStorageRepository
       .clientLogPath();
   _logPath = path;
+  // Seeds the byte counter from the current sink contents; runtime storage
+  // exposes no stat API, so legacy oversized logs are read once here and
+  // converge to the cap at the first eviction after attaching.
+  final existing = await _clients
+      .repositoryRuntimeStorageRepository
+      .readText(path: path);
+  _fileBytes = utf8.encode(existing ?? '').length;
 }
 
 /// Flushes buffered lines into the runtime-storage sink.
@@ -142,6 +155,24 @@ Future<void> _flushPendingLines() async {
   final text = _pendingLines.take(count).join();
   await _appendLogText(path, text);
   _pendingLines.removeRange(0, count);
+  await _evictOldestRecordsIfOversized(path, text);
+}
+
+/// Drops the oldest records once the persistent log crosses its byte cap.
+Future<void> _evictOldestRecordsIfOversized(String path, String appended) async {
+  _fileBytes += utf8.encode(appended).length;
+  if (_fileBytes <= clientLogMaxBytes) {
+    return;
+  }
+  final content = await _clients
+      .repositoryRuntimeStorageRepository
+      .readText(path: path);
+  final trimmed = trimClientLogText(content ?? '');
+  await _clients.repositoryRuntimeStorageRepository.writeText(
+    path: path,
+    content: trimmed,
+  );
+  _fileBytes = utf8.encode(trimmed).length;
 }
 
 /// Appends text through runtime storage VFS.

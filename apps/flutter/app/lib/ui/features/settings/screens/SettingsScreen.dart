@@ -91,6 +91,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// Builds the settings panes while preserving the backdrop during motion.
   Widget _buildWideSettingsLayout(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final themeSnapshot = OperitTheme.of(context).themePreferenceSnapshot;
@@ -138,15 +139,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             },
             transitionBuilder: (child, animation) {
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(_detailSwitchOffset, 0),
-                    end: Offset.zero,
-                  ).animate(animation),
-                  child: child,
-                ),
+              // Opacity isolates backdrop filters in a transparent saveLayer.
+              // Keep the real background available throughout the transition.
+              return SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(_detailSwitchOffset, 0),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
               );
             },
             child: SettingsDetailView(

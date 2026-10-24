@@ -1,11 +1,13 @@
+use crate::process::background_command;
+
 use std::collections::VecDeque;
 use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
-use std::thread;
+
 use std::time::Duration;
 
 use operit_host_api::{
@@ -154,7 +156,7 @@ impl ManagedRuntimeHost for WindowsManagedRuntimeHost {
     ) -> HostResult<Box<dyn ManagedRuntimeProcess>> {
         let executable = self
             .resolveRuntimeExecutable(request.program.clone(), request.executablePath.as_deref())?;
-        let mut command = Command::new(executable);
+        let mut command = background_command(executable);
         command.args(request.args);
         if let Some(cwd) = request.cwd {
             command.current_dir(cwd);
@@ -179,7 +181,7 @@ impl ManagedRuntimeHost for WindowsManagedRuntimeHost {
             .ok_or_else(|| HostError::new("managed runtime process has no stderr"))?;
 
         let (stdoutTx, stdoutRx) = mpsc::channel();
-        thread::spawn(move || {
+        let stdoutTask: operit_host_api::HostRuntimeTask = Box::new(move || {
             for line in BufReader::with_capacity(MANAGED_RUNTIME_STDIO_BUFFER_BYTES, stdout)
                 .lines()
                 .flatten()
@@ -190,7 +192,7 @@ impl ManagedRuntimeHost for WindowsManagedRuntimeHost {
 
         let stderrLines = Arc::new(Mutex::new(VecDeque::new()));
         let stderrLinesForThread = stderrLines.clone();
-        thread::spawn(move || {
+        let stderrTask: operit_host_api::HostRuntimeTask = Box::new(move || {
             for line in BufReader::with_capacity(MANAGED_RUNTIME_STDIO_BUFFER_BYTES, stderr)
                 .lines()
                 .flatten()
@@ -204,6 +206,13 @@ impl ManagedRuntimeHost for WindowsManagedRuntimeHost {
             }
         });
 
+        if let Err(error) = operit_host_native_common::NativeHostRuntimeTaskSchedulerHost::new()
+            .scheduleServiceTasks("managed-runtime-pipes", vec![stdoutTask, stderrTask])
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
         Ok(Box::new(NativeManagedRuntimeProcess {
             child: Mutex::new(child),
             stdin: Mutex::new(stdin),
@@ -219,7 +228,7 @@ impl ManagedRuntimeHost for WindowsManagedRuntimeHost {
     ) -> HostResult<RuntimeCommandOutput> {
         let executable = self
             .resolveRuntimeExecutable(request.program.clone(), request.executablePath.as_deref())?;
-        let mut command = Command::new(executable);
+        let mut command = background_command(executable);
         command.args(request.args);
         if let Some(cwd) = request.cwd {
             command.current_dir(cwd);

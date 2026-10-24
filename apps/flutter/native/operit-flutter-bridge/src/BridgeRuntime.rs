@@ -1,7 +1,6 @@
 //! Platform-neutral bridge ownership and local Core dispatch.
 //! Host assembly and transport execution are selected by PlatformRuntimeFactory.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,7 +15,6 @@ use operit_runtime::services::RuntimeHostInteractionService::{
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
 
-use crate::BridgeTransport::{PushStreamState, WatchSubscription};
 use crate::PlatformRuntimeFactory::PlatformBridgeState;
 
 /// Owns one Core tree independently of the frontend's transport or operating system.
@@ -25,8 +23,6 @@ pub struct OperitFlutterBridge {
     pub(crate) runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
     pub(crate) coreApplication: Mutex<Option<CoreApplication>>,
     pub(crate) platform: PlatformBridgeState,
-    pub(crate) watchSubscriptions: Arc<Mutex<HashMap<String, WatchSubscription>>>,
-    pub(crate) pushStreams: Mutex<HashMap<String, PushStreamState>>,
     pub(crate) taskScheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
 }
 
@@ -77,8 +73,6 @@ impl OperitFlutterBridge {
             runtimeStorageHost,
             coreApplication: Mutex::new(Some(coreApplication)),
             platform: PlatformBridgeState::new(),
-            watchSubscriptions: Arc::new(Mutex::new(HashMap::new())),
-            pushStreams: Mutex::new(HashMap::new()),
             taskScheduler,
         })
     }
@@ -106,9 +100,6 @@ impl Drop for OperitFlutterBridge {
     /// Releases the platform transport before destroying the shared Core tree.
     fn drop(&mut self) {
         self.platform.beforeShutdown(self);
-        if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
-            subscriptions.clear();
-        }
         if let Ok(application) = self.coreApplication.get_mut() {
             if let Some(application) = application.take() {
                 application.shutdownNow();
@@ -137,7 +128,10 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
             let response = match response {
                 Ok(response) => response,
                 Err(error) => {
-                    operit_util::AppLogger::AppLogger::e("OperitFlutterBridge", &format!("tool permission request failed: {error}"));
+                    operit_util::AppLogger::AppLogger::e(
+                        "OperitFlutterBridge",
+                        &format!("tool permission request failed: {error}"),
+                    );
                     return PermissionRequestResult::DENY;
                 }
             };
@@ -146,7 +140,10 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
                 "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
                 other => {
-                    operit_util::AppLogger::AppLogger::e("OperitFlutterBridge", &format!("unknown tool permission response result: {other}"));
+                    operit_util::AppLogger::AppLogger::e(
+                        "OperitFlutterBridge",
+                        &format!("unknown tool permission response result: {other}"),
+                    );
                     PermissionRequestResult::DENY
                 }
             }

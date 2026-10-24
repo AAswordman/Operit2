@@ -21,9 +21,7 @@ impl TcpHost for Esp32TcpHost {
         // caller cancels, the result (and its socket) is dropped by the worker.
         let address = address.to_owned();
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        std::thread::Builder::new()
-            .name("host-tcp-connect".into())
-            .spawn(move || {
+        defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeTask("host-tcp-connect", Box::new(move || {
                 let result = (|| {
                     let addresses = address
                         .to_socket_addrs()
@@ -44,8 +42,7 @@ impl TcpHost for Esp32TcpHost {
                     Err(last_error)
                 })();
                 let _ = sender.send(result);
-            })
-            .map_err(|error| HostError::new(error.to_string()))?;
+            }))?;
         receiver
             .await
             .map_err(|_| HostError::new("TCP connect worker ended"))?

@@ -39,7 +39,7 @@ pub async fn run_chat_command(
 
     match args[0].as_str() {
         "new" => create_chat(application, &args[1..], output).await,
-        "list" => list_chats(application, output),
+        "list" => list_chats(application, output).await,
         "show" => show_chat(application, &args[1..], output).await,
         "current" => show_current_chat(application, output),
         "switch" => switch_chat_command(application, &args[1..], output).await,
@@ -57,12 +57,15 @@ pub async fn run_chat_command(
     }
 }
 
-/// Lists all chats with compact metadata.
-fn list_chats(
+/// Lists chat metadata after any concurrent synchronization releases the runtime holder.
+async fn list_chats(
     application: &mut OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let chats = with_main_chat_core(application, |core| core.chatHistoriesFlow().value())?;
+    let chats = {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        holder.getCore(ChatRuntimeSlot::MAIN).chatHistoriesFlow().value()
+    };
     output.push_stdout_line(format!("Chats: {}", chats.len()));
     for chat in &chats {
         output.push_stdout_line(format!(
@@ -400,6 +403,7 @@ async fn create_chat(
         core.createNewChat(
             options.setAsCurrentChat,
             options.sourceChatId.clone(),
+            None,
             options.input.clone(),
         )
         .await

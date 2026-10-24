@@ -136,3 +136,8 @@ mod event_tests {
             .starts_with("Runtime event is invalid JSON:"));
     }
 }
+
+/// Builds the selected platform secret adapter for the independent maintenance boundary.
+pub(crate) fn rescue_secret_store(root: &std::path::Path) -> Result<Option<std::sync::Arc<dyn operit_host_api::HostSecretStore>>, String> {
+    platform::rescue_secret_store(root)
+}

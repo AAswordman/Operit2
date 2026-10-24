@@ -383,9 +383,10 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   ) {
     if (_tabById(sessionId) == null) {
       if (_closedSurfaceInteractionDropLogged.add(sessionId)) {
-        ClientLogger.d(
+        ClientLogger.v(
           'drop closed session=$sessionId type=${interaction['type']}',
           tag: _logTag,
+          verboseLevel: VerboseLevel.level5,
         );
       }
       return;
@@ -564,9 +565,10 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
       throw StateError('Browser surface descriptor is not a JSON object');
     }
     final descriptor = WorkspaceBrowserSurfaceDescriptor.fromJson(decoded);
-    ClientLogger.i(
+    ClientLogger.v(
       'descriptor session=${tab.id} transport=${descriptor.transport} platform=${descriptor.platform} streamId=${descriptor.streamId}',
       tag: _logTag,
+      verboseLevel: VerboseLevel.level5,
     );
     tab.updateSurfaceDescriptor(descriptor);
   }
@@ -575,9 +577,10 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   Map<String, Object?> _surfaceDisplayIntent() {
     final platform = defaultTargetPlatform;
     final transport = _encodedStreamTransport;
-    ClientLogger.i(
+    ClientLogger.v(
       'displayIntent platform=${platform.name} transport=$transport',
       tag: _logTag,
+      verboseLevel: VerboseLevel.level5,
     );
     return <String, Object?>{
       'transport': transport,

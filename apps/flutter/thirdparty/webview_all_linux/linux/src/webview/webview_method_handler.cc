@@ -78,8 +78,8 @@ GtkWidget *ensure_clip_container(LinuxWebView *webview, GtkOverlay *overlay) {
       reinterpret_cast<gpointer *>(&webview->clip_container));
 
   gtk_layout_put(GTK_LAYOUT(container), GTK_WIDGET(webview->web_view), 0, 0);
-  gtk_overlay_add_overlay(overlay, container);
-  gtk_overlay_set_overlay_pass_through(overlay, container, FALSE);
+  fl_view_register_native_view(FL_VIEW(webview->plugin->flutter_view),
+                               webview->id, container);
   return container;
 }
 
@@ -383,6 +383,16 @@ void instance_method_call_cb(FlMethodChannel *channel,
   const gchar *method = fl_method_call_get_name(method_call);
   FlValue *args = fl_method_call_get_args(method_call);
 
+  if (strcmp(method, "dispatchPointerEvent") == 0) {
+    dispatch_linux_webview_pointer(webview, args, method_call);
+    return;
+  }
+  if (strcmp(method, "releaseFocus") == 0) {
+    release_linux_webview_focus(webview);
+    respond(method_call, success_response());
+    return;
+  }
+
   if (strcmp(method, "setFrame") == 0) {
     GtkWidget *widget = GTK_WIDGET(webview->web_view);
     const gint64 frame_sequence =
@@ -470,7 +480,6 @@ void instance_method_call_cb(FlMethodChannel *channel,
       release_linux_webview_focus(webview);
       gtk_widget_hide(clip_container);
     }
-    schedule_flutter_view_input_region_update(webview->plugin);
     respond(method_call, success_response());
     return;
   }
@@ -1070,7 +1079,6 @@ void instance_method_call_cb(FlMethodChannel *channel,
     webview->visible = FALSE;
     release_linux_webview_focus(webview);
     gtk_widget_hide(GTK_WIDGET(webview->web_view));
-    schedule_flutter_view_input_region_update(webview->plugin);
     WebviewAllLinuxPlugin *plugin = webview->plugin;
     const gint identifier = webview->id;
     respond(method_call, success_response());

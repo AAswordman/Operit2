@@ -8,14 +8,14 @@ import os
 import zipfile
 from pathlib import Path
 
-from common import DIST_DIR, REPO_ROOT, require_command, run
+from common import DIST_DIR, REPO_ROOT, release_asset_name, require_command, run
 
 
 EDITOR_DIR = REPO_ROOT / "tools" / "esp32-editor"
 FIRMWARE_DIST_DIR = REPO_ROOT / "apps" / "esp32" / "dist"
 FIRMWARE_MANIFEST = EDITOR_DIR / "generated" / "manifest.json"
 PARTITIONS_FILE = REPO_ROOT / "apps" / "esp32" / "partitions.csv"
-DEFAULT_ARCHIVE_PATH = DIST_DIR / "operit2-esp32-esp32-2432s028.zip"
+DEFAULT_ARCHIVE_PATH = DIST_DIR / release_asset_name("firmware", "esp32", "2432s028", "zip")
 IMAGE_SPECS = (
     ("operit-esp32-4mb-full.bin", 0x000000, "initial-flash"),
     ("bootloader.bin", 0x001000, "bootloader"),

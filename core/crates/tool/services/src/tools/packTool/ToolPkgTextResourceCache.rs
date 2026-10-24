@@ -82,7 +82,10 @@ impl ToolPkgTextResourceCache {
             }
         }
         let text = load()?;
-        if !entry.as_ref().is_some_and(|cached| cached.signature == signature) {
+        if !entry
+            .as_ref()
+            .is_some_and(|cached| cached.signature == signature)
+        {
             *entry = Some(CachedResources {
                 signature: signature.into(),
                 texts: BTreeMap::new(),

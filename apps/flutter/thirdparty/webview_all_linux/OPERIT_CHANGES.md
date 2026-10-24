@@ -14,3 +14,10 @@ Both factors are retained independently and native updates are serialized by
 The fork uses local Flutter lint configuration and removes four upstream
 `@override` annotations for adapter-specific extension methods that are not
 members of Operit's shared interface. Their implementations remain unchanged.
+
+The fork implements Operit's socket-free local resource contract. It registers
+the `operit-vfs` URI scheme on each WebKit context, marks it secure and
+CORS-enabled, and serves requests through `operit/webview_resources` to the
+Dart handler registered by `setLocalResourceHandler`. Requests are kept alive
+until the Dart bridge returns bytes, so management documents and their
+subresources load entirely from the plugin VFS on Linux.

@@ -589,9 +589,22 @@ fn runFirmware(
         // display in the same loop iteration.
         if std::time::Instant::now() >= nextChatRoutePoll {
             nextChatRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            if let Ok(scope) = operit_node_runtime::NodeSpaceService::NodeSpaceContext::spaceStore(spaceService.as_ref()).space() {
-                if let Ok(preferences) = operit_store::DevicePreferencesStore::DevicePreferencesStore::new(runtimeStorage.clone()).read(&scope.spaceId, &identity.nodeId) {
-                    if let Err(error) = standalone_chat::configure(hostManager.httpHost.clone(), preferences.values().get("chat")) { ui.actionError(&error); }
+            let settings = (|| {
+                let scope = operit_node_runtime::NodeSpaceService::NodeSpaceContext::spaceStore(spaceService.as_ref())
+                    .space().map_err(|error| error.to_string())?;
+                let preferences = operit_store::DevicePreferencesStore::DevicePreferencesStore::new(runtimeStorage.clone())
+                    .read(&scope.spaceId, &identity.nodeId).map_err(|error| error.to_string())?;
+                Ok::<_, String>((scope.spaceId, preferences))
+            })();
+            match settings {
+                Ok((spaceId, preferences)) => {
+                    if let Err(error) = standalone_chat::configure(hostManager.httpHost.clone(), &spaceId, preferences.values().get("chat")) {
+                        ui.actionError(&error);
+                    }
+                }
+                Err(error) => {
+                    standalone_chat::reset();
+                    ui.actionError(&error);
                 }
             }
             chatRoute.poll(NodeServices::new(peerService.clone()));

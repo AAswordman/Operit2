@@ -14,7 +14,9 @@ Downloaded by pub (not CocoaPods).
   s.author           = { 'Flutter Dev Team' => 'flutter-dev@googlegroups.com' }
   s.source           = { :http => 'https://github.com/flutter/packages/tree/main/packages/webview_flutter/webview_flutter_wkwebview' }
   s.documentation_url = 'https://pub.dev/packages/webview_flutter'
-  s.source_files = 'webview_flutter_wkwebview/Sources/webview_flutter_wkwebview/**/*.swift'
+  s.source_files = 'webview_flutter_wkwebview/Sources/webview_flutter_wkwebview/**/*.swift',
+                   'webview_flutter_wkwebview/Sources/OperitWebViewSafety/**/*.{h,m}'
+  s.public_header_files = 'webview_flutter_wkwebview/Sources/OperitWebViewSafety/include/*.h'
   s.ios.dependency 'Flutter'
   s.osx.dependency 'FlutterMacOS'
   s.ios.deployment_target = '13.0'

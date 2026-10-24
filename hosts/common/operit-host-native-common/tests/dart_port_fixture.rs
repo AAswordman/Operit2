@@ -1,9 +1,9 @@
 //! Standalone native fixture for real Dart VM ownership and ABI tests.
 
-#[path = "../src/DartPort.rs"]
-mod dart_port;
 #[path = "../src/SharedBuffer.rs"]
 mod SharedBuffer;
+#[path = "../src/DartPort.rs"]
+mod dart_port;
 use SharedBuffer::SharedBuffer as BufferHandle;
 
 use dart_port::{DartPort, PostCObject};
@@ -56,8 +56,44 @@ pub unsafe extern "C" fn fixture_send(
     count: usize,
 ) -> bool {
     let bytes = Box::from_raw(std::ptr::slice_from_raw_parts_mut(pointer, length)).into_vec();
-    let buffers = (0..count).map(|index| BufferHandle::retain(handles.add(index).read_unaligned())).collect();
+    let buffers = (0..count)
+        .map(|index| BufferHandle::retain(handles.add(index).read_unaligned()))
+        .collect();
     DartPort::new(post, port).send(bytes, buffers)
+}
+
+/// Describes one independently attached frame in a VM delivery batch.
+#[repr(C)]
+pub struct FixtureFrame {
+    bytes: *mut u8,
+    length: usize,
+    handles: *const *const BufferHandle,
+    count: usize,
+}
+
+/// Sends multiple production envelopes in one native VM message.
+#[no_mangle]
+pub unsafe extern "C" fn fixture_send_batch(
+    post: PostCObject,
+    port: i64,
+    frames: *const FixtureFrame,
+    count: usize,
+) -> bool {
+    let frames = std::slice::from_raw_parts(frames, count)
+        .iter()
+        .map(|frame| {
+            let bytes = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                frame.bytes,
+                frame.length,
+            ))
+            .into_vec();
+            let buffers = (0..frame.count)
+                .map(|index| BufferHandle::retain(frame.handles.add(index).read_unaligned()))
+                .collect();
+            (bytes, buffers)
+        })
+        .collect();
+    DartPort::new(post, port).sendBatch(frames)
 }
 
 /// Allocates native ingress ownership using the production buffer implementation.

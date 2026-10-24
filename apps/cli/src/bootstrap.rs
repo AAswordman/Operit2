@@ -63,31 +63,67 @@ pub(crate) fn create_cli_host_manager() -> HostManager {
     create_cli_host_manager_with_toast_host(Arc::new(console_toast))
 }
 
+/// Returns the OS host name so CLI Cores on different machines stay distinguishable.
+#[allow(non_snake_case)]
+fn cliHostName() -> Option<String> {
+    gethostname::gethostname().into_string().ok()
+}
+
+/// Builds the CLI presentation identity used by pairing and the device space.
+#[allow(non_snake_case)]
+fn cliDeviceInfo(role: &str) -> LinkDeviceInfo {
+    LinkDeviceInfo::nativeCliOnHost(role, cliHostName().as_deref())
+}
+
 /// Writes one non-TUI toast into the active CLI terminal.
 fn console_toast(message: &str) -> HostResult<()> {
     eprintln!("{message}");
     Ok(())
 }
 
-/// Isolates explicit CLI profiles across all native IPC carriers.
+/// Isolates explicit CLI profiles across all native IPC carriers, and gives
+/// short-lived Cores their own instance so they can run next to the daemon/TUI
+/// without fighting over the same D-Bus service name.
 fn create_cli_plugin_sdk_ipc_host(
     runtimeRoot: &std::path::Path,
 ) -> Arc<dyn operit_host_api::PluginSdkIpcHost> {
-    if env::var_os("OPERIT_CLI_CONFIG_DIR").is_some_and(|path| !path.is_empty())
-        && !env::var_os("OPERIT_PLUGIN_SDK_INSTANCE").is_some_and(|value| !value.is_empty())
-    {
-        use sha2::{Digest, Sha256};
-        let key = format!(
-            "{:x}",
-            Sha256::digest(runtimeRoot.as_os_str().as_encoded_bytes())
-        );
-        return Arc::new(NativePluginSdkIpcHost::withInstance(&key[..16]));
+    if env::var_os("OPERIT_PLUGIN_SDK_INSTANCE").is_some_and(|value| !value.is_empty()) {
+        return Arc::new(NativePluginSdkIpcHost::new());
     }
-    Arc::new(NativePluginSdkIpcHost::new())
+    let stableInstance =
+        if env::var_os("OPERIT_CLI_CONFIG_DIR").is_some_and(|path| !path.is_empty()) {
+            use sha2::{Digest, Sha256};
+            let key = format!(
+                "{:x}",
+                Sha256::digest(runtimeRoot.as_os_str().as_encoded_bytes())
+            );
+            key[..16].to_string()
+        } else {
+            String::new()
+        };
+    let instance = cli_plugin_sdk_instance_name(&stableInstance, crate::daemon::process_is_owner());
+    Arc::new(NativePluginSdkIpcHost::withInstance(&instance))
+}
+
+/// The owner keeps the profile-stable service name; every short-lived Core
+/// gets a process-unique suffix so concurrent CLI commands never collide.
+fn cli_plugin_sdk_instance_name(stable: &str, ownerProcess: bool) -> String {
+    if ownerProcess {
+        return stable.to_string();
+    }
+    let pid = std::process::id();
+    if stable.is_empty() {
+        format!("pid-{pid}")
+    } else {
+        format!("{stable}-pid-{pid}")
+    }
 }
 
 /// Creates the CLI host manager with frontend-owned toast presentation.
 fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> HostManager {
+    static LEASE: std::sync::OnceLock<operit_host_data_rescue::StorageLease> = std::sync::OnceLock::new();
+    LEASE.get_or_init(|| operit_host_data_rescue::StorageLease::acquire(&NativeRuntimeStorageHost::defaultRuntimeRoot(), false)
+        .unwrap_or_else(|error| panic!("Storage access denied: {error}")));
     let storageConfig = CliStorageConfig::read();
     let (runtimeRoot, workspaceRoot) = storageConfig.activeRoots();
     let pluginSdkIpcHost = create_cli_plugin_sdk_ipc_host(&runtimeRoot);
@@ -190,11 +226,16 @@ pub(crate) fn create_cli_application() -> OperitApplication {
 pub(crate) async fn create_cli_core_application(
     deviceName: &str,
 ) -> Result<CoreApplication, String> {
-    CoreApplication::start(CoreApplicationConfig::new(
+    let mut config = CoreApplicationConfig::new(
         create_cli_host_manager(),
-        LinkDeviceInfo::nativeCli(deviceName),
-    ))
-    .await
+        cliDeviceInfo(deviceName),
+    );
+    // A short-lived CLI Core running next to the daemon/TUI must not claim
+    // the persistent Space sync worker as well.
+    if !crate::daemon::process_is_owner() && crate::daemon::owner_is_running() {
+        config = config.withSpaceSync(false);
+    }
+    CoreApplication::start(config).await
 }
 
 /// Starts a short-lived CLI Core tree without claiming the persistent sync worker.
@@ -210,7 +251,7 @@ pub(crate) async fn create_cli_core_application_with_node_services(
     services: Option<operit_node_runtime::NodeServices::NodeServices>,
 ) -> Result<CoreApplication, String> {
     let mut config = CoreApplicationConfig::new(
-        create_cli_host_manager(), LinkDeviceInfo::nativeCli(deviceName),
+        create_cli_host_manager(), cliDeviceInfo(deviceName),
     ).withSpaceSync(false);
     if let Some(services) = services { config = config.withNodeServices(services); }
     CoreApplication::start(config).await
@@ -224,7 +265,7 @@ pub(crate) async fn create_cli_core_application_configured(
     CoreApplication::start(
         CoreApplicationConfig::new(
             create_cli_host_manager(),
-            LinkDeviceInfo::nativeCli(deviceName),
+            cliDeviceInfo(deviceName),
         )
         .withLocalClientConfigurator(configurator),
     )
@@ -240,7 +281,7 @@ pub(crate) async fn create_cli_core_application_configured_with_toast_host(
     CoreApplication::start(
         CoreApplicationConfig::new(
             create_cli_host_manager_with_toast_host(toastHost),
-            LinkDeviceInfo::nativeCli(deviceName),
+            cliDeviceInfo(deviceName),
         )
         .withLocalClientConfigurator(configurator),
     )
@@ -341,6 +382,14 @@ impl CliStorageConfig {
 pub(crate) fn cli_identities() -> (Vec<CliIdentity>, String) {
     let config = CliStorageConfig::read();
     (config.identities, config.activeIdentityId)
+}
+
+/// Returns the selected identity and the runtime/workspace roots it owns.
+pub(crate) fn active_cli_identity() -> (CliIdentity, PathBuf, PathBuf) {
+    let config = CliStorageConfig::read();
+    let identity = config.activeIdentity().clone();
+    let (runtimeRoot, workspaceRoot) = config.activeRoots();
+    (identity, runtimeRoot, workspaceRoot)
 }
 
 /// Creates one isolated CLI identity without changing the active process identity.
@@ -600,6 +649,16 @@ mod tests {
     use operit_tools::tools::ToolResultDataClasses::ToolResultData;
     use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 
+    #[test]
+    fn short_lived_cores_get_a_process_unique_plugin_sdk_instance() {
+        assert_eq!(cli_plugin_sdk_instance_name("", true), "");
+        assert_eq!(cli_plugin_sdk_instance_name("profile", true), "profile");
+        let short_lived = cli_plugin_sdk_instance_name("profile", false);
+        assert!(short_lived.starts_with("profile-pid-"));
+        assert_ne!(short_lived, "profile");
+        assert!(cli_plugin_sdk_instance_name("", false).starts_with("pid-"));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn direct_terminal_tool_chain_executes_visible_terminal() {
         let application = create_cli_application();
@@ -682,3 +741,26 @@ mod tests {
         }
     }
 }
+
+/// Returns native roots for offline rescue without constructing the CLI Host manager.
+pub(crate) fn rescue_default_runtime() -> PathBuf { NativeRuntimeStorageHost::defaultRuntimeRoot() }
+
+/// Reads explicit CLI storage roots without creating missing configuration or identities.
+pub(crate) fn rescue_roots() -> Result<operit_host_data_rescue::RescueRoots, String> {
+    let bytes = fs::read(cli_storage_config_path()).map_err(|error| error.to_string())?;
+    let config: CliStorageConfig = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    Ok(operit_host_data_rescue::RescueRoots { runtime_root: config.runtimeRoot, workspace_root: config.workspaceRoot, cli_config_root: Some(cli_config_dir()) })
+}
+
+/// Returns the CLI configuration directory for an explicitly selected damaged-config rescue.
+pub(crate) fn rescue_config_root() -> PathBuf { cli_config_dir() }
+
+/// Opens maintenance with the same explicitly selected secret contract as normal CLI profiles.
+pub(crate) fn rescue_session(default_runtime: PathBuf, root: &std::path::Path) -> Result<operit_host_data_rescue::NativeRescueSession, String> {
+    if env::var("OPERIT_CLI_SECRET_STORE").as_deref() == Ok("file") {
+        return operit_host_data_rescue::NativeRescueSession::open_file_secrets(default_runtime);
+    }
+    let secrets = Arc::new(NativeRuntimeStorageHost::new(root.to_path_buf(), root.with_file_name("workspaces")));
+    operit_host_data_rescue::NativeRescueSession::open(default_runtime, Some(secrets))
+}
+

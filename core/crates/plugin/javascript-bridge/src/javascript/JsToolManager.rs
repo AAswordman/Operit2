@@ -378,7 +378,6 @@ impl JsToolManager {
                 &BTreeMap::new(),
                 None,
                 true,
-                60,
             )
         })
         .await
@@ -416,7 +415,6 @@ impl JsToolManager {
                     &BTreeMap::new(),
                     None,
                     true,
-                    60,
                 )
             })
             .await;
@@ -1563,7 +1561,6 @@ mod tests {
                 &BTreeMap::new(),
                 None,
                 true,
-                60,
             )
             .await;
 

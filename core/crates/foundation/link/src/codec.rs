@@ -162,3 +162,15 @@ where
 {
     rmp_serde::from_slice(bytes).map_err(|error| CoreLinkCodecError::Decode(error.to_string()))
 }
+
+/// Retains the exact attachment currently exposed to a structured serializer.
+pub(crate) fn retain_encoded_buffer(index: usize, offset: usize, length: usize) -> Result<CoreBytes, &'static str> {
+    let end = offset.checked_add(length).ok_or("shared buffer range overflow")?;
+    ENCODE_BUFFERS.with(|slot| {
+        let slot = slot.borrow();
+        let buffers = slot.as_ref().ok_or("shared encoding context is absent")?;
+        let bytes = buffers.get(index).ok_or("shared buffer index is invalid")?;
+        if end > bytes.len() { return Err("shared buffer range is invalid"); }
+        Ok(bytes.slice(offset..end))
+    })
+}

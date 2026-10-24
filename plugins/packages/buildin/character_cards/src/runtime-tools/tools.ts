@@ -408,7 +408,7 @@
           "name": "link_id",
           "type": "string",
           "required": false,
-          "description": "Lossless decimal-string relationship ID."
+          "description": "Opaque stable relationship identity."
         },
         {
           "name": "source_title",
@@ -456,7 +456,7 @@
           "name": "link_id",
           "type": "string",
           "required": false,
-          "description": "Lossless decimal-string relationship ID."
+          "description": "Opaque stable relationship identity."
         },
         {
           "name": "source_title",
@@ -516,7 +516,7 @@
           "name": "link_id",
           "type": "string",
           "required": false,
-          "description": "Lossless decimal-string relationship ID."
+          "description": "Opaque stable relationship identity."
         },
         {
           "name": "source_title",
@@ -594,7 +594,7 @@ export async function update_memory_link(input: unknown): Promise<MemoryToolResu
 export async function delete_memory_link(input: unknown): Promise<MemoryToolResults["delete_memory_link"]> { return execute("delete_memory_link", input); }
 
 /** Lists the actual plugin records through the single authenticated main-runtime domain dispatcher. */
-export async function list_character_cards(input: unknown): Promise<{ totalCount: number; cards: { id: string; name: string; description: string; isDefault: boolean; createdAt: number; updatedAt: number }[] }> {
+export async function list_character_cards(input: unknown): Promise<{ totalCount: number; cards: { id: string; name: string; description: string; createdAt: number; updatedAt: number }[] }> {
   const values = parameters(input), runtimeNames = new Set<string>(hostRuntimeParameterNames);
   for (const key of Object.keys(values)) {
     if (!runtimeNames.has(key)) throw new Error("Unknown list_character_cards parameter: " + key);
@@ -603,6 +603,6 @@ export async function list_character_cards(input: unknown): Promise<{ totalCount
   const records = await callDomain("character.list", {});
   return { totalCount: records.length, cards: records.map(
     /** Preserves the historical tool projection from actual complete stored card records. */
-    card => ({ id: card.id, name: card.name, description: card.description, isDefault: card.isDefault, createdAt: card.createdAt, updatedAt: card.updatedAt }),
+    card => ({ id: card.id, name: card.name, description: card.description, createdAt: card.createdAt, updatedAt: card.updatedAt }),
   ) };
 }

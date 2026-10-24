@@ -750,39 +750,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
-                    "move_file",
-                    "Move or rename a file or directory.",
-                    "",
-                    vec![
-                        param("source", "string", "source path", true, None),
-                        param("destination", "string", "destination path", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "copy_file",
-                    "Copy a file or directory through VFS paths.",
-                    "",
-                    vec![
-                        param("source", "string", "source path", true, None),
-                        param("destination", "string", "destination path", true, None),
-                        param("recursive", "boolean", "boolean", false, Some("false".to_string()))
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "file_info",
-                    "Get detailed information about a file or directory including type, size, permissions, owner, group, and last modified time.",
-                    "",
-                    vec![
-                        param("path", "string", "target path", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
                     "zip_files",
                     "Compress files or directories.",
                     "",
@@ -2021,39 +1988,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 tool(
                     "file_exists",
                     "检查文件或目录是否存在。",
-                    "",
-                    vec![
-                        param("path", "string", "目标路径", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "move_file",
-                    "移动或重命名文件或目录。",
-                    "",
-                    vec![
-                        param("source", "string", "源路径", true, None),
-                        param("destination", "string", "目标路径", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "copy_file",
-                    "通过 VFS 路径复制文件或目录。",
-                    "",
-                    vec![
-                        param("source", "string", "源路径", true, None),
-                        param("destination", "string", "目标路径", true, None),
-                        param("recursive", "boolean", "布尔值", false, Some("false".to_string()))
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "file_info",
-                    "获取文件或目录的详细信息，包括类型、大小、权限、所有者、组和最后修改时间。",
                     "",
                     vec![
                         param("path", "string", "目标路径", true, None)

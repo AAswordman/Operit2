@@ -6,12 +6,12 @@ use chacha20poly1305::{
     aead::{AeadInPlace, KeyInit},
     ChaCha20Poly1305, Key, Nonce, Tag,
 };
+use operit_host_api::{HostJavaScriptRuntime, HostManager::defaultHostJavaScriptRuntimeHost};
 use regex::Regex;
-#[cfg(not(target_arch = "wasm32"))]
-use rquickjs::{CatchResultExt, Context as QuickJsContext, Runtime as QuickJsRuntime};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::{Cursor, Read, Write};
+use zeroize::Zeroize;
 use zip::write::SimpleFileOptions;
 
 pub const PROTECTION_ID: &str = "operit-protected";
@@ -39,7 +39,6 @@ const DEFAULT_SCRIPT_ENTRY_NAME: &str = "artifact.js";
 const MARKET_ORIGIN_XOR_KEY: u8 = 0x5a;
 const MARKET_ORIGIN_METADATA_PREFIX: &str = "xor-v1:";
 const TOOLPKG_SIMILARITY_FRAGMENT_SIZE: usize = 24;
-const MINIFIER_MAX_STACK_SIZE: usize = 8 * 1024 * 1024;
 const TERSER_BUNDLE: &str = include_str!("vendor/terser.bundle.min.js");
 const MINIFIER_BOOTSTRAP: &str = r#"
 (function(root) {
@@ -325,19 +324,40 @@ pub fn toolPkgArchiveContainsProtectedEntries(bytes: &[u8]) -> Result<bool, Stri
 /// Verifies marketplace protection for declared executable entries of an ordinary ToolPkg.
 #[allow(non_snake_case)]
 pub fn validateMarketToolPkgArchive(bytes: &[u8]) -> Result<(), String> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
     let index = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
     let preview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &index)
         .ok_or("ToolPkg manifest is missing or invalid")?;
-    let base = preview.entryName.rsplit_once('/').map(|(base, _)| base).unwrap_or("");
-    let mut executable = preview.manifest.subpackages.iter().map(|entry| entry.entry.as_str()).collect::<Vec<_>>();
-    if !preview.manifest.main.is_empty() { executable.push(&preview.manifest.main); }
+    let base = preview
+        .entryName
+        .rsplit_once('/')
+        .map(|(base, _)| base)
+        .unwrap_or("");
+    let mut executable = preview
+        .manifest
+        .subpackages
+        .iter()
+        .map(|entry| entry.entry.as_str())
+        .collect::<Vec<_>>();
+    if !preview.manifest.main.is_empty() {
+        executable.push(&preview.manifest.main);
+    }
     for raw_path in executable {
         let path = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(base, raw_path)
             .ok_or("Invalid ToolPkg executable path")?;
-        let header = ToolPkgArchiveParser::readZipEntryPrefix(&mut archive, &index, &path, MARKET_ONLY_PROTECTION_HEADER_SIZE)
-            .ok_or_else(|| format!("Cannot read ToolPkg executable '{path}'"))?;
-        if !isProtectedEntry(&header) { return Err(format!("Market ToolPkg executable '{path}' is not protected")); }
+        let header = ToolPkgArchiveParser::readZipEntryPrefix(
+            &mut archive,
+            &index,
+            &path,
+            MARKET_ONLY_PROTECTION_HEADER_SIZE,
+        )
+        .ok_or_else(|| format!("Cannot read ToolPkg executable '{path}'"))?;
+        if !isProtectedEntry(&header) {
+            return Err(format!(
+                "Market ToolPkg executable '{path}' is not protected"
+            ));
+        }
     }
     Ok(())
 }
@@ -902,23 +922,36 @@ fn minifyToolPkgArchiveWithMarketOrigin(
         }
     }
     if let Some(license) = &mPreview.manifest.license {
-        let path = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(&manifestBasePath, license)
-            .ok_or("Invalid ToolPkg agreement reference")?;
+        let path =
+            ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(&manifestBasePath, license)
+                .ok_or("Invalid ToolPkg agreement reference")?;
         resourceEntryRoots.insert(path);
     }
     for theme in &mPreview.manifest.themes {
         for path in [&theme.path, &theme.preview] {
-            resourceEntryRoots.insert(ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(&manifestBasePath, path)
-                .ok_or("Invalid theme template reference")?);
+            resourceEntryRoots.insert(
+                ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(&manifestBasePath, path)
+                    .ok_or("Invalid theme template reference")?,
+            );
         }
-        let definition = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(&manifestBasePath, &theme.path)
-            .ok_or("Invalid theme template definition path")?;
-        let base = definition.rsplit_once('/').map(|(base, _)| base).unwrap_or("");
+        let definition = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(
+            &manifestBasePath,
+            &theme.path,
+        )
+        .ok_or("Invalid theme template definition path")?;
+        let base = definition
+            .rsplit_once('/')
+            .map(|(base, _)| base)
+            .unwrap_or("");
         for resource in &theme.files {
             let path = resource.path.as_str();
-            if matches!(path, "theme.json" | "preview.png") { continue; }
-            resourceEntryRoots.insert(ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(base, path)
-                .ok_or("Invalid theme template resource path")?);
+            if matches!(path, "theme.json" | "preview.png") {
+                continue;
+            }
+            resourceEntryRoots.insert(
+                ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(base, path)
+                    .ok_or("Invalid theme template resource path")?,
+            );
         }
     }
     for module in &mPreview.manifest.wasmModules {
@@ -1000,26 +1033,47 @@ fn injectToolPkgMarketOrigin(
         ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
             .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
     if manifestPreview.manifest.main.is_empty() {
-        let text = ToolPkgArchiveParser::readZipEntryText(&mut archive, &entryIndex, &manifestPreview.entryName)
-            .ok_or("Cannot read declarative ToolPkg manifest")?;
-        let mut manifest = crate::toolpkg::ToolPkgParser::parseToolPkgManifestValue(&text, &manifestPreview.entryName)?;
-        manifest["market_origin"] = serde_json::to_value(marketOrigin).map_err(|error| error.to_string())?;
+        let text = ToolPkgArchiveParser::readZipEntryText(
+            &mut archive,
+            &entryIndex,
+            &manifestPreview.entryName,
+        )
+        .ok_or("Cannot read declarative ToolPkg manifest")?;
+        let mut manifest = crate::toolpkg::ToolPkgParser::parseToolPkgManifestValue(
+            &text,
+            &manifestPreview.entryName,
+        )?;
+        manifest["market_origin"] =
+            serde_json::to_value(marketOrigin).map_err(|error| error.to_string())?;
         let replacement = serde_json::to_vec(&manifest).map_err(|error| error.to_string())?;
         let mut output = Vec::new();
         let mut writer = zip::ZipWriter::new(Cursor::new(&mut output));
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
             let name = entry.name().to_string();
-            let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
             if entry.is_dir() {
-                writer.add_directory(&name, options).map_err(|error| error.to_string())?;
+                writer
+                    .add_directory(&name, options)
+                    .map_err(|error| error.to_string())?;
                 continue;
             }
             let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-            writer.start_file(&name, options).map_err(|error| error.to_string())?;
-            let content = if name == manifestPreview.entryName { replacement.as_slice() } else { bytes.as_slice() };
-            writer.write_all(content).map_err(|error| error.to_string())?;
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|error| error.to_string())?;
+            writer
+                .start_file(&name, options)
+                .map_err(|error| error.to_string())?;
+            let content = if name == manifestPreview.entryName {
+                replacement.as_slice()
+            } else {
+                bytes.as_slice()
+            };
+            writer
+                .write_all(content)
+                .map_err(|error| error.to_string())?;
         }
         writer.finish().map_err(|error| error.to_string())?;
         return Ok(output);
@@ -1367,33 +1421,32 @@ fn startsWithMetadataLabel(commentBody: &str) -> bool {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 struct ToolPkgJsAstMinifier {
-    _runtime: QuickJsRuntime,
-    context: QuickJsContext,
+    runtime: Box<dyn HostJavaScriptRuntime>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl ToolPkgJsAstMinifier {
-    /// Creates a QuickJS-backed Terser minifier instance.
+    /// Creates Terser using the JavaScript engine installed by the active Host.
     fn new() -> Result<Self, String> {
         if TERSER_BUNDLE.trim().is_empty() {
             return Err("Terser bundle is empty".to_string());
         }
-        let runtime = QuickJsRuntime::new().map_err(|error| error.to_string())?;
-        // Terser's scope analysis needs more stack than QuickJS's default for published packages.
-        runtime.set_max_stack_size(MINIFIER_MAX_STACK_SIZE);
-        let context = QuickJsContext::full(&runtime).map_err(|error| error.to_string())?;
-        let minifier = Self {
-            _runtime: runtime,
-            context,
-        };
-        minifier.evalVoid(TERSER_BUNDLE)?;
-        minifier.evalVoid(MINIFIER_BOOTSTRAP)?;
+        let runtime = defaultHostJavaScriptRuntimeHost()
+            .createHostJavaScriptRuntime()
+            .map_err(|error| error.to_string())?;
+        let mut minifier = Self { runtime };
+        minifier
+            .runtime
+            .evaluateHostJavaScriptVoid("terser.bundle.js", TERSER_BUNDLE)
+            .map_err(|error| error.to_string())?;
+        minifier
+            .runtime
+            .evaluateHostJavaScriptVoid("terser.bootstrap.js", MINIFIER_BOOTSTRAP)
+            .map_err(|error| error.to_string())?;
         Ok(minifier)
     }
 
-    /// Minifies one JavaScript source string for a named entry.
+    /// Minifies one source through the Host's structured function invocation contract.
     fn minify(&mut self, source: &str, entryName: &str) -> Result<String, String> {
         if source.is_empty() {
             return Err(format!(
@@ -1403,51 +1456,31 @@ impl ToolPkgJsAstMinifier {
         if entryName.trim().is_empty() {
             return Err("JavaScript entry name is required for AST minification".to_string());
         }
-        let sourceJson = serde_json::to_string(source).map_err(|error| error.to_string())?;
-        let entryNameJson = serde_json::to_string(entryName).map_err(|error| error.to_string())?;
-        let script = format!("__operitToolPkgAstMinify({sourceJson},{entryNameJson});");
-        let minified = self.evalString(&script)?;
+        let result = self
+            .runtime
+            .callHostJavaScriptFunction(
+                "__operitToolPkgAstMinify",
+                &[
+                    serde_json::Value::String(source.to_owned()),
+                    serde_json::Value::String(entryName.to_owned()),
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        let serde_json::Value::String(minified) = result else {
+            return Err("AST minifier must return a string".to_string());
+        };
         if minified.is_empty() {
             return Err(format!("AST-minified output is empty for {entryName}"));
         }
         Ok(minified)
     }
 
-    /// Evaluates one QuickJS script and discards its result.
-    fn evalVoid(&self, script: &str) -> Result<(), String> {
-        let wrapped = format!("{script}\nvoid 0;");
-        self.context.with(|ctx| {
-            ctx.eval::<(), _>(wrapped.as_str())
-                .catch(&ctx)
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    /// Evaluates one QuickJS script and returns a string result.
-    fn evalString(&self, script: &str) -> Result<String, String> {
-        self.context.with(|ctx| {
-            ctx.eval::<String, _>(script)
-                .catch(&ctx)
-                .map_err(|error| error.to_string())
-        })
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-struct ToolPkgJsAstMinifier;
-
-#[cfg(target_arch = "wasm32")]
-impl ToolPkgJsAstMinifier {
-    /// Reports that artifact protection is unavailable in wasm32 builds.
-    fn new() -> Result<Self, String> {
-        Err("ToolPkg artifact protection is not available on wasm32".to_string())
-    }
-
-    /// Reports that JavaScript AST minification is unavailable in wasm32 builds.
-    fn minify(&mut self, _source: &str, entryName: &str) -> Result<String, String> {
-        Err(format!(
-            "ToolPkg JavaScript AST minification is not available for {entryName} on wasm32"
-        ))
+    /// Evaluates a minifier assertion through the same Host runtime used for compilation.
+    #[cfg(test)]
+    fn evalString(&mut self, script: &str) -> Result<String, String> {
+        self.runtime
+            .evaluateHostJavaScriptString("terser.test.js", script)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -1463,7 +1496,7 @@ fn protectionKey() -> Vec<u8> {
     }
 }
 
-/// Reconstructs the public non-production key through the same volatile share topology.
+/// Reconstructs the public non-production key from shares behind optimization barriers.
 #[cfg(not(operit_private_toolpkg_protection))]
 #[inline(never)]
 fn decoyProtectionKey() -> Vec<u8> {
@@ -1487,11 +1520,11 @@ fn decoyProtectionKey() -> Vec<u8> {
     output
 }
 
-/// Reads one public decoy share through a volatile access boundary.
+/// Reads one public decoy share with bounds checks and best-effort optimization barriers.
 #[cfg(not(operit_private_toolpkg_protection))]
 #[inline(never)]
 fn readDecoyByte(values: &[u8; DECOY_PRIVATE_SIZE], index: usize) -> u8 {
-    unsafe { core::ptr::read_volatile(values.as_ptr().add(index)) }
+    std::hint::black_box(values)[std::hint::black_box(index)]
 }
 
 #[allow(non_snake_case)]
@@ -1603,13 +1636,9 @@ fn constantTimeEquals(left: &[u8], right: &[u8]) -> bool {
 }
 
 #[allow(non_snake_case)]
-/// Clears a fixed-size key buffer through volatile writes before it is released.
+/// Clears a fixed-size key buffer without allowing the writes to be optimized away.
 fn clearKeyMaterial(material: &mut [u8; SHA256_SIZE]) {
-    for value in material {
-        unsafe {
-            core::ptr::write_volatile(value, 0);
-        }
-    }
+    material.zeroize();
 }
 
 #[allow(non_snake_case)]
@@ -1649,10 +1678,33 @@ fn decryptDetached(
         .map_err(|_| "Protected payload authentication failed".to_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    #[cfg(not(operit_private_toolpkg_protection))]
+    /// Preserves the existing public key derivation contract for protected artifacts and archives.
+    fn public_decoy_key_derivation_matches_existing_format() {
+        crate::javascript_test::install_host();
+        assert_eq!(
+            deriveAeadKey(),
+            [
+                0x1b, 0xbc, 0xf7, 0x7f, 0x22, 0x1b, 0xdc, 0x8b, 0x7b, 0x0d, 0x41, 0x3e, 0x3f, 0x52,
+                0x02, 0x10, 0x56, 0xc4, 0xc8, 0x8b, 0xac, 0xd7, 0x82, 0x37, 0x4d, 0x99, 0x3e, 0x1f,
+                0x8b, 0xb0, 0xd6, 0x1c,
+            ]
+        );
+        assert_eq!(
+            deriveMarketArchiveMacKey(),
+            [
+                0xda, 0xff, 0xb6, 0xfd, 0x1f, 0x32, 0x8e, 0x06, 0x22, 0x45, 0xab, 0x7d, 0xfd, 0xe6,
+                0x41, 0xf0, 0x29, 0xe2, 0x5a, 0xe8, 0x64, 0x7e, 0x57, 0xf0, 0xaa, 0x73, 0x7f, 0xeb,
+                0x11, 0x43, 0xe2, 0xbd,
+            ]
+        );
+    }
 
     /// Builds a minimal ToolPkg archive with one main JavaScript entry.
     fn buildSimilarityTestToolPkg(mainScript: &str) -> Vec<u8> {
@@ -1684,6 +1736,7 @@ mod tests {
     #[test]
     /// Verifies standalone scripts retain public exports while their executable code is optimized.
     fn standalone_script_is_plain_and_ast_minified() {
+        crate::javascript_test::install_host();
         let source = br#"
             // comment must disappear
             export function keepExternalName(value) {
@@ -1701,6 +1754,7 @@ mod tests {
     #[test]
     /// Verifies standalone package metadata remains parseable after AST minification.
     fn standalone_package_metadata_survives_ast_minification() {
+        crate::javascript_test::install_host();
         let source = br#"/* METADATA
 {
   name: protected_package
@@ -1739,6 +1793,7 @@ exports.inspect = function(params) {
     #[test]
     /// Verifies direct marketplace uploads always carry the authenticated author provenance.
     fn publish_processing_injects_script_provenance_with_or_without_minification() {
+        crate::javascript_test::install_host();
         let source = r#"/* METADATA
 {
   "name": "uuid_generator"
@@ -1790,6 +1845,7 @@ exports.generate = function generateUuid(value) {
     #[test]
     /// Verifies ToolPkg publication preserves all files normally and keeps only reachable files when minified.
     fn publish_processing_marks_toolpkg_and_trims_to_reachable_entries() {
+        crate::javascript_test::install_host();
         let manifest = br#"{
             "toolpkg_id": "tree-publish-test",
             "version": "1.0.2",
@@ -1902,6 +1958,7 @@ exports.generate = function generateUuid(value) {
     /// Preserves every declared template and the package agreement while processing executable capabilities.
     #[test]
     fn toolpkg_minification_preserves_theme_references_and_agreement() {
+        crate::javascript_test::install_host();
         let manifest = serde_json::json!({
             "toolpkg_id":"mixed_fixture", "version":"1", "main":"main.js", "license":"terms.txt",
             "themes":[{"id":"night", "path":"templates/night/visual.json", "preview":"cover/night.png",
@@ -1911,17 +1968,33 @@ exports.generate = function generateUuid(value) {
         let mut writer = zip::ZipWriter::new(Cursor::new(&mut source));
         for (path, bytes) in [
             ("manifest.json", manifest.to_string().into_bytes()),
-            ("main.js", b"exports.registerToolPkg = function() {};".to_vec()),
-            ("templates/night/visual.json", b"{}".to_vec()), ("cover/night.png", b"png".to_vec()),
-            ("templates/night/assets/images/background.png", b"data".to_vec()), ("terms.txt", b"Custom terms".to_vec()),
+            (
+                "main.js",
+                b"exports.registerToolPkg = function() {};".to_vec(),
+            ),
+            ("templates/night/visual.json", b"{}".to_vec()),
+            ("cover/night.png", b"png".to_vec()),
+            (
+                "templates/night/assets/images/background.png",
+                b"data".to_vec(),
+            ),
+            ("terms.txt", b"Custom terms".to_vec()),
         ] {
-            writer.start_file(path, SimpleFileOptions::default()).unwrap();
+            writer
+                .start_file(path, SimpleFileOptions::default())
+                .unwrap();
             writer.write_all(&bytes).unwrap();
         }
         writer.finish().unwrap();
         let output = protectArtifactNamedBytes(&source, "mixed_fixture.toolpkg", true).unwrap();
         let mut archive = zip::ZipArchive::new(Cursor::new(output)).unwrap();
-        for path in ["main.js", "templates/night/visual.json", "cover/night.png", "templates/night/assets/images/background.png", "terms.txt"] {
+        for path in [
+            "main.js",
+            "templates/night/visual.json",
+            "cover/night.png",
+            "templates/night/assets/images/background.png",
+            "terms.txt",
+        ] {
             assert!(archive.by_name(path).is_ok(), "{path}");
         }
     }
@@ -1929,19 +2002,32 @@ exports.generate = function generateUuid(value) {
     /// Applies ordinary manifest provenance to a declaration-only ToolPkg, independent of its capability kind.
     #[test]
     fn declarative_toolpkg_publication_preserves_hjson_resources() {
+        crate::javascript_test::install_host();
         let mut source = Vec::new();
         let mut writer = zip::ZipWriter::new(Cursor::new(&mut source));
-        writer.start_file("manifest.hjson", SimpleFileOptions::default()).unwrap();
+        writer
+            .start_file("manifest.hjson", SimpleFileOptions::default())
+            .unwrap();
         writer.write_all(b"{toolpkg_id:'resource_fixture',version:'1',resources:[{key:'data',path:'data.txt'}]}").unwrap();
-        writer.add_directory("data/", SimpleFileOptions::default()).unwrap();
-        writer.start_file("data.txt", SimpleFileOptions::default()).unwrap();
+        writer
+            .add_directory("data/", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .start_file("data.txt", SimpleFileOptions::default())
+            .unwrap();
         writer.write_all(b"Resource bytes").unwrap();
         writer.finish().unwrap();
         let output = protectArtifactNamedBytes(&source, "resource_fixture.toolpkg", true).unwrap();
         let mut archive = zip::ZipArchive::new(Cursor::new(output)).unwrap();
         let mut text = String::new();
-        archive.by_name("manifest.hjson").unwrap().read_to_string(&mut text).unwrap();
-        let value = crate::toolpkg::ToolPkgParser::parseToolPkgManifestValue(&text, "manifest.hjson").unwrap();
+        archive
+            .by_name("manifest.hjson")
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        let value =
+            crate::toolpkg::ToolPkgParser::parseToolPkgManifestValue(&text, "manifest.hjson")
+                .unwrap();
         assert_eq!(value["market_origin"]["toolpkgId"], "resource_fixture");
         assert!(archive.by_name("data.txt").is_ok());
         assert!(archive.by_name("data/").unwrap().is_dir());
@@ -1950,6 +2036,7 @@ exports.generate = function generateUuid(value) {
     #[test]
     /// Verifies release optimization removes private names without changing a CommonJS export.
     fn release_optimization_preserves_commonjs_export_and_removes_private_names() {
+        crate::javascript_test::install_host();
         let source = r#"
             // This implementation detail must not be retained in a published artifact.
             const internalPrefixForUuidGenerator = "normalized:";
@@ -1971,7 +2058,7 @@ exports.generate = function generateUuid(value) {
         assert!(!protected.contains("normalizeUserSuppliedUuid"));
         assert!(!protected.contains("generateUuidImplementation"));
 
-        let mut minifier = ToolPkgJsAstMinifier::new().expect("QuickJS minifier should initialize");
+        let mut minifier = ToolPkgJsAstMinifier::new().expect("Host minifier should initialize");
         let result = minifier
             .evalString(&format!(
                 "globalThis.exports={{}};{protected}JSON.stringify(exports.generate_uuid({{text:\"  A1B2-C3D4  \"}}));"
@@ -1983,6 +2070,7 @@ exports.generate = function generateUuid(value) {
     #[test]
     /// Verifies ToolPkg publication preserves a normal ZIP, manifest bytes, and resource bytes.
     fn toolpkg_publication_minifies_only_executable_entries() {
+        crate::javascript_test::install_host();
         let manifest = br#"{
             "toolpkg_id": "minify-test",
             "version": "1.0.0",
@@ -2058,6 +2146,7 @@ exports.generate = function generateUuid(value) {
     #[test]
     /// Verifies comments and formatting do not change ToolPkg code similarity.
     fn toolpkg_similarity_ignores_comments_and_formatting() {
+        crate::javascript_test::install_host();
         let reference = buildSimilarityTestToolPkg(
             r#"
                 // This comment is not code.
@@ -2082,6 +2171,7 @@ exports.generate = function generateUuid(value) {
     #[test]
     /// Verifies publication-minified ToolPkg code remains strongly comparable to its source archive.
     fn toolpkg_similarity_matches_published_minified_source() {
+        crate::javascript_test::install_host();
         let source = buildSimilarityTestToolPkg(
             r#"
                 function normalizeName(value) { return value.trim().toLowerCase(); }
@@ -2103,6 +2193,7 @@ exports.generate = function generateUuid(value) {
     #[test]
     /// Verifies a local function change preserves evidence from the unchanged code.
     fn toolpkg_similarity_survives_a_local_code_change() {
+        crate::javascript_test::install_host();
         let reference = buildSimilarityTestToolPkg(
             r#"
                 function normalizeName(value) { return value.trim().toLowerCase(); }
@@ -2134,6 +2225,7 @@ exports.generate = function generateUuid(value) {
     #[test]
     /// Verifies broader edits lower the score while preserving overlap from unchanged structure.
     fn toolpkg_similarity_reports_broader_code_changes() {
+        crate::javascript_test::install_host();
         let reference = buildSimilarityTestToolPkg(
             r#"
                 function normalizeName(value) { return value.trim().toLowerCase(); }
@@ -2164,6 +2256,7 @@ exports.generate = function generateUuid(value) {
     #[test]
     /// Verifies unrelated ToolPkg scripts do not produce a material similarity score.
     fn toolpkg_similarity_rejects_unrelated_code() {
+        crate::javascript_test::install_host();
         let reference = buildSimilarityTestToolPkg(
             r#"
                 function normalizeName(value) { return value.trim().toLowerCase(); }

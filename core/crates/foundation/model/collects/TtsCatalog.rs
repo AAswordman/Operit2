@@ -115,6 +115,16 @@ GEMINI_TTS||Vindemiatrix|Vindemiatrix|Gemini 温和音色
 GEMINI_TTS||Sadachbia|Sadachbia|Gemini 活泼轻快音色
 GEMINI_TTS||Sadaltager|Sadaltager|Gemini 专业音色
 GEMINI_TTS||Sulafat|Sulafat|Gemini 温暖音色
+QWEN_TTS|qwen3-tts-flash|Cherry|芊悦 Cherry|通义千问普通话女声
+QWEN_TTS|qwen3-tts-flash|Serena|苏瑶 Serena|通义千问温柔女声
+QWEN_TTS|qwen3-tts-flash|Ethan|晨煦 Ethan|通义千问普通话男声
+QWEN_TTS|qwen3-tts-flash|Chelsie|千雪 Chelsie|通义千问中文女声
+CARTESIA_TTS|sonic-3.6|db6b0ed5-d5d3-463d-ae85-518a07d3c2b4|Skylar|Cartesia 美式英语女声
+INWORLD_TTS|inworld-tts-2|Ashley|Ashley|Inworld 英文音色
+INWORLD_TTS|inworld-tts-2|Dennis|Dennis|Inworld 英文音色
+INWORLD_TTS|inworld-tts-2|Alex|Alex|Inworld 英文男声
+RIME_TTS|coda|astra|Astra|Rime Coda 英文女声
+RIME_TTS|mistv3|cove|Cove|Rime Mist v3 英文女声
 KOKORO_TTS||af_heart|AF Heart|Kokoro 美式英语女声
 KOKORO_TTS||af_alloy|AF Alloy|Kokoro 美式英语女声
 KOKORO_TTS||af_aoede|AF Aoede|Kokoro 美式英语女声

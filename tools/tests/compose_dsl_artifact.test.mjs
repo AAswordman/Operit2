@@ -20,7 +20,7 @@ const source = `module.exports.default = function(ctx) {
 
 test('build artifact is deterministic, portable, idempotent and loads without parser or lowering', () => {
   const artifact = compileComposeModule(source, 'test:screen.js');
-  assert.match(artifact, /^\/\/ @operit-compose-artifact 1\n/);
+  assert.match(artifact, /^\/\/ @operit-compose-artifact 4\n/);
   assert.match(artifact, /OperitComposeReactive\.frame/);
   assert.equal(artifact, compileComposeModule(source, 'test:screen.js'));
   assert.equal(artifact, compileComposeModule(artifact, 'test:screen.js'));
@@ -116,4 +116,14 @@ test('runtime registration preserves a screen expression without a trailing semi
   }`), context);
   assert.equal(typeof context.module.exports.default, 'function');
   assert.equal(typeof context.__operit_render_compose_dsl, 'function');
+});
+
+/** Removed executable ABIs must be rebuilt rather than retaining a second renderer. */
+test('old artifacts require rebuilding with the program ABI', () => {
+  const context = runtime();
+  for (const version of [1, 2, 3]) {
+    const artifact = '// @operit-compose-artifact ' + version + '\nmodule.exports.default = ctx => ctx.UI.Text({text: "existing"});';
+    for (const method of ['prepare', 'compile', 'artifact'])
+      assert.throws(() => context.OperitComposeCompiler[method](artifact, 'existing'), /Unsupported Compose artifact version/);
+  }
 });

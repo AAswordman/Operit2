@@ -12,12 +12,12 @@ use crate::javascript::PreparedEnginePool::PreparedEnginePool;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_util::AppLogger::AppLogger;
 
-/// Provides QuickJS-backed execution for caller-owned SDK contracts.
-pub struct QuickJsExecutionProvider {
+/// Provides Host-backed execution for caller-owned SDK contracts.
+pub struct HostJsExecutionProvider {
     prepared_engines: Arc<PreparedEnginePool<PreparedJsEngine>>,
 }
 
-impl QuickJsExecutionProvider {
+impl HostJsExecutionProvider {
     /// Starts preparing two unbound engines through the application's Host scheduler.
     pub fn new() -> Self {
         let scheduler = defaultHostRuntimeTaskSchedulerHost();
@@ -42,21 +42,21 @@ impl QuickJsExecutionProvider {
     }
 }
 
-impl Default for QuickJsExecutionProvider {
-    /// Creates the default unbound QuickJS execution provider.
+impl Default for HostJsExecutionProvider {
+    /// Creates the default unbound Host JavaScript execution provider.
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[derive(Clone)]
-struct QuickJsExecutionEngineFactory {
+struct HostJsExecutionEngineFactory {
     execution_host: Arc<dyn JsExecutionHost>,
     prepared_engines: Arc<PreparedEnginePool<PreparedJsEngine>>,
 }
 
-impl ToolPkgExecutionEngineFactory for QuickJsExecutionEngineFactory {
-    /// Creates one QuickJS engine without a ToolPkg package environment.
+impl ToolPkgExecutionEngineFactory for HostJsExecutionEngineFactory {
+    /// Creates one Host JavaScript engine without a ToolPkg package environment.
     #[allow(non_snake_case)]
     fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String> {
         JsEngine::new(self.execution_host.clone())
@@ -64,7 +64,7 @@ impl ToolPkgExecutionEngineFactory for QuickJsExecutionEngineFactory {
             .map_err(|error| error.to_string())
     }
 
-    /// Creates one QuickJS engine bound to the supplied execution host.
+    /// Creates one Host JavaScript engine bound to the supplied execution host.
     #[allow(non_snake_case)]
     fn createToolPkgExecutionEngine(
         &self,
@@ -88,8 +88,8 @@ impl ToolPkgExecutionEngineFactory for QuickJsExecutionEngineFactory {
     }
 }
 
-impl JsExecutionProvider for QuickJsExecutionProvider {
-    /// Creates one QuickJS engine bound to a caller-owned execution host.
+impl JsExecutionProvider for HostJsExecutionProvider {
+    /// Creates one Host JavaScript engine bound to a caller-owned execution host.
     fn create_execution_engine(
         &self,
         execution_host: Arc<dyn JsExecutionHost>,
@@ -99,7 +99,7 @@ impl JsExecutionProvider for QuickJsExecutionProvider {
             .map_err(|error| error.to_string())
     }
 
-    /// Creates one QuickJS engine bound to a ToolPkg package environment.
+    /// Creates one Host JavaScript engine bound to a ToolPkg package environment.
     fn create_toolpkg_execution_engine(
         &self,
         execution_host: Arc<dyn JsExecutionHost>,
@@ -127,7 +127,7 @@ impl JsExecutionProvider for QuickJsExecutionProvider {
     ) -> Arc<dyn JsPackageExecutor> {
         Arc::new(JsToolManager::new(
             package_runtime,
-            Arc::new(QuickJsExecutionEngineFactory {
+            Arc::new(HostJsExecutionEngineFactory {
                 execution_host,
                 prepared_engines: self.prepared_engines.clone(),
             }),

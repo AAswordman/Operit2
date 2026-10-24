@@ -500,10 +500,13 @@ fn revocationMesh(
     let services = (0..nodeCount)
         .map(|index| approvalService(&format!("{prefix}-{index}")))
         .collect::<Vec<_>>();
-    let routers = services
+    let mut routers = services
         .iter()
         .map(|(router, _)| router.clone())
         .collect::<Vec<_>>();
+    for router in &mut routers {
+        sync_idle_gate::installControlSyncTestApplication(router);
+    }
     let access = services
         .iter()
         .map(|(_, service)| service.clone())

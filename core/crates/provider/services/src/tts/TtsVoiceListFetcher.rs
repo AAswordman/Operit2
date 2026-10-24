@@ -347,3 +347,7 @@ fn jsonValueString(value: &Value) -> Option<String> {
         Value::Null | Value::Array(_) | Value::Object(_) => None,
     }
 }
+
+#[cfg(test)]
+#[path = "TtsVoiceListFetcherTests.rs"]
+mod tests;

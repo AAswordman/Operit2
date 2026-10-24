@@ -147,7 +147,7 @@ function App() {
           primary: { main: hostTheme.colors.primary, contrastText: hostTheme.colors.onPrimary },
           secondary: { main: hostTheme.colors.secondary, contrastText: hostTheme.colors.onSecondary },
           error: { main: hostTheme.colors.error, contrastText: hostTheme.colors.onError },
-          background: { default: hostTheme.colors.surface, paper: hostTheme.colors.surfaceContainer },
+          background: { default: hostTheme.colors.background, paper: hostTheme.colors.surfaceContainer },
           text: { primary: hostTheme.colors.onSurface, secondary: hostTheme.colors.onSurfaceVariant },
           divider: hostTheme.colors.outlineVariant,
         },

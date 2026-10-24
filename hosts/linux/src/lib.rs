@@ -1,5 +1,9 @@
 #![allow(non_snake_case)]
 
+#[cfg(all(feature = "daemon", target_os = "linux"))]
+#[path = "../../unix/daemon.rs"]
+pub mod daemon;
+
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]

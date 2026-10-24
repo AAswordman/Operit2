@@ -16,7 +16,8 @@ use operit_model::ModelConfigData::{BuiltinToolRequestFormat, ModelBuiltinTool};
 use operit_model::PromptTurn::PromptTurn;
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
+    with_event_channel_and_failure, RevisableTextStream, RevisableTextStreamLike,
+    TerminalFailureState, TextStreamEventCarrier,
 };
 use operit_util::stream::Stream::{FnStream, Stream};
 use operit_util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges};
@@ -936,6 +937,22 @@ impl OpenAIResponsesPayloadAdapter {
                                 );
                             }
                         }
+                        "video_url" | "input_video" => {
+                            let videoUrl = if partType == "input_video" {
+                                part.get("video_url")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                            } else {
+                                part.pointer("/video_url/url")
+                                    .and_then(Value::as_str)
+                                    .or_else(|| part.get("video_url").and_then(Value::as_str))
+                                    .unwrap_or_default()
+                            };
+                            if !videoUrl.is_empty() {
+                                convertedParts
+                                    .push(json!({"type": "input_video", "video_url": videoUrl}));
+                            }
+                        }
                         _ => {
                             if let Some(text) = part.get("text").and_then(Value::as_str) {
                                 if !text.is_empty() {
@@ -1322,6 +1339,7 @@ impl AIService for OpenAIResponsesProvider {
         AIService::calculate_input_tokens(&parent, chat_history, available_tools).await
     }
 
+    /// Sends an OpenAI Responses request through a failure-aware cold stream.
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
@@ -1351,6 +1369,8 @@ impl AIService for OpenAIResponsesProvider {
             .with_responses_api(true);
             let mut parent_stream = parent.send_prepared_request(request, requestBody).await?;
             let event_channel = parent_stream.event_channel().clone();
+            let terminalFailure = TerminalFailureState::new();
+            let producerTerminalFailure = terminalFailure.clone();
             let mut provider = self.clone();
             let activeParentGeneration = provider.setActiveParent(parent.clone());
             if provider.isCancelled() {
@@ -1369,8 +1389,12 @@ impl AIService for OpenAIResponsesProvider {
                 let mut provider = ownedProvider
                     .take()
                     .expect("OpenAI Responses parent stream must only be collected once");
+                let producerTerminalFailure = producerTerminalFailure.clone();
                 Box::pin(async move {
                     parentStream.collect(emit).await;
+                    if let Some(error) = parentStream.terminal_failure() {
+                        producerTerminalFailure.set(error);
+                    }
                     provider.apply_usage_counts(&UsageCounts {
                         totalInputTokens: parent.input_token_count()
                             + parent.cached_input_token_count(),
@@ -1381,7 +1405,11 @@ impl AIService for OpenAIResponsesProvider {
                     provider.clearActiveParent(activeParentGeneration);
                 })
             });
-            return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
+            return Ok(Box::new(with_event_channel_and_failure(
+                cold_stream,
+                event_channel,
+                terminalFailure,
+            )));
         }
 
         let response = reqwest::Client::new()

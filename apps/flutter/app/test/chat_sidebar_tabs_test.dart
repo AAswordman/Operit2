@@ -5,12 +5,14 @@ import 'dart:typed_data';
 import 'support/compose_session_fixture.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/application/PluginHotReload.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/logging/ClientLogger.dart';
+import 'package:operit2/core/host/AppToastController.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
@@ -24,6 +26,7 @@ import 'package:operit2/ui/main/components/DrawerConversationState.dart';
 import 'package:operit2/ui/main/layout/TabletLayout.dart';
 import 'package:operit2/ui/main/components/NavigationDrawerAppearance.dart';
 import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
+import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:operit2/ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 
@@ -129,6 +132,11 @@ void main() {
     tester,
   ) async {
     final bridge = _registry();
+    bridge.entries.removeWhere(
+      (entry) =>
+          entry.containerPackageName != 'owner.first' ||
+          entry.surface != 'chat_sidebar_tabs',
+    );
     final expanded = ValueNotifier(false);
     final conversations = ValueNotifier(
       DrawerConversationState(histories: [_chat('chat-a')], loading: false),
@@ -291,6 +299,44 @@ void main() {
     expect(bridge.invocations, 2);
   });
 
+  test(
+    'catalog-only refresh retains unchanged prepared data without notifying',
+    () async {
+      final bridge = _PreparationBridge();
+      final preparation = ChatSidebarPreparation(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      addTearDown(preparation.dispose);
+      await preparation.prepare(const []);
+      final pending = Completer<Object?>();
+      bridge.responses.add(pending.future);
+      var notifications = 0;
+      preparation.addListener(() => notifications++);
+      ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
+      await _flushPreparation();
+      final id = chatSidebarTabIdentity('plugin.one', 'roles');
+      expect(preparation.read(id, const []), {'seed': 'plugin.one'});
+      expect(notifications, 0);
+      pending.complete({
+        'entries': [
+          {
+            'entryId': 'roles',
+            'data': {'seed': 'plugin.one'},
+          },
+        ],
+      });
+      await _flushPreparation();
+      expect(bridge.invocations, 2);
+      expect(notifications, 0);
+
+      bridge.owners = [];
+      ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
+      await _flushPreparation();
+      expect(preparation.read(id, const []), isNull);
+      expect(notifications, 1);
+    },
+  );
+
   test('disposing during a preparation rejects late publication', () async {
     final bridge = _PreparationBridge();
     final pending = Completer<Object?>();
@@ -318,7 +364,10 @@ void main() {
 
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(ClientLogger.initialize);
-  tearDown(() => newChatIntroArmed.value = false);
+  tearDown(() {
+    newChatIntroArmed.value = false;
+    AppToastController.instance.reset();
+  });
 
   test('tab identity namespaces owners without delimiter collisions', () {
     expect(
@@ -347,6 +396,7 @@ void main() {
       'locked': true,
       'pinned': true,
       'group': 'legacy-native-folder',
+      'parentChatId': null,
     });
     expect(summary.keys.toSet(), {
       'id',
@@ -358,6 +408,7 @@ void main() {
       'locked',
       'pinned',
       'group',
+      'parentChatId',
     });
   });
 
@@ -385,6 +436,42 @@ void main() {
       expect(() => chatSidebarActivation(malformed), throwsFormatException);
     }
   });
+
+  test(
+    'detached-window requests require exactly type and a nonblank chatId',
+    () {
+      expect(chatSidebarWindowRequest(null), isNull);
+      expect(
+        chatSidebarWindowRequest({
+          'type': 'toolpkg.chat.activate',
+          'chatId': 'chat-a',
+        }),
+        isNull,
+      );
+      expect(
+        chatSidebarWindowRequest({
+          'type': 'toolpkg.chat.openInWindow',
+          'chatId': 'chat-a',
+        }),
+        'chat-a',
+      );
+      for (final malformed in <Object?>[
+        {'type': 'toolpkg.chat.openInWindow'},
+        {'type': 'toolpkg.chat.openInWindow', 'chatId': ' '},
+        {'type': 'toolpkg.chat.openInWindow', 'chatId': 42},
+        {
+          'type': 'toolpkg.chat.openInWindow',
+          'chatId': 'chat-a',
+          'title': 'untrusted',
+        },
+      ]) {
+        expect(
+          () => chatSidebarWindowRequest(malformed),
+          throwsFormatException,
+        );
+      }
+    },
+  );
 
   test('new tab preference does not read or migrate legacy grouping', () async {
     final bridge = _registry();
@@ -443,15 +530,23 @@ void main() {
       await tester.pumpAndSettle();
       await _openFirstTab(tester);
       final launcher = find.byType(ToolPkgUiLauncherScreen);
-      final initialHeight = tester.getSize(launcher).height;
-      final scroll = find.ancestor(
+      final pluginSliver = find
+          .descendant(of: launcher, matching: find.byType(SliverMainAxisGroup))
+          .first;
+      final initialHeight = tester
+          .renderObject<RenderSliver>(pluginSliver)
+          .geometry!
+          .scrollExtent;
+      final scroll = find.descendant(
         of: launcher,
         matching: find.byType(Scrollable),
       );
       expect(scroll, findsOneWidget);
       final scrollState = tester.state<ScrollableState>(scroll);
       expect(scrollState.position.maxScrollExtent, 0);
-      final initialFooterTop = tester.getTopLeft(find.text('Plugin footer')).dy;
+      final initialFooterTop = tester
+          .getTopLeft(find.text('Plugin footer', skipOffstage: false))
+          .dy;
       bridge.extraRows = 60;
       await tester.pumpWidget(
         _host(
@@ -462,10 +557,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(tester.getSize(launcher).height, greaterThan(initialHeight + 600));
+      expect(
+        tester.renderObject<RenderSliver>(pluginSliver).geometry!.scrollExtent,
+        greaterThan(initialHeight + 600),
+      );
       expect(scrollState.position.maxScrollExtent, greaterThan(600));
       expect(
-        tester.getTopLeft(find.text('Plugin footer')).dy,
+        tester.getTopLeft(find.text('Plugin footer', skipOffstage: false)).dy,
         greaterThan(initialFooterTop + 600),
       );
       await tester.drag(scroll, const Offset(0, -1200));
@@ -476,8 +574,63 @@ void main() {
         _host(bridge, clients: clients, pluginFooter: footer),
       );
       await tester.pumpAndSettle();
-      expect(tester.getSize(launcher).height, initialHeight);
+      expect(
+        tester.renderObject<RenderSliver>(pluginSliver).geometry!.scrollExtent,
+        initialHeight,
+      );
       expect(scrollState.position.maxScrollExtent, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'lazy plugin rows share host chrome and scrolling submits no Compose commands',
+    (tester) async {
+      final bridge = _registry()
+        ..lazyContent = true
+        ..extraRows = 200;
+      await tester.pumpWidget(
+        _host(bridge, pluginFooter: const Text('Plugin footer')),
+      );
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final launcher = find.byType(ToolPkgUiLauncherScreen);
+      final scroll = find.descendant(
+        of: launcher,
+        matching: find.byType(Scrollable),
+      );
+      expect(scroll, findsOneWidget);
+      expect(find.text('Sidebar row 199'), findsNothing);
+      expect(
+        find.textContaining('Sidebar row').evaluate().length,
+        lessThan(40),
+      );
+      final commands = bridge.compose.commands.length;
+      final reads = bridge.catalogReads;
+      await tester.scrollUntilVisible(
+        find.text('Sidebar row 199'),
+        1000,
+        scrollable: scroll,
+        maxScrolls: 20,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Sidebar row 199'), findsOneWidget);
+      expect(find.text('Sidebar row 0'), findsNothing);
+      expect(
+        find.textContaining('Sidebar row').evaluate().length,
+        lessThan(40),
+      );
+      expect(bridge.compose.commands.length, commands);
+      expect(bridge.catalogReads, reads);
+      expect(
+        tester.state(
+          find.ancestor(
+            of: find.text('Plugin footer', skipOffstage: false),
+            matching: find.byType(Scrollable),
+          ),
+        ),
+        same(tester.state(scroll)),
+      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -485,7 +638,7 @@ void main() {
   testWidgets(
     'completed action continues delivering detached session commits',
     (tester) async {
-      final bridge = _registry();
+      final bridge = _registry()..lazyContent = true;
       await tester.pumpWidget(_host(bridge));
       await tester.pumpAndSettle();
       await _openFirstTab(tester);
@@ -559,13 +712,13 @@ void main() {
       await tester.pumpAndSettle();
       await _openFirstTab(tester);
       final launcher = find.byType(ToolPkgUiLauncherScreen);
-      final scroll = find.ancestor(
+      final scroll = find.descendant(
         of: launcher,
         matching: find.byType(Scrollable),
       );
       expect(scroll, findsOneWidget);
       final footerScroll = find.ancestor(
-        of: find.text('Plugin destination 24'),
+        of: find.text('Plugin destination 24', skipOffstage: false),
         matching: find.byType(Scrollable),
       );
       expect(footerScroll, findsOneWidget);
@@ -716,6 +869,7 @@ void main() {
       expect(launcher.showLauncherChrome, isFalse);
       expect(launcher.initialState, {
         'input': _input('owner.second'),
+        'chatSidebarCapabilities': {'openInWindow': false},
         'chatSidebar': {
           'chats': [chatSidebarSummary(_chat('chat-a'))],
           'currentChatId': 'chat-a',
@@ -875,6 +1029,146 @@ void main() {
   );
 
   testWidgets(
+    'unrelated catalog refresh retains the session and its action callback',
+    (tester) async {
+      final bridge = _registry()
+        ..lazyContent = true
+        ..extraRows = 200;
+      final activated = <String>[];
+      final preparation = ChatSidebarPreparation(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      addTearDown(preparation.dispose);
+      await preparation.prepare([_chat('chat-a')]);
+      await tester.pumpWidget(
+        ChatSidebarPreparationScope(
+          preparation: preparation,
+          child: _host(bridge, onActivate: activated.add),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final launcher = find.byType(ToolPkgUiLauncherScreen);
+      final session = tester.state(launcher);
+      final callback = _launcher(tester).onActionResult!;
+      final scroll = find.descendant(
+        of: launcher,
+        matching: find.byType(Scrollable),
+      );
+      await tester.drag(scroll, const Offset(0, -300));
+      await tester.pumpAndSettle();
+      final position = tester.state<ScrollableState>(scroll).position;
+      final offset = position.pixels;
+      expect(offset, greaterThan(0));
+      final commands = bridge.compose.commands.length;
+      final pending = Completer<void>();
+      bridge.nextCatalogRead = pending.future;
+      bridge.entries.removeWhere((entry) => entry.surface == 'toolbox');
+      ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
+      await tester.pump();
+      expect(tester.state(launcher), same(session));
+      expect(position.pixels, offset);
+
+      pending.complete();
+      await tester.pumpAndSettle();
+      expect(tester.state(launcher), same(session));
+      expect(position.pixels, offset);
+      expect(bridge.compose.commands.length, commands);
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'openComposeDslSession',
+        ),
+        hasLength(1),
+      );
+      callback({'type': 'toolpkg.chat.activate', 'chatId': 'chat-a'});
+      await tester.pumpAndSettle();
+      expect(activated, ['chat-a']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'adding and removing another tab preserves visited sidebar sessions',
+    (tester) async {
+      final bridge = _registry();
+      await tester.pumpWidget(_host(bridge));
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final first = tester.state(find.byType(ToolPkgUiLauncherScreen));
+      await tester.tap(find.byKey(_tabKey('owner.second')));
+      await tester.pumpAndSettle();
+      final second = tester.state(find.byType(ToolPkgUiLauncherScreen));
+      await _openFirstTab(tester);
+      final launchers = find.byType(
+        ToolPkgUiLauncherScreen,
+        skipOffstage: false,
+      );
+
+      bridge.entries.add(_entry('owner.third'));
+      bridge.routes.add(_route('owner.third'));
+      ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
+      await tester.pumpAndSettle();
+      expect(tester.stateList(launchers), containsAll([first, second]));
+      expect(find.byKey(_tabKey('owner.third')), findsOneWidget);
+
+      bridge.entries.removeWhere(
+        (entry) => entry.containerPackageName == 'owner.second',
+      );
+      bridge.routes.removeWhere(
+        (route) => route.containerPackageName == 'owner.second',
+      );
+      ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
+      await tester.pumpAndSettle();
+      expect(tester.state(find.byType(ToolPkgUiLauncherScreen)), same(first));
+      expect(first.mounted, isTrue);
+      expect(second.mounted, isFalse);
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'openComposeDslSession',
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  testWidgets(
+    'changed tab registration replaces only its own session and callbacks',
+    (tester) async {
+      final bridge = _registry();
+      final activated = <String>[];
+      await tester.pumpWidget(_host(bridge, onActivate: activated.add));
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final first = tester.state(find.byType(ToolPkgUiLauncherScreen));
+      final staleCallback = _launcher(tester).onActionResult!;
+      await tester.tap(find.byKey(_tabKey('owner.second')));
+      await tester.pumpAndSettle();
+      final second = tester.state(find.byType(ToolPkgUiLauncherScreen));
+      await _openFirstTab(tester);
+
+      bridge.entries[0] = core.ToolPkgNavigationEntry.fromJson({
+        ...bridge.entries[0].toJson(),
+        'params': {'changed': true},
+      });
+      ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
+      await tester.pumpAndSettle();
+      expect(first.mounted, isFalse);
+      expect(second.mounted, isTrue);
+      expect(_launcher(tester).initialState['input'], {'changed': true});
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'openComposeDslSession',
+        ),
+        hasLength(3),
+      );
+      staleCallback({'type': 'toolpkg.chat.activate', 'chatId': 'chat-a'});
+      await tester.pumpAndSettle();
+      expect(activated, isEmpty);
+      expect(find.textContaining('no longer current'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'disabled selected tab stays selected and never shows workspace',
     (tester) async {
       final bridge = _registry();
@@ -888,7 +1182,7 @@ void main() {
       bridge.routes.removeWhere(
         (route) => route.containerPackageName == 'owner.first',
       );
-      ToolPkgCatalogChangeBus.notifyCatalogChanged();
+      ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
       await tester.pumpAndSettle();
       expect(bridge.preferences[_tabPreference], savedId);
       expect(find.textContaining('not enabled or registered'), findsOneWidget);
@@ -919,6 +1213,36 @@ void main() {
         bridge.preferences[_tabPreference],
         chatSidebarTabIdentity('owner.first', 'history'),
       );
+    },
+  );
+
+  testWidgets(
+    'code replacement reloads a tab even when its registration is unchanged',
+    (tester) async {
+      final bridge = _registry();
+      final activated = <String>[];
+      await tester.pumpWidget(_host(bridge, onActivate: activated.add));
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final session = tester.state(find.byType(ToolPkgUiLauncherScreen));
+      final staleCallback = _launcher(tester).onActionResult!;
+      ToolPkgCatalogChangeBus.notifyCatalogChanged();
+      await tester.pumpAndSettle();
+      expect(session.mounted, isFalse);
+      expect(
+        tester.state(find.byType(ToolPkgUiLauncherScreen)),
+        isNot(same(session)),
+      );
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'openComposeDslSession',
+        ),
+        hasLength(2),
+      );
+      staleCallback({'type': 'toolpkg.chat.activate', 'chatId': 'chat-a'});
+      await tester.pumpAndSettle();
+      expect(activated, isEmpty);
+      expect(find.textContaining('no longer current'), findsOneWidget);
     },
   );
 
@@ -965,6 +1289,171 @@ void main() {
       expect(activated, isEmpty);
       expect(find.byKey(_workspaceKey), findsOneWidget);
       expect(find.textContaining('selection changed'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'detached windows validate current metadata without activating the chat',
+    (tester) async {
+      final bridge = _registry();
+      final activated = <String>[];
+      final opened = <core.ChatHistoryListItem>[];
+      await tester.pumpWidget(
+        _host(
+          bridge,
+          onActivate: activated.add,
+          onOpenChatInWindow: (chat) async {
+            opened.add(chat);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      expect(_launcher(tester).initialState['chatSidebarCapabilities'], {
+        'openInWindow': true,
+      });
+      bridge.chats[0] = _chat('chat-a', title: 'Fresh window title');
+      _launcher(tester).onActionResult!({
+        'type': 'toolpkg.chat.openInWindow',
+        'chatId': 'chat-a',
+      });
+      await tester.pumpAndSettle();
+      expect(opened.single.title, 'Fresh window title');
+      expect(opened.single.id, 'chat-a');
+      expect(activated, isEmpty);
+      expect(bridge.historyReads, 1);
+      expect(bridge.catalogReads, 2);
+    },
+  );
+
+  testWidgets(
+    'detached-window actions reject unsupported hosts and missing chats',
+    (tester) async {
+      final bridge = _registry();
+      final clients = GeneratedCoreProxyClients(bridge);
+      final opened = <core.ChatHistoryListItem>[];
+      await tester.pumpWidget(_host(bridge, clients: clients));
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      expect(_launcher(tester).initialState['chatSidebarCapabilities'], {
+        'openInWindow': false,
+      });
+      _launcher(tester).onActionResult!({
+        'type': 'toolpkg.chat.openInWindow',
+        'chatId': 'chat-a',
+      });
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Detached chat windows are not available'),
+        findsOneWidget,
+      );
+      expect(bridge.historyReads, 0);
+      await tester.pumpWidget(
+        _host(
+          bridge,
+          clients: clients,
+          onOpenChatInWindow: (chat) async {
+            opened.add(chat);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(_launcher(tester).initialState['chatSidebarCapabilities'], {
+        'openInWindow': true,
+      });
+      _launcher(tester).onActionResult!({
+        'type': 'toolpkg.chat.openInWindow',
+        'chatId': 'missing-chat',
+      });
+      await tester.pumpAndSettle();
+      expect(opened, isEmpty);
+      expect(
+        find.textContaining('conversation does not exist'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'leaving the sidebar tab while validating a window request does not open a window',
+    (tester) async {
+      final bridge = _registry();
+      final gate = Completer<void>();
+      final opened = <core.ChatHistoryListItem>[];
+      await tester.pumpWidget(
+        _host(
+          bridge,
+          onOpenChatInWindow: (chat) async {
+            opened.add(chat);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      bridge.nextHistoryRead = gate.future;
+      _launcher(tester).onActionResult!({
+        'type': 'toolpkg.chat.openInWindow',
+        'chatId': 'chat-a',
+      });
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('chat-sidebar-workspace-tab')),
+      );
+      await tester.pumpAndSettle();
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(opened, isEmpty);
+      expect(find.textContaining('selection changed'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'drawer only supplies an active chat to plugin tabs on the chat route',
+    (tester) async {
+      final bridge = _registry();
+      bridge.preferences[_tabPreference] = chatSidebarTabIdentity(
+        'owner.first',
+        'history',
+      );
+      Future<void> showRoute(String route) async {
+        await tester.pumpWidget(
+          _nativeDrawer(
+            bridge,
+            expanded: true,
+            currentChatId: 'chat-a',
+            histories: [_chat('chat-a')],
+            selectedRouteId: route,
+            onActivated: () {},
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      final chatRoute = ScreenRouteRegistry.routeIdOf(
+        ScreenRouteRegistry.aiChat,
+      );
+      await showRoute(chatRoute);
+      final element = tester.element(find.byType(ToolPkgUiLauncherScreen));
+      expect(
+        (_launcher(tester).initialState['chatSidebar'] as Map)['currentChatId'],
+        'chat-a',
+      );
+      await showRoute(
+        ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.settings),
+      );
+      expect(
+        tester.element(find.byType(ToolPkgUiLauncherScreen)),
+        same(element),
+      );
+      expect(
+        (bridge.renderedStates.last['chatSidebar'] as Map)['currentChatId'],
+        isNull,
+      );
+      await showRoute(chatRoute);
+      expect(
+        (bridge.renderedStates.last['chatSidebar'] as Map)['currentChatId'],
+        'chat-a',
+      );
     },
   );
 
@@ -1095,6 +1584,7 @@ void main() {
           expect(request.args, {
             'setAsCurrentChat': true,
             'sourceChatId': source,
+            'parentChatId': null,
             'input': null,
           });
           expect(activations, 1);
@@ -1135,6 +1625,8 @@ void main() {
           find.textContaining('Authoritative create failure'),
           findsWidgets,
         );
+        // Corner notices own process-wide timers beyond the drawer's lifecycle.
+        AppToastController.instance.reset();
       },
     );
   }
@@ -1184,6 +1676,7 @@ Widget _nativeDrawer(
   required VoidCallback onActivated,
   List<core.ChatHistoryListItem> histories = const [],
   List<NavigationEntrySpec> pluginEntries = const [],
+  String? selectedRouteId,
 }) => OperitTheme(
   initialThemePreferenceSnapshot:
       UserPreferencesManager.defaultThemePreferenceSnapshot,
@@ -1197,7 +1690,9 @@ Widget _nativeDrawer(
           ? DrawerContent(
               navigationEntries: const [],
               pluginEntries: pluginEntries,
-              selectedRouteId: 'native-chat',
+              selectedRouteId:
+                  selectedRouteId ??
+                  ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat),
               appearance: _appearance,
               histories: histories,
               activeStreamingChatIds: const {},
@@ -1233,7 +1728,9 @@ Widget _nativeDrawer(
                 ),
               ],
               pluginEntries: pluginEntries,
-              selectedRouteId: 'native-chat',
+              selectedRouteId:
+                  selectedRouteId ??
+                  ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat),
               appearance: _appearance,
               currentChatId: currentChatId,
               bridge: bridge,
@@ -1267,6 +1764,7 @@ Widget _host(
   Future<void> Function(String)? onActivateAsync,
   Widget Function(BuildContext, Widget)? workspaceWithTabsBuilder,
   Widget? pluginFooter,
+  Future<void> Function(core.ChatHistoryListItem)? onOpenChatInWindow,
 }) => MaterialApp(
   localizationsDelegates: AppLocalizations.localizationsDelegates,
   supportedLocales: AppLocalizations.supportedLocales,
@@ -1280,6 +1778,7 @@ Widget _host(
         activeStreamingChatIds: streamingChatIds,
         workspaceWithTabsBuilder: workspaceWithTabsBuilder,
         pluginFooter: pluginFooter,
+        onOpenChatInWindow: onOpenChatInWindow,
         workspaceBuilder: (_) =>
             const Text('Native workspace', key: _workspaceKey),
         onActivateChat: (chatId) async {
@@ -1361,19 +1860,21 @@ core.ToolPkgUiRoute _route(String owner) => core.ToolPkgUiRoute(
 );
 
 /// Decodes the generated canonical DTO while proving legacy metadata never enters tab state.
-core.ChatHistoryListItem _chat(String id) => core.ChatHistoryListItem.fromJson({
-  'id': id,
-  'title': 'Title $id',
-  'updatedAt': '2026-10-08T12:00:00Z',
-  'displayOrder': 3,
-  'workspaceId': 'workspace-a',
-  'workspaceName': 'Workspace A',
-  'locked': true,
-  'pinned': true,
-  'group': 'legacy-native-folder',
-  'characterCardName': 'legacy-card-not-forwarded',
-  'characterGroupId': 'legacy-subject-not-forwarded',
-});
+core.ChatHistoryListItem _chat(String id, {String? title}) =>
+    core.ChatHistoryListItem.fromJson({
+      'id': id,
+      'title': title ?? 'Title $id',
+      'updatedAt': '2026-10-08T12:00:00Z',
+      'displayOrder': 3,
+      'workspaceId': 'workspace-a',
+      'workspaceName': 'Workspace A',
+      'locked': true,
+      'pinned': true,
+      'group': 'legacy-native-folder',
+      'parentChatId': null,
+      'characterCardName': 'legacy-card-not-forwarded',
+      'characterGroupId': 'legacy-subject-not-forwarded',
+    });
 
 /// Exercises generated catalog, preference, watch, and Compose render codecs.
 class _SidebarRegistryBridge extends OperitRuntimeBridge {
@@ -1390,6 +1891,7 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
       final tree = Map<String, Object?>.from(
         (jsonDecode(_render(state)) as Map)['tree'] as Map,
       );
+      if (lazyContent) tree['type'] = 'LazyColumn';
       for (var index = 0; index < extraRows; index++) {
         (tree['children'] as List).add({
           'type': 'Text',
@@ -1416,6 +1918,7 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
   Future<void>? nextActionRead;
   Future<void>? nextCatalogRead;
   Object? createError;
+  bool lazyContent = false;
   int extraRows = 0;
   int catalogReads = 0;
   int historyReads = 0;
@@ -1621,6 +2124,8 @@ core.ToolPkgContainerRuntime _runtime(String owner) =>
       manifestExtensions: const {},
       author: const ['Operit'],
       mainEntry: 'dist/main.js',
+      themes: const [],
+      license: null,
       sourceType: core.ToolPkgSourceType.externalValue,
       sourcePath: 'test',
       subpackages: const [],
@@ -1677,6 +2182,7 @@ Future<void> _flushPreparation() async {
 
 core.ChatHistoryListItem _preparationChat(String id) =>
     core.ChatHistoryListItem(
+      parentChatId: null,
       id: id,
       title: id,
       updatedAt: '1',
@@ -1784,7 +2290,9 @@ Widget _tabletSidebar(
             ),
           ],
           pluginSidebarEntries: const [],
-          selectedRouteId: 'native-chat',
+          selectedRouteId: ScreenRouteRegistry.routeIdOf(
+            ScreenRouteRegistry.aiChat,
+          ),
           drawerConversationState: conversations,
           isTabletSidebarExpanded: open,
           tabletSidebarWidth: 280,

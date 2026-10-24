@@ -62,6 +62,52 @@ void main() {
     expect(generated, 1);
     expect(file.byteReads, 0);
   });
+
+  /// Uses the selected output and Host writer without touching file bytes in Dart.
+  test(
+    'progress save uses a Host writer and counts its declared bytes',
+    () async {
+      FileSelectorPlatform.instance = _SaveLocationPlatform(
+        '/selected/snapshot.zip',
+      );
+      final file = _ReferenceOnlyFile();
+      final progress = <int>[];
+      final saved = await FileSaveService.saveGeneratedFileWithProgress(
+        onChooseDestination: () {},
+        generate: () async => file,
+        write: (source, path) async {
+          expect(identical(source, file), isTrue);
+          expect(path, '/selected/snapshot.zip');
+          progress.add(512);
+        },
+        onProgress: (completed, total) {
+          expect(total, 1024);
+          progress.add(completed);
+        },
+        name: 'snapshot.zip',
+        acceptedTypeGroups: const [],
+      );
+      expect(saved, '/selected/snapshot.zip');
+      expect(progress, [0, 512]);
+      expect(file.byteReads, 0);
+      expect(file.savedTo, isNull);
+    },
+  );
+
+  /// Cancels before generating any archive or starting a destination write.
+  test('progress save cancellation does not generate or write', () async {
+    FileSelectorPlatform.instance = _SaveLocationPlatform(null);
+    final saved = await FileSaveService.saveGeneratedFileWithProgress(
+      onChooseDestination: () {},
+      generate: () async => throw StateError('Generation must not run'),
+      write: (source, path) async => throw StateError('Writing must not run'),
+      onProgress: (completed, total) =>
+          throw StateError('Progress must not run'),
+      name: 'snapshot.zip',
+      acceptedTypeGroups: const [],
+    );
+    expect(saved, isNull);
+  });
 }
 
 /// Supplies a deterministic destination while retaining the production file-reference implementation.
@@ -91,6 +137,10 @@ class _ReferenceOnlyFile extends XFile {
   final bool failSave;
   int byteReads = 0;
   String? savedTo;
+
+  /// Reports a declared source size without opening or copying the fixture.
+  @override
+  Future<int> length() async => 1024;
 
   /// Rejects accidental whole-file byte materialization.
   @override

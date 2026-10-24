@@ -1,3 +1,4 @@
+import { chatBindingSpec } from "../features/characters/chat-binding";
 import { exportSpec, importSpec } from "../features/characters/import-export-view";
 import { setGraphViewport } from "../features/graph/canvas";
 import { cancelGraphCameraAnimation } from "../features/graph/camera";
@@ -30,6 +31,7 @@ export function createDialogRenderer(context: EditorContext) {
   /** Renders finite dialog types with their real independent theme choices. */
   function dialogSpec(dialog: Dialog): DialogSpec {
     switch (dialog.type) {
+      case "chat-binding": return chatBindingSpec(dialog, context.snapshot());
       case "owner-settings": return { title: "记忆设置", style: "large", tabs: ["自动提取", "检索", "历史重建"], body: ownerSettingsBody(dialog), footer: ownerSettingsFooter(dialog) };
       case "store": return { title: dialog.create ? "创建共享记忆库" : "编辑共享记忆库", style: "compact", tabs: [], body: field("名称 *", "name", dialog.store.name), footer: button("close-dialog", "取消", "") + button("save-store", "保存", "", "", "filled") };
       case "user": return { title: `${dialog.name} 的用户资料`, style: "large", tabs: [], body: dialog.loading ? '<div class="loading">正在读取 USER.md…</div>' : `<div class="muted">${escapeHtml(dialog.ownerKey)} · USER.md</div>${field("用户资料", "content", dialog.content, 18)}${notice("保存会更新当前绑定记忆库的 USER.md。")}`, footer: button("close-dialog", "取消", "") + button("save-user", "保存", "", !dialog.loaded ? "disabled" : "", "filled") };
@@ -75,7 +77,8 @@ export function createDialogRenderer(context: EditorContext) {
     element.setAttribute("aria-label", spec.title);
     let tabs = "";
     for (let i = 0; i < spec.tabs.length; i++) tabs += `<button type="button" class="tab" role="tab" aria-selected="${"tab" in dialog && dialog.tab === i}" data-action="select-tab" data-tab="${i}">${escapeHtml(spec.tabs[i])}</button>`;
-    const content = `<div class="dialog-layout"><header class="dialog-header"><h2>${escapeHtml(spec.title)}</h2>${dialog.type === "graph" ? graphHeader(dialog) : ""}${iconButton("close-dialog", "关闭", "close", dialog.busy ? "disabled" : "")}</header>${tabs === "" ? "" : `<div class="tabs" role="tablist">${tabs}</div>`}${dialog.busy ? '<div class="busy-bar"></div>' : ""}<div class="dialog-error" role="alert" ${dialog.error === "" ? "hidden" : ""}>${escapeHtml(dialog.error)}</div>${dialog.type === "graph" ? spec.body : `<div class="dialog-body" data-index="${index}">${spec.body}</div>`}${spec.footer === "" ? "" : `<footer class="dialog-footer">${spec.footer}</footer>`}</div>`;
+    const header = dialog.type === "graph" ? graphHeader(dialog) : `<h2>${escapeHtml(spec.title)}</h2>${iconButton("close-dialog", "关闭", "close", dialog.busy ? "disabled" : "")}`;
+    const content = `<div class="dialog-layout"><header class="dialog-header">${header}</header>${tabs === "" ? "" : `<div class="tabs" role="tablist">${tabs}</div>`}${dialog.busy ? '<div class="busy-bar"></div>' : ""}<div class="dialog-error" role="alert" ${dialog.error === "" ? "hidden" : ""}>${escapeHtml(dialog.error)}</div>${dialog.type === "graph" ? spec.body : `<div class="dialog-body" data-index="${index}">${spec.body}</div>`}${spec.footer === "" ? "" : `<footer class="dialog-footer">${spec.footer}</footer>`}</div>`;
     // Do not replace unchanged controls after a click: native focus and the
     // modal's top-layer membership must survive routine final repainting.
     if (markup.get(element) !== content) { element.innerHTML = content; markup.set(element, content); }

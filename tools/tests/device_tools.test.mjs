@@ -37,6 +37,7 @@ function runtime(native) {
       return native ? native(args) : Promise.resolve({success: true, data: args[3]});
     },
   });
+  vm.runInContext(readFileSync(new URL('../../hosts/web/src/javascript_promises.js', import.meta.url), 'utf8'), context);
   vm.runInContext(api, context);
   vm.runInContext(bridge, context);
   vm.runInContext(generated, context);

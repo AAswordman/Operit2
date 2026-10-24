@@ -1951,9 +1951,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final list = find.byType(ListView);
+      final strip = find.byType(SingleChildScrollView);
       final scrollable = tester.state<ScrollableState>(
-        find.descendant(of: list, matching: find.byType(Scrollable)),
+        find.descendant(of: strip, matching: find.byType(Scrollable)),
       );
       final start = tester.getCenter(find.text('config-file-0.json'));
       final swipe = await tester.createGesture(kind: PointerDeviceKind.touch);
@@ -1988,6 +1988,54 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets(
+    'long titles cap tab width and selecting an offscreen tab reveals it',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1024, 600);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final tabs = <WorkspaceTab>[
+        const WorkspaceTab(
+          kind: WorkspaceTabKind.home,
+          title: 'Home',
+          icon: Icons.home,
+          closable: false,
+        ),
+        for (var i = 0; i < 6; i++)
+          WorkspaceTab(
+            kind: WorkspaceTabKind.terminal,
+            title: 'super_admin_default_session_bash_20368a0$i',
+            icon: Icons.terminal,
+          ),
+      ];
+      Widget strip({required int selectedIndex}) => SizedBox(
+        width: 360,
+        child: WorkspaceTabStrip(
+          tabs: tabs,
+          selectedIndex: selectedIndex,
+          onSelected: (_) {},
+          onClosed: (_) {},
+        ),
+      );
+      await tester.pumpWidget(_app(strip(selectedIndex: 0)));
+      await tester.pumpAndSettle();
+      final lastTitle = tabs.last.title;
+      final lastButton = find.ancestor(
+        of: find.text(lastTitle),
+        matching: find.byType(LongPressDraggable<WorkspaceTabDragPayload>),
+      );
+      expect(tester.getSize(lastButton).width, lessThanOrEqualTo(220));
+
+      await tester.pumpWidget(_app(strip(selectedIndex: tabs.length - 1)));
+      await tester.pumpAndSettle();
+      final stripRect = tester.getRect(find.byType(SingleChildScrollView));
+      final revealedTitle = tester.getRect(find.text(lastTitle));
+      expect(revealedTitle.left, greaterThanOrEqualTo(stripRect.left));
+      expect(revealedTitle.right, lessThanOrEqualTo(stripRect.right));
+    },
+  );
 
   for (final action in <String>['保存', '放弃修改']) {
     testWidgets('dirty close requires an explicit $action decision', (

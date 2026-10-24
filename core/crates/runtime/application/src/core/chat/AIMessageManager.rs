@@ -56,8 +56,6 @@ pub struct BuildUserMessageContentRequest {
     pub enableDirectVideoProcessing: bool,
     pub chatId: Option<String>,
     pub participantId: Option<String>,
-    /// Host callback used to surface a timed-out Prompt Input Hook.
-    pub onHookTimeout: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 pub struct SendMessageRequest<'a> {
@@ -177,39 +175,27 @@ pub fn logMessageTiming(stage: &str, startTimeMs: MessageTiming, details: Option
         .filter(|value| !value.trim().is_empty())
         .map(|value| format!(", {value}"))
         .unwrap_or_default();
-    AppLogger::d(
+    AppLogger::v_with_level(
         MESSAGE_PROCESS_TIMING_TAG,
         &format!("{stage} 耗时={elapsed}ms{suffix}"),
+        operit_util::AppLogger::VERBOSE_LEVEL_2,
     );
 }
 
 impl AIMessageManager {
-    /// Persists the immutable model or plugin snapshot and display identity for one message revision.
-    pub async fn applyConfigurationSnapshot(
-        message: &mut ChatMessage,
-        configuration: &ChatConfigurationResult,
-        handler: &operit_tools::tools::AIToolHandler::AIToolHandler,
-    ) -> Result<(), String> {
-        configuration.validate()?;
-        let api =
-            crate::services::ProviderRuntimeSupportService::ChatConfigurationApi::ready(handler)
-                .await?;
-        let api = if configuration.extensionOwner == crate::services::ProviderRuntimeSupportService::MODEL_CONFIGURATION_OWNER { api.forModelSnapshot() } else { api };
-        if api.extensionOwner() != configuration.extensionOwner {
-            return Err("Configuration snapshot owner changed".into());
-        }
-        let reference = api
-            .storeSnapshot(configuration.messageExtension.clone())
-            .await?;
+    /// Records display identity and the actual author, without persisting execution configuration.
+    pub fn applyConfigurationIdentity(message: &mut ChatMessage, configuration: &ChatConfigurationResult) {
         message.pluginExtensions.insert(
             "host.chat.identity".into(),
-            serde_json::json!({"title": configuration.profile.name, "avatarUri": configuration.profile.avatarUri}),
+            serde_json::json!({
+                "title": configuration.profile.name,
+                "avatarUri": configuration.profile.avatarUri,
+            }),
         );
         message.pluginExtensions.insert(
             configuration.extensionOwner.clone(),
-            serde_json::Value::Object(reference),
+            serde_json::json!({ "participantId": configuration.profile.id }),
         );
-        Ok(())
     }
 
     pub fn initialize() {
@@ -228,9 +214,9 @@ impl AIMessageManager {
             input: request.messageText,
             chat_id: request.chatId.clone(),
             participant_id: request.participantId.clone(),
-            on_hook_timeout: request.onHookTimeout.clone(),
         })
-        .await;
+        .await
+        .map_err(AiServiceError::RequestFailed)?;
         logMessageTiming(
             "buildUserMessageContent.processUserInput",
             promptInputStartTime,
@@ -337,7 +323,7 @@ impl AIMessageManager {
                 },
             );
         Self::setLastActiveChatKey(chatKey.clone());
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             SEND_CHAIN,
             "send.ai_manager.start",
             &[
@@ -349,6 +335,7 @@ impl AIMessageManager {
                 ),
                 ("historyCount", request.chatHistory.len().to_string()),
             ],
+            operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
 
         let memory = match request.promptHistoryOverride.clone() {
@@ -383,7 +370,7 @@ impl AIMessageManager {
         )
         .await;
         if let Some(pluginExecution) = pluginExecution {
-            ChainLogger::info(
+            ChainLogger::verbose_with_level(
                 PLUGIN_CHAIN,
                 "plugin.message_processing.matched",
                 &[
@@ -393,6 +380,7 @@ impl AIMessageManager {
                         ChainLogger::lenField(&request.messageContent),
                     ),
                 ],
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
             Self::finishOperation(&chatKey, operationId);
             return Ok(SharedAiResponseStream::from(with_event_channel_shared(
@@ -436,7 +424,7 @@ impl AIMessageManager {
             Some(value) => !value.trim().is_empty(),
             None => false,
         };
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             SEND_CHAIN,
             "send.provider.request",
             &[
@@ -449,6 +437,7 @@ impl AIMessageManager {
                 ),
                 ("modelOverrideSet", ChainLogger::boolField(modelOverrideSet)),
             ],
+            operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
         // A pre-send hook may have yielded while the user cancelled this operation.
         if activeChatOperations()
@@ -503,10 +492,11 @@ impl AIMessageManager {
                     Self::cancelOperationForId(&chatKey, Some(operationId)).await;
                     return Err(AiServiceError::RequestFailed(error.to_string()));
                 }
-                ChainLogger::info(
+                ChainLogger::verbose_with_level(
                     RECEIVE_CHAIN,
                     "receive.provider.stream.ready",
                     &[("chatKey", chatKey.clone())],
+                    operit_util::AppLogger::VERBOSE_LEVEL_2,
                 );
                 Ok(stream)
             }
@@ -1080,13 +1070,14 @@ impl AIMessageManager {
         // Close the per-send gate immediately, including a send that has not yet
         // entered the provider or registered its execution context.
         operation.cancellationToken.cancel();
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             SEND_CHAIN,
             "send.cancel.start",
             &[
                 ("chatKey", chatKey.to_string()),
                 ("operationId", operationId.to_string()),
             ],
+            operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
         // The token already stops response callbacks and new tool rounds. Close
         // output promptly, without waiting for a busy provider mutex; cleanup cannot
@@ -1380,6 +1371,27 @@ fn strip_tag_blocks(text: &str, tag_name: &str) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn message_identity_contains_no_execution_settings() {
+        let profile = serde_json::json!({
+            "id":"author-id","name":"Display name","avatarUri":null,
+            "introPrompt":"Do not persist this prompt","userPreferencesText":"Private current USER",
+            "openingStatement":"Hello","modelBinding":{"providerId":"provider","modelId":"model"},
+            "ttsConfigId":"current-voice","toolAccess":{"enabled":false,"allowedBuiltinTools":[],"allowedPackages":[],"allowedSkills":[],"allowedMcpServers":[]},"resources":[]
+        });
+        let mut configuration: ChatConfigurationResult = serde_json::from_value(serde_json::json!({
+            "contextKey":"current","profile":profile,"participants":[profile],
+            "executionData":{"profile":profile,"private":"Runtime only"}
+        })).unwrap();
+        configuration.extensionOwner = "configuration-owner".into();
+        let mut message = ChatMessage::new("ai".into());
+        AIMessageManager::applyConfigurationIdentity(&mut message,&configuration);
+        assert_eq!(serde_json::to_value(&message.pluginExtensions).unwrap(),serde_json::json!({
+            "configuration-owner":{"participantId":"author-id"},
+            "host.chat.identity":{"title":"Display name","avatarUri":null}
+        }));
+    }
 
     #[test]
     fn attachment_markup_keeps_the_source_node_and_portable_tool_path() {

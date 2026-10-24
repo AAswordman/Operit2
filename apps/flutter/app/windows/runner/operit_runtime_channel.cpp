@@ -104,6 +104,21 @@ bool InvokeRuntimeBootstrapStorage(const std::string& default_runtime_root,
   return true;
 }
 
+/// Invokes maintenance on a permanently mapped bridge without constructing a Core handle.
+bool InvokeDataRescue(const std::string& root, const std::string& request,
+                     std::string* response, std::string* error) {
+  static HMODULE library = LoadLibraryW(L"operit_flutter_bridge.dll");
+  if (library == nullptr) { *error = "operit_flutter_bridge.dll was not found"; return false; }
+  const auto call = reinterpret_cast<BridgeRuntimeBootstrapWrite>(GetProcAddress(library, "operit_flutter_bridge_data_rescue"));
+  const auto release = reinterpret_cast<BridgeFreeString>(GetProcAddress(library, "operit_flutter_bridge_free_string"));
+  if (call == nullptr || release == nullptr) { *error = "Data rescue ABI is incomplete"; return false; }
+  char* raw = call(root.c_str(), request.c_str());
+  if (raw == nullptr) { *error = "Data rescue returned null"; return false; }
+  *response = raw;
+  release(raw);
+  return true;
+}
+
 /// Returns whether the current foreground window belongs to this process.
 bool IsOperitApplicationForeground() {
   const HWND foreground_window = ::GetForegroundWindow();
@@ -1144,6 +1159,18 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             return;
           }
           result->Success(WindowsStoragePaths(runtime_root, workspace_root));
+          return;
+        }
+        if (method_call.method_name() == "dataRescue") {
+          const auto* request = StringArgument(method_call);
+          if (request == nullptr) { result->Error("INVALID_ARGS", "dataRescue expects JSON text"); return; }
+          std::string root;
+          std::string workspace;
+          if (!ResolveWindowsDefaultStorageRoots(&root, &workspace, &error)) { result->Error("DATA_RESCUE_ERROR", error); return; }
+          RespondRuntimeStringAsync(channel_owner,
+            [root, request = *request](std::string* response, std::string* error) {
+              return InvokeDataRescue(root, request, response, error);
+            }, std::move(result));
           return;
         }
         if (method_call.method_name().compare(

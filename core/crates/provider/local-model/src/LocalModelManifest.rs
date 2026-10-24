@@ -42,6 +42,8 @@ pub struct LocalEngineRequirement {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LocalModelDriver {
+    LlamaCpp { model: String },
+    Mnn { config: String },
     SherpaOnnxStreamingTransducer {
         encoder: String,
         decoder: String,
@@ -101,6 +103,9 @@ impl LocalModelDriver {
     /// Returns whether this driver has an inference implementation on one platform.
     pub fn supportsPlatform(&self, platform: &LocalPlatform) -> bool {
         match self {
+            Self::LlamaCpp { .. } | Self::Mnn { .. } => {
+                cfg!(feature = "native-llm") && *platform != LocalPlatform::Web
+            }
             Self::SherpaOnnxStreamingTransducer { .. }
             | Self::SherpaOnnxVits { .. }
             | Self::SherpaOnnxMatcha { .. }

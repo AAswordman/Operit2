@@ -32,6 +32,64 @@ class FileSelectorWeb extends FileSelectorPlatform {
     FileSelectorPlatform.instance = FileSelectorWeb();
   }
 
+  /// Counts streamed writes while preserving browser backpressure and user activation.
+  @override
+  Future<FileSaveLocation?> saveGeneratedFileWithProgress({
+    required Future<XFile> Function() generate,
+    required void Function() onChooseDestination,
+    required Future<void> Function(XFile file, String destination) write,
+    required void Function(int completed, int total) onProgress,
+    List<XTypeGroup>? acceptedTypeGroups,
+    SaveDialogOptions options = const SaveDialogOptions(),
+  }) async {
+    final web.FileSystemFileHandle handle;
+    try {
+      handle = await _SavePickerWindow(web.window)
+          .showSaveFilePicker(
+            <String, Object?>{'suggestedName': options.suggestedName}.jsify()!
+                as JSObject,
+          )
+          .toDart;
+    } catch (error) {
+      final exception = error as JSObject;
+      if (exception.getProperty<JSString>('name'.toJS).toDart == 'AbortError')
+        return null;
+      rethrow;
+    }
+    final output = await handle.createWritable().toDart;
+    try {
+      final file = await generate();
+      final total = await file.length();
+      var completed = 0;
+      onProgress(completed, total);
+      final response = await web.window.fetch(file.path.toJS).toDart;
+      if (!response.ok || response.body == null) {
+        throw StateError('Unable to read the generated backup');
+      }
+      final reader =
+          response.body!.getReader() as web.ReadableStreamDefaultReader;
+      try {
+        while (true) {
+          final chunk = await reader.read().toDart;
+          if (chunk.done) break;
+          final bytes = chunk.value! as JSUint8Array;
+          await output.write(bytes).toDart;
+          completed += bytes.toDart.length;
+          onProgress(completed, total);
+        }
+      } finally {
+        await reader.cancel().toDart;
+        reader.releaseLock();
+      }
+      if (completed != total) throw StateError('Incomplete generated backup');
+      await output.close().toDart;
+      return FileSaveLocation(handle.name);
+    } catch (error) {
+      await output.abort().toDart;
+      rethrow;
+    }
+  }
+
   /// Acquires the browser output under the user gesture and pipes the generated file with backpressure.
   @override
   Future<FileSaveLocation?> saveGeneratedFile({

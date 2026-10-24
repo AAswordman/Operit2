@@ -80,6 +80,7 @@ fn buildOperit2CharacterCards(
         let chatModelId = resolveOperit1CharacterChatModelId(parsed, preferences, &id)?;
         let memoryBinding = resolveOperit1CharacterMemoryBinding(parsed, preferences, &id)?;
         cards.push(CharacterCard {
+            chatProviderId: None,
             id: id.clone(),
             name: name.to_string(),
             description: optionalPreferenceString(
@@ -598,7 +599,20 @@ fn buildOperit2CharacterGroups(
     Ok(groups)
 }
 
+/// Identifies the source that owns a legacy speech configuration field.
+enum Operit1TtsConfigSource {
+    Preferences,
+    ProviderCatalog,
+}
+
+/// Describes how a legacy voice identifier maps to the target provider contract.
+enum Operit1TtsVoiceFormat {
+    Literal,
+    ModelQualified,
+}
+
 #[allow(non_snake_case)]
+/// Migrates each legacy speech service using its provider's request contract.
 fn buildOperit2TtsConfig(parsed: &ParsedOperit1Snapshot) -> Result<Option<TtsConfig>, String> {
     let Some(preferences) = parsed
         .archive
@@ -640,10 +654,22 @@ fn buildOperit2TtsConfig(parsed: &ParsedOperit1Snapshot) -> Result<Option<TtsCon
     )?;
     let httpConfig: Operit1TtsHttpConfig = serde_json::from_str(httpConfigRaw)
         .map_err(|error| format!("Operit1 TTS HTTP 配置格式不正确：{error}"))?;
-    Ok(Some(TtsConfig {
+    use Operit1TtsConfigSource::{Preferences, ProviderCatalog};
+    use Operit1TtsVoiceFormat::{Literal, ModelQualified};
+    // Declare source-field ownership once; the conversion below follows these contracts uniformly.
+    let (providerType, requestSource, endpointSource, voiceFormat) = match serviceType {
+        "HTTP_TTS" => (TtsProviderType::HTTP_TTS, Preferences, Preferences, Literal),
+        "OPENAI_TTS" => ("OPENAI_COMPATIBLE", ProviderCatalog, Preferences, Literal),
+        "SILICONFLOW_TTS" => (serviceType, ProviderCatalog, ProviderCatalog, ModelQualified),
+        "MINIMAX_TTS" | "MIMO_TTS" | "DOUBAO_TTS" => {
+            (serviceType, ProviderCatalog, Preferences, Literal)
+        }
+        other => return Err(format!("不支持迁移的 Operit1 TTS 服务类型：{other}")),
+    };
+    let mut config = TtsConfig {
         id: String::new(),
         name: format!("Operit1 {serviceType}"),
-        providerType: TtsProviderType::HTTP_TTS.to_string(),
+        providerType: providerType.to_string(),
         endpoint: httpConfig.urlTemplate,
         apiKey: httpConfig.apiKey,
         model: httpConfig.modelName,
@@ -673,10 +699,40 @@ fn buildOperit2TtsConfig(parsed: &ParsedOperit1Snapshot) -> Result<Option<TtsCon
             .collect(),
         createdAt: now,
         updatedAt: now,
-    }))
+    };
+    if matches!(requestSource, ProviderCatalog) {
+        let catalog = TtsCatalog::provider(providerType)?;
+        config.endpoint = match endpointSource {
+            Preferences => config.endpoint,
+            ProviderCatalog => catalog.defaultEndpoint,
+        };
+        config.responseFormat = catalog.defaultResponseFormat;
+        config.httpMethod = catalog.defaultHttpMethod;
+        config.requestBody = catalog.defaultRequestBody;
+        config.contentType = catalog.defaultContentType;
+        config.responsePipeline = catalog.defaultResponsePipeline;
+        for header in catalog.defaultHeaders {
+            config
+                .headers
+                .retain(|existing| !existing.name.eq_ignore_ascii_case(&header.name));
+            config.headers.push(header);
+        }
+    }
+    // Resolve the same canonical fields used by storage before matching an existing import.
+    let mut config = normalizeTtsConfig(config)
+        .map_err(|error| format!("导入 Operit1 TTS 配置失败：{error}"))?;
+    config.voice = match voiceFormat {
+        Literal => config.voice,
+        ModelQualified => match config.voice.split_once(':') {
+            Some(_) => config.voice,
+            None => format!("{}:{}", config.model, config.voice),
+        },
+    };
+    Ok(Some(config))
 }
 
 #[allow(non_snake_case)]
+/// Persists the migrated provider configuration and selects it for speech playback.
 fn importOperit1TtsConfig(manager: &TtsConfigManager, config: TtsConfig) -> Result<(), String> {
     let existing = manager
         .getAllTtsConfigs()

@@ -12,6 +12,41 @@ function embedded(path) {
   return source.slice(start, source.indexOf('"#', start));
 }
 
+test('shared bootstrap exposes global as globalThis for v1 and v2 plugins', async () => {
+  const source = readFileSync(new URL(
+    'core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs', root,
+  ), 'utf8');
+  const start = source.indexOf('        var globalThis = this;');
+  const end = source.indexOf('        var OPERIT_CLEAN_ON_EXIT_DIR =', start);
+  assert.ok(start >= 0 && end > start);
+  const context = vm.createContext({
+    version: '1.0.0', __operitCurrentCallId: 'global-alias-test',
+    /** Supplies the active API family to the production dispatcher. */
+    __operitGetCallState() { return { params: { __operit_toolpkg_api_version: context.version } }; },
+    /** Installs the production API registry. */
+    __operitExpose(name, value) { context[name] = value; },
+  });
+  vm.runInContext(embedded('core/crates/plugin/sdk/src/toolpkg/ToolPkgApiRuntimeScript.rs'), context);
+  vm.runInContext(source.slice(start, end), context);
+  vm.runInContext(`
+    var writeTimer = __operitToolPkgApi.method()
+      .between('1.0.0', '2.0.0')
+      .since('2.0.0')
+      .implement(function() { global.__audit_timer = 42; })
+      .build('audit.writeTimer');
+    var readTimer = function() { return global.__audit_timer; };
+  `, context);
+  for (const version of ['1.0.0', '1.0.1', '2.0.0']) {
+    context.version = version;
+    assert.equal(vm.runInContext('global === globalThis && global === window && global.global === globalThis', context), true);
+    vm.runInContext('writeTimer()', context);
+    assert.equal(vm.runInContext('globalThis.__audit_timer', context), 42);
+    assert.equal(await vm.runInContext('Promise.resolve().then(readTimer)', context), 42);
+    vm.runInContext('delete global.__audit_timer', context);
+    assert.equal(vm.runInContext('typeof globalThis.__audit_timer', context), 'undefined');
+  }
+});
+
 test('plugin console forwards info, warnings and errors to the native log sink', () => {
   const source = readFileSync(new URL(
     'core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs', root,

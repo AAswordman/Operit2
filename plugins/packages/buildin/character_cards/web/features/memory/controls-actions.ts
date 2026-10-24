@@ -49,7 +49,7 @@ export function createMemoryControlsFeature(context: EditorContext) {
   async function load(dialog: OwnerSettingsDialog): Promise<void> {
     dialog.loading = true; dialog.error = ""; renderDialogs();
     try {
-      const [settings, config, chats, queue, progress] = await Promise.all([
+      const [settings, config, listing, queue, progress] = await Promise.all([
         request({ action: "readMemorySettings", ownerKey: dialog.ownerKey }, { background: true }),
         request({ action: "readMemorySearchConfig", ownerKey: dialog.ownerKey }, { background: true }),
         request({ action: "listMemoryChats", ownerKey: dialog.ownerKey }, { background: true }),
@@ -58,16 +58,33 @@ export function createMemoryControlsFeature(context: EditorContext) {
       ]);
       assertMemorySettings(settings); assertSearchConfig(config);
       if (!exists(dialog)) return;
-      dialog.settings = settings; dialog.config = config; dialog.chats = chats; dialog.queue = queue; dialog.progress = progress;
+      dialog.settings = settings; dialog.config = config;
+      dialog.chats = listing.chats; dialog.missingChatIds = listing.missingChatIds;
+      dialog.queue = queue; dialog.progress = progress;
       dialog.statusError = ""; startPolling(dialog);
+      void pruneInBackground(dialog);
     } finally { if (exists(dialog)) { dialog.loading = false; renderDialogs(); } }
+  /** Drops stale bindings and orphaned candidates so counters and the error banner reflect only actionable failures. */
+  async function pruneInBackground(dialog: OwnerSettingsDialog): Promise<void> {
+    try {
+      const pruned = await request({ action: "pruneMissingChatBindings", ownerKey: dialog.ownerKey }, { background: true });
+      if (!exists(dialog) || (pruned.removedChatIds.length === 0 && pruned.removedCandidateIds.length === 0)) return;
+      const [chats, queue] = await Promise.all([
+        request({ action: "listMemoryChats", ownerKey: dialog.ownerKey }, { background: true }),
+        request({ action: "readMemoryAutoSaveStatus", ownerKey: dialog.ownerKey }, { background: true }),
+      ]);
+      if (!exists(dialog)) return;
+      dialog.chats = chats.chats; dialog.missingChatIds = chats.missingChatIds; dialog.queue = queue;
+      if (topDialog() === dialog) { renderDialogs(); updateMemoryStatus(dialog, context.dialogsRoot); }
+    } catch { /* best-effort maintenance; the manual reload path still exists */ }
+  }
   }
   /** Applies a real request and refreshes only acknowledged job state. */
   async function handleAction(action: string, element: HTMLElement | SVGElement): Promise<void> {
     if (action === "owner-user") { await openUser(dataValue(element, "owner"), dataValue(element, "name")); return; }
     if (action === "owner-settings") {
       const dialog = pushDialog({ type: "owner-settings", ownerKey: dataValue(element, "owner"), name: dataValue(element, "name"), tab: 0,
-        loading: true, settings: null, config: null, chats: null, queue: null, progress: null, statusError: "",
+        loading: true, settings: null, config: null, chats: null, missingChatIds: [], queue: null, progress: null, statusError: "",
         searchQuery: "", searchThreshold: 0, searchResult: null, selectedChatIds: [], windowMessageCount: 32, from: "", to: "" });
       await load(dialog); return;
     }
@@ -87,6 +104,13 @@ export function createMemoryControlsFeature(context: EditorContext) {
         return;
       }
       case "reload-memory-settings": await load(dialog); return;
+      case "prune-missing-chat-bindings": {
+        const pruned = await request({ action: "pruneMissingChatBindings", ownerKey });
+        dialog.missingChatIds = [];
+        toast(`已清理 ${pruned.removedChatIds.length} 条失效的会话绑定、${pruned.removedCandidateIds.length} 条失效的提取候选`);
+        renderDialogs();
+        return;
+      }
       case "refresh-memory-status": await poll(dialog); return;
       case "save-memory-settings": {
         if (dialog.settings === null || dialog.config === null || dialog.loading) throw new Error("记忆设置尚未读取成功");
@@ -111,5 +135,5 @@ export function createMemoryControlsFeature(context: EditorContext) {
       default: throw new Error(`Unknown memory controls action: ${action}`);
     }
   }
-  return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "refresh-memory-status", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
+  return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "prune-missing-chat-bindings", "refresh-memory-status", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
 }

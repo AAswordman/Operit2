@@ -16,6 +16,7 @@ import 'package:operit2/ui/features/packages/screens/UnifiedMarketScreen.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:operit2/ui/main/TopBarController.dart';
 
+/// Verifies market installation state and bottom navigation layout.
 void main() {
   final entry = _entry();
 
@@ -194,6 +195,58 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final (topInset, bottomInset) in <(double, double)>[
+    (0, 0),
+    (24, 0),
+    (24, 48),
+    (48, 24),
+  ]) {
+    testWidgets('market bottom navigation excludes the top system inset '
+        '(top: $topInset, bottom: $bottomInset)', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.padding = FakeViewPadding(top: topInset, bottom: bottomInset);
+      tester.view.viewPadding = FakeViewPadding(
+        top: topInset,
+        bottom: bottomInset,
+      );
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetPadding);
+      addTearDown(tester.view.resetViewPadding);
+
+      await tester.pumpWidget(
+        _testApp(
+          Scaffold(
+            body: SafeArea(
+              top: false,
+              child: UnifiedMarketScreen(
+                clients: GeneratedCoreProxyClients(_MarketBridge()),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final navigation = find.byType(NavigationBar);
+      final bounds = tester.getRect(navigation);
+      expect(bounds.height, 56);
+      expect(bounds.bottom, 800 - bottomInset);
+      expect(
+        tester.getCenter(find.byIcon(Icons.storefront)).dy,
+        bounds.center.dy,
+      );
+      expect(
+        MediaQuery.paddingOf(
+          tester.element(find.byType(UnifiedMarketScreen)),
+        ).top,
+        topInset,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('list installation succeeds inline without any bottom popup', (
     tester,

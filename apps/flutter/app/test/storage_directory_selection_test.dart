@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit_folder_access/operit_folder_access.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
+import 'package:operit2/core/runtime/RuntimeBootstrapManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/StorageDirectorySelectionError.dart';
 import 'package:operit2/ui/features/onboarding/OnboardingStartupRoute.dart';
@@ -128,6 +131,51 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets('a new identity skips path selection when roots are mounted', (
+    tester,
+  ) async {
+    messenger.setMockMethodCallHandler(runtimeChannel, (call) async {
+      switch (call.method) {
+        case 'runtimeBootstrapRead':
+          return jsonEncode(<String, Object?>{'ok': true, 'value': null});
+        case 'runtimeBootstrapWrite':
+          return jsonEncode(<String, Object?>{'ok': true});
+        case 'localRuntimeStoragePaths':
+          return call.arguments;
+        case 'setLocalRuntimeStorage':
+          return null;
+        case 'connectCoreFfi':
+          throw PlatformException(code: 'TEST_CONNECTION_BOUNDARY');
+        default:
+          throw StateError('Unexpected host method: ${call.method}');
+      }
+    });
+    addTearDown(() async {
+      await RuntimeBootstrapManager.instance.initialize();
+    });
+
+    await ClientLogger.initialize();
+    final manager = RuntimeBootstrapManager.instance;
+    await manager.initialize();
+    final decision = await const OnboardingStartupRouteStrategy().resolve();
+    await manager.confirmLocalRuntimeStorage('/runtime', '/workspaces');
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Builder(builder: (context) => decision!.builder(context, () {})),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('开始'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2/3'), findsOneWidget);
+    expect(find.text('确认本地存储位置'), findsNothing);
+    expect(find.text('用户协议与隐私政策'), findsOneWidget);
   });
 
   testWidgets('other picker failures are shown rather than escaping the zone', (

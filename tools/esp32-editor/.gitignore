@@ -2,3 +2,6 @@ generated/
 __pycache__/
 simulator/target/
 device.local.json
+
+# Local build-cache cleanup helper
+/clear-build-cache.ps1

@@ -267,6 +267,12 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
         ).writeBytesAtomically(path, content)
     }
 
+    fn flushFile(&self, path: &str) -> HostResult<()> {
+        operit_host_native_common::NativeRuntimeStorageHost::new(
+            self.runtimeRoot.clone(), self.workspaceRoot.clone(),
+        ).flushFile(path)
+    }
+
     /// Appends bytes to a Linux runtime storage file.
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {

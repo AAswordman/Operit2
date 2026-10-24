@@ -5,7 +5,12 @@ edition = "2021"
 license = "MIT"
 publish = false
 
+[features]
+default = []
+daemon = ["dep:tokio", "operit-host-native-common/daemon"]
+
 [dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"], optional = true }
 operit-host-apple-native = { path = "../apple" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
 operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["tcp", "serial", "storage"] }

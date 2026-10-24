@@ -47,7 +47,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -572,7 +571,7 @@ class OwnerSystemCapabilityChannel(
                     ?: throw IllegalArgumentException("quality is required"),
             )
         val text =
-            runBlocking(Dispatchers.IO) {
+            runBlocking {
                 when (
                     val ocrResult =
                         OCRUtils.recognizeTextFromUri(

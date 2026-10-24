@@ -1,5 +1,5 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; font-src 'none'"><title>角色卡</title><style>/* Material sizes follow the original Flutter settings cards and editor dialogs. */
-*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{font:14px/1.45 "Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;color:var(--onSurface);background:var(--surface)}button,input,textarea,select{font:inherit}button{cursor:pointer;user-select:none}button:disabled{cursor:not-allowed;opacity:.45}button,input,textarea,select{outline:none}button:focus-visible{outline:2px solid var(--primary);outline-offset:3px}button svg{flex:none}svg{vertical-align:middle}.icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.page{height:100%;display:flex;flex-direction:column}.appbar{height:58px;flex:none;display:flex;align-items:center;padding:0 18px;gap:12px;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 25%,transparent)}.appbar h1{margin:0;font-size:20px;font-weight:500;flex:1}.scroll{flex:1;min-height:0;overflow:auto;padding:12px 16px 20px;scrollbar-gutter:stable}.section{border:1px solid color-mix(in srgb,var(--outlineVariant) 36%,transparent);border-radius:16px;background:color-mix(in srgb,var(--surfaceContainer) 65%,transparent);padding:14px;margin-bottom:14px}.section-head{display:flex;align-items:center;gap:10px;min-height:32px;margin-bottom:12px}.section-head h2{font-size:16px;font-weight:700;margin:0;flex:1}.section-icon{color:var(--primary)}.actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.button{min-height:38px;display:inline-flex;gap:7px;align-items:center;justify-content:center;border:0;border-radius:20px;padding:8px 16px;background:transparent;color:var(--primary);font-weight:600}.button.small{min-height:32px;padding:4px 8px;font-size:13px}.button.filled{color:var(--onPrimary);background:var(--primary)}.button.tonal{background:var(--primaryContainer);color:var(--onPrimaryContainer)}.button.danger{color:var(--error)}.button:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 10%,transparent)}.button.filled:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 90%,var(--onPrimary))}.icon-button{width:32px;height:32px;padding:6px;border:0;border-radius:50%;background:transparent;color:var(--onSurfaceVariant);display:inline-grid;place-items:center}.icon-button:hover:not(:disabled){background:color-mix(in srgb,var(--onSurface) 9%,transparent)}.entity{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;border-radius:12px;border:1px solid color-mix(in srgb,var(--outlineVariant) 28%,transparent);background:color-mix(in srgb,var(--surfaceContainerHighest) 28%,transparent);min-height:76px}.entity.active{border-color:color-mix(in srgb,var(--primary) 45%,transparent);background:color-mix(in srgb,var(--primaryContainer) 16%,transparent)}.entity:last-child{margin-bottom:0}.entity-main{border:0;text-align:left;padding:0;display:flex;gap:12px;align-items:center;min-width:0;flex:1;color:inherit;background:none}.entity-copy{min-width:0;flex:1}.entity-title{font-size:14px;font-weight:700}.entity-subtitle{font-size:12px;color:var(--onSurfaceVariant);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}.badge{font-size:11px;line-height:20px;padding:0 7px;border-radius:6px;background:color-mix(in srgb,var(--onSurfaceVariant) 8%,transparent);color:var(--onSurfaceVariant)}.avatar{width:40px;height:40px;flex:none;border-radius:50%;display:grid;place-items:center;background:var(--surfaceContainerHighest);color:var(--onSurfaceVariant);position:relative;overflow:hidden}.avatar .icon{width:24px;height:24px}.active .avatar{color:var(--primary);background:var(--primaryContainer)}.avatar img{width:100%;height:100%;object-fit:cover}.active-pill{width:78px;height:28px;font-size:11px;border:1px solid color-mix(in srgb,var(--primary) 32%,transparent);border-radius:20px;background:color-mix(in srgb,var(--primary) 8%,var(--surfaceContainerHigh));color:var(--primary);display:grid;place-items:center;font-weight:700}.entity-actions{display:flex;align-items:center;gap:4px;max-width:190px;flex-wrap:wrap;justify-content:flex-end}.empty{padding:14px 4px;color:var(--onSurfaceVariant);font-size:13px}.loading{height:100%;display:grid;place-items:center;font-size:14px}.error-banner{padding:12px 16px;border:1px solid var(--error);border-radius:10px;color:var(--error);margin-bottom:12px;white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:var(--onSurfaceVariant);font-size:12px}.hint{padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--primaryContainer) 42%,transparent);color:var(--onSurfaceVariant);font-size:12px;margin:8px 0 16px;display:flex;gap:8px;align-items:flex-start}.hint .icon{width:16px;height:16px;flex:none;margin-top:1px}.row{display:flex;align-items:center;gap:12px}.row .grow{flex:1;min-width:0}.switch-row{display:flex;align-items:center;gap:16px;padding:10px 0}.switch-row .grow{flex:1}.switch-label{font-size:14px;font-weight:500}.switch-description{color:var(--onSurfaceVariant);font-size:12px;margin-top:3px}.switch{appearance:none;width:48px;height:28px;border:2px solid var(--outline);border-radius:18px;background:var(--surfaceContainerHighest);position:relative;flex:none;margin:0;cursor:pointer}.switch:before{content:"";position:absolute;width:16px;height:16px;top:4px;left:4px;border-radius:50%;background:var(--outline);transition:transform .15s}.switch:checked{border-color:var(--primary);background:var(--primary)}.switch:checked:before{background:var(--onPrimary);transform:translateX(20px)}.switch:disabled{opacity:.45;cursor:not-allowed}.switch:focus-visible{outline:2px solid var(--primary);outline-offset:3px}.binding{padding:10px 0 14px;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 45%,transparent);margin-bottom:6px}.binding:last-child{border-bottom:0}.binding-fields{padding:5px 0 0}.binding-fields[hidden]{display:none}.field{display:block;position:relative;margin:12px 0 18px}.field-label{position:absolute;left:10px;top:-9px;padding:0 4px;background:var(--surfaceContainer);font-size:12px;color:var(--onSurfaceVariant);z-index:1}.field input:not([type=checkbox]),.field textarea,.field select{display:block;width:100%;border:1px solid var(--outline);background:transparent;border-radius:8px;padding:14px 12px;color:var(--onSurface);min-height:48px}.field textarea{resize:vertical;line-height:1.55;min-height:76px}.field:focus-within .field-label{color:var(--primary)}.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}.field input:disabled,.field select:disabled,.field textarea:disabled{opacity:.58;border-color:var(--outlineVariant)}.field select{appearance:none;-webkit-appearance:none;height:56px;min-height:56px;padding:0 44px 0 12px;line-height:24px;text-overflow:ellipsis}.select-arrow{position:absolute;top:0;right:12px;height:56px;display:flex;align-items:center;pointer-events:none;color:var(--onSurfaceVariant)}.field select:disabled+.select-arrow{opacity:.58}.field select option{color:var(--onSurface);background:var(--surfaceContainer)}.field textarea.code{font-family:Consolas,"SFMono-Regular",monospace;font-size:13px;min-height:300px}.field-action{position:absolute;right:6px;top:4px}.field.expandable textarea{padding-right:36px}.field-caption{font-size:11px;color:var(--onSurfaceVariant);margin-top:5px}.tag-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px;font-weight:500}.chips{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 16px}.chip{padding:5px 10px;border:1px solid var(--outlineVariant);color:var(--onSurfaceVariant);border-radius:8px;background:none;font-size:12px;display:flex;align-items:center;gap:5px}.chip.selected{border-color:var(--primary);color:var(--onPrimaryContainer);background:var(--primaryContainer)}.chip .icon{width:14px;height:14px}.avatar-editor{display:flex;gap:16px;align-items:center;padding:4px 0 6px}.avatar-editor .avatar{width:64px;height:64px}.avatar-editor .avatar .icon{width:36px;height:36px}.avatar-editor .field{flex:1;margin:8px 0}.dialog{border:1px solid color-mix(in srgb,var(--outlineVariant) 30%,transparent);border-radius:24px;padding:0;background:var(--surfaceContainer);color:var(--onSurface);box-shadow:0 12px 48px #0003;width:min(760px,calc(100vw - 48px));max-width:none;max-height:calc(100dvh - 48px);overflow:hidden;margin:auto}.dialog::backdrop{background:#0006}.dialog.large{height:min(820px,calc(100dvh - 48px))}.dialog.compact{width:min(500px,calc(100vw - 48px))}.dialog.graph-dialog{width:calc(100vw - 48px);height:calc(100dvh - 48px);max-width:1400px;border-radius:16px}.dialog-layout{height:100%;max-height:calc(100dvh - 48px);display:flex;flex-direction:column}.dialog-header{padding:18px 22px 12px;display:flex;align-items:center;gap:12px;flex:none}.dialog-header h2{flex:1;min-width:0;font-size:20px;line-height:1.35;font-weight:500;margin:0}.tabs{display:flex;flex:none;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 50%,transparent)}.tab{position:relative;flex:1;min-height:48px;border:0;color:var(--onSurfaceVariant);font-weight:500;background:none}.tab[aria-selected=true]{color:var(--primary)}.tab[aria-selected=true]:after{content:"";height:3px;position:absolute;bottom:0;left:26%;right:26%;background:var(--primary);border-radius:4px 4px 0 0}.dialog-body{padding:10px 18px;overflow:auto;flex:1;min-height:0;scrollbar-gutter:stable}.dialog-body>.field:first-child{margin-top:14px}.dialog-footer{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:12px 18px 18px;flex:none}.dialog-footer .spacer{flex:1}.dialog-footer .button{min-height:38px}.dialog-error{margin:10px 18px 0;padding:10px 12px;border-radius:10px;color:var(--error);background:color-mix(in srgb,var(--error) 8%,transparent);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.dialog-error[hidden]{display:none}.memory-entry{padding:12px;border:1px solid var(--outlineVariant);border-radius:12px;margin:10px 0}.memory-entry h3{font-size:14px;margin:0 0 4px}.memory-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.checkbox-row{padding:9px 0;display:flex;align-items:center;gap:10px}.checkbox-row input{accent-color:var(--primary);width:18px;height:18px}.checkbox-row .avatar{width:32px;height:32px}.members-list{border:1px solid var(--outlineVariant);border-radius:10px;padding:0 12px;margin:10px 0}.graph-toolbar{padding:8px 18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--outlineVariant)}.graph-toolbar .search{flex:1;min-width:140px;border:1px solid var(--outline);border-radius:24px;background:none;color:var(--onSurface);padding:9px 14px}.graph-layout{display:flex;flex:1;min-height:0}.graph-canvas{flex:1;min-width:0;overflow:hidden;position:relative;touch-action:none;background:radial-gradient(color-mix(in srgb,var(--outline) 25%,transparent) 1px,transparent 1px);background-size:20px 20px}.graph-canvas>svg{width:100%;height:100%;touch-action:none}.graph-canvas .graph-empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;gap:10px;pointer-events:none;color:var(--onSurfaceVariant)}.graph-node{cursor:pointer}.graph-node circle{fill:var(--primaryContainer);stroke:var(--primary);stroke-width:1.5}.graph-node.selected circle{stroke-width:3;fill:var(--primary)}.graph-node text{fill:var(--onPrimaryContainer);font-size:12px;pointer-events:none}.graph-node.selected text{fill:var(--onPrimary)}.graph-edge{stroke:var(--outline);stroke-width:1.5;opacity:.7}.graph-sidebar{width:290px;flex:none;overflow:auto;padding:12px;border-left:1px solid var(--outlineVariant);background:color-mix(in srgb,var(--surfaceContainerHigh) 50%,transparent)}.graph-sidebar h3{font-size:14px;margin:4px 0 10px}.memory-item{border:0;border-radius:8px;text-align:left;padding:10px;width:100%;background:none;color:var(--onSurface);margin:2px 0}.memory-item:hover:not(.selected){background:color-mix(in srgb,var(--onSurface) 8%,transparent)}.memory-item.selected{background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:inset 3px 0 0 var(--primary)}.memory-item strong{display:block;font-size:13px}.memory-item small{font-size:11px;opacity:.75;display:block;margin-top:4px}.graph-detail{padding:10px;margin-top:10px;border-top:1px solid var(--outlineVariant)}.graph-detail pre{font:12px/1.6 inherit;white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto}.graph-tools{position:absolute;bottom:14px;left:14px;display:flex;gap:3px;padding:4px;border-radius:24px;border:1px solid var(--outlineVariant);background:var(--surfaceContainer)}.busy .button,.busy .icon-button{pointer-events:none}.busy-bar{height:2px;background:var(--primary);animation:busy 1s infinite;flex:none}.notice{padding:12px;border-radius:12px;border:1px solid var(--outlineVariant);color:var(--onSurfaceVariant);font-size:12px}.notice strong{color:var(--onSurface);font-weight:600}.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.unwired{opacity:.65}.unwired input[type=range]{width:100%;accent-color:var(--primary)}#snackbar{position:fixed;z-index:10000;left:50%;bottom:20px;transform:translateX(-50%);border-radius:8px;background:var(--onSurface);color:var(--surface);padding:12px 18px;max-width:calc(100vw - 32px);font-size:13px;display:none}#snackbar.visible{display:block}.step-row{display:flex;gap:4px;align-items:center}.step-row .grow{flex:1}.section-description{color:var(--onSurfaceVariant);font-size:12px;margin:4px 0 12px}.dirty-dot{width:7px;height:7px;display:inline-block;background:var(--primary);border-radius:50%;margin-left:6px}.divider{height:1px;background:var(--outlineVariant);opacity:.5;margin:12px 0}@keyframes busy{50%{opacity:.3}}@media(max-width:600px){.scroll{padding:12px 12px 20px}.appbar{padding:0 12px}.section{padding:12px}.dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px);border-radius:20px}.dialog.large,.dialog.graph-dialog{height:calc(100dvh - 24px)}.dialog-layout{max-height:calc(100dvh - 24px)}.dialog.graph-dialog{width:calc(100vw - 24px)}.dialog-header{padding:16px 18px 10px}.dialog-header h2{font-size:18px}.dialog-body{padding:10px 16px}.dialog-footer{padding:10px 12px 14px;gap:2px}.dialog-footer .button{padding:8px 12px}.graph-sidebar{width:210px}.settings-grid{grid-template-columns:1fr}.section-head{flex-wrap:wrap}.section-head .actions{margin-left:auto}}@media(max-width:440px){.entity{flex-wrap:wrap}.entity-actions{width:100%;max-width:none;justify-content:flex-end}.graph-layout{flex-direction:column}.graph-canvas{min-height:220px}.graph-sidebar{width:100%;height:190px;border-left:0;border-top:1px solid var(--outlineVariant)}.graph-toolbar{padding:8px 12px}.avatar-editor{gap:10px}.avatar-editor .avatar{width:48px;height:48px}.appbar h1{font-size:18px}.button{font-size:13px}.tabs .tab{font-size:13px}.dialog-header .actions{gap:0}}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{font:14px/1.45 "Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;color:var(--onSurface);background:var(--background)}button,input,textarea,select{font:inherit}button{cursor:pointer;user-select:none}button:disabled{cursor:not-allowed;opacity:.45}button,input,textarea,select{outline:none}button:focus-visible{outline:2px solid var(--primary);outline-offset:3px}button svg{flex:none}svg{vertical-align:middle}.icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.page{height:100%;display:flex;flex-direction:column}.appbar{height:58px;flex:none;display:flex;align-items:center;padding:0 18px;gap:12px;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 25%,transparent)}.appbar h1{margin:0;font-size:20px;font-weight:500;flex:1}.scroll{flex:1;min-height:0;overflow:auto;padding:12px 16px 20px;scrollbar-gutter:stable}.section{border:1px solid color-mix(in srgb,var(--outlineVariant) 36%,transparent);border-radius:16px;background:color-mix(in srgb,var(--surfaceContainer) 65%,transparent);padding:14px;margin-bottom:14px}.section-head{display:flex;align-items:center;gap:10px;min-height:32px;margin-bottom:12px}.section-head h2{font-size:16px;font-weight:700;margin:0;flex:1}.section-icon{color:var(--primary)}.actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.button{min-height:38px;display:inline-flex;gap:7px;align-items:center;justify-content:center;border:0;border-radius:20px;padding:8px 16px;background:transparent;color:var(--primary);font-weight:600}.button.small{min-height:32px;padding:4px 8px;font-size:13px}.button.filled{color:var(--onPrimary);background:var(--primary)}.button.tonal{background:var(--primaryContainer);color:var(--onPrimaryContainer)}.button.danger{color:var(--error)}.button:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 10%,transparent)}.button.filled:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 90%,var(--onPrimary))}.icon-button{width:32px;height:32px;padding:6px;border:0;border-radius:50%;background:transparent;color:var(--onSurfaceVariant);display:inline-grid;place-items:center}.icon-button:hover:not(:disabled){background:color-mix(in srgb,var(--onSurface) 9%,transparent)}.entity{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;border-radius:12px;border:1px solid color-mix(in srgb,var(--outlineVariant) 28%,transparent);background:color-mix(in srgb,var(--surfaceContainerHighest) 28%,transparent);min-height:76px}.entity.active{border-color:color-mix(in srgb,var(--primary) 45%,transparent);background:color-mix(in srgb,var(--primaryContainer) 16%,transparent)}.entity:last-child{margin-bottom:0}.entity-main{border:0;text-align:left;padding:0;display:flex;gap:12px;align-items:center;min-width:0;flex:1;color:inherit;background:none}.entity-copy{min-width:0;flex:1}.entity-title{font-size:14px;font-weight:700}.entity-subtitle{font-size:12px;color:var(--onSurfaceVariant);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}.badge{font-size:11px;line-height:20px;padding:0 7px;border-radius:6px;background:color-mix(in srgb,var(--onSurfaceVariant) 8%,transparent);color:var(--onSurfaceVariant)}.avatar{width:40px;height:40px;flex:none;border-radius:50%;display:grid;place-items:center;background:var(--surfaceContainerHighest);color:var(--onSurfaceVariant);position:relative;overflow:hidden}.avatar .icon{width:24px;height:24px}.active .avatar{color:var(--primary);background:var(--primaryContainer)}.avatar img{width:100%;height:100%;object-fit:cover}.active-pill{width:78px;height:28px;font-size:11px;border:1px solid color-mix(in srgb,var(--primary) 32%,transparent);border-radius:20px;background:color-mix(in srgb,var(--primary) 8%,var(--surfaceContainerHigh));color:var(--primary);display:grid;place-items:center;font-weight:700}.entity-actions{display:flex;align-items:center;gap:4px;max-width:190px;flex-wrap:wrap;justify-content:flex-end}.empty{padding:14px 4px;color:var(--onSurfaceVariant);font-size:13px}.loading{height:100%;display:grid;place-items:center;font-size:14px}.error-banner{padding:12px 16px;border:1px solid var(--error);border-radius:10px;color:var(--error);margin-bottom:12px;white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:var(--onSurfaceVariant);font-size:12px}.hint{padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--primaryContainer) 42%,transparent);color:var(--onSurfaceVariant);font-size:12px;margin:8px 0 16px;display:flex;gap:8px;align-items:flex-start}.hint .icon{width:16px;height:16px;flex:none;margin-top:1px}.row{display:flex;align-items:center;gap:12px}.row .grow{flex:1;min-width:0}.switch-row{display:flex;align-items:center;gap:16px;padding:10px 0}.switch-row .grow{flex:1}.switch-label{font-size:14px;font-weight:500}.switch-description{color:var(--onSurfaceVariant);font-size:12px;margin-top:3px}.switch{appearance:none;width:48px;height:28px;border:2px solid var(--outline);border-radius:18px;background:var(--surfaceContainerHighest);position:relative;flex:none;margin:0;cursor:pointer}.switch:before{content:"";position:absolute;width:16px;height:16px;top:4px;left:4px;border-radius:50%;background:var(--outline);transition:transform .15s}.switch:checked{border-color:var(--primary);background:var(--primary)}.switch:checked:before{background:var(--onPrimary);transform:translateX(20px)}.switch:disabled{opacity:.45;cursor:not-allowed}.switch:focus-visible{outline:2px solid var(--primary);outline-offset:3px}.binding{padding:10px 0 14px;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 45%,transparent);margin-bottom:6px}.binding:last-child{border-bottom:0}.binding-fields{padding:5px 0 0}.binding-fields[hidden]{display:none}.field{display:block;position:relative;margin:12px 0 18px}.field-label{position:absolute;left:10px;top:-9px;padding:0 4px;background:var(--surfaceContainer);font-size:12px;color:var(--onSurfaceVariant);z-index:1}.field input:not([type=checkbox]),.field textarea,.field select{display:block;width:100%;border:1px solid var(--outline);background:transparent;border-radius:8px;padding:14px 12px;color:var(--onSurface);min-height:48px}.field textarea{resize:vertical;line-height:1.55;min-height:76px}.field:focus-within .field-label{color:var(--primary)}.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}.field input:disabled,.field select:disabled,.field textarea:disabled{opacity:.58;border-color:var(--outlineVariant)}.field select{appearance:none;-webkit-appearance:none;height:56px;min-height:56px;padding:0 44px 0 12px;line-height:24px;text-overflow:ellipsis}.select-arrow{position:absolute;top:0;right:12px;height:56px;display:flex;align-items:center;pointer-events:none;color:var(--onSurfaceVariant)}.field select:disabled+.select-arrow{opacity:.58}.field select option{color:var(--onSurface);background:var(--surfaceContainer)}.field textarea.code{font-family:Consolas,"SFMono-Regular",monospace;font-size:13px;min-height:300px}.field-action{position:absolute;right:6px;top:4px}.field.expandable textarea{padding-right:36px}.field-caption{font-size:11px;color:var(--onSurfaceVariant);margin-top:5px}.tag-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px;font-weight:500}.chips{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 16px}.chip{padding:5px 10px;border:1px solid var(--outlineVariant);color:var(--onSurfaceVariant);border-radius:8px;background:none;font-size:12px;display:flex;align-items:center;gap:5px}.chip.selected{border-color:var(--primary);color:var(--onPrimaryContainer);background:var(--primaryContainer)}.chip .icon{width:14px;height:14px}.avatar-editor{display:flex;gap:16px;align-items:center;padding:4px 0 6px}.avatar-editor .avatar{width:64px;height:64px}.avatar-editor .avatar .icon{width:36px;height:36px}.avatar-editor .field{flex:1;margin:8px 0}.dialog{border:1px solid color-mix(in srgb,var(--outlineVariant) 30%,transparent);border-radius:24px;padding:0;background:var(--surfaceContainer);color:var(--onSurface);box-shadow:0 12px 48px #0003;width:min(760px,calc(100vw - 48px));max-width:none;max-height:calc(100dvh - 48px);overflow:hidden;margin:auto}.dialog::backdrop{background:#0006}.dialog.large{height:min(820px,calc(100dvh - 48px))}.dialog.compact{width:min(500px,calc(100vw - 48px))}.dialog.graph-dialog{width:calc(100vw - 48px);height:calc(100dvh - 48px);max-width:1400px;border-radius:16px}.dialog-layout{height:100%;max-height:calc(100dvh - 48px);display:flex;flex-direction:column}.dialog-header{padding:18px 22px 12px;display:flex;align-items:center;gap:12px;flex:none}.dialog-header h2{flex:1;min-width:0;font-size:20px;line-height:1.35;font-weight:500;margin:0}.tabs{display:flex;flex:none;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 50%,transparent)}.tab{position:relative;flex:1;min-height:48px;border:0;color:var(--onSurfaceVariant);font-weight:500;background:none}.tab[aria-selected=true]{color:var(--primary)}.tab[aria-selected=true]:after{content:"";height:3px;position:absolute;bottom:0;left:26%;right:26%;background:var(--primary);border-radius:4px 4px 0 0}.dialog-body{padding:10px 18px;overflow:auto;flex:1;min-height:0;scrollbar-gutter:stable}.dialog-body>.field:first-child{margin-top:14px}.dialog-footer{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:12px 18px 18px;flex:none}.dialog-footer .spacer{flex:1}.dialog-footer .button{min-height:38px}.dialog-error{margin:10px 18px 0;padding:10px 12px;border-radius:10px;color:var(--error);background:color-mix(in srgb,var(--error) 8%,transparent);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.dialog-error[hidden]{display:none}.memory-entry{padding:12px;border:1px solid var(--outlineVariant);border-radius:12px;margin:10px 0}.memory-entry h3{font-size:14px;margin:0 0 4px}.memory-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.checkbox-row{padding:9px 0;display:flex;align-items:center;gap:10px}.checkbox-row input{accent-color:var(--primary);width:18px;height:18px}.checkbox-row .avatar{width:32px;height:32px}.members-list{border:1px solid var(--outlineVariant);border-radius:10px;padding:0 12px;margin:10px 0}.graph-toolbar{padding:8px 18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--outlineVariant)}.graph-toolbar .search{flex:1;min-width:140px;border:1px solid var(--outline);border-radius:24px;background:none;color:var(--onSurface);padding:9px 14px}.graph-layout{display:flex;flex:1;min-height:0}.graph-canvas{flex:1;min-width:0;overflow:hidden;position:relative;touch-action:none;background:radial-gradient(color-mix(in srgb,var(--outline) 25%,transparent) 1px,transparent 1px);background-size:20px 20px}.graph-canvas>svg{width:100%;height:100%;touch-action:none}.graph-canvas .graph-empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;gap:10px;pointer-events:none;color:var(--onSurfaceVariant)}.graph-node{cursor:pointer}.graph-node circle{fill:var(--primaryContainer);stroke:var(--primary);stroke-width:1.5}.graph-node.selected circle{stroke-width:3;fill:var(--primary)}.graph-node text{fill:var(--onPrimaryContainer);font-size:12px;pointer-events:none}.graph-node.selected text{fill:var(--onPrimary)}.graph-edge{stroke:var(--outline);stroke-width:1.5;opacity:.7}.graph-sidebar{width:290px;flex:none;overflow:auto;padding:12px;border-left:1px solid var(--outlineVariant);background:color-mix(in srgb,var(--surfaceContainerHigh) 50%,transparent)}.graph-sidebar h3{font-size:14px;margin:4px 0 10px}.memory-item{border:0;border-radius:8px;text-align:left;padding:10px;width:100%;background:none;color:var(--onSurface);margin:2px 0}.memory-item:hover:not(.selected){background:color-mix(in srgb,var(--onSurface) 8%,transparent)}.memory-item.selected{background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:inset 3px 0 0 var(--primary)}.memory-item strong{display:block;font-size:13px}.memory-item small{font-size:11px;opacity:.75;display:block;margin-top:4px}.graph-detail{padding:10px;margin-top:10px;border-top:1px solid var(--outlineVariant)}.graph-detail pre{font:12px/1.6 inherit;white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto}.graph-tools{position:absolute;bottom:14px;left:14px;display:flex;gap:3px;padding:4px;border-radius:24px;border:1px solid var(--outlineVariant);background:var(--surfaceContainer)}.busy .button,.busy .icon-button{pointer-events:none}.busy-bar{height:2px;background:var(--primary);animation:busy 1s infinite;flex:none}.notice{padding:12px;border-radius:12px;border:1px solid var(--outlineVariant);color:var(--onSurfaceVariant);font-size:12px}.notice strong{color:var(--onSurface);font-weight:600}.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.unwired{opacity:.65}.unwired input[type=range]{width:100%;accent-color:var(--primary)}#snackbar{position:fixed;z-index:10000;left:50%;bottom:20px;transform:translateX(-50%);border-radius:8px;background:var(--onSurface);color:var(--surface);padding:12px 18px;max-width:calc(100vw - 32px);font-size:13px;display:none}#snackbar.visible{display:block}.step-row{display:flex;gap:4px;align-items:center}.step-row .grow{flex:1}.section-description{color:var(--onSurfaceVariant);font-size:12px;margin:4px 0 12px}.dirty-dot{width:7px;height:7px;display:inline-block;background:var(--primary);border-radius:50%;margin-left:6px}.divider{height:1px;background:var(--outlineVariant);opacity:.5;margin:12px 0}@keyframes busy{50%{opacity:.3}}@media(max-width:600px){.scroll{padding:12px 12px 20px}.appbar{padding:0 12px}.section{padding:12px}.dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px);border-radius:20px}.dialog.large,.dialog.graph-dialog{height:calc(100dvh - 24px)}.dialog-layout{max-height:calc(100dvh - 24px)}.dialog.graph-dialog{width:calc(100vw - 24px)}.dialog-header{padding:16px 18px 10px}.dialog-header h2{font-size:18px}.dialog-body{padding:10px 16px}.dialog-footer{padding:10px 12px 14px;gap:2px}.dialog-footer .button{padding:8px 12px}.graph-sidebar{width:210px}.settings-grid{grid-template-columns:1fr}.section-head{flex-wrap:wrap}.section-head .actions{margin-left:auto}}@media(max-width:440px){.entity{flex-wrap:wrap}.entity-actions{width:100%;max-width:none;justify-content:flex-end}.graph-layout{flex-direction:column}.graph-canvas{min-height:220px}.graph-sidebar{width:100%;height:190px;border-left:0;border-top:1px solid var(--outlineVariant)}.graph-toolbar{padding:8px 12px}.avatar-editor{gap:10px}.avatar-editor .avatar{width:48px;height:48px}.appbar h1{font-size:18px}.button{font-size:13px}.tabs .tab{font-size:13px}.dialog-header .actions{gap:0}}
 
 .tag-prompt{white-space:pre-wrap;margin:6px 0;color:var(--onSurfaceVariant);font:inherit}.score-field{display:flex;flex-direction:column;gap:8px;margin:12px 0}.score-field span{display:flex;justify-content:space-between}.score-field input{width:100%;accent-color:var(--primary)}
 
@@ -29,8 +29,30 @@
 .memory-search-table tbody tr:last-child td{border-bottom:0}
 .memory-search-scores:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 
+/* Batch role binding keeps target, search and selection actions visible above history. */
+.dialog.binding-dialog{width:min(720px,calc(100vw - 48px));height:min(720px,calc(100dvh - 48px))}
+.binding-dialog .dialog-layout{height:100%;min-height:0}
+.binding-dialog .dialog-body{display:flex;flex:1;flex-direction:column;gap:16px;min-height:0;overflow:hidden;padding-bottom:0}
+.binding-intro{display:flex;align-items:flex-start;gap:12px;flex:none;padding:14px 16px;border-radius:16px;background:var(--surfaceContainerHigh)}
+.binding-intro-icon{display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:12px;background:var(--primaryContainer);color:var(--onPrimaryContainer)}
+.binding-intro strong{font-size:14px;font-weight:600}.binding-intro p{margin:5px 0 0;font-size:12px;line-height:1.7;color:var(--onSurfaceVariant)}
+.binding-controls{display:grid;grid-template-columns:1fr 1fr;column-gap:12px;flex:none}.binding-controls .field{margin:0 0 12px;min-width:0}.binding-controls input,.binding-controls select{width:100%;min-width:0}
+.binding-list-toolbar{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px}.binding-list-toolbar .chips{margin:0;gap:6px}.binding-list-toolbar .button{flex:none}
+.binding-chat-list{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 2px 12px;scrollbar-gutter:stable}
+.binding-chat{display:flex;align-items:center;gap:14px;margin-bottom:6px;padding:13px 14px;min-height:70px;border:1px solid transparent;border-radius:14px;cursor:pointer;transition:background .15s,border-color .15s}
+.binding-chat:hover{background:var(--surfaceContainerHigh)}.binding-chat.selected{border-color:var(--primary);background:color-mix(in srgb,var(--primaryContainer) 28%,var(--surface))}
+.binding-chat:focus-within{outline:2px solid var(--primary);outline-offset:1px}.binding-chat.already-bound{cursor:default}
+.binding-chat input{flex:none;width:18px;height:18px;margin:0;accent-color:var(--primary);cursor:inherit}.binding-chat-copy{display:flex;flex-direction:column;gap:7px;flex:1;min-width:0}
+.binding-chat-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;overflow-wrap:anywhere;font-size:14px;font-weight:500;line-height:1.5}
+.binding-current{flex:none;font-size:10px;font-weight:400;border-radius:5px;padding:1px 5px;background:var(--surfaceContainerHigh);color:var(--onSurfaceVariant)}
+.binding-chat-meta{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;color:var(--onSurfaceVariant);font-size:11px;line-height:1.5}
+.binding-owner{display:inline-flex;align-items:center;gap:4px;overflow-wrap:anywhere}.binding-owner .icon{width:13px;height:13px;flex:none}.binding-owner.bound{color:var(--primary)}
+.binding-chat-error{font-size:11px;color:var(--error);overflow-wrap:anywhere}.binding-empty{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;min-height:160px;padding:24px 12px;text-align:center;color:var(--onSurfaceVariant);font-size:12px}.binding-empty>.icon{width:32px;height:32px;opacity:.6}.binding-empty strong{font-size:14px;font-weight:500}
+.binding-dialog .dialog-footer{display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--outlineVariant);gap:12px}.binding-selection-count{font-size:12px;color:var(--onSurfaceVariant);font-variant-numeric:tabular-nums}.binding-footer-actions{display:flex;align-items:center;gap:4px;flex:none}
+@media(max-width:600px){.dialog.binding-dialog{width:calc(100vw - 24px);height:calc(100dvh - 24px)}.binding-dialog .dialog-body{gap:12px}.binding-intro{padding:12px}.binding-controls{grid-template-columns:1fr;gap:0}.binding-chat{padding:12px 10px;gap:12px}.binding-dialog .dialog-footer{flex-wrap:wrap;gap:6px}.binding-selection-count{width:100%;padding:0 8px}.binding-footer-actions{width:100%;justify-content:flex-end}}
+
 /* Presentation views reuse the manager's host-provided Material palette and offline icons. */
-.presentation-page{min-width:0;max-width:100%;background:var(--surface)}
+.presentation-page{min-width:0;max-width:100%;background:var(--background)}
 .selection-toolbar{flex:none;padding:8px 16px 0}.selection-toolbar .field{margin:4px 0 8px}
 .selection-categories{margin-bottom:10px}.selection-check{display:grid;place-items:center;width:24px;flex:none;color:var(--primary)}
 .entity.selected{border-color:var(--primary);background:color-mix(in srgb,var(--primaryContainer) 24%,var(--surfaceContainer))}
@@ -41,6 +63,72 @@
 .picker-row:hover:not(:disabled){background:color-mix(in srgb,var(--onSurface) 8%,transparent)}
 .attachment-content{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:8px 0;user-select:text}
 @media(max-width:600px){.selection-toolbar{padding:8px 12px 0}.presentation-footer{padding:10px 12px}.picker-row{padding:12px 8px}}
+
+/* Material graph workspace: app bar, search, filter chips, canvas FAB and inspector. */
+.dialog.graph-dialog{border-radius:28px;background:var(--surface);border:0}
+.graph-dialog .dialog-layout{min-height:0}
+.graph-dialog .dialog-header{position:relative;z-index:2;min-height:80px;padding:12px 16px;gap:12px}
+.graph-dialog .icon-button{width:48px;height:48px;padding:12px;flex:none}
+.graph-dialog .icon-button .icon{width:24px;height:24px}
+.graph-dialog .graph-heading{flex:1;min-width:0}
+.graph-dialog .graph-heading h2{font-size:22px;line-height:28px;font-weight:500;white-space:nowrap}
+.graph-dialog .graph-heading>span{display:block;margin-top:2px;color:var(--onSurfaceVariant);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.graph-overflow{position:relative;flex:none}
+.graph-overflow>summary{list-style:none;cursor:pointer}
+.graph-overflow>summary::-webkit-details-marker{display:none}
+.graph-overflow>summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.graph-overflow[open]>summary{background:var(--surfaceContainerHigh)}
+.graph-menu{position:absolute;right:0;top:calc(100% + 4px);width:220px;padding:8px 0;border-radius:12px;background:var(--surfaceContainerHigh);box-shadow:0 4px 8px #0003,0 8px 24px #0002}
+.graph-menu .button{display:flex;justify-content:flex-start;gap:12px;width:100%;min-height:48px;border-radius:0;padding:12px 16px;font-size:14px;font-weight:400;color:var(--onSurface)}
+.graph-menu .button .icon{color:var(--onSurfaceVariant)}
+.graph-menu hr{margin:8px 0;border:0;border-top:1px solid var(--outlineVariant)}
+.graph-dialog .graph-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:0 24px 16px;flex:none;border:0}
+.graph-dialog .graph-search{display:flex;align-items:center;gap:4px;width:100%;height:56px;padding:4px 8px;border-radius:28px;background:var(--surfaceContainerHigh)}
+.graph-search:focus-within{outline:2px solid var(--primary);outline-offset:2px}
+.graph-dialog .graph-search input{flex:1;min-width:0;width:100%;height:100%;padding:0 4px;border:0;outline:none;background:transparent;color:var(--onSurface);font-size:16px;appearance:none}
+.graph-search input::placeholder{color:var(--onSurfaceVariant);opacity:1}
+.graph-search input::-webkit-search-cancel-button{display:none}
+.graph-search:has(input:placeholder-shown) [data-action="clear-search"]{visibility:hidden}
+.graph-filters{display:flex;align-items:center;gap:8px;min-width:0}
+.graph-folder{display:flex;align-items:center;position:relative;min-width:0;max-width:calc(100% - 96px);height:40px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant)}
+.graph-folder>.icon:first-child{position:absolute;left:12px;width:18px;height:18px;pointer-events:none}
+.graph-folder>.icon:last-child{position:absolute;right:10px;width:18px;height:18px;pointer-events:none}
+.graph-folder select{width:100%;min-width:0;max-width:260px;height:100%;padding:0 34px 0 38px;border:0;border-radius:8px;appearance:none;background:transparent;color:var(--onSurface);font-size:14px;text-overflow:ellipsis;cursor:pointer}
+.graph-folder select:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.graph-folder select option{color:var(--onSurface);background:var(--surfaceContainerHigh)}
+.graph-dialog .graph-link-chip{flex:none;min-height:40px;gap:8px;padding:0 12px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant);font-size:14px;font-weight:500}
+.graph-dialog .graph-link-chip .icon{width:18px;height:18px}
+.graph-dialog .graph-link-chip[aria-pressed="true"]{border-color:transparent;background:var(--primaryContainer);color:var(--onPrimaryContainer)}
+.graph-link-hint{color:var(--primary);font-size:12px;line-height:18px}
+.graph-dialog .graph-layout{gap:0;overflow:hidden;border-top:1px solid var(--outlineVariant)}
+.graph-dialog .graph-canvas{min-height:0;background-color:var(--surface);background-image:radial-gradient(color-mix(in srgb,var(--outlineVariant) 65%,transparent) 1px,transparent 1px);background-size:24px 24px}
+.graph-dialog .graph-canvas>svg{display:block}
+.graph-dialog .graph-tools{bottom:20px;left:20px;gap:0;padding:4px;border:0;border-radius:16px;background:var(--surfaceContainerHigh);box-shadow:0 2px 6px #0002}
+.graph-dialog .graph-fab{position:absolute;right:20px;bottom:20px;min-height:56px;padding:0 20px;gap:12px;border-radius:16px;background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:0 3px 6px #0003,0 6px 12px #0001;font-size:14px;font-weight:500}
+.graph-dialog .graph-fab .icon{width:24px;height:24px}
+.graph-dialog .graph-fab:hover{background:color-mix(in srgb,var(--onPrimaryContainer) 8%,var(--primaryContainer));box-shadow:0 4px 8px #0003,0 8px 16px #0001}
+.graph-dialog .graph-sidebar{width:304px;padding:16px 12px;overscroll-behavior:contain;background:var(--surfaceContainer)}
+.graph-dialog .graph-sidebar>h3{padding:0 12px;margin:0 0 12px;font-size:14px;line-height:24px;font-weight:500;color:var(--onSurfaceVariant)}
+.graph-dialog .memory-item{padding:12px;border-radius:12px;margin:0 0 4px;cursor:pointer}
+.graph-dialog .memory-item strong{font-size:14px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
+.graph-dialog .memory-item small{font-size:12px;line-height:18px;color:var(--onSurfaceVariant);opacity:1;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.graph-dialog .memory-item.selected{box-shadow:none}
+.graph-dialog .memory-item.selected small{color:var(--onPrimaryContainer)}
+.graph-dialog .graph-detail{padding:16px 12px}
+@media(max-width:840px){
+  .graph-dialog .graph-layout{flex-direction:column}
+  .graph-dialog .graph-sidebar{width:100%;height:30%;min-height:120px;max-height:240px;padding:12px;border-left:0;border-top:1px solid var(--outlineVariant);border-radius:20px 20px 0 0}
+  .graph-dialog .graph-sidebar>h3{margin-bottom:8px}
+}
+@media(max-width:600px){
+  .dialog.graph-dialog{width:100vw;height:100dvh;max-height:100dvh;max-width:none;margin:0;border-radius:0}
+  .graph-dialog .dialog-layout{max-height:100dvh}
+  .graph-dialog .dialog-header{min-height:72px;padding:8px 12px;gap:8px}
+  .graph-dialog .graph-heading h2{font-size:20px;line-height:26px}
+  .graph-dialog .graph-toolbar{padding:0 16px 12px;gap:12px}
+  .graph-dialog .graph-tools{left:16px;bottom:16px}
+  .graph-dialog .graph-fab{right:16px;bottom:16px;padding:0 16px;gap:8px}
+}
 </style></head><body><main id="app" aria-label="角色卡"><div class="loading" role="status">正在加载角色卡…</div></main><div id="dialogs"></div><div id="snackbar" role="status" aria-live="polite"></div><script>"use strict";
 (() => {
   // web/shared/dom.ts
@@ -58,78 +146,6 @@
       /** Compares only complete declared field names. */
       (key) => value === key
     );
-  }
-
-  // web/bridge/transport.ts
-  function host() {
-    const bridge = window.CharacterMemoryHost;
-    if (bridge === void 0) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C");
-    const methods = ["loadScreen", "completeScreen", "cancelScreen", "request", "exportFile", "avatarImage", "openEntity"];
-    for (const method of methods) if (typeof bridge[method] !== "function") throw new Error(`CharacterMemoryHost.${method} \u5C1A\u672A\u6CE8\u518C`);
-    return bridge;
-  }
-  async function waitForHost() {
-    const deadline = performance.now() + 5e3;
-    while (window.CharacterMemoryHost === void 0) {
-      if (performance.now() >= deadline) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C\uFF0C\u8BF7\u4ECE\u5E94\u7528\u4E2D\u7684\u89D2\u8272\u5361\u63D2\u4EF6\u6253\u5F00\u6B64\u9875\u9762\u3002");
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    host();
-  }
-
-  // web/features/characters/data.ts
-  function getCard(snapshot, id) {
-    for (const card of snapshot.cards) if (card.id === id) return card;
-    throw new Error("\u89D2\u8272\u5361\u4E0D\u5B58\u5728");
-  }
-  function ownerFor(card) {
-    switch (card.memoryBindingMode) {
-      case "CHARACTER":
-        return `character:${card.id}`;
-      case "SHARED":
-        if (typeof card.sharedMemoryId !== "string" || card.sharedMemoryId === "") throw new Error("\u89D2\u8272\u7684\u5171\u4EAB\u8BB0\u5FC6\u7ED1\u5B9A\u4E0D\u5B8C\u6574");
-        return `shared:${card.sharedMemoryId}`;
-      default:
-        throw new Error("\u4E0D\u652F\u6301\u7684\u89D2\u8272\u8BB0\u5FC6\u7ED1\u5B9A\u7C7B\u578B");
-    }
-  }
-  function isActive(active, type, id) {
-    if (type === "card") return "CharacterCard" in active && active.CharacterCard.id === id;
-    if (type === "group") return "CharacterGroup" in active && active.CharacterGroup.id === id;
-    throw new Error("Invalid active profile type");
-  }
-
-  // web/features/characters/actions.ts
-  function createCharactersActionsFeature(context) {
-    const { snapshot, state, request, renderMain, toast, openUser, openGraph } = context;
-    async function handleAction(action, element) {
-      switch (action) {
-        case "create-card":
-          await host().openEntity("create", "card", "");
-          return;
-        case "edit-card":
-          await host().openEntity("edit", "card", getCard(snapshot(), dataValue(element, "id")).id);
-          return;
-        case "activate-card":
-          state.snapshot = await request({ action: "activate", type: "card", id: dataValue(element, "id") });
-          renderMain();
-          toast("\u5DF2\u5207\u6362\u89D2\u8272\u5361");
-          return;
-        case "card-user": {
-          const card = getCard(snapshot(), dataValue(element, "id"));
-          await openUser(ownerFor(card), card.name);
-          return;
-        }
-        case "card-graph": {
-          const card = getCard(snapshot(), dataValue(element, "id"));
-          await openGraph(ownerFor(card), card.name);
-          return;
-        }
-        default:
-          throw new Error(`Unknown characters action: ${action}`);
-      }
-    }
-    return { names: ["create-card", "edit-card", "activate-card", "card-user", "card-graph"], handleAction };
   }
 
   // web/shared/ui/icons.ts
@@ -205,6 +221,232 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  // web/features/characters/data.ts
+  function getCard(snapshot, id) {
+    for (const card of snapshot.cards) if (card.id === id) return card;
+    throw new Error("\u89D2\u8272\u5361\u4E0D\u5B58\u5728");
+  }
+  function ownerFor(card) {
+    switch (card.memoryBindingMode) {
+      case "CHARACTER":
+        return `character:${card.id}`;
+      case "SHARED":
+        if (typeof card.sharedMemoryId !== "string" || card.sharedMemoryId === "") throw new Error("\u89D2\u8272\u7684\u5171\u4EAB\u8BB0\u5FC6\u7ED1\u5B9A\u4E0D\u5B8C\u6574");
+        return `shared:${card.sharedMemoryId}`;
+      default:
+        throw new Error("\u4E0D\u652F\u6301\u7684\u89D2\u8272\u8BB0\u5FC6\u7ED1\u5B9A\u7C7B\u578B");
+    }
+  }
+  function isActive(active, type, id) {
+    if (type === "card") return "CharacterCard" in active && active.CharacterCard.id === id;
+    if (type === "group") return "CharacterGroup" in active && active.CharacterGroup.id === id;
+    throw new Error("Invalid active profile type");
+  }
+
+  // web/features/characters/chat-binding.ts
+  function bindingLabel(selection2, snapshot) {
+    if (selection2 === null) return "\u672A\u7ED1\u5B9A\u89D2\u8272";
+    if (selection2 === "model:chat") return "\u4EC5\u4F7F\u7528\u6A21\u578B";
+    for (const card of snapshot.cards) if (selection2 === "card:" + card.id) return card.name;
+    for (const group of snapshot.groups) if (selection2 === "group:" + group.id) return "\u7FA4\u7EC4 \xB7 " + group.name;
+    return "\u539F\u89D2\u8272\u5DF2\u5931\u6548";
+  }
+  function filteredBindingChats(dialog, snapshot) {
+    const query = dialog.query.trim().toLocaleLowerCase();
+    return dialog.chats.filter((chat) => (dialog.filter !== "unbound" || chat.selection === null) && (query === "" || [chat.title, bindingLabel(chat.selection, snapshot)].some((value) => value.toLocaleLowerCase().includes(query))));
+  }
+  function selectableBindingChats(dialog, snapshot) {
+    return filteredBindingChats(dialog, snapshot).filter((chat) => chat.selection !== "card:" + dialog.cardId);
+  }
+  function chatDate(value) {
+    const date = new Date(/^\d+$/.test(value) ? Number(value) : value);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+  }
+  function chatBindingSpec(dialog, snapshot) {
+    const visible = filteredBindingChats(dialog, snapshot), selectable = selectableBindingChats(dialog, snapshot);
+    const allSelected = selectable.length > 0 && selectable.every((chat) => dialog.selectedIds.includes(chat.id));
+    let rows = "";
+    for (const chat of visible) {
+      const bound = chat.selection === "card:" + dialog.cardId, selected = dialog.selectedIds.includes(chat.id);
+      const failure = dialog.failures[chat.id];
+      rows += `<label class="binding-chat ${selected ? "selected" : ""} ${bound ? "already-bound" : ""}"><input type="checkbox" data-binding-chat="${escapeHtml(chat.id)}" aria-label="\u9009\u62E9\u5BF9\u8BDD ${escapeHtml(chat.title)}" ${selected ? "checked" : ""} ${bound || dialog.busy || dialog.cardId === "" ? "disabled" : ""}><span class="binding-chat-copy"><span class="binding-chat-title">${escapeHtml(chat.title || "\u672A\u547D\u540D\u5BF9\u8BDD")}${chat.isCurrent ? '<span class="binding-current">\u5F53\u524D\u5BF9\u8BDD</span>' : ""}</span><span class="binding-chat-meta"><span class="binding-owner ${bound ? "bound" : ""}">${bound ? icon("check") : icon("person")}${escapeHtml(bound ? "\u5DF2\u7ED1\u5B9A" : bindingLabel(chat.selection, snapshot))}</span><span>${chat.messageCount} \u6761\u6D88\u606F${chatDate(chat.updatedAt) === "" ? "" : " \xB7 " + escapeHtml(chatDate(chat.updatedAt))}</span></span>${failure === void 0 ? "" : `<span class="binding-chat-error">${escapeHtml(failure)}</span>`}</span></label>`;
+    }
+    const target = selectField("\u7ED1\u5B9A\u5230\u89D2\u8272\u5361", "bindingCard", dialog.cardId, snapshot.cards.map((card) => ({ id: card.id, label: card.name })), dialog.loading || dialog.busy);
+    const filter = (value, label) => `<button type="button" class="chip ${dialog.filter === value ? "selected" : ""}" data-action="binding-filter" data-filter="${value}" aria-pressed="${dialog.filter === value}" ${dialog.busy || dialog.loading ? "disabled" : ""}>${label}</button>`;
+    const body = `<div class="binding-intro"><span class="binding-intro-icon">${icon("chat")}</span><div><strong>\u4E3A\u5DF2\u6709\u5BF9\u8BDD\u6307\u5B9A\u89D2\u8272</strong><p>\u7ED1\u5B9A\u540E\uFF0C\u5BF9\u8BDD\u5C06\u4F7F\u7528\u6240\u9009\u89D2\u8272\u7684\u8BBE\u5B9A\u7EE7\u7EED\u4EA4\u6D41\u3002\u5DF2\u6709\u89D2\u8272\u7ED1\u5B9A\u4F1A\u88AB\u66FF\u6362\u3002</p></div></div><div class="binding-controls">${target}<label class="field binding-search"><span class="field-label">\u641C\u7D22\u5BF9\u8BDD\u6216\u5F53\u524D\u89D2\u8272</span><input data-binding-query aria-label="\u641C\u7D22\u5BF9\u8BDD\u6216\u5F53\u524D\u89D2\u8272" value="${escapeHtml(dialog.query)}" ${dialog.busy || dialog.loading ? "disabled" : ""}></label><div class="binding-list-toolbar"><div class="chips">${filter("all", "\u5168\u90E8\u5BF9\u8BDD")}${filter("unbound", "\u672A\u7ED1\u5B9A")}</div>${button("binding-select-visible", allSelected ? "\u53D6\u6D88\u5168\u9009" : "\u5168\u9009\u7ED3\u679C", "", selectable.length === 0 || dialog.loading || dialog.busy || dialog.cardId === "" ? "disabled" : "", "small")}</div></div><div class="binding-chat-list" aria-label="\u9009\u62E9\u8981\u7ED1\u5B9A\u7684\u5BF9\u8BDD" aria-busy="${dialog.loading}">${dialog.loading ? '<div class="binding-empty" role="status">\u6B63\u5728\u8BFB\u53D6\u5BF9\u8BDD\u2026</div>' : visible.length === 0 ? `<div class="binding-empty">${icon("chat")}<strong>${dialog.chats.length === 0 ? "\u8FD8\u6CA1\u6709\u5BF9\u8BDD" : "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u5BF9\u8BDD"}</strong><span>${dialog.chats.length === 0 ? "\u5F00\u59CB\u4E00\u6BB5\u5BF9\u8BDD\u540E\uFF0C\u5373\u53EF\u5728\u8FD9\u91CC\u7ED1\u5B9A\u89D2\u8272\u3002" : "\u8BD5\u8BD5\u5176\u4ED6\u5173\u952E\u8BCD\uFF0C\u6216\u5207\u6362\u5230\u5168\u90E8\u5BF9\u8BDD\u3002"}</span></div>` : rows}</div>`;
+    const status = dialog.busy ? `\u6B63\u5728\u7ED1\u5B9A ${dialog.completed} / ${dialog.total}` : `\u5DF2\u9009\u62E9 ${dialog.selectedIds.length} \u6761${dialog.query !== "" || dialog.filter !== "all" ? ` \xB7 \u7B5B\u9009\u51FA ${visible.length} \u6761` : ` \xB7 \u5171 ${dialog.chats.length} \u6761`}`;
+    return {
+      title: "\u6279\u91CF\u7ED1\u5B9A\u5BF9\u8BDD",
+      style: "binding-dialog",
+      tabs: [],
+      body,
+      footer: `<span class="binding-selection-count" role="status" aria-live="polite">${status}</span><div class="binding-footer-actions">${button("close-dialog", "\u53D6\u6D88", "", dialog.busy ? "disabled" : "")}${button("binding-submit", dialog.busy ? "\u7ED1\u5B9A\u4E2D\u2026" : `\u7ED1\u5B9A${dialog.selectedIds.length > 0 ? " " + dialog.selectedIds.length + " \u6761\u5BF9\u8BDD" : "\u5BF9\u8BDD"}`, "chat", dialog.loading || dialog.busy || dialog.selectedIds.length === 0 || dialog.cardId === "" ? "disabled" : "", "filled")}</div>`
+    };
+  }
+  function createChatBindingFeature(context) {
+    const { snapshot, pushDialog, topDialog, request, renderDialogs, popDialog, toast } = context;
+    async function handleAction(action, element) {
+      if (action === "bind-chats" || action === "bind-card-chats") {
+        const cardId = action === "bind-card-chats" ? getCard(snapshot(), dataValue(element, "id")).id : "";
+        const dialog2 = pushDialog({ type: "chat-binding", cardId, query: "", filter: "all", loading: true, chats: [], selectedIds: [], failures: {}, completed: 0, total: 0 });
+        try {
+          dialog2.chats = await request({ action: "listBindableChats" }, { background: true });
+        } finally {
+          dialog2.loading = false;
+          renderDialogs();
+        }
+        return;
+      }
+      const dialog = topDialog("chat-binding");
+      if (dialog.busy || dialog.loading) return;
+      switch (action) {
+        case "binding-filter": {
+          const filter = dataValue(element, "filter");
+          if (filter !== "all" && filter !== "unbound") throw new Error("\u65E0\u6548\u7684\u5BF9\u8BDD\u7B5B\u9009\u6761\u4EF6");
+          dialog.filter = filter;
+          return;
+        }
+        case "binding-select-visible": {
+          if (dialog.cardId === "") return;
+          const ids = selectableBindingChats(dialog, snapshot()).map((chat) => chat.id);
+          const selected = new Set(dialog.selectedIds), allSelected = ids.length > 0 && ids.every((id) => selected.has(id));
+          for (const id of ids) {
+            if (allSelected) selected.delete(id);
+            else selected.add(id);
+          }
+          dialog.selectedIds = [...selected];
+          return;
+        }
+        case "binding-submit": {
+          getCard(snapshot(), dialog.cardId);
+          const selection2 = "card:" + dialog.cardId;
+          const ids = dialog.selectedIds.filter((id) => dialog.chats.some((chat) => chat.id === id && chat.selection !== selection2));
+          if (ids.length === 0) return;
+          dialog.busy = true;
+          dialog.total = ids.length;
+          dialog.completed = 0;
+          dialog.failures = {};
+          renderDialogs();
+          let succeeded = 0;
+          try {
+            for (const chatId of ids) {
+              try {
+                const binding = await request({ action: "writeChatBinding", chatId, selection: selection2 }, { background: true });
+                if (binding.chatId !== chatId || binding.selection !== selection2) throw new Error("\u7ED1\u5B9A\u7ED3\u679C\u4E0D\u4E00\u81F4\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5");
+                const chat = dialog.chats.find((value) => value.id === chatId);
+                chat.selection = selection2;
+                dialog.selectedIds = dialog.selectedIds.filter((id) => id !== chatId);
+                succeeded++;
+              } catch (error) {
+                dialog.failures[chatId] = String(error);
+              }
+              dialog.completed++;
+              renderDialogs();
+            }
+          } finally {
+            dialog.busy = false;
+          }
+          if (succeeded === ids.length) {
+            popDialog();
+            toast(`\u5DF2\u5C06 ${succeeded} \u6761\u5BF9\u8BDD\u7ED1\u5B9A\u5230\u300C${getCard(snapshot(), dialog.cardId).name}\u300D`);
+          } else {
+            dialog.error = `\u5DF2\u7ED1\u5B9A ${succeeded} \u6761\uFF0C${ids.length - succeeded} \u6761\u672A\u5B8C\u6210\u3002\u4FDD\u7559\u4E86\u672A\u5B8C\u6210\u7684\u9009\u62E9\uFF0C\u53EF\u91CD\u8BD5\u3002`;
+            renderDialogs();
+          }
+          return;
+        }
+        default:
+          throw new Error("Unknown chat binding action: " + action);
+      }
+    }
+    return { names: ["bind-chats", "bind-card-chats", "binding-filter", "binding-select-visible", "binding-submit"], handleAction };
+  }
+  function inputChatBinding(context, element) {
+    if (!element.hasAttribute("data-binding-query") && element.dataset.field !== "bindingCard") return false;
+    const dialog = context.topDialog("chat-binding");
+    if (context.state.busy || dialog.busy || dialog.loading) return true;
+    if (element.hasAttribute("data-binding-query") && element instanceof HTMLInputElement) {
+      const start = element.selectionStart, end = element.selectionEnd;
+      dialog.query = element.value;
+      context.renderDialogs();
+      const next = context.dialogsRoot.querySelector("[data-binding-query]");
+      if (next !== null) {
+        next.focus();
+        next.setSelectionRange(start, end);
+      }
+    } else {
+      dialog.cardId = element.value;
+      dialog.selectedIds = dialog.selectedIds.filter((id) => dialog.chats.some((chat) => chat.id === id && chat.selection !== "card:" + dialog.cardId));
+      dialog.failures = {};
+      dialog.error = "";
+      context.renderDialogs();
+      context.dialogsRoot.querySelector('[data-field="bindingCard"]')?.focus();
+    }
+    return true;
+  }
+  function changeChatBinding(context, element) {
+    if (!(element instanceof HTMLInputElement) || !element.hasAttribute("data-binding-chat")) return false;
+    const dialog = context.topDialog("chat-binding"), id = dataValue(element, "bindingChat");
+    if (context.state.busy || dialog.busy || dialog.loading || dialog.cardId === "") return true;
+    if (!dialog.chats.some((chat) => chat.id === id && chat.selection !== "card:" + dialog.cardId)) return true;
+    dialog.selectedIds = element.checked ? [.../* @__PURE__ */ new Set([...dialog.selectedIds, id])] : dialog.selectedIds.filter((value) => value !== id);
+    context.renderDialogs();
+    context.dialogsRoot.querySelectorAll("[data-binding-chat]").forEach((input) => {
+      if (input.dataset.bindingChat === id) input.focus();
+    });
+    return true;
+  }
+
+  // web/bridge/transport.ts
+  function host() {
+    const bridge = window.CharacterMemoryHost;
+    if (bridge === void 0) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C");
+    const methods = ["loadScreen", "completeScreen", "cancelScreen", "request", "exportFile", "avatarImage", "openEntity"];
+    for (const method of methods) if (typeof bridge[method] !== "function") throw new Error(`CharacterMemoryHost.${method} \u5C1A\u672A\u6CE8\u518C`);
+    return bridge;
+  }
+  async function waitForHost() {
+    const deadline = performance.now() + 5e3;
+    while (window.CharacterMemoryHost === void 0) {
+      if (performance.now() >= deadline) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C\uFF0C\u8BF7\u4ECE\u5E94\u7528\u4E2D\u7684\u89D2\u8272\u5361\u63D2\u4EF6\u6253\u5F00\u6B64\u9875\u9762\u3002");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    host();
+  }
+
+  // web/features/characters/actions.ts
+  function createCharactersActionsFeature(context) {
+    const { snapshot, state, request, renderMain, toast, openUser, openGraph } = context;
+    async function handleAction(action, element) {
+      switch (action) {
+        case "create-card":
+          await host().openEntity("create", "card", "");
+          return;
+        case "edit-card":
+          await host().openEntity("edit", "card", getCard(snapshot(), dataValue(element, "id")).id);
+          return;
+        case "activate-card":
+          state.snapshot = await request({ action: "activate", type: "card", id: dataValue(element, "id") });
+          renderMain();
+          toast("\u5DF2\u5207\u6362\u89D2\u8272\u5361");
+          return;
+        case "card-user": {
+          const card = getCard(snapshot(), dataValue(element, "id"));
+          await openUser(ownerFor(card), card.name);
+          return;
+        }
+        case "card-graph": {
+          const card = getCard(snapshot(), dataValue(element, "id"));
+          await openGraph(ownerFor(card), card.name);
+          return;
+        }
+        default:
+          throw new Error(`Unknown characters action: ${action}`);
+      }
+    }
+    return { names: ["create-card", "edit-card", "activate-card", "card-user", "card-graph"], handleAction };
+  }
+
   // web/features/groups/tiles.ts
   function groupTile(group, snapshot) {
     let names = "";
@@ -219,7 +461,7 @@
     for (const id of card.attachedTagIds) for (const tag of snapshot.tags) if (tag.id === id) tags += `<span class="badge">${escapeHtml(tag.name)}</span>`;
     const active = isActive(snapshot.active, "card", card.id);
     const binding = card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6";
-    return `<article class="entity ${active ? "active" : ""}"><button type="button" class="entity-main" data-action="edit-card" data-id="${escapeHtml(card.id)}" aria-label="\u7F16\u8F91 ${escapeHtml(card.name)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${avatarSources.has(card.avatarUri ?? "") ? `<img src="${escapeHtml(avatarSources.get(card.avatarUri ?? ""))}" alt="">` : icon("person")}${active ? `<span class="avatar-check">${icon("check")}</span>` : ""}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(card.name)}</span>${card.description === "" ? "" : `<div class="entity-subtitle">${escapeHtml(card.description)}</div>`}<span class="badges"><span class="badge">${card.chatModelBindingMode === "FIXED_MODEL" ? "\u56FA\u5B9A\u6A21\u578B\u914D\u7F6E" : "\u8DDF\u968F\u5168\u5C40\u6A21\u578B"}</span><span class="badge">${binding}</span>${tags}</span></span></button><div class="entity-actions">${iconButton("card-graph", "\u6253\u5F00\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-id="${escapeHtml(card.id)}"`)}${iconButton("card-user", "\u7F16\u8F91\u7528\u6237\u8D44\u6599", "profile", `data-id="${escapeHtml(card.id)}"`)}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : button("activate-card", "\u4F7F\u7528", "", `data-id="${escapeHtml(card.id)}"`, "small")}</div></article>`;
+    return `<article class="entity ${active ? "active" : ""}"><button type="button" class="entity-main" data-action="edit-card" data-id="${escapeHtml(card.id)}" aria-label="\u7F16\u8F91 ${escapeHtml(card.name)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${avatarSources.has(card.avatarUri ?? "") ? `<img src="${escapeHtml(avatarSources.get(card.avatarUri ?? ""))}" alt="">` : icon("person")}${active ? `<span class="avatar-check">${icon("check")}</span>` : ""}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(card.name)}</span>${card.description === "" ? "" : `<div class="entity-subtitle">${escapeHtml(card.description)}</div>`}<span class="badges"><span class="badge">${card.chatModelBindingMode === "FIXED_MODEL" ? "\u56FA\u5B9A\u6A21\u578B\u914D\u7F6E" : "\u8DDF\u968F\u5168\u5C40\u6A21\u578B"}</span><span class="badge">${binding}</span>${tags}</span></span></button><div class="entity-actions">${iconButton("bind-card-chats", "\u7ED1\u5B9A\u5BF9\u8BDD", "chat", `data-id="${escapeHtml(card.id)}"`)}${iconButton("card-graph", "\u6253\u5F00\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-id="${escapeHtml(card.id)}"`)}${iconButton("card-user", "\u7F16\u8F91\u7528\u6237\u8D44\u6599", "profile", `data-id="${escapeHtml(card.id)}"`)}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : button("activate-card", "\u4F7F\u7528", "", `data-id="${escapeHtml(card.id)}"`, "small")}</div></article>`;
   }
 
   // web/features/memory/library-view.ts
@@ -235,9 +477,17 @@
     }
     let characters = "";
     for (const card of snapshot.cards) {
-      const owner = ownerFor(card), active = isActive(snapshot.active, "card", card.id);
+      const active = isActive(snapshot.active, "card", card.id);
+      const needsRebind = card.memoryBindingMode === "SHARED" && !snapshot.stores.some((store) => store.id === card.sharedMemoryId);
+      let actions;
+      if (needsRebind) {
+        actions = button("edit-card", "\u91CD\u65B0\u7ED1\u5B9A\u8BB0\u5FC6\u5E93", "edit", `data-id="${escapeHtml(card.id)}"`, "small");
+      } else {
+        const owner = ownerFor(card);
+        actions = iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`) + iconButton("owner-user", "\u7528\u6237\u8D44\u6599 \xB7 USER.md", "profile", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`) + iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`);
+      }
       const source = avatarSources.get(card.avatarUri ?? "");
-      characters += `<article class="entity ${active ? "active" : ""}" data-memory-card="${escapeHtml(card.id)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${source ? `<img src="${escapeHtml(source)}" alt="">` : icon("person")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(card.name)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6"}</span>${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : ""}</div></div><div class="entity-actions">${iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}${iconButton("owner-user", "\u7528\u6237\u8D44\u6599 \xB7 USER.md", "profile", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}${iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}</div></article>`;
+      characters += `<article class="entity ${active ? "active" : ""}" data-memory-card="${escapeHtml(card.id)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${source ? `<img src="${escapeHtml(source)}" alt="">` : icon("person")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(card.name)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6"}</span>${needsRebind ? '<span class="badge">\u9700\u8981\u91CD\u65B0\u7ED1\u5B9A\u8BB0\u5FC6\u5E93</span>' : ""}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : ""}</div></div><div class="entity-actions">${actions}</div></article>`;
     }
     return `<section class="section"><div class="section-head">${icon("tune")}<h2>\u5168\u5C40\u8BB0\u5FC6\u8BBE\u7F6E</h2></div>${globalSwitch("\u5411\u6A21\u578B\u63D0\u4F9B\u7528\u6237\u8D44\u6599", "\u804A\u5929\u6267\u884C\u65F6\u63D0\u4F9B\u7528\u6237\u8D44\u6599\uFF1B\u5173\u95ED\u4E0D\u4F1A\u5220\u9664 USER.md \u6216\u6539\u5199\u5386\u53F2\u8BB0\u5F55\u3002", "userDescriptionEnabled", snapshot.memoryPreferences.userDescriptionEnabled)}${globalSwitch("\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93", "\u5141\u8BB8\u81EA\u52A8\u5019\u9009\u5165\u961F\u548C\u5B9A\u65F6\u63D0\u53D6\uFF1B\u5173\u95ED\u4E0D\u4F1A\u53D6\u6D88\u624B\u52A8\u5386\u53F2\u91CD\u5EFA\u3002", "autoUpdateEnabled", snapshot.memoryPreferences.autoUpdateEnabled)}</section><section class="section"><div class="section-head">${icon("hub")}<h2>\u5171\u4EAB\u8BB0\u5FC6\u5E93</h2>${button("create-store", "\u521B\u5EFA", "add", "", "small")}</div>${stores === "" ? '<div class="empty">\u5F53\u524D\u8FD8\u6CA1\u6709\u5171\u4EAB\u8BB0\u5FC6\u5E93\uFF0C\u521B\u5EFA\u540E\u53EF\u88AB\u591A\u4E2A\u89D2\u8272\u5361\u6302\u8F7D\u5171\u4EAB\u3002</div>' : stores}</section><section class="section"><div class="section-head">${icon("badge")}<h2>\u89D2\u8272\u8BB0\u5FC6\u5E93</h2></div>${characters}</section>`;
   }
@@ -254,7 +504,7 @@
       let cards = "", groups = "";
       for (const card of snapshot().cards) cards += cardTile(card, snapshot(), state.avatarSources);
       for (const group of snapshot().groups) groups += groupTile(group, snapshot());
-      app.innerHTML = `<div class="page"><div class="scroll">${state.error === "" ? "" : `<div class="error-banner" role="alert">${escapeHtml(state.error)}</div>`}<section class="section"><div class="section-head"><span class="section-icon">${icon("badge")}</span><h2>\u89D2\u8272\u5361</h2><div class="actions">${button("import-card", "\u5BFC\u5165", "upload", "", "small")}${button("create-card", "\u521B\u5EFA", "add", "", "small")}</div></div>${cards === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u89D2\u8272\u5361\uFF0C\u70B9\u51FB\u521B\u5EFA\u6DFB\u52A0\u89D2\u8272\u3002</div>' : cards}</section><section class="section"><div class="section-head"><span class="section-icon">${icon("groups")}</span><h2>\u7FA4\u7EC4</h2><div class="actions">${button("import-group", "\u5BFC\u5165 JSON", "upload", "", "small")}${button("create-group", "\u521B\u5EFA", "add", "", "small")}</div></div>${groups === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u7FA4\u7EC4\uFF0C\u521B\u5EFA\u540E\u53EF\u7F16\u6392\u591A\u4E2A\u89D2\u8272\u53C2\u4E0E\u5BF9\u8BDD\u3002</div>' : groups}</section></div></div>`;
+      app.innerHTML = `<div class="page"><div class="scroll">${state.error === "" ? "" : `<div class="error-banner" role="alert">${escapeHtml(state.error)}</div>`}<section class="section"><div class="section-head"><span class="section-icon">${icon("badge")}</span><h2>\u89D2\u8272\u5361</h2><div class="actions">${button("bind-chats", "\u7ED1\u5B9A\u5BF9\u8BDD", "chat", snapshot().cards.length === 0 ? "disabled" : "", "small")}${button("import-card", "\u5BFC\u5165", "upload", "", "small")}${button("create-card", "\u521B\u5EFA", "add", "", "small")}</div></div>${cards === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u89D2\u8272\u5361\uFF0C\u70B9\u51FB\u521B\u5EFA\u6DFB\u52A0\u89D2\u8272\u3002</div>' : cards}</section><section class="section"><div class="section-head"><span class="section-icon">${icon("groups")}</span><h2>\u7FA4\u7EC4</h2><div class="actions">${button("import-group", "\u5BFC\u5165 JSON", "upload", "", "small")}${button("create-group", "\u521B\u5EFA", "add", "", "small")}</div></div>${groups === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u7FA4\u7EC4\uFF0C\u521B\u5EFA\u540E\u53EF\u7F16\u6392\u591A\u4E2A\u89D2\u8272\u53C2\u4E0E\u5BF9\u8BDD\u3002</div>' : groups}</section></div></div>`;
     }
     return { renderMain };
   }
@@ -942,16 +1192,17 @@
     const settings = dialog.settings, config = dialog.config;
     if (settings === null || config === null || dialog.chats === null) return header + button("reload-memory-settings", "\u91CD\u8BD5", "refresh");
     const statusError = `<div data-memory-status-error class="error-banner" role="alert" ${dialog.statusError === "" ? "hidden" : ""}>${escapeHtml(dialog.statusError)}</div>`;
+    const missingBanner = dialog.missingChatIds.length === 0 ? "" : `<div class="error-banner" role="alert">\u68C0\u6D4B\u5230 ${dialog.missingChatIds.length} \u6761\u5DF2\u5931\u6548\u7684\u4F1A\u8BDD\u7ED1\u5B9A\uFF08\u5BF9\u5E94\u804A\u5929\u5DF2\u88AB\u5220\u9664\uFF09\uFF0C\u81EA\u52A8\u63D0\u53D6\u4E0E\u5386\u53F2\u91CD\u5EFA\u4F1A\u8DF3\u8FC7\u5B83\u4EEC\u3002${button("prune-missing-chat-bindings", "\u6E05\u7406\u5931\u6548\u7ED1\u5B9A", "")}</div>`;
     switch (dialog.tab) {
       case 0:
-        return header + statusError + `<div data-memory-queue>${memoryQueueStatus(dialog)}</div>` + notice("\u81F3\u5C11\u79EF\u7D2F 5 \u4E2A\u5019\u9009\u540E\u81EA\u52A8\u63D0\u53D6\uFF1B\u63D0\u53D6\u7ED3\u679C\u5199\u5165\u6B64\u8BB0\u5FC6\u5E93\u3002") + numericField("\u68C0\u67E5\u95F4\u9694\uFF08\u5206\u949F\uFF09", "interval", settings.autoSaveIntervalMinutes, 1, 30) + field("\u8BB0\u5FC6\u63D0\u53D6\u81EA\u5B9A\u4E49\u89C4\u5219", "extractionRules", settings.memoryExtractionCustomRules, 5) + switchRow("\u81EA\u52A8\u66F4\u65B0 USER.md", "\u63D0\u53D6\u8BB0\u5FC6\u65F6\u66F4\u65B0\u6B64\u8BB0\u5FC6\u5E93\u7684\u7528\u6237\u8D44\u6599\u3002", "profileAuto", settings.profileAutoUpdateEnabled, false) + switchRow("\u9501\u5B9A USER.md", "\u7981\u6B62\u6A21\u578B\u8986\u76D6\u7528\u6237\u8D44\u6599\u3002", "profileLocked", settings.profileAutoUpdateLocked, false);
+        return header + statusError + missingBanner + `<div data-memory-queue>${memoryQueueStatus(dialog)}</div>` + notice("\u81F3\u5C11\u79EF\u7D2F 5 \u4E2A\u5019\u9009\u540E\u81EA\u52A8\u63D0\u53D6\uFF1B\u63D0\u53D6\u7ED3\u679C\u5199\u5165\u6B64\u8BB0\u5FC6\u5E93\u3002") + numericField("\u68C0\u67E5\u95F4\u9694\uFF08\u5206\u949F\uFF09", "interval", settings.autoSaveIntervalMinutes, 1, 30) + field("\u8BB0\u5FC6\u63D0\u53D6\u81EA\u5B9A\u4E49\u89C4\u5219", "extractionRules", settings.memoryExtractionCustomRules, 5) + switchRow("\u81EA\u52A8\u66F4\u65B0 USER.md", "\u63D0\u53D6\u8BB0\u5FC6\u65F6\u66F4\u65B0\u6B64\u8BB0\u5FC6\u5E93\u7684\u7528\u6237\u8D44\u6599\u3002", "profileAuto", settings.profileAutoUpdateEnabled, false) + switchRow("\u9501\u5B9A USER.md", "\u7981\u6B62\u6A21\u578B\u8986\u76D6\u7528\u6237\u8D44\u6599\u3002", "profileLocked", settings.profileAutoUpdateLocked, false);
       case 1:
-        return header + statusError + numericField("\u5173\u952E\u8BCD\u6743\u91CD", "keywordWeight", config.keywordWeight, 0, void 0, "any") + numericField("\u6807\u7B7E\u6743\u91CD", "tagWeight", config.tagWeight, 0, void 0, "any") + numericField("\u5411\u91CF\u6743\u91CD", "vectorWeight", config.vectorWeight, 0, void 0, "any") + numericField("\u5173\u7CFB\u6743\u91CD", "edgeWeight", config.edgeWeight, 0, void 0, "any") + switchRow("\u4E91\u7AEF Embedding", "\u542F\u7528\u540E\uFF0C\u641C\u7D22\u6587\u672C\u548C\u8BB0\u5FC6\u6587\u672C\u4F1A\u53D1\u9001\u81F3\u6307\u5B9A\u670D\u52A1\u3002", "embedding", settings.cloudEmbeddingEnabled, false) + (settings.cloudEmbeddingEnabled ? field("Embedding \u5B8C\u6574\u8BF7\u6C42\u5730\u5740", "endpoint", settings.cloudEmbeddingEndpoint) + field("Embedding \u6A21\u578B", "embeddingModel", settings.cloudEmbeddingModel) + field("API Key", "apiKey", settings.cloudEmbeddingApiKey, 0, false, "", { type: "password" }) + notice("\u91CD\u5EFA\u4F7F\u7528\u5DF2\u4FDD\u5B58\u7684\u914D\u7F6E\u3002\u4FEE\u6539\u670D\u52A1\u5730\u5740\u3001\u6A21\u578B\u6216\u5BC6\u94A5\u540E\uFF0C\u8BF7\u5148\u4FDD\u5B58\u8BBE\u7F6E\u3002") + button("rebuild-memory-embeddings", "\u91CD\u5EFA Embedding", "refresh", "", "tonal") : "") + "<h3>\u68C0\u7D22\u8C03\u8BD5</h3>" + field("\u68C0\u7D22\u67E5\u8BE2", "searchQuery", dialog.searchQuery) + numericField("\u76F8\u5173\u6027\u9608\u503C", "searchThreshold", dialog.searchThreshold, 0, 1, "any") + notice("\u4F7F\u7528\u5F53\u524D\u6743\u91CD\u6267\u884C\u771F\u5B9E\u68C0\u7D22\uFF0C\u4E0D\u4FDD\u5B58\u6743\u91CD\uFF1B\u5411\u91CF\u68C0\u7D22\u4F7F\u7528\u5DF2\u4FDD\u5B58\u7684 Embedding \u670D\u52A1\u914D\u7F6E\u3002\u5404\u901A\u9053\u663E\u793A\u5BF9\u603B\u5206\u7684\u5B9E\u9645\u8D21\u732E\u3002") + button("search-memory-debug", "\u4F7F\u7528\u5F53\u524D\u6743\u91CD\u68C0\u7D22", "search", "", "tonal") + searchResults(dialog);
+        return header + statusError + missingBanner + numericField("\u5173\u952E\u8BCD\u6743\u91CD", "keywordWeight", config.keywordWeight, 0, void 0, "any") + numericField("\u6807\u7B7E\u6743\u91CD", "tagWeight", config.tagWeight, 0, void 0, "any") + numericField("\u5411\u91CF\u6743\u91CD", "vectorWeight", config.vectorWeight, 0, void 0, "any") + numericField("\u5173\u7CFB\u6743\u91CD", "edgeWeight", config.edgeWeight, 0, void 0, "any") + switchRow("\u4E91\u7AEF Embedding", "\u542F\u7528\u540E\uFF0C\u641C\u7D22\u6587\u672C\u548C\u8BB0\u5FC6\u6587\u672C\u4F1A\u53D1\u9001\u81F3\u6307\u5B9A\u670D\u52A1\u3002", "embedding", settings.cloudEmbeddingEnabled, false) + (settings.cloudEmbeddingEnabled ? field("Embedding \u5B8C\u6574\u8BF7\u6C42\u5730\u5740", "endpoint", settings.cloudEmbeddingEndpoint) + field("Embedding \u6A21\u578B", "embeddingModel", settings.cloudEmbeddingModel) + field("API Key", "apiKey", settings.cloudEmbeddingApiKey, 0, false, "", { type: "password" }) + notice("\u91CD\u5EFA\u4F7F\u7528\u5DF2\u4FDD\u5B58\u7684\u914D\u7F6E\u3002\u4FEE\u6539\u670D\u52A1\u5730\u5740\u3001\u6A21\u578B\u6216\u5BC6\u94A5\u540E\uFF0C\u8BF7\u5148\u4FDD\u5B58\u8BBE\u7F6E\u3002") + button("rebuild-memory-embeddings", "\u91CD\u5EFA Embedding", "refresh", "", "tonal") : "") + "<h3>\u68C0\u7D22\u8C03\u8BD5</h3>" + field("\u68C0\u7D22\u67E5\u8BE2", "searchQuery", dialog.searchQuery) + numericField("\u76F8\u5173\u6027\u9608\u503C", "searchThreshold", dialog.searchThreshold, 0, 1, "any") + notice("\u4F7F\u7528\u5F53\u524D\u6743\u91CD\u6267\u884C\u771F\u5B9E\u68C0\u7D22\uFF0C\u4E0D\u4FDD\u5B58\u6743\u91CD\uFF1B\u5411\u91CF\u68C0\u7D22\u4F7F\u7528\u5DF2\u4FDD\u5B58\u7684 Embedding \u670D\u52A1\u914D\u7F6E\u3002\u5404\u901A\u9053\u663E\u793A\u5BF9\u603B\u5206\u7684\u5B9E\u9645\u8D21\u732E\u3002") + button("search-memory-debug", "\u4F7F\u7528\u5F53\u524D\u6743\u91CD\u68C0\u7D22", "search", "", "tonal") + searchResults(dialog);
       case 2: {
         const rebuilding = memoryRebuilding(dialog);
         let chats = "";
         for (const chat of dialog.chats) chats += `<label class="checkbox-row"><input type="checkbox" data-memory-chat="${escapeHtml(chat.id)}" aria-label="${escapeHtml(chat.title)}" ${dialog.selectedChatIds.includes(chat.id) ? "checked" : ""} ${rebuilding ? "disabled" : ""}><span>${escapeHtml(chat.title)}<span class="muted"> \xB7 ${chat.messageCount} \u6761\u6D88\u606F</span></span></label>`;
-        return header + statusError + notice("\u4ECE\u804A\u5929\u5386\u53F2\u91CD\u5EFA\u8BB0\u5FC6\uFF08\u8FFD\u52A0\uFF0F\u66F4\u65B0\uFF0C\u4E0D\u5220\u9664\u73B0\u6709\u8BB0\u5FC6\uFF09\u3002") + numericField("\u7A97\u53E3\u6D88\u606F\u6570", "windowMessageCount", dialog.windowMessageCount, 1) + `<div class="settings-grid">${field("\u5F00\u59CB\u65F6\u95F4", "from", dialog.from, 0, false, "\u5305\u542B\u6240\u9009\u65E5\u671F", { type: "date" })}${field("\u7ED3\u675F\u65F6\u95F4", "to", dialog.to, 0, false, "\u5305\u542B\u6240\u9009\u65E5\u671F", { type: "date" })}</div><h3>\u9009\u62E9\u804A\u5929</h3>` + (chats === "" ? '<p class="muted">\u6B64\u8BB0\u5FC6\u5E93\u6682\u65E0\u7ED1\u5B9A\u804A\u5929</p>' : chats) + `<div class="actions">${button("start-memory-rebuild", "\u5F00\u59CB\u91CD\u5EFA", "refresh", rebuilding || dialog.selectedChatIds.length === 0 ? "disabled" : "", "filled")}${button("cancel-memory-rebuild", "\u53D6\u6D88\u91CD\u5EFA", "", rebuilding ? "" : "disabled", "tonal")}${button("refresh-memory-status", "\u5237\u65B0\u72B6\u6001", "refresh")}</div><div data-memory-rebuild>${memoryRebuildStatus(dialog)}</div>`;
+        return header + statusError + missingBanner + notice("\u4ECE\u804A\u5929\u5386\u53F2\u91CD\u5EFA\u8BB0\u5FC6\uFF08\u8FFD\u52A0\uFF0F\u66F4\u65B0\uFF0C\u4E0D\u5220\u9664\u73B0\u6709\u8BB0\u5FC6\uFF09\u3002") + numericField("\u7A97\u53E3\u6D88\u606F\u6570", "windowMessageCount", dialog.windowMessageCount, 1) + `<div class="settings-grid">${field("\u5F00\u59CB\u65F6\u95F4", "from", dialog.from, 0, false, "\u5305\u542B\u6240\u9009\u65E5\u671F", { type: "date" })}${field("\u7ED3\u675F\u65F6\u95F4", "to", dialog.to, 0, false, "\u5305\u542B\u6240\u9009\u65E5\u671F", { type: "date" })}</div><h3>\u9009\u62E9\u804A\u5929</h3>` + (chats === "" ? '<p class="muted">\u6B64\u8BB0\u5FC6\u5E93\u6682\u65E0\u7ED1\u5B9A\u804A\u5929</p>' : chats) + `<div class="actions">${button("start-memory-rebuild", "\u5F00\u59CB\u91CD\u5EFA", "refresh", rebuilding || dialog.selectedChatIds.length === 0 ? "disabled" : "", "filled")}${button("cancel-memory-rebuild", "\u53D6\u6D88\u91CD\u5EFA", "", rebuilding ? "" : "disabled", "tonal")}${button("refresh-memory-status", "\u5237\u65B0\u72B6\u6001", "refresh")}</div><div data-memory-rebuild>${memoryRebuildStatus(dialog)}</div>`;
       }
       default:
         throw new Error("Invalid memory settings tab");
@@ -1030,7 +1281,7 @@
       dialog.error = "";
       renderDialogs();
       try {
-        const [settings, config, chats, queue, progress] = await Promise.all([
+        const [settings, config, listing, queue, progress] = await Promise.all([
           request({ action: "readMemorySettings", ownerKey: dialog.ownerKey }, { background: true }),
           request({ action: "readMemorySearchConfig", ownerKey: dialog.ownerKey }, { background: true }),
           request({ action: "listMemoryChats", ownerKey: dialog.ownerKey }, { background: true }),
@@ -1042,15 +1293,36 @@
         if (!exists(dialog)) return;
         dialog.settings = settings;
         dialog.config = config;
-        dialog.chats = chats;
+        dialog.chats = listing.chats;
+        dialog.missingChatIds = listing.missingChatIds;
         dialog.queue = queue;
         dialog.progress = progress;
         dialog.statusError = "";
         startPolling(dialog);
+        void pruneInBackground(dialog);
       } finally {
         if (exists(dialog)) {
           dialog.loading = false;
           renderDialogs();
+        }
+      }
+      async function pruneInBackground(dialog2) {
+        try {
+          const pruned = await request({ action: "pruneMissingChatBindings", ownerKey: dialog2.ownerKey }, { background: true });
+          if (!exists(dialog2) || pruned.removedChatIds.length === 0 && pruned.removedCandidateIds.length === 0) return;
+          const [chats, queue] = await Promise.all([
+            request({ action: "listMemoryChats", ownerKey: dialog2.ownerKey }, { background: true }),
+            request({ action: "readMemoryAutoSaveStatus", ownerKey: dialog2.ownerKey }, { background: true })
+          ]);
+          if (!exists(dialog2)) return;
+          dialog2.chats = chats.chats;
+          dialog2.missingChatIds = chats.missingChatIds;
+          dialog2.queue = queue;
+          if (topDialog() === dialog2) {
+            renderDialogs();
+            updateMemoryStatus(dialog2, context.dialogsRoot);
+          }
+        } catch {
         }
       }
     }
@@ -1069,6 +1341,7 @@
           settings: null,
           config: null,
           chats: null,
+          missingChatIds: [],
           queue: null,
           progress: null,
           statusError: "",
@@ -1101,6 +1374,13 @@
         case "reload-memory-settings":
           await load(dialog);
           return;
+        case "prune-missing-chat-bindings": {
+          const pruned = await request({ action: "pruneMissingChatBindings", ownerKey });
+          dialog.missingChatIds = [];
+          toast(`\u5DF2\u6E05\u7406 ${pruned.removedChatIds.length} \u6761\u5931\u6548\u7684\u4F1A\u8BDD\u7ED1\u5B9A\u3001${pruned.removedCandidateIds.length} \u6761\u5931\u6548\u7684\u63D0\u53D6\u5019\u9009`);
+          renderDialogs();
+          return;
+        }
         case "refresh-memory-status":
           await poll(dialog);
           return;
@@ -1137,7 +1417,7 @@
           throw new Error(`Unknown memory controls action: ${action}`);
       }
     }
-    return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "refresh-memory-status", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
+    return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "prune-missing-chat-bindings", "refresh-memory-status", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
   }
 
   // web/features/memory/item-actions.ts
@@ -1506,7 +1786,8 @@
 
   // web/features/graph/view.ts
   function graphHeader(dialog) {
-    return `<div class="actions">${iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(dialog.ownerKey)}" data-name="${escapeHtml(dialog.name)}"`)}${iconButton("export-graph", "\u5BFC\u51FA\u8BB0\u5FC6 JSON", "download", dialog.loading ? "disabled" : "")}${iconButton("import-graph", "\u5BFC\u5165\u8BB0\u5FC6 JSON", "upload", dialog.loading ? "disabled" : "")}${iconButton("refresh-graph", "\u5237\u65B0", "refresh", dialog.loading ? "disabled" : "")}</div>`;
+    const disabled = dialog.loading ? "disabled" : "";
+    return `${iconButton("close-dialog", "\u5173\u95ED", "back", dialog.busy ? "disabled" : "")}<div class="graph-heading"><h2>\u8BB0\u5FC6\u56FE\u8C31</h2><span title="${escapeHtml(dialog.name)}">${escapeHtml(dialog.name)}</span></div><details class="graph-overflow"><summary class="icon-button" role="button" aria-label="\u66F4\u591A\u64CD\u4F5C" title="\u66F4\u591A\u64CD\u4F5C">${icon("more")}</summary><div class="graph-menu" role="group" aria-label="\u8BB0\u5FC6\u56FE\u8C31\u64CD\u4F5C">${button("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(dialog.ownerKey)}" data-name="${escapeHtml(dialog.name)}"`)}${button("refresh-graph", "\u5237\u65B0", "refresh", disabled)}<hr>${button("import-graph", "\u5BFC\u5165\u8BB0\u5FC6 JSON", "upload", disabled)}${button("export-graph", "\u5BFC\u51FA\u8BB0\u5FC6 JSON", "download", disabled)}</div></details>`;
   }
   function graphSpec(dialog) {
     if (dialog.data === null) return { title: `${dialog.name} \u7684\u8BB0\u5FC6\u56FE\u8C31`, style: "graph-dialog", tabs: [], body: dialog.loading ? '<div class="loading">\u6B63\u5728\u8BFB\u53D6\u8BB0\u5FC6\u56FE\u8C31\u2026</div>' : notice("\u8BB0\u5FC6\u56FE\u8C31\u672A\u52A0\u8F7D\u6210\u529F\uFF0C\u672A\u5F00\u653E\u5199\u5165\u3002"), footer: "" };
@@ -1514,7 +1795,18 @@
     for (const item of graphData(dialog).items) folders.add(item.folderPath === null ? "" : item.folderPath);
     let folderOptions = `<option value="*" ${dialog.folder === "*" ? "selected" : ""}>\u5168\u90E8\u6587\u4EF6\u5939</option>`;
     for (const folder of folders) folderOptions += `<option value="${escapeHtml(folder)}" ${dialog.folder === folder ? "selected" : ""}>${escapeHtml(folder === "" ? "\u6839\u76EE\u5F55" : folder)}</option>`;
-    return { title: `${dialog.name} \u7684\u8BB0\u5FC6\u56FE\u8C31`, style: "graph-dialog", tabs: [], body: `<div class="graph-toolbar"><input class="search" aria-label="\u641C\u7D22\u8BB0\u5FC6" data-graph-search value="${escapeHtml(dialog.query)}" placeholder="\u641C\u7D22\u8BB0\u5FC6\u2026">${iconButton("search-graph", "\u641C\u7D22", "search")}${iconButton("clear-search", "\u6E05\u9664\u641C\u7D22", "close")}<select class="search" style="flex:0;min-width:140px" data-graph-folder aria-label="\u6587\u4EF6\u5939">${folderOptions}</select>${button("create-link", "\u94FE\u63A5", "link", graphData(dialog).items.length < 2 ? "disabled" : "", dialog.linkMode ? "small tonal" : "small")}${button("create-memory", "\u521B\u5EFA\u8BB0\u5FC6", "add", "", "small tonal")}</div><div class="graph-layout"><div class="graph-canvas"><svg viewBox="-400 -260 800 520" data-graph-surface aria-label="\u8BB0\u5FC6\u56FE\u8C31\u753B\u5E03">${graphSvg(dialog)}</svg>${graphData(dialog).items.length === 0 ? '<div class="graph-empty"><span>\u6682\u65E0\u8BB0\u5FC6</span><span class="muted">\u521B\u5EFA\u8BB0\u5FC6\u540E\uFF0C\u53EF\u5728\u8FD9\u91CC\u67E5\u770B\u548C\u8FDE\u63A5\u8282\u70B9\u3002</span></div>' : ""}<div class="graph-tools">${iconButton("zoom-in", "\u653E\u5927", "add")}${iconButton("zoom-out", "\u7F29\u5C0F", "minus")}${iconButton("fit-graph", "\u9002\u5E94\u753B\u5E03", "expand")}</div></div><aside class="graph-sidebar">${graphInspector(dialog)}</aside></div>`, footer: "" };
+    const linkAttributes = `aria-pressed="${dialog.linkMode}" ${graphData(dialog).items.length < 2 ? "disabled" : ""}`;
+    return {
+      title: `${dialog.name} \u7684\u8BB0\u5FC6\u56FE\u8C31`,
+      style: "graph-dialog",
+      tabs: [],
+      body: `<div class="graph-toolbar">
+      <div class="graph-search" role="search">${iconButton("search-graph", "\u641C\u7D22", "search")}<input type="search" aria-label="\u641C\u7D22\u8BB0\u5FC6" data-graph-search value="${escapeHtml(dialog.query)}" placeholder="\u641C\u7D22\u8BB0\u5FC6\u2026">${iconButton("clear-search", "\u6E05\u9664\u641C\u7D22", "close")}</div>
+      <div class="graph-filters"><label class="graph-folder">${icon("folder")}<select data-graph-folder aria-label="\u6587\u4EF6\u5939">${folderOptions}</select>${icon("down")}</label>${button("create-link", "\u94FE\u63A5", "link", linkAttributes, "graph-link-chip")}</div>
+      ${dialog.linkMode ? '<div class="graph-link-hint" role="status">\u9009\u62E9\u4E24\u6761\u8BB0\u5FC6\u4EE5\u5EFA\u7ACB\u94FE\u63A5</div>' : ""}
+    </div><div class="graph-layout"><div class="graph-canvas"><svg viewBox="-400 -260 800 520" data-graph-surface aria-label="\u8BB0\u5FC6\u56FE\u8C31\u753B\u5E03">${graphSvg(dialog)}</svg>${graphData(dialog).items.length === 0 ? '<div class="graph-empty"><span>\u6682\u65E0\u8BB0\u5FC6</span><span class="muted">\u521B\u5EFA\u8BB0\u5FC6\u540E\uFF0C\u53EF\u5728\u8FD9\u91CC\u67E5\u770B\u548C\u8FDE\u63A5\u8282\u70B9\u3002</span></div>' : ""}<div class="graph-tools" role="group" aria-label="\u753B\u5E03\u7F29\u653E">${iconButton("zoom-in", "\u653E\u5927", "add")}${iconButton("zoom-out", "\u7F29\u5C0F", "minus")}${iconButton("fit-graph", "\u9002\u5E94\u753B\u5E03", "expand")}</div>${button("create-memory", "\u521B\u5EFA\u8BB0\u5FC6", "add", "", "graph-fab")}</div><aside class="graph-sidebar" aria-label="\u8BB0\u5FC6\u5217\u8868\u4E0E\u8BE6\u60C5">${graphInspector(dialog)}</aside></div>`,
+      footer: ""
+    };
   }
 
   // web/features/memory/item-view.ts
@@ -1555,6 +1847,8 @@
     );
     function dialogSpec(dialog) {
       switch (dialog.type) {
+        case "chat-binding":
+          return chatBindingSpec(dialog, context.snapshot());
         case "owner-settings":
           return { title: "\u8BB0\u5FC6\u8BBE\u7F6E", style: "large", tabs: ["\u81EA\u52A8\u63D0\u53D6", "\u68C0\u7D22", "\u5386\u53F2\u91CD\u5EFA"], body: ownerSettingsBody(dialog), footer: ownerSettingsFooter(dialog) };
         case "store":
@@ -1615,7 +1909,8 @@
       element.setAttribute("aria-label", spec.title);
       let tabs = "";
       for (let i = 0; i < spec.tabs.length; i++) tabs += `<button type="button" class="tab" role="tab" aria-selected="${"tab" in dialog && dialog.tab === i}" data-action="select-tab" data-tab="${i}">${escapeHtml(spec.tabs[i])}</button>`;
-      const content = `<div class="dialog-layout"><header class="dialog-header"><h2>${escapeHtml(spec.title)}</h2>${dialog.type === "graph" ? graphHeader(dialog) : ""}${iconButton("close-dialog", "\u5173\u95ED", "close", dialog.busy ? "disabled" : "")}</header>${tabs === "" ? "" : `<div class="tabs" role="tablist">${tabs}</div>`}${dialog.busy ? '<div class="busy-bar"></div>' : ""}<div class="dialog-error" role="alert" ${dialog.error === "" ? "hidden" : ""}>${escapeHtml(dialog.error)}</div>${dialog.type === "graph" ? spec.body : `<div class="dialog-body" data-index="${index}">${spec.body}</div>`}${spec.footer === "" ? "" : `<footer class="dialog-footer">${spec.footer}</footer>`}</div>`;
+      const header = dialog.type === "graph" ? graphHeader(dialog) : `<h2>${escapeHtml(spec.title)}</h2>${iconButton("close-dialog", "\u5173\u95ED", "close", dialog.busy ? "disabled" : "")}`;
+      const content = `<div class="dialog-layout"><header class="dialog-header">${header}</header>${tabs === "" ? "" : `<div class="tabs" role="tablist">${tabs}</div>`}${dialog.busy ? '<div class="busy-bar"></div>' : ""}<div class="dialog-error" role="alert" ${dialog.error === "" ? "hidden" : ""}>${escapeHtml(dialog.error)}</div>${dialog.type === "graph" ? spec.body : `<div class="dialog-body" data-index="${index}">${spec.body}</div>`}${spec.footer === "" ? "" : `<footer class="dialog-footer">${spec.footer}</footer>`}</div>`;
       if (markup.get(element) !== content) {
         element.innerHTML = content;
         markup.set(element, content);
@@ -1690,6 +1985,8 @@
     }
     async function onClick(event) {
       if (!(event.target instanceof Element)) return;
+      const overflow = context.dialogsRoot.querySelector(".graph-overflow[open]");
+      if (overflow !== null && (!overflow.contains(event.target) || event.target.closest("[data-action]") !== null)) overflow.open = false;
       if (event.type === "click" && event.detail !== 0 && state.gestureMoved && event.target.closest("[data-graph-surface]") !== null) {
         event.preventDefault();
         return;
@@ -1722,6 +2019,8 @@
       if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement)) return;
       const element = event.target;
       if (element.disabled) return;
+      if (element.hasAttribute("data-binding-query") && event instanceof InputEvent && event.isComposing) return;
+      if (inputChatBinding(context, element)) return;
       if (element instanceof HTMLInputElement && context.onScreenInput(element)) return;
       if (element instanceof HTMLInputElement && element.type === "checkbox") return;
       if (element.hasAttribute("data-graph-search")) {
@@ -1747,6 +2046,7 @@
       if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement)) return;
       const element = event.target;
       if (element.disabled) return;
+      if (changeChatBinding(context, element)) return;
       if (element.hasAttribute("data-graph-folder")) {
         topDialog("graph").folder = element.value;
         updateGraphSurface2(topDialog("graph"));
@@ -1757,6 +2057,12 @@
     async function onCancel(event) {
       event.preventDefault();
       if (state.busy || state.dialogs.length === 0) return;
+      const overflow = context.dialogsRoot.querySelector(".graph-overflow[open]");
+      if (overflow !== null) {
+        overflow.open = false;
+        requireElement(overflow.querySelector("summary"), HTMLElement).focus();
+        return;
+      }
       state.busy = true;
       try {
         await dismissDialog();
@@ -2485,7 +2791,7 @@ ${sections.join("\n\n")}`;
     const page = createPageRenderer(context), dialogs = createDialogRenderer(context);
     const screens = createScreenController(context, page);
     const graph = createGraphActionsFeature(context), profile = createProfileFeature(context), transfers = createCharactersTransfersFeature(context);
-    const events = createEditorEvents(context, [...screens.features, createPreviewFeature(context), createDialogActions(context), createCharactersActionsFeature(context), createGroupsActionsFeature(context), createMemoryLibraryActionsFeature(context), createMemoryItemActionsFeature(context), createMemoryLinkActionsFeature(context), transfers, graph, profile, createMemoryControlsFeature(context)]);
+    const events = createEditorEvents(context, [...screens.features, createPreviewFeature(context), createDialogActions(context), createCharactersActionsFeature(context), createChatBindingFeature(context), createGroupsActionsFeature(context), createMemoryLibraryActionsFeature(context), createMemoryItemActionsFeature(context), createMemoryLinkActionsFeature(context), transfers, graph, profile, createMemoryControlsFeature(context)]);
     const gestures = createGraphGestures(context);
     function mount() {
       window.addEventListener("character-entity-closed", () => {
@@ -2501,6 +2807,9 @@ ${sections.join("\n\n")}`;
       });
       document.addEventListener("click", events.onClick);
       document.addEventListener("input", events.onInput);
+      document.addEventListener("compositionend", (event) => {
+        if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-binding-query")) events.onInput(event);
+      });
       document.addEventListener("change", events.onChange);
       document.addEventListener("keydown", screens.onKeyDown);
       dialogsRoot.addEventListener("cancel", events.onCancel, true);
@@ -2540,7 +2849,7 @@ ${sections.join("\n\n")}`;
   // web/shared/ui/material.ts
   function applyMaterialTheme(theme) {
     if (theme.brightness !== "light" && theme.brightness !== "dark") throw new Error("\u5BBF\u4E3B\u4E3B\u9898\u4EAE\u5EA6\u65E0\u6548");
-    const roles = ["primary", "onPrimary", "primaryContainer", "onPrimaryContainer", "onSurface", "onSurfaceVariant", "surface", "surfaceContainer", "surfaceContainerHigh", "surfaceContainerHighest", "outline", "outlineVariant", "error"];
+    const roles = ["background", "primary", "onPrimary", "primaryContainer", "onPrimaryContainer", "onSurface", "onSurfaceVariant", "surface", "surfaceContainer", "surfaceContainerHigh", "surfaceContainerHighest", "outline", "outlineVariant", "error"];
     for (const role of roles) {
       if (typeof theme.colors[role] !== "string" || !/^#[0-9a-f]{8}$/i.test(theme.colors[role])) throw new Error("\u5BBF\u4E3B\u7F3A\u5C11\u4E3B\u9898\u989C\u8272\uFF1A" + role);
       document.documentElement.style.setProperty("--" + role, theme.colors[role]);

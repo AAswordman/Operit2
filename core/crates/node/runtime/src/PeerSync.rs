@@ -37,6 +37,7 @@ impl PeerSyncMethod {
         )
     }
 
+    /// Validates the exact peer method and its typed operation envelope.
     pub(crate) fn fromRequest(request: &CoreCallRequest) -> Result<Self, CoreLinkError> {
         let method: Self = serde_json::from_value(serde_json::Value::String(
             request.methodName.clone(),
@@ -55,7 +56,6 @@ impl PeerSyncMethod {
                         "Remote synchronization requires an operation array",
                     )
                 })?;
-            // Bootstrap forceApply is local-only; it cannot be represented by this DTO.
             let _operations = args.operations;
         }
         Ok(method)
@@ -94,6 +94,7 @@ mod tests {
     use operit_link::toCoreValue;
     use serde_json::json;
 
+    /// Accepts the operation-only envelope without transport completion semantics.
     #[test]
     fn peer_sync_methods_round_trip_through_standard_link_requests() {
         for method in [
@@ -115,14 +116,19 @@ mod tests {
         }
     }
 
+    /// Rejects removed completion fields and unauthorized management or bootstrap overrides.
     #[test]
     fn peer_sync_does_not_expose_management_or_bootstrap_override() {
         let request =
             CoreCallRequest::new("test", NODE_SYNC_TARGET, "startPairing", CoreValue::Null);
         assert!(PeerSyncMethod::fromRequest(&request).is_err());
         for args in [
+            json!({}),
+            json!({"operations":[],"complete":true}),
             json!({"operations":{"operations":[],"forceApply":true}}),
             json!({"operations":[],"forceApply":true}),
+            json!({"operations":[],"spaceMerge":true}),
+            json!({"operations":[],"firstJoin":true}),
         ] {
             let request = PeerSyncMethod::SyncApplyOperations
                 .request("test".into(), toCoreValue(args).unwrap());

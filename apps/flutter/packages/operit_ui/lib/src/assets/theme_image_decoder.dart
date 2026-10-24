@@ -1,7 +1,43 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_svg/flutter_svg.dart' show SvgBytesLoader, vg;
+
+/// Largest width or height a theme image may have.
+const int themeImageMaxDimension = 4096;
+
+/// Largest pixel count a theme image may have.
+const int themeImageMaxPixels = 16777216;
+
+/// Returns the largest size that stays inside the theme image bounds.
+(int, int) themeImageFittedSize(int width, int height) {
+  if (width <= 0 || height <= 0) {
+    throw FormatException('theme image dimensions are invalid');
+  }
+  var fittedWidth = width;
+  var fittedHeight = height;
+  if (fittedWidth > themeImageMaxDimension) {
+    fittedHeight = math.max(
+      1,
+      (fittedHeight * themeImageMaxDimension) ~/ fittedWidth,
+    );
+    fittedWidth = themeImageMaxDimension;
+  }
+  if (fittedHeight > themeImageMaxDimension) {
+    fittedWidth = math.max(
+      1,
+      (fittedWidth * themeImageMaxDimension) ~/ fittedHeight,
+    );
+    fittedHeight = themeImageMaxDimension;
+  }
+  if (fittedWidth * fittedHeight > themeImageMaxPixels) {
+    final scale = math.sqrt(themeImageMaxPixels / (fittedWidth * fittedHeight));
+    fittedWidth = math.max(1, (fittedWidth * scale).floor());
+    fittedHeight = math.max(1, (fittedHeight * scale).floor());
+  }
+  return (fittedWidth, fittedHeight);
+}
 
 /// Decodes theme images through Flutter's shared renderer.
 ///
@@ -26,7 +62,9 @@ Future<ui.Image> decodeThemeImageBytes(
       }
       final width = size.width.ceil();
       final height = size.height.ceil();
-      if (width > 4096 || height > 4096 || width * height > 16_777_216) {
+      if (width > themeImageMaxDimension ||
+          height > themeImageMaxDimension ||
+          width * height > themeImageMaxPixels) {
         throw FormatException(
           'SVG pixel dimensions exceed v1 bounds: $reference',
         );
@@ -48,9 +86,9 @@ Future<ui.Image> decodeThemeImageBytes(
     final image = frame.image;
     if (image.width <= 0 ||
         image.height <= 0 ||
-        image.width > 4096 ||
-        image.height > 4096 ||
-        image.width * image.height > 16_777_216) {
+        image.width > themeImageMaxDimension ||
+        image.height > themeImageMaxDimension ||
+        image.width * image.height > themeImageMaxPixels) {
       image.dispose();
       throw FormatException(
         'Theme image dimensions exceed v1 bounds: $reference',

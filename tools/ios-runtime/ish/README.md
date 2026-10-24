@@ -4,8 +4,9 @@ This directory owns the iOS iSH runtime inputs and build steps.
 
 - `fetch_sources.py` downloads verified ZIP archives for iSH and its required
   upstream dependencies into `downloads/`, then extracts them into `sources/`.
-- `build_alpine_rootfs_linux.sh` produces the x86 Alpine rootfs on Linux with
-  `bash`, `python3`, `py3-pip`, `nodejs`, `npm`, and `ca-certificates`.
+- `build_alpine_rootfs_linux.sh` produces the Alpine v3.23 x86 rootfs on Linux
+  with `bash`, `python3`, `py3-pip`, `nodejs` (Node.js 24), `npm`, and
+  `ca-certificates`.
 - `build_ish_ios.sh` builds the iSH static targets used by the Flutter iOS
   Runner. It requires the rootfs staged by the Linux rootfs build.
 
@@ -71,3 +72,15 @@ read-only paths, page-length boundaries, repeated/conflicting mounts, every
 allocation failure, and mount failure/retry cleanup. Patch application is also
 checked against locally cached, pinned upstream archives, without downloading
 sources. Edit the tracked patches rather than generated files under `sources/`.
+
+## Node.js version contract
+
+The rootfs builder uses the Alpine v3.23 repositories, constrains `nodejs` to
+major 24, and verifies the installed APK database before packaging. Changing CI's
+host Node does not update `ish-root.tar.gz`: rebuild the rootfs on Linux and
+include that artifact in the iOS build.
+
+Installed apps currently reuse the persistent iSH fakefs root, so replacing the
+bundled archive does not upgrade an existing installation. That root may contain
+user-created files; a future migration must preserve them rather than deleting
+the directory as part of an upgrade.

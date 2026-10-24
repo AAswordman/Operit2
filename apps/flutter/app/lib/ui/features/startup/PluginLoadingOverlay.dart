@@ -462,9 +462,11 @@ class _PluginLoadingRow extends StatelessWidget {
   }
 
   String _subtitle(AppLocalizations l10n) {
-    final kind = item.kind == 'mcp'
-        ? l10n.pluginLoadingKindMcp
-        : l10n.pluginLoadingKindPackage;
+    final kind = switch (item.kind) {
+      'mcp' => l10n.pluginLoadingKindMcp,
+      'plugin' => l10n.pluginLoadingKindPlugin,
+      _ => l10n.pluginLoadingKindPackage,
+    };
     final status = switch (item.status) {
       'loading' => l10n.pluginLoadingTitle,
       'success' => l10n.pluginLoadingSuccess,

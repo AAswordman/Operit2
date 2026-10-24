@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/core/compose/compose_program_buffer.dart';
 import 'package:operit2/core/bridge/FfiCoreProxy.dart';
 import 'package:operit2/core/bridge/FfiCoreTransport.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -28,6 +29,54 @@ Map<String, double> pipelineDistribution(List<double> values) {
     'p50': sorted[(sorted.length * .5).ceil() - 1],
     'p95': sorted[(sorted.length * .95).ceil() - 1],
   };
+}
+
+/// Reads root lifecycle metadata directly from the measured program transaction.
+Map<String, Object?> probeRootProps(ToolPkgComposeDslTransaction envelope) {
+  final update = ComposeProgramBuffer(envelope.buffer).transaction;
+  final source = update.instances.singleWhere(
+    (value) => value.id == update.root.instanceId,
+  );
+  final program = update.programs.singleWhere(
+    (value) => value.id == source.programId,
+  );
+
+  /// Evaluates metadata operands without projecting the measured layout tree.
+  Object? evaluate(Object? raw) {
+    final code = raw as List;
+    switch (code[0]) {
+      case 0:
+        return code[1];
+      case 1:
+        return source.values[code[1] as int];
+      case 2:
+        return {
+          for (var index = 0; index < (code[1] as List).length; index++)
+            (code[1] as List)[index] as String: evaluate(
+              (code[2] as List)[index],
+            ),
+        };
+      case 3:
+        return [for (final member in code[1] as List) evaluate(member)];
+      case 4:
+        return {
+          '__composeRef': [source.id, code[1]],
+        };
+      case 5:
+        return [...evaluate(code[1]) as List, ...evaluate(code[2]) as List];
+      default:
+        throw StateError('Unknown probe operand');
+    }
+  }
+
+  var props = (evaluate(program.nodes[update.root.node].props) as Map)
+      .cast<String, Object?>();
+  for (final patch in source.patches) {
+    if (patch.node == update.root.node && patch.field == 'props') {
+      props = (patch.value as Map).cast<String, Object?>();
+    }
+  }
+  return props;
 }
 
 /// Measures an explicitly supplied native runtime through production CoreLink and Flutter.
@@ -196,10 +245,12 @@ void main() {
           });
           expect(tester.takeException(), isNull);
           final update = event.update!;
-          nodes = update.upserts.length;
+          nodes = ComposeProgramBuffer(
+            update.buffer,
+          ).transaction.instances.length;
           final previous = watch.elapsedMicroseconds / 1000;
           late VoidCallback dispose;
-          final child = buildRetainedComposeDslLayoutForTest(
+          final child = buildComposeProgramLayoutForTest(
             update: update,
             hostContext: ComposeDslWebViewHostContext(
               packageName: 'diagnostic',
@@ -224,10 +275,7 @@ void main() {
           firstSampleMs ??= times['totalMs'];
           await tester.runAsync(() async {
             response = Completer();
-            final root = update.upserts.singleWhere(
-              (node) => node.id == update.rootId,
-            );
-            final onLoad = root.props['onLoad'] as Map;
+            final onLoad = probeRootProps(update)['onLoad'] as Map;
             await commands.add(
               ToolPkgComposeDslCommand(
                 requestId: '$contextKey-stages',

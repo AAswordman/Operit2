@@ -39,7 +39,7 @@ pub(crate) fn extensionStatements(
 }
 
 /// Reads complete records from the same transaction that performed their mutation.
-fn payloadInTransaction(
+pub(super) fn payloadInTransaction(
     transaction: &mut SqliteTransaction<'_>,
     chatId: &str,
     timestamp: Option<i64>,

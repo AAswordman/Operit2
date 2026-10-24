@@ -49,7 +49,6 @@ test("SQLite facade preserves int64 and binary values without a JSON text transp
   f.reply([{columns:["integer","blob","missing"],values:[{kind:"integer",value:"9223372036854775807"},{kind:"blob",value:[0,255]},{kind:"null"}]}]);
   const rows=await result; assert.equal(rows[0].integer,9223372036854775807n);assert.deepEqual(Array.from(rows[0].blob),[0,255]);assert.equal(rows[0].missing,null);
   await assert.rejects(f.run("db.query('SELECT ?', [9007199254740992])"),/Use bigint/);assert.equal(f.pending.length,0);
-  const changed=f.run("db.changes()");assert.deepEqual(f.request(),{op:"changes",handle:"sql",after:"0",limit:100});f.reply([]);await changed;
   const closed=f.run("db.close()");f.reply(null);await closed;await assert.rejects(f.run("db.query('SELECT 1')"),/closed/);assert.equal(f.pending.length,0);
 });
 
@@ -64,12 +63,22 @@ test("storage open accepts only paths and rejects the removed sync parameter",as
   }
 });
 
-/** Keeps stored nulls, key removals and exact absence checks distinct in one batch. */
-test("DataStore creates an atomic key mutation batch and rejects unsupported structured values",async()=>{
-  const f=fixture();const opening=f.run("Tools.Storage.dataStore.open({path:'runtime/owned/keys.db'}).then(value=>{globalThis.db=value;})");f.reply({handle:"keys",path:"runtime/owned/keys.db"});await opening;
-  const commit=f.run("db.commit({set:{nullable:null,count:3},remove:['old'],expectedVersions:{nullable:null,old:'v1'}})");
-  assert.deepEqual(f.request().mutations,[{collection:"keys",key:"nullable",value:null,deleted:false,checkVersion:true,expectedVersion:null},{collection:"keys",key:"count",value:3,deleted:false,checkVersion:false,expectedVersion:null},{collection:"keys",key:"old",value:null,deleted:true,checkVersion:true,expectedVersion:"v1"}]);f.reply({version:"v2"});assert.equal((await commit).version,"v2");
-  for(const code of ["db.put('x',undefined)","db.put('x',NaN)","db.put('x',new Date())","db.put('x',Array(1))","db.put('x',Object.defineProperty({},'x',{get(){return 1;},enumerable:true}))","(()=>{const x={};x.self=x;return db.put('x',x)})()"]){assert.throws(()=>f.run(code),/Storage/);assert.equal(f.pending.length,0);}
+/** Transports one native preference callback without exposing the retired collection/CAS facade. */
+test("DataStore edits native typed preferences through the structured Host bridge", async () => {
+  const f = fixture();
+  const opening = f.run("Tools.Storage.dataStore.open({path:'runtime/owned/settings.preferences.json'}).then(value=>{globalThis.db=value;})");
+  f.reply({handle:"preferences",path:"runtime/owned/settings.preferences.json"}); await opening;
+  assert.equal(f.run("typeof db.commit"), "undefined");
+  assert.equal(f.run("typeof db.get"), "undefined");
+  const editing = f.run("db.edit(preferences=>{preferences.set('nullable',null);preferences.set('count',3);preferences.remove('old')})");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.request(), {op:"preferences_begin_edit",handle:"preferences"});
+  f.reply({token:"callback",snapshot:{values:{old:"retired"},schemaVersion:0}});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.request(), {op:"preferences_finish_edit",handle:"preferences",token:"callback",schemaVersion:0,edits:[{op:"set",key:"nullable",value:null},{op:"set",key:"count",value:3},{op:"remove",key:"old"}]});
+  f.reply({values:{nullable:null,count:3},schemaVersion:0});
+  const snapshot = await editing;
+  assert.equal(snapshot.get("nullable"), null); assert.equal(snapshot.get("count"), 3); assert.equal(snapshot.get("old"), undefined);
 });
 
 /** Exercises nested proxy mutations and retries the same CAS version only after an explicit failed save. */
@@ -90,4 +99,84 @@ test("storage promises restore their owner without publishing callback functions
   const f=fixture();const promise=f.run("Tools.Storage.request({op:'close',handle:'x'}).catch(error=>({message:error.message,owner:__operitCurrentCallId}))");
   const globals=Object.keys(f.sandbox);assert.equal(typeof f.pending[0].requestId,"number");f.run("__operitCurrentCallId='unrelated'");f.reply("closed on host",true);const value=await promise;
   assert.equal(value.owner,"owner");assert.equal(value.message,"closed on host");assert.deepEqual(Object.keys(f.sandbox),globals);assert.equal(f.sandbox.refs,0);
+});
+
+/** Forwards the declared merge contract unchanged through the real SDK facade. */
+test("storage open forwards declarative merge metadata without dropping its fields", async () => {
+  const f = fixture();
+  const opening = f.run("Tools.Storage.sqlite.open({path:'runtime/owned/sqlite.db',merge:{version:2,maxEntities:4,maxReferences:32,entities:[]}})");
+  assert.deepEqual(f.request().merge, {version:2,maxEntities:4,maxReferences:32,entities:[]});
+  f.reply({handle:"sql",path:"runtime/owned/sqlite.db"});
+  const database = await opening;
+  assert.equal(database.path, "runtime/owned/sqlite.db");
+});
+
+/** Observes one exact key through the real facade and releases only its owned handle. */
+test("record watch sends exact collection and key, emits initial absence and cancels pending reads", async () => {
+  const f=fixture();const registry=f.sandbox.__operitHostPromiseRegistry;const waits=[];
+  f.sandbox.__operitNativeWaitPluginStorageRecord=registry.binding((id,handle,collection,key,after)=>waits.push({id,handle,collection,key,after}));
+  const opening=f.run("Tools.Storage.objects.open({path:'runtime/owned/live.sqlite'}).then(value=>{globalThis.db=value})");
+  f.reply({handle:"parent",path:"runtime/owned/live.sqlite"});await opening;
+  assert.equal(f.run("typeof db.watch"),"undefined");assert.equal(f.run("typeof db.changes"),"undefined");
+  f.run("globalThis.stream=db.collection('goals').watch('chat-a')");const first=f.run("stream.next()");
+  f.reply({handle:"watcher",path:"runtime/owned/live.sqlite"});await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual({...waits[0],id:null},{id:null,handle:"watcher",collection:"goals",key:"chat-a",after:null});
+  registry.settle(waits.shift().id,null,false);assert.equal((await first).value,null);
+  const second=f.run("stream.next()");await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(structuredClone(waits[0].after),{version:null});
+  const entry={value:{objective:"target"},version:"remote:9007199254740993"};
+  registry.settle(waits.shift().id,entry,false);assert.equal((await second).value.version,entry.version);
+  const pending=f.run("stream.next()");await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(waits[0].after.version,entry.version);await assert.rejects(f.run("stream.next()"),/pending read/);
+  const closing=f.run("stream.return()");await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(f.request(),{op:"close",handle:"watcher"});f.reply(null);
+  registry.settle(waits.shift().id,"Storage handle is not active",true);
+  assert.equal((await closing).done,true);assert.equal((await pending).done,true);
+  const get=f.run("db.collection('goals').get('chat-a')");assert.equal(f.request().handle,"parent");f.reply(null);await get;
+  assert.equal(f.sandbox.refs,0);
+});
+
+/** Avoids opening a retained handle for an unused collector. */
+test("record watch return before next allocates no resources", async()=>{
+  const f=fixture();const opening=f.run("Tools.Storage.objects.open({path:'runtime/owned/live.sqlite'}).then(value=>{globalThis.db=value})");
+  f.reply({handle:"parent",path:"runtime/owned/live.sqlite"});await opening;
+  f.run("globalThis.stream=db.collection('goals').watch('chat-a')");await f.run("stream.return()");
+  assert.equal((await f.run("stream.next()")).done,true);assert.equal(f.pending.length,0);
+});
+
+/** Observes native preference snapshots and cancels the collector's retained handle. */
+test("DataStore flow abort closes its exact retained handle",async()=>{
+  const f=fixture();const registry=f.sandbox.__operitHostPromiseRegistry;const waits=[];const listeners=new Set();
+  f.sandbox.signal={aborted:false,addEventListener(name,listener){assert.equal(name,"abort");listeners.add(listener);},removeEventListener(name,listener){listeners.delete(listener);}};
+  f.sandbox.__operitNativeWaitPluginStorageRecord=registry.binding((id,handle,collection,key,after)=>waits.push({id,handle,collection,key,after}));
+  const opening=f.run("Tools.Storage.dataStore.open({path:'runtime/owned/settings.preferences.json'}).then(value=>{globalThis.db=value})");f.reply({handle:"parent",path:"runtime/owned/settings.preferences.json"});await opening;
+  f.run("globalThis.stream=db.dataFlow({signal})");const pending=f.run("stream.next()");
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.request().op,"preferences_data");f.reply({values:{theme:"dark"},schemaVersion:0});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.request().op,"open_preferences");f.reply({handle:"watcher",path:"runtime/owned/settings.preferences.json"});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(waits[0].collection,"__preferences");assert.equal(waits[0].key,"snapshot");f.sandbox.signal.aborted=true;
+  for(const listener of [...listeners])listener();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(f.request(),{op:"close",handle:"watcher"});f.reply(null);registry.settle(waits.shift().id,"closed",true);
+  assert.equal((await pending).done,true);assert.equal(listeners.size,0);assert.equal(f.sandbox.refs,0);
+});
+
+/** Exercises the real facade's ordered atomic reads, absence semantics, bounds and disposal. */
+test("object getMany preserves ordered null records and rejects invalid batches", async () => {
+  const f = fixture();
+  const opening = f.run("Tools.Storage.objects.open({path:'runtime/owned/objects.db'}).then(value=>{globalThis.db=value;})");
+  f.reply({handle:"objects",path:"runtime/owned/objects.db"}); await opening;
+  const reading = f.run("db.collection('memories').getMany(['present','missing','nullable','present'])");
+  assert.deepEqual(f.request(), {op:"get_many",handle:"objects",collection:"memories",keys:["present","missing","nullable","present"]});
+  const values = [{value:{id:"present",tags:["one"]},version:"v1"},null,{value:null,version:"v2"},{value:{id:"present",tags:["one"]},version:"v1"}];
+  f.reply(values);
+  assert.deepEqual(structuredClone(await reading), values);
+  assert.deepEqual(structuredClone(await f.run("db.collection('memories').getMany([])")), []);
+  for (const batch of ["null", "[1]", "Array(1001).fill('key')"]) {
+    await assert.rejects(f.run("db.collection('memories').getMany(" + batch + ")"), /1000 string keys/);
+    assert.equal(f.pending.length, 0);
+  }
+  const closing = f.run("db.close()"); f.reply(null); await closing;
+  await assert.rejects(f.run("db.collection('memories').getMany([])"), /closed/);
 });

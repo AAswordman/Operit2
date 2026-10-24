@@ -2,9 +2,11 @@
 
 import 'package:flutter/material.dart';
 
-/// Serializes the effective UI theme for the public plugin Theme service.
+/// Serializes the Material palette and the transparent hosted-page background.
+/// Hosted pages reveal the shared application background through this role.
 Map<String, Object?> pluginThemeSnapshot(ColorScheme scheme) {
   final colors = <String, Color>{
+    'background': Colors.transparent,
     'primary': scheme.primary,
     'onPrimary': scheme.onPrimary,
     'primaryContainer': scheme.primaryContainer,

@@ -6,6 +6,9 @@ import '../link/CoreLinkCodec.dart';
 import '../link/CoreLinkProtocol.dart';
 
 abstract interface class PlatformRuntimeHost {
+  /// Executes an offline data rescue operation without starting Core.
+  Future<Object?> dataRescue(Map<String, Object?> request);
+
   /// Reads the platform default base roots before the Runtime is created.
   Future<Map<Object?, Object?>> runtimeStorageDefaults();
 
@@ -40,7 +43,8 @@ abstract class CoreProxy implements PlatformRuntimeHost {
   }
 
   /// Sends one control call and returns its MessagePack response unchanged.
-  Future<Uint8List> callControlBytes(CoreCallRequest request) => callBytes(request);
+  Future<Uint8List> callControlBytes(CoreCallRequest request) =>
+      callBytes(request);
 
   /// Executes a control call concurrently with serialized runtime work.
   Future<Object?> callControl(CoreCallRequest request) async {

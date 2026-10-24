@@ -8,6 +8,9 @@ pub struct ChatHistoryListItem {
     /// Native conversation folder; independent of plugin-owned role bindings.
     #[serde(default)]
     pub group: Option<String>,
+    /// Identifies the native parent conversation independently of plugin metadata.
+    #[serde(default)]
+    pub parentChatId: Option<String>,
     pub updatedAt: String,
     pub displayOrder: i64,
     pub workspaceId: Option<String>,
@@ -23,6 +26,7 @@ impl ChatHistoryListItem {
             id: history.id.clone(),
             title: history.title.clone(),
             group: history.group.clone(),
+            parentChatId: history.parentChatId.clone(),
             updatedAt: history.updatedAt.clone(),
             displayOrder: history.displayOrder,
             workspaceId: history.workspaceId.clone(),

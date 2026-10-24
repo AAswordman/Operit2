@@ -3,7 +3,7 @@ import { packageRuntime } from "./package-runtime.mjs";
 
 /** Captures existing SDK registrations and loops only the package's real IPC callback; it supplies no business data. */
 export function openPlugin(disk) {
-  const commands = new Map(), apis = new Map(), channels = new Map(), routes = [], navigation = [], lifecycle = [], chatMessageHooks = [], hostEventHooks = [], chatLifecycleHooks = [], chatInputHooks = [], toolLifecycleHooks = [], toolPromptHooks = [];
+  const commands = new Map(), apis = new Map(), channels = new Map(), routes = [], navigation = [], lifecycle = [], chatMessageHooks = [], hostEventHooks = [], chatLifecycleHooks = [], chatViewHooks = [], chatInputHooks = [], toolLifecycleHooks = [], toolPromptHooks = [];
   const registry = {
     ...disk.globals.ToolPkg,
     /** Records an actual command provider and rejects duplicate test registration. */
@@ -28,6 +28,8 @@ export function openPlugin(disk) {
     registerHostEventHook(definition) { hostEventHooks.push(definition); },
     /** Captures the genuine pre-create callback without initializing a chat or substituting a creation provider. */
     registerChatLifecycleHook(definition) { chatLifecycleHooks.push(definition); },
+    /** Captures actual chat view callbacks without emitting navigation events during registration. */
+    registerChatViewHook(definition) { chatViewHooks.push(definition); },
     /** Captures the genuine group input handler without invoking planning or accepting input during registration. */
     registerChatInputHook(definition) { chatInputHooks.push(definition); },
     /** Captures the real execution policy without running it or synthesizing its result. */
@@ -52,7 +54,7 @@ export function openPlugin(disk) {
   const main = loadModule("src/main.ts", { ...disk.globals, ToolPkg: registry });
   if (main.registerToolPkg() !== true) throw new Error("Actual plugin registration did not succeed");
   return {
-    main, commands, apis, routes, navigation, lifecycle, chatMessageHooks, hostEventHooks, chatLifecycleHooks, chatInputHooks, toolLifecycleHooks, toolPromptHooks,
+    main, commands, apis, routes, navigation, lifecycle, chatMessageHooks, hostEventHooks, chatLifecycleHooks, chatViewHooks, chatInputHooks, toolLifecycleHooks, toolPromptHooks,
     ...(disk.composeModules === undefined ? {} : {
       /** Opens the packaged executable in its own SDK realm while retaining the real main IPC provider. */
       openComposeRoute(routeId) {

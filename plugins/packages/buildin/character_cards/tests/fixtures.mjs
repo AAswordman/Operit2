@@ -1,11 +1,11 @@
 /** Provides deterministic plugin-domain records exclusively for isolated browser and codec tests. */
 export function fixture() {
-  const base = { description: "", characterSetting: "你是一位可靠、温和的助手。", openingStatement: "你好，有什么可以帮你的？", otherContentChat: "", otherContentVoice: "", avatarUri: null, attachedTagIds: ["tag-persona"], advancedCustomPrompt: "", marks: "", chatModelBindingMode: "FOLLOW_GLOBAL", chatModelId: null, ttsConfigId: null, themeConfigId: null, memoryBindingMode: "CHARACTER", sharedMemoryId: null, sharedMemoryMounts: [], toolAccessConfig: { enabled: false, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] }, createdAt: 1, updatedAt: 1 };
+  const base = { description: "", characterSetting: "你是一位可靠、温和的助手。", openingStatement: "你好，有什么可以帮你的？", otherContentChat: "", otherContentVoice: "", avatarUri: null, attachedTagIds: ["tag-persona"], advancedCustomPrompt: "", marks: "", chatModelBindingMode: "FOLLOW_GLOBAL", chatModelId: null, chatProviderId: null, ttsConfigId: null, themeConfigId: null, memoryBindingMode: "CHARACTER", sharedMemoryId: null, sharedMemoryMounts: [], toolAccessConfig: { enabled: false, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] }, createdAt: 1, updatedAt: 1 };
   const snapshot = {
     memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true },
     cards: [
-      { ...base, id: "operit", name: "Operit", description: "默认角色卡", isDefault: true },
-      { ...base, id: "travel", name: "旅行助理", description: "一起规划行程，记录沿途的故事。", isDefault: false, memoryBindingMode: "SHARED", sharedMemoryId: "shared-main", attachedTagIds: ["tag-persona", "tag-travel"] },
+      { ...base, id: "operit", name: "Operit", description: "默认角色卡" },
+      { ...base, id: "travel", name: "旅行助理", description: "一起规划行程，记录沿途的故事。", memoryBindingMode: "SHARED", sharedMemoryId: "shared-main", attachedTagIds: ["tag-persona", "tag-travel"] },
     ],
     groups: [{ id: "group-one", name: "日常讨论", description: "多个角色一起交流", themeConfigId: null, members: [{ characterCardId: "operit", orderIndex: 0 }, { characterCardId: "travel", orderIndex: 1 }], createdAt: 2, updatedAt: 3 }],
     stores: [{ id: "shared-main", name: "共享记忆", createdAt: 2, updatedAt: 3 }],
@@ -24,11 +24,11 @@ export function fixture() {
     /** Converts fixture memories into the declared plugin graph node shape, not a production data source. */
     item => ({ id: item.uuid, label: item.title, color: 0, metadata: {} }),
   ), edges: [{ id: "1", sourceId: "memory-one", targetId: "memory-three", label: "影响", weight: 0.8, metadata: { description: "必须保留的原始关系描述" }, isCrossFolderLink: true }] } };
-  const theme = { brightness: "light", colors: { primary: "#6750a4ff", onPrimary: "#ffffffff", primaryContainer: "#eaddffff", onPrimaryContainer: "#21005dff", onSurface: "#1d1b20ff", onSurfaceVariant: "#49454fff", surface: "#fffaffff", surfaceContainer: "#f3edf7ff", surfaceContainerHigh: "#ece6f0ff", surfaceContainerHighest: "#e6e0e9ff", outline: "#79747eff", outlineVariant: "#cac4d0ff", error: "#b3261eff" } };
+  const theme = { brightness: "light", colors: { background: "#00000000", primary: "#6750a4ff", onPrimary: "#ffffffff", primaryContainer: "#eaddffff", onPrimaryContainer: "#21005dff", onSurface: "#1d1b20ff", onSurfaceVariant: "#49454fff", surface: "#fffaffff", surfaceContainer: "#f3edf7ff", surfaceContainerHigh: "#ece6f0ff", surfaceContainerHighest: "#e6e0e9ff", outline: "#79747eff", outlineVariant: "#cac4d0ff", error: "#b3261eff" } };
   const links = [{ id: "1", sourceMemoryId: "1", targetMemoryId: "3", type_: "影响", weight: 0.8, description: "必须保留的原始关系描述" }];
   const settings = { autoSaveIntervalMinutes: 15, nextAutoSaveRunAtMs: 12345, memoryExtractionCustomRules: "测试提取规则", profileAutoUpdateEnabled: true, profileAutoUpdateLocked: false, cloudEmbeddingEnabled: true, cloudEmbeddingEndpoint: "https://fixture.invalid/embeddings", cloudEmbeddingApiKey: "fixture-embedding-key", cloudEmbeddingModel: "fixture-embedding" };
   const searchConfig = { scoreMode: "BALANCED", keywordWeight: 0.4, tagWeight: 0.2, vectorWeight: 0.3, edgeWeight: 0.1 };
-  const importedCard = { ...snapshot.cards[0], id: "fixture-imported-card", name: "隔离 UI 导入返回角色", isDefault: false, createdAt: 10, updatedAt: 10 };
+  const importedCard = { ...snapshot.cards[0], id: "fixture-imported-card", name: "隔离 UI 导入返回角色", createdAt: 10, updatedAt: 10 };
   const importCharacterSnapshot = { ...snapshot, cards: [...snapshot.cards, importedCard] };
   const themeChoices = [{ id: "independent-theme-one", label: "测试独立主题" }, { id: "independent-theme-two", label: "测试夜间主题" }];
   return { snapshot, graph, theme, themeChoices, links, settings, searchConfig, importCharacterSnapshot };
@@ -60,7 +60,13 @@ export function installBrowserFixture(data) {
         // Presentation-only inputs for layout tests; persistence/jobs are covered by the separate real-service suite.
         case "readMemorySettings": return copy(data.settings);
         case "readMemorySearchConfig": return copy(data.searchConfig);
-        case "listMemoryChats": return [];
+        case "listMemoryChats": return { chats: [], missingChatIds: [] };
+        case "pruneMissingChatBindings": return { removedChatIds: [], removedCandidateIds: [] };
+        case "listBindableChats": return copy(data.bindingChats ?? []);
+        case "writeChatBinding": {
+          if (window.testBindingFailure === operation.chatId) throw new Error("TEST_BINDING_REJECTED");
+          return { chatId: operation.chatId, selection: operation.selection };
+        }
         case "readMemoryAutoSaveStatus": return { ownerKey: operation.ownerKey, pendingCandidates: 0, pendingChats: 0, processingCandidates: 0, failedCandidates: 0, nextRunAtMs: data.settings.nextAutoSaveRunAtMs, minutesUntilNextRun: 0, lastError: "" };
         case "readMemoryRebuildProgress": return { status: "idle", totalChats: 0, completedChats: 0, totalWindows: 0, completedWindows: 0, totalSourceMessages: 0, processedSourceMessages: 0, failedWindows: 0, currentChatTitle: "", lastError: "" };
         case "readUser": return { ownerKey: operation.ownerKey, content: window.testProfile };

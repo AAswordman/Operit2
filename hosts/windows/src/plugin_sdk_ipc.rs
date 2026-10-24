@@ -1,9 +1,9 @@
+use operit_host_native_common::{scheduleNativeServiceTask, NativeTaskHandle as JoinHandle};
 use std::collections::HashMap;
 use std::fs::File;
 use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 use operit_host_native_plugin_sdk_ipc::stream::{
     closePluginSdkIpcStream, sendPluginSdkIpcStream, spawnPluginSdkIpcReadLoop,
@@ -231,56 +231,54 @@ impl PluginSdkIpcHost for WindowsPluginSdkIpcHost {
         let host = self.inner.clone();
         let nextSession = self.nextSession.clone();
         let instance = self.instance.clone();
-        let thread = std::thread::Builder::new()
-            .name("operit-plugin-sdk-ipc-pipe-listen".to_string())
-            .spawn(move || {
-                let wide = WindowsPluginSdkIpcHost::wide(&pipeName);
-                while !stop.load(Ordering::SeqCst) {
-                    let handle = unsafe {
-                        CreateNamedPipeW(
-                            wide.as_ptr(),
-                            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                            PIPE_UNLIMITED_INSTANCES,
-                            65536,
-                            65536,
-                            0,
-                            std::ptr::null(),
-                        )
-                    };
-                    if handle == INVALID_HANDLE_VALUE {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                        continue;
-                    }
-                    let Ok(file) = WindowsPluginSdkIpcHost::fileFromHandle(handle) else {
-                        continue;
-                    };
-                    if let Err(error) = pipe_io::accept(&file, &stop) {
-                        if !stop.load(Ordering::SeqCst) {
-                            operit_host_api::logHostError(
-                                "WindowsPluginSdkIpc",
-                                &format!("Plugin SDK pipe accept failed: {error}"),
-                            );
-                        }
-                        break;
-                    }
-                    if stop.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    let carrier = WindowsPluginSdkIpcHost {
-                        instance: instance.clone(),
-                        inner: host.clone(),
-                        nextSession: nextSession.clone(),
-                    };
-                    if let Err(error) = carrier.attachFile(file, callbacks.clone(), true) {
+        let thread = scheduleNativeServiceTask("operit-plugin-sdk-ipc-listener", move || {
+            let wide = WindowsPluginSdkIpcHost::wide(&pipeName);
+            while !stop.load(Ordering::SeqCst) {
+                let handle = unsafe {
+                    CreateNamedPipeW(
+                        wide.as_ptr(),
+                        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                        PIPE_UNLIMITED_INSTANCES,
+                        65536,
+                        65536,
+                        0,
+                        std::ptr::null(),
+                    )
+                };
+                if handle == INVALID_HANDLE_VALUE {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    continue;
+                }
+                let Ok(file) = WindowsPluginSdkIpcHost::fileFromHandle(handle) else {
+                    continue;
+                };
+                if let Err(error) = pipe_io::accept(&file, &stop) {
+                    if !stop.load(Ordering::SeqCst) {
                         operit_host_api::logHostError(
                             "WindowsPluginSdkIpc",
                             &format!("Plugin SDK pipe accept failed: {error}"),
                         );
                     }
+                    break;
                 }
-            })
-            .map_err(|error| HostError::new(error.to_string()))?;
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                let carrier = WindowsPluginSdkIpcHost {
+                    instance: instance.clone(),
+                    inner: host.clone(),
+                    nextSession: nextSession.clone(),
+                };
+                if let Err(error) = carrier.attachFile(file, callbacks.clone(), true) {
+                    operit_host_api::logHostError(
+                        "WindowsPluginSdkIpc",
+                        &format!("Plugin SDK pipe accept failed: {error}"),
+                    );
+                }
+            }
+        })
+        .map_err(|error| HostError::new(error.to_string()))?;
         self.lock()?.listenerThread = Some(thread);
         Ok(())
     }

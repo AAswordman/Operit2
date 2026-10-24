@@ -50,4 +50,57 @@ void main() {
     expect(connectionStorageStates, isNotEmpty);
     expect(connectionStorageStates, everyElement(isTrue));
   });
+
+  test('reconfirming mounted roots does not apply storage again', () async {
+    const channel = MethodChannel('operit/runtime');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    var storageApplies = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'runtimeBootstrapRead':
+          return jsonEncode(<String, Object?>{
+            'ok': true,
+            'value': jsonEncode(<String, Object?>{
+              'confirmed': true,
+              'runtimeRoot': '/runtime',
+              'workspaceRoot': '/workspaces',
+              'identities': <Map<String, Object?>>[
+                <String, Object?>{
+                  'id': 'identity-1-aaaa',
+                  'name': 'A',
+                  'createdAt': 1,
+                },
+              ],
+              'activeIdentityId': 'identity-1-aaaa',
+              'updatedAt': 1,
+              'startupThemeMode': 'system',
+            }),
+          });
+        case 'runtimeBootstrapWrite':
+          return jsonEncode(<String, Object?>{'ok': true});
+        case 'localRuntimeStoragePaths':
+          return call.arguments;
+        case 'setLocalRuntimeStorage':
+          storageApplies++;
+          return null;
+        case 'connectCoreFfi':
+          throw PlatformException(code: 'TEST_CONNECTION_BOUNDARY');
+        default:
+          throw StateError('Unexpected host method: ${call.method}');
+      }
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    await ClientLogger.initialize();
+    final manager = RuntimeBootstrapManager.instance;
+    await manager.initialize();
+    expect(storageApplies, 1);
+
+    await manager.confirmLocalRuntimeStorage('/runtime', '/workspaces');
+    expect(storageApplies, 1);
+
+    await manager.confirmLocalRuntimeStorage('/runtime-other', '/workspaces');
+    expect(storageApplies, 2);
+  });
 }

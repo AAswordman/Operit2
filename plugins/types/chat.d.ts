@@ -25,6 +25,10 @@ export namespace Chat {
      */
     sourceChatId?: string | null;
     /**
+     * Places the new conversation beneath an existing parent without cloning its history.
+     */
+    parentChatId?: string | null;
+    /**
      * Supplies opaque creation input interpreted solely by registered plugins.
      */
     input?: JsonObject | null;

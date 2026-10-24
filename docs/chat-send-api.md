@@ -150,3 +150,24 @@ are present but were not compiled or executed in this task.
 The installed plugin HTML/main/subpackage archive checks still require current
 packaging artifacts. This task does not build Rust, Flutter or production plugin
 artifacts to conceal their mismatch with changed source.
+
+## Conversation context and background ownership
+
+A conversation-wide context refresh reads the current binding and estimates the
+request window for every currently bound participant. The stored conversation
+window is the largest of those estimates. A refresh with an explicit participant
+estimates that participant alone. Historical assistant authors do not select the
+conversation's current configuration.
+
+Regenerating an assistant revision requires that revision's persisted participant
+identity. Missing identity, catalog initialization errors, and extension read
+errors stop regeneration with the original failure instead of selecting a
+replacement participant. Manual summary insertion calls the summary model without
+resolving a conversation execution participant first, including histories that
+contain only user messages.
+
+The shared JavaScript runtime retains a call for each pending Promise reaction
+subscribed under that call. Primary hook completion can return `Consume` while
+those reactions keep the session detached. Each delivered reaction releases its
+reference, and explicit cancellation still prevents its handler from running.
+Plugins do not need a fixed-duration keepalive timer for observed background work.

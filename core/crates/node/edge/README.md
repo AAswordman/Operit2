@@ -1,42 +1,30 @@
 # operit-node-edge
 
-Lightweight device-side Edge Core node.
+Device-side Edge Services and their Link adapter. The device's place in a Space
+is defined in [Edge responsibilities](../../../../docs/edge-architecture.md).
 
-The crate owns typed Edge Services and adapts them to the internal
-`CoreLinkSharedClient` boundary. It consumes `operit-host-api::HostManager` and
-does not represent the full `CoreNode` defined by the Space architecture. It
-does not own `OperitApplication`, providers, ToolPkg, chat orchestration,
-persistence, identity, Access sessions, Space sync, or Proxy implementations.
+This crate owns typed device services, native application endpoint hooks and
+`EdgePeerRouter`. It does not assemble `OperitApplication`, an Agent runtime,
+providers, ToolPkg engines or a full business replica. Device applications wire
+shared node identity, pairing, Space control and storage services at their
+composition root; those services are not independently reimplemented here.
 
-## Pairing startup
+`peer::createPeerService` uses the shared code-confirmed pairing and encrypted
+session engine. Pairing and Space admission remain separate. `EdgePeerRouter`
+accepts local Target routes and the defined shared Space control calls; it is
+not a full Core Binding router or a relay implementation.
 
-Firmware, simulator and other Edge apps use `peer::createPeerService` to select
-code-only pairing in the shared runtime. The receiver never asks for an Edge
-token, including on remote network connections. Confirm the six-digit code on
-the receiving device; pairing alone does not grant Space membership or business
-permissions. Outbound pairing to a Core uses the same code-confirmed handshake.
-The shared listener preference schema no longer includes a token field.
+Applications register native calls with `withCallHandler` and optional output
+and input endpoints with `withStreamHandlers`. These use Call, Watch / Stream
+and Push / ReverseStream. Missing endpoints return a standard method error.
+Host API traits provide hardware, I/O and storage; the device app owns behavior.
 
-## Native application endpoints
+An Edge can persist its own configuration and resources without
+`storage.provide`. Bounded device preferences are exchanged on the shared Space
+control channel with membership and revocation checks. Full business replicas
+require storage capability and actual Core storage services at both endpoints.
 
-Device applications attach their own Call dispatch with `withCallHandler` and
-Stream / ReverseStream endpoints with `withStreamHandlers`. These are native
-application callbacks on the existing shared Link client. A firmware application
-owns its device behavior, resource configuration, display input and optional
-local processing.
-
-`EdgePeerRouter` carries Call, Watch and Push through the shared authenticated
-runtime. ToolPkg code runs on capable hosts and uses the generic device transport;
-its configuration editor is optional once configuration has been saved to hardware.
-The common node boundary does not contain an audio-specific runtime.
-
-## Application configuration and replication
-
-The shared Space control channel exchanges bounded device preferences independently
-of `storage.provide`. Every exchange checks current membership, revocation, Space
-and device scope. Full operation clocks, business logs and blob endpoints still
-require storage capability at both endpoints. Native apps choose configuration
-keys and own their local session state; Host only supplies storage and transport.
-
-The ESP app provides `edge.preferences` for configuration editors and native
-direct chat over Host HTTP. None of this requires a ToolPkg runtime on Edge.
+The current [ESP32 application](../../../../apps/esp32/README.md) supports native
+device services, bounded independent HTTP chat and optional remote Core chat.
+Configuration ToolPkg runs on a capable host and need not remain installed or
+running after the device configuration has been saved.

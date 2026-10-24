@@ -5,6 +5,7 @@ use operit_host_api::HttpRequestData;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use url::Url;
 
 use crate::data::preferences::PreferenceStorageManager::PreferenceStorageManager;
@@ -12,6 +13,11 @@ use crate::data::preferences::PreferenceStorageManager::PreferenceStorageManager
 const POINTER_URL: &str = "https://operit.app/announcements/latest.json";
 const PREFERENCES: &str = "remote_announcement_preferences";
 const ACKNOWLEDGED_VERSION: &str = "acknowledged_version";
+const STAGED_VERSION: &str = "staged_version";
+const STAGED_READY: &str = "staged_ready";
+
+/// The first fetch in a process may promote an announcement staged by an earlier launch.
+static ANNOUNCEMENT_LAUNCH_PROMOTED: AtomicBool = AtomicBool::new(false);
 
 /// Fetches public announcements through the runtime HTTP and storage hosts.
 pub struct RemoteAnnouncementService {
@@ -66,7 +72,10 @@ impl RemoteAnnouncementService {
         }
     }
 
-    /// Fetches the published announcement for every user without audience filtering.
+    /// Fetches the published announcement and shows it only on a later launch.
+    ///
+    /// The launch that first pulls a version stores it and returns nothing.
+    /// The next time this process starts, that same version becomes displayable.
     pub fn fetchDisplayableAnnouncement(
         &self,
     ) -> Result<Option<RemoteAnnouncementDisplay>, String> {
@@ -99,6 +108,9 @@ impl RemoteAnnouncementService {
             if display.version <= version {
                 return Ok(None);
             }
+        }
+        if !stageAnnouncementForLaterLaunch(display.version)? {
+            return Ok(None);
         }
         Ok(Some(display))
     }
@@ -162,6 +174,75 @@ impl RemoteAnnouncementService {
     }
 }
 
+/// Remembers one fetched version until a later application process may show it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AnnouncementDisplayGate {
+    version: Option<i32>,
+    ready: bool,
+}
+
+/// Promotes a version fetched by a previous process, then accepts only that version.
+fn gateAnnouncement(
+    mut gate: AnnouncementDisplayGate,
+    version: i32,
+    promotePreviousFetch: bool,
+) -> (AnnouncementDisplayGate, bool) {
+    if promotePreviousFetch && gate.version.is_some() && !gate.ready {
+        gate.ready = true;
+    }
+    if gate.version == Some(version) && gate.ready {
+        return (gate, true);
+    }
+    gate.version = Some(version);
+    gate.ready = false;
+    (gate, false)
+}
+
+/// Persists the first sight of a version and reports whether this launch may show it.
+fn stageAnnouncementForLaterLaunch(version: i32) -> Result<bool, String> {
+    let preferences = PreferenceStorageManager::getInstance();
+    let current = readAnnouncementDisplayGate(&preferences)?;
+    let promote = !ANNOUNCEMENT_LAUNCH_PROMOTED.swap(true, Ordering::SeqCst);
+    let (next, show) = gateAnnouncement(current.clone(), version, promote);
+    if next != current {
+        let mut values = BTreeMap::new();
+        values.insert(
+            STAGED_VERSION.to_string(),
+            serde_json::json!(next.version.expect("staged announcement version")),
+        );
+        values.insert(STAGED_READY.to_string(), serde_json::json!(next.ready));
+        preferences
+            .setPreferences(PREFERENCES, values)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(show)
+}
+
+/// Reads the announcement version waiting for a later launch.
+fn readAnnouncementDisplayGate(
+    preferences: &PreferenceStorageManager,
+) -> Result<AnnouncementDisplayGate, String> {
+    let version = match preferences
+        .getPreference(PREFERENCES, STAGED_VERSION)
+        .map_err(|error| error.to_string())?
+    {
+        None => None,
+        Some(value) => Some(
+            serde_json::from_value::<i32>(value)
+                .map_err(|error| format!("Invalid staged announcement version: {error}"))?,
+        ),
+    };
+    let ready = match preferences
+        .getPreference(PREFERENCES, STAGED_READY)
+        .map_err(|error| error.to_string())?
+    {
+        None => false,
+        Some(value) => serde_json::from_value::<bool>(value)
+            .map_err(|error| format!("Invalid staged announcement readiness: {error}"))?,
+    };
+    Ok(AnnouncementDisplayGate { version, ready })
+}
+
 /// Uses the publisher's declared content directly, with no audience or locale selection.
 fn prepareAnnouncement(
     payload: AnnouncementPayload,
@@ -204,4 +285,41 @@ fn prepareAnnouncement(
         acknowledgeText: content.acknowledge,
         countdownSec: payload.countdownSec.clamp(0, 30),
     }))
+}
+
+#[cfg(test)]
+mod announcement_display_gate_tests {
+    use super::{gateAnnouncement, AnnouncementDisplayGate};
+
+    fn gate(version: Option<i32>, ready: bool) -> AnnouncementDisplayGate {
+        AnnouncementDisplayGate { version, ready }
+    }
+
+    #[test]
+    fn first_fetch_is_stored_and_not_shown() {
+        let (next, show) = gateAnnouncement(gate(None, false), 3, true);
+        assert!(!show);
+        assert_eq!(next, gate(Some(3), false));
+    }
+
+    #[test]
+    fn next_launch_shows_the_previously_fetched_version() {
+        let (next, show) = gateAnnouncement(gate(Some(3), false), 3, true);
+        assert!(show);
+        assert_eq!(next, gate(Some(3), true));
+    }
+
+    #[test]
+    fn same_launch_keeps_a_fresh_fetch_hidden() {
+        let (next, show) = gateAnnouncement(gate(Some(3), false), 3, false);
+        assert!(!show);
+        assert_eq!(next, gate(Some(3), false));
+    }
+
+    #[test]
+    fn a_new_version_waits_for_another_launch() {
+        let (next, show) = gateAnnouncement(gate(Some(3), true), 4, true);
+        assert!(!show);
+        assert_eq!(next, gate(Some(4), false));
+    }
 }

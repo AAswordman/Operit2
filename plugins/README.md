@@ -34,10 +34,9 @@ The VM service must be reachable from this computer (including the forwarded
 port used by Flutter for a connected phone). Keep the authenticated URL private.
 `--no-hot-reload` disables remote delivery explicitly.
 
-## Edge hardware ports
+## Edge hardware integration
 
-See [Core 插件调用 Edge 硬件端口](docs/edge-ports.md) for the initial `Tools.device(nodeId).Edge.execute` /
-`Tools.device(nodeId).Io.execute` APIs, bounded payloads, authorization and the GPIO-only scope.
-The generic duplex facade over Stream / ReverseStream is described in [edge-plugin-guide.md](docs/edge-plugin-guide.md).
-
-Device-local input ownership is described in [edge-events.md](docs/edge-events.md).
+See [硬件 ToolPkg 接入](docs/edge-plugin-guide.md) for generic Call / Watch / Push,
+`Tools.device(nodeId).Edge` / `Io`, payload limits and device-local interaction.
+[Edge responsibilities](../docs/edge-architecture.md) defines Space membership,
+device configuration and the boundary between firmware and host processing.

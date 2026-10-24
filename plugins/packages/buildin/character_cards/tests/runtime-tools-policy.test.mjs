@@ -13,7 +13,7 @@ const directoryInput = plain(loadModule("tests/host-directories-input.ts").hostD
 
 /** Registers real main callbacks and providers over actual temporary disk IO plus explicit host-boundary inputs. */
 async function environment(t) {
-  const disk = await createDiskHarness(t), settings = createHostDirectoriesFixture(disk, directoryInput);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directoryInput);
   const chats = new Map(["policy-chat", "group-chat"].map(
     /** Defines actual controlled host records with an unrelated namespace that must never select this plugin's participant. */
     id => [id, { summary: { id, title: id, messageCount: 0, inputTokens: 0, outputTokens: 0, createdAt: "1760000000000", updatedAt: "1760000000000", isCurrent: false },
@@ -99,14 +99,14 @@ async function environment(t) {
 /** Resolves a full execution message marker through the actual production service before starting the tool-policy turn. */
 async function resolveContext(environment, chatId, participantId) {
   const configuration = await environment.dispatchDomain("chat.configuration.resolve", {
-    purpose: "execution", chatId, chatExtension: await environment.readChatExtension(chatId), messageExtension: null, participantId,
+    purpose: "execution", chatId, chatExtension: await environment.readChatExtension(chatId), participantId,
     promptFunctionType: "CHAT",
     defaultModelBinding: { providerId: directoryInput.models[0].providerId, modelId: directoryInput.models[0].modelId },
     defaultTtsConfigId: directoryInput.ttsConfigs[0].id,
   });
   assert.equal(configuration.profile.id, participantId);
-  assert.deepEqual(plain(configuration.messageExtension.profile.toolAccess), plain(configuration.profile.toolAccess));
-  return { chatId, participantId, extensionOwner: authenticatedOwner, messageExtension: plain(configuration.messageExtension) };
+  assert.deepEqual(plain(configuration.executionData.profile.toolAccess), plain(configuration.profile.toolAccess));
+  return { chatId, participantId, extensionOwner: authenticatedOwner, executionData: plain(configuration.executionData) };
 }
 
 /** Persists explicit permissions and binding, then captures the complete resolved snapshot for one real test turn. */
@@ -120,7 +120,7 @@ async function bind(environment, chatId = "policy-chat") {
   assert.equal((await environment.dispatchDomain("chat.configuration.binding.read", { chatId })).selection, "card:default");
   assert.deepEqual(chat.extensions.get(siblingOwner), { version: 1, selection: "card:sibling-only", private: { retained: chatId } });
   const state = JSON.parse(await environment.disk.stateBytes().toString("utf8"));
-  assert.equal(state.version, 3); assert.equal(Object.hasOwn(state, "chatBindings"), false);
+  assert.equal(state.version, 1); assert.equal(Object.hasOwn(state, "chatBindings"), false);
   return resolveContext(environment, chatId, "default");
 }
 
@@ -168,16 +168,16 @@ test("actual execution policy accepts only frozen builtin and registered source 
 /** Rejects missing, malformed, mismatched and foreign snapshots instead of manufacturing a participant or reading current bindings. */
 test("invalid execution context and unowned or incomplete snapshot reject explicitly", async t => {
   const runtime = await environment(t), context = await bind(runtime), before = ioCounts(runtime);
-  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, participantId: "other" })), /does not match the frozen message snapshot/);
+  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, participantId: "other" })), /does not match the current execution data/);
   await assert.rejects(runtime.toolCallPolicy(event("read_file", { participantId: "default" })), /executionContext.chatId is required/);
   await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, chatId: null })), /requires a real chat context/);
   await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, extensionOwner: siblingOwner })), /extensionOwner does not match/);
   await assert.rejects(runtime.toolCallPolicy(event("read_file", context, {}, siblingOwner)), /authenticated registered owner/);
-  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, messageExtension: [] })), /messageExtension/);
-  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, messageExtension: { version: 1 } })), /message marker selection/);
+  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, executionData: [] })), /executionData/);
+  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, executionData: { version: 1 } })), /execution data selection/);
   await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...context, plugins: { [siblingOwner]: {} } })), /unexpected fields/);
-  const absent = plain(context); delete absent.messageExtension;
-  await assert.rejects(runtime.toolCallPolicy(event("read_file", absent)), /messageExtension is required/);
+  const absent = plain(context); delete absent.executionData;
+  await assert.rejects(runtime.toolCallPolicy(event("read_file", absent)), /executionData is required/);
   assert.deepEqual(ioCounts(runtime), before);
 });
 
@@ -219,8 +219,8 @@ test("group snapshots keep exact per-participant tool policy without consulting 
   assert.equal((await runtime.toolCallPolicy(event("read_file", first))).action, "allow");
   assert.equal((await runtime.toolCallPolicy(event("read_file", second))).action, "block");
   assert.equal((await runtime.toolCallPolicy(event("delete_file", second))).action, "allow");
-  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...second, participantId: null })), /frozen message snapshot/);
-  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...second, participantId: "not-member" })), /frozen message snapshot/);
+  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...second, participantId: null })), /current execution data/);
+  await assert.rejects(runtime.toolCallPolicy(event("read_file", { ...second, participantId: "not-member" })), /current execution data/);
   assert.deepEqual(ioCounts(runtime), before);
 });
 
@@ -249,7 +249,7 @@ test("current role and binding changes cannot change an already-open turn's thre
 
 /** Treats a host-isolated null namespace as genuine non-participation, never as permission to read a current character. */
 test("explicit owner non-participation and non-chat calls perform zero reads", async t => {
-  const runtime = await environment(t), context = await bind(runtime), absent = { ...context, messageExtension: null }, before = ioCounts(runtime);
+  const runtime = await environment(t), context = await bind(runtime), absent = { ...context, executionData: null }, before = ioCounts(runtime);
   assert.equal(await runtime.toolCallPolicy(event("read_file", absent)), undefined);
   assert.equal(await runtime.toolCallPolicy(event("read_file", null)), undefined);
   for (const stage of ["filter_tool_call_tools", "build_tool_prompt"]) assert.equal(await runtime.toolPromptPolicy(prompt(stage, absent, [{ name: "read_file" }])), undefined);
@@ -279,7 +279,7 @@ test("concurrent snapshot policy evaluation does not leak the next turn's permis
 /** Keeps existing real IO failures explicit in their actual service while proving policy does not reread that service. */
 test("queued repository and host errors remain unconsumed by frozen policy and propagate on the real dependency read", async t => {
   const runtime = await environment(t), context = await bind(runtime), before = ioCounts(runtime);
-  const diskFailure = new Error("snapshot-must-not-reread-disk"); runtime.disk.failNext("storage.query", diskFailure);
+  const diskFailure = new Error("snapshot-must-not-reread-disk"); runtime.disk.failNext("storage.preferences.data", diskFailure);
   const hostFailure = new Error("snapshot-must-not-reread-binding"); runtime.failNextHost("findChat", hostFailure);
   assert.equal((await runtime.toolCallPolicy(event("read_file", context))).action, "allow");
   assert.deepEqual(ioCounts(runtime), before);

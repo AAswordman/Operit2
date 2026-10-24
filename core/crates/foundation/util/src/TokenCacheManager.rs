@@ -109,7 +109,7 @@ impl TokenCacheManager {
             if !chat_history.is_empty() {
                 self.previous_chat_history = history_with_tools;
             }
-            let _ = AppLogger::d(
+            let _ = AppLogger::trace(
                 "TokenCacheManager",
                 &format!(
                     "calculate_input_tokens cached={} new={} total={} commonPrefix={}",

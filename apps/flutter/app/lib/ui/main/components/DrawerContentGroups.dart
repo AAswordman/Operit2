@@ -120,6 +120,7 @@ extension _NativeWorkspaceGroups on _DrawerContentState {
     final id = await _chatCoreProxy.createNewChat(
       setAsCurrentChat: false,
       sourceChatId: source?.id,
+      parentChatId: null,
       input: null,
     );
     await _chatCoreProxy.updateChatGroups(chatIds: [id], groupName: name);
@@ -183,8 +184,9 @@ extension _NativeWorkspaceGroups on _DrawerContentState {
         .toList();
     await _runGroupMutation(() async {
       for (final chat in members) {
-        if (!await _chatCoreProxy.deleteChatHistory(chatId: chat.id))
+        if (!await _chatCoreProxy.deleteChatHistory(chatId: chat.id)) {
           throw StateError('删除对话失败：${chat.id}');
+        }
       }
     });
   }

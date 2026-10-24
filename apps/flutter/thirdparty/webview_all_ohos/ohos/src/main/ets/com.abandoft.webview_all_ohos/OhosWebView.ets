@@ -12,10 +12,14 @@ export declare class Params {
 /** Completes a native script-list update only after the ArkUI frame is committed. */
 class DocumentStartScriptCommit extends FrameCallback {
   private settled: boolean = false;
+  private complete: () => void;
+  private fail: (error: Error) => void;
 
   /** Retains the platform-channel acknowledgement callbacks for one render frame. */
-  constructor(private complete: () => void, private fail: (error: Error) => void) {
+  constructor(complete: () => void, fail: (error: Error) => void) {
     super();
+    this.complete = complete;
+    this.fail = fail;
   }
 
   /** Acknowledges registration after native Web attributes have been applied. */

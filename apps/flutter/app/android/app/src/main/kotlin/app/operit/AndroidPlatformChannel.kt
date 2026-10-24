@@ -36,6 +36,31 @@ class AndroidPlatformChannel(
                 AndroidHostEventScheduler.readUndelivered(activity).map { it.toMap() }
             }
             "localRuntimeStorageDefaults" -> localRuntimeStorageDefaults(result)
+            "dataRescue" -> {
+                val request = call.arguments as? String
+                if (request == null) {
+                    result.error("INVALID_ARGS", "dataRescue expects JSON text", null)
+                } else {
+                    try {
+                        val command = org.json.JSONObject(request)
+                        if (command.getString("operation") == "launchMode") {
+                            val rescue = false
+                            result.success("{\"ok\":true,\"value\":{\"rescue\":$rescue}}")
+                        } else {
+                            runtimeHost.runBackground {
+                                try {
+                                    val response = OperitRuntimeNative.dataRescue(runtimeHost.defaultRuntimeRootPath(), request, runtimeHost)
+                                    activity.runOnUiThread { result.success(response) }
+                                } catch (error: Throwable) {
+                                    activity.runOnUiThread { result.error("DATA_RESCUE_ERROR", error.message, null) }
+                                }
+                            }
+                        }
+                    } catch (error: Throwable) {
+                        result.error("DATA_RESCUE_ERROR", error.message, null)
+                    }
+                }
+            }
             "runtimeBootstrapRead" -> runtimeBootstrapRead(result)
             "runtimeBootstrapWrite" -> runtimeBootstrapWrite(call, result)
             "localRuntimeStoragePaths" -> localRuntimeStoragePaths(call, result)

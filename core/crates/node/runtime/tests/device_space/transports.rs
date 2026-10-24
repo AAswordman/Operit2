@@ -1,26 +1,25 @@
 use super::*;
 
-/// Single real TCP pairing: independent peers have no return authority, while
-/// admitted members exchange scoped return credentials without a second pairing.
-/// Reconnect works; current revocation and local management boundaries still hold.
+/// One TCP pairing carries both directions before and after admission, with no second carrier.
 #[tokio::test]
-async fn real_tcp_single_pairing_admission_enables_scoped_return_channel() {
-    tcpAdmissionReturnChannel("127.0.0.1:0").await;
+async fn real_tcp_single_pairing_uses_one_bidirectional_channel() {
+    tcpAdmissionSingleChannel("127.0.0.1:0").await;
 }
 
-/// The dialer's IPv6 listener must be reachable even when its pairing connection uses IPv4.
+/// An IPv6 listener does not require a separate reverse connection.
 #[tokio::test]
-async fn real_tcp_return_channel_uses_listener_address_family() {
-    tcpAdmissionReturnChannel("[::1]:0").await;
+async fn real_tcp_single_channel_with_ipv6_listener() {
+    tcpAdmissionSingleChannel("[::1]:0").await;
 }
 
-/// Wildcard listeners keep using the observed peer address for callbacks.
+/// A wildcard listener uses the same authenticated carrier in both directions.
 #[tokio::test]
-async fn real_tcp_return_channel_resolves_wildcard_listener() {
-    tcpAdmissionReturnChannel("0.0.0.0:0").await;
+async fn real_tcp_single_channel_with_wildcard_listener() {
+    tcpAdmissionSingleChannel("0.0.0.0:0").await;
 }
 
-async fn tcpAdmissionReturnChannel(macBind: &str) {
+/// Exercises admission, bidirectional calls and reconnection on a single authenticated carrier.
+async fn tcpAdmissionSingleChannel(macBind: &str) {
     use crate::HostRuntimePeerService::HostRuntimePeerService;
     use crate::PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore};
     use operit_host_api::HostManager::HostManager;
@@ -164,30 +163,31 @@ async fn tcpAdmissionReturnChannel(macBind: &str) {
         assert_eq!(response.result.unwrap_err().code, "LOCAL_MANAGEMENT_ONLY");
         assert!(mac.pairedDeviceOnline("tcp-ios".into()).unwrap());
         assert!(ios.pairedDeviceOnline("tcp-mac".into()).unwrap());
-        // Admission establishes a scoped return channel, never a reverse pairing.
+        // Pre-admission applicant traffic rides the gateway's own connection:
+        // the join snapshot uses the same carrier before Space admission.
+        // Admission grants business authority without creating another connection.
         let request = mac.requestDeviceSpaceJoin("tcp-ios".into()).await.unwrap();
         assert!(iosRouter.spaceChannelScope("tcp-mac").unwrap().is_none());
         assert!(macRouter.spaceChannelScope("tcp-ios").unwrap().is_none());
-        assert_eq!(
-            iosPeer
-                .call(
+        let pendingReturn = iosPeer
+            .call(
+                "tcp-mac",
+                makeRequest(
+                    "tcp-ios",
                     "tcp-mac",
-                    makeRequest(
-                        "tcp-ios",
-                        "tcp-mac",
-                        CoreCallRequest::new(
-                            "pending-return",
-                            NODE_SPACE_TARGET,
-                            "snapshot",
-                            CoreValue::Null
-                        )
+                    CoreCallRequest::new(
+                        "pending-return",
+                        NODE_SPACE_TARGET,
+                        "snapshot",
+                        CoreValue::Null
                     )
                 )
-                .await
-                .result
-                .unwrap_err()
-                .code,
-            "PEER_OUTBOUND_NOT_AUTHORIZED"
+            )
+            .await;
+        assert!(
+            pendingReturn.result.is_ok(),
+            "pre-admission join traffic rides the paired connection: {:?}",
+            pendingReturn.result
         );
         ios.incomingDeviceSpaceJoins().await.unwrap();
         ios.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true)
@@ -220,10 +220,10 @@ async fn tcpAdmissionReturnChannel(macBind: &str) {
         };
         let reverse = iosPeer.call("tcp-mac", returnRequest()).await;
         assert!(reverse.result.is_ok(), "{:?}", reverse.result);
-        assert!(iosPeer.spaceClient().is_some(), "TCP grants expose the shared Space client");
+        assert!(iosPeer.spaceClient().is_some(), "The admitted carrier exposes the shared Space client");
         // The receiver reuses the caller's connection without opening a reverse socket.
-        assert_eq!(iosPeer.pooledChannelCount("tcp-mac").await, 0);
-        assert_eq!(macPeer.pooledChannelCount("tcp-ios").await, 1);
+        assert_eq!(iosPeer.channelCount("tcp-mac").await, 1);
+        assert_eq!(macPeer.channelCount("tcp-ios").await, 1);
         // Different origins may reuse the same request ID at a shared relay hop.
         let (first, second) = tokio::join!(
             iosPeer.call("tcp-mac", returnRequest()),
@@ -233,16 +233,22 @@ async fn tcpAdmissionReturnChannel(macBind: &str) {
             assert_eq!(response.requestId.0, "return-space");
             assert!(response.result.is_ok(), "Concurrent correlation: {:?}", response.result);
         }
-        // Return credentials survive reconnect without any second confirmation.
+        // Only the pairing initiator reconnects; the receiver never opens a reverse socket.
         iosPeer.disconnectPeer("tcp-mac").await.unwrap();
-        assert_eq!(iosPeer.pooledChannelCount("tcp-mac").await, 0);
-        assert!(iosPeer
-            .call("tcp-mac", returnRequest())
-            .await
-            .result
-            .is_ok());
-        assert_eq!(iosPeer.pooledChannelCount("tcp-mac").await, 1);
-        // A Space grant does not expose local-only management surfaces.
+        macPeer.disconnectPeer("tcp-ios").await.unwrap();
+        let forward = macPeer.call("tcp-ios", RoutedCoreRequest {
+            spaceId: mac.deviceSpace().unwrap().spaceId,
+            originNodeId: "tcp-mac".into(),
+            targetNodeId: "tcp-ios".into(),
+            ttl: 0,
+            routeKind: RoutedCoreRequestKind::Target,
+            payload: PeerSyncMethod::DeviceSpace.request("reconnect-space".into(), CoreValue::Null),
+        }).await;
+        assert!(forward.result.is_ok(), "{:?}", forward.result);
+        assert!(iosPeer.call("tcp-mac", returnRequest()).await.result.is_ok());
+        assert_eq!(iosPeer.channelCount("tcp-mac").await, 1);
+        assert_eq!(macPeer.channelCount("tcp-ios").await, 1);
+        // Admission does not expose local-only management surfaces.
         let mut denied = returnRequest();
         denied.payload = CoreCallRequest::new(
             "return-management",

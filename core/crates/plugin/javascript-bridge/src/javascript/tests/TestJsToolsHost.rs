@@ -49,6 +49,12 @@ impl TestRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for TestRuntimeStorageHost {
+    /// Flushes the existing test file through its backing filesystem.
+    fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+        std::fs::OpenOptions::new().write(true).open(self.resolve(path)?)?.sync_all()?;
+        Ok(())
+    }
+
     /// Returns the test runtime root directory.
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         Some(self.runtime_root.clone())
@@ -62,6 +68,11 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
     /// Reads bytes from the test runtime root.
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(std::fs::read(self.resolve(path)?)?)
+    }
+
+    /// Atomically publishes one complete in-memory test entry.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        self.writeBytes(path, content)
     }
 
     /// Writes bytes into the test runtime root.

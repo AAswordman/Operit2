@@ -1347,4 +1347,38 @@ mod tests {
             .unwrap_or("")
             .contains("工具结果缺失"));
     }
+
+    /// Retains one native result per call after large same-name results pass through finalized markup.
+    #[test]
+    fn large_same_name_tool_results_remain_protocol_complete() {
+        use operit_tools::ConversationMarkupManager::ToolResult;
+        use operit_tools::ToolExecutionManager::ToolExecutionBatch;
+        use operit_tools::tools::ToolResultDataClasses::stringResultData;
+
+        let batch = ToolExecutionBatch::new(
+            ["a".repeat(100_000), "证".repeat(100_000)].into_iter().map(|text| ToolResult {
+                toolName: "grep_code".to_string(), success: true,
+                result: stringResultData(text), error: None,
+            }).collect(), None,
+        );
+        let history = vec![
+            PromptTurn::new(PromptTurnKind::ASSISTANT, concat!(
+                "<tool name=\"grep_code\"><param name=\"path\">/app/data</param><param name=\"pattern\">first</param></tool>",
+                "<tool name=\"grep_code\"><param name=\"path\">/app/data</param><param name=\"pattern\">second</param></tool>",
+            )),
+            PromptTurn::new(PromptTurnKind::TOOL_RESULT, batch.message.clone()),
+        ];
+        let messages: Value = serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(&history, true, true)).unwrap();
+        let messages = messages.as_array().unwrap();
+        let calls = messages[0].get("tool_calls").unwrap().as_array().unwrap();
+        let results = messages.iter().filter(|message| message.get("role").and_then(Value::as_str) == Some("tool")).collect::<Vec<_>>();
+        let blocks = operit_util::ChatMarkupRegex::ChatMarkupRegex::tool_result_blocks(&batch.message);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(results.len(), calls.len());
+        for ((call, result), block) in calls.iter().zip(results).zip(blocks) {
+            assert_eq!(result.get("tool_call_id"), call.get("id"));
+            let expected = block.body.strip_prefix("<content>").unwrap().strip_suffix("</content>").unwrap();
+            assert_eq!(result.get("content").and_then(Value::as_str), Some(expected));
+        }
+    }
 }

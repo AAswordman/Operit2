@@ -1,0 +1,17 @@
+[package]
+name = "operit-daemon-host-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+operit-host-native-common = { path = "../../common/operit-host-native-common", default-features = false, features = ["daemon"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Threading"] }
+
+[workspace]

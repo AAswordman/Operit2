@@ -572,6 +572,14 @@ mod tests {
     #[derive(Default)]
     struct Storage {files:Mutex<BTreeMap<String,Vec<u8>>>, fail: std::sync::atomic::AtomicBool}
     impl RuntimeStorageHost for Storage {
+        /// Confirms synchronous in-memory publication without copying or rewriting bytes.
+        fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+            if !self.exists(path)? {
+                return Err(operit_host_api::HostError::new("runtime storage entry not found"));
+            }
+            Ok(())
+        }
+
         fn runtimeRootDir(&self)->Option<std::path::PathBuf> {None}
         fn workspaceRootDir(&self)->Option<std::path::PathBuf> {None}
         fn readBytes(&self,path:&str)->operit_host_api::HostResult<Vec<u8>> {self.files.lock().unwrap().get(path).cloned().ok_or_else(||operit_host_api::HostError::new("missing"))}

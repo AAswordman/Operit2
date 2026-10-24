@@ -212,6 +212,7 @@ plugins/**/.sync_hot_reload_state.json
 AGENTS.md
 .codex*
 .zcodeignore
+.zcode/*
 tools/ios-runtime/native/sources
 
 # Local ESP32 Edge pairing secret
@@ -220,3 +221,7 @@ artifacts/*
 apps/flutter/app/web/runtime/generated/*
 # Developer-local Flutter macOS signing identity (never includes a private key).
 apps/flutter/app/macos/Runner/Configs/Signing.local.xcconfig
+
+# Build-owned Flutter engine font resources
+apps/flutter/app/web/fonts/
+tools/theme/preview/web/fonts/

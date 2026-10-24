@@ -1,11 +1,14 @@
+import { characterModelBindingMode, sameCharacterModelBinding } from "./model-binding";
 import type { DomainInput, DomainOperation, DomainOutput } from "./api";
-import { executeDomain } from "./operations";
+import { executeDomain, resolveConfiguration } from "./operations";
 import { parseDomainPayload } from "./domain";
+import type { ChatConfigurationService } from "./domain";
+import { combineCharacterPrompt } from "./character-prompt";
 import { findChatBinding } from "./chat-storage";
+import { listBindableChats } from "./chat-binding-catalog";
 import { parseChatSelection } from "./chat-bindings";
 import { MemoryJobRunner } from "./memory-jobs/scheduler";
-import { listMemoryChats } from "./memory-jobs/chat";
-import { decodeMemoryBackup, exportMemoryBackup } from "./backup";
+import { listMemoryChats, pruneMissingMemoryChats } from "./memory-jobs/chat";
 import type {
   CharacterRepository,
   CharacterRepositoryOwner,
@@ -21,7 +24,6 @@ import type {
   MemorySearchOptions,
   MemorySettings,
   MemorySearchConfig,
-  MemoryValues,
   Request,
   RequestOutput,
   Snapshot,
@@ -41,8 +43,6 @@ import {
   assertInteger,
   assertMemory,
   assertMemorySettings,
-  assertMemoryValues,
-  assertNumber,
   assertObject,
   assertSearchConfig,
   assertSearchOptions,
@@ -51,7 +51,6 @@ import {
   assertTag,
   assertTagValues,
   normalizeNames,
-  requireDecimal,
   requireId,
   requireName,
 } from "./validation";
@@ -83,7 +82,9 @@ interface TagPlan {
   deleted: string[];
   attachedIds: string[];
 }
-export interface CharacterCardsService {
+export interface CharacterCardsService extends ChatConfigurationService {
+  /** Activates the opened chat's persisted selection through the shared configuration application queue. */
+  activateChatSelection(chatId: string): Promise<void>;
   readGlobalMemoryPreferences(): Promise<
     import("./model").GlobalMemoryPreferences
   >;
@@ -106,7 +107,7 @@ export interface CharacterCardsService {
   ): Promise<DomainOutput<K>>;
 }
 
-/** Binds every entry point to one real file owner and the same required independent configuration dependencies. */
+/** Shares indexed readers and editing transactions across plugin entry points. */
 export function createCharacterCardsService(
   owner: CharacterRepositoryOwner,
   configurations: IndependentConfigurationAccess = independentConfigurations,
@@ -122,8 +123,14 @@ export function createCharacterCardsService(
     if (request.action === "listThemeChoices")
       return readThemeChoices(configurations);
     switch (request.action) {
+      case "snapshot":
+        return owner.readConfigurationSnapshot();
+      case "listBindableChats":
+        return listBindableChats();
       case "listMemoryChats":
         return listMemoryChats(request.ownerKey, owner);
+      case "pruneMissingChatBindings":
+        return owner.run((repository) => pruneMissingMemoryChats(request.ownerKey, repository));
       case "readGlobalMemoryPreferences":
         return owner.readGlobalMemoryPreferences();
       case "readMemorySettings":
@@ -155,28 +162,89 @@ export function createCharacterCardsService(
         ),
     );
   }
-  return {
+  const service: CharacterCardsService = {
+    /** Applies the exact persisted actor through the same validated operations used by explicit selection. */
+    async activateChatSelection(chatId: string): Promise<void> {
+      requireId(chatId, "chat id");
+      const binding = await findChatBinding(chatId);
+      if (binding === null) return;
+      const selection = parseChatSelection(binding.selection);
+      switch (selection.kind) {
+        case "card": await service.dispatchDomain("activePrompt.setCard", { id: selection.id }); break;
+        case "group": await service.dispatchDomain("activePrompt.setGroup", { id: selection.id }); break;
+        case "model": await service.dispatchDomain("activePrompt.setModel", {}); break;
+      }
+    },
     /** Runs the private job scheduler without constructing another store or business service. */
     runMemoryJobs: () => jobs.tick(),
     /** Reads only the metadata flags needed by prompt composition. */
     readGlobalMemoryPreferences: () => owner.readGlobalMemoryPreferences(),
+    /** Reads only the selected character and its owned relations. */
+    getCharacter: (id) => owner.getCharacter(id),
+    /** Reads only the selected group and its saved membership. */
+    getGroup: (id) => owner.getGroup(id),
+    /** Reads only one referenced prompt tag. */
+    getTag: (id) => owner.getTag(id),
+    /** Reads only one referenced shared memory library. */
+    getStore: (id) => owner.getStore(id),
+    /** Reads the model directory independently of role and tool catalogs. */
+    listModels: () => owner.listModels(),
+    /** Reads the speech directory independently of role and tool catalogs. */
+    listTtsConfigs: () => owner.listTtsConfigs(),
     /** Preserves action-specific results through the shared service dispatcher. */
     dispatch: dispatchRequest,
-    /** Reads one consistent domain snapshot through the same operation queue. */
-    snapshot: () => owner.run(snapshot),
-    /** Preserves the same repository queue and integrity checks as full snapshots. */
+    /** Reads configuration records without loading memory data. */
+    snapshot: () => owner.readConfigurationSnapshot(),
+    /** Reads role presentation without entering the editing queue. */
     sidebarDirectory: () => owner.readSidebarDirectory(),
-    /** Keeps every real selection alias and sidebar binding on the same awaited application sequence. */
+    /** Routes reads directly and keeps mutations in the editing transaction. */
     dispatchDomain<K extends DomainOperation>(
       operation: K,
       input: DomainInput<K>,
     ): Promise<DomainOutput<K>> {
       switch (operation) {
+        case "snapshot":
+          return owner.readConfigurationSnapshot() as Promise<DomainOutput<K>>;
+        case "chat.configuration.resolve":
+          return resolveConfiguration(parseDomainPayload("chat.configuration.resolve", input), service) as Promise<DomainOutput<K>>;
+        case "character.combine": {
+          const { id, promptFunctionType = "CHAT", additionalTagIds = [] } = parseDomainPayload("character.combine", input);
+          return combinePrompts(id, additionalTagIds, promptFunctionType, owner)
+            .then(prompt => ({ id, promptFunctionType, additionalTagIds, prompt })) as Promise<DomainOutput<K>>;
+        }
+        case "memory.resolveOwner": {
+          const { characterId } = parseDomainPayload("memory.resolveOwner", input);
+          return resolveMemoryOwner(characterId, owner).then(parseOwner) as Promise<DomainOutput<K>>;
+        }
+        case "tag.list":
+          return owner.listTags() as Promise<DomainOutput<K>>;
+        case "memory.shared.list":
+          return owner.listStores() as Promise<DomainOutput<K>>;
+        case "activePrompt.get":
+          return owner.readActive() as Promise<DomainOutput<K>>;
+        case "character.list":
+          return owner.listCharacters() as Promise<DomainOutput<K>>;
+        case "group.list":
+          return owner.listGroups() as Promise<DomainOutput<K>>;
+        case "character.get": {
+          const { id } = parseDomainPayload("character.get", input);
+          return owner.getCharacter(id) as Promise<DomainOutput<K>>;
+        }
+        case "group.get": {
+          const { id } = parseDomainPayload("group.get", input);
+          return owner.getGroup(id) as Promise<DomainOutput<K>>;
+        }
         case "memory.chat.list":
           return listMemoryChats(
             parseDomainPayload("memory.chat.list", input).ownerKey,
             owner,
           ) as Promise<DomainOutput<K>>;
+        case "memory.chat.pruneMissing":
+          return owner.run((repository) =>
+            pruneMissingMemoryChats(
+              parseDomainPayload("memory.chat.pruneMissing", input).ownerKey,
+              repository,
+            )) as Promise<DomainOutput<K>>;
         case "memory.settings.read":
           return owner.readMemorySettings(
             parseDomainPayload("memory.settings.read", input).ownerKey,
@@ -224,6 +292,7 @@ export function createCharacterCardsService(
       );
     },
   };
+  return service;
 }
 
 /** Requires real arrays and validates every complete canonical record. */
@@ -442,22 +511,24 @@ async function commitTagChanges(
   return normalizeNames(ids);
 }
 
-/** Normalizes every editable character field while retaining complete binding and policy records. */
+/** Validates an explicitly created or changed model binding before publishing it. */
+function assertCharacterModelBinding(card: Card): void {
+  const mode = characterModelBindingMode(card.chatModelBindingMode);
+  if (mode !== "FOLLOW_GLOBAL" && mode !== "FIXED_MODEL")
+    throw new Error("聊天模型绑定模式无效，请重新绑定模型");
+  if (mode === "FIXED_MODEL") {
+    requireId(card.chatProviderId, "固定聊天模型提供商");
+    requireId(card.chatModelId, "固定聊天模型");
+  }
+}
+
+/** Normalizes editable content while preserving stored model and memory selections for unrelated edits. */
 function normalizedCharacter(card: Card): Card {
-  if (
-    card.chatModelBindingMode !== "FOLLOW_GLOBAL" &&
-    card.chatModelBindingMode !== "FIXED_MODEL"
-  )
-    throw new Error("聊天模型绑定模式无效");
   if (
     card.memoryBindingMode !== "CHARACTER" &&
     card.memoryBindingMode !== "SHARED"
   )
     throw new Error("记忆绑定模式无效");
-  if (card.chatModelBindingMode === "FIXED_MODEL")
-    requireId(card.chatModelId, "固定聊天模型");
-  if (card.memoryBindingMode === "SHARED")
-    requireId(card.sharedMemoryId, "共享记忆库");
   if (card.ttsConfigId !== null) requireId(card.ttsConfigId, "TTS 配置");
   if (card.themeConfigId !== null) requireId(card.themeConfigId, "主题配置");
   const policy = card.toolAccessConfig;
@@ -510,17 +581,19 @@ export async function saveCharacter(
   assertCard(card);
   assertBoolean(create, "角色新建标识");
   let value = normalizedCharacter(card);
+  let validateMemoryBinding = create;
   if (create) {
-    if (value.isDefault) throw new Error("不能新建默认角色卡");
+    assertCharacterModelBinding(value);
     value = { ...value, id: "", createdAt: 0, updatedAt: 0 };
   } else {
     const id = requireId(value.id, "角色卡标识");
     const original = await host.getCharacter(id);
     assertCard(original);
+    if (!sameCharacterModelBinding(original, value)) assertCharacterModelBinding(value);
+    validateMemoryBinding = original.memoryBindingMode !== value.memoryBindingMode || original.sharedMemoryId !== value.sharedMemoryId;
     value = {
       ...value,
       id: original.id,
-      isDefault: original.isDefault,
       createdAt: original.createdAt,
     };
   }
@@ -546,7 +619,7 @@ export async function saveCharacter(
   records(tags, assertTag, "标签列表");
   records(stores, assertStore, "共享记忆库列表");
   const plan = prepareTagChanges(value.attachedTagIds, tagChanges, tags);
-  if (value.memoryBindingMode === "SHARED")
+  if (validateMemoryBinding && value.memoryBindingMode === "SHARED")
     findRecord(
       stores,
       requireId(value.sharedMemoryId, "共享记忆库标识"),
@@ -681,7 +754,7 @@ export function parseOwner(ownerKey: string): MemoryOwner {
   throw new Error("记忆库命名空间无效");
 }
 
-/** Matches the original menu's explicit-card and active-card memory owner rules entirely in the plugin. */
+/** Resolves memory only from an explicitly bound character without assuming an installation card. */
 async function menuMemoryOwner(
   chatId: string,
   host: CharacterRepository,
@@ -692,18 +765,13 @@ async function menuMemoryOwner(
     binding === null ? null : parseChatSelection(binding.selection);
   if (selection?.kind === "model") throw new Error("Model-only conversations have no role memory owner");
   if (selection?.kind === "card") return resolveMemoryOwner(selection.id, host);
-  const active = await host.readActive();
-  if ("Model" in active) throw new Error("Model-only selection has no role memory owner");
-  return resolveMemoryOwner(
-    "CharacterCard" in active ? active.CharacterCard.id : "default",
-    host,
-  );
+  throw new Error("Select a character memory owner for this conversation");
 }
 
 /** Requires the selected owner to exist in the canonical character or shared store registry. */
 export async function requireOwner(
   ownerKey: string,
-  host: CharacterRepository,
+  host: Pick<CharacterRepository, "getCharacter" | "listStores">,
 ): Promise<MemoryOwner> {
   const owner = parseOwner(ownerKey);
   if (owner.kind === "CHARACTER") assertCard(await host.getCharacter(owner.id));
@@ -719,7 +787,7 @@ export async function requireOwner(
 /** Resolves the primary memory namespace from the character's complete persisted binding. */
 export async function resolveMemoryOwner(
   characterId: string,
-  host: CharacterRepository,
+  host: Pick<CharacterRepository, "getCharacter" | "listStores">,
 ): Promise<string> {
   const card = await host.getCharacter(requireId(characterId, "角色卡标识"));
   assertCard(card);
@@ -756,20 +824,6 @@ export async function graph(
   return { graph: value, items };
 }
 
-/** Resolves a legacy editor title exactly and rejects ambiguous records instead of picking one. */
-function memoryByTitle(items: Memory[], title: string): Memory {
-  const name = requireName(title, "记忆标题");
-  let found: Memory | undefined;
-  for (const item of items) {
-    if (item.title !== name) continue;
-    if (found !== undefined)
-      throw new Error(`记忆标题不唯一，请使用数据库标识编辑：${name}`);
-    found = item;
-  }
-  if (found === undefined) throw new Error(`记忆不存在：${name}`);
-  return found;
-}
-
 /** Normalizes a user-selected folder using the canonical slash-delimited repository contract. */
 function normalizeFolderPath(value: string | null): string | null {
   if (value === null) return null;
@@ -779,33 +833,6 @@ function normalizeFolderPath(value: string | null): string | null {
     if (name !== "") parts.push(name);
   }
   return parts.length === 0 ? null : parts.join("/");
-}
-
-/** Persists complete editable memory values while retaining repository-owned identity and document data. */
-export async function saveMemory(
-  ownerKey: string,
-  values: MemoryValues,
-  id: string | null,
-  host: CharacterRepository,
-): Promise<Memory> {
-  assertMemoryValues(values);
-  await requireOwner(ownerKey, host);
-  const normalized = {
-    ...values,
-    title: requireName(values.title, "记忆标题"),
-    contentType: values.contentType.trim(),
-    source: values.source.trim(),
-    folderPath: normalizeFolderPath(values.folderPath),
-    tags: normalizeNames(values.tags),
-  };
-  let saved: Memory;
-  if (id === null) saved = await host.createMemory(ownerKey, normalized);
-  else {
-    requireDecimal(id, "记忆记录标识", true);
-    saved = await host.updateMemory(ownerKey, id, normalized);
-  }
-  assertMemory(saved);
-  return saved;
 }
 
 /** Performs full-record canonical search with explicit owner scope and explicit filters. */
@@ -830,31 +857,10 @@ export async function combinePrompts(
   characterId: string,
   additionalTagIds: string[],
   promptFunctionType: "CHAT" | "VOICE",
-  host: CharacterRepository,
+  host: Pick<CharacterRepository, "getCharacter" | "getTag">,
 ): Promise<string> {
   const card = await host.getCharacter(requireId(characterId, "角色卡标识"));
-  assertCard(card);
-  assertStrings(additionalTagIds, "附加标签");
-  if (promptFunctionType !== "CHAT" && promptFunctionType !== "VOICE")
-    throw new Error("提示词功能类型无效");
-  const tags = records(await host.listTags(), assertTag, "标签列表");
-  const parts: string[] = [];
-  const setting = card.characterSetting.trim();
-  if (setting !== "") parts.push(setting);
-  const otherContent = (
-    promptFunctionType === "CHAT"
-      ? card.otherContentChat
-      : card.otherContentVoice
-  ).trim();
-  if (otherContent !== "") parts.push(otherContent);
-  const ids = normalizeNames([...card.attachedTagIds, ...additionalTagIds]);
-  for (const id of ids) {
-    const content = findRecord(tags, id, "提示词标签").promptContent.trim();
-    if (content !== "") parts.push(content);
-  }
-  const advanced = card.advancedCustomPrompt.trim();
-  if (advanced !== "") parts.push(advanced);
-  return parts.join("\n\n").trim();
+  return combineCharacterPrompt(card, additionalTagIds, promptFunctionType, host);
 }
 
 /** Saves full settings through the owner service rather than writing preference files. */
@@ -956,7 +962,6 @@ export async function dispatch(
       const id = requireId(request.id, "角色卡标识");
       const card = await host.getCharacter(id);
       assertCard(card);
-      if (card.isDefault) throw new Error("默认角色卡不能删除");
       await host.deleteCharacter(id);
       return snapshot(host);
     }
@@ -968,6 +973,8 @@ export async function dispatch(
       assertActive(active);
       return active;
     }
+    case "listBindableChats":
+      return listBindableChats();
     case "readChatBinding":
       return executeDomain(
         "chat.configuration.binding.read",
@@ -1022,19 +1029,10 @@ export async function dispatch(
       return host.readToolCatalog();
     case "resolveMemoryOwner":
       return resolveMemoryOwner(request.characterId, host);
-    case "readUser": {
-      await requireOwner(request.ownerKey, host);
-      const user = await host.readUser(request.ownerKey);
-      assertObject(user, "用户资料");
-      assertString(user.content, "用户资料内容");
-      if (user.ownerKey !== request.ownerKey)
-        throw new Error("用户资料 owner 与请求不一致");
-      return user;
-    }
+    case "readUser":
+      return executeDomain("memory.user.read", { ownerKey: request.ownerKey }, host);
     case "writeUser":
-      await requireOwner(request.ownerKey, host);
-      assertString(request.content, "用户资料内容");
-      await host.writeUser(request.ownerKey, request.content);
+      await executeDomain("memory.user.write", { ownerKey: request.ownerKey, content: request.content }, host);
       return { saved: true };
     case "graph":
       return graph(request.ownerKey, host);
@@ -1055,70 +1053,34 @@ export async function dispatch(
     case "searchMemories":
       return searchMemories(request.options, host);
     case "saveMemory": {
-      assertString(request.tags, "记忆标签");
-      assertString(request.folderPath, "记忆文件夹");
-      const values: MemoryValues = {
+      const values = {
         title: request.title,
         content: request.content,
-        contentType: request.contentType,
-        source: request.source,
+        contentType: request.contentType.trim(),
+        source: request.source.trim(),
         credibility: request.credibility,
         importance: request.importance,
         folderPath: request.folderPath,
         tags: normalizeNames(request.tags.split(",")),
       };
-      const id =
-        request.originalTitle === null
-          ? null
-          : memoryByTitle(
-              await listMemories(request.ownerKey, host),
-              request.originalTitle,
-            ).id;
-      await saveMemory(request.ownerKey, values, id, host);
+      if (request.originalTitle === null) await executeDomain("memory.create", { ownerKey: request.ownerKey, values }, host);
+      else await executeDomain("memory.update", { ownerKey: request.ownerKey, originalTitle: request.originalTitle, changes: values }, host);
       return graph(request.ownerKey, host);
     }
     case "deleteMemory": {
-      const memory = memoryByTitle(
-        await listMemories(request.ownerKey, host),
-        request.title,
-      );
-      await host.deleteMemory(request.ownerKey, memory.id);
+      const { item } = await executeDomain("memory.get", { ownerKey: request.ownerKey, title: request.title }, host);
+      await executeDomain("memory.delete", { ownerKey: request.ownerKey, id: item.id }, host);
       return graph(request.ownerKey, host);
     }
-    case "createLink": {
-      assertNumber(request.weight, "关系强度", 0, 1);
-      assertString(request.description, "关系描述");
-      const type_ = requireName(request.linkType, "关系类型");
-      const items = await listMemories(request.ownerKey, host);
-      const source = memoryByTitle(items, request.sourceTitle),
-        target = memoryByTitle(items, request.targetTitle);
-      if (source.id === target.id) throw new Error("不能创建记忆自身关系");
-      await host.createLink(request.ownerKey, {
-        sourceMemoryId: source.id,
-        targetMemoryId: target.id,
-        type_,
-        weight: request.weight,
-        description: request.description,
-      });
+    case "createLink":
+      await executeDomain("memory.link.create", { ownerKey: request.ownerKey, sourceTitle: request.sourceTitle, targetTitle: request.targetTitle, linkType: request.linkType, weight: request.weight, description: request.description }, host);
       return graph(request.ownerKey, host);
-    }
     case "deleteLink":
-      await requireOwner(request.ownerKey, host);
-      requireDecimal(request.linkId, "记忆关系标识", true);
-      await host.deleteLink(request.ownerKey, request.linkId);
+      await executeDomain("memory.link.delete", { ownerKey: request.ownerKey, linkId: request.linkId }, host);
       return graph(request.ownerKey, host);
-    case "updateLink": {
-      await requireOwner(request.ownerKey, host);
-      requireDecimal(request.linkId, "记忆关系标识", true);
-      assertNumber(request.weight, "关系强度", 0, 1);
-      assertString(request.description, "关系描述");
-      await host.updateLink(request.ownerKey, request.linkId, {
-        type_: requireName(request.linkType, "关系类型"),
-        weight: request.weight,
-        description: request.description,
-      });
+    case "updateLink":
+      await executeDomain("memory.link.update", { ownerKey: request.ownerKey, linkId: request.linkId, changes: { linkType: request.linkType, weight: request.weight, description: request.description } }, host);
       return graph(request.ownerKey, host);
-    }
     case "readMemorySettings": {
       await requireOwner(request.ownerKey, host);
       const settings = await host.readMemorySettings(request.ownerKey);
@@ -1190,6 +1152,12 @@ export async function dispatch(
         { ownerKey: request.ownerKey },
         host,
       );
+    case "pruneMissingChatBindings":
+      return executeDomain(
+        "memory.chat.pruneMissing",
+        { ownerKey: request.ownerKey },
+        host,
+      );
     case "updateChatMemory":
       return executeDomain(
         "memory.chat.update",
@@ -1227,28 +1195,9 @@ export async function dispatch(
         host,
       );
     case "exportMemory":
-      await requireOwner(request.ownerKey, host);
-      return {
-        ownerKey: request.ownerKey,
-        content: await exportMemoryBackup(request.ownerKey, host),
-      };
-    case "importMemory": {
-      await requireOwner(request.ownerKey, host);
-      if (
-        request.strategy !== "SKIP" &&
-        request.strategy !== "UPDATE" &&
-        request.strategy !== "CREATE_NEW"
-      )
-        throw new Error("记忆导入策略无效");
-      const document = decodeMemoryBackup(request.content);
-      const result = await host.importMemorySpace(
-        request.ownerKey,
-        document.space,
-        request.strategy,
-      );
-      await host.writeUser(request.ownerKey, document.userMarkdown);
-      return { ownerKey: request.ownerKey, result };
-    }
+      return executeDomain("memory.export", { ownerKey: request.ownerKey }, host);
+    case "importMemory":
+      return executeDomain("memory.import", { ownerKey: request.ownerKey, content: request.content, strategy: request.strategy }, host);
     default: {
       const action: never = request;
       throw new Error(`未知角色卡请求：${JSON.stringify(action)}`);

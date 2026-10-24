@@ -26,6 +26,8 @@ pub mod GitHubAuthPreferences;
 pub mod ModelConfigManager;
 #[path = "PreferenceStorageManager.rs"]
 pub mod PreferenceStorageManager;
+#[path = "PreferenceSpaceMerge.rs"]
+pub(crate) mod PreferenceSpaceMerge;
 #[path = "PromptVersionManager.rs"]
 pub mod PromptVersionManager;
 #[path = "RemoteAnnouncementPreferences.rs"]

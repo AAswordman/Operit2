@@ -11,6 +11,14 @@ struct MemoryStorage {
     fail_write: Mutex<Option<String>>,
 }
 impl RuntimeStorageHost for MemoryStorage {
+    /// Confirms synchronous in-memory publication without copying or rewriting bytes.
+    fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+        if !self.exists(path)? {
+            return Err(operit_host_api::HostError::new("runtime storage entry not found"));
+        }
+        Ok(())
+    }
+
     fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
         None
     }
@@ -30,6 +38,11 @@ impl RuntimeStorageHost for MemoryStorage {
         let start = (offset as usize).min(bytes.len());
         Ok(bytes[start..start.saturating_add(length).min(bytes.len())].to_vec())
     }
+    /// Atomically replaces one in-memory file.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        self.writeBytes(path, content)
+    }
+
     fn writeBytes(&self, path: &str, bytes: &[u8]) -> HostResult<()> {
         let mut failure = self.fail_write.lock().unwrap();
         if failure.as_deref() == Some(path) {
@@ -124,12 +137,6 @@ fn transfer(
                 &op.operation,
                 op.payload.clone(),
             )?;
-        } else if op.domain == "preferences" {
-            PreferencesDataStore::applySyncedEntriesWithStorage(
-                target.clone(),
-                &[PreferencesSyncedEntry::fromOperation(op).map_err(|e| e.to_string())?],
-            )
-            .map_err(|e| e.to_string())?;
         } else {
             return Err(format!("Unexpected domain {}", op.domain));
         }
@@ -174,7 +181,7 @@ fn scope_move_syncs_real_files_and_settings_without_embedded_bundles() {
     assert!(ops
         .iter()
         .any(|op| op.entityId == "runtime/extensions/space/skills/demo/SKILL.md"));
-    assert!(ops.iter().any(|op| op.domain == "preferences"));
+    assert!(ops.iter().all(|op| op.domain == "runtime_file"));
     transfer(&source, &target, &ops).unwrap();
     assert_eq!(
         target
@@ -201,7 +208,7 @@ fn scope_move_syncs_real_files_and_settings_without_embedded_bundles() {
 
 /// Resolves concurrent writes by choosing one complete settings entity.
 #[test]
-fn concurrent_settings_choose_one_complete_record_without_republishing_installation() {
+fn concurrent_settings_choose_one_atomic_installation_record() {
     let a = host();
     let b = host();
     let store_a = skill(&a);
@@ -222,7 +229,7 @@ fn concurrent_settings_choose_one_complete_record_without_republishing_installat
     assert!(ops_a
         .iter()
         .chain(&ops_b)
-        .all(|op| op.domain == "preferences"));
+        .all(|op| op.domain == "runtime_file"));
     transfer(&a, &b, &ops_a).unwrap();
     transfer(&b, &a, &ops_b).unwrap();
     let settings_a = store_a.record("skill", "demo").unwrap().settings;
@@ -344,6 +351,7 @@ fn generic_file_tracking_only_publishes_changed_files_and_recursive_tombstones()
 fn legacy_bundle_upgrade_retries_actual_files_without_overwriting_local_edits() {
     let source = host();
     let record = ExtensionRecord {
+        schemaVersion: 0,
         kind: "skill".into(),
         id: "legacy".into(),
         scope: "space".into(),
@@ -505,7 +513,7 @@ fn observer_panic_cannot_undo_a_committed_sync_or_prevent_other_observers() {
 }
 
 #[test]
-fn shared_mcp_definition_and_flags_roundtrip_via_preferences() {
+fn shared_mcp_definition_and_flags_roundtrip_via_installation_record() {
     let source = host();
     let target = host();
     let store = ExtensionStore::new(source.clone());
@@ -517,7 +525,7 @@ fn shared_mcp_definition_and_flags_roundtrip_via_preferences() {
     settings["server"]["disabled"] = json!(true);
     store.setSettings("mcp", "remote", settings).unwrap();
     let ops = operations(&source, &before);
-    assert!(ops.iter().all(|op| op.domain == "preferences"));
+    assert!(ops.iter().all(|op| op.domain == "runtime_file"));
     transfer(&source, &target, &ops).unwrap();
     assert_eq!(
         ExtensionStore::new(target)
@@ -656,42 +664,6 @@ fn configuration_path_does_not_change_after_registration() {
     assert_eq!(store.configPath("first_import").unwrap(), path);
 }
 
-/// Verifies retiring managed code preserves configuration and business data and requires archival first.
-#[test]
-fn retired_device_package_keeps_data_and_requires_archived_source() {
-    let host = Arc::new(MemoryStorage::default());
-    let store = ExtensionStore::new(host.clone());
-    let source = "runtime/extensions/device/packages/daily_life.js";
-    host.writeBytes(source, b"legacy-bundled-code").unwrap();
-    store.registerDevice("package", "daily_life", "daily_life.js", json!({
-        "builtin": false, "installationId": "00000000000000000000000000000001", "members": ["daily_life"], "enabledNames": ["daily_life"],
-        "disabledNames": [], "order": 0, "subpackageStates": {}
-    })).unwrap();
-    let config = format!(
-        "{}/reminders.json",
-        ExtensionStore::configPathForScope("daily_life", "device").unwrap()
-    );
-    let data = format!(
-        "{}/memory.db",
-        ExtensionStore::dataPathForScope("daily_life", "device").unwrap()
-    );
-    host.writeBytes(&config, b"configuration").unwrap();
-    host.writeBytes(&data, b"business-data").unwrap();
-    assert!(store
-        .retireDevicePackageSource("daily_life", "daily_life.js")
-        .is_err());
-    assert!(store
-        .retireDevicePackageSource("daily_life", "other.js")
-        .is_err());
-    host.delete(source, false).unwrap();
-    store
-        .retireDevicePackageSource("daily_life", "daily_life.js")
-        .unwrap();
-    assert!(store.record("package", "daily_life").is_err());
-    assert_eq!(host.readBytes(&config).unwrap(), b"configuration");
-    assert_eq!(host.readBytes(&data).unwrap(), b"business-data");
-}
-
 /// Migrates the legacy package-manager strings before importing extension settings.
 #[test]
 fn legacy_package_preferences_migrate_to_native_json_before_registration() {
@@ -743,4 +715,470 @@ fn malformed_legacy_package_preferences_do_not_register_or_overwrite_data() {
         assert!(store.records("package").unwrap().is_empty());
         assert_eq!(storage.readBytes(path).unwrap(), original);
     }
+}
+
+/// Rejects incompatible installation and scope moves before touching package data or records.
+#[test]
+fn fixed_package_installation_scope_rejects_registration_and_moves_atomically() {
+    for (scope, other) in [("device", "space"), ("space", "device")] {
+        let storage = host();
+        let store = ExtensionStore::new(storage.clone());
+        let settings = json!({
+            "members":["fixed"], "enabledNames":[], "disabledNames":[],
+            "subpackageStates":{}, "order":0, "builtin":false,
+            "installationId":"00000000000000000000000000000000", "installationScope":scope
+        });
+        assert!(store.registerInScope("package", "fixed", "fixed.toolpkg", settings.clone(), other).is_err());
+        assert!(store.records("package").unwrap().is_empty());
+        store.registerInScope("package", "fixed", "fixed.toolpkg", settings, scope).unwrap();
+        let path = format!("{}/fixed.toolpkg", ExtensionStore::root("package", scope).unwrap());
+        storage.writeBytes(&path, b"original-package").unwrap();
+        let original = store.record("package", "fixed").unwrap();
+        assert!(store.moveScope("package", "fixed", other).is_err());
+        assert_eq!(store.record("package", "fixed").unwrap(), original);
+        assert_eq!(storage.readBytes(&path).unwrap(), b"original-package");
+        assert!(!storage.exists(&format!("{}/fixed.toolpkg", ExtensionStore::root("package", other).unwrap())).unwrap());
+    }
+}
+
+/// Failed packages can be removed even when device and space both claim the same ID.
+#[test]
+fn deleting_failed_package_removes_conflicting_owners_and_preserves_other_packages() {
+    let storage = host();
+    let store = ExtensionStore::new(storage.clone());
+    register_package_owner(&store, "broken", &["broken"]);
+    register_package_owner(&store, "healthy", &["healthy"]);
+    let mut shared = store.record("package", "broken").unwrap();
+    shared.scope = "space".into();
+    store.write(&shared).unwrap();
+    for scope in ["device", "space"] {
+        storage
+            .writeBytes(
+                &format!("runtime/extensions/{scope}/packages/broken.toolpkg"),
+                b"broken",
+            )
+            .unwrap();
+    }
+    assert!(store
+        .record("package", "broken")
+        .unwrap_err()
+        .contains("ownership conflict"));
+    let before = clock(&storage);
+    assert!(store.deleteFailedPackageInstallations("broken").unwrap());
+    assert!(!store.deleteFailedPackageInstallations("broken").unwrap());
+    assert_eq!(store.records("package").unwrap().len(), 1);
+    assert_eq!(store.record("package", "healthy").unwrap().id, "healthy");
+    for scope in ["device", "space"] {
+        assert!(!storage
+            .exists(&format!(
+                "runtime/extensions/{scope}/packages/broken.toolpkg"
+            ))
+            .unwrap());
+    }
+    assert!(operations(&storage, &before)
+        .iter()
+        .any(|operation| operation.operation == "delete"
+            && operation.entityId.ends_with("broken.toolpkg")));
+}
+
+
+/// Retains configuration, data, identity and user settings across custom installs and explicit removal.
+#[test]
+fn builtin_customization_preserves_data_and_supports_custom_updates() {
+    for scope in ["device", "space"] {
+        let storage = host();
+        let store = ExtensionStore::new(storage.clone());
+        store
+            .registerInScope(
+                "package",
+                "demo",
+                "",
+                json!({
+                    "members": ["demo", "demo:tools"], "enabledNames": ["demo"],
+                    "disabledNames": ["demo:tools"], "subpackageStates": {"demo:tools": false},
+                    "order": 7, "builtin": true,
+                    "installationId": "00000000000000000000000000000000"
+                }),
+                scope,
+            )
+            .unwrap();
+        let config = format!(
+            "{}/settings.json",
+            ExtensionStore::configPathForScope("demo", scope).unwrap()
+        );
+        storage.writeBytes(&config, b"user configuration").unwrap();
+        let local = format!(
+            "{}/notes.txt",
+            ExtensionStore::localDataPath("demo").unwrap()
+        );
+        let shared = format!(
+            "{}/memory.sqlite",
+            ExtensionStore::spaceDataPath("demo").unwrap()
+        );
+        storage.writeBytes(&local, b"local data").unwrap();
+        storage.writeBytes(&shared, b"shared data").unwrap();
+        let root = ExtensionStore::root("package", scope).unwrap();
+        storage
+            .writeBytes(&format!("{root}/custom.toolpkg"), b"first custom version")
+            .unwrap();
+        store
+            .customizePackage(
+                "demo",
+                "custom.toolpkg",
+                vec!["demo".into(), "demo:custom".into()],
+            )
+            .unwrap();
+        let custom = store.record("package", "demo").unwrap();
+        assert_eq!(custom.sourceName, "custom.toolpkg");
+        assert_eq!(custom.settings["builtin"], false);
+        assert_eq!(custom.settings["customized"], true);
+        assert_eq!(custom.settings["enabledNames"], json!(["demo"]));
+        assert_eq!(store.packageOwner("demo:custom").unwrap().id, "demo");
+        storage
+            .writeBytes(
+                &format!("{root}/updated.toolpkg"),
+                b"updated custom version",
+            )
+            .unwrap();
+        store
+            .customizePackage(
+                "demo",
+                "updated.toolpkg",
+                vec!["demo".into(), "demo:custom".into()],
+            )
+            .unwrap();
+        assert!(!storage.exists(&format!("{root}/custom.toolpkg")).unwrap());
+        assert_eq!(storage.readBytes(&config).unwrap(), b"user configuration");
+        store.removePackageCustomization("demo").unwrap();
+        let builtin = store.record("package", "demo").unwrap();
+        assert_eq!(builtin.id, "demo");
+        assert_eq!(builtin.scope, scope);
+        assert_eq!(builtin.sourceName, "");
+        assert_eq!(builtin.settings["builtin"], true);
+        assert_eq!(builtin.settings["customized"], false);
+        assert_eq!(builtin.settings["members"], json!(["demo", "demo:tools"]));
+        assert_eq!(builtin.settings["enabledNames"], json!(["demo"]));
+        assert_eq!(builtin.settings["disabledNames"], json!(["demo:tools"]));
+        assert_eq!(
+            builtin.settings["subpackageStates"],
+            json!({"demo:tools": false})
+        );
+        assert_eq!(builtin.settings["order"], 7);
+        assert_eq!(store.packageOwner("demo:tools").unwrap().id, "demo");
+        assert!(!storage.exists(&format!("{root}/updated.toolpkg")).unwrap());
+        assert_eq!(storage.readBytes(&config).unwrap(), b"user configuration");
+        assert_eq!(storage.readBytes(&local).unwrap(), b"local data");
+        assert_eq!(storage.readBytes(&shared).unwrap(), b"shared data");
+    }
+}
+
+/// Synchronizes custom source installation and explicit removal through existing Space file operations.
+#[test]
+fn shared_builtin_customization_syncs_source_changes_without_deleting_configuration() {
+    let source = host();
+    let target = host();
+    let store = ExtensionStore::new(source.clone());
+    store
+        .registerInScope(
+            "package",
+            "demo",
+            "",
+            json!({
+                "members": ["demo"], "enabledNames": ["demo"], "disabledNames": [],
+                "subpackageStates": {}, "order": 0, "builtin": true,
+                "installationId": "00000000000000000000000000000000"
+            }),
+            "space",
+        )
+        .unwrap();
+    let config = format!(
+        "{}/settings.json",
+        ExtensionStore::configPathForScope("demo", "space").unwrap()
+    );
+    RuntimeFileSyncStore::new(source.clone(), RUNTIME_SYNC_DIR_PATH)
+        .writeBytes(&config, b"shared configuration")
+        .unwrap();
+    transfer(&source, &target, &operations(&source, &SyncClock::empty())).unwrap();
+    let before_install = clock(&source);
+    let archive = "runtime/extensions/space/packages/custom.toolpkg";
+    source.writeBytes(archive, b"custom archive").unwrap();
+    store
+        .customizePackage("demo", "custom.toolpkg", vec!["demo".into()])
+        .unwrap();
+    transfer(&source, &target, &operations(&source, &before_install)).unwrap();
+    let peer = ExtensionStore::new(target.clone());
+    assert_eq!(
+        peer.record("package", "demo").unwrap().settings["customized"],
+        true
+    );
+    assert_eq!(target.readBytes(archive).unwrap(), b"custom archive");
+    let before_remove = clock(&source);
+    store.removePackageCustomization("demo").unwrap();
+    transfer(&source, &target, &operations(&source, &before_remove)).unwrap();
+    let restored = peer.record("package", "demo").unwrap();
+    assert_eq!(restored.settings["builtin"], true);
+    assert_eq!(restored.sourceName, "");
+    assert!(!target.exists(archive).unwrap());
+    assert_eq!(target.readBytes(&config).unwrap(), b"shared configuration");
+}
+
+/// Shared ownership replaces the bundled local record without merging independent local settings.
+#[test]
+fn shared_builtin_owner_replaces_local_state() {
+    let storage = host();
+    let store = ExtensionStore::new(storage.clone());
+    let settings = |enabled: Value, order: u64| {
+        let subpackageEnabled = enabled
+            .as_array()
+            .is_some_and(|values| !values.is_empty());
+        json!({
+            "members": ["bundle", "bundle_tools"], "enabledNames": enabled,
+            "disabledNames": [], "subpackageStates": {"bundle_tools": subpackageEnabled},
+            "order": order, "builtin": true,
+            "installationId": "00000000000000000000000000000000"
+        })
+    };
+    store
+        .registerDevice("package", "bundle", "", settings(json!(["legacy"]), 7))
+        .unwrap();
+    let mut canonical = store.record("package", "bundle").unwrap();
+    canonical.scope = "space".into();
+    canonical.settings = settings(json!(["canonical"]), 2);
+    canonical.settings["installationScope"] = json!("space");
+    store.write(&canonical).unwrap();
+    assert!(store
+        .record("package", "bundle")
+        .unwrap_err()
+        .contains("ownership conflict"));
+
+    assert!(store
+        .acceptsBuiltinPackage("bundle")
+        .unwrap());
+    let merged = store.record("package", "bundle").unwrap();
+    assert_eq!(merged.scope, "space");
+    assert_eq!(merged.settings["enabledNames"], json!(["canonical"]));
+    assert_eq!(merged.settings["order"], json!(2));
+    assert_eq!(merged.settings["installationScope"], json!("space"));
+    assert!(store
+        .records("package")
+        .unwrap()
+        .iter()
+        .all(|record| record.scope == "space"));
+    assert!(store.acceptsBuiltinPackage("bundle").unwrap());
+}
+
+/// Genuine ownership conflicts must keep failing instead of being auto-merged.
+#[test]
+fn builtin_scope_reconciliation_refuses_non_builtin_duplicates() {
+    let storage = host();
+    let store = ExtensionStore::new(storage);
+    register_package_owner(&store, "bundle", &["bundle"]);
+    let mut duplicate = store.record("package", "bundle").unwrap();
+    duplicate.scope = "space".into();
+    duplicate.settings["installationScope"] = json!("space");
+    store.write(&duplicate).unwrap();
+
+    assert!(store.acceptsBuiltinPackage("bundle").unwrap_err().contains("ownership conflict"));
+    assert!(store
+        .record("package", "bundle")
+        .unwrap_err()
+        .contains("ownership conflict"));
+}
+
+/// Keeps installation source and configuration in the same synchronized entity.
+#[test]
+fn installation_settings_use_only_the_installation_record() {
+    let storage = host();
+    let store = ExtensionStore::new(storage.clone());
+    store.registerInScope("skill", "demo", "demo", json!({"visible": true}), "space").unwrap();
+    let before = clock(&storage);
+    store.setSettings("skill", "demo", json!({"visible": false})).unwrap();
+    let changes = operations(&storage, &before);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].domain, "runtime_file");
+    assert_eq!(changes[0].entityId, recordPath("skill", "demo", "space").unwrap());
+    assert!(storage.list("runtime/extensions/space/settings").unwrap().is_empty());
+}
+
+/// A later peer's built-in initialization cannot replace an explicit shared installation.
+#[test]
+fn late_builtin_initialization_preserves_explicit_shared_installation() {
+    let installed = host();
+    let fresh = host();
+    let owner = ExtensionStore::new(installed.clone());
+    let peer = ExtensionStore::new(fresh.clone());
+    let settings = json!({
+        "members": ["demo"], "enabledNames": ["demo"], "disabledNames": [],
+        "subpackageStates": {}, "order": 9, "builtin": false,
+        "installationId": "00000000000000000000000000000000"
+    });
+    installed.writeBytes("runtime/extensions/space/packages/demo.toolpkg", b"archive").unwrap();
+    owner.registerInScope("package", "demo", "demo.toolpkg", settings.clone(), "space").unwrap();
+    let mut initial = settings;
+    initial["builtin"] = json!(true);
+    initial["order"] = json!(0);
+    initial["enabledNames"] = json!([]);
+    initial["installationId"] = json!("11111111111111111111111111111111");
+    peer.registerInScope("package", "demo", "", initial, "space").unwrap();
+    let explicit = operations(&installed, &SyncClock::empty());
+    let mut bootstrap = operations(&fresh, &SyncClock::empty());
+    for op in &mut bootstrap { op.createdAt += 60000; }
+    transfer(&fresh, &installed, &bootstrap).unwrap();
+    transfer(&installed, &fresh, &explicit).unwrap();
+    let expected = owner.record("package", "demo").unwrap();
+    assert_eq!(expected.sourceName, "demo.toolpkg");
+    assert_eq!(expected.settings["builtin"], false);
+    assert_eq!(expected.settings["order"], 9);
+    assert_eq!(expected.settings["installationId"], "00000000000000000000000000000000");
+    assert_eq!(peer.record("package", "demo").unwrap(), expected);
+}
+
+/// Moves bundled ownership through the existing sync path and preserves the selected subpackage flags.
+#[test]
+fn builtin_scope_moves_sync_flags_and_allows_deleting_bundled_installations() {
+    let source = host();
+    let target = host();
+    let store = ExtensionStore::new(source.clone());
+    let peer = ExtensionStore::new(target.clone());
+    let settings = json!({
+        "members": ["demo", "demo_tools"], "enabledNames": ["demo"], "disabledNames": [],
+        "subpackageStates": {"demo_tools": false}, "order": 7, "builtin": true,
+        "installationId": "00000000000000000000000000000000"
+    });
+    store.registerDevice("package", "demo", "", settings.clone()).unwrap();
+    let mut local_settings = settings.clone();
+    local_settings["subpackageStates"]["demo_tools"] = json!(true);
+    peer.registerDevice("package", "demo", "", local_settings).unwrap();
+    let local_config = format!("{}/settings.json", ExtensionStore::configPathForScope("demo", "device").unwrap());
+    let shared_config = format!("{}/settings.json", ExtensionStore::configPathForScope("demo", "space").unwrap());
+    let private_data = format!("{}/notes.txt", ExtensionStore::localDataPath("demo").unwrap());
+    source.writeBytes(&local_config, b"shared configuration").unwrap();
+    target.writeBytes(&local_config, b"old local configuration").unwrap();
+    target.writeBytes(&private_data, b"private device data").unwrap();
+    store.moveScope("package", "demo", "space").unwrap();
+    transfer(&source, &target, &operations(&source, &SyncClock::empty())).unwrap();
+    let before_adoption = clock(&target);
+    assert!(peer.acceptsBuiltinPackage("demo").unwrap());
+    assert_eq!(peer.record("package", "demo").unwrap(), store.record("package", "demo").unwrap());
+    assert_eq!(clock(&target), before_adoption);
+    assert!(!target.exists(&recordPath("package", "demo", "device").unwrap()).unwrap());
+    assert!(!target.exists(&local_config).unwrap());
+    assert_eq!(target.readBytes(&shared_config).unwrap(), b"shared configuration");
+    assert_eq!(target.readBytes(&private_data).unwrap(), b"private device data");
+    let before_toggle = clock(&source);
+    let mut updated = store.record("package", "demo").unwrap().settings;
+    updated["subpackageStates"]["demo_tools"] = json!(true);
+    store.setSettings("package", "demo", updated).unwrap();
+    transfer(&source, &target, &operations(&source, &before_toggle)).unwrap();
+    assert_eq!(peer.record("package", "demo").unwrap().settings["subpackageStates"]["demo_tools"], true);
+    let before_move = clock(&target);
+    peer.moveScope("package", "demo", "device").unwrap();
+    transfer(&target, &source, &operations(&target, &before_move)).unwrap();
+    assert!(!store.acceptsBuiltinPackage("demo").unwrap());
+    assert!(store.record("package", "demo").is_err());
+    assert!(peer.acceptsBuiltinPackage("demo").unwrap());
+    assert_eq!(target.readBytes(&local_config).unwrap(), b"shared configuration");
+    assert_eq!(target.readBytes(&private_data).unwrap(), b"private device data");
+    let local = peer.record("package", "demo").unwrap();
+    assert_eq!(local.scope, "device");
+    assert_eq!(local.settings["subpackageStates"]["demo_tools"], true);
+    assert_eq!(local.settings["order"], 7);
+    peer.delete("package", "demo").unwrap();
+    assert!(peer.record("package", "demo").is_err());
+    assert!(!peer.acceptsBuiltinPackage("demo").unwrap());
+    assert!(!target.exists(&local_config).unwrap());
+    assert_eq!(target.readBytes(&private_data).unwrap(), b"private device data");
+}
+
+/// Preserves plugin data during bundled uninstallation and synchronizes only installation removal.
+#[test]
+fn builtin_deletion_retires_installations_and_syncs_shared_removal() {
+    for scope in ["device", "space"] {
+        for failed in [false, true] {
+            let source = host();
+            let target = host();
+            let store = ExtensionStore::new(source.clone());
+            let peer = ExtensionStore::new(target.clone());
+            let settings = json!({
+                "members": ["demo"], "enabledNames": ["demo"], "disabledNames": [],
+                "subpackageStates": {}, "order": 0, "builtin": true,
+                "installationId": "00000000000000000000000000000000"
+            });
+            store.registerInScope("package", "demo", "", settings.clone(), scope).unwrap();
+            let mut data_files = Vec::new();
+            for data_scope in ["device", "space"] {
+                let root = ExtensionStore::dataPathForScope("demo", data_scope).unwrap();
+                for name in ["cards.preferences.json", "groups.preferences.json", "memory.sqlite", "owner/USER.md"] {
+                    let path = format!("{root}/{name}");
+                    let bytes = format!("existing {data_scope} {name}").into_bytes();
+                    source.writeBytes(&path, &bytes).unwrap();
+                    data_files.push((path, bytes));
+                }
+            }
+            if scope == "space" {
+                transfer(&source, &target, &operations(&source, &SyncClock::empty())).unwrap();
+                assert!(peer.acceptsBuiltinPackage("demo").unwrap());
+            }
+            let before_delete = clock(&source);
+            if failed {
+                assert!(store.deleteFailedPackageInstallations("demo").unwrap());
+                assert!(!store.deleteFailedPackageInstallations("demo").unwrap());
+            } else {
+                store.delete("package", "demo").unwrap();
+            }
+            assert!(store.record("package", "demo").is_err());
+            assert!(!ExtensionStore::new(source.clone()).acceptsBuiltinPackage("demo").unwrap());
+            for (path, bytes) in &data_files {
+                assert_eq!(source.readBytes(path).unwrap(), *bytes, "Uninstallation changed plugin data: {path}");
+            }
+            assert!(operations(&source, &before_delete).iter()
+                .all(|operation| !operation.entityId.starts_with("runtime/plugin_data/")));
+            if scope == "space" {
+                transfer(&source, &target, &operations(&source, &before_delete)).unwrap();
+                assert!(peer.record("package", "demo").is_err());
+                assert!(!peer.acceptsBuiltinPackage("demo").unwrap());
+            } else {
+                assert!(operations(&source, &before_delete).is_empty());
+                assert!(peer.acceptsBuiltinPackage("demo").unwrap());
+                store.registerDevice("package", "demo", "", settings).unwrap();
+                for (path, bytes) in &data_files {
+                    assert_eq!(source.readBytes(path).unwrap(), *bytes, "Reinstallation changed plugin data: {path}");
+                }
+                assert!(store.acceptsBuiltinPackage("demo").unwrap());
+                store.delete("package", "demo").unwrap();
+                assert!(!store.acceptsBuiltinPackage("demo").unwrap());
+            }
+        }
+    }
+}
+
+/// Retires the duplicate settings copy without letting it replace descriptor ownership.
+#[test]
+fn legacy_settings_migrate_once_without_changing_the_installation_source() {
+    let storage = host();
+    let store = ExtensionStore::new(storage.clone());
+    let mut record = ExtensionRecord {
+        schemaVersion: 0, kind: "package".into(), id: "demo".into(), scope: "space".into(),
+        sourceName: "demo.toolpkg".into(), files: BTreeMap::new(),
+        settings: json!({
+            "members": ["demo"], "enabledNames": [], "disabledNames": [],
+            "subpackageStates": {}, "order": 0, "builtin": false,
+            "installationId": "00000000000000000000000000000000"
+        }),
+    };
+    let mut old_settings = record.settings.clone();
+    old_settings["builtin"] = json!(true);
+    old_settings["installationId"] = json!("11111111111111111111111111111111");
+    old_settings["order"] = json!(7);
+    let preferences = store.legacySettingsStore(&record).unwrap();
+    preferences.edit(|prefs| prefs.set(&stringPreferencesKey("settings"), old_settings)).unwrap();
+    storage.writeBytes(&recordPath("package", "demo", "space").unwrap(), &serde_json::to_vec(&record).unwrap()).unwrap();
+    record.schemaVersion = 1;
+    record.settings["order"] = json!(7);
+    assert_eq!(store.record("package", "demo").unwrap(), record);
+    let migrated = clock(&storage);
+    preferences.edit(|prefs| prefs.set(&stringPreferencesKey("settings"), json!({"order": 99}))).unwrap();
+    assert_eq!(store.record("package", "demo").unwrap(), record);
+    let changes = operations(&storage, &migrated);
+    assert!(changes.iter().all(|op| op.domain == "preferences"));
 }

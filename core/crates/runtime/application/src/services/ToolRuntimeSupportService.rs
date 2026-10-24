@@ -135,11 +135,10 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         if let Some(runtime)=self.deviceToolRuntime.get() {runtime.close_transports(owner);}
     }
 
-    fn executeDeviceTool(&self, request: operit_plugin_sdk::javascript::JsToolCallRequest,
-        preflight: Option<operit_tools::tools::DeviceTools::DeviceToolPreflight>)
+    fn executeDeviceTool(&self, request: operit_plugin_sdk::javascript::JsToolCallRequest)
         -> operit_plugin_sdk::javascript::JsExecutionCompletion<operit_plugin_sdk::javascript::JsToolCallResult> {
         match self.deviceToolRuntime.get() {
-            Some(runtime) => runtime.dispatch_with_preflight(request, preflight),
+            Some(runtime) => runtime.dispatch(request),
             None => Box::pin(async { operit_tools::tools::DeviceTools::failure("Device tool routing is not initialized") }),
         }
     }
@@ -645,13 +644,26 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         &'a self,
         setAsCurrentChat: bool,
         sourceChatId: Option<String>,
+        parentChatId: Option<String>,
         input: Option<serde_json::Value>,
     ) -> ToolRuntimeSupportFuture<'a, Result<String, String>> {
         Box::pin(async move {
+            // Creating an unopened conversation only needs the shared record manager
+            // and publication flows. Do not reserve every chat runtime while plugins run.
+            if !setAsCurrentChat {
+                let (mut history, service) = {
+                    let mut holder = self.chatRuntimeHolder.lock().await;
+                    let core = holder.getCore(ChatRuntimeSlot::MAIN);
+                    let service = core.enhancedAiService.clone()
+                        .ok_or_else(|| "Chat creation requires an initialized AI runtime".to_string())?;
+                    (core.chatHistoryDelegate.clone_for_core(), service)
+                };
+                return history.createNewChat(&service, false, sourceChatId, parentChatId, input).await;
+            }
             let mut holder = self.chatRuntimeHolder.lock().await;
             let chatId = holder
                 .getCore(ChatRuntimeSlot::MAIN)
-                .createNewChat(setAsCurrentChat, sourceChatId, input)
+                .createNewChat(setAsCurrentChat, sourceChatId, parentChatId, input)
                 .await?;
             holder.observeStats();
             Ok(chatId)

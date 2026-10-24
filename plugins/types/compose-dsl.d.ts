@@ -2774,6 +2774,10 @@ export type ComposeAnimationCurve = "linear" | "easeOutCubic" | "easeInOut" | "e
  */
 export interface ComposeBoxAnimation {
   /**
+   * Animates intrinsic child size changes, including inserting or removing content.
+   */
+  animateContentSize?: boolean;
+  /**
    * Transition duration in milliseconds; zero applies changes immediately.
    */
   durationMillis?: number;
@@ -2918,6 +2922,44 @@ export interface MarkdownProps extends ComposeCommonProps {
 }
 
 /**
+ * Optional native input decoration overrides; omitted fields inherit the host theme.
+ */
+export interface ComposeTextFieldDecoration {
+  /**
+   * Uses compact vertical layout for the input decoration.
+   */
+  isDense?: boolean;
+  /**
+   * Paints the input container with its fill color.
+   */
+  filled?: boolean;
+  /**
+   * Background paint inside the input border.
+   */
+  fillColor?: ComposeColor;
+  /**
+   * Rounded outline radius; the resting outline is hidden unless borderColor is supplied.
+   */
+  cornerRadius?: number;
+  /**
+   * Resting outline color.
+   */
+  borderColor?: ComposeColor;
+  /**
+   * Outline color while the field has focus.
+   */
+  focusedBorderColor?: ComposeColor;
+  /**
+   * Insets around editable input content.
+   */
+  contentPadding?: ComposePadding;
+  /**
+   * Typography and color overrides for the placeholder.
+   */
+  hintStyle?: ComposeTextFieldStyle;
+}
+
+/**
  * State, decoration, validation, and typography for an editable text field.
  * Standard themed input frame for arbitrary plugin-owned content.
  * Controlled horizontally swipeable pages.
@@ -2959,6 +3001,10 @@ export interface InputDecoratorProps extends ComposeCommonProps {
  * State, decoration, validation, and typography for an editable text field.
  */
 export interface TextFieldProps extends ComposeCommonProps {
+  /**
+   * Optional native input decoration overrides.
+   */
+  decoration?: ComposeTextFieldDecoration;
   /**
    * Optional width constraint for suffix icon content.
    */
@@ -3266,6 +3312,11 @@ export interface IconButtonProps extends ComposeCommonProps {
 }
 
 /**
+ * Global surface layer whose material treatment follows the host theme settings.
+ */
+export type ComposeThemeSurfaceLayer = "panel" | "card" | "control";
+
+/**
  * Elevated or outlined Material container for grouped content.
  */
 export interface CardProps extends ComposeCommonProps {
@@ -3273,6 +3324,10 @@ export interface CardProps extends ComposeCommonProps {
    * Child nodes rendered inside the card container.
    */
   content?: ComposeChildren;
+  /**
+   * Uses global transparency and blur for this layer; requires containerColor and has no elevation.
+   */
+  themeSurface?: ComposeThemeSurfaceLayer;
   /**
    * Background color of the card surface.
    */
@@ -3412,6 +3467,10 @@ export interface ComposeLazyViewport {
    */
   itemExtent: number;
   /**
+   * Number of eager items before the windowed items in a sliver host.
+   */
+  staticItemCount?: number;
+  /**
    * Requests the next materialized range through normal action dispatch.
    */
   onRangeChanged: (arg0: ComposeLazyRange) => void;
@@ -3483,6 +3542,14 @@ export interface SnackbarHostProps extends ComposeCommonProps {
  * Properties for embedding the host AI chat content without its workspace panel.
  */
 export interface AiChatProps extends ComposeCommonProps {
+  /**
+   * Identifies the conversation shown in a local embedded chat runtime without changing the main selection.
+   */
+  chatId?: string;
+  /**
+   * Controls the native composer; false leaves sending and cancellation to the surrounding workflow.
+   */
+  showInput?: boolean;
 }
 
 /**
@@ -4318,6 +4385,10 @@ export interface ComposeDslContext {
    * Reuses a keyed computed value until its dependency list changes.
    */
   useMemo<T>(key: string, factory: () => T, deps?: unknown[]): T;
+  /**
+   * Runs composition-owned work and cleans it up on dependency change or disposal.
+   */
+  useEffect(key: string, setup: () => () => void, dependencies: any[]): void;
   /**
    * Measures text using host font metrics and the supplied layout constraints.
    */
