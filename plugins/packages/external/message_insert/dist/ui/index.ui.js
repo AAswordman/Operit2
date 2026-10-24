@@ -69,45 +69,6 @@ function createToggleRow(ctx, title, subtitle, checked, onCheckedChange, enabled
         }),
     ]);
 }
-function createMemoryConfigSection(ctx, text, enabled, allowRepeatedMemorySearch, onAllowRepeatedMemorySearchChange, limitValue, onLimitChange, onApply) {
-    return ctx.UI.Column({
-        fillMaxWidth: true,
-        padding: { horizontal: 14, vertical: 12 },
-        spacing: 10,
-    }, [
-        ctx.UI.Text({
-            text: text.memoryConfigTitle,
-            style: "bodyMedium",
-            fontWeight: "medium",
-        }),
-        ctx.UI.Text({
-            text: text.memoryConfigDescription,
-            style: "bodySmall",
-            color: "onSurfaceVariant",
-        }),
-        createToggleRow(ctx, text.memoryRepeatToggleTitle, text.memoryRepeatToggleDescription, allowRepeatedMemorySearch, onAllowRepeatedMemorySearchChange, enabled),
-        createDivider(ctx),
-        ctx.UI.TextField({
-            enabled,
-            label: text.memoryLimitFieldLabel,
-            placeholder: text.memoryLimitFieldPlaceholder,
-            value: limitValue,
-            onValueChange: onLimitChange,
-            singleLine: true,
-        }),
-        ctx.UI.Text({
-            text: text.memoryLimitFieldDescription,
-            style: "bodySmall",
-            color: "onSurfaceVariant",
-        }),
-        ctx.UI.Button({
-            text: text.memoryConfigApplyButton,
-            enabled,
-            fillMaxWidth: true,
-            onClick: onApply,
-        }),
-    ]);
-}
 /// Builds the configurable total deadline for one extra-info collection round.
 function createInjectionTimeoutConfigSection(ctx, text, value, onValueChange, onApply) {
     return ctx.UI.Surface(toggleCardStyle, [
@@ -132,13 +93,12 @@ function createInjectionTimeoutConfigSection(ctx, text, value, onValueChange, on
         ]),
     ]);
 }
-function createInjectionItemsCard(ctx, items, memoryConfigSection) {
+function createInjectionItemsCard(ctx, items) {
     const children = [];
     items.forEach((item, index) => {
         children.push(createToggleRow(ctx, item.title, item.subtitle, item.checked, item.onCheckedChange, item.enabled ?? true));
-        children.push(createDivider(ctx));
-        if (index === items.length - 1) {
-            children.push(memoryConfigSection);
+        if (index !== items.length - 1) {
+            children.push(createDivider(ctx));
         }
     });
     return ctx.UI.Surface(toggleCardStyle, [
@@ -159,10 +119,6 @@ function Screen(ctx) {
     const injectRecentAppUsageState = useStateValue(ctx, "injectRecentAppUsage", initial.injectRecentAppUsage);
     const injectScreenTextState = useStateValue(ctx, "injectScreenText", initial.injectScreenText);
     const injectNotificationsState = useStateValue(ctx, "injectNotifications", initial.injectNotifications);
-    const injectMemoryState = useStateValue(ctx, "injectMemory", initial.injectMemory);
-    const allowRepeatedMemorySearchState = useStateValue(ctx, "allowRepeatedMemorySearch", initial.allowRepeatedMemorySearch);
-    const memoryLimitState = useStateValue(ctx, "memoryLimit", initial.memoryLimit);
-    const memoryLimitInputState = useStateValue(ctx, "memoryLimitInput", String(initial.memoryLimit));
     const injectionTimeoutSecondsState = useStateValue(ctx, "injectionTimeoutSeconds", initial.injectionTimeoutSeconds);
     const injectionTimeoutInputState = useStateValue(ctx, "injectionTimeoutInput", String(initial.injectionTimeoutSeconds));
     const successMessageState = useStateValue(ctx, "successMessage", "");
@@ -180,10 +136,6 @@ function Screen(ctx) {
         injectRecentAppUsageState.set(next.injectRecentAppUsage);
         injectScreenTextState.set(next.injectScreenText);
         injectNotificationsState.set(next.injectNotifications);
-        injectMemoryState.set(next.injectMemory);
-        allowRepeatedMemorySearchState.set(next.allowRepeatedMemorySearch);
-        memoryLimitState.set(next.memoryLimit);
-        memoryLimitInputState.set(String(next.memoryLimit));
         injectionTimeoutSecondsState.set(next.injectionTimeoutSeconds);
         injectionTimeoutInputState.set(String(next.injectionTimeoutSeconds));
     };
@@ -222,17 +174,6 @@ function Screen(ctx) {
         if (patch.injectNotifications !== undefined) {
             injectNotificationsState.set(Boolean(patch.injectNotifications));
         }
-        if (patch.injectMemory !== undefined) {
-            injectMemoryState.set(Boolean(patch.injectMemory));
-        }
-        if (patch.allowRepeatedMemorySearch !== undefined) {
-            allowRepeatedMemorySearchState.set(Boolean(patch.allowRepeatedMemorySearch));
-        }
-        if (patch.memoryLimit !== undefined) {
-            const memoryLimit = Math.floor(Number(patch.memoryLimit));
-            memoryLimitState.set(memoryLimit);
-            memoryLimitInputState.set(String(memoryLimit));
-        }
         if (patch.injectionTimeoutSeconds !== undefined) {
             const timeoutSeconds = Number(patch.injectionTimeoutSeconds);
             injectionTimeoutSecondsState.set(timeoutSeconds);
@@ -250,17 +191,6 @@ function Screen(ctx) {
             const message = error instanceof Error ? error.message : String(error || "unknown");
             successMessageState.set("");
             errorMessageState.set(`${text.saveErrorPrefix}${message}`);
-        });
-    };
-    const applyMemorySettings = () => {
-        const limit = Number(memoryLimitInputState.value.trim());
-        if (!Number.isFinite(limit) || limit < 1) {
-            successMessageState.set("");
-            errorMessageState.set(`${text.saveErrorPrefix}${text.invalidMemoryLimitMessage}`);
-            return;
-        }
-        return persistSettings({
-            memoryLimit: Math.floor(limit),
         });
     };
     const applyInjectionTimeoutSettings = () => {
@@ -299,11 +229,6 @@ function Screen(ctx) {
         injectNotificationsState.value
             ? text.summaryNotificationsEnabled
             : text.summaryNotificationsDisabled,
-        injectMemoryState.value
-            ? `${text.summaryMemoryEnabled} (${text.memoryLimitLabel}: ${memoryLimitState.value}; ${allowRepeatedMemorySearchState.value
-                ? text.summaryMemoryRepeatEnabled
-                : text.summaryMemoryRepeatDisabled})`
-            : text.summaryMemoryDisabled,
         text.summaryInjectionTimeout.replace("{seconds}", injectionTimeoutSecondsState.value.toString()),
         text.summaryRulesHint,
     ];
@@ -422,19 +347,7 @@ function Screen(ctx) {
                     return persistSettings({ injectNotifications: checked });
                 },
             },
-            {
-                title: text.memoryToggleTitle,
-                subtitle: text.memoryToggleDescription,
-                checked: injectMemoryState.value,
-                onCheckedChange: checked => {
-                    return persistSettings({ injectMemory: checked });
-                },
-            },
-        ], createMemoryConfigSection(ctx, text, injectMemoryState.value, allowRepeatedMemorySearchState.value, checked => {
-            return persistSettings({ allowRepeatedMemorySearch: checked });
-        }, memoryLimitInputState.value, value => {
-            memoryLimitInputState.set(value);
-        }, applyMemorySettings)),
+        ]),
         createSectionTitle(ctx, "checkCircle", text.summarySectionTitle),
         ctx.UI.Card({
             fillMaxWidth: true,

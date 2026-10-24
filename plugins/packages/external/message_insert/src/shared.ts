@@ -1,5 +1,3 @@
-import { characterCards } from "./dependencies/character_cards/api";
-
 const SETTINGS_CONFIG_NAME = "settings";
 
 const COMBINED_ATTACHMENT_FILE_NAME_PREFIX = "Time:";
@@ -40,9 +38,6 @@ export type ExtraInfoInjectionSettings = {
   injectRecentAppUsage: boolean;
   injectScreenText: boolean;
   injectNotifications: boolean;
-  injectMemory: boolean;
-  allowRepeatedMemorySearch: boolean;
-  memoryLimit: number;
   injectionTimeoutSeconds: number;
 };
 
@@ -76,17 +71,6 @@ export type ExtraInfoI18n = {
   screenTextToggleDescription: string;
   notificationsToggleTitle: string;
   notificationsToggleDescription: string;
-  memoryToggleTitle: string;
-  memoryToggleDescription: string;
-  memoryConfigTitle: string;
-  memoryConfigDescription: string;
-  memoryRepeatToggleTitle: string;
-  memoryRepeatToggleDescription: string;
-  memoryLimitFieldLabel: string;
-  memoryLimitFieldDescription: string;
-  memoryLimitFieldPlaceholder: string;
-  memoryConfigApplyButton: string;
-  invalidMemoryLimitMessage: string;
   injectionTimeoutFieldLabel: string;
   injectionTimeoutFieldDescription: string;
   injectionTimeoutFieldPlaceholder: string;
@@ -115,10 +99,6 @@ export type ExtraInfoI18n = {
   summaryScreenTextDisabled: string;
   summaryNotificationsEnabled: string;
   summaryNotificationsDisabled: string;
-  summaryMemoryEnabled: string;
-  summaryMemoryDisabled: string;
-  summaryMemoryRepeatEnabled: string;
-  summaryMemoryRepeatDisabled: string;
   summaryInjectionTimeout: string;
   summaryRulesHint: string;
   saveErrorPrefix: string;
@@ -130,7 +110,6 @@ export type ExtraInfoI18n = {
   attachmentRecentAppUsageTitle: string;
   attachmentScreenTextTitle: string;
   attachmentNotificationsTitle: string;
-  attachmentMemoryTitle: string;
   timeZoneLabel: string;
   weekdayLabel: string;
   batteryLevelLabel: string;
@@ -165,27 +144,15 @@ export type ExtraInfoI18n = {
   notificationTextLabel: string;
   notificationTimeLabel: string;
   notificationsEmpty: string;
-  memoryQueryLabel: string;
-  memorySnapshotLabel: string;
-  memoryLimitLabel: string;
-  memoryResultCountLabel: string;
-  memoryTitleLabel: string;
-  memoryContentLabel: string;
-  memorySourceLabel: string;
-  memoryCreatedAtLabel: string;
-  memoryTagsLabel: string;
-  memoryChunkInfoLabel: string;
-  memoryEmpty: string;
-  memorySnapshotUnavailable: string;
   errorLabel: string;
 };
 
 const ZH_CN_I18N: ExtraInfoI18n = {
   menuTitle: "额外信息注入",
-  menuDescription: "发送消息时自动附加时间、电量、天气、位置、通知、记忆等额外信息，并与设置页开关同步",
+  menuDescription: "发送消息时自动附加时间、电量、天气、位置、通知等额外信息，并与设置页开关同步",
   toolboxTitle: "额外信息注入",
-  toolboxSubtitle: "把时间、电量、天气、位置、通知、记忆作为显性附件注入到用户消息里，并可单独控制是否随聊天记录一起保存。",
-  toolboxBanner: "这里的开关和输入菜单里的“额外信息注入”是同一个状态；你可以分别控制注入项目、是否落盘保存，以及记忆检索是否允许重复命中。",
+  toolboxSubtitle: "把时间、电量、天气、位置、通知作为显性附件注入到用户消息里，并可单独控制是否随聊天记录一起保存。",
+  toolboxBanner: "这里的开关和输入菜单里的“额外信息注入”是同一个状态；你可以分别控制注入项目以及是否落盘保存。",
   masterSectionTitle: "注入开关",
   masterToggleTitle: "额外信息注入",
   masterToggleDescription: "和输入菜单里的“额外信息注入”开关完全同步，切一个地方，另一个地方会一起变化。",
@@ -210,17 +177,6 @@ const ZH_CN_I18N: ExtraInfoI18n = {
   screenTextToggleDescription: "截图当前屏幕后调用 OCR 提取文本，并作为附件插入。",
   notificationsToggleTitle: "注入通知",
   notificationsToggleDescription: "每次发送消息时都插入最近通知摘要。",
-  memoryToggleTitle: "注入记忆",
-  memoryToggleDescription: "每次发送消息时根据当前输入自动分词检索记忆，并把命中的记忆摘要附加进去。",
-  memoryConfigTitle: "记忆检索设置",
-  memoryConfigDescription: "记忆搜索会直接使用软件内的记忆搜索设置；这里仅控制同会话去重和每次最多注入多少条。默认会复用当前会话 id 的前六位作为快照 id；开启“允许重复命中”后，将不再复用快照，同一条记忆后续还可以再次被检索到。",
-  memoryRepeatToggleTitle: "允许重复命中同一记忆",
-  memoryRepeatToggleDescription: "开启后，每次都会使用新的记忆查询快照，不再排除本会话里之前命中过的记忆。",
-  memoryLimitFieldLabel: "记忆上限",
-  memoryLimitFieldDescription: "默认 3。控制每次最多注入多少条记忆。",
-  memoryLimitFieldPlaceholder: "例如 3",
-  memoryConfigApplyButton: "保存记忆设置",
-  invalidMemoryLimitMessage: "记忆上限必须是大于等于 1 的整数",
   injectionTimeoutFieldLabel: "注入超时",
   injectionTimeoutFieldDescription: "整轮额外信息采集的最长等待时间，单位为秒。超时项目会标注 timeout。范围为 1 到 120 秒。",
   injectionTimeoutFieldPlaceholder: "例如 8",
@@ -249,10 +205,6 @@ const ZH_CN_I18N: ExtraInfoI18n = {
   summaryScreenTextDisabled: "屏幕文本：已关闭",
   summaryNotificationsEnabled: "通知：每次发送都注入",
   summaryNotificationsDisabled: "通知：已关闭",
-  summaryMemoryEnabled: "记忆：已开启，按当前输入自动分词检索",
-  summaryMemoryDisabled: "记忆：已关闭",
-  summaryMemoryRepeatEnabled: "记忆去重：允许重复命中",
-  summaryMemoryRepeatDisabled: "记忆去重：默认排除本会话已命中的记忆",
   summaryInjectionTimeout: "注入超时：{seconds} 秒",
   summaryRulesHint: "这些设置会直接影响用户消息中显性附件的生成规则。",
   saveErrorPrefix: "保存失败：",
@@ -264,7 +216,6 @@ const ZH_CN_I18N: ExtraInfoI18n = {
   attachmentRecentAppUsageTitle: "【应用使用时长】",
   attachmentScreenTextTitle: "【屏幕文本】",
   attachmentNotificationsTitle: "【最近通知】",
-  attachmentMemoryTitle: "【相关记忆】",
   timeZoneLabel: "时区",
   weekdayLabel: "星期",
   batteryLevelLabel: "电量",
@@ -299,27 +250,15 @@ const ZH_CN_I18N: ExtraInfoI18n = {
   notificationTextLabel: "内容",
   notificationTimeLabel: "时间",
   notificationsEmpty: "当前没有可注入的通知",
-  memoryQueryLabel: "查询",
-  memorySnapshotLabel: "快照",
-  memoryLimitLabel: "上限",
-  memoryResultCountLabel: "命中数量",
-  memoryTitleLabel: "标题",
-  memoryContentLabel: "内容",
-  memorySourceLabel: "来源",
-  memoryCreatedAtLabel: "时间",
-  memoryTagsLabel: "标签",
-  memoryChunkInfoLabel: "分块",
-  memoryEmpty: "当前没有命中的记忆",
-  memorySnapshotUnavailable: "当前会话 id 不可用，无法生成记忆快照",
   errorLabel: "错误",
 };
 
 const EN_US_I18N: ExtraInfoI18n = {
   menuTitle: "Extra Info Injection",
-  menuDescription: "Automatically attach time, battery, weather, location, notifications, memories, and other extra info when sending messages, synced with the settings switch",
+  menuDescription: "Automatically attach time, battery, weather, location, notifications, and other extra info when sending messages, synced with the settings switch",
   toolboxTitle: "Extra Info Injection",
-  toolboxSubtitle: "Attach time, battery, weather, location, notifications, and memories as visible attachments to the user message, with a separate option for whether they are persisted in chat history.",
-  toolboxBanner: "This switch is the same state as the input-menu toggle. You can separately control the injected items, whether they are persisted, and whether memory hits may repeat in the same chat.",
+  toolboxSubtitle: "Attach time, battery, weather, location, and notifications as visible attachments to the user message, with a separate option for whether they are persisted in chat history.",
+  toolboxBanner: "This switch is the same state as the input-menu toggle. You can separately control the injected items and whether they are persisted.",
   masterSectionTitle: "Injection Switch",
   masterToggleTitle: "Extra Info Injection",
   masterToggleDescription: "This is the exact same switch as the input-menu toggle. Changing either one keeps the other in sync.",
@@ -344,17 +283,6 @@ const EN_US_I18N: ExtraInfoI18n = {
   screenTextToggleDescription: "Capture the current screen, run OCR, and insert the recognized text as an attachment.",
   notificationsToggleTitle: "Inject Notifications",
   notificationsToggleDescription: "Insert a summary of recent notifications on every send.",
-  memoryToggleTitle: "Inject Memory",
-  memoryToggleDescription: "Tokenize the current input, query related memories, and attach the matched memory summaries on every send.",
-  memoryConfigTitle: "Memory Search Settings",
-  memoryConfigDescription: "Memory lookup directly uses the app's memory search settings. This panel only controls same-chat de-duplication and how many memories are injected each time. By default, the first 6 characters of the current chat id are reused as the snapshot id. When repeated hits are allowed, a fresh snapshot is used for each query so previously matched memories can appear again.",
-  memoryRepeatToggleTitle: "Allow repeated memory hits",
-  memoryRepeatToggleDescription: "When enabled, each query uses a fresh snapshot instead of excluding memories that were already matched earlier in this chat.",
-  memoryLimitFieldLabel: "Memory limit",
-  memoryLimitFieldDescription: "Default is 3. Controls how many memories can be injected each time.",
-  memoryLimitFieldPlaceholder: "For example 3",
-  memoryConfigApplyButton: "Save memory settings",
-  invalidMemoryLimitMessage: "Memory limit must be an integer greater than or equal to 1",
   injectionTimeoutFieldLabel: "Injection timeout",
   injectionTimeoutFieldDescription: "Maximum wait for the whole extra-info collection round in seconds. Timed-out items are marked timeout. Range: 1 to 120 seconds.",
   injectionTimeoutFieldPlaceholder: "For example 8",
@@ -383,10 +311,6 @@ const EN_US_I18N: ExtraInfoI18n = {
   summaryScreenTextDisabled: "Screen text: disabled",
   summaryNotificationsEnabled: "Notifications: inject on every send",
   summaryNotificationsDisabled: "Notifications: disabled",
-  summaryMemoryEnabled: "Memory: enabled with automatic tokenized lookup",
-  summaryMemoryDisabled: "Memory: disabled",
-  summaryMemoryRepeatEnabled: "Memory dedupe: repeated hits are allowed",
-  summaryMemoryRepeatDisabled: "Memory dedupe: previously hit memories are excluded in this chat",
   summaryInjectionTimeout: "Injection timeout: {seconds}s",
   summaryRulesHint: "These settings directly control how visible attachments are generated for user messages.",
   saveErrorPrefix: "Save failed: ",
@@ -398,7 +322,6 @@ const EN_US_I18N: ExtraInfoI18n = {
   attachmentRecentAppUsageTitle: "[Recent App Usage]",
   attachmentScreenTextTitle: "[Screen Text]",
   attachmentNotificationsTitle: "[Recent Notifications]",
-  attachmentMemoryTitle: "[Related Memories]",
   timeZoneLabel: "Time zone",
   weekdayLabel: "Weekday",
   batteryLevelLabel: "Level",
@@ -433,18 +356,6 @@ const EN_US_I18N: ExtraInfoI18n = {
   notificationTextLabel: "Content",
   notificationTimeLabel: "Time",
   notificationsEmpty: "There are no notifications to inject right now",
-  memoryQueryLabel: "Query",
-  memorySnapshotLabel: "Snapshot",
-  memoryLimitLabel: "Limit",
-  memoryResultCountLabel: "Matched",
-  memoryTitleLabel: "Title",
-  memoryContentLabel: "Content",
-  memorySourceLabel: "Source",
-  memoryCreatedAtLabel: "Time",
-  memoryTagsLabel: "Tags",
-  memoryChunkInfoLabel: "Chunk",
-  memoryEmpty: "There are no matched memories right now",
-  memorySnapshotUnavailable: "Current chat id is unavailable, so the memory snapshot cannot be created",
   errorLabel: "Error",
 };
 
@@ -460,9 +371,6 @@ const DEFAULT_SETTINGS: ExtraInfoInjectionSettings = {
   injectRecentAppUsage: false,
   injectScreenText: false,
   injectNotifications: false,
-  injectMemory: false,
-  allowRepeatedMemorySearch: false,
-  memoryLimit: 3,
   injectionTimeoutSeconds: DEFAULT_INJECTION_TIMEOUT_SECONDS,
 };
 
@@ -498,7 +406,6 @@ function describeEnabledItems(settings: ExtraInfoInjectionSettings): string {
     settings.injectRecentAppUsage && "recent_app_usage",
     settings.injectScreenText && "screen_text",
     settings.injectNotifications && "notifications",
-    settings.injectMemory && "memory",
   ].filter((item): item is string => Boolean(item));
   return items.join(",");
 }
@@ -585,13 +492,6 @@ export function applySettingsPatch(
     injectNotifications: patch.injectNotifications !== undefined
       ? Boolean(patch.injectNotifications)
       : current.injectNotifications,
-    injectMemory: patch.injectMemory !== undefined ? Boolean(patch.injectMemory) : current.injectMemory,
-    allowRepeatedMemorySearch: patch.allowRepeatedMemorySearch !== undefined
-      ? Boolean(patch.allowRepeatedMemorySearch)
-      : current.allowRepeatedMemorySearch,
-    memoryLimit: patch.memoryLimit !== undefined
-      ? Math.floor(Number(patch.memoryLimit))
-      : current.memoryLimit,
     injectionTimeoutSeconds: normalizeInjectionTimeoutSeconds(
       patch.injectionTimeoutSeconds ?? current.injectionTimeoutSeconds
     ),
@@ -614,13 +514,10 @@ export async function saveSettings(
   config.injectRecentAppUsage = next.injectRecentAppUsage;
   config.injectScreenText = next.injectScreenText;
   config.injectNotifications = next.injectNotifications;
-  config.injectMemory = next.injectMemory;
-  config.allowRepeatedMemorySearch = next.allowRepeatedMemorySearch;
-  config.memoryLimit = next.memoryLimit;
   config.injectionTimeoutSeconds = next.injectionTimeoutSeconds;
   logExtraInfoInjectionInfo(
     "settings.saved",
-    `master_enabled=${next.masterEnabled} persist=${next.persistInjectedContent} items=${describeEnabledItems(next) || "none"} memory_limit=${next.memoryLimit} injection_timeout_seconds=${next.injectionTimeoutSeconds}`
+    `master_enabled=${next.masterEnabled} persist=${next.persistInjectedContent} items=${describeEnabledItems(next) || "none"} injection_timeout_seconds=${next.injectionTimeoutSeconds}`
   );
   return next;
 }
@@ -1170,147 +1067,16 @@ function formatDecimal(value: number): string {
   return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function collapseInlineWhitespace(value: unknown, maxLength = 220): string {
-  const normalized = String(value || "").replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "-";
-  }
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, maxLength)}...`;
-}
-
-function buildMemorySnapshotId(chatId?: string): string {
-  const normalized = String(chatId || "").trim();
-  if (!normalized) {
-    return "";
-  }
-  return normalized;
-}
-
-/** Requires the selected participant without interpreting its plugin-owned identity. */
-function resolveMemoryCallerParticipantId(
-  executionContext?: ToolPkg.ExecutionContext | null
-): string {
-  if (executionContext == null || executionContext.participantId === null) {
-    throw new Error("Memory injection requires a selected execution participant");
-  }
-  const participantId = executionContext.participantId.trim();
-  if (!participantId) {
-    throw new Error("Memory injection execution participant must not be blank");
-  }
-  return participantId;
-}
-
-function stripMessageForMemorySearch(messageText: string): string {
-  return String(messageText || "")
-    .replace(/<attachment\b[\s\S]*?<\/attachment>/gi, " ")
-    .replace(/<workspace_attachment\b[\s\S]*?<\/workspace_attachment>/gi, " ")
-    .replace(/<reply_to\b[\s\S]*?<\/reply_to>/gi, " ")
-    .replace(/<proxy_sender\b[^>]*\/?>/gi, " ")
-    .replace(/\[\s*From [^\]]+\]\s*/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/[|]+/g, " ")
-    .trim();
-}
-
-function buildMemorySearchQuery(messageText: string): string {
-  return stripMessageForMemorySearch(messageText);
-}
-
-/** Queries the character plugin for memories owned by the selected participant. */
-async function buildMemoryContent(
-  messageText: string,
-  chatId?: string,
-  executionContext?: ToolPkg.ExecutionContext | null
-): Promise<string> {
-  const text = resolveExtraInfoI18n();
-  const settings = await loadSettings();
-  const reuseSnapshot = !settings.allowRepeatedMemorySearch;
-  const snapshotId = reuseSnapshot ? buildMemorySnapshotId(chatId) : "";
-  const participantId = resolveMemoryCallerParticipantId(executionContext);
-  if (reuseSnapshot && !snapshotId) {
-    throw new Error(text.memorySnapshotUnavailable);
-  }
-
-  const searchQuery = buildMemorySearchQuery(messageText);
-  const lines = [
-    text.attachmentMemoryTitle,
-    `${text.memoryQueryLabel}: ${searchQuery || "-"}`,
-    `${text.memorySnapshotLabel}: ${snapshotId || "-"}`,
-    `${text.memoryLimitLabel}: ${settings.memoryLimit}`,
-  ];
-
-  if (!searchQuery) {
-    lines.push(
-      `${text.memoryResultCountLabel}: 0`,
-      text.memoryEmpty
-    );
-    return lines.join("\n");
-  }
-
-  const result = await characterCards.memory.query({
-    participantId,
-    query: searchQuery,
-    limit: settings.memoryLimit,
-    snapshotId: reuseSnapshot ? snapshotId : null,
-  });
-
-  const memories = result.memories;
-  lines.push(`${text.memoryResultCountLabel}: ${memories.length}`);
-
-  if (!memories.length) {
-    lines.push(text.memoryEmpty);
-    return lines.join("\n");
-  }
-
-  /** Formats complete typed matches returned by the prerequisite memory API. */
-  memories.forEach((memory, index) => {
-    const tags = memory.tags.map(
-      /** Formats tag names from the typed public memory match. */
-      item => collapseInlineWhitespace(item, 40)
-    );
-
-    lines.push(
-      `#${index + 1}`,
-      `${text.memoryTitleLabel}: ${collapseInlineWhitespace(memory.title, 80)}`,
-      `${text.memoryContentLabel}: ${collapseInlineWhitespace(memory.content, 220)}`,
-      `${text.memorySourceLabel}: ${collapseInlineWhitespace(memory.source, 60)}`,
-      `${text.memoryCreatedAtLabel}: ${collapseInlineWhitespace(memory.createdAt, 40)}`
-    );
-
-    if (tags.length) {
-      lines.push(`${text.memoryTagsLabel}: ${tags.join(", ")}`);
-    }
-
-    if (memory.chunkInfo !== null) {
-      lines.push(
-        `${text.memoryChunkInfoLabel}: ${collapseInlineWhitespace(memory.chunkInfo, 80)}`
-      );
-    }
-  });
-
-  return lines.join("\n");
-}
-
-/** Appends enabled attachments while retaining the exact prompt execution context. */
+/** Appends the enabled device-information attachments to one outgoing user message. */
 export async function appendExtraInfoToMessage(
-  messageText: string,
-  chatId?: string,
-  executionContext?: ToolPkg.ExecutionContext | null
+  messageText: string
 ): Promise<string | null> {
-  if (!stripMessageForMemorySearch(messageText)) {
+  if (!String(messageText || "").trim()) {
     logExtraInfoInjectionInfo("append.skipped", "reason=empty_message");
     return null;
   }
 
-  const tags = await buildExtraInfoAttachmentTags(
-    messageText,
-    chatId,
-    executionContext
-  );
+  const tags = await buildExtraInfoAttachmentTags(messageText);
   if (!tags.length) {
     logExtraInfoInjectionInfo("append.skipped", "reason=no_attachment_tags");
     return null;
@@ -1326,9 +1092,7 @@ export async function appendExtraInfoToMessage(
 
 /** Builds enabled attachment content within the configured injection deadline. */
 export async function buildExtraInfoAttachmentTags(
-  messageText: string,
-  chatId?: string,
-  executionContext?: ToolPkg.ExecutionContext | null
+  messageText: string
 ): Promise<string[]> {
   const settings = await loadSettings();
   if (!settings.masterEnabled || containsExtraInfoAttachment(messageText)) {
@@ -1430,17 +1194,6 @@ export async function buildExtraInfoAttachmentTags(
         "notifications",
         resolveExtraInfoI18n().attachmentNotificationsTitle,
         buildNotificationsContent,
-        deadlineAt
-      )
-    );
-  }
-
-  if (settings.injectMemory) {
-    contentTasks.push(
-      buildOptionalContent(
-        "memory",
-        resolveExtraInfoI18n().attachmentMemoryTitle,
-        () => buildMemoryContent(messageText, chatId, executionContext),
         deadlineAt
       )
     );
