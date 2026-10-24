@@ -126,6 +126,10 @@ exports.characterCards = {
         candidates: {
             /** Enqueues an actual finalized reply or explicit selected-user message. */
             enqueue: (payload) => call("memory.candidate.enqueue", payload),
+            /** Returns terminal failed records to the pending queue for a genuine interval retry. */
+            retryFailed: (payload) => call("memory.candidates.retryFailed", payload),
+            /** Deletes terminal failed records instead of leaving them in the queue permanently. */
+            clearFailed: (payload) => call("memory.candidates.clearFailed", payload),
         },
         shared: {
             /** Lists shared memory libraries. */

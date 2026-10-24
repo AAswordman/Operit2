@@ -246,6 +246,10 @@ export type Request =
   | { action: "readGlobalMemoryPreferences" }
   | { action: "readChatMemoryAutoSaveStatus"; chatId: string }
   | { action: "updateCurrentChatMemory"; chatId: string }
+  | { action: "retryFailedCandidates"; chatId: string }
+  | { action: "clearFailedCandidates"; chatId: string }
+  | { action: "retryFailedCandidates"; ownerKey: string }
+  | { action: "clearFailedCandidates"; ownerKey: string }
   | { action: "writeGlobalMemoryPreference"; key: keyof GlobalMemoryPreferences; value: boolean }
   | { action: "searchMemoryDebug"; ownerKey: string; query: string; config: MemorySearchConfig; relevanceThreshold: number }
   | { action: "readMemoryLink"; ownerKey: string; linkId: string }
@@ -341,7 +345,7 @@ export interface MemoryRebuildTask { id: string; windows: MemoryJobWindow[]; nex
 /** Stores a real provider embedding, keyed by exact configured source and input text. */
 export interface MemoryEmbedding { id: string; endpoint: string; model: string; text: string; vector: number[]; updatedAt: number }
 /** Reports actual committed domain operations for a manual or background extraction. */
-export interface MemoryExtractionResult { ownerKey: string; created: number; updated: number; merged: number; links: number; profileUpdated: boolean }
+export interface MemoryExtractionResult { ownerKey: string; created: number; updated: number; merged: number; links: number; profileUpdated: boolean; skipped: number }
 
 /** Matches the complete MessagePart serde record used by extraction windows. */
 export interface MemoryMessagePart {
@@ -439,6 +443,8 @@ export interface RequestResults {
   readGlobalMemoryPreferences: GlobalMemoryPreferences;
   readChatMemoryAutoSaveStatus: MemoryAutoSaveStatus;
   updateCurrentChatMemory: MemoryExtractionResult;
+  retryFailedCandidates: { retried: number };
+  clearFailedCandidates: { cleared: number };
   writeGlobalMemoryPreference: GlobalMemoryPreferences;
   searchMemoryDebug: MemorySearchDebug;
   readMemoryLink: MemoryLink;

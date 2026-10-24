@@ -123,17 +123,20 @@ test("controlled Chat/AI: rebuild execution failure records failed progress and 
   assert.equal(harness.modelCalls.length, calls); assert.deepEqual(plain(await restarted.api("memory.rebuild.progress", owner)), failed.rebuildProgress);
 });
 
-/** Revalidates committed candidate source identities and refuses to analyze or delete a batch with a removed source. */
-test("controlled Chat/AI: deleting a pending candidate source produces durable failed candidates before AI and never automatically retries", async t => {
+/** Revalidates committed candidate source identities and fails only the removed source instead of its valid siblings. */
+test("controlled Chat/AI: deleting a pending candidate source fails only that candidate and still extracts its valid siblings", async t => {
   const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
   const sources = await runtime.enqueueReplies(); const before = await readOwner(harness);
   harness.deleteMessage(sources[0].timestamp); await runtime.makeDue();
-  await assert.rejects(runtime.interval(), /claimed candidate source no longer identifies exactly one message/u);
-  assert.equal(harness.modelCalls.length, 0); harness.assertOutputsConsumed(); const failed = await readOwner(harness);
-  assert.equal(failed.candidates.length, 5); assert.deepEqual(failed.memories, before.memories);
-  for (const candidate of failed.candidates) { assert.equal(candidate.status, "failed"); assert.equal(candidate.attemptCount, 1); assert.match(candidate.lastError, /claimed candidate source/u); }
+  harness.queueAnalysis({ main: { title: "Sibling survives", content: "Valid sibling sources remain extractable", tags: ["Project"], folder_path: "Projects" }, new: [], update: [], merge: [], links: [] });
+  await runtime.interval(); harness.assertOutputsConsumed(); assert.equal(harness.modelCalls.length, 1);
+  const after = await readOwner(harness); assert.equal(after.candidates.length, 1);
+  const failed = after.candidates[0];
+  assert.equal(failed.status, "failed"); assert.equal(failed.attemptCount, 1); assert.match(failed.lastError, /claimed candidate source no longer identifies exactly one message/u);
+  assert.equal(failed.triggerMessageTimestamp, sources[0].timestamp);
+  assert.equal(after.memories.length, 1); assert.equal(after.memories[0].title, "Sibling survives"); assert.deepEqual(before.memories, []);
   const restarted = harness.openRuntime(); await restarted.initialize(); await restarted.makeDue(); await restarted.interval();
-  assert.equal(harness.modelCalls.length, 0); assert.deepEqual((await readOwner(harness)).candidates, failed.candidates);
+  assert.equal(harness.modelCalls.length, 1); assert.deepEqual((await readOwner(harness)).candidates, after.candidates);
 });
 
 /** Rejects both count-changing and count-preserving source edits during reads without publishing partial candidates or plans. */
@@ -148,6 +151,73 @@ test("controlled Chat/AI: concurrent source count or updated-at changes reject m
   assert.equal(await harness.readStateText(), before); assert.equal(mutations(harness.disk).length, 0); assert.equal(harness.modelCalls.length, 0);
   assert.equal(harness.rangeCalls.length, 2); assert.equal(harness.rangeCalls[1].end, 32);
   const ownerState = await readOwner(harness); assert.equal(ownerState.candidates.length, 0); assert.equal(ownerState.rebuildTask, null); harness.assertOutputsConsumed();
+});
+
+/** Parses through model-emitted reasoning and prose while still rejecting output with no JSON payload. */
+test("model JSON parser ignores reasoning blocks and surrounding prose but still rejects invalid output", () => {
+  const { parseModelJson } = loadModule("src/memory-jobs/analysis.ts");
+  assert.deepEqual(plain(parseModelJson('{"main":null,"new":[],"update":[],"merge":[],"links":[]}')), { main: null, new: [], update: [], merge: [], links: [] });
+  assert.deepEqual(plain(parseModelJson('<think>internal reasoning</think>\n{"a":1}')), { a: 1 });
+  assert.deepEqual(plain(parseModelJson('分析如下：\n```json\n{"a":2}\n```\n完成')), { a: 2 });
+  assert.deepEqual(plain(parseModelJson('前言 {"a":3} 后记')), { a: 3 });
+  /** Checks the JSON syntax rejection across the module VM's own language realm. */
+  const isSyntax = error => error.name === "SyntaxError";
+  assert.throws(() => parseModelJson('<think>only reasoning</think>'), isSyntax);
+  assert.throws(() => parseModelJson('not json'), isSyntax);
+});
+
+/** Skips only the unresolvable model references while committing the rest of the extraction. */
+test("controlled Chat/AI: unresolvable model titles skip their own items instead of failing the extraction", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
+  await runtime.enqueueReplies(); await runtime.makeDue();
+  harness.queueAnalysis({ main: { title: "Valid extraction", content: "A valid extracted fact", tags: ["Project"], folder_path: "Projects" },
+    new: [], update: [{ title: "Missing title", content: "Never applies", reason: "model reference drift" }],
+    merge: [{ source_titles: ["Missing title", "Valid extraction"], title: "Merged", content: "Never applies", tags: ["Project"], folder_path: "Projects", reason: "model reference drift" }],
+    links: [{ source: "Missing title", target: "Valid extraction", type: "RELATED", description: "Never applies", weight: 0.5 }] });
+  await runtime.interval(); harness.assertOutputsConsumed(); assert.equal(harness.modelCalls.length, 1);
+  const saved = await readOwner(harness);
+  assert.equal(saved.candidates.length, 0); assert.equal(saved.memories.length, 1); assert.equal(saved.memories[0].title, "Valid extraction");
+});
+
+/** Requeues genuine terminal failures for a later real extraction and removes failures on explicit clear. */
+test("controlled Chat/AI: retryFailed requeues terminal failures and clearFailed removes them without retrying", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
+  await runtime.enqueueReplies(); await runtime.makeDue();
+  const failure = new Error("Controlled model outage"); harness.queueExecutionError(failure);
+  await assert.rejects(runtime.interval(), error => error === failure);
+  const failed = await readOwner(harness); assert.equal(failed.candidates.length, 5);
+  for (const candidate of failed.candidates) { assert.equal(candidate.status, "failed"); assert.equal(candidate.lastError, failure.message); }
+  assert.deepEqual(plain(await runtime.api("memory.candidates.retryFailed", owner)), { retried: 5 });
+  const retried = await readOwner(harness);
+  for (const candidate of retried.candidates) { assert.equal(candidate.status, "pending"); assert.equal(candidate.lastError, ""); }
+  await runtime.makeDue(); harness.queueAnalysis({});
+  await runtime.interval(); harness.assertOutputsConsumed(); assert.equal(harness.modelCalls.length, 2);
+  assert.equal((await readOwner(harness)).candidates.length, 0);
+  /** A second terminal failure set is removed directly instead of being processed again. */
+  await runtime.enqueueReplies(); await runtime.makeDue(); harness.queueExecutionError(failure);
+  await assert.rejects(runtime.interval(), error => error === failure);
+  assert.equal((await readOwner(harness)).candidates.length, 5);
+  assert.deepEqual(plain(await runtime.api("memory.candidates.clearFailed", owner)), { cleared: 5 });
+  assert.equal((await readOwner(harness)).candidates.length, 0);
+  assert.equal(harness.modelCalls.length, 3);
+});
+
+/** Skips malformed model items so one wrong field type cannot fail the whole candidate batch. */
+test("controlled Chat/AI: a malformed analysis item is skipped while the rest of the batch still commits", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
+  await runtime.enqueueReplies(); await runtime.makeDue();
+  harness.queueAnalysis({ main: { title: "Surviving fact", content: "Committed despite model drift", tags: ["Project"], folder_path: "Projects" },
+    new: [{ title: "Broken entity", content: "Missing required fields" }],
+    update: [], merge: [],
+    links: [{ source: "Surviving fact", target: "Surviving fact", type: 42, description: "Wrong field type", weight: 0.5 }] });
+  await runtime.interval(); harness.assertOutputsConsumed(); assert.equal(harness.modelCalls.length, 1);
+  const saved = await readOwner(harness);
+  assert.equal(saved.candidates.length, 0); assert.equal(saved.memories.length, 1); assert.equal(saved.memories[0].title, "Surviving fact");
+  assert.equal(saved.links.length, 0);
+  /** The manual update reports the exact number of skipped malformed items for the same drift. */
+  harness.queueAnalysis({ main: null, new: [], update: [], merge: [], links: [{ source: "Surviving fact", target: "Surviving fact", type: null, description: "Wrong field type", weight: 0.5 }] });
+  const result = plain(await runtime.api("memory.chat.update", { ownerKey: CONTROLLED_OWNER, chatId: CONTROLLED_CHAT_ID }));
+  assert.equal(result.skipped, 1); assert.equal(result.links, 0);
 });
 
 /** Preserves both original failures when execution and real status-file publication fail, for each production job path. */
@@ -261,15 +331,42 @@ test("controlled Chat/AI: candidate provider rejects missing snapshots or absent
   assert.equal(await harness.readStateText(), before); assert.equal(mutations(harness.disk).length, 0); assert.equal(harness.modelCalls.length, 0);
 });
 
-/** Revalidates the exact persisted candidate revision after a real selected-variant change and never retries the failed batch. */
-test("controlled Chat/AI: changing a candidate's selected revision records terminal failure before AI and survives restart without retry", async t => {
+/** Revalidates the exact persisted candidate revision after a real selected-variant change and never retries the failed record. */
+test("controlled Chat/AI: changing a candidate's selected revision fails only that record and still extracts the remaining batch", async t => {
   const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
   const sources = await enqueueProviderReplies(runtime, harness); await harness.selectNewVariant(sources[0].timestamp); await runtime.makeDue();
-  await assert.rejects(runtime.interval(), /claimed candidate source no longer identifies exactly one message/);
-  const failed = await readOwner(harness); assert.equal(failed.candidates.length, 5); assert.equal(harness.modelCalls.length, 0);
-  for (const candidate of failed.candidates) { assert.equal(candidate.triggerVariantIndex, 0); assert.equal(candidate.status, "failed"); assert.equal(candidate.attemptCount, 1); }
+  harness.queueAnalysis({ main: { title: "Revision survivors", content: "Unchanged revisions remain extractable", tags: ["Project"], folder_path: "Projects" }, new: [], update: [], merge: [], links: [] });
+  await runtime.interval(); harness.assertOutputsConsumed(); assert.equal(harness.modelCalls.length, 1);
+  const saved = await readOwner(harness); assert.equal(saved.candidates.length, 1);
+  assert.equal(saved.candidates[0].triggerMessageTimestamp, sources[0].timestamp);
+  assert.equal(saved.candidates[0].triggerVariantIndex, 0); assert.equal(saved.candidates[0].status, "failed"); assert.equal(saved.candidates[0].attemptCount, 1);
+  assert.match(saved.candidates[0].lastError, /claimed candidate source no longer identifies exactly one message/u);
+  assert.equal(saved.memories.length, 1); assert.equal(saved.memories[0].title, "Revision survivors");
   const restarted = harness.openRuntime(); await restarted.initialize(); await restarted.makeDue(); await restarted.interval();
-  assert.deepEqual((await readOwner(harness)).candidates, failed.candidates); assert.equal(harness.modelCalls.length, 0);
+  assert.deepEqual((await readOwner(harness)).candidates, saved.candidates); assert.equal(harness.modelCalls.length, 1);
+});
+
+/** Reclaims claims orphaned by an interrupted runtime once their lease expires while leaving fresh claims alone. */
+test("controlled Chat/AI: an interrupted processing claim is reclaimed after its lease and fresh claims are left untouched", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
+  await runtime.enqueueReplies();
+  /** Ages every claim as if the previous runtime died while the batch was running. */
+  const state = await harness.readState(), space = state.owners.filter(owner => owner.ownerKey === CONTROLLED_OWNER)[0];
+  assert.equal(space.candidates.length, 5);
+  for (const candidate of space.candidates) { candidate.status = "processing"; candidate.attemptCount = 1; candidate.updatedAt = Date.now() - 31 * 60 * 1000; }
+  harness.disk.replaceState(state);
+  await runtime.makeDue(); harness.queueAnalysis({ main: { title: "Reclaimed batch", content: "An orphaned claim runs again", tags: ["Project"], folder_path: "Projects" }, new: [], update: [], merge: [], links: [] });
+  await runtime.interval(); harness.assertOutputsConsumed(); assert.equal(harness.modelCalls.length, 1);
+  const reclaimed = await readOwner(harness); assert.equal(reclaimed.candidates.length, 0); assert.equal(reclaimed.memories.length, 1);
+  /** A fresh claim must survive the same tick so a live slow batch is never duplicated. */
+  await enqueueProviderReplies(runtime, harness);
+  const fresh = await harness.readState(), freshSpace = fresh.owners.filter(owner => owner.ownerKey === CONTROLLED_OWNER)[0];
+  for (const candidate of freshSpace.candidates) { candidate.status = "processing"; candidate.attemptCount = 1; candidate.updatedAt = Date.now(); }
+  harness.disk.replaceState(fresh);
+  await runtime.makeDue(); await runtime.interval();
+  assert.equal(harness.modelCalls.length, 1);
+  const claimed = await readOwner(harness); assert.equal(claimed.candidates.length, 5);
+  for (const candidate of claimed.candidates) assert.equal(candidate.status, "processing");
 });
 
 /** Rejects deleted source revisions in an already committed rebuild plan and retains failure counters across restart. */
@@ -281,4 +378,27 @@ test("controlled Chat/AI: a deleted committed rebuild source fails before extrac
   assert.equal(failed.rebuildTask.nextWindow, 0); assert.equal(harness.modelCalls.length, 0);
   const restarted = harness.openRuntime(); await restarted.initialize(); await restarted.interval();
   assert.deepEqual((await readOwner(harness)).rebuildProgress, failed.rebuildProgress); assert.equal(harness.modelCalls.length, 0);
+});
+
+/** Extracts unchanged sources even when the native storage codec returns persisted snapshot keys reordered, while genuine edits still fail. */
+test("controlled Chat/AI: alphabetically reordered plan snapshot keys still execute unchanged windows and genuine edits still fail their window", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
+  await runtime.startRebuild();
+  /** Reproduces the production host bridge: persisted object keys return in sorted order instead of construction order. */
+  const planned = await harness.readState(), spaces = planned.owners.filter(space => space.ownerKey === CONTROLLED_OWNER);
+  assert.equal(spaces.length, 1); assert.ok(spaces[0].rebuildTask !== null);
+  for (const window of spaces[0].rebuildTask.windows) window.messages = window.messages.map(
+    /** Rewrites each snapshot with sorted keys exactly like the native serde codec round trip. */
+    message => Object.fromEntries(Object.entries(message).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)),
+  );
+  harness.disk.replaceState(planned);
+  harness.queueAnalysis({}); await runtime.interval(); harness.assertOutputsConsumed();
+  const running = plain(await runtime.api("memory.rebuild.progress", owner));
+  assert.equal(running.status, "running"); assert.equal(running.completedWindows, 1); assert.equal(harness.modelCalls.length, 1);
+  /** Proves the strict contract itself survived: a genuinely changed second-window source still terminates the plan. */
+  harness.deleteMessage(harness.message(8).timestamp);
+  await assert.rejects(runtime.interval(), /planned rebuild source message revision changed or was deleted: memory-jobs-controlled-chat at \d+\/0/u);
+  const failed = await readOwner(harness);
+  assert.equal(failed.rebuildProgress.status, "failed"); assert.equal(failed.rebuildProgress.failedWindows, 1); assert.equal(failed.rebuildProgress.completedWindows, 1);
+  assert.equal(harness.modelCalls.length, 1);
 });

@@ -112,6 +112,16 @@ export async function memoryRebuildProgressApi(event: ToolPkg.PublicApiEvent<Dom
   return dispatchDomain("memory.rebuild.progress", parseDomainPayload("memory.rebuild.progress", event.payload));
 }
 
+/** Executes memory.candidates.retryFailed through the sole private database-backed service. */
+export async function memoryCandidatesRetryFailedApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.candidates.retryFailed">>): Promise<DomainOutput<"memory.candidates.retryFailed">> {
+  return dispatchDomain("memory.candidates.retryFailed", parseDomainPayload("memory.candidates.retryFailed", event.payload));
+}
+
+/** Executes memory.candidates.clearFailed through the sole private database-backed service. */
+export async function memoryCandidatesClearFailedApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.candidates.clearFailed">>): Promise<DomainOutput<"memory.candidates.clearFailed">> {
+  return dispatchDomain("memory.candidates.clearFailed", parseDomainPayload("memory.candidates.clearFailed", event.payload));
+}
+
 /** Executes memory.rebuild.cancel through the sole private database-backed service. */
 export async function memoryRebuildCancelApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.rebuild.cancel">>): Promise<DomainOutput<"memory.rebuild.cancel">> {
   return dispatchDomain("memory.rebuild.cancel", parseDomainPayload("memory.rebuild.cancel", event.payload));
@@ -454,6 +464,8 @@ export function registerDomainApis(): void {
   ToolPkg.registerApi<DomainInput<"memory.embeddings.rebuild">, DomainOutput<"memory.embeddings.rebuild">>({ name: "memory.embeddings.rebuild", function: memoryEmbeddingsRebuildApi });
   ToolPkg.registerApi<DomainInput<"memory.rebuild.cancel">, DomainOutput<"memory.rebuild.cancel">>({ name: "memory.rebuild.cancel", function: memoryRebuildCancelApi });
   ToolPkg.registerApi<DomainInput<"memory.rebuild.progress">, DomainOutput<"memory.rebuild.progress">>({ name: "memory.rebuild.progress", function: memoryRebuildProgressApi });
+  ToolPkg.registerApi<DomainInput<"memory.candidates.retryFailed">, DomainOutput<"memory.candidates.retryFailed">>({ name: "memory.candidates.retryFailed", function: memoryCandidatesRetryFailedApi });
+  ToolPkg.registerApi<DomainInput<"memory.candidates.clearFailed">, DomainOutput<"memory.candidates.clearFailed">>({ name: "memory.candidates.clearFailed", function: memoryCandidatesClearFailedApi });
   ToolPkg.registerApi<DomainInput<"memory.rebuild.start">, DomainOutput<"memory.rebuild.start">>({ name: "memory.rebuild.start", function: memoryRebuildStartApi });
   ToolPkg.registerApi<DomainInput<"memory.categorize">, DomainOutput<"memory.categorize">>({ name: "memory.categorize", function: memoryCategorizeApi });
   ToolPkg.registerApi<DomainInput<"memory.chat.update">, DomainOutput<"memory.chat.update">>({ name: "memory.chat.update", function: memoryChatUpdateApi });

@@ -27,7 +27,7 @@ export interface MemoryChat {
 export interface MemoryChatListing { chats: MemoryChat[]; missingChatIds: string[] }
 
 /** Publishes the complete MemoryExtractionResult contract in the standalone dependency client. */
-export interface MemoryExtractionResult { ownerKey: string; created: number; updated: number; merged: number; links: number; profileUpdated: boolean }
+export interface MemoryExtractionResult { ownerKey: string; created: number; updated: number; merged: number; links: number; profileUpdated: boolean; skipped: number }
 
 /** Publishes the complete MemoryRebuild contract in the standalone dependency client. */
 export interface MemoryRebuild {
@@ -229,6 +229,8 @@ export interface DomainOperations {
   "memory.rebuild.cancel": { input: { ownerKey: string }; output: MemoryRebuildProgress };
   "memory.embeddings.rebuild": { input: { ownerKey: string }; output: number };
   "memory.candidate.enqueue": { input: { chatId: string; timestamp: number; variantIndex: number; sourceType: "reply_finalized_auto" | "selected_user_message"; ownerKey: string | null }; output: { owners: string[]; candidateIds: string[] } };
+  "memory.candidates.retryFailed": { input: { ownerKey: string }; output: { retried: number } };
+  "memory.candidates.clearFailed": { input: { ownerKey: string }; output: { cleared: number } };
   "chat.configuration.resolve": { input: ChatConfigurationRequest; output: ChatConfigurationResult };
   "chat.configuration.binding.read": { input: { chatId: string }; output: ChatBindingRecord };
   "chat.configuration.binding.write": { input: ChatBindingRecord; output: ChatBindingRecord };
@@ -427,6 +429,10 @@ export const characterCards = {
     candidates: {
       /** Enqueues an actual finalized reply or explicit selected-user message. */
       enqueue: (payload: DomainInput<"memory.candidate.enqueue">): Promise<DomainOutput<"memory.candidate.enqueue">> => call("memory.candidate.enqueue", payload),
+      /** Returns terminal failed records to the pending queue for a genuine interval retry. */
+      retryFailed: (payload: OwnerParams): Promise<DomainOutput<"memory.candidates.retryFailed">> => call("memory.candidates.retryFailed", payload),
+      /** Deletes terminal failed records instead of leaving them in the queue permanently. */
+      clearFailed: (payload: OwnerParams): Promise<DomainOutput<"memory.candidates.clearFailed">> => call("memory.candidates.clearFailed", payload),
     },
     shared: {
       /** Lists shared memory libraries. */

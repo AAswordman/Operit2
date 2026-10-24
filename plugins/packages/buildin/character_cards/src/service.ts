@@ -921,6 +921,18 @@ export async function dispatch(
         },
         host,
       );
+    case "retryFailedCandidates":
+      return executeDomain(
+        "memory.candidates.retryFailed",
+        { ownerKey: "ownerKey" in request ? request.ownerKey : await menuMemoryOwner(request.chatId, host) },
+        host,
+      );
+    case "clearFailedCandidates":
+      return executeDomain(
+        "memory.candidates.clearFailed",
+        { ownerKey: "ownerKey" in request ? request.ownerKey : await menuMemoryOwner(request.chatId, host) },
+        host,
+      );
     case "writeGlobalMemoryPreference":
       return host.writeGlobalMemoryPreference(request.key, request.value);
     case "searchMemoryDebug": {

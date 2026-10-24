@@ -14,11 +14,14 @@ export function memoryRebuilding(dialog: OwnerSettingsDialog): boolean {
   return dialog.progress !== null && (dialog.progress.status === "preparing" || dialog.progress.status === "running");
 }
 
-/** Displays actual candidate counts and the persisted next-check timestamp. */
+/** Displays actual candidate counts, the persisted next-check timestamp and genuine failure recovery actions. */
 export function memoryQueueStatus(dialog: OwnerSettingsDialog): string {
   const queue = dialog.queue;
   if (queue === null) return '<p class="muted">正在读取自动提取队列…</p>';
-  return `<div class="muted">待处理 ${queue.pendingCandidates} 条 / ${queue.pendingChats} 个聊天 · 处理中 ${queue.processingCandidates} · 失败 ${queue.failedCandidates}</div><div class="muted">${queue.nextRunAtMs === 0 ? "尚未安排下次检查" : `下次检查：约 ${queue.minutesUntilNextRun} 分钟后`}</div>${queue.lastError === "" ? "" : `<p class="error-banner">${escapeHtml(queue.lastError)}</p>`}`;
+  const recovery = queue.failedCandidates === 0 ? "" : `<div class="actions">${dialog.pendingClearFailed
+    ? button("confirm-clear-failed-candidates", "确认清除失败记录", "trash", "", "filled") + button("cancel-clear-failed-candidates", "取消", "close")
+    : button("retry-failed-candidates", "重试失败候选", "refresh", "", "tonal") + button("clear-failed-candidates", "清除失败记录", "trash", "", "tonal")}</div>${dialog.pendingClearFailed ? '<p class="muted">清除只删除失败候选记录，不影响已写入的记忆。</p>' : ""}`;
+  return `<div class="muted">待处理 ${queue.pendingCandidates} 条 / ${queue.pendingChats} 个聊天 · 处理中 ${queue.processingCandidates} · 失败 ${queue.failedCandidates}</div><div class="muted">${queue.nextRunAtMs === 0 ? "尚未安排下次检查" : `下次检查：约 ${queue.minutesUntilNextRun} 分钟后`}</div>${queue.lastError === "" ? "" : `<p class="error-banner">${escapeHtml(queue.lastError)}</p>`}${recovery}`;
 }
 
 /** Projects genuine rebuild counters and failures without advancing them in the browser. */

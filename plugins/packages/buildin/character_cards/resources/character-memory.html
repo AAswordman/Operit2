@@ -1175,7 +1175,8 @@
   function memoryQueueStatus(dialog) {
     const queue = dialog.queue;
     if (queue === null) return '<p class="muted">\u6B63\u5728\u8BFB\u53D6\u81EA\u52A8\u63D0\u53D6\u961F\u5217\u2026</p>';
-    return `<div class="muted">\u5F85\u5904\u7406 ${queue.pendingCandidates} \u6761 / ${queue.pendingChats} \u4E2A\u804A\u5929 \xB7 \u5904\u7406\u4E2D ${queue.processingCandidates} \xB7 \u5931\u8D25 ${queue.failedCandidates}</div><div class="muted">${queue.nextRunAtMs === 0 ? "\u5C1A\u672A\u5B89\u6392\u4E0B\u6B21\u68C0\u67E5" : `\u4E0B\u6B21\u68C0\u67E5\uFF1A\u7EA6 ${queue.minutesUntilNextRun} \u5206\u949F\u540E`}</div>${queue.lastError === "" ? "" : `<p class="error-banner">${escapeHtml(queue.lastError)}</p>`}`;
+    const recovery = queue.failedCandidates === 0 ? "" : `<div class="actions">${dialog.pendingClearFailed ? button("confirm-clear-failed-candidates", "\u786E\u8BA4\u6E05\u9664\u5931\u8D25\u8BB0\u5F55", "trash", "", "filled") + button("cancel-clear-failed-candidates", "\u53D6\u6D88", "close") : button("retry-failed-candidates", "\u91CD\u8BD5\u5931\u8D25\u5019\u9009", "refresh", "", "tonal") + button("clear-failed-candidates", "\u6E05\u9664\u5931\u8D25\u8BB0\u5F55", "trash", "", "tonal")}</div>${dialog.pendingClearFailed ? '<p class="muted">\u6E05\u9664\u53EA\u5220\u9664\u5931\u8D25\u5019\u9009\u8BB0\u5F55\uFF0C\u4E0D\u5F71\u54CD\u5DF2\u5199\u5165\u7684\u8BB0\u5FC6\u3002</p>' : ""}`;
+    return `<div class="muted">\u5F85\u5904\u7406 ${queue.pendingCandidates} \u6761 / ${queue.pendingChats} \u4E2A\u804A\u5929 \xB7 \u5904\u7406\u4E2D ${queue.processingCandidates} \xB7 \u5931\u8D25 ${queue.failedCandidates}</div><div class="muted">${queue.nextRunAtMs === 0 ? "\u5C1A\u672A\u5B89\u6392\u4E0B\u6B21\u68C0\u67E5" : `\u4E0B\u6B21\u68C0\u67E5\uFF1A\u7EA6 ${queue.minutesUntilNextRun} \u5206\u949F\u540E`}</div>${queue.lastError === "" ? "" : `<p class="error-banner">${escapeHtml(queue.lastError)}</p>`}${recovery}`;
   }
   function memoryRebuildStatus(dialog) {
     const progress = dialog.progress;
@@ -1351,7 +1352,8 @@
           selectedChatIds: [],
           windowMessageCount: 32,
           from: "",
-          to: ""
+          to: "",
+          pendingClearFailed: false
         });
         await load(dialog2);
         return;
@@ -1384,6 +1386,28 @@
         case "refresh-memory-status":
           await poll(dialog);
           return;
+        case "retry-failed-candidates": {
+          const result = await request({ action: "retryFailedCandidates", ownerKey });
+          dialog.pendingClearFailed = false;
+          toast(`\u5DF2\u91CD\u65B0\u6392\u961F ${result.retried} \u6761\u5931\u8D25\u5019\u9009`);
+          await poll(dialog);
+          return;
+        }
+        case "clear-failed-candidates":
+          dialog.pendingClearFailed = true;
+          if (topDialog() === dialog) updateMemoryStatus(dialog, context.dialogsRoot);
+          return;
+        case "cancel-clear-failed-candidates":
+          dialog.pendingClearFailed = false;
+          if (topDialog() === dialog) updateMemoryStatus(dialog, context.dialogsRoot);
+          return;
+        case "confirm-clear-failed-candidates": {
+          const result = await request({ action: "clearFailedCandidates", ownerKey });
+          dialog.pendingClearFailed = false;
+          toast(`\u5DF2\u6E05\u9664 ${result.cleared} \u6761\u5931\u8D25\u5019\u9009\u8BB0\u5F55`);
+          await poll(dialog);
+          return;
+        }
         case "save-memory-settings": {
           if (dialog.settings === null || dialog.config === null || dialog.loading) throw new Error("\u8BB0\u5FC6\u8BBE\u7F6E\u5C1A\u672A\u8BFB\u53D6\u6210\u529F");
           for (const input of context.dialogsRoot.querySelectorAll("input[type=number]")) if (!input.reportValidity()) throw new Error("\u8BF7\u68C0\u67E5\u6570\u5B57\u8BBE\u7F6E\u7684\u8303\u56F4\u4E0E\u683C\u5F0F");
@@ -1417,7 +1441,7 @@
           throw new Error(`Unknown memory controls action: ${action}`);
       }
     }
-    return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "prune-missing-chat-bindings", "refresh-memory-status", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
+    return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "prune-missing-chat-bindings", "refresh-memory-status", "retry-failed-candidates", "clear-failed-candidates", "cancel-clear-failed-candidates", "confirm-clear-failed-candidates", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
   }
 
   // web/features/memory/item-actions.ts

@@ -9,7 +9,7 @@ import type { ChatConfigurationService } from "./domain";
 import { autoCategorizeMemory, updateChatMemory } from "./memory-jobs/analysis";
 import { listMemoryChats, pruneMissingMemoryChats, requireChat } from "./memory-jobs/chat";
 import { rebuildMemoryEmbeddings } from "./memory-jobs/embeddings";
-import { enqueueCandidate, startMemoryRebuild } from "./memory-jobs/scheduler";
+import { clearFailedCandidates, enqueueCandidate, retryFailedCandidates, startMemoryRebuild } from "./memory-jobs/scheduler";
 import { decodeCharacterBackup, decodeGroupBackup, decodeMemoryBackup, exportCharacterBackup, exportGroupBackup, exportMemoryBackup } from "./backup";
 import { decodeCharacterImport, decodeGroupImport, encodeCharacterExport } from "./serialization";
 import { assertCard, assertGroup, assertMemory, assertNumber, assertStrings, assertTag, normalizeNames, requireId, requireName } from "./validation";
@@ -105,6 +105,10 @@ const handlers: DomainHandlers = {
   "memory.embeddings.rebuild": (input, repository) => rebuildMemoryEmbeddings(input.ownerKey, repository),
   /** Enqueues only actual persisted message sources and genuine bound owners. */
   "memory.candidate.enqueue": (input, repository) => enqueueCandidate(input, repository),
+  /** Returns genuine terminal failures to the pending queue for one later interval retry. */
+  "memory.candidates.retryFailed": (input, repository) => retryFailedCandidates(input.ownerKey, repository),
+  /** Removes genuine terminal failures from the owner queue. */
+  "memory.candidates.clearFailed": (input, repository) => clearFailedCandidates(input.ownerKey, repository),
   /** Resolves chat configuration using this operation's existing repository snapshot. */
   "chat.configuration.resolve": (input, repository) => resolveConfiguration(input, {
     /** Reads only the requested character. */

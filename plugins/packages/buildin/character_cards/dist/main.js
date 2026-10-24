@@ -91,6 +91,8 @@ __export(main_exports, {
   groupSetActiveApi: () => groupSetActiveApi,
   groupUpdateApi: () => groupUpdateApi,
   memoryCandidateEnqueueApi: () => memoryCandidateEnqueueApi,
+  memoryCandidatesClearFailedApi: () => memoryCandidatesClearFailedApi,
+  memoryCandidatesRetryFailedApi: () => memoryCandidatesRetryFailedApi,
   memoryCategorizeApi: () => memoryCategorizeApi,
   memoryChatListApi: () => memoryChatListApi,
   memoryChatPruneMissingApi: () => memoryChatPruneMissingApi,
@@ -1282,6 +1284,8 @@ var validators = {
   "memory.rebuild.cancel": ownerOnly,
   "memory.embeddings.rebuild": ownerOnly,
   "memory.candidate.enqueue": shape({ chatId: required(nonblank), timestamp: required(integer), variantIndex: required(messageVariant), sourceType: required(enumeration("reply_finalized_auto", "selected_user_message")), ownerKey: required(nullable(owner)) }),
+  "memory.candidates.retryFailed": ownerOnly,
+  "memory.candidates.clearFailed": ownerOnly,
   "chat.configuration.resolve": parseChatConfigurationRequest,
   "chat.configuration.binding.read": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.write": shape({ chatId: required(nonblank), selection: required(nonblank) }),
@@ -1552,7 +1556,7 @@ function resolveChatExecution(request, service) {
 }
 
 // src/memory-jobs/prompt-template.ts
-var extractionTemplate = '\u4F60\u8981\u4ECE\u5BF9\u8BDD\u4E2D\u6784\u5EFA\u957F\u671F\u8BB0\u5FC6\u56FE\u8C31\u3002\r\n\r\n$duplicatesPromptPart\r\n$existingMemoriesPrompt\r\n$existingFoldersPrompt\r\n\r\n\u3010\u5199\u5165\u524D\u5148\u8FC7\u7B5B\u3011\r\n- \u53EA\u8BB0\u5F55"\u7528\u6237\u7279\u5F02\u4E14\u53EF\u590D\u7528"\u7684\u4FE1\u606F\uFF1A\u7A33\u5B9A\u504F\u597D\u3001\u7EA6\u675F\u3001\u5DF2\u786E\u8BA4\u51B3\u7B56\u3001\u53CD\u590D\u9519\u8BEF\u3001\u9879\u76EE\u4E8B\u5B9E\u3001\u957F\u671F\u4E16\u754C\u89C2\u4E2D\u7684\u7A33\u5B9A\u8BBE\u5B9A\u3002\r\n- \u4E0D\u8BB0\u5F55\u5E38\u8BC6/\u516C\u5F00\u5B9A\u4E49\uFF08\u5982"TS\u662F\u4EC0\u4E48""Node\u662F\u4EC0\u4E48""\u78C1\u504F\u89D2\u662F\u4EC0\u4E48"\uFF09\u3002\r\n- \u4E0D\u8BB0\u5F55\u672A\u6765\u63A8\u6D4B\u9879\uFF1A\u4E0B\u4E00\u6B65\u5EFA\u8BAE\u3001TODO\u3001\u6682\u5B9A\u8BA1\u5212\u3002\r\n- \u82E5\u6CA1\u6709\u957F\u671F\u4EF7\u503C\u4FE1\u53F7\uFF0C\u76F4\u63A5\u8FD4\u56DE `{}`\u3002\r\n\r\n\u3010\u62BD\u53D6\u7B56\u7565\u3011\r\n- \u63D0\u4F9B\u7684\u5DF2\u6709\u8BB0\u5FC6\u53EA\u662F\u68C0\u7D22\u7EBF\u7D22\uFF0C\u4E0D\u662F\u4E8B\u5B9E\u8BC1\u636E\uFF1B\u53EA\u6709\u5BF9\u8BDD\u660E\u786E\u8BC1\u660E\u4E3B\u4F53\u548C\u4E8B\u5B9E\u76F8\u540C\u65F6\u624D\u53EF `update`\u3001`merge` \u6216\u8FDE\u8FB9\uFF0C\u5426\u5219\u5FFD\u7565\u8BE5\u5019\u9009\u3002\r\n- \u4F18\u5148 `update` / `merge`\uFF0C\u5176\u6B21\u624D\u662F `new`\u3002\r\n- `new` \u4EC5\u5728\u786E\u5B9E\u65B0\u589E\u6982\u5FF5\u65F6\u4F7F\u7528\uFF08\u6700\u591A 5 \u6761\uFF09\u3002\r\n- \u957F\u671F\u5C0F\u8BF4/\u4E16\u754C\u89C2\u573A\u666F\u4E2D\uFF0C\u53CD\u590D\u51FA\u73B0\u4E14\u5F71\u54CD\u8FDE\u7EED\u6027\u7684\u89D2\u8272\u3001\u5730\u70B9\u3001\u7EC4\u7EC7\u3001\u89C4\u5219\u3001\u65F6\u95F4\u7EBF\u53EF\u4EE5\u5165\u5E93\u3002\r\n- \u82E5\u6838\u5FC3\u662F"\u66F4\u65B0\u65E7\u6982\u5FF5"\uFF0C`main` \u5FC5\u987B\u4E3A `null`\uFF0C\u53EA\u7528 `update`\u3002\r\n- \u5982\u679C\u53EA\u662F\u5BF9\u5DF2\u6709\u8BB0\u5FC6\u7684\u6539\u5199\uFF08\u540C\u4E3B\u4F53 + \u540C\u52A8\u4F5C + \u540C\u7ED3\u679C\uFF09\uFF0C\u6309\u91CD\u590D\u5904\u7406\uFF1A\u4F18\u5148 `update`/`merge`\uFF0C\u4E0D\u8981\u518D `new`\u3002\r\n- \u5982\u679C `main` \u4E0E\u5DF2\u6709\u8BB0\u5FC6\u5728\u8BED\u4E49\u4E0A\u662F\u540C\u4E00\u4E8B\u4EF6\uFF0C`main` \u8BBE\u4E3A `null`\uFF0C\u6539\u7528 `update` \u6216 `merge`\u3002\r\n- \u5982\u679C\u5F53\u524D\u8F6E\u7684\u5927\u90E8\u5206\u4E8B\u5B9E\u5DF2\u88AB\u5DF2\u6709\u8BB0\u5FC6\u8986\u76D6\uFF0C\u4E0D\u8981\u518D\u521B\u5EFA\u5E73\u884C `new`\uFF0C\u4F18\u5148\u7ED9\u51FA\u4E00\u6B21 `update` \u6216\u4E00\u6B21 `merge`\u3002\r\n- \u5728\u6709\u660E\u786E\u91CD\u590D\u8BC1\u636E\u65F6\u7EE7\u7EED `new` \u89C6\u4E3A\u4E0D\u5408\u683C\u8F93\u51FA\u3002\r\n- \u63D0\u4F9B\u7ED9\u4F60\u7684\u5DF2\u6709\u8BB0\u5FC6\u6837\u672C\u662F\u53EF\u64CD\u4F5C\u5BF9\u8C61\uFF1A\u5373\u4F7F\u672C\u8F6E\u6CA1\u6709 `new`\uFF0C\u4E5F\u53EF\u4EE5\u76F4\u63A5\u5BF9\u8FD9\u4E9B\u5DF2\u6709\u8BB0\u5FC6\u505A `update`\u3001`merge`\u3001`links`\u3002\r\n\r\n\u3010\u8BED\u6C14\u7B56\u7565\u3011\r\n- \u8BED\u6C14\u53EF\u6839\u636E\u573A\u666F\u53D8\u5316\uFF08\u6280\u672F\u3001\u65E5\u5E38\u804A\u5929\u3001\u5C0F\u8BF4\u521B\u4F5C\uFF09\uFF0C\u4F46\u53EA\u80FD\u6539\u53D8\u8868\u8FBE\u65B9\u5F0F\uFF0C\u4E0D\u80FD\u6539\u53D8\u5165\u5E93\u6807\u51C6\u3002\r\n- \u7ED3\u6784\u548C\u4E8B\u5B9E\u5FC5\u987B\u7A33\u5B9A\uFF1A\u8BED\u6C14\u53D8\u5316\u4E0D\u7B49\u4E8E\u653E\u5BBD\u7B5B\u9009\u3002\r\n- \u4E0D\u80FD\u56E0\u4E3A\u8BED\u6C14\u81EA\u7136\u5316\u5C31\u8BB0\u5F55\u5E38\u8BC6\u6216\u672A\u6765\u8BA1\u5212\u3002\r\n- \u6807\u9898\u4FDD\u6301\u7B80\u6D01\u5E76\u805A\u7126\u4E8B\u4EF6\uFF0C\u5185\u5BB9\u5728\u53EF\u8BFB\u7684\u524D\u63D0\u4E0B\u8D34\u5408\u573A\u666F\u8BED\u6C14\u3002\r\n\r\n\u3010\u6807\u9898\u4E0E\u5185\u5BB9\u5199\u6CD5\u3011\r\n- `main` \u6807\u9898\u4F18\u5148\u5199\u4E8B\u4EF6\uFF0C\u4E0D\u5199\u5B9A\u4E49\u3002\r\n- \u63A8\u8350\u6807\u9898\u6A21\u677F\uFF1A\r\n  - \u4E8B\u4EF6\uFF1A`[\u9886\u57DF] \u4E8B\u4EF6\uFF1A\u52A8\u4F5C + \u7ED3\u679C`\r\n  - \u4E16\u754C\u89C2\u5B9E\u4F53\uFF1A`\u5B9E\u4F53\uFF1A\u540D\u79F0\uFF08\u8EAB\u4EFD/\u7C7B\u578B\uFF09`\r\n- \u4E0D\u63A8\u8350\u6807\u9898\uFF1A`X\u662F\u4EC0\u4E48`\u3001`X\u7684\u5B9A\u4E49`\u3001\u767E\u79D1\u5F0F\u6CDB\u6807\u9898\u3002\r\n- \u5185\u5BB9\u53EA\u5199"\u5DF2\u53D1\u751F\u4E8B\u5B9E + \u5F53\u524D\u5DF2\u786E\u8BA4\u72B6\u6001"\u3002\r\n- \u5185\u5BB9\u7981\u6B62\u5199\u672A\u6765\u52A8\u4F5C\u3001TODO\u3001\u63A8\u6D4B\u6027\u8BA1\u5212\u3002\r\n$memoryExtractionCustomRulesInstruction\r\n\r\n\u3010\u8FDE\u63A5\u5173\u7CFB\u89C4\u5219\u3011\r\n- \u53EA\u6709\u5F53\u5BF9\u8BDD\u91CC\u6709\u660E\u786E\u8BC1\u636E\u65F6\u624D\u5EFA\u8FB9\u3002\r\n- \u63A8\u8350\u5173\u7CFB\u7C7B\u578B\uFF1A\r\n  - \u4E8B\u4EF6\u6D41\u7A0B\uFF1A`FOLLOWS`\u3001`CORRECTS`\u3001`UPDATES`\r\n  - \u53C2\u4E0E\u4E0E\u4E0A\u4E0B\u6587\uFF1A`INVOLVES`\u3001`HAPPENS_AT`\r\n  - \u4E16\u754C\u89C2\u7ED3\u6784\uFF1A`PART_OF`\u3001`ALLIED_WITH`\u3001`OPPOSES`\r\n- \u4E0D\u80FD\u4EC5\u51ED"\u540C\u6BB5\u63D0\u5230\u8FC7"\u5C31\u8FDE\u8FB9\u3002\r\n- \u62FF\u4E0D\u51C6\u5C31\u4E0D\u8FDE\u3002\r\n- \u5EFA\u8FB9\u8303\u56F4\u4E0D\u5E94\u53EA\u9650\u4E8E\u672C\u8F6E\u65B0\u8F93\u51FA\uFF1B\u5982\u679C"\u5DF2\u6709\u6837\u672C\u8BB0\u5FC6"\u4E0E\u672C\u8F6E\u4E8B\u4EF6/\u5B9E\u4F53\u5173\u7CFB\u660E\u786E\uFF0C\u4E5F\u5E94\u4E3B\u52A8\u5EFA\u8FB9\u3002\r\n- \u8F93\u51FA\u524D\u8BF7\u5728\u5168\u91CF\u5BF9\u8C61\u4E0A\u505A\u4E24\u4E24\u5173\u7CFB\u68C0\u67E5\uFF1A`main`\u3001`new`\u3001`update` \u76EE\u6807\u3001\u4EE5\u53CA\u63D0\u4F9B\u7684\u5DF2\u6709\u8BB0\u5FC6\uFF1B\u51E1\u6709\u660E\u786E\u8BC1\u636E\u90FD\u5E94\u5EFA\u8FB9\u3002\r\n\r\n\u3010\u793A\u4F8B\uFF08\u5FC5\u987B\u9075\u5FAA\uFF09\u3011\r\n- \u4EC5\u5728\u95EE\u7B54\u5E38\u8BC6\uFF08\u5982"\u78C1\u504F\u89D2\u662F\u4EC0\u4E48"\uFF09\u4E14\u65E0\u7528\u6237\u7279\u5F02\u4FE1\u53F7\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u4EC5\u89E3\u91CA TS/Node \u7B49\u516C\u5F00\u5B9A\u4E49\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u95F2\u804A\u4F46\u6709\u5B9E\u9645\u4EA4\u6D41\u5185\u5BB9\uFF1A\u538B\u7F29\u6210\u4E00\u6761\u4E8B\u4EF6\u578B `main` \u8BB0\u5F55\uFF0C\u4E0D\u62C6\u6280\u672F\u7EC6\u8282\u3002\r\n- \u53EA\u6709\u7A7A\u6CDB\u5BD2\u6684\uFF08\u5982\u4EC5"\u4F60\u597D/\u5728\u5417"\uFF09\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u672C\u8F6E\u51FA\u73B0"\u7528\u6237\u72AF\u9519\u5E76\u88AB\u7EA0\u6B63"\uFF1A\u4F5C\u4E3A\u4E8B\u4EF6\u5199\u5165 `main`\u3002\r\n- \u957F\u671F\u5C0F\u8BF4/\u4E16\u754C\u89C2\u8BA8\u8BBA\uFF1A\u53CD\u590D\u51FA\u73B0\u4E14\u5F71\u54CD\u8FDE\u7EED\u6027\u7684\u89D2\u8272\u3001\u5730\u540D\u3001\u7EC4\u7EC7\u3001\u89C4\u5219\u3001\u65F6\u95F4\u7EBF\u5E94\u5165\u5E93\uFF0C\u6309\u9700\u4F7F\u7528 `new`/`links`\u3002\r\n- \u4EC5\u89E3\u91CA\u533B\u7597\u5B9A\u4E49\uFF08\u5982"\u6D41\u611F\u662F\u4EC0\u4E48"\uFF09\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u4EC5\u89E3\u91CA\u91D1\u878D\u5B9A\u4E49\uFF08\u5982"ETF\u662F\u4EC0\u4E48"\uFF09\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u9879\u76EE\u672C\u8F6E\u6709\u660E\u786E\u8FDB\u5C55\uFF08\u4FEE\u590D\u5B8C\u6210/\u6458\u8981\u5B8C\u6210/\u4EFB\u52A1\u7EC8\u6B62\uFF09\uFF1A\u5199\u4E00\u6761\u4E8B\u4EF6\u578B `main`\u3002\r\n- \u53CD\u590D\u89E3\u91CA\u4F46\u6CA1\u6709\u65B0\u8FDB\u5C55/\u65B0\u51B3\u7B56\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u4E16\u754C\u89C2\u8BBE\u5B9A\u53D1\u751F\u53D8\u5316\uFF08\u5173\u7CFB/\u5F52\u5C5E\u53D8\u66F4\uFF09\uFF1A\u4F18\u5148 `update`\uFF0C\u5E76\u5728\u8BC1\u636E\u660E\u786E\u65F6\u8FDE `UPDATES` / `PART_OF`\u3002\r\n- \u672C\u8F6E\u53EA\u662F\u91CD\u8FF0\u5DF2\u5B58\u5728\u4E8B\u4EF6\uFF1A\u4F18\u5148 `update`/`merge`\uFF0C\u4E0D\u8981 `new`\u3002\r\n- \u4E8B\u4EF6\u91CC\u660E\u786E\u51FA\u73B0\u53C2\u4E0E\u8005/\u5DE5\u5177\u5305\u4E14\u5173\u7CFB\u6E05\u6670\uFF1A\u8865\u5145 `INVOLVES` \u94FE\u63A5\u3002\r\n- \u672C\u8F6E\u786E\u8BA4\u4E86"\u5DF2\u6709\u6837\u672C\u8BB0\u5FC6"\u548C\u5176\u4ED6\u8BB0\u5FC6\u7684\u660E\u786E\u5173\u7CFB\uFF1A\u5373\u4F7F\u6CA1\u6709 `new`\uFF0C\u4E5F\u5E94\u5728 `links` \u4E2D\u4F53\u73B0\u3002\r\n\r\n\u3010\u8F93\u51FA\u683C\u5F0F\uFF08\u4E25\u683CJSON\uFF09\u3011\r\n- \u9664\u8FD4\u56DE `{}` \u5916\uFF0C\u5FC5\u987B\u5305\u542B `main`\u3001`new`\u3001`update`\u3001`merge`\u3001`links`$profileOptionalKey\uFF1B\u6570\u7EC4\u4E2D\u7684\u6BCF\u4E00\u9879\u5FC5\u987B\u662F\u5177\u540D\u5BF9\u8C61\uFF0C\u7981\u6B62\u4F4D\u7F6E\u6570\u7EC4\u3002\r\n- `main`\uFF1A`null` \u6216 `{"title":"...","content":"...","tags":["..."],"folder_path":"..."}`\u3002\r\n- `new`\uFF1A`[{"title":"...","content":"...","tags":["..."],"folder_path":"...","alias_for":null}, ...]`\u3002\r\n- `update`\uFF1A`[{"title":"...","content":"\u65B0\u5B8C\u6574\u5185\u5BB9","reason":"...","credibility":null,"importance":null}, ...]`\u3002\r\n- `merge`\uFF1A`[{"source_titles":["A","B"],"title":"...","content":"...","tags":["..."],"folder_path":"...","reason":"..."}, ...]`\u3002\r\n- `links`\uFF1A`[{"source":"...","target":"...","type":"\u5927\u5199\u4E0B\u5212\u7EBF\u5173\u7CFB","description":"...","weight":0.0}, ...]`\u3002\r\n- \u53EF\u4FE1\u5EA6\u3001\u91CD\u8981\u6027\u3001\u6743\u91CD\u5FC5\u987B\u662F 0.0 \u5230 1.0 \u7684 JSON \u6570\u5B57\uFF1B\u53EF\u4FE1\u5EA6\u3001\u91CD\u8981\u6027\u548C `alias_for` \u53EF\u7528 JSON `null`\u3002\r\n$profileMarkdownSchemaLine\r\n\r\n$profileUpdateInstruction\r\n\r\n\u53EA\u8FD4\u56DE\u5408\u6CD5 JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981\u8F93\u51FA\u5176\u4ED6\u5185\u5BB9\u3002\r\n';
+var extractionTemplate = '\u4F60\u8981\u4ECE\u5BF9\u8BDD\u4E2D\u6784\u5EFA\u957F\u671F\u8BB0\u5FC6\u56FE\u8C31\u3002\r\n\r\n$duplicatesPromptPart\r\n$existingMemoriesPrompt\r\n$existingFoldersPrompt\r\n\r\n\u3010\u5199\u5165\u524D\u5148\u8FC7\u7B5B\u3011\r\n- \u53EA\u8BB0\u5F55"\u7528\u6237\u7279\u5F02\u4E14\u53EF\u590D\u7528"\u7684\u4FE1\u606F\uFF1A\u7A33\u5B9A\u504F\u597D\u3001\u7EA6\u675F\u3001\u5DF2\u786E\u8BA4\u51B3\u7B56\u3001\u53CD\u590D\u9519\u8BEF\u3001\u9879\u76EE\u4E8B\u5B9E\u3001\u957F\u671F\u4E16\u754C\u89C2\u4E2D\u7684\u7A33\u5B9A\u8BBE\u5B9A\u3002\r\n- \u4E0D\u8BB0\u5F55\u5E38\u8BC6/\u516C\u5F00\u5B9A\u4E49\uFF08\u5982"TS\u662F\u4EC0\u4E48""Node\u662F\u4EC0\u4E48""\u78C1\u504F\u89D2\u662F\u4EC0\u4E48"\uFF09\u3002\r\n- \u4E0D\u8BB0\u5F55\u672A\u6765\u63A8\u6D4B\u9879\uFF1A\u4E0B\u4E00\u6B65\u5EFA\u8BAE\u3001TODO\u3001\u6682\u5B9A\u8BA1\u5212\u3002\r\n- \u82E5\u6CA1\u6709\u957F\u671F\u4EF7\u503C\u4FE1\u53F7\uFF0C\u76F4\u63A5\u8FD4\u56DE `{}`\u3002\r\n\r\n\u3010\u62BD\u53D6\u7B56\u7565\u3011\r\n- \u63D0\u4F9B\u7684\u5DF2\u6709\u8BB0\u5FC6\u53EA\u662F\u68C0\u7D22\u7EBF\u7D22\uFF0C\u4E0D\u662F\u4E8B\u5B9E\u8BC1\u636E\uFF1B\u53EA\u6709\u5BF9\u8BDD\u660E\u786E\u8BC1\u660E\u4E3B\u4F53\u548C\u4E8B\u5B9E\u76F8\u540C\u65F6\u624D\u53EF `update`\u3001`merge` \u6216\u8FDE\u8FB9\uFF0C\u5426\u5219\u5FFD\u7565\u8BE5\u5019\u9009\u3002\r\n- \u4F18\u5148 `update` / `merge`\uFF0C\u5176\u6B21\u624D\u662F `new`\u3002\r\n- `new` \u4EC5\u5728\u786E\u5B9E\u65B0\u589E\u6982\u5FF5\u65F6\u4F7F\u7528\uFF08\u6700\u591A 5 \u6761\uFF09\u3002\r\n- \u957F\u671F\u5C0F\u8BF4/\u4E16\u754C\u89C2\u573A\u666F\u4E2D\uFF0C\u53CD\u590D\u51FA\u73B0\u4E14\u5F71\u54CD\u8FDE\u7EED\u6027\u7684\u89D2\u8272\u3001\u5730\u70B9\u3001\u7EC4\u7EC7\u3001\u89C4\u5219\u3001\u65F6\u95F4\u7EBF\u53EF\u4EE5\u5165\u5E93\u3002\r\n- \u82E5\u6838\u5FC3\u662F"\u66F4\u65B0\u65E7\u6982\u5FF5"\uFF0C`main` \u5FC5\u987B\u4E3A `null`\uFF0C\u53EA\u7528 `update`\u3002\r\n- \u5982\u679C\u53EA\u662F\u5BF9\u5DF2\u6709\u8BB0\u5FC6\u7684\u6539\u5199\uFF08\u540C\u4E3B\u4F53 + \u540C\u52A8\u4F5C + \u540C\u7ED3\u679C\uFF09\uFF0C\u6309\u91CD\u590D\u5904\u7406\uFF1A\u4F18\u5148 `update`/`merge`\uFF0C\u4E0D\u8981\u518D `new`\u3002\r\n- \u5982\u679C `main` \u4E0E\u5DF2\u6709\u8BB0\u5FC6\u5728\u8BED\u4E49\u4E0A\u662F\u540C\u4E00\u4E8B\u4EF6\uFF0C`main` \u8BBE\u4E3A `null`\uFF0C\u6539\u7528 `update` \u6216 `merge`\u3002\r\n- \u5982\u679C\u5F53\u524D\u8F6E\u7684\u5927\u90E8\u5206\u4E8B\u5B9E\u5DF2\u88AB\u5DF2\u6709\u8BB0\u5FC6\u8986\u76D6\uFF0C\u4E0D\u8981\u518D\u521B\u5EFA\u5E73\u884C `new`\uFF0C\u4F18\u5148\u7ED9\u51FA\u4E00\u6B21 `update` \u6216\u4E00\u6B21 `merge`\u3002\r\n- \u5728\u6709\u660E\u786E\u91CD\u590D\u8BC1\u636E\u65F6\u7EE7\u7EED `new` \u89C6\u4E3A\u4E0D\u5408\u683C\u8F93\u51FA\u3002\r\n- \u63D0\u4F9B\u7ED9\u4F60\u7684\u5DF2\u6709\u8BB0\u5FC6\u6837\u672C\u662F\u53EF\u64CD\u4F5C\u5BF9\u8C61\uFF1A\u5373\u4F7F\u672C\u8F6E\u6CA1\u6709 `new`\uFF0C\u4E5F\u53EF\u4EE5\u76F4\u63A5\u5BF9\u8FD9\u4E9B\u5DF2\u6709\u8BB0\u5FC6\u505A `update`\u3001`merge`\u3001`links`\u3002\r\n- `update`\u3001`merge`\u3001`links`\u3001`alias_for` \u5F15\u7528\u7684\u6807\u9898\u5FC5\u987B\u4ECE\u5DF2\u6709\u8BB0\u5FC6\u6807\u9898\u4E2D\u9010\u5B57\u590D\u5236\uFF0C\u7981\u6B62\u6539\u5199\u3001\u8865\u5145\u3001\u7FFB\u8BD1\u6216\u731C\u6D4B\uFF1B\u6CA1\u6709\u7CBE\u786E\u5339\u914D\u7684\u6807\u9898\u5C31\u5FFD\u7565\u8BE5\u6761\u76EE\u3002\r\n\r\n\u3010\u8BED\u6C14\u7B56\u7565\u3011\r\n- \u8BED\u6C14\u53EF\u6839\u636E\u573A\u666F\u53D8\u5316\uFF08\u6280\u672F\u3001\u65E5\u5E38\u804A\u5929\u3001\u5C0F\u8BF4\u521B\u4F5C\uFF09\uFF0C\u4F46\u53EA\u80FD\u6539\u53D8\u8868\u8FBE\u65B9\u5F0F\uFF0C\u4E0D\u80FD\u6539\u53D8\u5165\u5E93\u6807\u51C6\u3002\r\n- \u7ED3\u6784\u548C\u4E8B\u5B9E\u5FC5\u987B\u7A33\u5B9A\uFF1A\u8BED\u6C14\u53D8\u5316\u4E0D\u7B49\u4E8E\u653E\u5BBD\u7B5B\u9009\u3002\r\n- \u4E0D\u80FD\u56E0\u4E3A\u8BED\u6C14\u81EA\u7136\u5316\u5C31\u8BB0\u5F55\u5E38\u8BC6\u6216\u672A\u6765\u8BA1\u5212\u3002\r\n- \u6807\u9898\u4FDD\u6301\u7B80\u6D01\u5E76\u805A\u7126\u4E8B\u4EF6\uFF0C\u5185\u5BB9\u5728\u53EF\u8BFB\u7684\u524D\u63D0\u4E0B\u8D34\u5408\u573A\u666F\u8BED\u6C14\u3002\r\n\r\n\u3010\u6807\u9898\u4E0E\u5185\u5BB9\u5199\u6CD5\u3011\r\n- `main` \u6807\u9898\u4F18\u5148\u5199\u4E8B\u4EF6\uFF0C\u4E0D\u5199\u5B9A\u4E49\u3002\r\n- \u63A8\u8350\u6807\u9898\u6A21\u677F\uFF1A\r\n  - \u4E8B\u4EF6\uFF1A`[\u9886\u57DF] \u4E8B\u4EF6\uFF1A\u52A8\u4F5C + \u7ED3\u679C`\r\n  - \u4E16\u754C\u89C2\u5B9E\u4F53\uFF1A`\u5B9E\u4F53\uFF1A\u540D\u79F0\uFF08\u8EAB\u4EFD/\u7C7B\u578B\uFF09`\r\n- \u4E0D\u63A8\u8350\u6807\u9898\uFF1A`X\u662F\u4EC0\u4E48`\u3001`X\u7684\u5B9A\u4E49`\u3001\u767E\u79D1\u5F0F\u6CDB\u6807\u9898\u3002\r\n- \u5185\u5BB9\u53EA\u5199"\u5DF2\u53D1\u751F\u4E8B\u5B9E + \u5F53\u524D\u5DF2\u786E\u8BA4\u72B6\u6001"\u3002\r\n- \u5185\u5BB9\u7981\u6B62\u5199\u672A\u6765\u52A8\u4F5C\u3001TODO\u3001\u63A8\u6D4B\u6027\u8BA1\u5212\u3002\r\n$memoryExtractionCustomRulesInstruction\r\n\r\n\u3010\u8FDE\u63A5\u5173\u7CFB\u89C4\u5219\u3011\r\n- \u53EA\u6709\u5F53\u5BF9\u8BDD\u91CC\u6709\u660E\u786E\u8BC1\u636E\u65F6\u624D\u5EFA\u8FB9\u3002\r\n- \u63A8\u8350\u5173\u7CFB\u7C7B\u578B\uFF1A\r\n  - \u4E8B\u4EF6\u6D41\u7A0B\uFF1A`FOLLOWS`\u3001`CORRECTS`\u3001`UPDATES`\r\n  - \u53C2\u4E0E\u4E0E\u4E0A\u4E0B\u6587\uFF1A`INVOLVES`\u3001`HAPPENS_AT`\r\n  - \u4E16\u754C\u89C2\u7ED3\u6784\uFF1A`PART_OF`\u3001`ALLIED_WITH`\u3001`OPPOSES`\r\n- \u4E0D\u80FD\u4EC5\u51ED"\u540C\u6BB5\u63D0\u5230\u8FC7"\u5C31\u8FDE\u8FB9\u3002\r\n- \u62FF\u4E0D\u51C6\u5C31\u4E0D\u8FDE\u3002\r\n- \u5EFA\u8FB9\u8303\u56F4\u4E0D\u5E94\u53EA\u9650\u4E8E\u672C\u8F6E\u65B0\u8F93\u51FA\uFF1B\u5982\u679C"\u5DF2\u6709\u6837\u672C\u8BB0\u5FC6"\u4E0E\u672C\u8F6E\u4E8B\u4EF6/\u5B9E\u4F53\u5173\u7CFB\u660E\u786E\uFF0C\u4E5F\u5E94\u4E3B\u52A8\u5EFA\u8FB9\u3002\r\n- \u8F93\u51FA\u524D\u8BF7\u5728\u5168\u91CF\u5BF9\u8C61\u4E0A\u505A\u4E24\u4E24\u5173\u7CFB\u68C0\u67E5\uFF1A`main`\u3001`new`\u3001`update` \u76EE\u6807\u3001\u4EE5\u53CA\u63D0\u4F9B\u7684\u5DF2\u6709\u8BB0\u5FC6\uFF1B\u51E1\u6709\u660E\u786E\u8BC1\u636E\u90FD\u5E94\u5EFA\u8FB9\u3002\r\n\r\n\u3010\u793A\u4F8B\uFF08\u5FC5\u987B\u9075\u5FAA\uFF09\u3011\r\n- \u4EC5\u5728\u95EE\u7B54\u5E38\u8BC6\uFF08\u5982"\u78C1\u504F\u89D2\u662F\u4EC0\u4E48"\uFF09\u4E14\u65E0\u7528\u6237\u7279\u5F02\u4FE1\u53F7\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u4EC5\u89E3\u91CA TS/Node \u7B49\u516C\u5F00\u5B9A\u4E49\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u95F2\u804A\u4F46\u6709\u5B9E\u9645\u4EA4\u6D41\u5185\u5BB9\uFF1A\u538B\u7F29\u6210\u4E00\u6761\u4E8B\u4EF6\u578B `main` \u8BB0\u5F55\uFF0C\u4E0D\u62C6\u6280\u672F\u7EC6\u8282\u3002\r\n- \u53EA\u6709\u7A7A\u6CDB\u5BD2\u6684\uFF08\u5982\u4EC5"\u4F60\u597D/\u5728\u5417"\uFF09\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u672C\u8F6E\u51FA\u73B0"\u7528\u6237\u72AF\u9519\u5E76\u88AB\u7EA0\u6B63"\uFF1A\u4F5C\u4E3A\u4E8B\u4EF6\u5199\u5165 `main`\u3002\r\n- \u957F\u671F\u5C0F\u8BF4/\u4E16\u754C\u89C2\u8BA8\u8BBA\uFF1A\u53CD\u590D\u51FA\u73B0\u4E14\u5F71\u54CD\u8FDE\u7EED\u6027\u7684\u89D2\u8272\u3001\u5730\u540D\u3001\u7EC4\u7EC7\u3001\u89C4\u5219\u3001\u65F6\u95F4\u7EBF\u5E94\u5165\u5E93\uFF0C\u6309\u9700\u4F7F\u7528 `new`/`links`\u3002\r\n- \u4EC5\u89E3\u91CA\u533B\u7597\u5B9A\u4E49\uFF08\u5982"\u6D41\u611F\u662F\u4EC0\u4E48"\uFF09\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u4EC5\u89E3\u91CA\u91D1\u878D\u5B9A\u4E49\uFF08\u5982"ETF\u662F\u4EC0\u4E48"\uFF09\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u9879\u76EE\u672C\u8F6E\u6709\u660E\u786E\u8FDB\u5C55\uFF08\u4FEE\u590D\u5B8C\u6210/\u6458\u8981\u5B8C\u6210/\u4EFB\u52A1\u7EC8\u6B62\uFF09\uFF1A\u5199\u4E00\u6761\u4E8B\u4EF6\u578B `main`\u3002\r\n- \u53CD\u590D\u89E3\u91CA\u4F46\u6CA1\u6709\u65B0\u8FDB\u5C55/\u65B0\u51B3\u7B56\uFF1A\u8FD4\u56DE `{}`\u3002\r\n- \u4E16\u754C\u89C2\u8BBE\u5B9A\u53D1\u751F\u53D8\u5316\uFF08\u5173\u7CFB/\u5F52\u5C5E\u53D8\u66F4\uFF09\uFF1A\u4F18\u5148 `update`\uFF0C\u5E76\u5728\u8BC1\u636E\u660E\u786E\u65F6\u8FDE `UPDATES` / `PART_OF`\u3002\r\n- \u672C\u8F6E\u53EA\u662F\u91CD\u8FF0\u5DF2\u5B58\u5728\u4E8B\u4EF6\uFF1A\u4F18\u5148 `update`/`merge`\uFF0C\u4E0D\u8981 `new`\u3002\r\n- \u4E8B\u4EF6\u91CC\u660E\u786E\u51FA\u73B0\u53C2\u4E0E\u8005/\u5DE5\u5177\u5305\u4E14\u5173\u7CFB\u6E05\u6670\uFF1A\u8865\u5145 `INVOLVES` \u94FE\u63A5\u3002\r\n- \u672C\u8F6E\u786E\u8BA4\u4E86"\u5DF2\u6709\u6837\u672C\u8BB0\u5FC6"\u548C\u5176\u4ED6\u8BB0\u5FC6\u7684\u660E\u786E\u5173\u7CFB\uFF1A\u5373\u4F7F\u6CA1\u6709 `new`\uFF0C\u4E5F\u5E94\u5728 `links` \u4E2D\u4F53\u73B0\u3002\r\n\r\n\u3010\u8F93\u51FA\u683C\u5F0F\uFF08\u4E25\u683CJSON\uFF09\u3011\r\n- \u9664\u8FD4\u56DE `{}` \u5916\uFF0C\u5FC5\u987B\u5305\u542B `main`\u3001`new`\u3001`update`\u3001`merge`\u3001`links`$profileOptionalKey\uFF1B\u6570\u7EC4\u4E2D\u7684\u6BCF\u4E00\u9879\u5FC5\u987B\u662F\u5177\u540D\u5BF9\u8C61\uFF0C\u7981\u6B62\u4F4D\u7F6E\u6570\u7EC4\u3002\r\n- `main`\uFF1A`null` \u6216 `{"title":"...","content":"...","tags":["..."],"folder_path":"..."}`\u3002\r\n- `new`\uFF1A`[{"title":"...","content":"...","tags":["..."],"folder_path":"...","alias_for":null}, ...]`\u3002\r\n- `update`\uFF1A`[{"title":"...","content":"\u65B0\u5B8C\u6574\u5185\u5BB9","reason":"...","credibility":null,"importance":null}, ...]`\u3002\r\n- `merge`\uFF1A`[{"source_titles":["A","B"],"title":"...","content":"...","tags":["..."],"folder_path":"...","reason":"..."}, ...]`\u3002\r\n- `links`\uFF1A`[{"source":"...","target":"...","type":"\u5927\u5199\u4E0B\u5212\u7EBF\u5173\u7CFB","description":"...","weight":0.0}, ...]`\u3002\r\n- \u53EF\u4FE1\u5EA6\u3001\u91CD\u8981\u6027\u3001\u6743\u91CD\u5FC5\u987B\u662F 0.0 \u5230 1.0 \u7684 JSON \u6570\u5B57\uFF1B\u53EF\u4FE1\u5EA6\u3001\u91CD\u8981\u6027\u548C `alias_for` \u53EF\u7528 JSON `null`\u3002\r\n$profileMarkdownSchemaLine\r\n\r\n$profileUpdateInstruction\r\n\r\n\u53EA\u8FD4\u56DE\u5408\u6CD5 JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981\u8F93\u51FA\u5176\u4ED6\u5185\u5BB9\u3002\r\n';
 
 // src/storage/merge.json
 var merge_default = {
@@ -3343,9 +3347,16 @@ function planWindows(chat, messages, options) {
 // src/memory-jobs/analysis.ts
 function parseModelJson(text2) {
   assertString(text2, "model output");
-  const trimmed = text2.trim();
-  const fence = /^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```\s*$/u.exec(trimmed);
-  return JSON.parse(fence === null ? trimmed : fence[1]);
+  const cleaned = text2.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, " ").trim();
+  const fence = /```(?:json)?\s*([\s\S]*?)```/u.exec(cleaned);
+  const payload = (fence === null ? cleaned : fence[1]).trim();
+  try {
+    return JSON.parse(payload);
+  } catch (error) {
+    const start = payload.indexOf("{"), end = payload.lastIndexOf("}");
+    if (start < 0 || end <= start) throw error;
+    return JSON.parse(payload.slice(start, end + 1));
+  }
 }
 function entity(value, alias) {
   assertObject(value, "analysis entity");
@@ -3379,38 +3390,43 @@ function link(value) {
   assertString(value.description, "relationship description");
   assertNumber(value.weight, "relationship weight", 0, 1);
 }
-function objectArray(value, label, check) {
-  if (!Array.isArray(value)) throw new Error("Memory analysis requires a named object array: " + label);
+function objectArray(value, check, skipped) {
+  if (!Array.isArray(value)) return [];
   const result2 = [];
-  for (const item of value) {
+  for (const item of value) try {
     check(item);
     result2.push(item);
+  } catch {
+    skipped.count += 1;
   }
   return result2;
 }
 function analysis(value) {
   assertObject(value, "memory analysis");
   if (Object.keys(value).length === 0) return null;
+  const skipped = { count: 0 };
   let main = null;
-  if (value.main !== null) {
+  if (value.main !== null && value.main !== void 0) try {
     entity(value.main, false);
     main = value.main;
+  } catch {
+    skipped.count += 1;
   }
   const result2 = {
     main,
-    new: objectArray(value.new, "new", newEntity),
-    update: objectArray(value.update, "update", update),
-    merge: objectArray(value.merge, "merge", merge2),
-    links: objectArray(value.links, "links", link)
+    new: objectArray(value.new, newEntity, skipped),
+    update: objectArray(value.update, update, skipped),
+    merge: objectArray(value.merge, merge2, skipped),
+    links: objectArray(value.links, link, skipped),
+    skipped: 0
   };
   if (result2.new.length > 5) throw new Error("Memory extraction exceeds the five-entity gate");
   if (Object.prototype.hasOwnProperty.call(value, "profile_markdown")) {
     if (value.profile_markdown === null) result2.profile_markdown = null;
-    else {
-      assertString(value.profile_markdown, "profile Markdown");
-      result2.profile_markdown = value.profile_markdown;
-    }
+    else if (typeof value.profile_markdown === "string") result2.profile_markdown = value.profile_markdown;
+    else skipped.count += 1;
   }
+  result2.skipped = skipped.count;
   return result2;
 }
 function normalizeCandidateSearchText(text2, limit2) {
@@ -3485,10 +3501,16 @@ function extractionPrompt(candidates, memories, folders, settings2, profile) {
   for (const [token, content] of fields4) prompt = prompt.split(token).join(content);
   return prompt;
 }
+function unresolvedReference(error) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message;
+  return message.startsWith("Memory title does not identify exactly one record: ") || message.startsWith("Memory merge source does not exist: ") || message === "Memory merge requires at least two unique source records" || message.startsWith("Name already exists: ") || message === "Self relationships are not allowed";
+}
 function applyAnalysis(ownerKey, result2, settings2, repository) {
   return __async(this, null, function* () {
-    const report = { ownerKey, created: 0, updated: 0, merged: 0, links: 0, profileUpdated: false };
+    const report = { ownerKey, created: 0, updated: 0, merged: 0, links: 0, profileUpdated: false, skipped: 0 };
     if (result2 === null) return report;
+    report.skipped = result2.skipped;
     if (result2.profile_markdown !== void 0 && result2.profile_markdown !== null && (!settings2.profileAutoUpdateEnabled || settings2.profileAutoUpdateLocked))
       throw new Error("Model returned a profile update forbidden by the owner settings");
     const index = /* @__PURE__ */ new Map();
@@ -3502,7 +3524,7 @@ function applyAnalysis(ownerKey, result2, settings2, repository) {
       if (matches === void 0 || matches.length !== 1) throw new Error("Memory title does not identify exactly one record: " + title);
       return matches[0];
     }
-    for (const item of result2.merge) {
+    for (const item of result2.merge) try {
       const memory = yield repository.mergeMemories(ownerKey, item.source_titles, {
         title: item.title,
         content: item.content,
@@ -3516,37 +3538,48 @@ function applyAnalysis(ownerKey, result2, settings2, repository) {
       for (const title of item.source_titles) index.delete(title);
       index.set(memory.title, [memory]);
       report.merged += 1;
+    } catch (error) {
+      if (!unresolvedReference(error)) throw error;
+      report.skipped += 1;
     }
-    for (const item of result2.update) {
+    for (const item of result2.update) try {
       const memory = { ...resolve(item.title), content: item.content };
       if (item.credibility !== void 0 && item.credibility !== null) memory.credibility = item.credibility;
       if (item.importance !== void 0 && item.importance !== null) memory.importance = item.importance;
       const saved = yield repository.saveMemory(ownerKey, memory);
       index.set(saved.title, [saved]);
       report.updated += 1;
+    } catch (error) {
+      if (!unresolvedReference(error)) throw error;
+      report.skipped += 1;
     }
     if (result2.main !== null) {
       const item = result2.main;
-      let saved;
-      if (index.has(item.title)) {
-        saved = yield repository.saveMemory(ownerKey, { ...resolve(item.title), content: item.content });
-        report.updated += 1;
-      } else {
-        saved = yield repository.createMemory(ownerKey, {
-          title: item.title,
-          content: item.content,
-          contentType: "text/plain",
-          source: "memory_analysis",
-          credibility: 1,
-          importance: 0.8,
-          folderPath: item.folder_path,
-          tags: item.tags
-        });
-        report.created += 1;
+      try {
+        let saved;
+        if (index.has(item.title)) {
+          saved = yield repository.saveMemory(ownerKey, { ...resolve(item.title), content: item.content });
+          report.updated += 1;
+        } else {
+          saved = yield repository.createMemory(ownerKey, {
+            title: item.title,
+            content: item.content,
+            contentType: "text/plain",
+            source: "memory_analysis",
+            credibility: 1,
+            importance: 0.8,
+            folderPath: item.folder_path,
+            tags: item.tags
+          });
+          report.created += 1;
+        }
+        index.set(saved.title, [saved]);
+      } catch (error) {
+        if (!unresolvedReference(error)) throw error;
+        report.skipped += 1;
       }
-      index.set(saved.title, [saved]);
     }
-    for (const item of result2.new) {
+    for (const item of result2.new) try {
       if (item.alias_for !== void 0 && item.alias_for !== null) index.set(item.title, [resolve(item.alias_for)]);
       else {
         const saved = yield repository.createMemory(ownerKey, {
@@ -3562,8 +3595,11 @@ function applyAnalysis(ownerKey, result2, settings2, repository) {
         index.set(saved.title, [saved]);
         report.created += 1;
       }
+    } catch (error) {
+      if (!unresolvedReference(error)) throw error;
+      report.skipped += 1;
     }
-    for (const item of result2.links) {
+    for (const item of result2.links) try {
       yield repository.createLink(ownerKey, {
         sourceMemoryId: resolve(item.source).id,
         targetMemoryId: resolve(item.target).id,
@@ -3572,6 +3608,9 @@ function applyAnalysis(ownerKey, result2, settings2, repository) {
         weight: item.weight
       });
       report.links += 1;
+    } catch (error) {
+      if (!unresolvedReference(error)) throw error;
+      report.skipped += 1;
     }
     if (result2.profile_markdown !== void 0 && result2.profile_markdown !== null) {
       yield repository.writeUser(ownerKey, result2.profile_markdown);
@@ -3672,6 +3711,9 @@ function propagateJobFailure(error, publishStatus) {
     throw error;
   });
 }
+function sameMessageRevision(current, planned) {
+  return current.sender === planned.sender && current.content === planned.content && current.timestamp === planned.timestamp && current.variantIndex === planned.variantIndex && current.variantCount === planned.variantCount && current.provider === planned.provider && current.modelName === planned.modelName;
+}
 function enqueueCandidate(input, repository) {
   return __async(this, null, function* () {
     if (input.sourceType === "reply_finalized_auto" && !(yield repository.readGlobalMemoryPreferences()).autoUpdateEnabled) return { owners: [], candidateIds: [] };
@@ -3731,6 +3773,34 @@ function enqueueCandidate(input, repository) {
       result2.candidateIds.push(id2);
     }
     return result2;
+  });
+}
+function retryFailedCandidates(ownerKey, repository) {
+  return __async(this, null, function* () {
+    const space = yield repository.readMemorySpace(ownerKey), now = Date.now();
+    let retried = 0;
+    for (const candidate of space.candidates) if (candidate.status === "failed") {
+      candidate.status = "pending";
+      candidate.lastError = "";
+      candidate.updatedAt = now;
+      retried += 1;
+    }
+    if (retried !== 0) yield repository.writeMemorySpace(ownerKey, space);
+    return { retried };
+  });
+}
+function clearFailedCandidates(ownerKey, repository) {
+  return __async(this, null, function* () {
+    const space = yield repository.readMemorySpace(ownerKey);
+    const remaining = space.candidates.filter(
+      /** Retains pending and processing records for their real owners. */
+      (candidate) => candidate.status !== "failed"
+    ), cleared = space.candidates.length - remaining.length;
+    if (cleared !== 0) {
+      space.candidates = remaining;
+      yield repository.writeMemorySpace(ownerKey, space);
+    }
+    return { cleared };
   });
 }
 function startMemoryRebuild(ownerKey, rebuild, repository) {
@@ -3796,7 +3866,7 @@ function processRebuildWindow(ownerKey, taskId, owner2) {
               /** Matches the exact planned revision before trusting its original extraction content. */
               (message) => message.timestamp === source.timestamp && message.variantIndex === source.variantIndex
             );
-            if (present.length !== 1 || JSON.stringify(present[0]) !== JSON.stringify(source)) throw new Error("A planned rebuild source message revision changed or was deleted");
+            if (present.length !== 1 || !sameMessageRevision(present[0], source)) throw new Error("A planned rebuild source message revision changed or was deleted: " + window.chatId + " at " + source.timestamp + "/" + source.variantIndex);
           }
           yield requireMessagesOwner(window.chatId, window.messages, ownerKey, repository);
           yield extractMessages(ownerKey, window.messages, repository);
@@ -3833,6 +3903,7 @@ function processRebuildWindow(ownerKey, taskId, owner2) {
     }
   });
 }
+var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
 function processCandidates(ownerKey, candidates, owner2) {
   return __async(this, null, function* () {
     const ids = /* @__PURE__ */ new Set();
@@ -3840,26 +3911,49 @@ function processCandidates(ownerKey, candidates, owner2) {
     const chatId = candidates[0].chatId;
     try {
       yield owner2.run(
-        /** Validates the current chat owner and applies a genuine selected/automatic message batch. */
+        /** Validates every claimed source individually so one stale record cannot discard valid siblings. */
         (repository) => __async(null, null, function* () {
           let messages = yield readMessages(chatId);
+          const accepted = [], rejections = /* @__PURE__ */ new Map();
           for (const candidate of candidates) {
             const source = messages.filter(
               /** Revalidates each claimed source identity before any analysis or destructive queue update. */
               (message) => message.timestamp === candidate.triggerMessageTimestamp && message.variantIndex === candidate.triggerVariantIndex
             );
-            if (source.length !== 1) throw new Error("A claimed candidate source no longer identifies exactly one message: " + candidate.id);
-            const sender = source[0].sender;
-            if (candidate.sourceType === "selected_user_message" ? sender !== "user" : sender !== "ai" && sender !== "assistant") throw new Error("A claimed candidate source has changed sender: " + candidate.id);
-            if (candidate.sourceType === "reply_finalized_auto") yield requireMessageOwner(chatId, source[0], ownerKey, repository);
-            else yield requireChatOwner(chatId, ownerKey, repository);
+            let failure2 = "";
+            if (source.length !== 1) failure2 = "A claimed candidate source no longer identifies exactly one message: " + candidate.id;
+            else {
+              const sender = source[0].sender;
+              if (candidate.sourceType === "selected_user_message" ? sender !== "user" : sender !== "ai" && sender !== "assistant") failure2 = "A claimed candidate source has changed sender: " + candidate.id;
+              else try {
+                if (candidate.sourceType === "reply_finalized_auto") yield requireMessageOwner(chatId, source[0], ownerKey, repository);
+                else yield requireChatOwner(chatId, ownerKey, repository);
+              } catch (error) {
+                failure2 = errorText(error);
+              }
+            }
+            if (failure2 === "") accepted.push(candidate);
+            else rejections.set(candidate.id, failure2);
           }
-          if (candidates.every(
+          if (accepted.length === 0) {
+            const space2 = yield repository.readMemorySpace(ownerKey);
+            for (const candidate of space2.candidates) {
+              const failure2 = rejections.get(candidate.id);
+              if (failure2 !== void 0) {
+                candidate.status = "failed";
+                candidate.lastError = failure2;
+                candidate.updatedAt = Date.now();
+              }
+            }
+            yield repository.writeMemorySpace(ownerKey, space2);
+            return;
+          }
+          if (accepted.every(
             /** Recognizes only the exact declared selected-user source type. */
             (candidate) => candidate.sourceType === "selected_user_message"
           )) {
             const timestamps = /* @__PURE__ */ new Set();
-            for (const candidate of candidates) timestamps.add(candidate.triggerMessageTimestamp);
+            for (const candidate of accepted) timestamps.add(candidate.triggerMessageTimestamp);
             messages = messages.filter(
               /** Selects the genuinely persisted requested user messages. */
               (message) => message.sender === "user" && timestamps.has(message.timestamp)
@@ -3867,18 +3961,27 @@ function processCandidates(ownerKey, candidates, owner2) {
             if (messages.length !== timestamps.size) throw new Error("A selected candidate message no longer exists");
           } else {
             let lastTimestamp = 0;
-            for (const candidate of candidates) lastTimestamp = Math.max(lastTimestamp, candidate.triggerMessageTimestamp);
+            for (const candidate of accepted) lastTimestamp = Math.max(lastTimestamp, candidate.triggerMessageTimestamp);
             messages = messages.filter(
-              /** Bounds automatic extraction to actual source records at the final candidate. */
+              /** Bounds automatic extraction to actual source records at the final accepted candidate. */
               (message) => message.timestamp <= lastTimestamp
             ).slice(-48);
           }
           yield extractMessages(ownerKey, messages, repository);
-          const space = yield repository.readMemorySpace(ownerKey);
+          const space = yield repository.readMemorySpace(ownerKey), acceptedIds = /* @__PURE__ */ new Set();
+          for (const candidate of accepted) acceptedIds.add(candidate.id);
           space.candidates = space.candidates.filter(
-            /** Removes only the explicitly claimed batch after successful domain mutations. */
-            (candidate) => !ids.has(candidate.id)
+            /** Removes only the accepted records after their successful domain mutations. */
+            (candidate) => !acceptedIds.has(candidate.id)
           );
+          for (const candidate of space.candidates) {
+            const failure2 = rejections.get(candidate.id);
+            if (failure2 !== void 0) {
+              candidate.status = "failed";
+              candidate.lastError = failure2;
+              candidate.updatedAt = Date.now();
+            }
+          }
           yield repository.writeMemorySpace(ownerKey, space);
         })
       );
@@ -3924,6 +4027,19 @@ var MemoryJobRunner = class {
         (repository) => repository.listMemoryOwnerKeys()
       ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0 };
       for (const ownerKey of keys) {
+        yield this.owner.run(
+          /** Reclaims only outdated processing claims so interrupted batches can genuinely run again. */
+          (repository) => __async(this, null, function* () {
+            const space = yield repository.readMemorySpace(ownerKey), now = Date.now();
+            let reclaimed = 0;
+            for (const candidate of space.candidates) if (candidate.status === "processing" && now - candidate.updatedAt >= CANDIDATE_PROCESSING_LEASE_MS) {
+              candidate.status = "pending";
+              candidate.updatedAt = now;
+              reclaimed += 1;
+            }
+            if (reclaimed !== 0) yield repository.writeMemorySpace(ownerKey, space);
+          })
+        );
         const taskId = yield this.owner.run(
           /** Reads a persisted runnable rebuild identity without fabricating a job. */
           (repository) => __async(this, null, function* () {
@@ -4387,6 +4503,10 @@ var handlers = {
   "memory.embeddings.rebuild": (input, repository) => rebuildMemoryEmbeddings(input.ownerKey, repository),
   /** Enqueues only actual persisted message sources and genuine bound owners. */
   "memory.candidate.enqueue": (input, repository) => enqueueCandidate(input, repository),
+  /** Returns genuine terminal failures to the pending queue for one later interval retry. */
+  "memory.candidates.retryFailed": (input, repository) => retryFailedCandidates(input.ownerKey, repository),
+  /** Removes genuine terminal failures from the owner queue. */
+  "memory.candidates.clearFailed": (input, repository) => clearFailedCandidates(input.ownerKey, repository),
   /** Resolves chat configuration using this operation's existing repository snapshot. */
   "chat.configuration.resolve": (input, repository) => resolveConfiguration(input, {
     /** Reads only the requested character. */
@@ -5783,6 +5903,18 @@ function dispatch(request, host) {
             ownerKey: yield menuMemoryOwner(request.chatId, host),
             chatId: request.chatId
           },
+          host
+        );
+      case "retryFailedCandidates":
+        return executeDomain(
+          "memory.candidates.retryFailed",
+          { ownerKey: "ownerKey" in request ? request.ownerKey : yield menuMemoryOwner(request.chatId, host) },
+          host
+        );
+      case "clearFailedCandidates":
+        return executeDomain(
+          "memory.candidates.clearFailed",
+          { ownerKey: "ownerKey" in request ? request.ownerKey : yield menuMemoryOwner(request.chatId, host) },
           host
         );
       case "writeGlobalMemoryPreference":
@@ -9040,6 +9172,16 @@ function memoryRebuildProgressApi(event) {
     return dispatchDomain2("memory.rebuild.progress", parseDomainPayload("memory.rebuild.progress", event.payload));
   });
 }
+function memoryCandidatesRetryFailedApi(event) {
+  return __async(this, null, function* () {
+    return dispatchDomain2("memory.candidates.retryFailed", parseDomainPayload("memory.candidates.retryFailed", event.payload));
+  });
+}
+function memoryCandidatesClearFailedApi(event) {
+  return __async(this, null, function* () {
+    return dispatchDomain2("memory.candidates.clearFailed", parseDomainPayload("memory.candidates.clearFailed", event.payload));
+  });
+}
 function memoryRebuildCancelApi(event) {
   return __async(this, null, function* () {
     return dispatchDomain2("memory.rebuild.cancel", parseDomainPayload("memory.rebuild.cancel", event.payload));
@@ -9381,6 +9523,8 @@ function registerDomainApis() {
   ToolPkg.registerApi({ name: "memory.embeddings.rebuild", function: memoryEmbeddingsRebuildApi });
   ToolPkg.registerApi({ name: "memory.rebuild.cancel", function: memoryRebuildCancelApi });
   ToolPkg.registerApi({ name: "memory.rebuild.progress", function: memoryRebuildProgressApi });
+  ToolPkg.registerApi({ name: "memory.candidates.retryFailed", function: memoryCandidatesRetryFailedApi });
+  ToolPkg.registerApi({ name: "memory.candidates.clearFailed", function: memoryCandidatesClearFailedApi });
   ToolPkg.registerApi({ name: "memory.rebuild.start", function: memoryRebuildStartApi });
   ToolPkg.registerApi({ name: "memory.categorize", function: memoryCategorizeApi });
   ToolPkg.registerApi({ name: "memory.chat.update", function: memoryChatUpdateApi });

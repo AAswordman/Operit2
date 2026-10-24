@@ -85,7 +85,7 @@ export function createMemoryControlsFeature(context: EditorContext) {
     if (action === "owner-settings") {
       const dialog = pushDialog({ type: "owner-settings", ownerKey: dataValue(element, "owner"), name: dataValue(element, "name"), tab: 0,
         loading: true, settings: null, config: null, chats: null, missingChatIds: [], queue: null, progress: null, statusError: "",
-        searchQuery: "", searchThreshold: 0, searchResult: null, selectedChatIds: [], windowMessageCount: 32, from: "", to: "" });
+        searchQuery: "", searchThreshold: 0, searchResult: null, selectedChatIds: [], windowMessageCount: 32, from: "", to: "", pendingClearFailed: false });
       await load(dialog); return;
     }
     const dialog = topDialog("owner-settings"), ownerKey = dialog.ownerKey;
@@ -112,6 +112,26 @@ export function createMemoryControlsFeature(context: EditorContext) {
         return;
       }
       case "refresh-memory-status": await poll(dialog); return;
+      case "retry-failed-candidates": {
+        const result = await request({ action: "retryFailedCandidates", ownerKey });
+        dialog.pendingClearFailed = false;
+        toast(`已重新排队 ${result.retried} 条失败候选`);
+        await poll(dialog); return;
+      }
+      case "clear-failed-candidates":
+        dialog.pendingClearFailed = true;
+        if (topDialog() === dialog) updateMemoryStatus(dialog, context.dialogsRoot);
+        return;
+      case "cancel-clear-failed-candidates":
+        dialog.pendingClearFailed = false;
+        if (topDialog() === dialog) updateMemoryStatus(dialog, context.dialogsRoot);
+        return;
+      case "confirm-clear-failed-candidates": {
+        const result = await request({ action: "clearFailedCandidates", ownerKey });
+        dialog.pendingClearFailed = false;
+        toast(`已清除 ${result.cleared} 条失败候选记录`);
+        await poll(dialog); return;
+      }
       case "save-memory-settings": {
         if (dialog.settings === null || dialog.config === null || dialog.loading) throw new Error("记忆设置尚未读取成功");
         for (const input of context.dialogsRoot.querySelectorAll<HTMLInputElement>("input[type=number]")) if (!input.reportValidity()) throw new Error("请检查数字设置的范围与格式");
@@ -135,5 +155,5 @@ export function createMemoryControlsFeature(context: EditorContext) {
       default: throw new Error(`Unknown memory controls action: ${action}`);
     }
   }
-  return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "prune-missing-chat-bindings", "refresh-memory-status", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
+  return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "prune-missing-chat-bindings", "refresh-memory-status", "retry-failed-candidates", "clear-failed-candidates", "cancel-clear-failed-candidates", "confirm-clear-failed-candidates", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
 }

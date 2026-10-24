@@ -33,7 +33,7 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   const owner = ctx.useRef("memory-menu-chat", chatId);
   const [available, setAvailable] = ctx.useState<boolean | null>("memory-menu-available", null);
   const [preferences, setPreferences] = ctx.useState<GlobalMemoryPreferences | null>("memory-menu-preferences", null);
-  const [, setQueue] = ctx.useState<MemoryAutoSaveStatus | null>("memory-menu-queue", null);
+  const [queue, setQueue] = ctx.useState<MemoryAutoSaveStatus | null>("memory-menu-queue", null);
   const [expanded, setExpanded] = ctx.useState("memory-menu-expanded", false);
   const [busy, setBusy] = ctx.useState("memory-menu-busy", false);
   const liveBusy = ctx.useRef("memory-menu-busy-live", false);
@@ -89,6 +89,28 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       assertOwner(); return { type: "toolpkg.ui.message", message: "记忆提取失败：" + String(error) };
     } finally { liveBusy.current = false; assertOwner(); setBusy(false); }
   }
+  /** Returns every failed record to the pending queue and reports the actual requeued count. */
+  async function retryFailed(): Promise<ToolPkg.JsonValue> {
+    assertOwner(); if (liveBusy.current || chatId === null) return null;
+    liveBusy.current = true; setBusy(true);
+    try {
+      const result = await request({ action: "retryFailedCandidates", chatId }); assertOwner(); await refreshQueue();
+      return { type: "toolpkg.ui.message", message: "已重新排队 " + result.retried + " 条失败候选" };
+    } catch (error) {
+      assertOwner(); return { type: "toolpkg.ui.message", message: "重试失败候选失败：" + String(error) };
+    } finally { liveBusy.current = false; assertOwner(); setBusy(false); }
+  }
+  /** Deletes every terminal failed record and reports the actual cleared count. */
+  async function clearFailed(): Promise<ToolPkg.JsonValue> {
+    assertOwner(); if (liveBusy.current || chatId === null) return null;
+    liveBusy.current = true; setBusy(true);
+    try {
+      const result = await request({ action: "clearFailedCandidates", chatId }); assertOwner(); await refreshQueue();
+      return { type: "toolpkg.ui.message", message: "已清除 " + result.cleared + " 条失败记录" };
+    } catch (error) {
+      assertOwner(); return { type: "toolpkg.ui.message", message: "清除失败记录失败：" + String(error) };
+    } finally { liveBusy.current = false; assertOwner(); setBusy(false); }
+  }
   /** Creates the compact icon shared by memory menu rows. */
   function icon(name: string, color = colors.onSurfaceVariant): ComposeNode { return ctx.UI.Icon({ name, size: 16, tint: color }); }
   /** Reproduces the 32-pixel rows and 40-by-28 compact switches without a separate card. */
@@ -115,15 +137,36 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       content: ctx.UI.Icon({ name: "InfoOutline", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.7 }) }) }),
     ctx.UI.Spacer({ width: 6 }), ctx.UI.Icon({ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 20, tint: colors.onSurfaceVariant }),
   ])];
-  if (expanded) children.push(ctx.UI.Column({ key: "memory-section-children", modifier: ctx.Modifier.padding(12, 0, 8, 4) }, [
-    switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料"),
-    switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库"),
-    ctx.UI.Row({ key: "memory-manual", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
-      modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: !busy && chatId !== null ? manual : undefined }, [
-      icon("SaveOutlined"), ctx.UI.Spacer({ width: 12 }),
-      ctx.UI.Text({ text: busy ? "正在更新记忆…" : "手动更新记忆", style: "bodySmall", maxLines: 2, overflow: "ellipsis", weight: 1,
-        color: !busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 }) }),
-    ]),
-  ]));
+  if (expanded) {
+    const sectionChildren: ComposeNode[] = [
+      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料"),
+      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库"),
+      ctx.UI.Row({ key: "memory-manual", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
+        modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: !busy && chatId !== null ? manual : undefined }, [
+        icon("SaveOutlined"), ctx.UI.Spacer({ width: 12 }),
+        ctx.UI.Text({ text: busy ? "正在更新记忆…" : "手动更新记忆", style: "bodySmall", maxLines: 2, overflow: "ellipsis", weight: 1,
+          color: !busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 }) }),
+      ]),
+    ];
+    /** Exposes recovery only while real failed records remain in the owner queue. */
+    if (queue !== null && queue.failedCandidates > 0) {
+      const enabled = !busy && chatId !== null;
+      sectionChildren.push(
+        ctx.UI.Row({ key: "memory-retry-failed", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
+          modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: enabled ? retryFailed : undefined }, [
+          icon("Refresh"), ctx.UI.Spacer({ width: 12 }),
+          ctx.UI.Text({ text: "重试失败候选（" + queue.failedCandidates + "）", style: "bodySmall", maxLines: 1, overflow: "ellipsis", weight: 1,
+            color: enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 }) }),
+        ]),
+        ctx.UI.Row({ key: "memory-clear-failed", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
+          modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: enabled ? clearFailed : undefined }, [
+          icon("DeleteOutline"), ctx.UI.Spacer({ width: 12 }),
+          ctx.UI.Text({ text: "清除失败记录（" + queue.failedCandidates + "）", style: "bodySmall", maxLines: 1, overflow: "ellipsis", weight: 1,
+            color: enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 }) }),
+        ]),
+      );
+    }
+    children.push(ctx.UI.Column({ key: "memory-section-children", modifier: ctx.Modifier.padding(12, 0, 8, 4) }, sectionChildren));
+  }
   return ctx.UI.Column({ key: "memory-section", fillMaxWidth: true }, children);
 }
