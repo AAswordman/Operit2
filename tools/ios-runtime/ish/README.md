@@ -60,6 +60,14 @@ page on both success and failure. Hostfs copies the path into its own storage.
 CPU instead of Darwin thread-local storage, which can retain stale addresses
 when Linux tasks migrate between host pthreads. It remains a required build input.
 
+`0005-namespace-darwin-kernel-formatters.patch` gives the embedded kernel's
+printf/scanf implementations private names. Linux's format language differs from
+Darwin libc (in particular, it does not support floating point). Exporting them
+under libc names can route V8 GC tracing and other host formatting through the
+kernel and crash the application. The native formatter regression links the
+actual namespace macros with separate host and kernel translation units and
+checks both call paths.
+
 Run the runtime and cache regressions with:
 
 ```bash

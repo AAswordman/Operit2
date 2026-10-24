@@ -390,6 +390,7 @@
 				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0002-arm64-context-registers.patch",
 				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0003-fakefs-rebuild-heap-hashtable.patch",
 				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0004-emulator-tlb-task-migration.patch",
+				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0005-namespace-darwin-kernel-formatters.patch",
 			);
 			name = "Build iSH Runtime";
 			outputFileListPaths = (
@@ -790,8 +791,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				CLANG_LD_EXPORT_GLOBAL_SYMBOLS = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
+				ENABLE_DEBUG_DYLIB = NO;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/sources/ish",

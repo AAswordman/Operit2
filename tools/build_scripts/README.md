@@ -81,6 +81,50 @@ The App Store Connect scripts read the ignored file
 `tools/release/secrets/appstoreconnect/appstoreconnect.env`. No credentials are
 stored in tracked build scripts.
 
+## iOS V8 runtime
+
+The iOS Rust bridge runs `prepare_ios_v8.py` before compiling Rust. It builds the
+V8 version pinned in the bridge's `Cargo.lock` from source and supplies the
+resulting static library and generated Rust bindings together. The embedded
+startup snapshot comes from that same build. This avoids the incompatible
+snapshot in the previously used precompiled iOS archive.
+
+The iOS build uses compile-time jitless mode with Sparkplug, Maglev, TurboFan and
+WebAssembly disabled. It also disables the cppgc caged heap, avoiding its large
+aligned virtual-address reservation during startup without requiring Extended
+Virtual Addressing entitlements. Intl remains enabled. Temporal is disabled
+because the published source crate omits its Rust vendor dependencies; current
+runtime plugins do not use Temporal. These settings belong to the iOS build
+layer; the common JavaScript scheduler has no Apple-specific runtime branches.
+
+On macOS, install the source-build prerequisites with
+`brew install llvm@23 lld@23`. The helper combines Homebrew's LLVM/libclang with
+Xcode's iOS compiler runtimes in a local toolchain overlay. It downloads missing
+ICU data from the exact revision in V8's DEPS. The first build for each iOS
+architecture takes substantially longer; subsequent builds reuse
+`tools/release/work/ios-v8/<v8-version>/<rust-target>/`. Library, bindings and GN
+arguments are checked against a configuration manifest and SHA-256 hashes before
+reuse. A preparation failure stops the build instead of downloading the old
+archive. CI caches the complete artifact set and uses the same helper.
+
+For a manual build, after installing the Rust target:
+
+```bash
+python3 tools/build_scripts/prepare_ios_v8.py \
+  --target aarch64-apple-ios --env-file tools/release/work/ios-v8/device.env
+```
+
+Debug uses a regular executable with dead-code stripping and disables exporting
+all global symbols, so unused WebAssembly wrappers are removed. Swift-referenced
+Rust bridge entry points remain linked. The iSH runtime also namespaces its
+kernel printf/scanf functions so host V8 calls keep using Darwin libc. See
+`tools/ios-runtime/ish/README.md` for that native regression. Build/cache checks:
+
+```bash
+python3 -m unittest discover -s tools/tests -p test_ios_v8_build.py -v
+python3 -m unittest discover -s tools/tests -p test_apple_plugin_build.py -v
+```
+
 ## Local CLI development and macOS Keychain authorization
 
 Use the local runner to build and restore the CLI's configured signing identity

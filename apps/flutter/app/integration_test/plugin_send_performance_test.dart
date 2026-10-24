@@ -359,7 +359,7 @@ void main() {
       );
       final report = <String, Object?>{
         'scope':
-            'production QJS, CoreLink, tools and SQLite; isolated storage; first-use and retained-realm samples; full sends with/without real worldbook hooks (empty entries) use a local SSE fixture, no live model',
+            'production native JavaScript engine, CoreLink, tools and SQLite; isolated storage; first-use and retained-realm samples; full sends with/without real worldbook hooks (empty entries) use a local SSE fixture, no live model',
         'hostPlatform': Platform.operatingSystem,
         'runtimeRoot': directory.path,
         'samples': samples,
