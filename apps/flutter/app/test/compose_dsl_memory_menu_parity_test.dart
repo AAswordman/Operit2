@@ -87,7 +87,14 @@ Widget reference(bool expanded) => Builder(
               child: TextField(
                 controller: TextEditingController(text: value),
                 maxLines: 1,
-                decoration: InputDecoration(hintText: hint),
+                // Mirrors the DSL style parser: bodyMedium scaled by the declared fontSize.
+                style: text.bodyMedium!
+                    .apply(fontSizeFactor: 13 / text.bodyMedium!.fontSize!),
+                decoration: InputDecoration(
+                  hintText: hint,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                ),
               ),
             ),
           ],

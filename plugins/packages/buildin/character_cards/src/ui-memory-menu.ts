@@ -169,6 +169,8 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       ctx.UI.Spacer({ width: 8 }),
       ctx.UI.TextField({ key: "memory-recall-limit-input", value: limitInput, singleLine: true,
         placeholder: "1-" + MEMORY_RECALL_LIMIT_RANGE.max, onValueChange: changeRecallLimitInput,
+        style: { fontSize: 13 },
+        decoration: { isDense: true, contentPadding: { vertical: 8 } },
         modifier: ctx.Modifier.width(72) }),
     ]);
   }
