@@ -50,6 +50,50 @@ pub(super) struct NativeHostJavaScriptRuntime {
     jsonIntrinsics: Rc<RefCell<Option<JsonIntrinsics>>>,
 }
 
+/// Registers one realm-local function factory backed by the shared code cache.
+///
+/// Kept as a free function with an explicit `'js` so the closure passed to
+/// [`Function::new`] is typed as `Fn(Ctx<'js>, String) -> Result<Value<'js>>`
+/// exactly: an elided `'_` in the closure's return type creates an independent
+/// region that cannot satisfy `IntoJsFunc`'s bound.
+fn register_function_constructor<'js>(
+    ctx: Ctx<'js>,
+    name: &str,
+    prefix: String,
+    cache: Arc<HostJavaScriptCodeCache>,
+) -> rquickjs::Result<()> {
+    let function = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, body: String| {
+            let source = format!("{prefix}{body}\n}})");
+            let bytes = cache
+                .getOrCompile(&source, || compile_bootstrap(&ctx, &source))
+                .map_err(|error| Exception::throw_message(&ctx, &error.to_string()))?;
+            let raw = unsafe {
+                qjs::JS_ReadObject(
+                    ctx.as_raw().as_ptr(),
+                    bytes.as_ptr(),
+                    bytes.len() as _,
+                    qjs::JS_READ_OBJ_BYTECODE as _,
+                )
+            };
+            if unsafe { qjs::JS_IsException(raw) } {
+                let error = bootstrap_exception(&ctx);
+                return Err(Exception::throw_message(&ctx, &error.to_string()));
+            }
+            // JS_EvalFunction consumes the deserialized function.
+            let result = unsafe { qjs::JS_EvalFunction(ctx.as_raw().as_ptr(), raw) };
+            if unsafe { qjs::JS_IsException(result) } {
+                let error = bootstrap_exception(&ctx);
+                return Err(Exception::throw_message(&ctx, &error.to_string()));
+            }
+            Ok(unsafe { Value::from_raw(ctx.clone(), result) })
+        },
+    )?;
+    ctx.globals().set(name, function)?;
+    Ok(())
+}
+
 impl Drop for NativeHostJavaScriptRuntime {
     /// Releases engine-owned persistent handles before the runtime is destroyed.
     fn drop(&mut self) {
@@ -124,38 +168,9 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
         let cache = self.code_cache.clone();
         self.context
             .with(|ctx| {
-                let function = Function::new(
-                    ctx.clone(),
-                    move |ctx: Ctx<'_>, body: String| -> rquickjs::Result<Value<'_>> {
-                        let source = format!("{prefix}{body}\n}})");
-                        let bytes = cache
-                            .getOrCompile(&source, || compile_bootstrap(&ctx, &source))
-                            .map_err(|error| Exception::throw_message(&ctx, &error.to_string()))?;
-                        let raw = unsafe {
-                            qjs::JS_ReadObject(
-                                ctx.as_raw().as_ptr(),
-                                bytes.as_ptr(),
-                                bytes.len() as _,
-                                qjs::JS_READ_OBJ_BYTECODE as _,
-                            )
-                        };
-                        if unsafe { qjs::JS_IsException(raw) } {
-                            let error = bootstrap_exception(&ctx);
-                            return Err(Exception::throw_message(&ctx, &error.to_string()));
-                        }
-                        // JS_EvalFunction consumes the deserialized function.
-                        let result = unsafe { qjs::JS_EvalFunction(ctx.as_raw().as_ptr(), raw) };
-                        if unsafe { qjs::JS_IsException(result) } {
-                            let error = bootstrap_exception(&ctx);
-                            return Err(Exception::throw_message(&ctx, &error.to_string()));
-                        }
-                        Ok(unsafe { Value::from_raw(ctx.clone(), result) })
-                    },
-                )?;
-                ctx.globals().set(name, function)?;
-                Ok::<_, QuickJsError>(())
+                register_function_constructor(ctx, name, prefix, cache)
+                    .map_err(|error| HostError::new(error.to_string()))
             })
-            .map_err(|error| HostError::new(error.to_string()))
     }
 
     /// Evaluates one native QuickJS script without reading its return value.
