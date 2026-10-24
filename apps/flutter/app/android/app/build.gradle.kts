@@ -71,6 +71,7 @@ data class OperitRustTarget(
     val abi: String,
     val rustTarget: String,
     val envTarget: String,
+    val compilerRuntimeArch: String,
 )
 
 // Reads Flutter's requested Android target platforms from Gradle properties.
@@ -99,9 +100,9 @@ fun selectedOperitRustTargets(targets: List<OperitRustTarget>): List<OperitRustT
 }
 
 val operitRustTargets = listOf(
-    OperitRustTarget("android-arm64", "arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
-    OperitRustTarget("android-x64", "x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
-    OperitRustTarget("android-arm", "armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI"),
+    OperitRustTarget("android-arm64", "arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID", "aarch64"),
+    OperitRustTarget("android-x64", "x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID", "x86_64"),
+    OperitRustTarget("android-arm", "armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI", "arm"),
 )
 val selectedOperitRustTargets = selectedOperitRustTargets(operitRustTargets)
 
@@ -256,7 +257,8 @@ androidComponents {
             tasks.register<Exec>("cargoBuildOperitFlutterBridge$variantTaskSuffix$abiTaskSuffix") {
                 dependsOn(syncOperitPlugins)
                 val clangPrefix = target.rustTarget
-                val apiLevel = 23
+                val apiLevel = android.defaultConfig.minSdk
+                    ?: throw GradleException("Android minSdk is required for the Rust toolchain")
                 val ndkToolchain = android.ndkDirectory
                     .resolve("toolchains")
                     .resolve("llvm")
@@ -277,6 +279,12 @@ androidComponents {
                     .listFiles()
                     ?.single { it.isDirectory }
                     ?: throw GradleException("Android NDK clang resource dir not found")
+                val compilerRuntime = clangResourceDir.resolve(
+                    "lib/linux/libclang_rt.builtins-${target.compilerRuntimeArch}-android.a",
+                )
+                if (!compilerRuntime.isFile) {
+                    throw GradleException("Android compiler runtime not found: $compilerRuntime")
+                }
                 val bindgenClangArgs =
                     "--target=${target.rustTarget} --sysroot=${ndkToolchain.parentFile.resolve("sysroot").clangPath()} -resource-dir=${clangResourceDir.clangPath()}"
                 val ccEnvTarget = target.rustTarget.replace("-", "_")
@@ -291,7 +299,8 @@ androidComponents {
                 environment("RUSTFLAGS", "-Awarnings")
                 val cargoArguments = mutableListOf(
                     "cargo",
-                    "build",
+                    "rustc",
+                    "--lib",
                     "--manifest-path",
                     operitBridgeCrate.resolve("Cargo.toml").absolutePath,
                     "--target",
@@ -300,6 +309,12 @@ androidComponents {
                 if (rustProfile == "release") {
                     cargoArguments.add("--release")
                 }
+                // Rust disables default compiler libraries; V8 needs the NDK's cache flush builtin.
+                cargoArguments.addAll(listOf(
+                    "--",
+                    "-C", "link-arg=${compilerRuntime.absolutePath}",
+                    "-C", "link-arg=-Wl,--no-undefined",
+                ))
                 commandLine(cargoArguments)
                 doLast {
                     val nativeLibraries = listOf(
