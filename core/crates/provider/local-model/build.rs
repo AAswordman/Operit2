@@ -78,18 +78,19 @@ fn main() {
                 .define("OHOS_STL", "c++_static");
         }
         let windows = os == "windows";
-        if windows {
-            let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
-            let profile_dir = out_dir
-                .ancestors()
-                .nth(3)
-                .expect("Cargo OUT_DIR must be under the profile build directory");
-            // Place the runtime DLL beside Cargo's executable and bridge artifacts.
+        let shared = windows || os == "android";
+        let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+        let profile_dir = out_dir
+            .ancestors()
+            .nth(3)
+            .expect("Cargo OUT_DIR must be under the profile build directory");
+        if shared {
+            // Place the shared engine beside Cargo's executable and bridge artifacts.
             config.define("OPERIT_LOCAL_LLM_RUNTIME_DIR", profile_dir);
         }
         let output = config.build();
         let build = output.join("build");
-        let names: &[&str] = if windows {
+        let names: &[&str] = if shared {
             &["operit_local_llm"]
         } else {
             &[
@@ -121,19 +122,27 @@ fn main() {
                 format!("{name}.lib")
             } else if windows {
                 format!("lib{name}.dll.a")
+            } else if shared {
+                format!("lib{name}.so")
             } else {
                 format!("lib{name}.a")
             };
-            let path = find(&build, &file)
-                .unwrap_or_else(|| panic!("native inference library missing: {file}"));
+            let path = if os == "android" {
+                let path = profile_dir.join(&file);
+                assert!(path.is_file(), "native inference library missing: {file}");
+                path
+            } else {
+                find(&build, &file)
+                    .unwrap_or_else(|| panic!("native inference library missing: {file}"))
+            };
             println!(
                 "cargo:rustc-link-search=native={}",
                 path.parent().unwrap().display()
             );
-            let kind = if windows { "dylib" } else { "static" };
+            let kind = if shared { "dylib" } else { "static" };
             println!("cargo:rustc-link-lib={kind}={name}");
         }
-        if windows {
+        if shared {
             return;
         }
         if target_env == "ohos" {
@@ -143,10 +152,6 @@ fn main() {
         }
         match os.as_str() {
             "macos" | "ios" => println!("cargo:rustc-link-lib=c++"),
-            "android" => {
-                println!("cargo:rustc-link-lib=c++_static");
-                println!("cargo:rustc-link-lib=log");
-            }
             _ => {
                 let libraries = std::fs::read_to_string(build.join("operit_cxx_runtime.txt"))
                     .expect("CMake must report the configured C++ runtime");

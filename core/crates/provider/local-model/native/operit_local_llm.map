@@ -1,0 +1,8 @@
+{
+    global:
+        operit_local_llm_generate;
+        operit_local_llm_free;
+        operit_local_llm_unload;
+    local:
+        *;
+};

@@ -302,8 +302,14 @@ androidComponents {
                 }
                 commandLine(cargoArguments)
                 doLast {
-                    if (!bridgeLibrary.isFile) {
-                        throw GradleException("Missing Android Rust $rustProfile bridge: $bridgeLibrary")
+                    val nativeLibraries = listOf(
+                        bridgeLibrary,
+                        bridgeLibrary.parentFile.resolve("liboperit_local_llm.so"),
+                    )
+                    nativeLibraries.forEach { library ->
+                        if (!library.isFile) {
+                            throw GradleException("Missing Android Rust $rustProfile library: $library")
+                        }
                     }
                 }
             }
@@ -315,11 +321,13 @@ androidComponents {
             selectedOperitRustTargets.forEach { target ->
                 into(target.abi) {
                     from(operitBridgeJniLibs.resolve(target.abi)) {
-                        exclude("liboperit_flutter_bridge.so")
+                        exclude("liboperit_flutter_bridge.so", "liboperit_local_llm.so")
                     }
                     from(operitBridgeCrate.resolve(
-                        "target/${target.rustTarget}/$rustProfile/liboperit_flutter_bridge.so",
-                    ))
+                        "target/${target.rustTarget}/$rustProfile",
+                    )) {
+                        include("liboperit_flutter_bridge.so", "liboperit_local_llm.so")
+                    }
                 }
             }
             into(outputDirectory)
