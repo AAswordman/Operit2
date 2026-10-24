@@ -2,7 +2,7 @@ import type { Storage } from "../../../../../types/storage";
 import type { CharacterState } from "../model";
 
 import { assertObject, requireId } from "../validation";
-import { assertCharacterState } from "./state";
+import { assertCharacterState, normalizeMemoryRecallSettings } from "./state";
 
 export const collections = [
   "cards",
@@ -132,6 +132,9 @@ export function decodeStateFromRecords(
     version: metadata.version,
     active: metadata.active === null ? { Model: { id: "chat" } } : metadata.active,
     memoryPreferences: metadata.memoryPreferences,
+    // States written by the released plugin or the Core migration predate recall settings; the
+    // released default stays enabled so existing installations keep recalling after the upgrade.
+    memoryRecall: normalizeMemoryRecallSettings(metadata.memoryRecall === undefined ? { enabled: true } : metadata.memoryRecall),
     cards: [] as Storage.Value[],
     groups: [] as Storage.Value[],
     tags: [] as Storage.Value[],

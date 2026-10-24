@@ -114,65 +114,6 @@ type ToggleCardItem = {
   enabled?: boolean;
 };
 
-function createMemoryConfigSection(
-  ctx: ComposeDslContext,
-  text: ReturnType<typeof resolveExtraInfoI18n>,
-  enabled: boolean,
-  allowRepeatedMemorySearch: boolean,
-  onAllowRepeatedMemorySearchChange: (checked: boolean) => void,
-  limitValue: string,
-  onLimitChange: (value: string) => void,
-  onApply: () => void
-): ComposeNode {
-  return ctx.UI.Column(
-    {
-      fillMaxWidth: true,
-      padding: { horizontal: 14, vertical: 12 },
-      spacing: 10,
-    },
-    [
-      ctx.UI.Text({
-        text: text.memoryConfigTitle,
-        style: "bodyMedium",
-        fontWeight: "medium",
-      }),
-      ctx.UI.Text({
-        text: text.memoryConfigDescription,
-        style: "bodySmall",
-        color: "onSurfaceVariant",
-      }),
-      createToggleRow(
-        ctx,
-        text.memoryRepeatToggleTitle,
-        text.memoryRepeatToggleDescription,
-        allowRepeatedMemorySearch,
-        onAllowRepeatedMemorySearchChange,
-        enabled
-      ),
-      createDivider(ctx),
-      ctx.UI.TextField({
-        enabled,
-        label: text.memoryLimitFieldLabel,
-        placeholder: text.memoryLimitFieldPlaceholder,
-        value: limitValue,
-        onValueChange: onLimitChange,
-        singleLine: true,
-      }),
-      ctx.UI.Text({
-        text: text.memoryLimitFieldDescription,
-        style: "bodySmall",
-        color: "onSurfaceVariant",
-      }),
-      ctx.UI.Button({
-        text: text.memoryConfigApplyButton,
-        enabled,
-        fillMaxWidth: true,
-        onClick: onApply,
-      }),
-    ]
-  );
-}
-
 /// Builds the configurable total deadline for one extra-info collection round.
 function createInjectionTimeoutConfigSection(
   ctx: ComposeDslContext,
@@ -209,8 +150,7 @@ function createInjectionTimeoutConfigSection(
 
 function createInjectionItemsCard(
   ctx: ComposeDslContext,
-  items: ToggleCardItem[],
-  memoryConfigSection: ComposeNode
+  items: ToggleCardItem[]
 ): ComposeNode {
   const children: ComposeNode[] = [];
 
@@ -225,10 +165,8 @@ function createInjectionItemsCard(
         item.enabled ?? true
       )
     );
-    children.push(createDivider(ctx));
-
-    if (index === items.length - 1) {
-      children.push(memoryConfigSection);
+    if (index !== items.length - 1) {
+      children.push(createDivider(ctx));
     }
   });
 
@@ -272,18 +210,6 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     "injectNotifications",
     initial.injectNotifications
   );
-  const injectMemoryState = useStateValue(ctx, "injectMemory", initial.injectMemory);
-  const allowRepeatedMemorySearchState = useStateValue(
-    ctx,
-    "allowRepeatedMemorySearch",
-    initial.allowRepeatedMemorySearch
-  );
-  const memoryLimitState = useStateValue(ctx, "memoryLimit", initial.memoryLimit);
-  const memoryLimitInputState = useStateValue(
-    ctx,
-    "memoryLimitInput",
-    String(initial.memoryLimit)
-  );
   const injectionTimeoutSecondsState = useStateValue(
     ctx,
     "injectionTimeoutSeconds",
@@ -310,10 +236,6 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     injectRecentAppUsageState.set(next.injectRecentAppUsage);
     injectScreenTextState.set(next.injectScreenText);
     injectNotificationsState.set(next.injectNotifications);
-    injectMemoryState.set(next.injectMemory);
-    allowRepeatedMemorySearchState.set(next.allowRepeatedMemorySearch);
-    memoryLimitState.set(next.memoryLimit);
-    memoryLimitInputState.set(String(next.memoryLimit));
     injectionTimeoutSecondsState.set(next.injectionTimeoutSeconds);
     injectionTimeoutInputState.set(String(next.injectionTimeoutSeconds));
   };
@@ -355,19 +277,6 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     if (patch.injectNotifications !== undefined) {
       injectNotificationsState.set(Boolean(patch.injectNotifications));
     }
-    if (patch.injectMemory !== undefined) {
-      injectMemoryState.set(Boolean(patch.injectMemory));
-    }
-    if (patch.allowRepeatedMemorySearch !== undefined) {
-      allowRepeatedMemorySearchState.set(
-        Boolean(patch.allowRepeatedMemorySearch)
-      );
-    }
-    if (patch.memoryLimit !== undefined) {
-      const memoryLimit = Math.floor(Number(patch.memoryLimit));
-      memoryLimitState.set(memoryLimit);
-      memoryLimitInputState.set(String(memoryLimit));
-    }
     if (patch.injectionTimeoutSeconds !== undefined) {
       const timeoutSeconds = Number(patch.injectionTimeoutSeconds);
       injectionTimeoutSecondsState.set(timeoutSeconds);
@@ -390,20 +299,6 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
         successMessageState.set("");
         errorMessageState.set(`${text.saveErrorPrefix}${message}`);
       });
-  };
-
-  const applyMemorySettings = (): Promise<void> | void => {
-    const limit = Number(memoryLimitInputState.value.trim());
-
-    if (!Number.isFinite(limit) || limit < 1) {
-      successMessageState.set("");
-      errorMessageState.set(`${text.saveErrorPrefix}${text.invalidMemoryLimitMessage}`);
-      return;
-    }
-
-    return persistSettings({
-      memoryLimit: Math.floor(limit),
-    });
   };
 
   const applyInjectionTimeoutSettings = (): Promise<void> | void => {
@@ -447,13 +342,6 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     injectNotificationsState.value
       ? text.summaryNotificationsEnabled
       : text.summaryNotificationsDisabled,
-    injectMemoryState.value
-      ? `${text.summaryMemoryEnabled} (${text.memoryLimitLabel}: ${memoryLimitState.value}; ${
-          allowRepeatedMemorySearchState.value
-            ? text.summaryMemoryRepeatEnabled
-            : text.summaryMemoryRepeatDisabled
-        })`
-      : text.summaryMemoryDisabled,
     text.summaryInjectionTimeout.replace(
       "{seconds}",
       injectionTimeoutSecondsState.value.toString()
@@ -604,29 +492,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
             return persistSettings({ injectNotifications: checked });
           },
         },
-        {
-          title: text.memoryToggleTitle,
-          subtitle: text.memoryToggleDescription,
-          checked: injectMemoryState.value,
-          onCheckedChange: checked => {
-            return persistSettings({ injectMemory: checked });
-          },
-        },
-      ],
-      createMemoryConfigSection(
-        ctx,
-        text,
-        injectMemoryState.value,
-        allowRepeatedMemorySearchState.value,
-        checked => {
-          return persistSettings({ allowRepeatedMemorySearch: checked });
-        },
-        memoryLimitInputState.value,
-        value => {
-          memoryLimitInputState.set(value);
-        },
-        applyMemorySettings
-      )
+      ]
     ),
 
     createSectionTitle(ctx, "checkCircle", text.summarySectionTitle),

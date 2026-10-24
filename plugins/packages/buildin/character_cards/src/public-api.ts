@@ -82,6 +82,15 @@ export async function memoryQueryApi(event: ToolPkg.PublicApiEvent<MemoryQueryRe
   }, { chatId: null, participantId: input.participantId, callerName: event.callerPackage });
 }
 
+/** Executes one built-in recall query through the same participant-bound snapshot state. */
+export async function memoryRecallQuery(participantId: string, query: string, limit: number, snapshotId: string | null): Promise<MemoryQueryResult> {
+  return memoryQueries.execute("query_memory", {
+    query,
+    limit,
+    ...(snapshotId === null ? {} : { snapshot_id: snapshotId }),
+  }, { chatId: null, participantId, callerName: null });
+}
+
 /** Executes memory.chat.list through the sole private database-backed service. */
 export async function memoryChatListApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.chat.list">>): Promise<DomainOutput<"memory.chat.list">> {
   return dispatchDomain("memory.chat.list", parseDomainPayload("memory.chat.list", event.payload));

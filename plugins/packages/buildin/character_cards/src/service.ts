@@ -133,6 +133,8 @@ export function createCharacterCardsService(
         return owner.run((repository) => pruneMissingMemoryChats(request.ownerKey, repository));
       case "readGlobalMemoryPreferences":
         return owner.readGlobalMemoryPreferences();
+      case "readMemoryRecallSettings":
+        return owner.readMemoryRecallSettings();
       case "readMemorySettings":
         return owner.readMemorySettings(request.ownerKey);
       case "readMemorySearchConfig":
@@ -935,6 +937,10 @@ export async function dispatch(
       );
     case "writeGlobalMemoryPreference":
       return host.writeGlobalMemoryPreference(request.key, request.value);
+    case "readMemoryRecallSettings":
+      return host.readMemoryRecallSettings();
+    case "writeMemoryRecallSettings":
+      return host.writeMemoryRecallSettings(request.settings);
     case "searchMemoryDebug": {
       await requireOwner(request.ownerKey, host);
       assertSearchConfig(request.config);

@@ -26,7 +26,7 @@
             ]
           },
           "onClick": {
-            "__actionId": "__action_10"
+            "__actionId": "@fixture:2"
           }
         },
         "children": [
@@ -37,10 +37,7 @@
               "size": 16,
               "tint": {
                 "__colorToken": "onSurfaceVariant",
-                "alpha": 0.7,
-                "copy": {
-                  "__actionId": "__action_11"
-                }
+                "alpha": 0.7
               }
             },
             "children": [],
@@ -78,8 +75,8 @@
               "style": "bodySmall",
               "color": {
                 "__colorToken": "primary",
-                "copy": {
-                  "__actionId": "__action_12"
+                "alpha": {
+                  "__composeUndefined": true
                 }
               },
               "fontWeight": "600",
@@ -103,7 +100,7 @@
                 "vertical": 0
               },
               "onClick": {
-                "__actionId": "__action_13"
+                "__actionId": "@fixture:3"
               }
             },
             "children": [
@@ -114,10 +111,7 @@
                   "size": 16,
                   "tint": {
                     "__colorToken": "onSurfaceVariant",
-                    "alpha": 0.7,
-                    "copy": {
-                      "__actionId": "__action_14"
-                    }
+                    "alpha": 0.7
                   }
                 },
                 "children": [],
@@ -141,8 +135,8 @@
               "size": 20,
               "tint": {
                 "__colorToken": "onSurfaceVariant",
-                "copy": {
-                  "__actionId": "__action_15"
+                "alpha": {
+                  "__composeUndefined": true
                 }
               }
             },
@@ -182,7 +176,7 @@
             ]
           },
           "onClick": {
-            "__actionId": "__action_10"
+            "__actionId": "@fixture:2"
           }
         },
         "children": [
@@ -193,10 +187,7 @@
               "size": 16,
               "tint": {
                 "__colorToken": "onSurfaceVariant",
-                "alpha": 0.7,
-                "copy": {
-                  "__actionId": "__action_11"
-                }
+                "alpha": 0.7
               }
             },
             "children": [],
@@ -234,8 +225,8 @@
               "style": "bodySmall",
               "color": {
                 "__colorToken": "primary",
-                "copy": {
-                  "__actionId": "__action_12"
+                "alpha": {
+                  "__composeUndefined": true
                 }
               },
               "fontWeight": "600",
@@ -259,7 +250,7 @@
                 "vertical": 0
               },
               "onClick": {
-                "__actionId": "__action_13"
+                "__actionId": "@fixture:3"
               }
             },
             "children": [
@@ -270,10 +261,7 @@
                   "size": 16,
                   "tint": {
                     "__colorToken": "onSurfaceVariant",
-                    "alpha": 0.7,
-                    "copy": {
-                      "__actionId": "__action_14"
-                    }
+                    "alpha": 0.7
                   }
                 },
                 "children": [],
@@ -297,8 +285,8 @@
               "size": 20,
               "tint": {
                 "__colorToken": "onSurfaceVariant",
-                "copy": {
-                  "__actionId": "__action_15"
+                "alpha": {
+                  "__composeUndefined": true
                 }
               }
             },
@@ -347,7 +335,7 @@
                 ]
               },
               "onClick": {
-                "__actionId": "__action_53"
+                "__actionId": "@fixture:4"
               }
             },
             "children": [
@@ -358,8 +346,8 @@
                   "size": 16,
                   "tint": {
                     "__colorToken": "primary",
-                    "copy": {
-                      "__actionId": "__action_54"
+                    "alpha": {
+                      "__composeUndefined": true
                     }
                   }
                 },
@@ -381,8 +369,8 @@
                   "style": "bodySmall",
                   "color": {
                     "__colorToken": "onSurface",
-                    "copy": {
-                      "__actionId": "__action_55"
+                    "alpha": {
+                      "__composeUndefined": true
                     }
                   },
                   "maxLines": 1,
@@ -399,8 +387,8 @@
                   "style": "bodySmall",
                   "color": {
                     "__colorToken": "primary",
-                    "copy": {
-                      "__actionId": "__action_56"
+                    "alpha": {
+                      "__composeUndefined": true
                     }
                   },
                   "fontWeight": "600"
@@ -423,7 +411,7 @@
                   "width": 40,
                   "height": 28,
                   "onCheckedChange": {
-                    "__actionId": "__action_57"
+                    "__actionId": "@fixture:5"
                   }
                 },
                 "children": [],
@@ -452,7 +440,7 @@
                 ]
               },
               "onClick": {
-                "__actionId": "__action_58"
+                "__actionId": "@fixture:6"
               }
             },
             "children": [
@@ -463,8 +451,8 @@
                   "size": 16,
                   "tint": {
                     "__colorToken": "primary",
-                    "copy": {
-                      "__actionId": "__action_59"
+                    "alpha": {
+                      "__composeUndefined": true
                     }
                   }
                 },
@@ -486,8 +474,8 @@
                   "style": "bodySmall",
                   "color": {
                     "__colorToken": "onSurface",
-                    "copy": {
-                      "__actionId": "__action_60"
+                    "alpha": {
+                      "__composeUndefined": true
                     }
                   },
                   "maxLines": 1,
@@ -504,8 +492,8 @@
                   "style": "bodySmall",
                   "color": {
                     "__colorToken": "primary",
-                    "copy": {
-                      "__actionId": "__action_61"
+                    "alpha": {
+                      "__composeUndefined": true
                     }
                   },
                   "fontWeight": "600"
@@ -528,7 +516,323 @@
                   "width": 40,
                   "height": 28,
                   "onCheckedChange": {
-                    "__actionId": "__action_62"
+                    "__actionId": "@fixture:7"
+                  }
+                },
+                "children": [],
+                "slots": {}
+              }
+            ],
+            "slots": {}
+          },
+          {
+            "type": "Row",
+            "props": {
+              "key": "memory-memoryRecall",
+              "fillMaxWidth": true,
+              "paddingHorizontal": 12,
+              "verticalAlignment": "center",
+              "modifier": {
+                "__modifierOps": [
+                  {
+                    "name": "heightIn",
+                    "args": [
+                      {
+                        "minHeight": 32
+                      }
+                    ]
+                  }
+                ]
+              },
+              "onClick": {
+                "__actionId": "@fixture:8"
+              }
+            },
+            "children": [
+              {
+                "type": "Icon",
+                "props": {
+                  "name": "AutoAwesome",
+                  "size": 16,
+                  "tint": {
+                    "__colorToken": "primary",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  }
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 12
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "text": "自动检索注入记忆",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "onSurface",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "maxLines": 1,
+                  "overflow": "ellipsis",
+                  "weight": 1
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "text": "开",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "primary",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "fontWeight": "600"
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 8
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Switch",
+                "props": {
+                  "checked": true,
+                  "width": 40,
+                  "height": 28,
+                  "onCheckedChange": {
+                    "__actionId": "@fixture:9"
+                  }
+                },
+                "children": [],
+                "slots": {}
+              }
+            ],
+            "slots": {}
+          },
+          {
+            "type": "Row",
+            "props": {
+              "key": "memory-recallLimit",
+              "fillMaxWidth": true,
+              "paddingHorizontal": 12,
+              "verticalAlignment": "center",
+              "modifier": {
+                "__modifierOps": [
+                  {
+                    "name": "heightIn",
+                    "args": [
+                      {
+                        "minHeight": 32
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "children": [
+              {
+                "type": "Icon",
+                "props": {
+                  "name": "Tune",
+                  "size": 16,
+                  "tint": {
+                    "__colorToken": "onSurfaceVariant",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  }
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 12
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "text": "记忆注入条数",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "onSurface",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "maxLines": 1,
+                  "overflow": "ellipsis",
+                  "weight": 1
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 8
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "TextField",
+                "props": {
+                  "key": "memory-recall-limit-input",
+                  "value": "3",
+                  "singleLine": true,
+                  "placeholder": "1-50",
+                  "onValueChange": {
+                    "__actionId": "@fixture:10"
+                  },
+                  "style": {
+                    "fontSize": 13
+                  },
+                  "decoration": {
+                    "isDense": true,
+                    "contentPadding": {
+                      "vertical": 8
+                    }
+                  },
+                  "modifier": {
+                    "__modifierOps": [
+                      {
+                        "name": "width",
+                        "args": [
+                          72
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "children": [],
+                "slots": {}
+              }
+            ],
+            "slots": {}
+          },
+          {
+            "type": "Row",
+            "props": {
+              "key": "memory-memoryRecallRepeat",
+              "fillMaxWidth": true,
+              "paddingHorizontal": 12,
+              "verticalAlignment": "center",
+              "modifier": {
+                "__modifierOps": [
+                  {
+                    "name": "heightIn",
+                    "args": [
+                      {
+                        "minHeight": 32
+                      }
+                    ]
+                  }
+                ]
+              },
+              "onClick": {
+                "__actionId": "@fixture:11"
+              }
+            },
+            "children": [
+              {
+                "type": "Icon",
+                "props": {
+                  "name": "Repeat",
+                  "size": 16,
+                  "tint": {
+                    "__colorToken": "onSurfaceVariant",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  }
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 12
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "text": "允许重复命中",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "onSurface",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "maxLines": 1,
+                  "overflow": "ellipsis",
+                  "weight": 1
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "text": "关",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "primary",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "fontWeight": "600"
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 8
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Switch",
+                "props": {
+                  "checked": false,
+                  "width": 40,
+                  "height": 28,
+                  "onCheckedChange": {
+                    "__actionId": "@fixture:12"
                   }
                 },
                 "children": [],
@@ -557,7 +861,7 @@
                 ]
               },
               "onClick": {
-                "__actionId": "__action_63"
+                "__actionId": "@fixture:13"
               }
             },
             "children": [
@@ -568,8 +872,8 @@
                   "size": 16,
                   "tint": {
                     "__colorToken": "onSurfaceVariant",
-                    "copy": {
-                      "__actionId": "__action_64"
+                    "alpha": {
+                      "__composeUndefined": true
                     }
                   }
                 },
@@ -594,8 +898,8 @@
                   "weight": 1,
                   "color": {
                     "__colorToken": "onSurface",
-                    "copy": {
-                      "__actionId": "__action_65"
+                    "alpha": {
+                      "__composeUndefined": true
                     }
                   }
                 },
@@ -619,10 +923,10 @@
       "text": "待处理 5 条 · 1 个聊天\n处理中 0 · 失败 0\n下次检查：约 5 分钟后\n\n自动检查需要至少 5 个候选；不足时继续等待。手动更新不受此门槛限制。",
       "confirmText": "关闭",
       "onConfirm": {
-        "__actionId": "__action_3"
+        "__actionId": "@fixture:1"
       },
       "onDismissRequest": {
-        "__actionId": "__action_4"
+        "__actionId": "@fixture:2"
       }
     },
     "children": [],

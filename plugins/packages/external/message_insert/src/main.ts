@@ -13,26 +13,6 @@ RuntimeContext.register({
   saveSettings,
 });
 
-/** Passes the prompt execution identity to extra information injection. */
-async function appendExtraInfoWithStatus(
-  processedInput: string,
-  chatId?: string,
-  executionContext?: ToolPkg.ExecutionContext
-) {
-  return appendExtraInfoToMessage(
-    processedInput,
-    chatId || undefined,
-    executionContext
-  );
-}
-
-/** Reads the exact participant selected by the generic prompt host. */
-function resolveHookExecutionContext(
-  input: ToolPkg.PromptInputHookEvent | ToolPkg.PromptFinalizeHookEvent
-): ToolPkg.ExecutionContext | undefined {
-  return input.eventPayload.metadata?.executionContext;
-}
-
 /** Registers the settings screen and prompt injection hooks. */
 export function registerToolPkg(): boolean {
   ToolPkg.registerToolboxUiModule({
@@ -85,13 +65,7 @@ export async function onPromptInput(
     return null;
   }
 
-  const chatId = String(input.eventPayload.chatId ?? getChatId() ?? "").trim();
-  const executionContext = resolveHookExecutionContext(input);
-  return appendExtraInfoWithStatus(
-    processedInput,
-    chatId || undefined,
-    executionContext
-  );
+  return appendExtraInfoToMessage(processedInput);
 }
 
 /** Injects transient attachments into the final model request when enabled. */
@@ -115,13 +89,7 @@ export async function onPromptFinalize(
     return null;
   }
 
-  const chatId = String(input.eventPayload.chatId ?? getChatId() ?? "").trim();
-  const executionContext = resolveHookExecutionContext(input);
-  return appendExtraInfoWithStatus(
-    processedInput,
-    chatId || undefined,
-    executionContext
-  );
+  return appendExtraInfoToMessage(processedInput);
 }
 
 /** Reads or toggles the extra information injection menu state. */

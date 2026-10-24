@@ -15,6 +15,13 @@ function timers() {
 function menu(runtime, chatId) { return mountRegisteredComposeRoute(runtime, null, "chat-input-memory", { chatId, input: {} }); }
 /** Collects text from the real rendered Compose tree. */
 function texts(tree) { return composeNodes(tree, node => node.type === "Text").map(node => node.props.text); }
+/** Requires exactly one Switch inside a keyed row and returns its real props. */
+function rowSwitch(tree, key) {
+  const found = [];
+  (function visit(node) { if (node.type === "Switch") found.push(node); for (const child of node.children ?? []) visit(child); })(keyedNode(tree, key));
+  assert.equal(found.length, 1, "Expected one switch row: " + key);
+  return found[0];
+}
 
 // Compare the actual registered plugin tree with main's group geometry, labels and persisted preferences.
 test("plugin memory section retains main's exact collapsed and expanded controls and four summaries", async t => {
@@ -29,11 +36,26 @@ test("plugin memory section retains main's exact collapsed and expanded controls
   assert.equal(header.props.paddingHorizontal, 12);
   assert.deepEqual(plain(header.props.modifier.__modifierOps), [{ name: "heightIn", args: [{ minHeight: 36 }] }]);
   await ui.dispatch(header.props.onClick); tree = ui.render().tree;
-  assert.deepEqual(texts(tree), ["记忆", "用户资料 · 记忆库更新", "提供用户资料", "开", "自动更新记忆库", "开", "手动更新记忆"]);
+  assert.deepEqual(texts(tree), ["记忆", "用户资料 · 记忆库更新", "提供用户资料", "开", "自动更新记忆库", "开", "自动检索注入记忆", "开", "记忆注入条数", "允许重复命中", "关", "手动更新记忆"]);
   assert.deepEqual(plain(keyedNode(tree, "memory-section-children").props.modifier.__modifierOps), [{ name: "padding", args: [12, 0, 8, 4] }]);
   for (const control of composeNodes(tree, node => node.type === "Switch")) {
-    assert.equal(control.props.width, 40); assert.equal(control.props.height, 28); assert.equal(control.props.checked, true);
+    assert.equal(control.props.width, 40); assert.equal(control.props.height, 28);
   }
+  for (const key of ["memory-userDescriptionEnabled", "memory-autoUpdateEnabled", "memory-memoryRecall"]) assert.equal(rowSwitch(tree, key).props.checked, true);
+  assert.equal(rowSwitch(tree, "memory-memoryRecallRepeat").props.checked, false);
+  assert.equal(keyedNode(tree, "memory-recall-limit-input").props.value, "3");
+  await ui.dispatch(keyedNode(tree, "memory-recall-limit-input").props.onValueChange, "5"); tree = ui.render().tree;
+  assert.equal(keyedNode(tree, "memory-recall-limit-input").props.value, "5");
+  assert.deepEqual(plain(await runtime.web({ action: "readMemoryRecallSettings" })), { enabled: true, limit: 5, allowRepeated: false });
+  await ui.dispatch(keyedNode(tree, "memory-recall-limit-input").props.onValueChange, "abc"); tree = ui.render().tree;
+  await ui.dispatch(keyedNode(tree, "memory-recall-limit-input").props.onValueChange, "51"); tree = ui.render().tree;
+  assert.deepEqual(plain(await runtime.web({ action: "readMemoryRecallSettings" })), { enabled: true, limit: 5, allowRepeated: false });
+  assert.equal(keyedNode(tree, "memory-recall-limit-input").props.value, "51");
+  await ui.dispatch(keyedNode(tree, "memory-memoryRecallRepeat").props.onClick); tree = ui.render().tree;
+  assert.deepEqual(plain(await runtime.web({ action: "readMemoryRecallSettings" })), { enabled: true, limit: 5, allowRepeated: true });
+  await ui.dispatch(keyedNode(tree, "memory-memoryRecallRepeat").props.onClick); tree = ui.render().tree;
+  await ui.dispatch(keyedNode(tree, "memory-recall-limit-input").props.onValueChange, "3"); tree = ui.render().tree;
+  assert.deepEqual(plain(await runtime.web({ action: "readMemoryRecallSettings" })), { enabled: true, limit: 3, allowRepeated: false });
   if (process.env.OPERIT_EXPORT_MEMORY_MENU_FIXTURE === "1") {
     await writeFile(new URL("../../../../../apps/flutter/app/test/fixtures/native_memory_menu.json", import.meta.url), JSON.stringify({ collapsed, expanded: plain(tree) }, null, 2) + "\n");
   }

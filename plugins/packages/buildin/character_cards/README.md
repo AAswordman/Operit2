@@ -212,7 +212,7 @@ startup require their own integration acceptance.
 
 `manifest.json` publishes the self-contained client `src/api.ts`. Consumers
 copy that file into their own source tree, import it locally and declare
-`com.operit.character_cards >= 0.1.0` in `requires`, following
+`com.operit.character_cards >= 0.2.0` in `requires`, following
 `plugins/docs/PUBLIC_API.md`. Public calls use `ToolPkg.callDependency`.
 
 `characterCards.memory.query({ participantId, query, limit, snapshotId })`
@@ -220,8 +220,32 @@ resolves the explicit participant's actual memory binding and reuses the
 plugin's existing query implementation. Results contain complete typed
 matches and document chunks; snapshots remain in the provider's main runtime.
 A `null` snapshot ID requests a fresh query. An explicit snapshot ID retains
-owner-scoped deduplication across calls. The extra information injection
-plugin consumes this method through an exact local SDK copy.
+owner-scoped deduplication across calls.
+
+## Built-in memory recall
+
+The plugin owns per-turn memory recall through its prompt finalize hook
+(`src/memory-recall.ts`). On every main character or group turn it strips host
+markup from the authored input, queries the speaking participant's primary
+memory owner with a per-chat snapshot for owner-scoped deduplication, and
+appends the configured number of matches as a transient `<memory_context>`
+block to the final model request. Injections never persist into chat history,
+an empty result injects nothing, and provider failures fail closed without
+blocking the send.
+
+The memory menu's expanded section controls the persisted `memoryRecall` state
+field: the 自动检索注入记忆 switch, a numeric input for the per-turn injection
+count (1–50, committing every valid typed value), and the 允许重复命中 switch
+that bypasses the per-chat snapshot exclusion. States written by the released
+plugin or the Core migration default to enabled, count three, and repeated
+hits off. This recall replaces the memory item formerly offered by the extra
+information injection package.
+
+Retrieval always honors the owner's persisted search weights from the memory
+settings retrieval tab. When the cloud embedding provider is unconfigured, the
+semantic channel is skipped instead of failing the search, so keyword, tag and
+graph retrieval keep working regardless of the stored vector weight; provider
+failures on a configured endpoint still surface as search errors.
 
 ## Owner memory controls
 

@@ -21,6 +21,13 @@ function embeddingSource(settings: MemorySettings): { endpoint: string; model: s
   return { endpoint, model };
 }
 
+/** Reports whether the semantic channel may run without the provider rejecting the configuration. */
+export function embeddingConfigured(settings: MemorySettings | undefined): boolean {
+  if (!settings?.cloudEmbeddingEnabled) return false;
+  const endpoint = settings.cloudEmbeddingEndpoint.trim().replace(/\/+$/, "");
+  return endpoint !== "" && settings.cloudEmbeddingModel.trim() !== "" && /^https?:\/\//u.test(endpoint);
+}
+
 /** Requests and validates an actual provider vector without retries or zero-vector substitution. */
 async function requestEmbedding(text: string, settings: MemorySettings): Promise<MemoryEmbedding> {
   const source = embeddingSource(settings), headers: Record<string, string> = { "Content-Type": "application/json" };

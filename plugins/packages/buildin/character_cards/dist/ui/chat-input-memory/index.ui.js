@@ -1,6 +1,6 @@
 // @operit-compose-artifact 4
 "use strict";
-var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:70508","root":0,"nodes":[{"type":"Icon","props":[2,["name","size","tint"],[[1,0],[0,16],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:70732","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[1,0],[0,true],[0,12],[0,"center"],[1,1],[1,2]]],"children":[3,[[1,3],[4,1],[4,2],[4,3],[4,4],[4,5]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","maxLines","overflow","weight"],[[1,4],[0,"bodySmall"],[1,5],[0,1],[0,"ellipsis"],[0,1]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight"],[[1,6],[0,"bodySmall"],[1,7],[0,"600"]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false},{"type":"Switch","props":[2,["checked","width","height","onCheckedChange"],[[1,8],[0,40],[0,28],[1,9]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:71491","root":0,"nodes":[{"type":"Box","props":[2,["key"],[[0,"memory-menu-unavailable"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:71574","root":0,"nodes":[{"type":"Box","props":[2,["key","onLoad"],[[0,"memory-menu-loading"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:71652","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-section-header"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2],[4,3],[4,4],[4,5],[4,7],[4,8]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style"],[[0,"记忆"],[0,"bodySmall"]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight","textAlign","maxLines","overflow","weight"],[[1,3],[0,"bodySmall"],[1,4],[0,"600"],[0,"end"],[0,1],[0,"ellipsis"],[0,1]]],"children":[0,null],"explicitChildren":false},{"type":"IconButton","props":[2,["key","tooltip","width","height","contentPadding","onClick","content"],[[0,"memory-info"],[0,"记忆状态说明"],[0,24],[0,28],[2,["horizontal","vertical"],[[0,0],[0,0]]],[1,5],[4,6]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[0,"InfoOutline"],[0,16],[1,6]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,6]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[1,7],[0,20],[1,8]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:73116","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-manual"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,3],[0,"bodySmall"],[0,2],[0,"ellipsis"],[0,1],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:73968","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-retry-failed"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,3],[0,"bodySmall"],[0,1],[0,"ellipsis"],[0,1],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:74678","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-clear-failed"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,3],[0,"bodySmall"],[0,1],[0,"ellipsis"],[0,1],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:75418","root":0,"nodes":[{"type":"Column","props":[2,["key","modifier"],[[0,"memory-section-children"],[1,0]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:n39ost:75545","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth"],[[0,"memory-section"],[0,true]]],"children":[1,0],"explicitChildren":true}]}];
+var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:73561","root":0,"nodes":[{"type":"Icon","props":[2,["name","size","tint"],[[1,0],[0,16],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:73683","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[1,0],[0,true],[0,12],[0,"center"],[1,1],[1,2]]],"children":[3,[[1,3],[4,1],[4,2],[4,3],[4,4],[4,5]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","maxLines","overflow","weight"],[[1,4],[0,"bodySmall"],[1,5],[0,1],[0,"ellipsis"],[0,1]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight"],[[1,6],[0,"bodySmall"],[1,7],[0,"600"]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false},{"type":"Switch","props":[2,["checked","width","height","onCheckedChange"],[[1,8],[0,40],[0,28],[1,9]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:74453","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier"],[[0,"memory-recallLimit"],[0,true],[0,12],[0,"center"],[1,0]]],"children":[3,[[1,1],[4,1],[4,2],[4,3],[4,4]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","maxLines","overflow","weight"],[[1,2],[0,"bodySmall"],[1,3],[0,1],[0,"ellipsis"],[0,1]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false},{"type":"TextField","props":[2,["key","value","singleLine","placeholder","onValueChange","style","decoration","modifier"],[[0,"memory-recall-limit-input"],[1,4],[0,true],[1,5],[1,6],[2,["fontSize"],[[0,13]]],[2,["isDense","contentPadding"],[[0,true],[2,["vertical"],[[0,8]]]]],[1,7]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:75300","root":0,"nodes":[{"type":"Box","props":[2,["key"],[[0,"memory-menu-unavailable"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:75383","root":0,"nodes":[{"type":"Box","props":[2,["key","onLoad"],[[0,"memory-menu-loading"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:75461","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-section-header"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2],[4,3],[4,4],[4,5],[4,7],[4,8]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style"],[[0,"记忆"],[0,"bodySmall"]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight","textAlign","maxLines","overflow","weight"],[[1,3],[0,"bodySmall"],[1,4],[0,"600"],[0,"end"],[0,1],[0,"ellipsis"],[0,1]]],"children":[0,null],"explicitChildren":false},{"type":"IconButton","props":[2,["key","tooltip","width","height","contentPadding","onClick","content"],[[0,"memory-info"],[0,"记忆状态说明"],[0,24],[0,28],[2,["horizontal","vertical"],[[0,0],[0,0]]],[1,5],[4,6]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[0,"InfoOutline"],[0,16],[1,6]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,6]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[1,7],[0,20],[1,8]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:77427","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-manual"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,3],[0,"bodySmall"],[0,2],[0,"ellipsis"],[0,1],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:78279","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-retry-failed"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,3],[0,"bodySmall"],[0,1],[0,"ellipsis"],[0,1],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:78989","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-clear-failed"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,3],[0,"bodySmall"],[0,1],[0,"ellipsis"],[0,1],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:79729","root":0,"nodes":[{"type":"Column","props":[2,["key","modifier"],[[0,"memory-section-children"],[1,0]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1huretk:79856","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth"],[[0,"memory-section"],[0,true]]],"children":[1,0],"explicitChildren":true}]}];
 
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -47,12 +47,28 @@ __export(index_ui_exports, {
 });
 module.exports = __toCommonJS(index_ui_exports);
 
+// src/identity.ts
+function uuid() {
+  const bytes = [];
+  for (let index = 0; index < 16; index += 1) bytes.push(Math.floor(Math.random() * 256));
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const text2 = bytes.map(
+    /** Encodes every byte as two hexadecimal digits. */
+    (byte) => byte.toString(16).padStart(2, "0")
+  ).join("");
+  return text2.slice(0, 8) + "-" + text2.slice(8, 12) + "-" + text2.slice(12, 16) + "-" + text2.slice(16, 20) + "-" + text2.slice(20);
+}
+
 // src/validation.ts
 function assertObject(value, label) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
 }
 function assertString(value, label) {
   if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+}
+function assertBoolean(value, label) {
+  if (typeof value !== "boolean") throw new Error(`${label} \u5FC5\u987B\u662F\u5E03\u5C14\u503C`);
 }
 function assertNumber(value, label, min, max) {
   if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new Error(`${label} \u5FC5\u987B\u5728 ${min} \u5230 ${max} \u4E4B\u95F4`);
@@ -65,6 +81,22 @@ function requireId(value, label) {
   assertString(value, label);
   if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} \u65E0\u6548`);
   return value;
+}
+
+// src/storage/state.ts
+function userDocumentPath(ownerKey) {
+  return "owners/" + encodeURIComponent(ownerKey) + "/USER.md";
+}
+var MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 50 };
+function normalizeMemoryRecallSettings(value) {
+  assertObject(value, "memory recall settings");
+  assertBoolean(value.enabled, "memory recall enabled");
+  if (value.limit !== void 0) {
+    assertInteger(value.limit, "memory recall limit", MEMORY_RECALL_LIMIT_RANGE.min);
+    if (value.limit > MEMORY_RECALL_LIMIT_RANGE.max) throw new Error("memory recall limit \u5FC5\u987B\u4E0D\u8D85\u8FC7 " + MEMORY_RECALL_LIMIT_RANGE.max);
+  }
+  if (value.allowRepeated !== void 0) assertBoolean(value.allowRepeated, "memory recall allow repeated");
+  return { enabled: value.enabled, limit: value.limit ?? 3, allowRepeated: value.allowRepeated ?? false };
 }
 
 // src/chat-bindings.ts
@@ -362,19 +394,6 @@ function parseChatConfigurationRequest(value) {
     nonblank(request2.defaultTtsConfigId, "execution default TTS configuration");
   }
   return request2;
-}
-
-// src/identity.ts
-function uuid() {
-  const bytes = [];
-  for (let index = 0; index < 16; index += 1) bytes.push(Math.floor(Math.random() * 256));
-  bytes[6] = bytes[6] & 15 | 64;
-  bytes[8] = bytes[8] & 63 | 128;
-  const text2 = bytes.map(
-    /** Encodes every byte as two hexadecimal digits. */
-    (byte) => byte.toString(16).padStart(2, "0")
-  ).join("");
-  return text2.slice(0, 8) + "-" + text2.slice(8, 12) + "-" + text2.slice(12, 16) + "-" + text2.slice(16, 20) + "-" + text2.slice(20);
 }
 
 // src/storage/merge.json
@@ -757,11 +776,6 @@ var merge_default = {
   }
 };
 
-// src/storage/state.ts
-function userDocumentPath(ownerKey) {
-  return "owners/" + encodeURIComponent(ownerKey) + "/USER.md";
-}
-
 // src/storage/records.ts
 var ownerCollections = [
   "memories",
@@ -841,6 +855,9 @@ function decodeStateFromRecords(metadata, rows) {
     version: metadata.version,
     active: metadata.active === null ? { Model: { id: "chat" } } : metadata.active,
     memoryPreferences: metadata.memoryPreferences,
+    // States written by the released plugin or the Core migration predate recall settings; the
+    // released default stays enabled so existing installations keep recalling after the upgrade.
+    memoryRecall: normalizeMemoryRecallSettings(metadata.memoryRecall === void 0 ? { enabled: true } : metadata.memoryRecall),
     cards: [],
     groups: [],
     tags: [],
@@ -1629,6 +1646,8 @@ function renderMemoryMenu(ctx) {
   const owner2 = ctx.useRef("memory-menu-chat", chatId);
   const [available, setAvailable] = ctx.useState("memory-menu-available", null);
   const [preferences, setPreferences] = ctx.useState("memory-menu-preferences", null);
+  const [recall, setRecall] = ctx.useState("memory-menu-recall", null);
+  const [limitInput, setLimitInput] = ctx.useState("memory-recall-limit-input", "3");
   const [queue, setQueue] = ctx.useState("memory-menu-queue", null);
   const [expanded, setExpanded] = ctx.useState("memory-menu-expanded", false);
   const [busy, setBusy] = ctx.useState("memory-menu-busy", false);
@@ -1664,6 +1683,10 @@ function renderMemoryMenu(ctx) {
       const value = yield request({ action: "readGlobalMemoryPreferences" });
       assertOwner();
       setPreferences(value);
+      const recallValue = yield request({ action: "readMemoryRecallSettings" });
+      assertOwner();
+      setRecall(recallValue);
+      setLimitInput(String(recallValue.limit));
       yield refreshQueue();
     });
   }
@@ -1684,6 +1707,43 @@ function renderMemoryMenu(ctx) {
       assertOwner();
       setPreferences(value);
     });
+  }
+  function writeRecall(settings2) {
+    return __async(this, null, function* () {
+      assertOwner();
+      const value = yield request({ action: "writeMemoryRecallSettings", settings: settings2 });
+      assertOwner();
+      setRecall(value);
+    });
+  }
+  function toggleRecall() {
+    return __async(this, null, function* () {
+      const [current] = ctx.useState("memory-menu-recall", null);
+      if (current === null) throw new Error("Memory recall settings are not loaded");
+      yield writeRecall({ ...current, enabled: !current.enabled });
+    });
+  }
+  function toggleRecallRepeat() {
+    return __async(this, null, function* () {
+      const [current] = ctx.useState("memory-menu-recall", null);
+      if (current === null) throw new Error("Memory recall settings are not loaded");
+      yield writeRecall({ ...current, allowRepeated: !current.allowRepeated });
+    });
+  }
+  function changeRecallLimit(limit) {
+    return __async(this, null, function* () {
+      const [current] = ctx.useState("memory-menu-recall", null);
+      if (current === null) throw new Error("Memory recall settings are not loaded");
+      if (limit === current.limit) return;
+      yield writeRecall({ ...current, limit });
+    });
+  }
+  function changeRecallLimitInput(value) {
+    setLimitInput(value);
+    const limit = Number(value);
+    if (!Number.isInteger(limit) || limit < MEMORY_RECALL_LIMIT_RANGE.min || limit > MEMORY_RECALL_LIMIT_RANGE.max) return;
+    if (recall !== null && limit === recall.limit) return;
+    return changeRecallLimit(limit);
   }
   function manual() {
     return __async(this, null, function* () {
@@ -1749,35 +1809,39 @@ function renderMemoryMenu(ctx) {
     });
   }
   function icon(name, color = colors.onSurfaceVariant) {
-    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:70508",__operitUiPrograms_[0],[name,color]);
+    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:73561",__operitUiPrograms_[0],[name,color]);
   }
-  function switchRow(key, name, title) {
-    if (preferences === null) throw new Error("Memory preferences are not loaded");
-    const checked = preferences[key];
-    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:70732",__operitUiPrograms_[1],["memory-" + key,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),() => toggle(key),icon(name, checked ? colors.primary : colors.onSurfaceVariant),title,colors.onSurface,checked ? "\u5F00" : "\u5173",colors.primary,checked,() => toggle(key)]);
+  function switchRow(key, name, title, checked, toggleRow) {
+    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:73683",__operitUiPrograms_[1],["memory-" + key,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),() => toggleRow(),icon(name, checked ? colors.primary : colors.onSurfaceVariant),title,colors.onSurface,checked ? "\u5F00" : "\u5173",colors.primary,checked,() => toggleRow()]);
   }
-  if (available === false) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:71491",__operitUiPrograms_[2],[]);
-  if (preferences === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:71574",__operitUiPrograms_[3],[load]);
-  const children = [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:71652",__operitUiPrograms_[4],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 36 }]}])}),() => {
+  function limitInputRow(title) {
+    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:74453",__operitUiPrograms_[2],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),icon("Tune"),title,colors.onSurface,limitInput,"1-" + MEMORY_RECALL_LIMIT_RANGE.max,changeRecallLimitInput,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"width",args:[72]}])})]);
+  }
+  if (available === false) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:75300",__operitUiPrograms_[3],[]);
+  if (preferences === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:75383",__operitUiPrograms_[4],[load]);
+  const children = [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:75461",__operitUiPrograms_[5],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 36 }]}])}),() => {
       assertOwner();
       setExpanded(!expanded);
     },icon("DataObjectOutlined", colors.onSurfaceVariant.copy({ alpha: 0.7 })),memorySummary(preferences),colors.primary,showInfo,colors.onSurfaceVariant.copy({ alpha: 0.7 }),expanded ? "KeyboardArrowUp" : "KeyboardArrowDown",colors.onSurfaceVariant])];
   if (expanded) {
     const sectionChildren = [
-      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "\u63D0\u4F9B\u7528\u6237\u8D44\u6599"),
-      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93"),
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:73116",__operitUiPrograms_[5],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),!busy && chatId !== null ? manual : void 0,icon("SaveOutlined"),busy ? "\u6B63\u5728\u66F4\u65B0\u8BB0\u5FC6\u2026" : "\u624B\u52A8\u66F4\u65B0\u8BB0\u5FC6",!busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })])
+      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "\u63D0\u4F9B\u7528\u6237\u8D44\u6599", preferences.userDescriptionEnabled, () => toggle("userDescriptionEnabled")),
+      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93", preferences.autoUpdateEnabled, () => toggle("autoUpdateEnabled")),
+      switchRow("memoryRecall", "AutoAwesome", "\u81EA\u52A8\u68C0\u7D22\u6CE8\u5165\u8BB0\u5FC6", recall !== null && recall.enabled, toggleRecall),
+      limitInputRow("\u8BB0\u5FC6\u6CE8\u5165\u6761\u6570"),
+      switchRow("memoryRecallRepeat", "Repeat", "\u5141\u8BB8\u91CD\u590D\u547D\u4E2D", recall !== null && recall.allowRepeated, toggleRecallRepeat),
+      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:77427",__operitUiPrograms_[6],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),!busy && chatId !== null ? manual : void 0,icon("SaveOutlined"),busy ? "\u6B63\u5728\u66F4\u65B0\u8BB0\u5FC6\u2026" : "\u624B\u52A8\u66F4\u65B0\u8BB0\u5FC6",!busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })])
     ];
     if (queue !== null && queue.failedCandidates > 0) {
       const enabled = !busy && chatId !== null;
       sectionChildren.push(
-        OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:73968",__operitUiPrograms_[6],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),enabled ? retryFailed : void 0,icon("Refresh"),"\u91CD\u8BD5\u5931\u8D25\u5019\u9009\uFF08" + queue.failedCandidates + "\uFF09",enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })]),
-        OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:74678",__operitUiPrograms_[7],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),enabled ? clearFailed : void 0,icon("DeleteOutline"),"\u6E05\u9664\u5931\u8D25\u8BB0\u5F55\uFF08" + queue.failedCandidates + "\uFF09",enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })])
+        OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:78279",__operitUiPrograms_[7],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),enabled ? retryFailed : void 0,icon("Refresh"),"\u91CD\u8BD5\u5931\u8D25\u5019\u9009\uFF08" + queue.failedCandidates + "\uFF09",enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })]),
+        OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:78989",__operitUiPrograms_[8],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),enabled ? clearFailed : void 0,icon("DeleteOutline"),"\u6E05\u9664\u5931\u8D25\u8BB0\u5F55\uFF08" + queue.failedCandidates + "\uFF09",enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })])
       );
     }
-    children.push(OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:75418",__operitUiPrograms_[8],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"padding",args:[12,0,8,4]}])}),sectionChildren]));
+    children.push(OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:79729",__operitUiPrograms_[9],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"padding",args:[12,0,8,4]}])}),sectionChildren]));
   }
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:75545",__operitUiPrograms_[9],[children]);
+  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:79856",__operitUiPrograms_[10],[children]);
 }
 
 // src/ui/chat-input-memory/index.ui.ts

@@ -1,5 +1,6 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
-import type { GlobalMemoryPreferences, MemoryAutoSaveStatus, Request, RequestOutput } from "./model";
+import type { GlobalMemoryPreferences, MemoryAutoSaveStatus, MemoryRecallSettings, Request, RequestOutput } from "./model";
+import { MEMORY_RECALL_LIMIT_RANGE } from "./storage/state";
 import { chatIdentity } from "./ui-contributions";
 import { definition } from "./definition";
 import { findChatBinding } from "./chat-storage";
@@ -33,6 +34,8 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   const owner = ctx.useRef("memory-menu-chat", chatId);
   const [available, setAvailable] = ctx.useState<boolean | null>("memory-menu-available", null);
   const [preferences, setPreferences] = ctx.useState<GlobalMemoryPreferences | null>("memory-menu-preferences", null);
+  const [recall, setRecall] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
+  const [limitInput, setLimitInput] = ctx.useState("memory-recall-limit-input", "3");
   const [queue, setQueue] = ctx.useState<MemoryAutoSaveStatus | null>("memory-menu-queue", null);
   const [expanded, setExpanded] = ctx.useState("memory-menu-expanded", false);
   const [busy, setBusy] = ctx.useState("memory-menu-busy", false);
@@ -62,6 +65,7 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       if (!hasCharacter) return;
     }
     const value = await request({ action: "readGlobalMemoryPreferences" }); assertOwner(); setPreferences(value);
+    const recallValue = await request({ action: "readMemoryRecallSettings" }); assertOwner(); setRecall(recallValue); setLimitInput(String(recallValue.limit));
     await refreshQueue();
   }
   /** Reads current status before presenting the user-requested explanation. */
@@ -77,6 +81,39 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
     if (current === null) throw new Error("Memory preferences are not loaded");
     const value = await request({ action: "writeGlobalMemoryPreference", key, value: !current[key] });
     assertOwner(); setPreferences(value);
+  }
+  /** Commits the full recall settings consumed by the built-in prompt finalize hook. */
+  async function writeRecall(settings: MemoryRecallSettings): Promise<void> {
+    assertOwner();
+    const value = await request({ action: "writeMemoryRecallSettings", settings });
+    assertOwner(); setRecall(value);
+  }
+  /** Commits the recall switch consumed by the built-in prompt finalize hook. */
+  async function toggleRecall(): Promise<void> {
+    const [current] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    await writeRecall({ ...current, enabled: !current.enabled });
+  }
+  /** Commits the repeat switch that decides whether per-chat snapshots exclude delivered memories. */
+  async function toggleRecallRepeat(): Promise<void> {
+    const [current] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    await writeRecall({ ...current, allowRepeated: !current.allowRepeated });
+  }
+  /** Commits the per-turn injection count inside the shared validated range. */
+  async function changeRecallLimit(limit: number): Promise<void> {
+    const [current] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    if (limit === current.limit) return;
+    await writeRecall({ ...current, limit });
+  }
+  /** Commits every typed count that forms a valid value; invalid text stays local until corrected. */
+  function changeRecallLimitInput(value: string): Promise<void> | void {
+    setLimitInput(value);
+    const limit = Number(value);
+    if (!Number.isInteger(limit) || limit < MEMORY_RECALL_LIMIT_RANGE.min || limit > MEMORY_RECALL_LIMIT_RANGE.max) return;
+    if (recall !== null && limit === recall.limit) return;
+    return changeRecallLimit(limit);
   }
   /** Runs real extraction once and sends the original completion or failure text to the generic snackbar host. */
   async function manual(): Promise<ToolPkg.JsonValue> {
@@ -114,15 +151,27 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   /** Creates the compact icon shared by memory menu rows. */
   function icon(name: string, color = colors.onSurfaceVariant): ComposeNode { return ctx.UI.Icon({ name, size: 16, tint: color }); }
   /** Reproduces the 32-pixel rows and 40-by-28 compact switches without a separate card. */
-  function switchRow(key: keyof GlobalMemoryPreferences, name: string, title: string): ComposeNode {
-    if (preferences === null) throw new Error("Memory preferences are not loaded");
-    const checked = preferences[key];
+  function switchRow(key: string, name: string, title: string, checked: boolean, toggleRow: () => Promise<void>): ComposeNode {
     return ctx.UI.Row({ key: "memory-" + key, fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
-      modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: () => toggle(key) }, [
+      modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: () => toggleRow() }, [
       icon(name, checked ? colors.primary : colors.onSurfaceVariant), ctx.UI.Spacer({ width: 12 }),
       ctx.UI.Text({ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }),
       ctx.UI.Text({ text: checked ? "开" : "关", style: "bodySmall", color: colors.primary, fontWeight: "600" }),
-      ctx.UI.Spacer({ width: 8 }), ctx.UI.Switch({ checked, width: 40, height: 28, onCheckedChange: () => toggle(key) }),
+      ctx.UI.Spacer({ width: 8 }), ctx.UI.Switch({ checked, width: 40, height: 28, onCheckedChange: () => toggleRow() }),
+    ]);
+  }
+  /** Reproduces the injection-count row whose numeric input commits every valid typed value. */
+  function limitInputRow(title: string): ComposeNode {
+    return ctx.UI.Row({ key: "memory-recallLimit", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
+      modifier: ctx.Modifier.heightIn({ minHeight: 32 }) }, [
+      icon("Tune"), ctx.UI.Spacer({ width: 12 }),
+      ctx.UI.Text({ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }),
+      ctx.UI.Spacer({ width: 8 }),
+      ctx.UI.TextField({ key: "memory-recall-limit-input", value: limitInput, singleLine: true,
+        placeholder: "1-" + MEMORY_RECALL_LIMIT_RANGE.max, onValueChange: changeRecallLimitInput,
+        style: { fontSize: 13 },
+        decoration: { isDense: true, contentPadding: { vertical: 8 } },
+        modifier: ctx.Modifier.width(72) }),
     ]);
   }
   if (available === false) return ctx.UI.Box({ key: "memory-menu-unavailable" });
@@ -139,8 +188,11 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   ])];
   if (expanded) {
     const sectionChildren: ComposeNode[] = [
-      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料"),
-      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库"),
+      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料", preferences.userDescriptionEnabled, () => toggle("userDescriptionEnabled")),
+      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库", preferences.autoUpdateEnabled, () => toggle("autoUpdateEnabled")),
+      switchRow("memoryRecall", "AutoAwesome", "自动检索注入记忆", recall !== null && recall.enabled, toggleRecall),
+      limitInputRow("记忆注入条数"),
+      switchRow("memoryRecallRepeat", "Repeat", "允许重复命中", recall !== null && recall.allowRepeated, toggleRecallRepeat),
       ctx.UI.Row({ key: "memory-manual", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
         modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: !busy && chatId !== null ? manual : undefined }, [
         icon("SaveOutlined"), ctx.UI.Spacer({ width: 12 }),

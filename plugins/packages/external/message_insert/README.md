@@ -1,22 +1,16 @@
 # Extra information injection
 
-The package injects enabled information into user-message attachments. It uses
-ToolPkg API `2.0.0` and requires `com.operit.character_cards >= 0.1.0`, as declared
-in `manifest.json`. Both packages must be installed and enabled.
+The package injects enabled device information into user-message attachments. It
+uses ToolPkg API `2.0.0` and declares no package dependencies in `manifest.json`.
 
-Memory injection imports the character package's copied public client at
-`src/dependencies/character_cards/api.ts`. That file is an exact copy of the
-provider's `public_api` (`character_cards/src/api.ts`); update the copy explicitly
-when adopting a changed contract. It is self-contained and imports no provider
-implementation files. See `plugins/docs/PUBLIC_API.md` for the dependency protocol.
+Injected items cover time, battery, weather, location, the current screen app,
+recent app usage, screen text, and notifications. Character memory recall is a
+built-in capability of `com.operit.character_cards` through its own prompt
+finalize hook; this package no longer performs any memory query.
 
-Prompt hooks forward the generic `executionContext.participantId` to
-`characterCards.memory.query`. The provider resolves that participant's persisted
-memory binding and returns typed matches, including document snippets. It retains
-owner-scoped query snapshots in its main runtime. Disabling repeated searches
-uses the full chat ID as the snapshot key; enabling them requests a fresh query.
-The consumer formats those matches into attachments. Missing participants and
-provider failures remain visible through the existing injection error reporting.
+Prompt hooks run at `before_process` when injected content persists with the
+message, and at `before_send_to_model` when it is transient. The shared
+injection deadline bounds every enabled collection item.
 
 Build with the repository plugin synchronizer. A direct type check is:
 
