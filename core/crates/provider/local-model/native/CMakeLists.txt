@@ -43,13 +43,32 @@ FetchContent_Declare(mnn URL https://codeload.github.com/alibaba/MNN/zip/refs/ta
     URL_HASH SHA256=93d60848879e68be554c247afe376657630a30652a7d8ec713e9e7d1bbf69260
     PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/PatchMnnStrictAnsi.cmake)
 FetchContent_MakeAvailable(mnn)
-# Keep MSVC's C++ implementation outside V8's statically linked libc++ ABI.
-if(WIN32)
+# Keep the platform C++ runtime outside the Rust cdylib on Windows and Android.
+# The engine ships as a shared library that links the platform STL itself
+# (ANDROID_STL=c++_static), so liboperit_flutter_bridge.so never references
+# libc++ symbols and Android's dynamic linker can always resolve them.
+if(WIN32 OR ANDROID)
     add_library(operit_local_llm SHARED inference.cpp)
-    # ggml's CPU detection owns the Windows registry dependency.
-    target_link_libraries(operit_local_llm PRIVATE advapi32)
     set_target_properties(operit_local_llm PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "$<1:${OPERIT_LOCAL_LLM_RUNTIME_DIR}>")
+        RUNTIME_OUTPUT_DIRECTORY "$<1:${OPERIT_LOCAL_LLM_RUNTIME_DIR}>"
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${OPERIT_LOCAL_LLM_RUNTIME_DIR}>")
+    if(WIN32)
+        # ggml's CPU detection owns the Windows registry dependency.
+        target_link_libraries(operit_local_llm PRIVATE advapi32)
+    else()
+        # Export only the plain C boundary and keep llama/MNN/libc++ internal.
+        set(operit_local_llm_exports "${CMAKE_CURRENT_SOURCE_DIR}/operit_local_llm.map")
+        set_target_properties(operit_local_llm PROPERTIES
+            CXX_VISIBILITY_PRESET hidden
+            VISIBILITY_INLINES_HIDDEN ON
+            LINK_DEPENDS "${operit_local_llm_exports}")
+        target_link_options(operit_local_llm PRIVATE
+            "LINKER:--exclude-libs,ALL"
+            "LINKER:--version-script,${operit_local_llm_exports}")
+        if(ANDROID)
+            target_link_libraries(operit_local_llm PRIVATE log)
+        endif()
+    endif()
 else()
     add_library(operit_local_llm STATIC inference.cpp)
 endif()

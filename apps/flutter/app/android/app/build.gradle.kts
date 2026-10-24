@@ -305,6 +305,14 @@ androidComponents {
                     if (!bridgeLibrary.isFile) {
                         throw GradleException("Missing Android Rust $rustProfile bridge: $bridgeLibrary")
                     }
+                    // The shared local LLM engine must sit beside the bridge so
+                    // Android's dynamic linker can resolve the C boundary.
+                    val engineLibrary = operitBridgeCrate.resolve(
+                        "target/${target.rustTarget}/$rustProfile/liboperit_local_llm.so",
+                    )
+                    if (!engineLibrary.isFile) {
+                        throw GradleException("Missing Android Rust $rustProfile local LLM engine: $engineLibrary")
+                    }
                 }
             }
         }
@@ -315,11 +323,13 @@ androidComponents {
             selectedOperitRustTargets.forEach { target ->
                 into(target.abi) {
                     from(operitBridgeJniLibs.resolve(target.abi)) {
-                        exclude("liboperit_flutter_bridge.so")
+                        exclude("liboperit_flutter_bridge.so", "liboperit_local_llm.so")
                     }
                     from(operitBridgeCrate.resolve(
-                        "target/${target.rustTarget}/$rustProfile/liboperit_flutter_bridge.so",
-                    ))
+                        "target/${target.rustTarget}/$rustProfile",
+                    )) {
+                        include("liboperit_flutter_bridge.so", "liboperit_local_llm.so")
+                    }
                 }
             }
             into(outputDirectory)
