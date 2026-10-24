@@ -83,14 +83,42 @@ test("disabled recall settings stop injection without any memory query", async t
   assert.equal(await hook(finalizeEvent(RECALL_EVENT)), null);
 });
 
-/** Verifies the transactional state path persists the switch and released states default to enabled. */
+/** Requires the configured count to bound one turn and to feed the next turn from the same snapshot. */
+test("recall limit bounds one turn and repeats deliver the remaining memories", async t => {
+  const env = await environment(t);
+  for (const title of ["Stable fact", "Other fact"]) await env.client.memory.create({ ownerKey: "character:default", values: { title, content: "Known durable " + title } });
+  env.disk.replaceState({ ...plain(env.disk.readState()), memoryRecall: { enabled: true, limit: 1 } });
+  const hook = recallHook(env.disk);
+  const first = await hook(finalizeEvent(RECALL_EVENT));
+  assert.match(first, /Known durable Stable fact/);
+  assert.doesNotMatch(first, /Other fact/);
+  const second = await hook(finalizeEvent(RECALL_EVENT));
+  assert.match(second, /Known durable Other fact/);
+  assert.equal(await hook(finalizeEvent(RECALL_EVENT)), null);
+});
+
+/** Requires repeated hits to bypass the per-chat snapshot exclusion. */
+test("allowRepeated recall settings deliver the same memory again", async t => {
+  const env = await environment(t);
+  await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
+  env.disk.replaceState({ ...plain(env.disk.readState()), memoryRecall: { enabled: true, limit: 3, allowRepeated: true } });
+  const hook = recallHook(env.disk);
+  assert.match(await hook(finalizeEvent(RECALL_EVENT)), /Known durable knowledge/);
+  assert.match(await hook(finalizeEvent(RECALL_EVENT)), /Known durable knowledge/);
+});
+
+/** Verifies the transactional state path persists the settings and released states default to enabled. */
 test("recall settings persist through the transactional state path and default to enabled", async t => {
   const disk = await createDiskHarness(t);
   const database = loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository;
   const owner = await database.open();
-  assert.deepEqual(plain(await owner.readMemoryRecallSettings()), { enabled: true });
-  await owner.run(session => session.writeMemoryRecallSettings(false));
+  assert.deepEqual(plain(await owner.readMemoryRecallSettings()), { enabled: true, limit: 3, allowRepeated: false });
+  const saved = await owner.run(session => session.writeMemoryRecallSettings({ enabled: false, limit: 5, allowRepeated: true }));
+  assert.deepEqual(plain(saved), { enabled: false, limit: 5, allowRepeated: true });
   const reopened = await database.open();
-  assert.deepEqual(plain(await reopened.readMemoryRecallSettings()), { enabled: false });
-  assert.equal(plain(disk.readState()).memoryRecall.enabled, false);
+  assert.deepEqual(plain(await reopened.readMemoryRecallSettings()), { enabled: false, limit: 5, allowRepeated: true });
+  assert.deepEqual(plain(disk.readState()).memoryRecall, { enabled: false, limit: 5, allowRepeated: true });
+  await assert.rejects(owner.run(session => session.writeMemoryRecallSettings({ enabled: true, limit: 0, allowRepeated: false })), /memory recall limit/);
+  // A released-shape record without the newer fields normalizes to the documented defaults.
+  await assert.rejects(owner.run(session => session.writeMemoryRecallSettings({ enabled: true, limit: 11, allowRepeated: false })), /memory recall limit/);
 });

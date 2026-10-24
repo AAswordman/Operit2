@@ -3,7 +3,7 @@ import type { CharacterRepository } from "./canonical";
 import type { ActivePrompt, BackupImportResult, Card, ChatBinding, CharacterDirectories, CharacterState, ConversationGroupRecord, Group, Memory, MemoryAutoSaveStatus, MemoryGraph, MemoryImportResult, MemoryLink, MemoryLinkUpdate, MemoryLinkValues, MemoryRebuildProgress, MemorySearchConfig, MemorySearchOptions, MemorySettings, MemorySpace, MemoryValues, ModelSummary, Store, Tag, TagValues, ToolCatalog, TtsConfig, UserDocument, UserDocumentWrite } from "./model";
 import { assertBoolean, assertCard, assertConversationGroups, assertGroup, assertMemory, assertMemorySettings, assertMemoryValues, assertNumber, assertSearchConfig, assertSearchOptions, assertString, assertTag, assertTagValues, normalizeNames, requireId, requireName } from "./validation";
 import { clone } from "./storage/records";
-import { createMemorySpace, assertMemorySpace } from "./storage/state";
+import { createMemorySpace, assertMemorySpace, normalizeMemoryRecallSettings } from "./storage/state";
 import { searchMemorySpace, searchMemorySpaceDebug } from "./memory-search";
 import { requireChatSelection } from "./chat-bindings";
 import { deleteChatBinding, listChatBindings, readChatBinding, writeChatBinding } from "./chat-storage";
@@ -49,8 +49,8 @@ export class RepositorySession implements CharacterRepository {
     assertBoolean(value, key); this.state.memoryPreferences[key] = value; return this.readGlobalMemoryPreferences();
   }
   async readMemoryRecallSettings(): Promise<import("./model").MemoryRecallSettings> { return copy(this.state.memoryRecall); }
-  async writeMemoryRecallSettings(enabled: boolean): Promise<import("./model").MemoryRecallSettings> {
-    assertBoolean(enabled, "memory recall enabled"); this.state.memoryRecall = { enabled }; return this.readMemoryRecallSettings();
+  async writeMemoryRecallSettings(settings: import("./model").MemoryRecallSettings): Promise<import("./model").MemoryRecallSettings> {
+    this.state.memoryRecall = normalizeMemoryRecallSettings(settings); return this.readMemoryRecallSettings();
   }
   async searchMemoryDebug(options: MemorySearchOptions, config: MemorySearchConfig): Promise<import("./model").MemorySearchDebug> {
     assertSearchOptions(options); assertSearchConfig(config); return copy(await searchMemorySpaceDebug(this.space(options.ownerKey), options, config));

@@ -633,6 +633,267 @@
           {
             "type": "Row",
             "props": {
+              "key": "memory-recallLimit",
+              "fillMaxWidth": true,
+              "paddingHorizontal": 12,
+              "verticalAlignment": "center",
+              "modifier": {
+                "__modifierOps": [
+                  {
+                    "name": "heightIn",
+                    "args": [
+                      {
+                        "minHeight": 32
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "children": [
+              {
+                "type": "Icon",
+                "props": {
+                  "name": "Tune",
+                  "size": 16,
+                  "tint": {
+                    "__colorToken": "onSurfaceVariant",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  }
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 12
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "text": "记忆注入条数",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "onSurface",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "maxLines": 1,
+                  "overflow": "ellipsis",
+                  "weight": 1
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 8
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "IconButton",
+                "props": {
+                  "key": "memory-recall-limit-remove",
+                  "width": 24,
+                  "height": 28,
+                  "contentPadding": {
+                    "horizontal": 0,
+                    "vertical": 0
+                  },
+                  "onClick": {
+                    "__actionId": "@fixture:10"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "Icon",
+                    "props": {
+                      "name": "RemoveCircleOutline",
+                      "size": 16,
+                      "tint": {
+                        "__colorToken": "primary",
+                        "alpha": {
+                          "__composeUndefined": true
+                        }
+                      }
+                    },
+                    "children": [],
+                    "slots": {}
+                  }
+                ],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "key": "memory-recall-limit-value",
+                  "text": "3",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "primary",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "fontWeight": "600"
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "IconButton",
+                "props": {
+                  "key": "memory-recall-limit-add",
+                  "width": 24,
+                  "height": 28,
+                  "contentPadding": {
+                    "horizontal": 0,
+                    "vertical": 0
+                  },
+                  "onClick": {
+                    "__actionId": "@fixture:11"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "Icon",
+                    "props": {
+                      "name": "AddCircleOutline",
+                      "size": 16,
+                      "tint": {
+                        "__colorToken": "primary",
+                        "alpha": {
+                          "__composeUndefined": true
+                        }
+                      }
+                    },
+                    "children": [],
+                    "slots": {}
+                  }
+                ],
+                "slots": {}
+              }
+            ],
+            "slots": {}
+          },
+          {
+            "type": "Row",
+            "props": {
+              "key": "memory-memoryRecallRepeat",
+              "fillMaxWidth": true,
+              "paddingHorizontal": 12,
+              "verticalAlignment": "center",
+              "modifier": {
+                "__modifierOps": [
+                  {
+                    "name": "heightIn",
+                    "args": [
+                      {
+                        "minHeight": 32
+                      }
+                    ]
+                  }
+                ]
+              },
+              "onClick": {
+                "__actionId": "@fixture:12"
+              }
+            },
+            "children": [
+              {
+                "type": "Icon",
+                "props": {
+                  "name": "Repeat",
+                  "size": 16,
+                  "tint": {
+                    "__colorToken": "onSurfaceVariant",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  }
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 12
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "text": "允许重复命中",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "onSurface",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "maxLines": 1,
+                  "overflow": "ellipsis",
+                  "weight": 1
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Text",
+                "props": {
+                  "text": "关",
+                  "style": "bodySmall",
+                  "color": {
+                    "__colorToken": "primary",
+                    "alpha": {
+                      "__composeUndefined": true
+                    }
+                  },
+                  "fontWeight": "600"
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Spacer",
+                "props": {
+                  "width": 8
+                },
+                "children": [],
+                "slots": {}
+              },
+              {
+                "type": "Switch",
+                "props": {
+                  "checked": false,
+                  "width": 40,
+                  "height": 28,
+                  "onCheckedChange": {
+                    "__actionId": "@fixture:13"
+                  }
+                },
+                "children": [],
+                "slots": {}
+              }
+            ],
+            "slots": {}
+          },
+          {
+            "type": "Row",
+            "props": {
               "key": "memory-manual",
               "fillMaxWidth": true,
               "paddingHorizontal": 12,
@@ -650,7 +911,7 @@
                 ]
               },
               "onClick": {
-                "__actionId": "@fixture:10"
+                "__actionId": "@fixture:14"
               }
             },
             "children": [

@@ -228,13 +228,17 @@ The plugin owns per-turn memory recall through its prompt finalize hook
 (`src/memory-recall.ts`). On every main character or group turn it strips host
 markup from the authored input, queries the speaking participant's primary
 memory owner with a per-chat snapshot for owner-scoped deduplication, and
-appends the top three matches as a transient `<memory_context>` block to the
-final model request. Injections never persist into chat history, an empty
-result injects nothing, and provider failures fail closed without blocking the
-send. The memory menu's "自动检索注入记忆" switch persists the enabled state in
-the plugin state's `memoryRecall` field; states written by the released plugin
-or the Core migration default to enabled. This recall replaces the memory item
-formerly offered by the extra information injection package.
+appends the configured number of matches as a transient `<memory_context>`
+block to the final model request. Injections never persist into chat history,
+an empty result injects nothing, and provider failures fail closed without
+blocking the send.
+
+The memory menu's expanded section controls the persisted `memoryRecall` state
+field: the 自动检索注入记忆 switch, a 1–10 stepper for the per-turn injection
+count, and the 允许重复命中 switch that bypasses the per-chat snapshot
+exclusion. States written by the released plugin or the Core migration default
+to enabled, count three, and repeated hits off. This recall replaces the
+memory item formerly offered by the extra information injection package.
 
 ## Owner memory controls
 

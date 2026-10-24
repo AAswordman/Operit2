@@ -36,7 +36,7 @@ export interface CharacterRepository {
   ): Promise<import("./model").GlobalMemoryPreferences>;
   readMemoryRecallSettings(): Promise<import("./model").MemoryRecallSettings>;
   writeMemoryRecallSettings(
-    enabled: boolean,
+    settings: import("./model").MemoryRecallSettings,
   ): Promise<import("./model").MemoryRecallSettings>;
   searchMemoryDebug(
     options: MemorySearchOptions,

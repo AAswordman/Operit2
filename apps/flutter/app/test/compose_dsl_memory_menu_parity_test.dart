@@ -19,7 +19,7 @@ Widget reference(bool expanded) => Builder(
   builder: (context) {
     final colors = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    Widget switchRow(IconData icon, String title) => InkWell(
+    Widget switchRow(IconData icon, String title, {bool checked = true}) => InkWell(
       onTap: () {},
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 32),
@@ -27,7 +27,11 @@ Widget reference(bool expanded) => Builder(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
-              Icon(icon, size: 16, color: colors.primary),
+              Icon(
+                icon,
+                size: 16,
+                color: checked ? colors.primary : colors.onSurfaceVariant,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -38,7 +42,7 @@ Widget reference(bool expanded) => Builder(
                 ),
               ),
               Text(
-                '开',
+                checked ? '开' : '关',
                 style: text.bodySmall!.copyWith(
                   color: colors.primary,
                   fontWeight: FontWeight.w600,
@@ -50,7 +54,7 @@ Widget reference(bool expanded) => Builder(
                 height: 28,
                 child: FittedBox(
                   child: Switch(
-                    value: true,
+                    value: checked,
                     onChanged: (_) {},
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
@@ -58,6 +62,43 @@ Widget reference(bool expanded) => Builder(
               ),
             ],
           ),
+        ),
+      ),
+    );
+    Widget stepperButton(IconData icon) => IconButton(
+      onPressed: () {},
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 24, height: 28),
+      style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+      icon: Icon(icon, size: 16, color: colors.primary),
+    );
+    Widget stepperRow(String title, String value) => ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 32),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            Icon(Icons.tune, size: 16, color: colors.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.bodySmall!.copyWith(color: colors.onSurface),
+              ),
+            ),
+            const SizedBox(width: 8),
+            stepperButton(Icons.remove_circle_outline),
+            Text(
+              value,
+              style: text.bodySmall!.copyWith(
+                color: colors.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            stepperButton(Icons.add_circle_outline),
+          ],
         ),
       ),
     );
@@ -131,6 +172,8 @@ Widget reference(bool expanded) => Builder(
                 switchRow(Icons.assignment_ind_outlined, '提供用户资料'),
                 switchRow(Icons.save, '自动更新记忆库'),
                 switchRow(Icons.auto_awesome, '自动检索注入记忆'),
+                stepperRow('记忆注入条数', '3'),
+                switchRow(Icons.repeat, '允许重复命中', checked: false),
                 InkWell(
                   onTap: () {},
                   child: ConstrainedBox(
@@ -317,7 +360,7 @@ void main() {
             reference(expanded),
             brightness,
             GlobalKey(),
-            height: expanded ? 200 : 160,
+            height: expanded ? 248 : 160,
           );
           await tester.pumpWidget(const SizedBox.shrink());
           await tester.pumpAndSettle();
@@ -340,7 +383,7 @@ void main() {
             ),
             brightness,
             GlobalKey(),
-            height: expanded ? 200 : 160,
+            height: expanded ? 248 : 160,
           );
           expect(actual, orderedEquals(expected));
         },

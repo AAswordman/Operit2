@@ -1,6 +1,6 @@
 // @operit-compose-artifact 4
 "use strict";
-var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:69408","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Person"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:69583","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:69739","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:69889","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Person"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:70054","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:70173","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"SmartToy"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:70370","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Groups"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:72286","root":0,"nodes":[{"type":"Text","props":[2,["text","color","paddingHorizontal","paddingVertical"],[[1,0],[1,1],[0,12],[0,6]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:72420","root":0,"nodes":[{"type":"Box","props":[2,["key","onLoad","modifier","fillMaxWidth","contentAlignment"],[[0,"current-character-loading"],[1,0],[1,1],[0,true],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"CircularProgressIndicator","props":[2,["width","height"],[[0,18],[0,18]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:1wlc48n:72699","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","paddingVertical","verticalAlignment","modifier","onClick"],[[0,"current-character"],[0,true],[0,12],[0,6],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2],[4,5]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,10]]],"children":[0,null],"explicitChildren":false},{"type":"Column","props":[2,["weight"],[[0,1]]],"children":[3,[[4,3],[4,4]]],"explicitChildren":true},{"type":"Text","props":[2,["text","style","color"],[[0,"当前角色卡"],[0,"labelSmall"],[1,3]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight","maxLines","overflow"],[[1,4],[0,"bodySmall"],[1,5],[0,"600"],[0,1],[0,"ellipsis"]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[0,"ChevronRight"],[0,20],[1,6]]],"children":[0,null],"explicitChildren":false}]}];
+var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:70281","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Person"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:70456","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:70612","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:70762","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Person"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:70927","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:71046","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"SmartToy"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:71243","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Groups"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:73159","root":0,"nodes":[{"type":"Text","props":[2,["text","color","paddingHorizontal","paddingVertical"],[[1,0],[1,1],[0,12],[0,6]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:73293","root":0,"nodes":[{"type":"Box","props":[2,["key","onLoad","modifier","fillMaxWidth","contentAlignment"],[[0,"current-character-loading"],[1,0],[1,1],[0,true],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"CircularProgressIndicator","props":[2,["width","height"],[[0,18],[0,18]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:50on7a:73572","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","paddingVertical","verticalAlignment","modifier","onClick"],[[0,"current-character"],[0,true],[0,12],[0,6],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2],[4,5]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,10]]],"children":[0,null],"explicitChildren":false},{"type":"Column","props":[2,["weight"],[[0,1]]],"children":[3,[[4,3],[4,4]]],"explicitChildren":true},{"type":"Text","props":[2,["text","style","color"],[[0,"当前角色卡"],[0,"labelSmall"],[1,3]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight","maxLines","overflow"],[[1,4],[0,"bodySmall"],[1,5],[0,"600"],[0,1],[0,"ellipsis"]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[0,"ChevronRight"],[0,20],[1,6]]],"children":[0,null],"explicitChildren":false}]}];
 
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -53,6 +53,9 @@ function assertObject(value, label) {
 }
 function assertString(value, label) {
   if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+}
+function assertBoolean(value, label) {
+  if (typeof value !== "boolean") throw new Error(`${label} \u5FC5\u987B\u662F\u5E03\u5C14\u503C`);
 }
 function assertNumber(value, label, min, max) {
   if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new Error(`${label} \u5FC5\u987B\u5728 ${min} \u5230 ${max} \u4E4B\u95F4`);
@@ -783,6 +786,17 @@ var merge_default = {
 function userDocumentPath(ownerKey) {
   return "owners/" + encodeURIComponent(ownerKey) + "/USER.md";
 }
+var MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 10 };
+function normalizeMemoryRecallSettings(value) {
+  assertObject(value, "memory recall settings");
+  assertBoolean(value.enabled, "memory recall enabled");
+  if (value.limit !== void 0) {
+    assertInteger(value.limit, "memory recall limit", MEMORY_RECALL_LIMIT_RANGE.min);
+    if (value.limit > MEMORY_RECALL_LIMIT_RANGE.max) throw new Error("memory recall limit \u5FC5\u987B\u4E0D\u8D85\u8FC7 " + MEMORY_RECALL_LIMIT_RANGE.max);
+  }
+  if (value.allowRepeated !== void 0) assertBoolean(value.allowRepeated, "memory recall allow repeated");
+  return { enabled: value.enabled, limit: value.limit ?? 3, allowRepeated: value.allowRepeated ?? false };
+}
 
 // src/storage/records.ts
 var ownerCollections = [
@@ -865,7 +879,7 @@ function decodeStateFromRecords(metadata, rows) {
     memoryPreferences: metadata.memoryPreferences,
     // States written by the released plugin or the Core migration predate recall settings; the
     // released default stays enabled so existing installations keep recalling after the upgrade.
-    memoryRecall: metadata.memoryRecall === void 0 ? { enabled: true } : metadata.memoryRecall,
+    memoryRecall: normalizeMemoryRecallSettings(metadata.memoryRecall === void 0 ? { enabled: true } : metadata.memoryRecall),
     cards: [],
     groups: [],
     tags: [],
@@ -1709,18 +1723,18 @@ function selectedOption(data) {
 function menuAvatar(ctx, option, unboundAvatar) {
   const props = { width: 32, height: 32, contentScale: "crop", modifier: ctx.Modifier.clip({ type: "circle" }) };
   if (option === null) {
-    if (unboundAvatar === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:69408",__operitUiPrograms_[0],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
-    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:69583",__operitUiPrograms_[1],[{ ...props, path: unboundAvatar, contentDescription: "\u672A\u7ED1\u5B9A" }]);
+    if (unboundAvatar === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:70281",__operitUiPrograms_[0],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
+    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:70456",__operitUiPrograms_[1],[{ ...props, path: unboundAvatar, contentDescription: "\u672A\u7ED1\u5B9A" }]);
   }
   switch (option.avatar.type) {
     case "uri":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:69739",__operitUiPrograms_[2],[{ ...props, uri: option.avatar.uri, contentDescription: option.title }]);
+      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:70612",__operitUiPrograms_[2],[{ ...props, uri: option.avatar.uri, contentDescription: option.title }]);
     case "resource":
-      return option.avatar.path === null ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:69889",__operitUiPrograms_[3],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:70054",__operitUiPrograms_[4],[{ ...props, path: option.avatar.path, contentDescription: option.title }]);
+      return option.avatar.path === null ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:70762",__operitUiPrograms_[3],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:70927",__operitUiPrograms_[4],[{ ...props, path: option.avatar.path, contentDescription: option.title }]);
     case "model":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:70173",__operitUiPrograms_[5],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
+      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:71046",__operitUiPrograms_[5],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
     case "group":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:70370",__operitUiPrograms_[6],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
+      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:71243",__operitUiPrograms_[6],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
   }
 }
 function renderChatInputMenu(ctx) {
@@ -1757,10 +1771,10 @@ function renderChatInputMenu(ctx) {
     });
   }
   const colors = ctx.MaterialTheme.colorScheme;
-  if (state.error !== "") return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:72286",__operitUiPrograms_[7],[state.error,colors.error]);
-  if (state.data === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:72420",__operitUiPrograms_[8],[load,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 48 }]}])})]);
+  if (state.error !== "") return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:73159",__operitUiPrograms_[7],[state.error,colors.error]);
+  if (state.data === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:73293",__operitUiPrograms_[8],[load,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 48 }]}])})]);
   const option = selectedOption(state.data);
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:72699",__operitUiPrograms_[9],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 48 }]}])}),() => {
+  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:73572",__operitUiPrograms_[9],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 48 }]}])}),() => {
       assertOwner();
       return {
         type: "toolpkg.ui.present",

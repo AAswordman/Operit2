@@ -20,7 +20,7 @@ import type {
   CharacterRepositoryOwner,
 } from "../canonical";
 import { RepositorySession } from "../repository";
-import { assertCharacterState, createInitialState } from "./state";
+import { assertCharacterState, createInitialState, normalizeMemoryRecallSettings } from "./state";
 import {
   clone,
   collections,
@@ -374,10 +374,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     this.requirePublicationReady();
     const metadata = (await this.storage.metadata.data()).get<Record<string, Storage.Value>>("state");
     if (metadata === undefined) throw new Error("Character database metadata disappeared");
-    if (metadata.memoryRecall === undefined) return { enabled: true };
-    assertObject(metadata.memoryRecall, "memory recall settings");
-    assertBoolean(metadata.memoryRecall.enabled, "memory recall enabled");
-    return { enabled: metadata.memoryRecall.enabled };
+    return normalizeMemoryRecallSettings(metadata.memoryRecall === undefined ? { enabled: true } : metadata.memoryRecall);
   }
 
   /** Reads the selected owner's actual USER.md document. */

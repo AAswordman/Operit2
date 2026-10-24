@@ -1,5 +1,6 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
 import type { GlobalMemoryPreferences, MemoryAutoSaveStatus, MemoryRecallSettings, Request, RequestOutput } from "./model";
+import { MEMORY_RECALL_LIMIT_RANGE } from "./storage/state";
 import { chatIdentity } from "./ui-contributions";
 import { definition } from "./definition";
 import { findChatBinding } from "./chat-storage";
@@ -80,13 +81,31 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
     const value = await request({ action: "writeGlobalMemoryPreference", key, value: !current[key] });
     assertOwner(); setPreferences(value);
   }
+  /** Commits the full recall settings consumed by the built-in prompt finalize hook. */
+  async function writeRecall(settings: MemoryRecallSettings): Promise<void> {
+    assertOwner();
+    const value = await request({ action: "writeMemoryRecallSettings", settings });
+    assertOwner(); setRecall(value);
+  }
   /** Commits the recall switch consumed by the built-in prompt finalize hook. */
   async function toggleRecall(): Promise<void> {
-    assertOwner();
     const [current] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
     if (current === null) throw new Error("Memory recall settings are not loaded");
-    const value = await request({ action: "writeMemoryRecallSettings", enabled: !current.enabled });
-    assertOwner(); setRecall(value);
+    await writeRecall({ ...current, enabled: !current.enabled });
+  }
+  /** Commits the repeat switch that decides whether per-chat snapshots exclude delivered memories. */
+  async function toggleRecallRepeat(): Promise<void> {
+    const [current] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    await writeRecall({ ...current, allowRepeated: !current.allowRepeated });
+  }
+  /** Steps the per-turn injection count inside the shared validated range. */
+  async function changeRecallLimit(delta: number): Promise<void> {
+    const [current] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    const limit = Math.min(MEMORY_RECALL_LIMIT_RANGE.max, Math.max(MEMORY_RECALL_LIMIT_RANGE.min, current.limit + delta));
+    if (limit === current.limit) return;
+    await writeRecall({ ...current, limit });
   }
   /** Runs real extraction once and sends the original completion or failure text to the generic snackbar host. */
   async function manual(): Promise<ToolPkg.JsonValue> {
@@ -133,6 +152,21 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       ctx.UI.Spacer({ width: 8 }), ctx.UI.Switch({ checked, width: 40, height: 28, onCheckedChange: () => toggleRow() }),
     ]);
   }
+  /** Reproduces the 32-pixel stepper row used for the recall injection count. */
+  function stepperRow(key: string, title: string, value: number, change: (delta: number) => Promise<void>): ComposeNode {
+    const button = (buttonKey: string, name: string, delta: number): ComposeNode => ctx.UI.IconButton({ key: buttonKey,
+      width: 24, height: 28, contentPadding: { horizontal: 0, vertical: 0 }, onClick: () => change(delta),
+      content: ctx.UI.Icon({ name, size: 16, tint: colors.primary }) });
+    return ctx.UI.Row({ key: "memory-" + key, fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
+      modifier: ctx.Modifier.heightIn({ minHeight: 32 }) }, [
+      icon("Tune"), ctx.UI.Spacer({ width: 12 }),
+      ctx.UI.Text({ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }),
+      ctx.UI.Spacer({ width: 8 }),
+      button("memory-recall-limit-remove", "RemoveCircleOutline", -1),
+      ctx.UI.Text({ key: "memory-recall-limit-value", text: String(value), style: "bodySmall", color: colors.primary, fontWeight: "600" }),
+      button("memory-recall-limit-add", "AddCircleOutline", 1),
+    ]);
+  }
   if (available === false) return ctx.UI.Box({ key: "memory-menu-unavailable" });
   if (preferences === null) return ctx.UI.Box({ key: "memory-menu-loading", onLoad: load });
   const children: ComposeNode[] = [ctx.UI.Row({ key: "memory-section-header", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
@@ -150,6 +184,8 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料", preferences.userDescriptionEnabled, () => toggle("userDescriptionEnabled")),
       switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库", preferences.autoUpdateEnabled, () => toggle("autoUpdateEnabled")),
       switchRow("memoryRecall", "AutoAwesome", "自动检索注入记忆", recall !== null && recall.enabled, toggleRecall),
+      stepperRow("recallLimit", "记忆注入条数", recall === null ? 3 : recall.limit, changeRecallLimit),
+      switchRow("memoryRecallRepeat", "Repeat", "允许重复命中", recall !== null && recall.allowRepeated, toggleRecallRepeat),
       ctx.UI.Row({ key: "memory-manual", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
         modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: !busy && chatId !== null ? manual : undefined }, [
         icon("SaveOutlined"), ctx.UI.Spacer({ width: 12 }),

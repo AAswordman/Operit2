@@ -226,7 +226,7 @@ export interface MemorySearchConfig {
 /** Aggregates independent canonical reads only after every requested read succeeds. */
 export interface GlobalMemoryPreferences { userDescriptionEnabled: boolean; autoUpdateEnabled: boolean }
 /** Controls the built-in per-turn recall that injects matched memories into the model request. */
-export interface MemoryRecallSettings { enabled: boolean }
+export interface MemoryRecallSettings { enabled: boolean; limit: number; allowRepeated: boolean }
 export interface MemorySearchHit { memory: Memory; score: number; keywordScore: number; tagScore: number; vectorScore: number; edgeScore: number; passedThreshold: boolean }
 export interface MemorySearchDebug { query: string; config: MemorySearchConfig; relevanceThreshold: number; memoriesInScopeCount: number; candidates: MemorySearchHit[] }
 
@@ -254,7 +254,7 @@ export type Request =
   | { action: "clearFailedCandidates"; ownerKey: string }
   | { action: "writeGlobalMemoryPreference"; key: keyof GlobalMemoryPreferences; value: boolean }
   | { action: "readMemoryRecallSettings" }
-  | { action: "writeMemoryRecallSettings"; enabled: boolean }
+  | { action: "writeMemoryRecallSettings"; settings: MemoryRecallSettings }
   | { action: "searchMemoryDebug"; ownerKey: string; query: string; config: MemorySearchConfig; relevanceThreshold: number }
   | { action: "readMemoryLink"; ownerKey: string; linkId: string }
   | { action: "listThemeChoices" }

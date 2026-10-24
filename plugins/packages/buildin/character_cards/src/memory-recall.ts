@@ -2,8 +2,7 @@ import type { MemoryQueryResult } from "./api";
 import { dispatch } from "./service-runtime";
 import { memoryRecallQuery } from "./public-api";
 
-/** Bounds every injected memory summary the same way the migrated injection package did. */
-const MEMORY_RECALL_LIMIT = 3;
+/** Bounds every injected memory summary; the persisted limit shares the same validated range. */
 const MEMORY_RECALL_MARKER = '<memory_context source="character-memory">';
 const MODEL_PARTICIPANT_ID = "model:chat";
 
@@ -69,7 +68,7 @@ export async function onMemoryRecallPromptFinalize(event: ToolPkg.PromptFinalize
   try {
     const settings = await dispatch({ action: "readMemoryRecallSettings" });
     if (!settings.enabled) return null;
-    const result = await memoryRecallQuery(participant.participantId, query, MEMORY_RECALL_LIMIT, participant.chatId);
+    const result = await memoryRecallQuery(participant.participantId, query, settings.limit, settings.allowRepeated ? null : participant.chatId);
     const block = memoryBlock(result);
     if (block === null) return null;
     return `${processedInput.replace(/\s+$/, "")}\n\n${block}`;

@@ -21,10 +21,27 @@ export function createMemorySpace(ownerKey: string): MemorySpace {
     rebuildProgress: { status: "idle", totalChats: 0, completedChats: 0, totalWindows: 0, completedWindows: 0, totalSourceMessages: 0, processedSourceMessages: 0, failedWindows: 0, currentChatTitle: "", lastError: "" },
   };
 }
+/** Bounds the per-turn recall injection count; the menu stepper and persisted writes share this range. */
+export const MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 10 } as const;
+/** Defaults for recall settings that predate a given field in persisted states. */
+export function defaultMemoryRecallSettings(): import("../model").MemoryRecallSettings {
+  return { enabled: true, limit: 3, allowRepeated: false };
+}
+/** Validates one persisted recall-settings record, defaulting fields that older writers omitted. */
+export function normalizeMemoryRecallSettings(value: unknown): import("../model").MemoryRecallSettings {
+  assertObject(value, "memory recall settings");
+  assertBoolean(value.enabled, "memory recall enabled");
+  if (value.limit !== undefined) {
+    assertInteger(value.limit, "memory recall limit", MEMORY_RECALL_LIMIT_RANGE.min);
+    if (value.limit > MEMORY_RECALL_LIMIT_RANGE.max) throw new Error("memory recall limit 必须不超过 " + MEMORY_RECALL_LIMIT_RANGE.max);
+  }
+  if (value.allowRepeated !== undefined) assertBoolean(value.allowRepeated, "memory recall allow repeated");
+  return { enabled: value.enabled, limit: value.limit ?? 3, allowRepeated: value.allowRepeated ?? false };
+}
 /** Creates first-install domain state without reading or migrating Core records. */
 export function createInitialState(now: number): CharacterState {
   const card = createInstalledCharacter(now);
-  return { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true }, memoryRecall: { enabled: true }, conversationGroups: [], cards: [card], groups: [], tags: [], stores: [], active: { CharacterCard: { id: card.id } }, owners: [createMemorySpace("character:" + card.id)] };
+  return { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true }, memoryRecall: defaultMemoryRecallSettings(), conversationGroups: [], cards: [card], groups: [], tags: [], stores: [], active: { CharacterCard: { id: card.id } }, owners: [createMemorySpace("character:" + card.id)] };
 }
 /** Requires a real array instead of supplying missing persisted records. */
 function array(value: unknown, label: string): asserts value is unknown[] {
@@ -50,8 +67,7 @@ export function assertCharacterState(value: unknown): asserts value is Character
   assertObject(value.memoryPreferences, "global memory preferences");
   assertBoolean(value.memoryPreferences.userDescriptionEnabled, "user description enabled");
   assertBoolean(value.memoryPreferences.autoUpdateEnabled, "auto update enabled");
-  assertObject(value.memoryRecall, "memory recall settings");
-  assertBoolean(value.memoryRecall.enabled, "memory recall enabled");
+  normalizeMemoryRecallSettings(value.memoryRecall);
   assertConversationGroups(value.conversationGroups);
   const cards = value.cards, groups = value.groups, tags = value.tags, stores = value.stores, owners = value.owners;
   array(cards, "cards"); array(groups, "groups"); array(tags, "tags"); array(stores, "stores"); array(owners, "owners");

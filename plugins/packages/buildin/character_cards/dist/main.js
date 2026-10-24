@@ -1971,9 +1971,23 @@ function createMemorySpace(ownerKey) {
     rebuildProgress: { status: "idle", totalChats: 0, completedChats: 0, totalWindows: 0, completedWindows: 0, totalSourceMessages: 0, processedSourceMessages: 0, failedWindows: 0, currentChatTitle: "", lastError: "" }
   };
 }
+var MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 10 };
+function defaultMemoryRecallSettings() {
+  return { enabled: true, limit: 3, allowRepeated: false };
+}
+function normalizeMemoryRecallSettings(value) {
+  assertObject(value, "memory recall settings");
+  assertBoolean(value.enabled, "memory recall enabled");
+  if (value.limit !== void 0) {
+    assertInteger(value.limit, "memory recall limit", MEMORY_RECALL_LIMIT_RANGE.min);
+    if (value.limit > MEMORY_RECALL_LIMIT_RANGE.max) throw new Error("memory recall limit \u5FC5\u987B\u4E0D\u8D85\u8FC7 " + MEMORY_RECALL_LIMIT_RANGE.max);
+  }
+  if (value.allowRepeated !== void 0) assertBoolean(value.allowRepeated, "memory recall allow repeated");
+  return { enabled: value.enabled, limit: value.limit ?? 3, allowRepeated: value.allowRepeated ?? false };
+}
 function createInitialState(now) {
   const card = createInstalledCharacter(now);
-  return { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true }, memoryRecall: { enabled: true }, conversationGroups: [], cards: [card], groups: [], tags: [], stores: [], active: { CharacterCard: { id: card.id } }, owners: [createMemorySpace("character:" + card.id)] };
+  return { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true }, memoryRecall: defaultMemoryRecallSettings(), conversationGroups: [], cards: [card], groups: [], tags: [], stores: [], active: { CharacterCard: { id: card.id } }, owners: [createMemorySpace("character:" + card.id)] };
 }
 function array2(value, label) {
   if (!Array.isArray(value)) throw new Error(label + " must be an array");
@@ -1996,8 +2010,7 @@ function assertCharacterState(value) {
   assertObject(value.memoryPreferences, "global memory preferences");
   assertBoolean(value.memoryPreferences.userDescriptionEnabled, "user description enabled");
   assertBoolean(value.memoryPreferences.autoUpdateEnabled, "auto update enabled");
-  assertObject(value.memoryRecall, "memory recall settings");
-  assertBoolean(value.memoryRecall.enabled, "memory recall enabled");
+  normalizeMemoryRecallSettings(value.memoryRecall);
   assertConversationGroups(value.conversationGroups);
   const cards = value.cards, groups = value.groups, tags = value.tags, stores = value.stores, owners = value.owners;
   array2(cards, "cards");
@@ -2241,7 +2254,7 @@ function decodeStateFromRecords(metadata, rows) {
     memoryPreferences: metadata.memoryPreferences,
     // States written by the released plugin or the Core migration predate recall settings; the
     // released default stays enabled so existing installations keep recalling after the upgrade.
-    memoryRecall: metadata.memoryRecall === void 0 ? { enabled: true } : metadata.memoryRecall,
+    memoryRecall: normalizeMemoryRecallSettings(metadata.memoryRecall === void 0 ? { enabled: true } : metadata.memoryRecall),
     cards: [],
     groups: [],
     tags: [],
@@ -5921,7 +5934,7 @@ function dispatch(request, host) {
       case "readMemoryRecallSettings":
         return host.readMemoryRecallSettings();
       case "writeMemoryRecallSettings":
-        return host.writeMemoryRecallSettings(request.enabled);
+        return host.writeMemoryRecallSettings(request.settings);
       case "searchMemoryDebug": {
         yield requireOwner(request.ownerKey, host);
         assertSearchConfig(request.config);
@@ -6261,10 +6274,9 @@ var RepositorySession = class {
       return copy(this.state.memoryRecall);
     });
   }
-  writeMemoryRecallSettings(enabled) {
+  writeMemoryRecallSettings(settings2) {
     return __async(this, null, function* () {
-      assertBoolean(enabled, "memory recall enabled");
-      this.state.memoryRecall = { enabled };
+      this.state.memoryRecall = normalizeMemoryRecallSettings(settings2);
       return this.readMemoryRecallSettings();
     });
   }
@@ -7377,10 +7389,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       this.requirePublicationReady();
       const metadata = (yield this.storage.metadata.data()).get("state");
       if (metadata === void 0) throw new Error("Character database metadata disappeared");
-      if (metadata.memoryRecall === void 0) return { enabled: true };
-      assertObject(metadata.memoryRecall, "memory recall settings");
-      assertBoolean(metadata.memoryRecall.enabled, "memory recall enabled");
-      return { enabled: metadata.memoryRecall.enabled };
+      return normalizeMemoryRecallSettings(metadata.memoryRecall === void 0 ? { enabled: true } : metadata.memoryRecall);
     });
   }
   /** Reads the selected owner's actual USER.md document. */
@@ -9631,7 +9640,6 @@ function registerDomainApis() {
 }
 
 // src/memory-recall.ts
-var MEMORY_RECALL_LIMIT = 3;
 var MEMORY_RECALL_MARKER = '<memory_context source="character-memory">';
 var MODEL_PARTICIPANT_ID = "model:chat";
 function collapse(value, maxLength) {
@@ -9679,7 +9687,7 @@ function onMemoryRecallPromptFinalize(event) {
     try {
       const settings2 = yield dispatch2({ action: "readMemoryRecallSettings" });
       if (!settings2.enabled) return null;
-      const result2 = yield memoryRecallQuery(participant.participantId, query, MEMORY_RECALL_LIMIT, participant.chatId);
+      const result2 = yield memoryRecallQuery(participant.participantId, query, settings2.limit, settings2.allowRepeated ? null : participant.chatId);
       const block = memoryBlock(result2);
       if (block === null) return null;
       return `${processedInput.replace(/\s+$/, "")}

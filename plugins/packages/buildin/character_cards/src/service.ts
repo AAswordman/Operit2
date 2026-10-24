@@ -940,7 +940,7 @@ export async function dispatch(
     case "readMemoryRecallSettings":
       return host.readMemoryRecallSettings();
     case "writeMemoryRecallSettings":
-      return host.writeMemoryRecallSettings(request.enabled);
+      return host.writeMemoryRecallSettings(request.settings);
     case "searchMemoryDebug": {
       await requireOwner(request.ownerKey, host);
       assertSearchConfig(request.config);
