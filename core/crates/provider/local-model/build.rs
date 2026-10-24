@@ -3,6 +3,7 @@ fn main() {
     println!("cargo:rerun-if-changed=native");
     println!("cargo:rerun-if-env-changed=OPERIT_LLAMA_SOURCE");
     println!("cargo:rerun-if-env-changed=OPERIT_MNN_SOURCE");
+    println!("cargo:rerun-if-env-changed=OPERIT_KLEIDIAI_SOURCE");
     for variable in [
         "ANDROID_NDK_HOME",
         "ANDROID_NDK_ROOT",
@@ -31,6 +32,7 @@ fn main() {
         for (env, option) in [
             ("OPERIT_LLAMA_SOURCE", "FETCHCONTENT_SOURCE_DIR_LLAMA"),
             ("OPERIT_MNN_SOURCE", "FETCHCONTENT_SOURCE_DIR_MNN"),
+            ("OPERIT_KLEIDIAI_SOURCE", "KLEIDIAI_SRC_DIR"),
         ] {
             if let Some(path) = std::env::var_os(env) {
                 config.define(option, path);
@@ -61,8 +63,10 @@ fn main() {
                 .define("ANDROID_PLATFORM", "android-23")
                 .define("ANDROID_STL", "c++_static");
         } else if target_env == "ohos" {
-            let sdk = std::env::var_os("OHOS_NATIVE_HOME")
-                .expect("Set OHOS_NATIVE_HOME to the native OpenHarmony SDK directory");
+            let sdk = std::path::PathBuf::from(
+                std::env::var_os("OHOS_NATIVE_HOME")
+                    .expect("Set OHOS_NATIVE_HOME to the native OpenHarmony SDK directory"),
+            );
             let abi = match arch.as_str() {
                 "aarch64" => "arm64-v8a",
                 "x86_64" => "x86_64",
@@ -72,13 +76,17 @@ fn main() {
                 .generator("Ninja")
                 .define(
                     "CMAKE_TOOLCHAIN_FILE",
-                    std::path::PathBuf::from(sdk).join("build/cmake/ohos.toolchain.cmake"),
+                    sdk.join("build/cmake/ohos.toolchain.cmake"),
+                )
+                .define(
+                    "CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES",
+                    sdk.join("llvm/include/c++/v1"),
                 )
                 .define("OHOS_ARCH", abi)
                 .define("OHOS_STL", "c++_static");
         }
         let windows = os == "windows";
-        let shared = windows || os == "android";
+        let shared = windows || os == "android" || target_env == "ohos";
         let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
         let profile_dir = out_dir
             .ancestors()
@@ -127,7 +135,7 @@ fn main() {
             } else {
                 format!("lib{name}.a")
             };
-            let path = if os == "android" {
+            let path = if shared && !windows {
                 let path = profile_dir.join(&file);
                 assert!(path.is_file(), "native inference library missing: {file}");
                 path
@@ -143,11 +151,6 @@ fn main() {
             println!("cargo:rustc-link-lib={kind}={name}");
         }
         if shared {
-            return;
-        }
-        if target_env == "ohos" {
-            println!("cargo:rustc-link-lib=c++_static");
-            println!("cargo:rustc-link-lib=c++abi");
             return;
         }
         match os.as_str() {

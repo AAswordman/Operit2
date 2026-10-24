@@ -40,6 +40,28 @@ from their native hooks. `verify_cli_plugin_assets()` rejects a packaged CLI
 whose binary omits any generated asset name. Do not commit or reuse stale
 asset directories across machines.
 
+## OpenHarmony native libraries
+
+The HAP build uses the API 18 native SDK configured in the OHOS project's
+`local.properties` and a current `ld.lld` on `PATH`. V8's Chromium compiler emits
+ELF CREL relocations, which the SDK's bundled LLD 15 cannot read. The final Rust
+link uses the selected LLD with the SDK sysroot and compiler builtins, and rejects
+undefined symbols.
+
+Provide a V8 archive and its matching generated Rust bindings for
+`aarch64-unknown-linux-ohos` through `RUSTY_V8_ARCHIVE` and
+`RUSTY_V8_SRC_BINDING_PATH`. Set `RUSTY_V8_ARCHIVE_SHA256` to the archive's SHA-256.
+Both artifacts must come from the locked V8 version, built against the OHOS
+sysroot; Android and GNU/Linux artifacts have a different ABI.
+
+Local native source caches can be supplied through `OPERIT_LLAMA_SOURCE`,
+`OPERIT_MNN_SOURCE`, and `OPERIT_KLEIDIAI_SOURCE` (KleidiAI 1.16.0 for MNN 3.6.1).
+Use CMake-style forward slashes in these paths. The OHOS engine uses the SDK's
+C++ headers, aligns their namespace with the SDK's `__n1` ABI, and uses
+`sched_setaffinity` for inference thread affinity. Its static C++ runtime stays
+private behind the three exported inference C functions. Packaging includes both `liboperit_flutter_bridge.so` and
+`liboperit_local_llm.so`.
+
 ## Apple release helpers
 
 ```bash

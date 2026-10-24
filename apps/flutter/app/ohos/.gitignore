@@ -20,6 +20,7 @@
 **/libs/**/libflutter.so
 **/libs/**/libvmservice_snapshot.so
 **/libs/**/liboperit_flutter_bridge.so
+**/libs/**/liboperit_local_llm.so
 **/libs/**/libonnxruntime.so
 **/libs/**/libsherpa-onnx-c-api.so
 /har/

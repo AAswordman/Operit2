@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 3.22)
 project(operit_local_llm LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(OHOS)
+    # Expose musl's CPU affinity declarations used by the native inference engines.
+    add_compile_definitions(_GNU_SOURCE)
+    # Match the __n1 namespace exported by the OHOS SDK's libc++ archives.
+    set(operit_ohos_cxx_config_dir "${CMAKE_CURRENT_BINARY_DIR}/ohos-libcpp")
+    file(READ "${OHOS_SDK_NATIVE}/llvm/include/c++/v1/__config_site" operit_ohos_cxx_config)
+    string(REGEX REPLACE "#define _LIBCPP_ABI_NAMESPACE [^\r\n]+"
+        "#define _LIBCPP_ABI_NAMESPACE __n1" operit_ohos_cxx_config "${operit_ohos_cxx_config}")
+    file(MAKE_DIRECTORY "${operit_ohos_cxx_config_dir}")
+    file(CONFIGURE OUTPUT "${operit_ohos_cxx_config_dir}/__config_site"
+        CONTENT "${operit_ohos_cxx_config}" @ONLY)
+    list(PREPEND CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES "${operit_ohos_cxx_config_dir}")
+endif()
 # Export the C++ runtime selected by the toolchain for Rust's final link.
 set(operit_cxx_runtime "")
 foreach(library IN LISTS CMAKE_CXX_IMPLICIT_LINK_LIBRARIES)
@@ -28,6 +41,15 @@ set(GGML_F16C OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(llama URL https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/b11829
     URL_HASH SHA256=70281a1798762c91045a304cddb64016f605db3290de3c4b28c385b2da051961)
 FetchContent_MakeAvailable(llama)
+if(OHOS)
+    # OHOS exposes current-thread affinity through sched_setaffinity.
+    set(operit_llama_cpu_source "${llama_SOURCE_DIR}/ggml/src/ggml-cpu/ggml-cpu.c")
+    file(READ "${operit_llama_cpu_source}" operit_llama_cpu)
+    string(REPLACE "#ifdef __ANDROID__\n    err = sched_setaffinity("
+        "#if defined(__ANDROID__) || defined(__OHOS__)\n    err = sched_setaffinity("
+        operit_llama_cpu "${operit_llama_cpu}")
+    file(CONFIGURE OUTPUT "${operit_llama_cpu_source}" CONTENT "${operit_llama_cpu}" @ONLY)
+endif()
 set(MNN_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 # Use the standalone CMake build without Android Studio header-copy hooks.
 set(MNN_BUILD_FOR_ANDROID_COMMAND ON CACHE BOOL "" FORCE)
@@ -54,7 +76,7 @@ FetchContent_Declare(mnn URL https://codeload.github.com/alibaba/MNN/zip/refs/ta
     PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/PatchMnnBuild.cmake)
 FetchContent_MakeAvailable(mnn)
 # Isolate the platform C++ runtime from V8 behind the exported C interface.
-if(WIN32 OR ANDROID)
+if(WIN32 OR ANDROID OR OHOS)
     add_library(operit_local_llm SHARED inference.cpp)
     set_target_properties(operit_local_llm PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "$<1:${OPERIT_LOCAL_LLM_RUNTIME_DIR}>"
@@ -71,7 +93,9 @@ if(WIN32 OR ANDROID)
         target_link_options(operit_local_llm PRIVATE
             "LINKER:--exclude-libs,ALL"
             "LINKER:--version-script,${operit_local_llm_exports}")
-        target_link_libraries(operit_local_llm PRIVATE log)
+        if(ANDROID)
+            target_link_libraries(operit_local_llm PRIVATE log)
+        endif()
     endif()
 else()
     add_library(operit_local_llm STATIC inference.cpp)

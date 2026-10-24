@@ -49,6 +49,7 @@ OHOS_RELEASE_SIGNING_PROPERTIES = REPO_ROOT / "tools" / "release" / "secrets" / 
 OHOS_RUST_TARGET = "aarch64-unknown-linux-ohos"
 OHOS_CLANG_TARGET = "aarch64-linux-ohos"
 OHOS_BRIDGE_LIBRARY_NAME = "liboperit_flutter_bridge.so"
+OHOS_ENGINE_LIBRARY_NAME = "liboperit_local_llm.so"
 LIBCLANG_PACKAGE_VERSION = "21.1.8"
 OHOS_REQUIRED_SDK_COMPONENTS = ("ets", "js", "native", "previewer", "toolchains")
 OHOS_SIGNING_SECRET_OPTIONS = {"-keyPwd", "-keystorePwd"}
@@ -609,9 +610,11 @@ def build_ohos_rust_bridge() -> None:
     sysroot = native_dir / "sysroot"
     clang = executable_path(llvm_bin / "clang")
     llvm_ar = executable_path(llvm_bin / "llvm-ar")
+    linker = Path(require_command("ld.lld"))
     libclang_dir = ensure_bindgen_libclang()
     clang_resource_dir = ohos_clang_resource_dir(native_dir)
-    required_paths = [native_dir, sysroot, clang, llvm_ar, libclang_dir, clang_resource_dir]
+    compiler_runtime = clang_resource_dir / "lib" / OHOS_CLANG_TARGET / "libclang_rt.builtins.a"
+    required_paths = [native_dir, sysroot, clang, llvm_ar, libclang_dir, clang_resource_dir, compiler_runtime]
     missing = [path for path in required_paths if not path.exists()]
     if missing:
         raise RuntimeError("OpenHarmony native SDK is incomplete: " + ", ".join(str(path) for path in missing))
@@ -649,24 +652,27 @@ def build_ohos_rust_bridge() -> None:
     run(
         [
             "cargo",
-            "build",
+            "rustc",
+            "--lib",
             "--release",
             "--manifest-path",
             OHOS_BRIDGE_CRATE_DIR / "Cargo.toml",
             "--target",
             OHOS_RUST_TARGET,
+            "--",
+            "-C",
+            f"link-arg={compiler_runtime}",
+            "-C",
+            f"link-arg=--ld-path={linker}",
+            "-C",
+            "link-arg=-Wl,--no-undefined",
         ],
         cwd=OHOS_BRIDGE_CRATE_DIR,
         env=env,
     )
-    bridge_library = (
-        OHOS_BRIDGE_CRATE_DIR
-        / "target"
-        / OHOS_RUST_TARGET
-        / "release"
-        / OHOS_BRIDGE_LIBRARY_NAME
-    )
-    copy_required_file(bridge_library, OHOS_ENTRY_LIB_DIR / OHOS_BRIDGE_LIBRARY_NAME)
+    runtime_dir = OHOS_BRIDGE_CRATE_DIR / "target" / OHOS_RUST_TARGET / "release"
+    for library_name in (OHOS_BRIDGE_LIBRARY_NAME, OHOS_ENGINE_LIBRARY_NAME):
+        copy_required_file(runtime_dir / library_name, OHOS_ENTRY_LIB_DIR / library_name)
 
 
 # Returns the Clang resource directory shipped by the configured native SDK.
