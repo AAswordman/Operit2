@@ -130,6 +130,7 @@ Widget reference(bool expanded) => Builder(
               children: [
                 switchRow(Icons.assignment_ind_outlined, '提供用户资料'),
                 switchRow(Icons.save, '自动更新记忆库'),
+                switchRow(Icons.auto_awesome, '自动检索注入记忆'),
                 InkWell(
                   onTap: () {},
                   child: ConstrainedBox(
@@ -171,8 +172,9 @@ Future<Uint8List> capture(
   WidgetTester tester,
   Widget child,
   Brightness brightness,
-  GlobalKey key,
-) async {
+  GlobalKey key, {
+  double height = 160,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(brightness: brightness),
@@ -183,7 +185,7 @@ Future<Uint8List> capture(
             key: key,
             child: SizedBox(
               width: 300,
-              height: 160,
+              height: height,
               child: ColoredBox(
                 color: Colors.white,
                 child: Align(alignment: Alignment.topLeft, child: child),
@@ -315,6 +317,7 @@ void main() {
             reference(expanded),
             brightness,
             GlobalKey(),
+            height: expanded ? 200 : 160,
           );
           await tester.pumpWidget(const SizedBox.shrink());
           await tester.pumpAndSettle();
@@ -337,6 +340,7 @@ void main() {
             ),
             brightness,
             GlobalKey(),
+            height: expanded ? 200 : 160,
           );
           expect(actual, orderedEquals(expected));
         },

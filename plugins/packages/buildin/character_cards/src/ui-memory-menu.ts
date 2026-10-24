@@ -1,5 +1,5 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
-import type { GlobalMemoryPreferences, MemoryAutoSaveStatus, Request, RequestOutput } from "./model";
+import type { GlobalMemoryPreferences, MemoryAutoSaveStatus, MemoryRecallSettings, Request, RequestOutput } from "./model";
 import { chatIdentity } from "./ui-contributions";
 import { definition } from "./definition";
 import { findChatBinding } from "./chat-storage";
@@ -33,6 +33,7 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   const owner = ctx.useRef("memory-menu-chat", chatId);
   const [available, setAvailable] = ctx.useState<boolean | null>("memory-menu-available", null);
   const [preferences, setPreferences] = ctx.useState<GlobalMemoryPreferences | null>("memory-menu-preferences", null);
+  const [recall, setRecall] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
   const [queue, setQueue] = ctx.useState<MemoryAutoSaveStatus | null>("memory-menu-queue", null);
   const [expanded, setExpanded] = ctx.useState("memory-menu-expanded", false);
   const [busy, setBusy] = ctx.useState("memory-menu-busy", false);
@@ -62,6 +63,7 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       if (!hasCharacter) return;
     }
     const value = await request({ action: "readGlobalMemoryPreferences" }); assertOwner(); setPreferences(value);
+    const recallValue = await request({ action: "readMemoryRecallSettings" }); assertOwner(); setRecall(recallValue);
     await refreshQueue();
   }
   /** Reads current status before presenting the user-requested explanation. */
@@ -77,6 +79,14 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
     if (current === null) throw new Error("Memory preferences are not loaded");
     const value = await request({ action: "writeGlobalMemoryPreference", key, value: !current[key] });
     assertOwner(); setPreferences(value);
+  }
+  /** Commits the recall switch consumed by the built-in prompt finalize hook. */
+  async function toggleRecall(): Promise<void> {
+    assertOwner();
+    const [current] = ctx.useState<MemoryRecallSettings | null>("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    const value = await request({ action: "writeMemoryRecallSettings", enabled: !current.enabled });
+    assertOwner(); setRecall(value);
   }
   /** Runs real extraction once and sends the original completion or failure text to the generic snackbar host. */
   async function manual(): Promise<ToolPkg.JsonValue> {
@@ -114,15 +124,13 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   /** Creates the compact icon shared by memory menu rows. */
   function icon(name: string, color = colors.onSurfaceVariant): ComposeNode { return ctx.UI.Icon({ name, size: 16, tint: color }); }
   /** Reproduces the 32-pixel rows and 40-by-28 compact switches without a separate card. */
-  function switchRow(key: keyof GlobalMemoryPreferences, name: string, title: string): ComposeNode {
-    if (preferences === null) throw new Error("Memory preferences are not loaded");
-    const checked = preferences[key];
+  function switchRow(key: string, name: string, title: string, checked: boolean, toggleRow: () => Promise<void>): ComposeNode {
     return ctx.UI.Row({ key: "memory-" + key, fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
-      modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: () => toggle(key) }, [
+      modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: () => toggleRow() }, [
       icon(name, checked ? colors.primary : colors.onSurfaceVariant), ctx.UI.Spacer({ width: 12 }),
       ctx.UI.Text({ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }),
       ctx.UI.Text({ text: checked ? "开" : "关", style: "bodySmall", color: colors.primary, fontWeight: "600" }),
-      ctx.UI.Spacer({ width: 8 }), ctx.UI.Switch({ checked, width: 40, height: 28, onCheckedChange: () => toggle(key) }),
+      ctx.UI.Spacer({ width: 8 }), ctx.UI.Switch({ checked, width: 40, height: 28, onCheckedChange: () => toggleRow() }),
     ]);
   }
   if (available === false) return ctx.UI.Box({ key: "memory-menu-unavailable" });
@@ -139,8 +147,9 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   ])];
   if (expanded) {
     const sectionChildren: ComposeNode[] = [
-      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料"),
-      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库"),
+      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料", preferences.userDescriptionEnabled, () => toggle("userDescriptionEnabled")),
+      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库", preferences.autoUpdateEnabled, () => toggle("autoUpdateEnabled")),
+      switchRow("memoryRecall", "AutoAwesome", "自动检索注入记忆", recall !== null && recall.enabled, toggleRecall),
       ctx.UI.Row({ key: "memory-manual", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
         modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: !busy && chatId !== null ? manual : undefined }, [
         icon("SaveOutlined"), ctx.UI.Spacer({ width: 12 }),

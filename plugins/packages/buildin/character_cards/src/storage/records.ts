@@ -132,6 +132,9 @@ export function decodeStateFromRecords(
     version: metadata.version,
     active: metadata.active === null ? { Model: { id: "chat" } } : metadata.active,
     memoryPreferences: metadata.memoryPreferences,
+    // States written by the released plugin or the Core migration predate recall settings; the
+    // released default stays enabled so existing installations keep recalling after the upgrade.
+    memoryRecall: metadata.memoryRecall === undefined ? { enabled: true } : metadata.memoryRecall,
     cards: [] as Storage.Value[],
     groups: [] as Storage.Value[],
     tags: [] as Storage.Value[],

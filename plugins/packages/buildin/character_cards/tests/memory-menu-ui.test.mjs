@@ -29,7 +29,7 @@ test("plugin memory section retains main's exact collapsed and expanded controls
   assert.equal(header.props.paddingHorizontal, 12);
   assert.deepEqual(plain(header.props.modifier.__modifierOps), [{ name: "heightIn", args: [{ minHeight: 36 }] }]);
   await ui.dispatch(header.props.onClick); tree = ui.render().tree;
-  assert.deepEqual(texts(tree), ["记忆", "用户资料 · 记忆库更新", "提供用户资料", "开", "自动更新记忆库", "开", "手动更新记忆"]);
+  assert.deepEqual(texts(tree), ["记忆", "用户资料 · 记忆库更新", "提供用户资料", "开", "自动更新记忆库", "开", "自动检索注入记忆", "开", "手动更新记忆"]);
   assert.deepEqual(plain(keyedNode(tree, "memory-section-children").props.modifier.__modifierOps), [{ name: "padding", args: [12, 0, 8, 4] }]);
   for (const control of composeNodes(tree, node => node.type === "Switch")) {
     assert.equal(control.props.width, 40); assert.equal(control.props.height, 28); assert.equal(control.props.checked, true);

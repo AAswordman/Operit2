@@ -6,6 +6,7 @@ import type {
   ActivePrompt,
   Group,
   GlobalMemoryPreferences,
+  MemoryRecallSettings,
   MemorySettings,
   MemorySearchConfig,
   Snapshot,
@@ -95,7 +96,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
       }
       await storage.metadata.edit(preferences => {
         if (preferences.contains("state")) throw new Error("Character initialization changed concurrently");
-        preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences) });
+        preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
       });
     }
     await repository.readMetadata();
@@ -368,6 +369,17 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     return (await this.readMetadata()).memoryPreferences;
   }
 
+  /** Reads recall settings; states persisted by the released plugin predate the field. */
+  async readMemoryRecallSettings(): Promise<MemoryRecallSettings> {
+    this.requirePublicationReady();
+    const metadata = (await this.storage.metadata.data()).get<Record<string, Storage.Value>>("state");
+    if (metadata === undefined) throw new Error("Character database metadata disappeared");
+    if (metadata.memoryRecall === undefined) return { enabled: true };
+    assertObject(metadata.memoryRecall, "memory recall settings");
+    assertBoolean(metadata.memoryRecall.enabled, "memory recall enabled");
+    return { enabled: metadata.memoryRecall.enabled };
+  }
+
   /** Reads the selected owner's actual USER.md document. */
   readUser(ownerKey: string): Promise<UserDocument> {
     return this.readOwnerMetadata(ownerKey, async (row) => {
@@ -507,7 +519,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
       });
     }
     for (const batch of memoryBatches) await this.storage.memory.commit(batch);
-    const nextMetadata = { ...metadata, version: state.version, active: "Model" in state.active ? null : storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences) };
+    const nextMetadata = { ...metadata, version: state.version, active: "Model" in state.active ? null : storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) };
     await this.storage.metadata.edit(preferences => {
       if (!equal(preferences.get("state"), metadata)) throw new Error("Character metadata edit conflict");
       preferences.set("state", nextMetadata);

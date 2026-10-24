@@ -34,6 +34,10 @@ export interface CharacterRepository {
     key: keyof import("./model").GlobalMemoryPreferences,
     value: boolean,
   ): Promise<import("./model").GlobalMemoryPreferences>;
+  readMemoryRecallSettings(): Promise<import("./model").MemoryRecallSettings>;
+  writeMemoryRecallSettings(
+    enabled: boolean,
+  ): Promise<import("./model").MemoryRecallSettings>;
   searchMemoryDebug(
     options: MemorySearchOptions,
     config: MemorySearchConfig,
@@ -196,6 +200,7 @@ export interface CharacterRepository {
 export interface CharacterRepositoryOwner extends Pick<
   CharacterRepository,
   | "readGlobalMemoryPreferences"
+  | "readMemoryRecallSettings"
   | "readActive"
   | "listCharacters"
   | "listGroups"

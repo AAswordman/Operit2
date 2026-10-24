@@ -115,6 +115,7 @@ __export(main_exports, {
   memoryRebuildCancelApi: () => memoryRebuildCancelApi,
   memoryRebuildProgressApi: () => memoryRebuildProgressApi,
   memoryRebuildStartApi: () => memoryRebuildStartApi,
+  memoryRecallQuery: () => memoryRecallQuery,
   memoryResolveOwnerApi: () => memoryResolveOwnerApi,
   memorySearchApi: () => memorySearchApi,
   memorySearchConfigReadApi: () => memorySearchConfigReadApi,
@@ -139,6 +140,7 @@ __export(main_exports, {
   onMemoryCommand: () => onMemoryCommand,
   onMemoryInterval: () => onMemoryInterval,
   onMemoryMessagePersisted: () => onMemoryMessagePersisted,
+  onMemoryRecallPromptFinalize: () => onMemoryRecallPromptFinalize,
   onServiceInitialize: () => onServiceInitialize,
   onTagCommand: () => onTagCommand,
   parseActivePromptCommand: () => parseActivePromptCommand,
@@ -1971,7 +1973,7 @@ function createMemorySpace(ownerKey) {
 }
 function createInitialState(now) {
   const card = createInstalledCharacter(now);
-  return { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true }, conversationGroups: [], cards: [card], groups: [], tags: [], stores: [], active: { CharacterCard: { id: card.id } }, owners: [createMemorySpace("character:" + card.id)] };
+  return { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true }, memoryRecall: { enabled: true }, conversationGroups: [], cards: [card], groups: [], tags: [], stores: [], active: { CharacterCard: { id: card.id } }, owners: [createMemorySpace("character:" + card.id)] };
 }
 function array2(value, label) {
   if (!Array.isArray(value)) throw new Error(label + " must be an array");
@@ -1989,11 +1991,13 @@ function identities(records3, label) {
 function assertCharacterState(value) {
   assertObject(value, "character state");
   if (value.version !== 1) throw new Error("Unsupported character database version");
-  const fields4 = /* @__PURE__ */ new Set(["memoryPreferences", "version", "cards", "groups", "tags", "stores", "active", "owners", "conversationGroups"]);
+  const fields4 = /* @__PURE__ */ new Set(["memoryPreferences", "memoryRecall", "version", "cards", "groups", "tags", "stores", "active", "owners", "conversationGroups"]);
   for (const key of Object.keys(value)) if (!fields4.has(key)) throw new Error("Unsupported character state field: " + key);
   assertObject(value.memoryPreferences, "global memory preferences");
   assertBoolean(value.memoryPreferences.userDescriptionEnabled, "user description enabled");
   assertBoolean(value.memoryPreferences.autoUpdateEnabled, "auto update enabled");
+  assertObject(value.memoryRecall, "memory recall settings");
+  assertBoolean(value.memoryRecall.enabled, "memory recall enabled");
   assertConversationGroups(value.conversationGroups);
   const cards = value.cards, groups = value.groups, tags = value.tags, stores = value.stores, owners = value.owners;
   array2(cards, "cards");
@@ -2235,6 +2239,9 @@ function decodeStateFromRecords(metadata, rows) {
     version: metadata.version,
     active: metadata.active === null ? { Model: { id: "chat" } } : metadata.active,
     memoryPreferences: metadata.memoryPreferences,
+    // States written by the released plugin or the Core migration predate recall settings; the
+    // released default stays enabled so existing installations keep recalling after the upgrade.
+    memoryRecall: metadata.memoryRecall === void 0 ? { enabled: true } : metadata.memoryRecall,
     cards: [],
     groups: [],
     tags: [],
@@ -5220,6 +5227,8 @@ function createCharacterCardsService(owner2, configurations = independentConfigu
         return owner2.run((repository) => pruneMissingMemoryChats(request.ownerKey, repository));
       case "readGlobalMemoryPreferences":
         return owner2.readGlobalMemoryPreferences();
+      case "readMemoryRecallSettings":
+        return owner2.readMemoryRecallSettings();
       case "readMemorySettings":
         return owner2.readMemorySettings(request.ownerKey);
       case "readMemorySearchConfig":
@@ -5909,6 +5918,10 @@ function dispatch(request, host) {
         );
       case "writeGlobalMemoryPreference":
         return host.writeGlobalMemoryPreference(request.key, request.value);
+      case "readMemoryRecallSettings":
+        return host.readMemoryRecallSettings();
+      case "writeMemoryRecallSettings":
+        return host.writeMemoryRecallSettings(request.enabled);
       case "searchMemoryDebug": {
         yield requireOwner(request.ownerKey, host);
         assertSearchConfig(request.config);
@@ -6241,6 +6254,18 @@ var RepositorySession = class {
       assertBoolean(value, key);
       this.state.memoryPreferences[key] = value;
       return this.readGlobalMemoryPreferences();
+    });
+  }
+  readMemoryRecallSettings() {
+    return __async(this, null, function* () {
+      return copy(this.state.memoryRecall);
+    });
+  }
+  writeMemoryRecallSettings(enabled) {
+    return __async(this, null, function* () {
+      assertBoolean(enabled, "memory recall enabled");
+      this.state.memoryRecall = { enabled };
+      return this.readMemoryRecallSettings();
     });
   }
   searchMemoryDebug(options, config) {
@@ -7079,7 +7104,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
         }
         yield storage.metadata.edit((preferences) => {
           if (preferences.contains("state")) throw new Error("Character initialization changed concurrently");
-          preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences) });
+          preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
         });
       }
       yield repository.readMetadata();
@@ -7346,6 +7371,18 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       return (yield this.readMetadata()).memoryPreferences;
     });
   }
+  /** Reads recall settings; states persisted by the released plugin predate the field. */
+  readMemoryRecallSettings() {
+    return __async(this, null, function* () {
+      this.requirePublicationReady();
+      const metadata = (yield this.storage.metadata.data()).get("state");
+      if (metadata === void 0) throw new Error("Character database metadata disappeared");
+      if (metadata.memoryRecall === void 0) return { enabled: true };
+      assertObject(metadata.memoryRecall, "memory recall settings");
+      assertBoolean(metadata.memoryRecall.enabled, "memory recall enabled");
+      return { enabled: metadata.memoryRecall.enabled };
+    });
+  }
   /** Reads the selected owner's actual USER.md document. */
   readUser(ownerKey) {
     return this.readOwnerMetadata(ownerKey, (row) => __async(this, null, function* () {
@@ -7466,7 +7503,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
         });
       }
       for (const batch of memoryBatches) yield this.storage.memory.commit(batch);
-      const nextMetadata = { ...metadata, version: state.version, active: "Model" in state.active ? null : storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences) };
+      const nextMetadata = { ...metadata, version: state.version, active: "Model" in state.active ? null : storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) };
       yield this.storage.metadata.edit((preferences) => {
         if (!equal(preferences.get("state"), metadata)) throw new Error("Character metadata edit conflict");
         preferences.set("state", nextMetadata);
@@ -9132,6 +9169,15 @@ function memoryQueryApi(event) {
     }, { chatId: null, participantId: input.participantId, callerName: event.callerPackage });
   });
 }
+function memoryRecallQuery(participantId, query, limit2, snapshotId) {
+  return __async(this, null, function* () {
+    return memoryQueries.execute("query_memory", {
+      query,
+      limit: limit2,
+      ...snapshotId === null ? {} : { snapshot_id: snapshotId }
+    }, { chatId: null, participantId, callerName: null });
+  });
+}
 function memoryChatListApi(event) {
   return __async(this, null, function* () {
     return dispatchDomain2("memory.chat.list", parseDomainPayload("memory.chat.list", event.payload));
@@ -9582,6 +9628,71 @@ function registerDomainApis() {
   ToolPkg.registerApi({ name: "memory.link.delete", function: memoryLinkDeleteApi });
   ToolPkg.registerApi({ name: "memory.export", function: memoryExportApi });
   ToolPkg.registerApi({ name: "memory.import", function: memoryImportApi });
+}
+
+// src/memory-recall.ts
+var MEMORY_RECALL_LIMIT = 3;
+var MEMORY_RECALL_MARKER = '<memory_context source="character-memory">';
+var MODEL_PARTICIPANT_ID = "model:chat";
+function collapse(value, maxLength) {
+  const normalized = String(value ?? "").replace(/\s+/gu, " ").trim();
+  if (normalized === "") return "-";
+  return normalized.length <= maxLength ? normalized : normalized.slice(0, maxLength) + "...";
+}
+function searchQuery(processedInput) {
+  return String(processedInput ?? "").replace(/<attachment\b[\s\S]*?<\/attachment>/gi, " ").replace(/<workspace_attachment\b[\s\S]*?<\/workspace_attachment>/gi, " ").replace(/<reply_to\b[\s\S]*?<\/reply_to>/gi, " ").replace(/<proxy_sender\b[^>]*\/?>/gi, " ").replace(/\[\s*From [^\]]+\]\s*/gi, " ").replace(/<[^>]+>/g, " ").replace(/[\r\n\t]+/g, " ").replace(/[|]+/g, " ").trim();
+}
+function executionParticipant(payload) {
+  const context = payload.metadata?.executionContext;
+  if (context === void 0 || context === null) return null;
+  const chatId = String(context.chatId ?? "").trim();
+  const participantId = String(context.participantId ?? "").trim();
+  if (chatId === "" || participantId === "" || participantId === MODEL_PARTICIPANT_ID) return null;
+  return { chatId, participantId };
+}
+function memoryBlock(result2) {
+  if (result2.memories.length === 0) return null;
+  const lines2 = [MEMORY_RECALL_MARKER, "\u3010\u76F8\u5173\u8BB0\u5FC6\u3011", `\u547D\u4E2D\u6570\u91CF: ${result2.memories.length}`];
+  result2.memories.forEach((memory, index) => {
+    lines2.push(
+      `#${index + 1}`,
+      `\u6807\u9898: ${collapse(memory.title, 80)}`,
+      `\u5185\u5BB9: ${collapse(memory.content, 220)}`,
+      `\u65F6\u95F4: ${collapse(memory.createdAt, 40)}`
+    );
+    if (memory.tags.length > 0) lines2.push(`\u6807\u7B7E: ${memory.tags.map((tag) => collapse(tag, 40)).join(", ")}`);
+    if (memory.chunkInfo !== null) lines2.push(`\u5206\u5757: ${collapse(memory.chunkInfo, 80)}`);
+  });
+  lines2.push("</memory_context>");
+  return lines2.join("\n");
+}
+function onMemoryRecallPromptFinalize(event) {
+  return __async(this, null, function* () {
+    const stage = String(event.eventPayload.stage ?? event.eventName ?? "");
+    if (stage !== "before_send_to_model") return null;
+    const participant = executionParticipant(event.eventPayload);
+    if (participant === null) return null;
+    const processedInput = String(event.eventPayload.processedInput ?? event.eventPayload.rawInput ?? "");
+    if (processedInput.includes(MEMORY_RECALL_MARKER)) return null;
+    const query = searchQuery(processedInput);
+    if (query === "") return null;
+    try {
+      const settings2 = yield dispatch2({ action: "readMemoryRecallSettings" });
+      if (!settings2.enabled) return null;
+      const result2 = yield memoryRecallQuery(participant.participantId, query, MEMORY_RECALL_LIMIT, participant.chatId);
+      const block = memoryBlock(result2);
+      if (block === null) return null;
+      return `${processedInput.replace(/\s+$/, "")}
+
+${block}`;
+    } catch (error) {
+      console.error("Memory recall injection failed: " + String(error));
+      return null;
+    }
+  });
+}
+function registerMemoryRecallHook() {
+  ToolPkg.registerPromptFinalizeHook({ id: "character-memory-recall", function: onMemoryRecallPromptFinalize });
 }
 
 // src/chat-lifecycle.ts
@@ -10735,6 +10846,7 @@ function registerToolPkg() {
   registerDomainApis();
   registerServiceLifecycle();
   registerMemoryJobHooks();
+  registerMemoryRecallHook();
   registerToolPolicies();
   registerChatInitialization();
   registerChatViewTheme();

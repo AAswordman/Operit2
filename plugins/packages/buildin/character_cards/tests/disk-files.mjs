@@ -190,7 +190,7 @@ export async function createDiskHarness(testContext, { legacyIdentity = null } =
     replaceState(state) {
       const schema = loadModule("src/storage/records.ts"), rows = schema.records(state), names = ["cards", "groups", "tags", "stores", "conversationGroups"];
       for (const name of names) writeFileSync(path.join(directory, name + ".preferences.json"), JSON.stringify(Object.fromEntries(rows.filter(row => row.collection === name).map(row => ["record_" + row.key, row.value]))), "utf8");
-      writeFileSync(path.join(directory, "meta.preferences.json"), JSON.stringify({ __operit_preferences_schema_version: 1, state: { version: state.version, active: state.active, memoryPreferences: state.memoryPreferences } }), "utf8");
+      writeFileSync(path.join(directory, "meta.preferences.json"), JSON.stringify({ __operit_preferences_schema_version: 1, state: { version: state.version, active: state.active, memoryPreferences: state.memoryPreferences, memoryRecall: state.memoryRecall } }), "utf8");
       storage.inspect(sql => {
         sql.exec("BEGIN");
         try {

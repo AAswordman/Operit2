@@ -24,7 +24,7 @@ export function createMemorySpace(ownerKey: string): MemorySpace {
 /** Creates first-install domain state without reading or migrating Core records. */
 export function createInitialState(now: number): CharacterState {
   const card = createInstalledCharacter(now);
-  return { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true }, conversationGroups: [], cards: [card], groups: [], tags: [], stores: [], active: { CharacterCard: { id: card.id } }, owners: [createMemorySpace("character:" + card.id)] };
+  return { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true }, memoryRecall: { enabled: true }, conversationGroups: [], cards: [card], groups: [], tags: [], stores: [], active: { CharacterCard: { id: card.id } }, owners: [createMemorySpace("character:" + card.id)] };
 }
 /** Requires a real array instead of supplying missing persisted records. */
 function array(value: unknown, label: string): asserts value is unknown[] {
@@ -45,11 +45,13 @@ function identities(records: unknown[], label: string): Set<string> {
 export function assertCharacterState(value: unknown): asserts value is CharacterState {
   assertObject(value, "character state");
   if (value.version !== 1) throw new Error("Unsupported character database version");
-  const fields = new Set(["memoryPreferences", "version", "cards", "groups", "tags", "stores", "active", "owners", "conversationGroups"]);
+  const fields = new Set(["memoryPreferences", "memoryRecall", "version", "cards", "groups", "tags", "stores", "active", "owners", "conversationGroups"]);
   for (const key of Object.keys(value)) if (!fields.has(key)) throw new Error("Unsupported character state field: " + key);
   assertObject(value.memoryPreferences, "global memory preferences");
   assertBoolean(value.memoryPreferences.userDescriptionEnabled, "user description enabled");
   assertBoolean(value.memoryPreferences.autoUpdateEnabled, "auto update enabled");
+  assertObject(value.memoryRecall, "memory recall settings");
+  assertBoolean(value.memoryRecall.enabled, "memory recall enabled");
   assertConversationGroups(value.conversationGroups);
   const cards = value.cards, groups = value.groups, tags = value.tags, stores = value.stores, owners = value.owners;
   array(cards, "cards"); array(groups, "groups"); array(tags, "tags"); array(stores, "stores"); array(owners, "owners");

@@ -48,6 +48,10 @@ export class RepositorySession implements CharacterRepository {
     if (key !== "userDescriptionEnabled" && key !== "autoUpdateEnabled") throw new Error("Unknown global memory preference");
     assertBoolean(value, key); this.state.memoryPreferences[key] = value; return this.readGlobalMemoryPreferences();
   }
+  async readMemoryRecallSettings(): Promise<import("./model").MemoryRecallSettings> { return copy(this.state.memoryRecall); }
+  async writeMemoryRecallSettings(enabled: boolean): Promise<import("./model").MemoryRecallSettings> {
+    assertBoolean(enabled, "memory recall enabled"); this.state.memoryRecall = { enabled }; return this.readMemoryRecallSettings();
+  }
   async searchMemoryDebug(options: MemorySearchOptions, config: MemorySearchConfig): Promise<import("./model").MemorySearchDebug> {
     assertSearchOptions(options); assertSearchConfig(config); return copy(await searchMemorySpaceDebug(this.space(options.ownerKey), options, config));
   }
