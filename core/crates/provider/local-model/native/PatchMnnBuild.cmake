@@ -5,7 +5,7 @@
 # fire and every MNN translation unit fails with redefinition errors.
 # Runs inside the fetched MNN source directory (FetchContent PATCH_COMMAND).
 if(NOT EXISTS "CMakeLists.txt")
-    message(FATAL_ERROR "PatchMnnStrictAnsi must run inside the fetched MNN source directory")
+    message(FATAL_ERROR "PatchMnnBuild must run inside the fetched MNN source directory")
 endif()
 file(READ "CMakeLists.txt" mnnListsContent)
 set(strictAnsiLine [==[set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D__STRICT_ANSI__")]==])
@@ -17,3 +17,10 @@ else()
     file(WRITE "CMakeLists.txt" "${mnnListsContent}")
     message(STATUS "Removed MNN Linux -D__STRICT_ANSI__ flag")
 endif()
+
+# Include the standard declarations used by MNN's DFlash implementation.
+set(dflashSource "transformers/llm/engine/src/speculative_decoding/dflash.cpp")
+file(READ "${dflashSource}" dflashContent)
+string(REPLACE "#include <cmath>\n" "" dflashContent "${dflashContent}")
+string(REPLACE "#include \"generate.hpp\"" "#include <cmath>\n#include \"generate.hpp\"" dflashContent "${dflashContent}")
+file(WRITE "${dflashSource}" "${dflashContent}")

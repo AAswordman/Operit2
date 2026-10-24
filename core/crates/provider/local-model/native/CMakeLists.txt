@@ -51,7 +51,7 @@ set(MNN_WIN_RUNTIME_MT OFF CACHE BOOL "" FORCE)
 set(LLM_SUPPORT_HTTP_RESOURCE OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(mnn URL https://codeload.github.com/alibaba/MNN/zip/refs/tags/3.6.1
     URL_HASH SHA256=93d60848879e68be554c247afe376657630a30652a7d8ec713e9e7d1bbf69260
-    PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/PatchMnnStrictAnsi.cmake)
+    PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/PatchMnnBuild.cmake)
 FetchContent_MakeAvailable(mnn)
 # Keep MSVC's C++ implementation outside V8's statically linked libc++ ABI.
 if(WIN32)
