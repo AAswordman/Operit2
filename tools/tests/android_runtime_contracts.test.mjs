@@ -293,7 +293,7 @@ test('Android releases verify the final APK before copying it to dist', () => {
   const script = source('tools/build_scripts/build_flutter_android.py');
   const main = script.slice(script.indexOf('def main()'));
   assert.ok(main.indexOf('verify_android_runtime_assets(apk_path, "arm64-v8a")') <
-    main.indexOf('copy_required_file('));
+    main.indexOf('publish_android_apk(apk_path, args.dist_dir)'));
   assert.match(main, /"--target-platform",\s*"android-arm64"/);
 });
 
@@ -350,7 +350,7 @@ test('Android Rust profiles follow the exact Android build variant', () => {
   assert.match(gradle, /if \(rustProfile == "release"\) \{\s*cargoArguments\.add\("--release"\)/);
   assert.match(gradle, /commandLine\(cargoArguments\)/);
   assert.match(gradle, /target\/\$\{target\.rustTarget\}\/\$rustProfile\/liboperit_flutter_bridge\.so/);
-  assert.match(gradle, /if \(!bridgeLibrary\.isFile\) \{\s*throw GradleException/);
+  assert.match(gradle, /if \(!library\.isFile\) \{\s*throw GradleException/);
 });
 
 /** Excludes shared cached bridges and publishes only the selected variant's generated JNI libraries. */
@@ -361,7 +361,7 @@ test('Android JNI sources isolate Rust build variants and selected ABIs', () => 
   assert.match(gradle, /cargoBuildOperitFlutterBridge\$variantTaskSuffix\$abiTaskSuffix/);
   assert.match(gradle, /stageOperitAndroidJniLibraries\$variantTaskSuffix/);
   assert.match(gradle, /dependsOn\(cargoBuildOperitFlutterBridgeTasks\)/);
-  assert.match(gradle, /into\(target\.abi\) \{\s*from\(operitBridgeJniLibs\.resolve\(target\.abi\)\) \{\s*exclude\("liboperit_flutter_bridge\.so"\)/);
+  assert.match(gradle, /into\(target\.abi\) \{\s*from\(operitBridgeJniLibs\.resolve\(target\.abi\)\) \{\s*exclude\("liboperit_flutter_bridge\.so", "liboperit_local_llm\.so"\)/);
   assert.match(gradle, /jniLibraries\.addGeneratedSourceDirectory\(stagedJniLibraries\) \{ it\.outputDirectory \}/);
   const preBuild = gradle.slice(gradle.indexOf('tasks.named("preBuild")'));
   assert.doesNotMatch(preBuild, /cargoBuildOperitFlutterBridge/);

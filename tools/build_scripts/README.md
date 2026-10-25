@@ -125,6 +125,54 @@ python3 -m unittest discover -s tools/tests -p test_ios_v8_build.py -v
 python3 -m unittest discover -s tools/tests -p test_apple_plugin_build.py -v
 ```
 
+## Android V8 runtime
+
+rusty_v8 publishes no prebuilt static libraries for Android targets, so the
+crate's default GitHub download fails with a 404. The Android Gradle build
+therefore runs `prepare_android_v8.py` before compiling Rust. Like the iOS
+helper, it builds the V8 version pinned in the bridge's `Cargo.lock` from
+source and writes `RUSTY_V8_ARCHIVE`, `RUSTY_V8_ARCHIVE_SHA256` and
+`RUSTY_V8_SRC_BINDING_PATH` into an env file; the Cargo compile tasks apply it.
+Library, bindings and GN arguments are verified against a configuration
+manifest and SHA-256 hashes before reuse under
+`tools/release/work/android-v8/<v8-version>/<rust-target>/`.
+
+Unlike iOS, Android keeps the JIT with WebAssembly enabled. The sandbox,
+pointer compression and cppgc caged heap stay disabled to keep both mobile
+builds on the same memory layout, and Temporal stays disabled because the
+published source crate omits its Rust vendor dependencies. The NDK API level
+defaults to 24 (matching the app's minSdkVersion) and can be raised with
+`OPERIT_ANDROID_V8_API_LEVEL`; the value is part of the cache identity.
+
+An NDK r23+ installation is required and detected from `OPERIT_ANDROID_V8_NDK`,
+`ANDROID_NDK_HOME`, `$ANDROID_HOME/ndk` or `~/Android/ndk` (newest match wins).
+On Linux, the helper falls back to downloading the NDK that rusty_v8's build
+script pins. The detected NDK is exposed inside the crate source where both the
+build script's guard and the GN `android_ndk_root` default expect it, so no
+extra download happens even when the crate would fetch a Linux-only archive.
+Linux needs libclang 21.1+ and `ld.lld` (`apt install llvm-21-dev lld`); the
+host compiler itself is downloaded from Chromium's pinned build so the
+compiler-runtime layout matches. macOS uses Homebrew LLVM (`brew install
+llvm@23 lld@23`); on Windows, set `OPERIT_LIBCLANG_DIR`
+to a directory containing `libclang.dll` (the Gradle build already does).
+The helper also provisions the pinned `gn` and `ninja` under the cache and
+passes them via `GN`/`NINJA`, because the crate's own downloader opens raw
+connections that bypass proxy environment settings. `armv7-linux-androideabi`
+is not supported: rusty_v8's build script maps only
+the x86_64 and aarch64 Android targets. Build/cache checks:
+
+```bash
+python3 -m unittest discover -s tools/tests -p test_android_v8_build.py -v
+```
+
+For a manual build after installing the Rust target:
+
+```bash
+python3 tools/build_scripts/prepare_android_v8.py \
+  --target aarch64-linux-android \
+  --env-file tools/release/work/android-v8/aarch64-linux-android.env
+```
+
 ## Local CLI development and macOS Keychain authorization
 
 Use the local runner to build and restore the CLI's configured signing identity
