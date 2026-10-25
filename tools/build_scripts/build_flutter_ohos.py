@@ -25,6 +25,7 @@ from common import (
     node_package_command,
     flutter_command,
     flutter_pub_get,
+    prepare_plugin_assets,
     read_properties,
     require_command,
     run,
@@ -102,6 +103,7 @@ def main() -> int:
             f"{OHOS_PROJECT_DIR}. Generate it with the OpenHarmony Flutter SDK."
         )
     verify_ohos_sdk_preflight()
+    prepare_plugin_assets()
     build_ohos_rust_bridge()
     env = ohos_hvigor_env()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
