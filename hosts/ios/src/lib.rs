@@ -45,12 +45,8 @@ pub fn createRuntimeHostManager(
     managedRuntimeHost: Arc<dyn operit_host_api::ManagedRuntimeHost>,
 ) -> HostManager {
     operit_host_apple_native::installAppleLogSink();
-    let runtimeStorageWriteHost =
-        Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-            runtimeRoot.clone(),
-            workspaceRoot.clone(),
-        ));
     let runtimeStorageHost = Arc::new(IosRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
+    let runtimeStorageWriteHost = runtimeStorageHost.clone();
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(

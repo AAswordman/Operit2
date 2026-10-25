@@ -192,7 +192,7 @@ impl ChatConfigurationApi {
         Ok(())
     }
 
-    /// Asks the selected configuration owner to release its state after the conversation is deleted.
+    /// Requires the selected owner to release its state before the Core conversation can be deleted.
     pub async fn deleteConfiguration(&self, chatId: &str) -> Result<(), String> {
         requireChatId(chatId)?;
         if self.ownerPackage == MODEL_CONFIGURATION_OWNER {

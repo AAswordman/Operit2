@@ -1,8 +1,6 @@
-# ToolPkg installation, storage, and automatic routes
+# ToolPkg runtime
 
 A manifest can fix its installation scope with `"installation_scope": "device"` or `"installation_scope": "space"`. The parser, package registration, bundled import, marketplace install, and scope moves enforce this declaration. A fixed-scope package cannot be installed or moved into the other scope. The package UI shows its required scope and hides scope moves.
-
-Older binaries registered every built-in package in device scope regardless of its manifest. When an upgrade leaves both a legacy device record and the required space record for the same built-in package, the package scan merges their enabled lists, members, subpackage states, and order into the space owner, then removes the stale device record. Only unambiguous built-in duplicates are healed; non-built-in owners and every other duplicate still fail with an ownership conflict instead of being merged.
 
 Device installations own local data. Space installations own synchronized data. Storage synchronization follows the registered directory owner; `Storage.open` does not accept a synchronization switch. Goal and Plan both require a space installation and keep their state in their own databases, independently of chat workspaces. Workspace records are not migrated.
 
@@ -81,3 +79,64 @@ Compose `ctx.useEffect(key, setup, dependencies)` owns subscriptions and timers.
 Goal's UI consumes `GoalService.watch(chatId)`. Its clock exists only while the displayed goal is active and never polls storage. Plan's UI consumes `PlanModeShared.watchStarted(chatId, content)` and replaces its collector when the chat, plan content, or readiness changes. Goal records, input flags, plan mode flags, plan content, and handoff markers live in plugin-owned Object Storage. Plan content and mode removal commit atomically; handoff markers use an explicit absence precondition.
 
 All public route, cancellation, storage facade, and Compose lifecycle declarations originate in the Rust SDK. Regenerate `plugins/types/*.d.ts` using `operit-plugin-sdk-codegen`; do not edit those generated files by hand.
+
+## Registration and configuration directories
+
+`ToolPkg.getConfigDir()` is available at module top level, inside
+`registerToolPkg()`, and during execution. Archive loading fixes the package ID
+and selected `ToolPkgConfigScope` before evaluating JavaScript. Registration
+binds that Rust-owned snapshot for the operation and clears it on return.
+
+Registration resolves configuration through this context without acquiring the
+package-manager mutex or requiring an installation record that has not yet been
+committed. Runtime execution resolves container/subpackage ownership from
+`ExtensionStore`. Both paths share `configPathForScope()` and the filesystem
+Host. Named directories stay inside the owner's `namespaces` directory. Invalid
+scope, owner mismatch and filesystem failures are errors.
+
+## Compose page resources
+
+Before rendering, the package manager snapshots UTF-8 resources from the
+extracted package cache onto the page-owned JavaScript engine. Render, rerender
+and action execution use the structured
+`__operitNativeReadToolPkgTextResource` binding to read that snapshot. Module
+loading must not reenter the package-manager mutex while its caller owns it.
+The page engine owns and releases the snapshot; binary resources use their
+materialization API.
+
+Flutter parses returned Compose results on its UI isolate. Page execution and
+resource ownership remain in the Rust runtime and Host. The current program,
+buffer and event lifecycle contract is maintained in the
+[Compose runtime guide](../core/crates/plugin/sdk/src/toolpkg/compose/README.md).
+
+## Script deadlines
+
+Ordinary JavaScript calls, workflows, IPC, public APIs, notifications and after
+hooks run until completion, caller cancellation or runtime destruction. Active
+cancellation can interrupt synchronous loops.
+
+Only `submit_requested` and pre-hooks share a total deadline: 10 seconds by
+default, configurable from 1 to 60 seconds in advanced tool settings. Queueing,
+synchronous work and asynchronous waits consume that same budget. Each hook
+receives the remaining time. Timeout terminates the owning hook, reports an
+error and aborts the dependent operation. Its interruption token must not cancel
+unrelated calls waiting in the same runtime.
+
+## XML renderer changes
+
+`ToolPkgXmlRenderBridge` commits normalized hook declarations, releases its
+mutex, then publishes a changed `StateFlow<i64>` revision. Identical declarations
+publish no revision. `ChatServiceCore.xmlRenderRegistryRevisionFlow()` exposes
+this committed state through the existing Core proxy.
+
+Mounted XML nodes observe the selected chat runtime's revision, including the
+initial snapshot. A changed revision starts a new render generation; stale
+responses cannot replace current output. Runtime changes and widget disposal
+release the subscription. Existing message content does not need modification.
+
+## Related contracts
+
+- [Plugin storage](plugin-storage.md): preference and object-store ownership.
+- [Chat send API](chat-send-api.md): submission and control semantics.
+- [Theme templates](theme-v1-contract.md): manifest declarations and validation.
+- [Plugin author documentation](../plugins/docs/README.md): public SDK usage.

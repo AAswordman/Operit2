@@ -1186,27 +1186,16 @@ impl ChatServiceCore {
             .map_err(|error| error.to_string())
     }
 
-    /// Deletes the Core conversation and releases state through its configuration owner.
+    /// Deletes a conversation through its configuration owner and history lifecycle.
     pub async fn deleteChatHistory(&mut self, chatId: String) -> Result<bool, String> {
-        self.chatHistoryDelegate.requireChatExists(&chatId)?;
         let service = self
             .enhancedAiService
             .as_ref()
             .ok_or("Chat deletion requires an initialized runtime")?;
-        let api = ChatConfigurationApi::ready(&service.tool_handler).await?;
-        let deleted = self.chatHistoryDelegate.deleteChatHistory(chatId.clone());
-        if !deleted {
-            return Err(format!("Core conversation deletion failed: {chatId}"));
-        }
-        // The conversation is already gone; a failed owner cleanup must not
-        // report the deletion as failed. Dangling plugin state is recovered by
-        // the owner's own missing-binding cleanup.
-        if let Err(error) = api.deleteConfiguration(&chatId).await {
-            AppLogger::e(
-                "ChatConfiguration",
-                &format!("Post-deletion cleanup failed for {chatId}: {error}"),
-            );
-        }
+        let deleted = self
+            .chatHistoryDelegate
+            .deleteChatHistory(service, chatId)
+            .await?;
         self.syncTokenStatisticsForCurrentChat();
         Ok(deleted)
     }

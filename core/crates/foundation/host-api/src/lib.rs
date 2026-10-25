@@ -1811,7 +1811,8 @@ pub trait RuntimeStorageHost: Send + Sync {
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()>;
     /// Checks whether a virtual runtime storage entry exists.
     fn exists(&self, path: &str) -> HostResult<bool>;
-    /// Lists entries under a virtual runtime storage prefix.
+    /// Lists committed logical entries under a virtual runtime storage prefix.
+    /// Host-owned write staging files are private and must not be exposed.
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>>;
 }
 

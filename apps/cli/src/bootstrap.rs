@@ -132,11 +132,9 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
     ));
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(
         runtimeRoot.clone(),
-        workspaceRoot.clone(),
+        workspaceRoot,
     ));
-    let runtimeStorageWriteHost = Arc::new(
-        operit_host_native_common::NativeRuntimeStorageHost::new(runtimeRoot.clone(), workspaceRoot),
-    );
+    let runtimeStorageWriteHost = runtimeStorageHost.clone();
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore: Arc<dyn operit_host_api::HostSecretStore> =
         if env::var("OPERIT_CLI_SECRET_STORE").as_deref() == Ok("file") {

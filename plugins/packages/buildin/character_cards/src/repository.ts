@@ -223,9 +223,13 @@ export class RepositorySession implements CharacterRepository {
     else if (active.Model.id !== "chat") throw new Error("Invalid model selection");
     this.state.active = copy(active);
   }
-  /** Rejects deletion using only selections on existing authoritative host records. */
+  /** Rejects deletion while any stored chat binding references the selection. */
   private async requireUnboundSelection(selection: string): Promise<void> {
-    for (const binding of await this.chatBindings.listChatBindings()) if (binding.selection === selection) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
+    const binding = (await this.chatBindings.listChatBindings()).find(
+      /** Matches the exact selection proposed for deletion. */
+      binding => binding.selection === selection,
+    );
+    if (binding !== undefined) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
   }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */
   async readUser(ownerKey: string): Promise<UserDocument> {

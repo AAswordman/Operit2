@@ -150,7 +150,7 @@ cargo test --release --manifest-path core/Cargo.toml -p operit-js-bridge \
 ```
 
 基准涵盖 engine owner、工具调度、Promise jobs 与 SDK 包装，不包含真实业务 I/O。
-历史协议比较不再是可执行测试路径，也不能当作本次修改的性能结论。
+该基准仅衡量结构化链路，不能用于比较已移除的历史协议。
 
 固定结构记录的基准可分别观察额外 Rust 深拷贝、所有权转移和完整读取：
 

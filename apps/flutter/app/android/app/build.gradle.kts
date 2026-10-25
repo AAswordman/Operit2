@@ -229,6 +229,51 @@ val operitLibclangDir = when {
 // Converts a file path into the clang-compatible slash format.
 fun File.clangPath(): String = absolutePath.replace('\\', '/')
 
+// Android has no prebuilt rusty_v8 artifacts; the crate's default GitHub
+// download 404s for every Android target. Prepare a source-built V8 library,
+// snapshot and bindings instead, and feed them to Cargo via RUSTY_V8_* values.
+val operitV8PrepareScript = operitRepoRoot
+    .resolve("tools/build_scripts/prepare_android_v8.py")
+val operitV8BridgeLock = operitBridgeCrate.resolve("Cargo.lock")
+
+fun operitV8EnvFile(rustTarget: String): File =
+    operitBridgeCrate.resolve("target/operit-v8/$rustTarget.v8.env")
+
+// Parses the shell env file written by prepare_android_v8.py.
+fun parseOperitV8EnvFile(file: File): Map<String, String> = file.readLines()
+    .filter { it.startsWith("export ") }
+    .associate { line ->
+        val entry = line.removePrefix("export ")
+        val separator = entry.indexOf('=')
+        require(separator > 0) { "Invalid V8 environment entry in $file: $line" }
+        var value = entry.substring(separator + 1)
+        if (value.length >= 2 && value.first() == '\'' && value.last() == '\'') {
+            value = value.substring(1, value.length - 1).replace("'\\''", "'")
+        }
+        entry.substring(0, separator) to value
+    }
+
+val prepareOperitAndroidV8Tasks = selectedOperitRustTargets.associateWith { target ->
+    val abiTaskSuffix = target.abi.replace("-", "").replace("_", "")
+    tasks.register<Exec>("prepareOperitAndroidV8$abiTaskSuffix") {
+        description = "Builds the source-built V8 library and bindings required by the Rust bridge"
+        group = "operit"
+        val envFile = operitV8EnvFile(target.rustTarget)
+        inputs.files(operitV8PrepareScript, operitV8BridgeLock)
+        outputs.file(envFile)
+        workingDir = operitRepoRoot
+        commandLine(
+            operitPluginSyncPython.absolutePath,
+            operitV8PrepareScript.absolutePath,
+            "--target",
+            target.rustTarget,
+            "--env-file",
+            envFile.absolutePath,
+        )
+        // Windows source builds locate libclang for the bindings generation.
+        environment("OPERIT_LIBCLANG_DIR", operitLibclangDir.absolutePath)
+    }
+}
 
 val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
     workingDir = operitRepoRoot
@@ -256,6 +301,7 @@ androidComponents {
             )
             tasks.register<Exec>("cargoBuildOperitFlutterBridge$variantTaskSuffix$abiTaskSuffix") {
                 dependsOn(syncOperitPlugins)
+                dependsOn(prepareOperitAndroidV8Tasks.getValue(target))
                 val clangPrefix = target.rustTarget
                 val apiLevel = android.defaultConfig.minSdk
                     ?: throw GradleException("Android minSdk is required for the Rust toolchain")
@@ -297,6 +343,13 @@ androidComponents {
                 environment("LIBCLANG_PATH", operitLibclangDir.absolutePath)
                 environment("BINDGEN_EXTRA_CLANG_ARGS_$ccEnvTarget", bindgenClangArgs)
                 environment("RUSTFLAGS", "-Awarnings")
+                // Applies the source-built V8 library and bindings prepared by
+                // prepareOperitAndroidV8; upstream publishes no Android artifacts.
+                doFirst {
+                    parseOperitV8EnvFile(operitV8EnvFile(target.rustTarget)).forEach { (name, value) ->
+                        environment(name, value)
+                    }
+                }
                 val cargoArguments = mutableListOf(
                     "cargo",
                     "rustc",

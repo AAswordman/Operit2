@@ -64,6 +64,14 @@ verify(/if let Some\(participantId\) = &initial\.participantId/.test(create) && 
 verify(!/profile\.openingStatement|participants\.first|configuration\.profile/.test(create), "Core must not infer opening statements or select an execution participant during draft display");
 verify(/purpose: ChatConfigurationPurpose::Display/.test(create) && /resolveDraft/.test(create), "Drafts must resolve the explicit display purpose");
 verify(!/switchConfiguredChat|publishChatConfiguration/.test(processor), "Message execution must not publish an execution descriptor into the presentation cache");
+const deletion = section(history, "pub async fn deleteChatHistory(", "/// Deletes a message from a chat by timestamp.");
+verify(/self\.requireChatExists\(&chatId\)\?;/.test(deletion) && deletion.indexOf("requireChatExists") < deletion.indexOf("canDeleteChatHistory") && deletion.indexOf("if !canDelete") < deletion.indexOf("ChatConfigurationApi::ready"), "Deletion must reject missing or locked histories before invoking their owner");
+verify(/api\.deleteConfiguration\(&chatId\)\.await\?;/.test(deletion), "Owner cleanup errors must stop deletion and propagate to the caller");
+verify(deletion.indexOf("api.deleteConfiguration") < deletion.indexOf(".deleteChatHistory(chatId.clone())"), "Owner cleanup must finish before the Core conversation is deleted");
+verify(/\.deleteChatHistory\(chatId\.clone\(\)\)[\s\S]*?\.map_err\(\|error\| error\.to_string\(\)\)\?;/.test(deletion), "Persistence failures must propagate without panicking or reporting success");
+verify(deletion.indexOf("if !deleted") < deletion.indexOf("self.chatConfigurationsFlow.update") && deletion.indexOf("self.chatConfigurationsFlow.update") < deletion.indexOf("self.finishDestructiveHistoryMutation"), "Deletion may clear projections and publish completion only after persistence succeeds");
+const coreDeletion = section(core, "pub async fn deleteChatHistory(", "/// Deletes one message from an explicit chat");
+verify(/self\s*\.chatHistoryDelegate\s*\.deleteChatHistory\(service, chatId\)\s*\.await\?/.test(coreDeletion) && !/deleteConfiguration|if let Err|AppLogger/.test(coreDeletion), "Core deletion must use the single history lifecycle and retain its errors");
 const startup = section(history, "pub fn initialize(", "/// Loads the newest indexed display window");
 verify(/openChatHistory\(chatId, false\)\?/.test(startup) && !/switchConfiguredChat|\.resolve\(|ChatConfigurationApi/.test(startup), "Unbound startup must restore persisted history without resolving execution configuration");
 const historyOpen = section(history, "pub fn openChatHistory(", "/// Requires an actual Core chat record");

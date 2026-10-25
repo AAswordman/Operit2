@@ -2,7 +2,7 @@
 
 TTS 设置界面从 Rust 的 `TtsCatalog` 读取供应商、请求模板、鉴权头、音频格式、响应管道和音色列表操作。新增目录项会出现在 Flutter 的“新建 TTS 供应商”选项中。合成请求和音色查询通过现有 Host HTTP 接口执行。
 
-## 新增供应商
+## 供应商配置
 
 | 供应商 | 默认模型 | 默认音频 | 音色来源 | 配置说明 |
 | --- | --- | --- | --- | --- |
@@ -13,7 +13,7 @@ TTS 设置界面从 Rust 的 `TtsCatalog` 读取供应商、请求模板、鉴�
 | Hume Octave | `2` | MP3 | 在线共享音色列表 | 使用 Hume API Key。模型字段为 Octave 版本号；首次创建时填写 Voice Library 中的共享音色 ID。请求明确使用 `HUME_AI` 音色来源。 |
 | Rime | `coda` | MP3 | Coda 的 Astra、Mist v3 的 Cove | 使用 Rime API Key。`Accept: audio/mpeg` 指定 MP3，避免返回无文件头的 PCM。预置音色为英语。 |
 
-ElevenLabs 保留现有的 `eleven_multilingual_v2`、预置音色和在线音色查询。本次将设置中的速度写入 `voice_settings.speed`，并将在线音色查询的页大小明确为 100。
+ElevenLabs 使用 `eleven_multilingual_v2`，提供预置音色和在线音色查询；速度设置写入 `voice_settings.speed`，在线查询每页 100 条。
 
 在“设置 → TTS 供应商”中创建配置，选择供应商并填写凭证及音色 ID；保存后可用“添加音色”读取供应商目录。在线查询当前读取一页：Cartesia 100 条、Speechify 200 条、Inworld 2000 条、Hume 100 条、ElevenLabs 100 条。需要列表之外的音色时，可直接填写控制台中的 ID。
 

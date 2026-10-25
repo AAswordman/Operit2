@@ -1098,11 +1098,6 @@ impl CoreSpaceStore {
             if entry.isDirectory {
                 continue;
             }
-            // The atomic writer stages private dot-prefixed siblings; a killed
-            // process leaves them behind and they are never member records.
-            if entry.path.rsplit('/').next().is_some_and(|name| name.starts_with('.')) {
-                continue;
-            }
             let preferences =
                 self.recordStore(entry.path.clone())
                     .data()
@@ -1869,34 +1864,34 @@ mod tests {
             .expect("test device profile must initialize");
     }
 
-    /// A killed process leaves an atomic-write staging sibling in the members
-    /// directory; Space initialization must skip it instead of panicking.
+    /// Rejects corrupt committed records, including ordinary dot-prefixed files exposed by the host.
     #[test]
-    fn initialize_ignores_leftover_partial_staging_files_in_members_directory() {
-        let host = Arc::new(MemoryStorageHost::default());
-        let store = CoreSpaceStore::new(host.clone());
-        initializeTestDeviceProfile(&store);
-        store
-            .initializeNamed("local-space".to_string())
-            .expect("test space must initialize");
-        host.writeBytes(
-            &format!(
-                "{RUNTIME_SPACE_MEMBERS_DIR_PATH}/.core-staging.preferences.json.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial"
-            ),
-            b"uncommitted",
-        )
-        .expect("test staging file must write");
-
-        let space = store
-            .initialize()
-            .expect("leftover staging files must not break Space initialization");
-        assert!(
-            space
-                .members
-                .iter()
-                .all(|member| !member.contains("staging")),
-            "the staging sibling must not surface as a member"
-        );
+    fn record_readers_reject_corrupt_committed_files() {
+        for directory in [
+            RUNTIME_SPACE_MEMBERS_DIR_PATH,
+            RUNTIME_SPACE_TOPOLOGY_DIR_PATH,
+            RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
+            RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH,
+        ] {
+            let host = Arc::new(MemoryStorageHost::default());
+            let store = CoreSpaceStore::new(host.clone());
+            host.writeBytes(
+                &format!("{directory}/.corrupt.preferences.json"),
+                b"invalid",
+            )
+            .expect("test record must write");
+            let result = match directory {
+                RUNTIME_SPACE_MEMBERS_DIR_PATH => store.memberRecords().map(|_| ()),
+                RUNTIME_SPACE_TOPOLOGY_DIR_PATH => store.topologyRecords().map(|_| ()),
+                RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH => store.deviceProfiles().map(|_| ()),
+                RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH => store.devicePresences().map(|_| ()),
+                _ => unreachable!(),
+            };
+            assert!(
+                result.is_err(),
+                "Corrupt committed record must fail: {directory}"
+            );
+        }
     }
 
     /// Verifies remote member ejection rewrites the member as a standalone

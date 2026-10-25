@@ -3451,10 +3451,14 @@ var RepositorySession = class {
       this.state.active = copy(active);
     });
   }
-  /** Rejects deletion using only selections on existing authoritative host records. */
+  /** Rejects deletion while any stored chat binding references the selection. */
   requireUnboundSelection(selection) {
     return __async(this, null, function* () {
-      for (const binding of yield this.chatBindings.listChatBindings()) if (binding.selection === selection) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
+      const binding = (yield this.chatBindings.listChatBindings()).find(
+        /** Matches the exact selection proposed for deletion. */
+        (binding2) => binding2.selection === selection
+      );
+      if (binding !== void 0) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
     });
   }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */

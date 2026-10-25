@@ -99,7 +99,7 @@ TimeoutStopSec=20
 WantedBy=default.target
 ```
 
-## 仍待补齐
+## 使用限制与日志
 
 - `link` 子命令仍会启动自己的短命 Core，尚未通过 control socket 路由；不要和 daemon 同时执行 `link listen`。
 - Market/GitHub 登录仍是 loopback 回调，无头服务器需要端口转发；Codex 已有 device-code 流程可参照。
