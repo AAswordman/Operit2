@@ -335,6 +335,13 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
         }
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
+            // The atomic writer stages a private sibling until commit; a killed
+            // process leaves it behind and no listing may ever publish it.
+            if operit_host_native_common::isPartialStagingFile(
+                &entry.file_name().to_string_lossy(),
+            ) {
+                continue;
+            }
             let metadata = entry.metadata()?;
             entries.push(RuntimeStorageEntry {
                 path: self.storagePathForPhysical(&entry.path())?,
@@ -571,5 +578,39 @@ fn fromRusqliteValue(value: Value) -> SqliteValue {
         Value::Real(value) => SqliteValue::Real(value),
         Value::Text(value) => SqliteValue::Text(value),
         Value::Blob(value) => SqliteValue::Blob(value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A killed atomic write leaves a private staging sibling on disk; the
+    /// runtime listing must never publish it into Core record readers.
+    #[test]
+    fn list_never_publishes_leftover_atomic_staging_siblings() {
+        let root = std::env::temp_dir().join(format!("operit-linux-storage-{}", Uuid::new_v4()));
+        let runtimeRoot = root.join("runtime");
+        std::fs::create_dir_all(runtimeRoot.join("space/topology"))
+            .expect("test topology directory must create");
+        let stagingName = ".core-staging.preferences.json.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial";
+        std::fs::write(runtimeRoot.join("space/topology").join(stagingName), b"uncommitted")
+            .expect("test staging file must write");
+        std::fs::write(
+            runtimeRoot.join("space/topology/core-local.preferences.json"),
+            b"{}",
+        )
+        .expect("test record file must write");
+
+        let entries = LinuxRuntimeStorageHost::new(runtimeRoot, root.join("workspaces"))
+            .list("runtime/space/topology")
+            .expect("runtime listing must succeed");
+        std::fs::remove_dir_all(&root).expect("test root must clean up");
+
+        assert_eq!(
+            entries.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>(),
+            vec!["runtime/space/topology/core-local.preferences.json"],
+            "the staging sibling must not surface in the runtime listing"
+        );
     }
 }

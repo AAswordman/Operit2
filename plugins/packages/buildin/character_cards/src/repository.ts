@@ -223,9 +223,20 @@ export class RepositorySession implements CharacterRepository {
     else if (active.Model.id !== "chat") throw new Error("Invalid model selection");
     this.state.active = copy(active);
   }
-  /** Rejects deletion using only selections on existing authoritative host records. */
+  /** Rejects deletion while a conversation that still exists binds the selection; bindings whose Core conversation disappeared are swept instead of blocking. */
   private async requireUnboundSelection(selection: string): Promise<void> {
-    for (const binding of await this.chatBindings.listChatBindings()) if (binding.selection === selection) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
+    const bindings = (await this.chatBindings.listChatBindings()).filter(
+      /** Matches only the exact selection proposed for deletion. */
+      binding => binding.selection === selection,
+    );
+    if (bindings.length === 0) return;
+    const live = new Set<string>();
+    for (let offset = 0; offset < bindings.length; offset += 200) {
+      const ids = bindings.slice(offset, offset + 200).map(binding => binding.chatId), result = await Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
+      for (const chat of result.chats) live.add(String(chat.id));
+    }
+    for (const binding of bindings) if (!live.has(binding.chatId)) await this.chatBindings.deleteChatBinding(binding.chatId);
+    for (const binding of bindings) if (live.has(binding.chatId)) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
   }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */
   async readUser(ownerKey: string): Promise<UserDocument> {
