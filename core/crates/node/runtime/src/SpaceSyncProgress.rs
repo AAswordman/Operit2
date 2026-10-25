@@ -36,6 +36,16 @@ pub struct SpaceSyncProgress {
 }
 
 const LARGE_SYNC_DELAY_MS: i64 = 3_000;
+const LARGE_SYNC_RECORDS: u64 = 256;
+const LARGE_SYNC_BYTES: i64 = 1024 * 1024;
+
+impl SpaceSyncProgress {
+    fn hasSubstantialWork(&self) -> bool {
+        self.exchangedRecords >= LARGE_SYNC_RECORDS
+            || self.transferredBytes >= LARGE_SYNC_BYTES
+            || self.fileSize >= LARGE_SYNC_BYTES
+    }
+}
 
 #[derive(Clone, PartialEq)]
 struct SyncProgressSession {
@@ -155,7 +165,7 @@ impl SyncProgressTracker {
                 session.progress.peerNodeId == peer
                     && session.progress.status != SpaceSyncStatus::Completed
             }) {
-                session.visible = true;
+                session.visible |= session.progress.hasSubstantialWork();
             }
         });
     }
@@ -167,6 +177,9 @@ impl SyncProgressTracker {
                     && session.progress.status != SpaceSyncStatus::Completed
             }) {
                 change(&mut session.progress);
+                // A pass can cross the volume threshold after its delay fired.
+                session.visible |= session.progress.hasSubstantialWork()
+                    && currentTimeMillis() - session.progress.startedAt >= LARGE_SYNC_DELAY_MS;
             }
         });
     }
@@ -256,11 +269,31 @@ mod tests {
     }
 
     #[test]
+    fn slow_small_work_stays_silent_but_later_backlog_reveals() {
+        let progress = SyncProgressTracker::default();
+        progress.begin("peer", "space");
+        progress.update(|sessions| sessions[0].progress.startedAt -= LARGE_SYNC_DELAY_MS + 1);
+        progress.reveal("peer");
+        progress.records("peer", 2);
+        progress.beginFile("peer", 6);
+        progress.fileOffset("peer", 6, true);
+        assert!(progress.flow().value().is_empty());
+        progress.finish("peer", false, None, None);
+        assert!(progress.flow().value().is_empty());
+
+        progress.begin("peer", "space");
+        progress.update(|sessions| sessions[0].progress.startedAt -= LARGE_SYNC_DELAY_MS + 1);
+        progress.reveal("peer");
+        progress.records("peer", 256);
+        assert_eq!(progress.flow().value().len(), 1);
+    }
+
+    #[test]
     fn pending_passes_and_retries_keep_one_session_and_confirmed_counts() {
         let progress = SyncProgressTracker::default();
         progress.begin("peer", "space");
-        progress.reveal("peer");
         progress.records("peer", 512);
+        progress.reveal("peer");
         let started = progress.flow().value()[0].startedAt;
         progress.finish("peer", true, None, None);
         assert_eq!(progress.flow().value()[0].status, SpaceSyncStatus::Waiting);
@@ -295,6 +328,7 @@ mod tests {
     fn file_totals_are_per_file_and_retransmission_counts_as_traffic() {
         let progress = SyncProgressTracker::default();
         progress.begin("peer", "space");
+        progress.records("peer", 256);
         progress.reveal("peer");
         progress.beginFile("peer", 1024);
         progress.fileOffset("peer", 1024, false);
@@ -313,6 +347,7 @@ mod tests {
         let progress = SyncProgressTracker::default();
         progress.begin("old-peer", "old-space");
         progress.begin("peer", "space");
+        progress.records("peer", 256);
         progress.reveal("peer");
         assert_eq!(progress.flow().value().len(), 1);
         progress.retain("space", &[]);

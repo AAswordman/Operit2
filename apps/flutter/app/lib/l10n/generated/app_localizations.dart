@@ -7735,6 +7735,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You can keep using the app while syncing continues.'**
   String get deviceSpaceSyncBackground;
+
+  /// No description provided for @runtimeActivityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Background tasks'**
+  String get runtimeActivityTitle;
+
+  /// No description provided for @runtimeActivitySyncing.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing'**
+  String get runtimeActivitySyncing;
+
+  /// No description provided for @runtimeActivitySyncCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync complete'**
+  String get runtimeActivitySyncCompleted;
+
+  /// No description provided for @runtimeActivityWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting to retry'**
+  String get runtimeActivityWaiting;
+
+  /// No description provided for @runtimeActivityExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Show background tasks'**
+  String get runtimeActivityExpand;
+
+  /// No description provided for @runtimeActivityLoadingPackages.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading extensions'**
+  String get runtimeActivityLoadingPackages;
 }
 
 class _AppLocalizationsDelegate

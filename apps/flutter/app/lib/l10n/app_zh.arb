@@ -2281,5 +2281,11 @@
       }
     }
   },
-  "deviceSpaceSyncBackground": "可以继续使用，同步会在后台完成"
+  "deviceSpaceSyncBackground": "可以继续使用，同步会在后台完成",
+  "runtimeActivityTitle": "后台任务",
+  "runtimeActivitySyncing": "正在同步",
+  "runtimeActivitySyncCompleted": "同步完成",
+  "runtimeActivityWaiting": "等待重试",
+  "runtimeActivityExpand": "查看后台任务",
+  "runtimeActivityLoadingPackages": "加载扩展"
 }

@@ -19,7 +19,7 @@ import '../common/RuntimeBootstrapScreen.dart';
 import '../common/layout/ApplicationZoom.dart';
 import '../common/layout/ApplicationZoomPreferences.dart';
 import '../features/chat/tts/TtsFloatingPanel.dart';
-import '../features/startup/PluginLoadingOverlay.dart';
+import '../features/startup/RuntimeActivityOverlay.dart';
 import '../../core/host/browser/RuntimeBrowserOwnerHost.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
 import 'OperitThemeAssets.dart';
@@ -412,8 +412,8 @@ class _OperitMaterialApp extends StatelessWidget {
               children: <Widget>[
                 Positioned.fill(child: child),
                 const TtsFloatingPanel(),
-                PluginLoadingOverlay(
-                  key: const ValueKey<String>('plugin-loading-overlay'),
+                RuntimeActivityOverlay(
+                  key: const ValueKey<String>('runtime-activity-overlay'),
                   enabled: hostInteractionHostsEnabled,
                 ),
               ],

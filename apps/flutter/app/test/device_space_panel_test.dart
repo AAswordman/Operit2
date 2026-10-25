@@ -338,33 +338,6 @@ void main() {
     await bridge.prompts.close();
   }
 
-  testWidgets('large sync events update progress without reloading topology', (tester) async {
-    final bridge = DeviceSpacePanelBridge(topology: _topology(), control: _control());
-    await mountPanel(tester, bridge);
-    final callsBeforeProgress = bridge.calls.length;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    bridge.prompts.add(CoreEvent.raw(
-      requestId: 'sync-progress-watch',
-      target: 'core/server.runtimeRemoteLinkService',
-      propertyName: 'spaceSyncProgressFlow',
-      kind: 'Snapshot',
-      valueBytes: encodeCoreLink(<Object?>[<String, Object?>{
-        'spaceId': 'space', 'peerNodeId': 'tablet',
-        'startedAt': now - 10000, 'updatedAt': now,
-        'status': 'Syncing', 'stage': 'Files',
-        'exchangedRecords': 1200, 'transferredBytes': 1048576,
-        'fileBytes': 1048576, 'fileSize': 4194304,
-        'retryAt': null, 'error': null,
-      }]),
-      decodeValue: decodeCoreLink<Object?>,
-    ));
-    await tester.pump();
-    expect(find.text('正在与 android-tablet 同步'), findsOneWidget);
-    expect(find.text('当前文件：1.0 MB / 4.0 MB'), findsOneWidget);
-    expect(bridge.calls.length, callsBeforeProgress);
-    await unmount(tester, bridge);
-  });
-
   testWidgets(
     'member rows stay readable without device-management capabilities',
     (tester) async {

@@ -2288,5 +2288,11 @@
       }
     }
   },
-  "deviceSpaceSyncBackground": "You can keep using the app while syncing continues."
+  "deviceSpaceSyncBackground": "You can keep using the app while syncing continues.",
+  "runtimeActivityTitle": "Background tasks",
+  "runtimeActivitySyncing": "Syncing",
+  "runtimeActivitySyncCompleted": "Sync complete",
+  "runtimeActivityWaiting": "Waiting to retry",
+  "runtimeActivityExpand": "Show background tasks",
+  "runtimeActivityLoadingPackages": "Loading extensions"
 }

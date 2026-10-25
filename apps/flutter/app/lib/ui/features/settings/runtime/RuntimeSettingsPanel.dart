@@ -21,7 +21,6 @@ import '../profile/UserProfileSummaryTile.dart';
 import 'DeviceSpaceGraph.dart';
 import 'NetworkControlPanel.dart';
 import 'SpaceIdentityLabels.dart';
-import 'SpaceSyncProgressCard.dart';
 
 String _deviceInfoName(generated.LinkDeviceInfo info) {
   final parts = [
@@ -83,9 +82,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
   StreamSubscription<generated.RuntimeDeviceSpaceSnapshot>?
   _snapshotSubscription;
   Timer? _watchRetryTimer;
-  List<generated.SpaceSyncProgress> _syncProgress = const [];
-  StreamSubscription<List<generated.SpaceSyncProgress>>?
-  _syncProgressSubscription;
 
   late final GeneratedCoreProxyClients _clients =
       widget.clients ??
@@ -99,8 +95,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     _pageGeneration += 1;
     _watchRetryTimer?.cancel();
     if (!active) {
-      _syncProgressSubscription?.cancel();
-      _syncProgressSubscription = null;
       _snapshotSubscription?.cancel();
       _snapshotSubscription = null;
       _pairedDevicesSubscription?.cancel();
@@ -116,10 +110,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
   @override
   void dispose() {
     _watchRetryTimer?.cancel();
-    final syncProgressSubscription = _syncProgressSubscription;
-    if (syncProgressSubscription != null) {
-      unawaited(syncProgressSubscription.cancel());
-    }
     final snapshotSubscription = _snapshotSubscription;
     if (snapshotSubscription != null) {
       unawaited(snapshotSubscription.cancel());
@@ -170,13 +160,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
   /// Subscribes the synchronized overview, the pairing records and the
   /// direct-link statuses while this page is active.
   void _startWatches() {
-    _subscribeWatch(
-      _clients.server.runtimeRemoteLinkService.spaceSyncProgressFlow,
-      (progress) {
-        if (mounted && isPageActive) setState(() => _syncProgress = progress);
-      },
-      (subscription) => _syncProgressSubscription = subscription,
-    );
     _subscribeWatch(
       _clients.server.runtimeRemoteLinkService.deviceSpaceSnapshotFlow,
       _applyDeviceSpaceSnapshot,
@@ -1259,11 +1242,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
         onDisconnectDevice: _disconnectDeviceSpaceConnection,
         connectionMessage: _connectionMessage,
         connectionFailed: _connectionFailed,
-      ),
-      SpaceSyncProgressCard(
-        progress: _syncProgress,
-        spaceId: _currentDeviceSpace?.spaceId,
-        deviceNames: _deviceNames(),
       ),
       _SectionCard(
         title: l10n.deviceSpaceDevices,

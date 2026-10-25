@@ -4181,4 +4181,22 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get deviceSpaceSyncBackground => '可以继续使用，同步会在后台完成';
+
+  @override
+  String get runtimeActivityTitle => '后台任务';
+
+  @override
+  String get runtimeActivitySyncing => '正在同步';
+
+  @override
+  String get runtimeActivitySyncCompleted => '同步完成';
+
+  @override
+  String get runtimeActivityWaiting => '等待重试';
+
+  @override
+  String get runtimeActivityExpand => '查看后台任务';
+
+  @override
+  String get runtimeActivityLoadingPackages => '加载扩展';
 }
