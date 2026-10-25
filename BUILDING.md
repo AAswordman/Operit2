@@ -576,6 +576,13 @@ provide implicitly:
    place that package the same way or point the Gradle task at a full LLVM
    install before the daemon starts. Without it the bridge build fails with
    "Unable to find libclang".
+6. **Source-built V8**. The bridge links V8 for the JavaScript runtime, and
+   rusty_v8 publishes no prebuilt Android artifacts. The Gradle build runs
+   `tools/build_scripts/prepare_android_v8.py` automatically; the first build
+   takes substantially longer and needs an NDK r23+ installation (detected from
+   `OPERIT_ANDROID_V8_NDK`, `ANDROID_NDK_HOME`, `$ANDROID_HOME/ndk` or
+   `~/Android/ndk`) plus libclang 21.1+ for the bindings generation — the same
+   `libclang.dll` as item 5 works. See `tools/build_scripts/README.md`.
 
 With the prerequisites in place:
 
@@ -607,6 +614,11 @@ install `libclang.so`; set `OPERIT_LIBCLANG_DIR` to override it when libclang
 lives elsewhere. All other prerequisites are shared with the Windows list above:
 host C compiler, pnpm 10.7.0 via corepack, Web Access bundle, plugin packaging,
 and the Android runtime (rootfs) artifacts.
+
+The source-built V8 from item 6 also applies here: install libclang 21.1+ and
+`ld.lld` (Debian/Ubuntu: `apt install llvm-21-dev lld`) and make sure an NDK
+r23+ is discoverable (`~/Android/ndk`, `$ANDROID_HOME/ndk` or
+`ANDROID_NDK_HOME`); the host compiler is fetched automatically.
 
 ```bash
 python tools/build_scripts/build_flutter_android.py --build-name 2.0.0 --build-number 11
