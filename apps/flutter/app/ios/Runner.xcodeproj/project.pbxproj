@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3D2A10262D000001003D2A10 /* IshRootFilesystem.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10272D000001003D2A10 /* IshRootFilesystem.mm */; };
 		D1C021260001000000000001 /* AppleTextRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C021260001000000000002 /* AppleTextRecognizer.swift */; };
 		D1C021260001000000000003 /* AppleTextRecognizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C021260001000000000004 /* AppleTextRecognizerTests.swift */; };
 		011C84738C7022D3E34452AA /* libPods-Runner.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 16312C53B2BD4BB3A1EA8E0A /* libPods-Runner.a */; };
@@ -55,6 +56,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		3D2A10272D000001003D2A10 /* IshRootFilesystem.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = IshRootFilesystem.mm; sourceTree = "<group>"; };
+		3D2A10282D000001003D2A10 /* IshRootFilesystem.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IshRootFilesystem.h; sourceTree = "<group>"; };
 		D1C021260001000000000002 /* AppleTextRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleTextRecognizer.swift; sourceTree = "<group>"; };
 		D1C021260001000000000004 /* AppleTextRecognizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleTextRecognizerTests.swift; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
@@ -189,6 +192,8 @@
 				3D2A10042D000001003D2A10 /* AppleLocalInferenceRunner.swift */,
 				3D2A10062D000001003D2A10 /* AppleLocalInferenceBridge.mm */,
 				3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */,
+				3D2A10272D000001003D2A10 /* IshRootFilesystem.mm */,
+				3D2A10282D000001003D2A10 /* IshRootFilesystem.h */,
 				3D2A10232D000001003D2A10 /* ish-root.tar.gz */,
 				3D2A10022D000001003D2A10 /* OperitFlutterBridge.h */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
@@ -388,7 +393,7 @@
 				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/fetch_sources.py",
 				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0001-operit-managed-runtime-mount.patch",
 				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0002-arm64-context-registers.patch",
-				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0003-fakefs-rebuild-heap-hashtable.patch",
+				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0003-root-preparation-lifecycle.patch",
 				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0004-emulator-tlb-task-migration.patch",
 				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0005-namespace-darwin-kernel-formatters.patch",
 			);
@@ -488,6 +493,7 @@
 				3D2A10032D000001003D2A10 /* AppleLocalInferenceRunner.swift in Sources */,
 				3D2A10052D000001003D2A10 /* AppleLocalInferenceBridge.mm in Sources */,
 				3D2A10242D000001003D2A10 /* IshTerminalBridge.mm in Sources */,
+				3D2A10262D000001003D2A10 /* IshRootFilesystem.mm in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

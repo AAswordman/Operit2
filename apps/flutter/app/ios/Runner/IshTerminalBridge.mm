@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import "IshRootFilesystem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -7,7 +8,6 @@
 extern "C" {
 #import "LinuxInterop.h"
 #include "kernel/errno.h"
-#include "tools/fakefs.h"
 }
 
 typedef bool (*ORTIshOutputCallback)(void *, const uint8_t *, size_t);
@@ -53,7 +53,7 @@ static ORTIshTerminalSession *ORTIshPendingSession;
 static NSLock *ORTIshStateLock;
 static NSLock *ORTIshStartLock;
 static NSString *ORTIshRootPath;
-static BOOL ORTIshKernelStarted;
+static NSNumber *ORTIshKernelResult;
 static uint64_t ORTIshNextSessionId;
 
 /// Initializes the process-global iSH bridge state.
@@ -170,58 +170,30 @@ static BOOL ORTIshResize(ORTIshTerminalSession *session, NSInteger rows, NSInteg
   return YES;
 }
 
-/// Imports the bundled Alpine root archive into the persistent iSH fakefs directory.
-static BOOL ORTIshPrepareRoot(NSString **errorOut) {
-  NSFileManager *fileManager = [NSFileManager defaultManager];
-  NSURL *supportDirectory = [fileManager URLsForDirectory:NSApplicationSupportDirectory
-                                                inDomains:NSUserDomainMask].firstObject;
-  NSURL *runtimeDirectory = [supportDirectory URLByAppendingPathComponent:@"operit-ish"];
-  NSURL *rootDirectory = [runtimeDirectory URLByAppendingPathComponent:@"rootfs"];
-  NSError *directoryError = nil;
-  if (![fileManager createDirectoryAtURL:runtimeDirectory
-             withIntermediateDirectories:YES
-                              attributes:nil
-                                   error:&directoryError]) {
-    *errorOut = directoryError.localizedDescription;
-    return NO;
-  }
-  if ([fileManager fileExistsAtPath:rootDirectory.path]) {
-    ORTIshRootPath = rootDirectory.path;
-    return YES;
-  }
-  NSURL *archive = [NSBundle.mainBundle URLForResource:@"ish-root" withExtension:@"tar.gz"];
-  if (archive == nil) {
-    *errorOut = @"Bundled iSH Alpine root archive is missing";
-    return NO;
-  }
-  struct fakefsify_error fakefsError = {};
-  if (!fakefs_import(archive.fileSystemRepresentation, rootDirectory.fileSystemRepresentation,
-                     &fakefsError, (struct progress){})) {
-    NSString *message = fakefsError.message == NULL ? @"iSH root import failed"
-                                                    : [NSString stringWithUTF8String:fakefsError.message];
-    free(fakefsError.message);
-    *errorOut = message;
-    return NO;
-  }
-  ORTIshRootPath = rootDirectory.path;
-  return YES;
-}
-
-/// Starts the iSH Linux kernel after its fakefs root has been prepared.
+/// Prepares one complete root and starts Linux once, retaining its actual result.
 static BOOL ORTIshEnsureKernel(NSString **errorOut) {
   ORTIshInitializeState();
   [ORTIshStateLock lock];
-  if (ORTIshKernelStarted) {
-    [ORTIshStateLock unlock];
-    return YES;
+  if (ORTIshKernelResult == nil) {
+    NSURL *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                        inDomains:NSUserDomainMask].firstObject;
+    NSURL *runtime = [support URLByAppendingPathComponent:@"operit-ish"];
+    NSURL *archive = [NSBundle.mainBundle URLForResource:@"ish-root" withExtension:@"tar.gz"];
+    ORTIshRootPath = ORTIshPrepareRootAtURL(runtime, archive, errorOut);
+    if (ORTIshRootPath == nil) {
+      [ORTIshStateLock unlock];
+      return NO;
+    }
+    // run_kernel already waits for startup. A failed embedded kernel cannot
+    // be restarted in the same process, so retain failure as well as success.
+    ORTIshKernelResult = @(actuate_kernel("earlyprintk"));
   }
-  BOOL prepared = ORTIshPrepareRoot(errorOut);
-  if (prepared) {
-    actuate_kernel("earlyprintk");
-    ORTIshKernelStarted = YES;
-  }
+  int result = ORTIshKernelResult.intValue;
   [ORTIshStateLock unlock];
-  return prepared;
+  if (result != 0) {
+    *errorOut = [NSString stringWithFormat:@"iSH kernel startup failed (%d); reopen the app to retry", result];
+  }
+  return result == 0;
 }
 
 /// Creates one required iSH runtime mount directory and accepts an existing directory.

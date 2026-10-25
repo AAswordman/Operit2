@@ -81,6 +81,50 @@ allocation failure, and mount failure/retry cleanup. Patch application is also
 checked against locally cached, pinned upstream archives, without downloading
 sources. Edit the tracked patches rather than generated files under `sources/`.
 
+## Root filesystem lifecycle
+
+`0003-root-preparation-lifecycle.patch` replaces the former kernel-side inode
+rebuild fix. One host preparation path now owns schema validation, migration and
+inode rebuilding before Linux starts. Migration, rebuilt metadata and the
+`db_inode` marker commit in one SQLite transaction. Mount only opens version-3
+metadata whose inode marker matches the database file; it never upgrades or
+rebuilds a root. Preparation and mount failures return errors instead of invoking
+`die()` for startup database errors.
+
+Runner's `IshRootFilesystem` imports into `rootfs.importing`, closes the importer,
+prepares that root, then atomically renames it to `rootfs`. Interrupted staging
+imports can be discarded and retried. Existing healthy roots are adopted in
+place without requiring a new marker file. Only the known legacy interrupted
+state (valid SQLite database, version 0, empty schema) is moved aside as
+`rootfs.incomplete-<UUID>` before importing anew. Its files are retained; other
+corrupt or unsupported existing databases return errors without replacement.
+
+The importer closes SQLite/archive/file handles on errors and cancellation.
+Inode rebuilding creates a replacement hardlink before replacing a file, and
+commits the rebuilt inode map with the marker so interruption cannot claim that
+an unfinished rebuild is ready.
+
+`actuate_kernel()` reuses the existing startup condition and returns the actual
+root mount result. A failed root boot wakes the host and parks the Linux init
+task, preventing Linux's missing-root panic. Runner retains that failure for the
+rest of the process and queues no sessions on the failed kernel. Preparation
+errors occur before boot and can be retried in the same process.
+
+`test_ish_root_lifecycle.py` compiles the actual patched sources with ASan/UBSan
+and executes the host lifecycle against SQLite and real files, including SIGKILL,
+legacy roots, all supported schema versions, rollback, hardlink restoration and
+the shipped Alpine archive. It also injects faults into each root boot operation.
+To run the real kernel and terminal bridge on a booted arm64 simulator:
+
+```bash
+python3 tools/tests/run_ish_simulator_smoke.py
+```
+
+This checks native library freshness, then tests a fresh root, a reused root and
+a failed root mount. It executes a shell command through the PTY and requires
+mount failures to return to the host. It does not build or install the Flutter
+app; temporary test roots are removed afterwards.
+
 ## Node.js version contract
 
 The rootfs builder uses the Alpine v3.23 repositories, constrains `nodejs` to
