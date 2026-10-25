@@ -2,7 +2,7 @@
 //! migration prerequisite, not an advertisement of Core-managed authorization.
 #![allow(non_snake_case)]
 use super::{NodeSpaceContext, CoreSpace, CoreSpaceDeviceProfile,
-    CoreSpaceTopologyRecord, SyncOperation, space_departure};
+    CoreSpaceTopologyRecord, CoreSpaceStore, SyncOperation, space_departure};
 #[cfg(any(test, feature = "full"))]
 use super::PeerSpaceSnapshot;
 use operit_link::{CoreValue, fromCoreValue, toCoreValue, encodedLinkSize};
@@ -22,11 +22,14 @@ pub(crate) struct ProjectionProtocol {
     pub authorityMode: String,
     pub maxMessageBytes: usize,
     pub snapshotPaging: bool,
+    #[serde(default)]
+    pub projectionReference: bool,
 }
 impl ProjectionProtocol {
     pub fn validate(&self, peer: &str) -> Result<(), String> {
         if self.version != VERSION || self.nodeId != peer || self.authorityMode != "localReplay"
-            || self.maxMessageBytes <= ENVELOPE_BYTES || self.snapshotPaging != self.endpoint {
+            || self.maxMessageBytes <= ENVELOPE_BYTES || self.snapshotPaging != self.endpoint
+            || (self.projectionReference && !self.snapshotPaging) {
             return Err("SPACE_PROTOCOL_INCOMPATIBLE: Unsupported projection protocol".into());
         }
         Ok(())
@@ -65,7 +68,8 @@ pub(crate) fn negotiate(service: &dyn NodeSpaceContext, args: CoreValue) -> Resu
     let peers = service.peers()?;
     let protocol = ProjectionProtocol { version: VERSION, nodeId: service.localNodeId(),
         endpoint: service.isSpaceEndpoint(), authorityMode: "localReplay".into(),
-        maxMessageBytes: peers.maxMessageBytes(), snapshotPaging: service.isSpaceEndpoint() };
+        maxMessageBytes: peers.maxMessageBytes(), snapshotPaging: service.isSpaceEndpoint(),
+        projectionReference: service.isSpaceEndpoint() };
     protocol.validate(&protocol.nodeId)?;
     toCoreValue(protocol).map_err(|error| error.to_string())
 }
@@ -156,6 +160,55 @@ pub(crate) fn controlPage(service: &dyn NodeSpaceContext, args: CoreValue) -> Re
         Some(&request.revision), request.after.as_deref())?;
     requirePayloadFits(&page, service.peers()?.maxMessageBytes())?;
     toCoreValue(page).map_err(|error| error.to_string())
+}
+
+/// Metadata refresh bound to the endpoint's complete, immutable policy export.
+/// This cannot import authority, acknowledge departures, or migrate a Space.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ProjectionObservation {
+    pub controlRevision: String,
+    pub space: CoreSpace,
+    pub deviceProfiles: Vec<CoreSpaceDeviceProfile>,
+    pub topology: Vec<CoreSpaceTopologyRecord>,
+}
+
+pub(crate) fn observeProjection(service: &dyn NodeSpaceContext, peer: &str, args: CoreValue) -> Result<CoreValue, String> {
+    if !service.isSpaceEndpoint() { return Err("SPACE_PROTOCOL_INCOMPATIBLE: Projection references are endpoint-only".into()); }
+    let observation: ProjectionObservation = fromCoreValue(args).map_err(|error| error.to_string())?;
+    let local = service.spaceStore().space()?;
+    if observation.space.spaceId != local.spaceId || !space_departure::pending(service, peer)?.is_empty() {
+        return Err("SPACE_EXPORT_CHANGED: A complete Space exchange is required".into());
+    }
+    CoreSpaceStore::validateSpaceProfiles(&observation.space, &observation.deviceProfiles)?;
+    if !observation.space.members.iter().any(|node| node == peer) {
+        return Err("Paired device is not present in its announced device space".into());
+    }
+    // Verify the exact policy before any publication. Opening this export also
+    // validates all immutable envelopes, including unknown payload fields.
+    drop(service.networkControlStore().nodeLocalControlExport(&local.spaceId,
+        Some(&observation.controlRevision), None)?);
+    let policy = service.networkControlStore().currentState()?;
+    for node in &observation.space.members {
+        if !policy.memberNodeIds.contains(node) {
+            return Err(format!("Space snapshot contains an unauthorized member: {node}"));
+        }
+    }
+    drop(policy);
+    service.spaceStore().pruneNodeLocalProjection()?;
+    service.spaceStore().importDeviceProfiles(observation.deviceProfiles)?;
+    service.spaceStore().importTopologyRecords(observation.topology)?;
+    let space = service.spaceStore().observePairedDeviceSpace(peer.to_owned(), observation.space)?;
+    toCoreValue(space).map_err(|error| error.to_string())
+}
+
+/// Compare complete immutable records on Core, independent of export ordering.
+/// An ID match alone is insufficient, and duplicate IDs never prove equality.
+#[cfg(any(test, feature = "full"))]
+pub(crate) fn sameControlOperations(left: &[SyncOperation], right: &[SyncOperation]) -> bool {
+    use std::collections::BTreeMap;
+    let leftById: BTreeMap<_, _> = left.iter().map(|operation| (&operation.opId, operation)).collect();
+    let rightById: BTreeMap<_, _> = right.iter().map(|operation| (&operation.opId, operation)).collect();
+    leftById.len() == left.len() && rightById.len() == right.len() && leftById == rightById
 }
 
 /// Legacy callers still get the original complete snapshot if it fits. The
@@ -255,6 +308,32 @@ mod tests {
         NodeLocalControlExport { revision: "a".repeat(64), count, operation: id.map(operation) }
     }
     #[test]
+    fn projection_reference_requires_exact_unique_immutable_operations() {
+        let a = operation("a");
+        let b = operation("b");
+        assert!(sameControlOperations(&[a.clone(), b.clone()], &[b.clone(), a.clone()]));
+        assert!(!sameControlOperations(&[a.clone()], &[a.clone(), b.clone()]));
+        assert!(!sameControlOperations(&[a.clone(), a.clone()], &[a.clone(), a.clone()]));
+        let mut changed = a.clone();
+        changed.payload["future"] = serde_json::json!({"mustPreserve": true});
+        assert!(!sameControlOperations(&[a.clone()], &[changed]));
+        let mut changed = a.clone();
+        changed.createdAt += 1;
+        assert!(!sameControlOperations(&[a], &[changed]));
+    }
+    #[test]
+    fn old_protocol_omission_does_not_enable_projection_references() {
+        let old = serde_json::json!({"version":1,"nodeId":"peer","endpoint":true,
+            "authorityMode":"localReplay","maxMessageBytes":8192,"snapshotPaging":true});
+        let mut protocol: ProjectionProtocol = serde_json::from_value(old).unwrap();
+        assert!(!protocol.projectionReference);
+        protocol.validate("peer").unwrap();
+        protocol.projectionReference = true;
+        protocol.snapshotPaging = false;
+        protocol.endpoint = false;
+        assert!(protocol.validate("peer").is_err());
+    }
+    #[test]
     fn negotiated_protocol_never_downgrades_on_failure_or_advertises_hosted_authority() {
         assert!(decodeProtocolResponse("peer", Err(CoreLinkError::internal("Unknown node Space method"))).unwrap().is_none());
         for code in ["PEER_SECURITY", "METHOD_NOT_FOUND", "SPACE_ID_MISMATCH", "INTERNAL"] {
@@ -262,7 +341,7 @@ mod tests {
         }
         assert!(decodeProtocolResponse("peer", Ok(CoreValue::Null)).is_err());
         let mut protocol = ProjectionProtocol { version: VERSION, nodeId: "peer".into(), endpoint: true,
-            authorityMode: "localReplay".into(), maxMessageBytes: 8192, snapshotPaging: true };
+            authorityMode: "localReplay".into(), maxMessageBytes: 8192, snapshotPaging: true, projectionReference: true };
         assert!(protocol.validate("peer").is_ok());
         assert!(protocol.validate("other").is_err());
         protocol.version += 1;

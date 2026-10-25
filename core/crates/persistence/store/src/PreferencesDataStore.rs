@@ -2007,7 +2007,7 @@ impl CoreNodeStateStore {
                 let merged = NodeEntryBatch { entries: &entries, added: &added };
                 let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
                 let encode = |output: &mut PreferencesJsonBuffer| merged.serialize(&mut serde_json::Serializer::with_formatter(
-                    output, serde_json::ser::PrettyFormatter::with_indent(b"")));
+                    output, serde_json::ser::CompactFormatter));
                 encode(&mut content)?;
                 content.bytes.try_reserve_exact(content.measured)
                     .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
@@ -2058,7 +2058,7 @@ impl CoreNodeStateStore {
                 let replacement = NodeEntryReplacement { entries: &entries, key, value };
                 let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
                 let encode = |output: &mut PreferencesJsonBuffer| replacement.serialize(&mut serde_json::Serializer::with_formatter(
-                    output, serde_json::ser::PrettyFormatter::with_indent(b"")));
+                    output, serde_json::ser::CompactFormatter));
                 encode(&mut content)?;
                 content.bytes.try_reserve_exact(content.measured)
                     .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
@@ -3695,17 +3695,21 @@ impl PreferencesDataStore {
             values.insert(PREFERENCES_REPLICATION_KEY, replication);
         }
         let bounded = self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache();
-        let indent: &[u8] = if bounded { b"" } else { b"  " };
         let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: bounded, bounded };
+        // PrettyFormatter with an empty indent still emits newlines and spaces.
+        // Node-local constrained storage needs compact JSON; retained Core and
+        // replicated datasets keep their existing human-readable encoding.
+        let encode = |output: &mut PreferencesJsonBuffer| {
+            if bounded { values.serialize(&mut serde_json::Serializer::new(output)) }
+            else { values.serialize(&mut serde_json::Serializer::pretty(output)) }
+        };
         if bounded {
-            let formatter = serde_json::ser::PrettyFormatter::with_indent(indent);
-            values.serialize(&mut serde_json::Serializer::with_formatter(&mut content, formatter))?;
+            encode(&mut content)?;
             content.bytes.try_reserve_exact(content.measured)
                 .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
             content.countOnly = false;
         }
-        let formatter = serde_json::ser::PrettyFormatter::with_indent(indent);
-        values.serialize(&mut serde_json::Serializer::with_formatter(&mut content, formatter))?;
+        encode(&mut content)?;
         let storedContent = match &self.encryption {
             Some(encryption) => encryption.encrypt(&self.storagePath, &content.bytes)?,
             None => content.bytes,

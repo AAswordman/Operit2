@@ -348,6 +348,9 @@ async fn constrained_gateway_retires_only_old_terminal_receipts_and_retries_fail
         let request = a_space.requestDeviceSpaceJoin(b_id).await.unwrap();
         let path = "runtime/link_access/space_merge_inbound.preferences.json";
         let mut pending = storedRecords(&b_store, path)[&request.requestId].clone();
+        for field in ["accepted", "unavailableSince", "approvedDecision", "decisionRevision", "cancelRequested"] {
+            assert!(pending.get(field).is_none(), "default field {field} needlessly occupies endpoint storage");
+        }
         assert!(pending["source"]["controlOperations"].as_array().unwrap().is_empty());
         let outbound = storedRecords(&a_store, "runtime/link_access/space_merge_outbound.preferences.json");
         let sourceOperations = outbound[&request.requestId]["source"]["controlOperations"].clone();
@@ -1618,6 +1621,46 @@ mod core_edge {
             assert!(traffic.iter().filter(|(_, method, _)| method == "snapshotControlPage").count() >= 2);
             assert!(!traffic.iter().any(|(_, method, _)| matches!(method.as_str(), "snapshot" | "exchange")), "{traffic:?}");
             assert!(traffic.iter().any(|(_, method, _)| method == "exchangePreferences"), "{traffic:?}");
+            assert!(traffic.iter().any(|(_, method, _)| method == "observeSpaceProjection"), "{traffic:?}");
+            assert!(!traffic.iter().any(|(_, method, _)| method == "observeSpaceSnapshot"), "{traffic:?}");
+            // Metadata-only observations must bind to the exact durable export;
+            // they cannot import control, cross Spaces or invent membership.
+            let inspect = |method: &str| edge.service.acceptPeerSpaceCall(&core_id,
+                CoreCallRequest::new("reference-inspect", NODE_SPACE_TARGET, method, operit_link::CoreValue::Null)).unwrap();
+            let header: serde_json::Value = operit_link::fromCoreValue(inspect("snapshotHeader")).unwrap();
+            let valid = serde_json::json!({"controlRevision":header["controlRevision"], "space":header["space"],
+                "deviceProfiles":header["deviceProfiles"], "topology":header["topology"]});
+            let apply = |args: serde_json::Value| edge.service.acceptPeerSpaceCall(&core_id,
+                CoreCallRequest::new("reference-test", NODE_SPACE_TARGET, "observeSpaceProjection",
+                    operit_link::toCoreValue(args).unwrap()));
+            let before = edge.storage.0.lock().unwrap().clone();
+            for field in ["controlRevision", "spaceId", "unauthorizedMember"] {
+                let mut invalid = valid.clone();
+                match field {
+                    "controlRevision" => invalid["controlRevision"] = serde_json::json!("0".repeat(64)),
+                    "spaceId" => invalid["space"]["spaceId"] = serde_json::json!("unapproved-Space"),
+                    _ => {
+                        invalid["space"]["members"].as_array_mut().unwrap().push(serde_json::json!("unapproved-member"));
+                        let mut profile = invalid["deviceProfiles"][0].clone();
+                        profile["nodeId"] = serde_json::json!("unapproved-member");
+                        invalid["deviceProfiles"].as_array_mut().unwrap().push(profile);
+                    }
+                }
+                let error = apply(invalid).unwrap_err();
+                assert!(error.contains("SPACE_EXPORT_CHANGED") || error.contains("unauthorized member"), "{field}: {error}");
+                assert_eq!(*edge.storage.0.lock().unwrap(), before);
+            }
+            apply(valid.clone()).unwrap();
+            assert_eq!(*edge.storage.0.lock().unwrap(), before, "identical metadata refresh should be idempotent");
+            let mut forbidden = RoutedCoreRequest { spaceId: header["space"]["spaceId"].as_str().unwrap().into(),
+                originNodeId: core_id.clone(), targetNodeId: edge_id.clone(), ttl: 0,
+                routeKind: RoutedCoreRequestKind::Target, payload: CoreCallRequest::new("reference-origin",
+                    NODE_SPACE_TARGET, "observeSpaceProjection", operit_link::toCoreValue(valid).unwrap()) };
+            forbidden.originNodeId = "unpaired-origin".into();
+            let denied = edge.router.inner.routedCall(core_id.clone(), forbidden).await;
+            assert_eq!(denied.result.unwrap_err().code, "PEER_DIRECT_CALL_REQUIRED");
+            assert_eq!(*edge.storage.0.lock().unwrap(), before);
+
             assert_eq!(core.service.deviceSpaceControl().unwrap().deviceIdentityIds[&core_id], "user");
             assert_no_replica(&core, &edge);
             // A deliberately small response budget must produce a short

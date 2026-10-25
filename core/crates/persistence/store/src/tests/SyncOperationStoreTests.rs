@@ -361,8 +361,10 @@ fn clearing_identity_resets_to_default_user() {
 #[test]
 fn space_admission_preserves_identity_map_through_retry_and_replay() {
     use crate::NetworkControlStore::{NetworkControlCommand, NetworkControlCommandRecord, NetworkControlRole, NetworkControlStore};
-    let storage = Arc::new(MemoryStorageHost::default());
-    let store = NetworkControlStore::new(storage.clone()).unwrap();
+    for constrained in [false, true] {
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: constrained, ..Default::default() });
+    let store = if constrained { NetworkControlStore::newNodeLocal(storage.clone()).unwrap() }
+        else { NetworkControlStore::new(storage.clone()).unwrap() };
     let bootstrap = store.bootstrapCurrentSpace().unwrap();
     let admin = bootstrap.memberNodeIds.iter().next().unwrap().clone();
     store.defineRole(NetworkControlRole {
@@ -399,7 +401,10 @@ fn space_admission_preserves_identity_map_through_retry_and_replay() {
     }
     assert_eq!(store.validateSpacePolicy(&state.spaceId, &operations).unwrap(), state);
     store.validateSpaceAdmission(&state.spaceId, "source-space", &identities.keys().cloned().collect(), &operations).unwrap();
-    assert_eq!(NetworkControlStore::new(storage).unwrap().currentState().unwrap(), state);
+    let reopened = if constrained { NetworkControlStore::newNodeLocal(storage).unwrap() }
+        else { NetworkControlStore::new(storage).unwrap() };
+    assert_eq!(reopened.currentState().unwrap(), state);
+    }
 }
 
 /// Upgrade an existing join-only reviewer's log, then persist a new admission and reopen both.
@@ -1996,4 +2001,33 @@ fn archived_control_replay_is_bounded_and_does_not_publish_preference_outboxes()
     assert!(reopened.publishPreferenceOutboxes().unwrap().is_empty());
     let published: Value = serde_json::from_slice(&host.readBytes(path).unwrap()).unwrap();
     assert!(published["__operit_preferences_replication"]["outbox"].as_array().unwrap().is_empty());
+}
+
+/// Receipt lookup validates immutable conflicts even when the matching receipt
+/// sorts before the conflicting alias, and cannot append another admission.
+#[test]
+fn bounded_review_receipts_validate_complete_history_and_local_sequences() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let store = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
+    let initial = store.bootstrapCurrentSpace().unwrap();
+    let issuer = initial.memberNodeIds.iter().next().unwrap();
+    for index in 0..20 { store.updatePolicy(format!("history-{index}"), "unchanged".into()).unwrap(); }
+    let identities = BTreeMap::from([("esp".into(), "edge".into())]);
+    let receipt = store.admitSpaceForReview("source".into(), identities.clone(), "bounded").unwrap();
+    assert_eq!(receipt.sequence, 22);
+    assert_eq!(store.spaceControlOperation(&initial.spaceId, &receipt.entityId, issuer).unwrap(), Some(receipt.clone()));
+    assert!(store.spaceControlOperation(&initial.spaceId, &receipt.entityId, "other").unwrap().is_none());
+    assert_eq!(store.admitSpaceForReview("source".into(), identities.clone(), "bounded").unwrap(), receipt);
+    let next = store.updatePolicy("after-review".into(), "kept".into()).unwrap();
+    assert_eq!(next.sequence, receipt.sequence + 1);
+    let projection = NetworkControlStore::projectionStore(storage.clone());
+    let mut alias = receipt.clone();
+    alias.payload["futureField"] = json!({"immutable": true});
+    projection.setTypedEntry("zz-conflicting-alias", &alias).unwrap();
+    let writes = storage.writeCount();
+    assert!(store.spaceControlOperation(&initial.spaceId, &receipt.entityId, issuer)
+        .unwrap_err().contains("Conflicting immutable"));
+    assert!(store.admitSpaceForReview("source".into(), identities, "bounded").is_err());
+    assert_eq!(storage.writeCount(), writes);
 }

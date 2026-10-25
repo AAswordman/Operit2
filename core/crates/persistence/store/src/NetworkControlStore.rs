@@ -537,8 +537,7 @@ impl NetworkControlStore {
         authorizeCommand(&state, &self.localNodeId, &command)?;
         drop(state);
         let commandId = format!("control-review-{reviewKey}");
-        for operation in self.orderedCommands(&space.spaceId)? {
-            if operation.entityId != commandId || operation.originDeviceId != self.localNodeId { continue; }
+        if let Some(operation) = self.spaceControlOperation(&space.spaceId, &commandId, &self.localNodeId)? {
             let record = NetworkControlCommandRecord::deserialize(&operation.payload).map_err(|error| error.to_string())?;
             if record.spaceId != space.spaceId || record.issuerNodeId != self.localNodeId || record.command != command {
                 return Err("Stored admission differs from the claimed review".into());
@@ -557,6 +556,25 @@ impl NetworkControlStore {
     pub fn currentSpaceOperations(&self) -> Result<Vec<SyncOperation>, String> {
         let space = self.spaceStore.initialize()?;
         self.orderedCommands(&space.spaceId)
+    }
+
+    /// Looks up one review receipt without retaining the complete decoded log.
+    /// Every immutable envelope and duplicate is still validated before returning.
+    #[allow(non_snake_case)]
+    pub fn spaceControlOperation(&self, spaceId: &str, commandId: &str, issuer: &str) -> Result<Option<SyncOperation>, String> {
+        if !self.serializeReplay {
+            return Ok(self.orderedCommands(spaceId)?.into_iter()
+                .find(|operation| operation.entityId == commandId && operation.originDeviceId == issuer));
+        }
+        let mut found = None;
+        self.visitEncodedCommands(spaceId, |json| {
+            let (operation, _, _) = decodeEncodedControlOperation(json)?;
+            if found.is_none() && operation.entityId == commandId && operation.originDeviceId == issuer {
+                found = Some(serde_json::from_str(json.get()).map_err(|error| error.to_string())?);
+            }
+            Ok(())
+        })?;
+        Ok(found)
     }
 
     /// Export one immutable endpoint authority record without materializing the
@@ -928,10 +946,13 @@ impl NetworkControlStore {
         // fails and permanently breaks this Space's control-plane materialization.
         validateCommandRecord(&record)?;
         if self.nodeLocalOnly {
-            let sequence = self.orderedCommands(spaceId)?.iter()
-                .filter(|op| op.originDeviceId == self.localNodeId)
-                .map(|op| op.sequence).max().unwrap_or(0).checked_add(1)
-                .ok_or("Space control sequence exhausted")?;
+            let mut sequence = 0;
+            self.visitEncodedCommands(spaceId, |json| {
+                let (operation, _, _) = decodeEncodedControlOperation(json)?;
+                if operation.originDeviceId == self.localNodeId { sequence = sequence.max(operation.sequence); }
+                Ok(())
+            })?;
+            let sequence = sequence.checked_add(1).ok_or("Space control sequence exhausted")?;
             let operation = SyncOperation {
                 opId: record.commandId.clone(), originDeviceId: self.localNodeId.clone(), sequence,
                 domain: NETWORK_CONTROL_SYNC_DOMAIN.into(), entityType: NETWORK_CONTROL_ENTITY_TYPE.into(),
@@ -987,6 +1008,22 @@ impl NetworkControlStore {
     /// payload's JSON tree alongside an in-flight Space snapshot. Each operation
     /// still passes the same structural, immutable-conflict and authority checks.
     fn materializeCompactState(&self, spaceId: &str) -> Result<NetworkControlState, String> {
+        let mut state = NetworkControlState {
+            spaceId: spaceId.into(), initialized: false,
+            memberNodeIds: BTreeSet::new(), roles: builtinRoles(),
+            deviceIdentityIds: BTreeMap::new(), disconnectedNodeIds: BTreeSet::new(), policies: BTreeMap::new(),
+        };
+        self.visitEncodedCommands(spaceId, |json| {
+            let (operation, record, legacy) = decodeEncodedControlOperation(json)?;
+            let _ = authorizeAndApplyCommand(&mut state, &record, &operation.originDeviceId, legacy);
+            Ok(())
+        })?;
+        Ok(state)
+    }
+
+    /// Order borrowed encoded records once, decoding at most one payload at a time.
+    fn visitEncodedCommands(&self, spaceId: &str,
+        mut visit: impl FnMut(&serde_json::value::RawValue) -> Result<(), String>) -> Result<(), String> {
         validateSpaceId(spaceId)?;
         struct Encoded<'a> {
             id: String,
@@ -1022,16 +1059,8 @@ impl NetworkControlStore {
             }
             commands.retain(|operation| operation.space == spaceId);
             commands.sort_by(|left, right| left.order.cmp(&right.order));
-            let mut state = NetworkControlState {
-                spaceId: spaceId.into(), initialized: false,
-                memberNodeIds: BTreeSet::new(), roles: builtinRoles(),
-                deviceIdentityIds: BTreeMap::new(), disconnectedNodeIds: BTreeSet::new(), policies: BTreeMap::new(),
-            };
-            for encoded in commands {
-                let (operation, record, legacy) = decodeEncodedControlOperation(encoded.json)?;
-                let _ = authorizeAndApplyCommand(&mut state, &record, &operation.originDeviceId, legacy);
-            }
-            Ok(state)
+            for encoded in commands { visit(encoded.json)?; }
+            Ok(())
         }).map_err(|error| error.to_string())?
     }
 

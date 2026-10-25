@@ -372,7 +372,9 @@ impl SpacePersistenceSyncService {
             {
                 continue;
             }
-            if let Err(error) = self.exchangePairedDeviceSpaceProjection(&peerNodeId).await {
+            // Keep the projection's decoding/serialization future off the caller's
+            // stack, including the Windows CLI main thread in debug builds.
+            if let Err(error) = Box::pin(self.exchangePairedDeviceSpaceProjection(&peerNodeId)).await {
                 self.recordPeerPassFailed(&peerNodeId);
                 errors.push(format!("CoreNode {peerNodeId} Space projection exchange: {error}"));
                 continue;
@@ -482,7 +484,7 @@ impl SpacePersistenceSyncService {
             // for reachable-member passes too; requesting the entire log again
             // forces a second full reply into its constrained heap. Projection
             // observation still validates all authority before preference sync.
-            self.exchangePairedDeviceSpaceProjection(targetNodeId).await?;
+            Box::pin(self.exchangePairedDeviceSpaceProjection(targetNodeId)).await?;
         } else {
             let request = serviceCallRequest(&self.state.nodeRouter,
                 crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET, "exchange",
@@ -991,10 +993,12 @@ impl SpacePersistenceSyncService {
         peerNodeId: &str,
     ) -> Result<bool, String> {
         let protocol = projectionProtocol(&self.state.nodeRouter, peerNodeId).await?;
+        let mut referenceRevision = None;
         let remote = if protocol.as_ref().is_some_and(|protocol| protocol.snapshotPaging) {
             use crate::NodeSpaceService::space_projection::{SnapshotHeader, SnapshotCollector};
             let header: SnapshotHeader = callRemoteService(&self.state.nodeRouter, peerNodeId,
                 crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotHeader", Value::Null).await?;
+            referenceRevision = Some(header.controlRevision.clone());
             let mut collector = SnapshotCollector::new(header)?;
             loop {
                 let page = callRemoteService(&self.state.nodeRouter, peerNodeId,
@@ -1009,15 +1013,31 @@ impl SpacePersistenceSyncService {
             callRemoteService(&self.state.nodeRouter, peerNodeId,
                 crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshot", Value::Null).await?
         };
+        let remoteSpaceId = remote.space.spaceId.clone();
+        let remoteHasDepartures = !remote.departures.is_empty();
         let snapshotControlOperations = remote.controlOperations.clone();
         let service = crate::RuntimeRemoteLinkService::RuntimeRemoteLinkService::newWithRouter(
             (*self.state.localRuntime).clone(), self.state.nodeRouter.clone());
         service.observePeerSpaceSnapshot(peerNodeId, remote)?;
         self.applyRemovedMemberEffects(&snapshotControlOperations)?;
         let local = crate::NodeSpaceService::peerSpaceSnapshotForPeer(&service, peerNodeId)?;
+        let useReference = protocol.as_ref().is_some_and(|protocol| protocol.projectionReference)
+            && referenceRevision.is_some() && local.space.spaceId == remoteSpaceId
+            && !remoteHasDepartures && local.departures.is_empty()
+            && crate::NodeSpaceService::space_projection::sameControlOperations(
+                &local.controlOperations, &snapshotControlOperations);
+        drop(snapshotControlOperations);
+        let (method, arguments) = if useReference {
+            use crate::NodeSpaceService::space_projection::ProjectionObservation;
+            let observation = ProjectionObservation { controlRevision: referenceRevision.unwrap(),
+                space: local.space, deviceProfiles: local.deviceProfiles, topology: local.topology };
+            ("observeSpaceProjection", serde_json::to_value(observation))
+        } else {
+            ("observeSpaceSnapshot", serde_json::to_value(local))
+        };
         let request = serviceCallRequest(&self.state.nodeRouter,
-            crate::NodeSpaceService::NODE_SPACE_TARGET, "observeSpaceSnapshot",
-            serde_json::to_value(local).map_err(|error| error.to_string())?)?;
+            crate::NodeSpaceService::NODE_SPACE_TARGET, method,
+            arguments.map_err(|error| error.to_string())?)?;
         if let Some(protocol) = &protocol {
             crate::NodeSpaceService::space_projection::requireRoutedRequestFits(&request,
                 &self.state.spaceStore.space()?.spaceId, &self.state.nodeRouter.localNodeId(),

@@ -131,11 +131,16 @@ fn saveRecordWithSource(service: &dyn NodeSpaceContext, path: &str, id: &str, re
         targetSpaceId: &'a str,
         profile: &'a CoreSpaceDeviceProfile,
         source: Snapshot<'a>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         accepted: Option<Snapshot<'a>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         unavailableSince: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         approvedDecision: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         decisionRevision: Option<i64>,
-        cancelRequested: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cancelRequested: Option<bool>,
     }
     let durable = Durable {
         request: &record.request, sourceSpaceId: &record.sourceSpaceId,
@@ -154,7 +159,10 @@ fn saveRecordWithSource(service: &dyn NodeSpaceContext, path: &str, id: &str, re
             space: &accepted.space, deviceProfiles: &[], topology: &[], controlOperations: &[], departures: &[],
         }),
         unavailableSince: record.unavailableSince, approvedDecision: record.approvedDecision,
-        decisionRevision: record.decisionRevision, cancelRequested: record.cancelRequested,
+        decisionRevision: record.decisionRevision,
+        // Full Core retains its explicit cancellation flag. Endpoint receipts
+        // may omit false; Record's default restores the same durable intent.
+        cancelRequested: if constrained && !record.cancelRequested { None } else { Some(record.cancelRequested) },
     };
     store(service).putRecord(path, id, &durable)
 }
@@ -199,9 +207,10 @@ pub(crate) fn admissionCommitted(service: &dyn NodeSpaceContext, record: &Record
     let Some(reviewer) = record.request.reviewerDeviceId.as_deref() else { return Ok(false); };
     let id = format!("control-review-{}-{}", record.request.requestId, record.request.assignmentVersion);
     let members = record.source.space.members.iter().cloned().collect::<BTreeSet<_>>();
-    Ok(service.networkControlStore().currentSpaceOperations()?.into_iter().any(|operation| {
-        operation.entityId == id && operation.originDeviceId == reviewer
-            && NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
+    let currentSpaceId = service.spaceStore().initialize()?.spaceId;
+    Ok(service.networkControlStore().spaceControlOperation(&currentSpaceId, &id, reviewer)?
+        .is_some_and(|operation| {
+            NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
                 command.spaceId == record.targetSpaceId && command.issuerNodeId == operation.originDeviceId
                     && matches!(command.command, NetworkControlCommand::AdmitSpace { sourceSpaceId, identities }
                         if sourceSpaceId == record.sourceSpaceId && identities.keys().cloned().collect::<BTreeSet<_>>() == members)
@@ -277,6 +286,11 @@ fn recoverCommittedApproval(service: &dyn NodeSpaceContext, record: &mut Record,
     let state = service.networkControlStore().currentState()?;
     if !record.source.space.members.iter().all(|node| state.memberNodeIds.contains(node)) { return Ok(()); }
     drop(state);
+    if service.storage().nodeLocalApplicationHistoryLimit().is_some() {
+        // Canonicalize legacy claimed receipts before membership grows. A
+        // failed recovery must not postpone releasing redundant default fields.
+        saveRecord(service, INBOUND, &record.request.requestId, record)?;
+    }
     restoreClaimedMemberProfiles(service, record, current)?;
     // The projection rebuild needs the applicant's own presentation facts;
     // restoreClaimedMemberProfiles only covers members already projected.
@@ -1019,7 +1033,10 @@ fn claimDecision(service: &dyn NodeSpaceContext, origin: &str, decision: Decisio
     Ok(Claim { record, current: PeerSpaceJoin { space: current,
         deviceProfiles: service.spaceStore().deviceProfilesForCurrentSpace()?,
         topology: service.spaceStore().topologyRecords()?.into_values().collect(),
-        controlOperations: service.networkControlStore().currentSpaceOperations()?, departures: Vec::new() } })
+        // A local reviewer already owns this policy and never imports its own
+        // claim history. Remote reviewers still need the complete authority.
+        controlOperations: if origin == service.localNodeId() { Vec::new() }
+            else { service.networkControlStore().currentSpaceOperations()? }, departures: Vec::new() } })
 }
 fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Outcome, current: CoreSpace) -> Result<Record, String> {
             let mut record = load(service, INBOUND, &outcome.decision.requestId)?;

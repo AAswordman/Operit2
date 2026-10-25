@@ -2506,16 +2506,20 @@ fn replacing_and_deleting_shared_values_preserves_previous_snapshots_and_other_k
 
 #[test]
 fn borrowed_snapshot_encoding_matches_existing_sorted_json_bytes() {
-    let host = Arc::new(MemoryStorageHost::default());
+    for constrained in [false, true] {
+    let host = Arc::new(MemoryStorageHost { releasePreferencesCache: constrained, ..Default::default() });
     let path = "runtime/nvs-encoding.preferences.json";
     let store = super::CoreNodeStateStore::newWithStorage(host.clone(), path);
     let mut preferences = Preferences::default();
     preferences.set(&stringPreferencesKey("z-last"), json!({"nested": [true, null, "设备"]}));
     preferences.set(&stringPreferencesKey("a-first"), json!("unchanged bytes"));
-    let expected = serde_json::to_vec_pretty(&serde_json::to_value(&preferences).unwrap()).unwrap();
+    let values = serde_json::to_value(&preferences).unwrap();
+    let expected = if constrained { serde_json::to_vec(&values).unwrap() }
+        else { serde_json::to_vec_pretty(&values).unwrap() };
     store.replaceRecoverably(preferences.clone()).unwrap();
     assert_eq!(host.readBytes(path).unwrap(), expected);
     assert_eq!(store.data().unwrap(), preferences);
+    }
 }
 
 #[test]
@@ -2936,4 +2940,25 @@ fn encoded_node_snapshot_migrates_old_schema_and_rejects_future_or_corrupt_recor
         host.writeBytes(path, invalid).unwrap();
         assert!(store.withEncodedEntries(|_| panic!("invalid schema/JSON reached callback")).is_err());
     }
+}
+
+/// Compact publication must continue reading legacy pretty files and preserve
+/// unknown nested data and whitespace inside strings without a schema migration.
+#[test]
+fn constrained_compact_json_preserves_legacy_records_and_unknown_fields() {
+    let host = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let path = "runtime/legacy-pretty-node.json";
+    let legacy = json!({"keep":{"future":[null, {"text":"设备  \ntext"}]}, "change":{"value":1}});
+    host.writeBytes(path, &serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+    let store = super::CoreNodeStateStore::newWithStorage(host.clone(), path);
+    let next = json!({"value":2,"future":{"unknown":true}});
+    store.setTypedEntry("change", &next).unwrap();
+    let bytes = host.readBytes(path).unwrap();
+    let actual: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(actual["keep"], legacy["keep"]);
+    assert_eq!(actual["change"], next);
+    assert_eq!(store.typedEntry::<Value>("keep").unwrap(), Some(legacy["keep"].clone()));
+    let writes = host.writeCount();
+    store.setTypedEntry("change", &next).unwrap();
+    assert_eq!(host.writeCount(), writes);
 }

@@ -8,6 +8,9 @@ rustflags = ["--cfg", "espidf_time64", "--cfg", "mio_unsupported_force_poll_poll
 
 [unstable]
 build-std = ["std", "panic_abort"]
+# Keep panic messages and raw backtrace addresses; resolve symbols on the host
+# with the matching ELF instead of shipping a DWARF reader on the device.
+build-std-features = ["backtrace", "panic-unwind", "backtrace-trace-only"]
 
 [env]
 CARGO_WORKSPACE_DIR = { value = ".", relative = true, force = true }

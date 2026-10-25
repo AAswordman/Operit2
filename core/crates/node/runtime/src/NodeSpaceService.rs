@@ -359,6 +359,7 @@ pub(crate) fn dispatchPeerSpaceCall(
         "projectionProtocol" => space_projection::negotiate(service, request.args),
         "snapshotHeader" => toCoreValue(space_projection::header(service, peer)?).map_err(|error| error.to_string()),
         "snapshotControlPage" => space_projection::controlPage(service, request.args),
+        "observeSpaceProjection" => space_projection::observeProjection(service, peer, request.args),
         "snapshot" => peerSpaceSnapshotForPeer(service, peer)?.intoCoreValue(),
         "deviceSpace" => toCoreValue(service.spaceStore().initialize()?).map_err(|e| e.to_string()),
         "observeSpaceSnapshot" => {
