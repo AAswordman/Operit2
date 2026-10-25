@@ -1914,7 +1914,7 @@ impl CoreNodeRouter {
                 self.requireDirectPeer(&previousNodeId, PairingDirection::Either)?;
                 RuntimeRemoteLinkService::newWithRouter((*self.localCore).clone(), self.clone())
                     .acceptPeerSpaceCall(&previousNodeId, request.payload)
-                    .map_err(CoreLinkError::internal)
+                    .map_err(crate::NodeSpaceService::spaceCallError)
             })();
             return CoreCallResponse { requestId, result };
         }
@@ -1944,7 +1944,7 @@ impl CoreNodeRouter {
                     }
                     let service = RuntimeRemoteLinkService::newWithRouter((*self.localCore).clone(), self.clone());
                     let result = crate::NodeSpaceService::acceptSpaceControlCall(&service, &request.originNodeId, request.payload)
-                        .map_err(CoreLinkError::internal);
+                        .map_err(crate::NodeSpaceService::spaceCallError);
                     return CoreCallResponse { requestId, result };
                 }
                 if request.payload.target == NODE_SPACE_APPROVAL_TARGET {

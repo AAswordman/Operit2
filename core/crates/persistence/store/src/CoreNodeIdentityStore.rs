@@ -130,9 +130,7 @@ impl CoreNodeIdentityStore {
 
 /// Decodes the shared Link Access identity record into the CoreNode identity projection.
 fn decodeIdentity(encoded: &serde_json::Value) -> Result<CoreNodeIdentity, String> {
-    let record: serde_json::Value =
-        serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
-    let nodeId = record
+    let nodeId = encoded
         .get("deviceId")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "CoreNode identity record is missing deviceId".to_string())?

@@ -475,14 +475,28 @@ impl SpacePersistenceSyncService {
         }
         // Authority updates must still reach non-storage members (including
         // grants/revocations); they do not advance business replication clocks.
+        let protocol = projectionProtocol(&self.state.nodeRouter, targetNodeId).await?;
         let control = NetworkControlStore::new(self.state.localRuntime.runtimeStorageHost())?;
-        let request = serviceCallRequest(&self.state.nodeRouter,
-            crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET, "exchange",
-            serde_json::to_value(control.currentSpaceOperations()?).map_err(|error| error.to_string())?)?;
-        let response = self.state.nodeRouter.callNode(targetNodeId.to_string(), request).await;
-        let remote = crate::NodeSpaceService::decodeControlExchange(response.result)?;
-        control.projectPeerControlOperations(targetNodeId, &remote)?;
-        self.applyRemovedMemberEffects(&remote)?;
+        if protocol.as_ref().is_some_and(|protocol| protocol.snapshotPaging) {
+            // The endpoint already provides a bounded authority export. Use it
+            // for reachable-member passes too; requesting the entire log again
+            // forces a second full reply into its constrained heap. Projection
+            // observation still validates all authority before preference sync.
+            self.exchangePairedDeviceSpaceProjection(targetNodeId).await?;
+        } else {
+            let request = serviceCallRequest(&self.state.nodeRouter,
+                crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET, "exchange",
+                serde_json::to_value(control.currentSpaceOperations()?).map_err(|error| error.to_string())?)?;
+            if let Some(protocol) = &protocol {
+                crate::NodeSpaceService::space_projection::requireRoutedRequestFits(&request,
+                    &self.state.spaceStore.space()?.spaceId, &self.state.nodeRouter.localNodeId(),
+                    targetNodeId, 4, protocol.maxMessageBytes)?;
+            }
+            let response = self.state.nodeRouter.callNode(targetNodeId.to_string(), request).await;
+            let remote = crate::NodeSpaceService::decodeControlExchange(response.result)?;
+            control.projectPeerControlOperations(targetNodeId, &remote)?;
+            self.applyRemovedMemberEffects(&remote)?;
+        }
         // Small device-owned preferences are available to every admitted member;
         // their clocks and payloads are separate from business replica clocks.
         let preferenceStore = operit_store::DevicePreferencesStore::DevicePreferencesStore::new(self.state.localRuntime.runtimeStorageHost());
@@ -976,21 +990,41 @@ impl SpacePersistenceSyncService {
         &self,
         peerNodeId: &str,
     ) -> Result<bool, String> {
-        let remote: crate::RuntimeRemoteLinkService::PeerSpaceSnapshot = callRemoteService(
-            &self.state.nodeRouter, peerNodeId,
-            crate::RuntimeRemoteLinkService::NODE_SPACE_TARGET, "snapshot", Value::Null,
-        ).await?;
+        let protocol = projectionProtocol(&self.state.nodeRouter, peerNodeId).await?;
+        let remote = if protocol.as_ref().is_some_and(|protocol| protocol.snapshotPaging) {
+            use crate::NodeSpaceService::space_projection::{SnapshotHeader, SnapshotCollector};
+            let header: SnapshotHeader = callRemoteService(&self.state.nodeRouter, peerNodeId,
+                crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotHeader", Value::Null).await?;
+            let mut collector = SnapshotCollector::new(header)?;
+            loop {
+                let page = callRemoteService(&self.state.nodeRouter, peerNodeId,
+                    crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotControlPage",
+                    serde_json::to_value(collector.request()).map_err(|error| error.to_string())?).await?;
+                if collector.push(page)? { break; }
+            }
+            let current: SnapshotHeader = callRemoteService(&self.state.nodeRouter, peerNodeId,
+                crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotHeader", Value::Null).await?;
+            collector.finish(current)?
+        } else {
+            callRemoteService(&self.state.nodeRouter, peerNodeId,
+                crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshot", Value::Null).await?
+        };
         let snapshotControlOperations = remote.controlOperations.clone();
         let service = crate::RuntimeRemoteLinkService::RuntimeRemoteLinkService::newWithRouter(
             (*self.state.localRuntime).clone(), self.state.nodeRouter.clone());
         service.observePeerSpaceSnapshot(peerNodeId, remote)?;
         self.applyRemovedMemberEffects(&snapshotControlOperations)?;
         let local = crate::NodeSpaceService::peerSpaceSnapshotForPeer(&service, peerNodeId)?;
-        let remoteSpace: CoreSpace = callRemoteService(
-            &self.state.nodeRouter, peerNodeId,
-            crate::RuntimeRemoteLinkService::NODE_SPACE_TARGET, "observeSpaceSnapshot",
-            serde_json::to_value(local).map_err(|error| error.to_string())?,
-        ).await?;
+        let request = serviceCallRequest(&self.state.nodeRouter,
+            crate::NodeSpaceService::NODE_SPACE_TARGET, "observeSpaceSnapshot",
+            serde_json::to_value(local).map_err(|error| error.to_string())?)?;
+        if let Some(protocol) = &protocol {
+            crate::NodeSpaceService::space_projection::requireRoutedRequestFits(&request,
+                &self.state.spaceStore.space()?.spaceId, &self.state.nodeRouter.localNodeId(),
+                peerNodeId, 0, protocol.maxMessageBytes)?;
+        }
+        let response = self.state.nodeRouter.callNode(peerNodeId.to_owned(), request).await;
+        let remoteSpace: CoreSpace = decodeCoreResponse(response.result.map_err(|error| error.to_string())?)?;
         Ok(self.state.spaceStore.space()?.spaceId == remoteSpace.spaceId)
     }
 
@@ -1382,6 +1416,26 @@ where
     decodeCoreResponse(response.result.map_err(|error| {
         format!("remote {targetNodeId} {methodName}: {error}")
     })?)
+}
+
+/// Only the precise legacy unknown-method response permits the old protocol.
+/// Security, malformed replies, disconnects and unknown versions never downgrade.
+async fn projectionProtocol(
+    router: &CoreNodeRouter, peer: &str,
+) -> Result<Option<crate::NodeSpaceService::space_projection::ProjectionProtocol>, String> {
+    let peers = router.nodeServices()?.peers();
+    // Endpoint negotiation belongs to a direct authenticated neighbor. Ordinary
+    // Core control/business synchronization must still work across relay hops.
+    if !peers.activePeerNodeIds().map_err(|error| error.to_string())?.contains(peer)
+        || !peers.hasPairing(peer, crate::NodeServices::PairingDirection::Either).map_err(|error| error.to_string())? {
+        return Ok(None);
+    }
+    let request = serviceCallRequest(router, crate::NodeSpaceService::NODE_SPACE_TARGET,
+        "projectionProtocol", json!({"version": crate::NodeSpaceService::space_projection::VERSION}))?;
+    let response = router.callNode(peer.to_owned(), request).await;
+    let mut protocol = crate::NodeSpaceService::space_projection::decodeProtocolResponse(peer, response.result)?;
+    if let Some(protocol) = &mut protocol { protocol.maxMessageBytes = protocol.maxMessageBytes.min(peers.maxMessageBytes()); }
+    Ok(protocol)
 }
 
 /// Invokes one generated service method through the Router.

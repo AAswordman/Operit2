@@ -82,24 +82,14 @@ impl Esp32RuntimeStorageHost {
             }),
         }))
     }
-    fn update(&self, change: impl FnOnce(&mut Files) -> HostResult<()>) -> HostResult<()> {
+    fn update(&self, change: impl FnOnce(&Files) -> HostResult<codec::FileChange>) -> HostResult<()> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| HostError::new("runtime NVS lock poisoned"))?;
-        let mut files = state.files.clone();
-        change(&mut files)?;
-        if files == state.files {
-            return Ok(());
-        }
-        let bank = codec::commit_snapshot_transaction(
-            &files,
-            state.snapshot,
-            &mut NvsSnapshotBackend(&state.nvs),
-        )?;
-        state.files = files;
-        state.snapshot = Some(bank);
-        Ok(())
+        let change = change(&state.files)?;
+        let StorageState { files, snapshot, nvs } = &mut *state;
+        codec::commit_file_change(files, snapshot, change, &mut NvsSnapshotBackend(nvs))
     }
 }
 /// All scalar publication uses IDF's atomic NVS update (no erase-first).
@@ -145,6 +135,8 @@ impl codec::SnapshotBackend for NvsSnapshotBackend<'_> {
     }
 }
 impl RuntimeStorageHost for Esp32RuntimeStorageHost {
+    fn retainPreferencesCache(&self) -> bool { false }
+    fn nodeLocalApplicationHistoryLimit(&self) -> Option<usize> { Some(2) }
     fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
         None
     }
@@ -160,11 +152,20 @@ impl RuntimeStorageHost for Esp32RuntimeStorageHost {
             .ok_or_else(|| HostError::new("runtime storage entry not found"))
             .and_then(|bytes| pack::unpack(bytes))
     }
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        self.state.lock()
+            .map_err(|_| HostError::new("runtime NVS lock poisoned"))?
+            .files.get(path)
+            .ok_or_else(|| HostError::new("runtime storage entry not found"))
+            .and_then(|bytes| pack::unpack_range(bytes, offset, length))
+    }
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.update(|files| {
-            files.insert(path.into(), Arc::new(pack::pack(content)?));
-            Ok(())
-        })
+        self.update(|_| {
+            Ok(codec::FileChange::Put {
+                path: codec::copy_path(path)?,
+                bytes: pack::pack(content)?,
+            })
+        }).map_err(|error| HostError::new(format!("{} (record {path}, {} expanded bytes)", error.message, content.len())))
     }
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
         // writeBytes publishes the complete NVS snapshot through the alternate bank.
@@ -172,22 +173,22 @@ impl RuntimeStorageHost for Esp32RuntimeStorageHost {
     }
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.update(|files| {
-            let previous = files
+            let mut bytes = files
                 .get(path)
                 .map(|bytes| pack::unpack(bytes))
                 .transpose()?
                 .unwrap_or_default();
-            if content.len() > pack::MAX_RECORD_SIZE.saturating_sub(previous.len()) {
+            if content.len() > pack::MAX_RECORD_SIZE.saturating_sub(bytes.len()) {
                 return Err(HostError::new("ESP32 node state exceeds NVS budget"));
             }
-            let mut bytes = Vec::new();
             bytes
-                .try_reserve_exact(previous.len() + content.len())
-                .map_err(|_| codec::allocation_error("append", previous.len() + content.len()))?;
-            bytes.extend_from_slice(&previous);
+                .try_reserve_exact(content.len())
+                .map_err(|_| codec::allocation_error("append", bytes.len() + content.len()))?;
             bytes.extend_from_slice(content);
-            files.insert(path.into(), Arc::new(pack::pack(&bytes)?));
-            Ok(())
+            Ok(codec::FileChange::Put {
+                path: codec::copy_path(path)?,
+                bytes: pack::pack(&bytes)?,
+            })
         })
     }
     /// Confirms the file already belongs to the synchronously committed NVS snapshot.
@@ -203,10 +204,11 @@ impl RuntimeStorageHost for Esp32RuntimeStorageHost {
     }
 
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        self.update(|files| {
-            let prefix = format!("{path}/");
-            files.retain(|key, _| key != path && (!recursive || !key.starts_with(&prefix)));
-            Ok(())
+        self.update(|_| {
+            Ok(codec::FileChange::Delete {
+                path: codec::copy_path(path)?,
+                recursive,
+            })
         })
     }
     fn exists(&self, path: &str) -> HostResult<bool> {

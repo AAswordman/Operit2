@@ -47,7 +47,7 @@ impl Storage {
         if self.1 {
             let packed: codec::Files = next
                 .iter()
-                .map(|(path, bytes)| pack::pack(bytes).map(|bytes| (path.clone(), Arc::new(bytes))))
+                .map(|(path, bytes)| pack::pack(bytes).map(|bytes| (path.clone(), bytes)))
                 .collect::<HostResult<_>>()?;
             let mut nvs = self.2.lock().unwrap();
             let active = nvs.active_bank();
@@ -64,6 +64,9 @@ impl Storage {
     }
 }
 impl RuntimeStorageHost for Storage {
+    fn retainPreferencesCache(&self) -> bool { !self.1 }
+    fn nodeLocalApplicationHistoryLimit(&self) -> Option<usize> { self.1.then_some(2) }
+
     /// Confirms synchronous in-memory publication without copying or rewriting bytes.
     fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
         if !self.exists(path)? {
@@ -88,6 +91,13 @@ impl RuntimeStorageHost for Storage {
             .get(path)
             .cloned()
             .ok_or_else(|| HostError::new("missing"))
+    }
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let files = self.0.lock().unwrap();
+        let bytes = files.get(path).ok_or_else(|| HostError::new("missing"))?;
+        let start = usize::try_from(offset).unwrap_or(bytes.len()).min(bytes.len());
+        let end = start.saturating_add(length).min(bytes.len());
+        Ok(bytes[start..end].to_vec())
     }
     /// Atomically publishes one complete in-memory test entry.
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
@@ -265,11 +275,37 @@ async fn wait_for_peer_availability(peers: &HostRuntimePeerService, node: &str, 
     .expect("peer availability did not converge after listener restart");
 }
 
+#[tokio::test]
+async fn endpoint_restart_completes_durable_member_removal_without_peer_redelivery() {
+    let (storage, _, peers, service) = node(true);
+    let peer = "retired-offline-peer";
+    service.spaceStore().admitRemoteMember(peer.into(), "Peer".into(), "test".into(), "test".into(), "test".into()).unwrap();
+    service.networkControlStore().admitMember(peer.into()).unwrap();
+    let original = service.spaceStore().space().unwrap();
+    let profile = service.spaceStore().deviceProfiles().unwrap().remove(&service.localNodeId()).unwrap();
+    service.networkControlStore().removeMember(peer.into()).unwrap();
+    assert!(service.spaceStore().space().unwrap().members.contains(&peer.to_string()),
+        "fixture must retain the interrupted membership projection");
+    let identity = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage.clone()).initialize().unwrap();
+    let authority = service.networkControlStore().currentSpaceOperations().unwrap();
+    let restored = NodeSpaceService::new(storage.clone(), peers).unwrap();
+    restored.initialize(profile.clone()).unwrap();
+    let current = restored.spaceStore().space().unwrap();
+    assert_eq!(current.spaceId, original.spaceId);
+    assert_eq!(current.members, vec![identity.nodeId.clone()]);
+    assert!(!restored.spaceStore().deviceProfiles().unwrap().contains_key(peer));
+    assert_eq!(restored.networkControlStore().currentSpaceOperations().unwrap(), authority);
+    let before = storage.0.lock().unwrap().clone();
+    restored.initialize(profile).unwrap();
+    assert_eq!(*storage.0.lock().unwrap(), before, "completed startup recovery must be idempotent");
+    assert_eq!(operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage).initialize().unwrap(), identity);
+}
+
 fn print_size(stage: &str, storage: &Storage) {
     let files = storage.0.lock().unwrap();
     let packed: codec::Files = files
         .iter()
-        .map(|(path, bytes)| (path.clone(), Arc::new(pack::pack(bytes).unwrap())))
+        .map(|(path, bytes)| (path.clone(), pack::pack(bytes).unwrap()))
         .collect();
     let mut snapshot = Vec::new();
     codec::commit_packed_snapshot(
@@ -289,13 +325,80 @@ fn print_size(stage: &str, storage: &Storage) {
         codec::snapshot_required_entries(&packed).unwrap()
     );
 
-    for (path, bytes) in &packed {
+    for (path, bytes) in packed.iter() {
         assert_eq!(&pack::unpack(bytes).unwrap(), files.get(path).unwrap());
     }
     for (path, bytes) in files.iter() {
         println!("  {path}: {} / {} packed", bytes.len(), packed[path].len());
     }
 }
+#[tokio::test]
+async fn constrained_gateway_retires_only_old_terminal_receipts_and_retries_failed_cleanup() {
+    use operit_store::PreferencesDataStore::{CoreNodeStateStore, stringPreferencesKey};
+    let (a_store, _a_router, a_peer, a_space) = node(false);
+    let (b_store, _b_router, b_peer, b_space) = node(true);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        a_peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
+        b_peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
+        let b_id = b_space.localNodeId();
+        let address = PeerStateStore::new(b_store.clone()).hostConfig().unwrap().unwrap().bindAddress;
+        let pairing = a_peer.startPairing(PeerEndpoint { nodeId: b_id.clone(), address }, Some(PeerTransport::Tcp)).await.unwrap();
+        let code = b_peer.pairingPrompts().unwrap()[0].confirmationCode.clone();
+        a_peer.finishPairing(&pairing.pairingId, &code).await.unwrap();
+        let request = a_space.requestDeviceSpaceJoin(b_id).await.unwrap();
+        let path = "runtime/link_access/space_merge_inbound.preferences.json";
+        let mut pending = storedRecords(&b_store, path)[&request.requestId].clone();
+        assert!(pending["source"]["controlOperations"].as_array().unwrap().is_empty());
+        let outbound = storedRecords(&a_store, "runtime/link_access/space_merge_outbound.preferences.json");
+        let sourceOperations = outbound[&request.requestId]["source"]["controlOperations"].clone();
+        assert!(!sourceOperations.as_array().unwrap().is_empty(), "outgoing retry lost its source authority");
+        // Simulate receipts and an in-flight application written by older firmware.
+        pending["source"]["controlOperations"] = sourceOperations;
+        CoreNodeStateStore::newWithStorage(b_store.clone(), path).edit(|prefs| {
+            prefs.set(&stringPreferencesKey(&request.requestId), pending.clone());
+            for index in 0..6 {
+                let mut record = pending.clone();
+                let id = format!("retired-{index}");
+                record["request"]["requestId"] = serde_json::json!(id);
+                record["request"]["status"] = serde_json::json!("expired");
+                record["request"]["createdAt"] = serde_json::json!(index);
+                for field in ["controlOperations", "deviceProfiles", "topology"] {
+                    record["source"][field] = serde_json::json!([]);
+                }
+                record["accepted"] = record["source"].clone();
+                prefs.set(&stringPreferencesKey(&id), record);
+            }
+        }).unwrap();
+        let before = storedRecords(&b_store, path);
+        *b_store.3.lock().unwrap() = Some(0);
+        assert!(b_space.incomingDeviceSpaceJoins().await.unwrap().is_empty());
+        assert_eq!(storedRecords(&b_store, path), before, "failed publication retired an application");
+        let incoming = b_space.incomingDeviceSpaceJoins().await.unwrap();
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].requestId, request.requestId);
+        let retained = storedRecords(&b_store, path);
+        assert_eq!(retained.len(), 3);
+        assert!(retained.contains_key("retired-4") && retained.contains_key("retired-5"));
+        pending["source"]["controlOperations"] = serde_json::json!([]);
+        assert_eq!(retained[&request.requestId], pending, "compaction changed live consent");
+        for id in ["retired-4", "retired-5"] {
+            assert!(retained[id]["accepted"].is_null());
+            for field in ["controlOperations", "deviceProfiles", "topology"] {
+                assert!(retained[id]["source"][field].as_array().unwrap().is_empty());
+            }
+        }
+        assert_eq!(b_space.spaceStore().space().unwrap().members, vec![b_space.localNodeId()]);
+        assert_eq!(a_space.spaceChannelScope(&b_space.localNodeId()).unwrap(), None);
+        a_space.refreshDeviceSpaceJoin(request.requestId.clone()).await.unwrap();
+        let outbound = storedRecords(&a_store, "runtime/link_access/space_merge_outbound.preferences.json");
+        assert!(!outbound[&request.requestId]["source"]["controlOperations"].as_array().unwrap().is_empty(),
+            "compacted gateway response changed the original outgoing submission");
+    }).await;
+    a_peer.stop().await.unwrap();
+    b_peer.stop().await.unwrap();
+    result.unwrap();
+}
+
 #[tokio::test]
 async fn paired_edge_requires_explicit_approval_and_restores_space() {
     let (a_store, _a_router, a_peer, a_space) = node(false);
@@ -326,6 +429,37 @@ async fn paired_edge_requires_explicit_approval_and_restores_space() {
             .finishPairing(&pairing.pairingId, &code)
             .await
             .unwrap();
+        // Typed encoded replies preserve the ordinary snapshot result and all
+        // local route checks, including direct-origin and current pairing.
+        {
+            use operit_node_runtime::PeerRouter::PeerRouter as _;
+            use operit_link::{CoreCallRequest, CoreLinkResponse, CoreValue, RoutedCoreRequest, RoutedCoreRequestKind};
+            let call = CoreCallRequest::new("snapshot-parity", NODE_SPACE_TARGET, "snapshot", CoreValue::Null);
+            let routed = RoutedCoreRequest {
+                spaceId: a_space.spaceStore().initialize().unwrap().spaceId,
+                originNodeId: a_id.clone(), targetNodeId: b_id.clone(), ttl: 0,
+                routeKind: RoutedCoreRequestKind::Target, payload: call.clone(),
+            };
+            let encoded = b_router.prepareRoutedCall(&a_id, &routed).unwrap().unwrap();
+            let CoreLinkResponse::Call(decoded) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call reply expected") };
+            assert_eq!(decoded.requestId, call.requestId);
+            assert_eq!(decoded.result.unwrap(), b_space.acceptPeerSpaceCall(&a_id, call).unwrap());
+            for invalid in 0..4 {
+                let mut altered = routed.clone();
+                match invalid {
+                    0 => altered.targetNodeId = "other".into(),
+                    1 => altered.originNodeId = "other".into(),
+                    2 => altered.ttl = 1,
+                    _ => altered.routeKind = RoutedCoreRequestKind::SpaceRoute,
+                }
+                let encoded = b_router.prepareRoutedCall(&a_id, &altered).unwrap().unwrap();
+                let CoreLinkResponse::Call(decoded) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call reply expected") };
+                assert!(decoded.result.is_err());
+            }
+            let encoded = b_router.prepareRoutedCall("unpaired", &RoutedCoreRequest { originNodeId: "unpaired".into(), ..routed }).unwrap().unwrap();
+            let CoreLinkResponse::Call(decoded) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call reply expected") };
+            assert!(decoded.result.is_err());
+        }
         print_size("paired", &b_store);
         assert!(
             b_store.list("runtime/sync").unwrap().is_empty(),
@@ -389,6 +523,80 @@ async fn paired_edge_requires_explicit_approval_and_restores_space() {
             .networkControlStore()
             .nodeHasCapability(&a_id, "network.approval", None)
             .unwrap());
+        {
+            use operit_node_runtime::PeerRouter::PeerRouter as _;
+            let snapshot = b_space.acceptPeerSpaceCall(&a_id, CoreCallRequest::new("snapshot", NODE_SPACE_TARGET, "snapshot", CoreValue::Null)).unwrap();
+            let call = CoreCallRequest::new("typed-observe", NODE_SPACE_TARGET, "observeSpaceSnapshot", snapshot);
+            let routed = operit_link::RoutedCoreRequest {
+                spaceId: b_space.spaceStore().space().unwrap().spaceId,
+                originNodeId: a_id.clone(), targetNodeId: b_id.clone(), ttl: 0,
+                routeKind: operit_link::RoutedCoreRequestKind::Target, payload: call.clone(),
+            };
+            let encode = |route: operit_link::RoutedCoreRequest<CoreCallRequest>, mismatch: bool| {
+                let mut wire = route.payload.clone();
+                wire.args = operit_link::toCoreValue(route).unwrap();
+                if mismatch { wire.requestId = operit_link::CoreRequestId::new("mismatch"); }
+                operit_link::encodeLink(operit_link::CoreLinkRequest::Call(wire)).unwrap()
+            };
+            let mut ingress = encode(routed.clone(), false);
+            let encoded = b_router.prepareEncodedCall(&a_id, &mut ingress).unwrap().unwrap();
+            assert!(ingress.is_empty(), "handled ingress retained its consumed frame");
+            let mut unsupported = routed.clone();
+            unsupported.payload.methodName = "snapshot".into();
+            let mut untouched = encode(unsupported, false);
+            let original = untouched.clone();
+            assert!(b_router.prepareEncodedCall(&a_id, &mut untouched).is_none());
+            assert_eq!(untouched, original, "fallback ingress was consumed");
+            let operit_link::CoreLinkResponse::Call(decoded) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call reply expected") };
+            assert_eq!(decoded.result.unwrap(), b_space.acceptPeerSpaceCall(&a_id, call).unwrap());
+            let mut control = routed.clone();
+            control.ttl = 4; // Same-Space control routes retain their ordinary positive budget.
+            control.payload.target = operit_node_runtime::NodeSpaceService::NODE_SPACE_CONTROL_TARGET.into();
+            control.payload.methodName = "exchange".into();
+            control.payload.args = operit_link::toCoreValue(b_space.networkControlStore().currentSpaceOperations().unwrap()).unwrap();
+            let expected = operit_node_runtime::NodeSpaceService::acceptSpaceControlCall(b_space.as_ref(), &a_id, control.payload.clone()).unwrap();
+            let mut ingress = encode(control.clone(), false);
+            let encoded = b_router.prepareEncodedCall(&a_id, &mut ingress).unwrap().unwrap();
+            assert!(ingress.is_empty());
+            let operit_link::CoreLinkResponse::Call(decoded) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call reply expected") };
+            assert_eq!(decoded.result.unwrap(), expected);
+            let mut bounded = control.clone();
+            bounded.payload.methodName = "exchangeBounded".into();
+            bounded.payload.args = operit_link::toCoreValue(serde_json::json!({
+                "version": 1, "maxMessageBytes": b_peer.maxMessageBytes(),
+                "operations": b_space.networkControlStore().currentSpaceOperations().unwrap(),
+            })).unwrap();
+            let expected = operit_node_runtime::NodeSpaceService::acceptSpaceControlCall(b_space.as_ref(), &a_id, bounded.payload.clone()).unwrap();
+            let mut ingress = encode(bounded, false);
+            let encoded = b_router.prepareEncodedCall(&a_id, &mut ingress).unwrap().unwrap();
+            assert!(ingress.is_empty());
+            let operit_link::CoreLinkResponse::Call(decoded) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call reply expected") };
+            assert_eq!(decoded.result.unwrap(), expected);
+            for invalid in 0..3 {
+                let mut altered = control.clone();
+                match invalid {
+                    0 => altered.spaceId = "other-space".into(),
+                    1 => altered.targetNodeId = "other-node".into(),
+                    _ => altered.originNodeId = "other-peer".into(),
+                }
+                let encoded = b_router.prepareEncodedCall(&a_id, &mut encode(altered, false)).unwrap().unwrap();
+                let operit_link::CoreLinkResponse::Call(decoded) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call reply expected") };
+                assert!(decoded.result.is_err());
+            }
+            for invalid in 0..5 {
+                let mut altered = routed.clone();
+                match invalid {
+                    0 => altered.targetNodeId = "other".into(),
+                    1 => altered.originNodeId = "other".into(),
+                    2 => altered.ttl = 1,
+                    3 => altered.routeKind = operit_link::RoutedCoreRequestKind::SpaceRoute,
+                    _ => {},
+                }
+                let encoded = b_router.prepareEncodedCall(&a_id, &mut encode(altered, invalid == 4)).unwrap().unwrap();
+                let operit_link::CoreLinkResponse::Call(decoded) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call reply expected") };
+                assert!(decoded.result.is_err());
+            }
+        }
         print_size("approved", &b_store);
         assert!(
             b_store.list("runtime/sync").unwrap().is_empty(),
@@ -836,6 +1044,9 @@ mod core_edge {
         }
     }
     fn edge_node(storage: Arc<Storage>) -> EdgeFixture {
+        edge_node_with_limits(storage, operit_node_runtime::HostRuntimePeerService::PeerRuntimeLimits::default())
+    }
+    fn edge_node_with_limits(storage: Arc<Storage>, limits: operit_node_runtime::HostRuntimePeerService::PeerRuntimeLimits) -> EdgeFixture {
         configure_listener(&storage);
         let id = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage.clone())
             .initialize()
@@ -855,7 +1066,7 @@ mod core_edge {
                 model: "ESP32-2432S028".into(),
                 pairingIncarnation: None,
             },
-            operit_node_runtime::HostRuntimePeerService::PeerRuntimeLimits::default(),
+            limits,
         )
         .unwrap();
         let service = NodeSpaceService::new(storage.clone(), peers.clone()).unwrap();
@@ -1381,6 +1592,96 @@ mod core_edge {
             .unwrap());
     }
 
+    /// The real Core pulls a constrained endpoint one authority record at a
+    /// time, and refuses oversized reverse traffic before it reaches TCP.
+    #[tokio::test]
+    async fn core_uses_endpoint_control_pages_and_stops_oversized_reverse_projection() {
+        let _guard = TEST_LOCK.lock().await;
+        let core = core_node();
+        let edge = edge_node_with_limits(Arc::new(Storage(Mutex::default(), true,
+            Mutex::default(), Mutex::default())),
+            operit_node_runtime::HostRuntimePeerService::PeerRuntimeLimits::constrained());
+        start(&core, &edge).await;
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            let core_id = core.router.localNodeId();
+            let edge_id = edge.service.localNodeId();
+            pair(&core.peers, &edge.peers, &edge.storage, edge_id.clone()).await;
+            let request = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            edge.service.incomingDeviceSpaceJoins().await.unwrap();
+            edge.service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
+            assert_eq!(core.service.refreshDeviceSpaceJoin(request.requestId).await.unwrap().status, SpaceJoinStatus::Joined);
+            edge.router.traffic.lock().unwrap().clear();
+            core.sync.synchronizeOnce().await.unwrap();
+            let traffic = edge.router.traffic.lock().unwrap().clone();
+            assert!(traffic.iter().any(|(_, method, _)| method == "projectionProtocol"));
+            assert!(traffic.iter().any(|(_, method, _)| method == "snapshotHeader"));
+            assert!(traffic.iter().filter(|(_, method, _)| method == "snapshotControlPage").count() >= 2);
+            assert!(!traffic.iter().any(|(_, method, _)| matches!(method.as_str(), "snapshot" | "exchange")), "{traffic:?}");
+            assert!(traffic.iter().any(|(_, method, _)| method == "exchangePreferences"), "{traffic:?}");
+            assert_eq!(core.service.deviceSpaceControl().unwrap().deviceIdentityIds[&core_id], "user");
+            assert_no_replica(&core, &edge);
+            // A deliberately small response budget must produce a short
+            // protocol error, rather than a host backtrace that breaks TCP.
+            let bounded = CoreCallRequest::new("bounded-error-budget", NODE_SPACE_CONTROL_TARGET,
+                "exchangeBounded", operit_link::toCoreValue(serde_json::json!({
+                    "version": 1, "maxMessageBytes": 1100, "operations": [],
+                })).unwrap());
+            let response = edge.service.callNode(core_id.clone(), bounded).await;
+            let error = response.result.as_ref().unwrap_err();
+            assert_eq!(error.code, "SPACE_MESSAGE_LIMIT");
+            assert!(error.backtrace.is_none());
+            assert!(operit_link::encodeLink(operit_link::CoreLinkResponse::Call(response)).unwrap().len() < 1100);
+            assert!(edge.peers.spaceConnection().is_some());
+            // Add durable unknown fields only on Core. They are part of the
+            // immutable envelope and must not be dropped to make the batch fit.
+            let store = core.service.networkControlStore();
+            let mut large = store.currentSpaceOperations().unwrap().remove(0);
+            large.payload["futureAuthorityExtension"] = serde_json::json!("x".repeat(9000));
+            let projection = operit_store::NetworkControlStore::NetworkControlStore::projectionStore(core.storage.clone());
+            large.opId = "large-archived-operation".into();
+            large.entityId = large.opId.clone();
+            large.payload["commandId"] = serde_json::json!(large.entityId);
+            // It remains in the current Space export, but a second bootstrap is
+            // ignored by policy replay rather than granting additional rights.
+            projection.setTypedEntry(&large.opId, &large).unwrap();
+            edge.router.traffic.lock().unwrap().clear();
+            let before = edge.storage.0.lock().unwrap().clone();
+            let error = core.sync.synchronizeOnce().await.unwrap_err();
+            assert!(error.contains("SPACE_MESSAGE_LIMIT"), "{error}");
+            let traffic = edge.router.traffic.lock().unwrap().clone();
+            assert!(!traffic.iter().any(|(_, method, _)| method == "observeSpaceSnapshot" || method == "exchange"), "{traffic:?}");
+            assert_eq!(*edge.storage.0.lock().unwrap(), before);
+            assert!(core.peers.spaceConnection().is_some());
+            assert!(edge.peers.spaceConnection().is_some());
+            // Both ordinary and prepared ingress reject the oversized bytes
+            // before attempting to decode the deliberately malformed policy.
+            for (target, method) in [(NODE_SPACE_TARGET, "observeSpaceSnapshot"),
+                (NODE_SPACE_CONTROL_TARGET, "exchange"), (NODE_SPACE_CONTROL_TARGET, "exchangeBounded")] {
+                let request = CoreCallRequest::new("oversized-ingress", target, method,
+                    operit_link::CoreValue::String("x".repeat(9000)));
+                let ordinary = if target == NODE_SPACE_TARGET {
+                    edge.service.acceptPeerSpaceCall(&core_id, request.clone())
+                } else {
+                    operit_node_runtime::NodeSpaceService::acceptSpaceControlCall(edge.service.as_ref(), &core_id, request.clone())
+                };
+                assert!(ordinary.unwrap_err().contains("SPACE_MESSAGE_LIMIT"));
+                let routed = RoutedCoreRequest { spaceId: edge.service.spaceStore().space().unwrap().spaceId,
+                    originNodeId: core_id.clone(), targetNodeId: edge_id.clone(), ttl: 0,
+                    routeKind: RoutedCoreRequestKind::Target, payload: request.clone() };
+                let wire = CoreCallRequest::new(request.requestId.0.clone(), target, method, operit_link::toCoreValue(routed).unwrap());
+                let mut ingress = operit_link::encodeLink(operit_link::CoreLinkRequest::Call(wire)).unwrap();
+                let encoded = edge.router.inner.prepareEncodedCall(&core_id, &mut ingress).unwrap().unwrap();
+                let operit_link::CoreLinkResponse::Call(response) = operit_link::decodeLink(&encoded).unwrap() else { panic!("Call expected") };
+                assert!(response.result.unwrap_err().message.contains("SPACE_MESSAGE_LIMIT"));
+                assert_eq!(*edge.storage.0.lock().unwrap(), before);
+            }
+
+        }).await;
+        core.peers.stop().await.unwrap();
+        edge.peers.stop().await.unwrap();
+        result.unwrap();
+    }
+
     #[tokio::test]
     async fn full_core_pairs_with_edge_and_only_explicit_approval_joins() {
         let _guard = TEST_LOCK.lock().await;
@@ -1449,7 +1750,10 @@ mod core_edge {
                     .unwrap()
                     .is_some()
             );
-            assert!(!core
+            // Source members enter as users. The current built-in user role
+            // may provide storage; the endpoint Edge still cannot replicate.
+            assert_eq!(core.service.deviceSpaceControl().unwrap().deviceIdentityIds[&core_id], "user");
+            assert!(core
                 .service
                 .networkControlStore()
                 .nodeHasCapability(&core_id, "storage.provide", None)
@@ -2381,7 +2685,7 @@ mod core_edge {
                                 "$node.sync",
                                 method,
                                 operit_link::toCoreValue(
-                                    serde_json::json!({"operations":[],"complete":true}),
+                                    serde_json::json!({"operations":[]}),
                                 )
                                 .unwrap(),
                             ),
@@ -2472,8 +2776,12 @@ mod core_edge {
                 None
             );
             assert_no_replica(&core, &edge);
+            // Clearing a role restores the default user, which may provide
+            // storage. Explicitly restore the Edge identity to revoke it.
             core.service
-                .clearDeviceSpaceIdentity(edge_id.clone())
+                .setDeviceSpaceIdentity(NetworkControlIdentityAssignment {
+                    nodeId: edge_id.clone(), roleId: "edge".into(),
+                })
                 .unwrap();
             core.sync.synchronizeOnce().await.unwrap();
             assert!(!edge

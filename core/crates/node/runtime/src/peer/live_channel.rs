@@ -1,5 +1,5 @@
 //! One authenticated reader handles control frames before logical request dispatch.
-use super::crypto::{error, Channel};
+use super::crypto::{error, Channel, StoredMessage};
 use super::heartbeat::{Heartbeat, HeartbeatAction};
 use futures_util::{future::LocalBoxFuture, stream::FuturesUnordered, StreamExt};
 use operit_host_api::HostRuntimeTaskSchedulerHost;
@@ -15,7 +15,8 @@ const TICK_MS: u64 = 1_000;
 pub(super) struct LiveChannel {
     pub raw: Arc<dyn PeerConnection>,
     channel: Arc<Channel>,
-    inbox: AsyncMutex<mpsc::UnboundedReceiver<PeerMessage>>,
+    inbox: AsyncMutex<mpsc::UnboundedReceiver<StoredMessage<PeerMessage>>>,
+    compact: bool,
     heartbeat: Mutex<Heartbeat>,
     failure: Mutex<Option<CoreLinkError>>,
     changed: Box<dyn Fn() + Send + Sync>,
@@ -24,13 +25,13 @@ pub(super) struct LiveChannel {
 impl LiveChannel {
     /// Starts one authenticated reader on the installed cross-platform Host scheduler.
     pub(super) fn start(
-        channel: Arc<Channel>, scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+        channel: Arc<Channel>, scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>, compact: bool,
         changed: impl Fn() + Send + Sync + 'static,
     ) -> Result<Arc<Self>, CoreLinkError> {
         let now = scheduler.monotonicTimeMillis().map_err(|error| super::crypto::error(error.to_string()))?;
         let (sender, receiver) = mpsc::unbounded_channel();
         let live = Arc::new(Self {
-            raw: channel.raw.clone(), channel, inbox: AsyncMutex::new(receiver),
+            raw: channel.raw.clone(), channel, inbox: AsyncMutex::new(receiver), compact,
             heartbeat: Mutex::new(Heartbeat::new(now)),
             failure: Mutex::new(None), changed: Box::new(changed),
         });
@@ -41,6 +42,8 @@ impl LiveChannel {
         }))).map_err(|e| error(e.to_string()))?;
         Ok(live)
     }
+
+    pub(super) fn compactMessages(&self) -> bool { self.compact }
 
     /// Reports whether this connection generation has reached a terminal failure.
     pub(super) fn isAvailable(&self) -> bool { self.failure.lock().unwrap().is_none() }
@@ -60,8 +63,17 @@ impl LiveChannel {
         }
     }
 
+    /// Sends already encoded standard Link replies after authorization recheck.
+    pub(super) async fn sendEncodedBatch(&self, messages: Vec<Vec<u8>>) -> Result<(), CoreLinkError> {
+        if let Some(error) = self.failure.lock().unwrap().clone() { return Err(error); }
+        match self.channel.sendEncodedBatch(messages).await {
+            Ok(()) => Ok(()),
+            Err(error) => { self.terminate(error.clone()).await; Err(error) }
+        }
+    }
+
     /// Receives only data frames; authenticated control frames never enter the logical dispatcher.
-    pub(super) async fn receive(&self) -> Result<Option<PeerMessage>, CoreLinkError> {
+    pub(super) async fn receiveStored(&self) -> Result<Option<StoredMessage<PeerMessage>>, CoreLinkError> {
         let message = self.inbox.lock().await.recv().await;
         match message {
             Some(message) => Ok(Some(message)),
@@ -89,12 +101,12 @@ impl LiveChannel {
     }
 
     /// Reads independently of operation execution, with one idle probe per connection.
-    async fn readLoop(self: Arc<Self>, sender: mpsc::UnboundedSender<PeerMessage>, scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>) {
+    async fn readLoop(self: Arc<Self>, sender: mpsc::UnboundedSender<StoredMessage<PeerMessage>>, scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>) {
         let mut writes = FuturesUnordered::<LocalBoxFuture<'static, Result<(), CoreLinkError>>>::new();
         let mut tick = scheduler.waitForHostRuntimeDelay(TICK_MS);
         let result: Result<(), CoreLinkError> = loop {
             tokio::select! {
-                message = self.channel.receive() => {
+                message = self.channel.receiveStored(self.compact) => {
                     let message = match message {
                         Ok(Some(message)) => message,
                         Ok(None) => break Err(error("Authenticated channel closed")),
@@ -105,8 +117,12 @@ impl LiveChannel {
                         Err(error) => break Err(super::crypto::error(error.to_string())),
                     };
                     self.heartbeat.lock().unwrap().received(now);
-                    match message {
-                        PeerMessage::Request(CoreLinkRequest::Call(request)) if request.target == CONTROL_TARGET => {
+                    let control = match message.callHeader() { Ok(header) => header.is_some_and(|header| header.control), Err(error) => break Err(error) };
+                    if control {
+                        let request = match message.decodeWith(PeerMessage::decode) {
+                            Ok(PeerMessage::Request(CoreLinkRequest::Call(request))) => request,
+                            Ok(_) => break Err(error("Invalid control envelope")), Err(error) => break Err(error),
+                        };
                             if request.args != CoreValue::Null { break Err(error("Invalid channel control payload")); }
                             match request.methodName.as_str() {
                                 "ping" => {
@@ -116,8 +132,8 @@ impl LiveChannel {
                                 "pong" => self.heartbeat.lock().unwrap().pong(&request.requestId.0, now),
                                 _ => break Err(error("Unknown channel control operation")),
                             }
-                        }
-                        message => if sender.send(message).is_err() { break Err(error("Authenticated channel consumer closed")); },
+                    } else if sender.send(message).is_err() {
+                        break Err(error("Authenticated channel consumer closed"));
                     }
                 }
                 result = &mut tick => {

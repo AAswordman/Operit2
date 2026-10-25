@@ -38,6 +38,20 @@ pub(crate) struct Record {
     #[serde(default)]
     pub(crate) cancelRequested: bool,
 }
+impl Record {
+    fn intoCoreValue(mut self) -> Result<CoreValue, String> {
+        let source = takeSnapshotOperations(&mut self.source);
+        let accepted = self.accepted.as_mut().map(|snapshot| takeSnapshotOperations(snapshot));
+        let CoreValue::Map(mut fields) = toCoreValue(self).map_err(|error| error.to_string())? else {
+            return Err("Invalid join record wire envelope".into());
+        };
+        attachSnapshotOperations(fields.get_mut("source").ok_or("Missing join source")?, source)?;
+        if let Some(accepted) = accepted {
+            attachSnapshotOperations(fields.get_mut("accepted").ok_or("Missing join receipt")?, accepted)?;
+        }
+        Ok(CoreValue::Map(fields))
+    }
+}
 #[derive(Serialize, Deserialize)]
 struct Submission {
     requestId: String,
@@ -82,25 +96,65 @@ fn expire(record: &mut Record, now: i64, spaceId: &str) {
     }
 }
 fn load(service: &dyn NodeSpaceContext, path: &str, id: &str) -> Result<Record, String> {
-    store(service).records::<Record>(path)?.remove(id).ok_or_else(|| "Join request not found".into())
+    store(service).record(path, id)?.ok_or_else(|| "Join request not found".into())
 }
 // Accepted control history already lives in the common synchronization log.
 // Persist only the decision/membership receipt, not another complete log per
 // request. Rehydrate the wire response below; old full records remain readable.
 pub(crate) fn saveRecord(service: &dyn NodeSpaceContext, path: &str, id: &str, record: &Record) -> Result<(), String> {
-    let durable = Record {
-        request: record.request.clone(), sourceSpaceId: record.sourceSpaceId.clone(),
-        sourceRevision: record.sourceRevision, targetSpaceId: record.targetSpaceId.clone(),
-        profile: record.profile.clone(), source: if active(&record.request.status) { record.source.clone() } else {
-            // A terminal request is an identity/membership receipt, not another
-            // replica of the applicant's profiles, topology and policy log.
-            PeerSpaceSnapshot { space: record.source.space.clone(), deviceProfiles: Vec::new(), topology: Vec::new(), controlOperations: Vec::new(), departures: Vec::new() }
-        }, unavailableSince: record.unavailableSince,
-        approvedDecision: record.approvedDecision, decisionRevision: record.decisionRevision,
-        cancelRequested: record.cancelRequested,
-        accepted: record.accepted.as_ref().map(|accepted| Box::new(PeerSpaceJoin {
-            space: accepted.space.clone(), deviceProfiles: Vec::new(), topology: Vec::new(), controlOperations: Vec::new(), departures: Vec::new(),
-        })),
+    saveRecordWithSource(service, path, id, record, &record.source)
+}
+fn saveRecordWithSource(service: &dyn NodeSpaceContext, path: &str, id: &str, record: &Record, source: &PeerSpaceSnapshot) -> Result<(), String> {
+    let constrained = service.storage().nodeLocalApplicationHistoryLimit().is_some();
+    let live = active(&record.request.status);
+    // Source commands have already passed departure observation on receipt.
+    // Review/recovery needs the source membership and presentation facts, not
+    // another copy of its authority log. Outgoing submissions retain that log.
+    let compactSource = constrained && path == INBOUND;
+    if live && record.accepted.is_none() && !compactSource && std::ptr::eq(source, &record.source) {
+        return store(service).putRecord(path, id, record);
+    }
+    #[derive(Serialize)]
+    struct Snapshot<'a> {
+        space: &'a CoreSpace,
+        deviceProfiles: &'a [CoreSpaceDeviceProfile],
+        controlOperations: &'a [SyncOperation],
+        topology: &'a [operit_store::CoreSpaceStore::CoreSpaceTopologyRecord],
+        #[serde(skip_serializing_if = "<[SyncOperation]>::is_empty")]
+        departures: &'a [SyncOperation],
+    }
+    #[derive(Serialize)]
+    struct Durable<'a> {
+        request: &'a SpaceJoinRequest,
+        sourceSpaceId: &'a str,
+        sourceRevision: i64,
+        targetSpaceId: &'a str,
+        profile: &'a CoreSpaceDeviceProfile,
+        source: Snapshot<'a>,
+        accepted: Option<Snapshot<'a>>,
+        unavailableSince: Option<i64>,
+        approvedDecision: Option<bool>,
+        decisionRevision: Option<i64>,
+        cancelRequested: bool,
+    }
+    let durable = Durable {
+        request: &record.request, sourceSpaceId: &record.sourceSpaceId,
+        sourceRevision: record.sourceRevision, targetSpaceId: &record.targetSpaceId,
+        profile: &record.profile,
+        source: Snapshot {
+            space: &source.space,
+            deviceProfiles: if live { &source.deviceProfiles } else { &[] },
+            topology: if live { &source.topology } else { &[] },
+            controlOperations: if live && !compactSource { &source.controlOperations } else { &[] },
+            departures: if live && !compactSource { &source.departures } else { &[] },
+        },
+        // A terminal endpoint receipt cannot resume membership handoff. Keep
+        // its request identity/status, without an obsolete accepted snapshot.
+        accepted: record.accepted.as_ref().filter(|_| live || !constrained).map(|accepted| Snapshot {
+            space: &accepted.space, deviceProfiles: &[], topology: &[], controlOperations: &[], departures: &[],
+        }),
+        unavailableSince: record.unavailableSince, approvedDecision: record.approvedDecision,
+        decisionRevision: record.decisionRevision, cancelRequested: record.cancelRequested,
     };
     store(service).putRecord(path, id, &durable)
 }
@@ -222,6 +276,7 @@ fn recoverCommittedApproval(service: &dyn NodeSpaceContext, record: &mut Record,
     // reviewer's own retry; doctor reports it instead of inventing approval.
     let state = service.networkControlStore().currentState()?;
     if !record.source.space.members.iter().all(|node| state.memberNodeIds.contains(node)) { return Ok(()); }
+    drop(state);
     restoreClaimedMemberProfiles(service, record, current)?;
     // The projection rebuild needs the applicant's own presentation facts;
     // restoreClaimedMemberProfiles only covers members already projected.
@@ -284,6 +339,18 @@ pub(crate) const REMOVAL_EFFECTS_PATH: &str = "runtime/link_access/space_removal
 pub(crate) fn applyRemovedMemberLocalEffects(service: &dyn NodeSpaceContext, operations: &[SyncOperation]) -> Result<(), String> {
     let local = service.localNodeId();
     let spaceId = service.spaceStore().space()?.spaceId;
+    // Most exchanges contain only admissions or grants. They cannot revoke a
+    // local projection or credential, so avoid a second authority replay while
+    // their decoded log is still held by the caller.
+    if !operations.iter().any(|operation| {
+        NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|record| {
+            record.spaceId == spaceId && match record.command {
+                NetworkControlCommand::LeaveSpace => record.issuerNodeId != local,
+                NetworkControlCommand::RemoveMember { nodeId, .. } => nodeId != local,
+                _ => false,
+            }
+        })
+    }) { return Ok(()); }
     let state = service.networkControlStore().currentState()?;
     let applied = removalEffectsApplied(service)?;
     let mut removed = Vec::new();
@@ -449,13 +516,13 @@ fn leaveLocked(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
     // receipt and replacement identity on bounded storage. None can belong to
     // the fresh Space, whose id has not been minted yet.
     for path in [INBOUND, INBOX] {
-        for id in store(service).records::<Record>(path)?.into_keys() {
+        for id in store(service).recordValues::<Record>(path)?.into_iter().map(|record| record.request.requestId) {
             store(service).deleteRecord(RESULTS, &id)?;
             store(service).deleteRecord(path, &id)?;
         }
     }
-    for (id, record) in store(service).records::<Record>(OUTBOUND)? {
-        if !active(&record.request.status) { store(service).deleteRecord(OUTBOUND, &id)?; }
+    for record in store(service).recordValues::<Record>(OUTBOUND)? {
+        if !active(&record.request.status) { store(service).deleteRecord(OUTBOUND, &record.request.requestId)?; }
     }
     space_departure::prepare(service)?;
     let space = service.spaceStore().leave()?;
@@ -562,17 +629,18 @@ async fn sendSubmission(service: &dyn NodeSpaceContext, record: &Record) -> Resu
         sourceRevision: record.sourceRevision, targetSpaceId: record.targetSpaceId.clone(), profile: record.profile.clone(), source: record.source.clone(),
     }).map_err(|e| e.to_string())?).await
 }
+fn responseIdentity(record: &Record) -> [&str; 5] {
+    [&record.request.requestId, &record.request.applicantDeviceId, &record.request.targetDeviceId,
+        &record.targetSpaceId, &record.sourceSpaceId]
+}
 fn validateResponse(local: &Record, remote: &Record) -> Result<(), String> {
-    if local.request.requestId != remote.request.requestId
-        || local.request.applicantDeviceId != remote.request.applicantDeviceId
-        || local.request.targetDeviceId != remote.request.targetDeviceId
-        || local.targetSpaceId != remote.targetSpaceId || local.sourceSpaceId != remote.sourceSpaceId {
+    if responseIdentity(local) != responseIdentity(remote) {
         return Err("Join response identity mismatch".into());
     }
     Ok(())
 }
 pub(crate) fn outgoing(service: &dyn NodeSpaceContext) -> Result<Vec<SpaceJoinRequest>, String> {
-    let mut records: Vec<_> = store(service).records::<Record>(OUTBOUND)?.into_values().map(|r| r.request).collect();
+    let mut records: Vec<_> = store(service).recordValues::<Record>(OUTBOUND)?.into_iter().map(|r| r.request).collect();
     // Do not expire locally: a lost reply may hide a completed remote approval.
     records.sort_by_key(|r| r.createdAt);
     Ok(records)
@@ -660,13 +728,15 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
             return Err("Join request must merge a distinct source Space, not the target itself".into());
         }
         space_departure::observe(service, peer, &[], &input.source.controlOperations)?;
-        let mut records = store(service).records::<Record>(INBOUND)?;
-        if let Some(old) = records.get(&input.requestId) {
+        let mut records = store(service).recordValues::<Record>(INBOUND)?;
+        pruneCompletedRequests(service, &mut records)?;
+        if let Some(index) = records.iter().position(|record| record.request.requestId == input.requestId) {
+            let old = records.swap_remove(index);
             if old.request.applicantDeviceId != peer || old.targetSpaceId != input.targetSpaceId
                 || old.sourceSpaceId != input.sourceSpaceId || old.sourceRevision != input.sourceRevision {
                 return Err("Join request id belongs to another submission".into());
             }
-            old.clone()
+            old
         } else {
             // A submission from a different source Space means the applicant
             // left and forked a new one; its previous application or admission
@@ -674,18 +744,18 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
             // submission starts a real review instead of being blocked
             // forever. Resubmissions from the same source Space stay rejected.
             if !cancellation {
-                for (id, record) in records.iter_mut() {
+                for record in records.iter_mut() {
                     if record.request.applicantDeviceId == peer && record.targetSpaceId == current.spaceId
                         && active(&record.request.status) && record.sourceSpaceId != input.sourceSpaceId {
                         record.request.status = SpaceJoinStatus::Cancelled;
-                        saveRecord(service, INBOUND, id, record)?;
+                        saveRecord(service, INBOUND, &record.request.requestId, record)?;
                     }
                 }
             }
-            if !cancellation && records.values().filter(|r| active(&r.request.status) && r.request.expiresAt > now).count() >= 64 {
+            if !cancellation && records.iter().filter(|r| active(&r.request.status) && r.request.expiresAt > now).count() >= 64 {
                 return Err("Too many pending join requests".into());
             }
-            if !cancellation && records.values().any(|r| r.request.applicantDeviceId == peer && r.targetSpaceId == current.spaceId
+            if !cancellation && records.iter().any(|r| r.request.applicantDeviceId == peer && r.targetSpaceId == current.spaceId
                 && active(&r.request.status) && (r.request.status != SpaceJoinStatus::Pending || r.request.expiresAt > now)) {
                 return Err("An active join request already exists".into());
             }
@@ -720,7 +790,7 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
         if accepted.space.spaceId != current.spaceId { return Err("Approved Space is no longer hosted here".into()); }
         accepted.controlOperations = service.networkControlStore().currentSpaceOperations()?;
     }
-    toCoreValue(record).map_err(|e| e.to_string())
+    record.intoCoreValue()
 }
 
 async fn approvalCall<T: serde::de::DeserializeOwned>(service: &dyn NodeSpaceContext, node: &str, method: &str, args: CoreValue) -> Result<T, String> {
@@ -735,7 +805,7 @@ async fn approvalCall<T: serde::de::DeserializeOwned>(service: &dyn NodeSpaceCon
 /// Every reviewer pulls only its assignments from reachable same-Space gateways.
 /// No applicant data is replicated/broadcast and no other admin gets a popup.
 pub(crate) fn hasInbound(service: &dyn NodeSpaceContext) -> Result<bool, String> {
-    Ok(!store(service).records::<Record>(INBOUND)?.is_empty())
+    Ok(!store(service).recordValues::<Record>(INBOUND)?.is_empty())
 }
 
 /// Read-only review-state summary for diagnostics, judged through the shared
@@ -745,7 +815,7 @@ pub(crate) fn doctorSummaries(service: &dyn NodeSpaceContext) -> Result<Vec<spac
     let mut summaries = Vec::new();
     let mut seen = BTreeSet::new();
     for path in [INBOUND, INBOX] {
-        for (_, record) in store(service).records::<Record>(path)? {
+        for record in store(service).recordValues::<Record>(path)? {
             if !seen.insert(record.request.requestId.clone()) { continue; }
             let committed = record.request.status == SpaceJoinStatus::Approving
                 && record.approvedDecision == Some(true)
@@ -812,11 +882,74 @@ fn validateAssignment(service: &dyn NodeSpaceContext, record: &Record, origin: &
     }
     Ok(())
 }
+/// Endpoint NVS holds consent in flight and two recent terminal receipts, not
+/// an unbounded application archive. Active claims and approved handoffs stay
+/// durable; a retired request cannot be replayed without fresh user consent.
+fn pruneCompletedRequests(service: &dyn NodeSpaceContext, records: &mut Vec<Record>) -> Result<(), String> {
+    let Some(limit) = service.storage().nodeLocalApplicationHistoryLimit() else { return Ok(()); };
+    let mut terminal: Vec<_> = records.iter().filter(|record| !active(&record.request.status))
+        .map(|record| (record.request.createdAt, record.request.requestId.clone())).collect();
+    terminal.sort_by(|left, right| right.cmp(left));
+    for (_, id) in terminal.into_iter().skip(limit) {
+        store(service).deleteRecord(RESULTS, &id)?;
+        store(service).deleteRecord(INBOUND, &id)?;
+        records.retain(|record| record.request.requestId != id);
+    }
+    Ok(())
+}
 fn assignedRequests(service: &dyn NodeSpaceContext, origin: &str, current: &CoreSpace) -> Result<Vec<Record>, String> {
             let mut assigned = Vec::new();
-            for mut record in store(service).records::<Record>(INBOUND)?.into_values() {
+            // Validate every record before any writes, but retain only tiny
+            // summaries. Load live requests individually after the encoded
+            // snapshot is released; completed receipts need no reconciliation.
+            let mut summaries = store(service).recordSummaries::<Record, _>(INBOUND, |record| {
+                (record.request.createdAt, record.request.requestId, record.request.status)
+            })?;
+            if let Some(limit) = service.storage().nodeLocalApplicationHistoryLimit() {
+                summaries.sort_by(|left, right| (right.0, &right.1).cmp(&(left.0, &left.1)));
+                let mut completed = 0;
+                for (_, id, status) in &summaries {
+                    if !active(status) {
+                        completed += 1;
+                        if completed > limit {
+                            store(service).deleteRecord(RESULTS, id)?;
+                            store(service).deleteRecord(INBOUND, id)?;
+                        }
+                    }
+                }
+            }
+            if service.storage().nodeLocalApplicationHistoryLimit().is_some() {
+                // Release obsolete terminal snapshots before a live recovery
+                // needs room for membership. Old receipts remain readable.
+                for (_, id, status) in &summaries {
+                    if !active(status) {
+                        if let Some(record) = store(service).record::<Record>(INBOUND, id)? {
+                            saveRecord(service, INBOUND, id, &record)?;
+                        }
+                    }
+                }
+            }
+            for (_, id, status) in summaries {
+                if !matches!(status, SpaceJoinStatus::Pending | SpaceJoinStatus::Approving) { continue; }
+                let mut record = load(service, INBOUND, &id)?;
+                if service.storage().nodeLocalApplicationHistoryLimit().is_some()
+                    && (!record.source.controlOperations.is_empty() || !record.source.departures.is_empty()) {
+                    // Compact legacy inputs before recovery grows membership.
+                    saveRecord(service, INBOUND, &id, &record)?;
+                    record.source.controlOperations.clear();
+                    record.source.departures.clear();
+                }
+                // Other statuses cannot expire, recover a claim, or reassign.
+                // Avoid replaying policy while holding historical receipts.
+                if !matches!(record.request.status, SpaceJoinStatus::Pending | SpaceJoinStatus::Approving) { continue; }
+                // Reconciliation only changes the public request, its offline
+                // lease, or the receipt when transitioning to Approved. Do not
+                // parse and serialize an unchanged durable file every UI poll.
+                let before = (record.request.clone(), record.unavailableSince);
                 reconcile(service, &mut record)?;
-                saveRecord(service, INBOUND, &record.request.requestId, &record)?;
+                if record.request != before.0 || record.unavailableSince != before.1 {
+                    saveRecord(service, INBOUND, &record.request.requestId, &record)?;
+                }
                 if record.targetSpaceId == current.spaceId && record.request.reviewerDeviceId.as_deref() == Some(origin)
                     && matches!(record.request.status, SpaceJoinStatus::Pending | SpaceJoinStatus::Approving)
                     && canReview(service, origin)? { assigned.push(record); }
@@ -830,14 +963,15 @@ pub(crate) fn receiveApproval(service: &dyn NodeSpaceContext, origin: &str, requ
         return Err("Approval requires an active member of this Space".into());
     }
     match request.methodName.as_str() {
-        "assigned" => toCoreValue(assignedRequests(service, origin, &current)?).map_err(|e| e.to_string()),
+        "assigned" => assignedRequests(service, origin, &current)?.into_iter().map(Record::intoCoreValue)
+            .collect::<Result<Vec<_>, _>>().map(CoreValue::List),
         "claim" => {
             let decision: Decision = fromCoreValue(request.args).map_err(|e| e.to_string())?;
             toCoreValue(claimDecision(service, origin, decision, current)?).map_err(|e| e.to_string())
         }
         "complete" => {
             let outcome: Outcome = fromCoreValue(request.args).map_err(|e| e.to_string())?;
-            toCoreValue(completeDecision(service, origin, outcome, current)?).map_err(|e| e.to_string())
+            completeDecision(service, origin, outcome, current)?.intoCoreValue()
         }
         _ => Err("Unknown Space approval method".into()),
     }
@@ -908,6 +1042,9 @@ fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Outco
                 if !operations.iter().any(|existing| existing.opId == operation.opId) { operations.push(operation.clone()); }
                 service.networkControlStore().validateSpaceAdmission(&record.targetSpaceId,
                     &record.sourceSpaceId, &members, &operations)?;
+                // This validated log is no longer needed when publishing the
+                // member projection and exporting the accepted snapshot.
+                drop(operations);
                 service.spaceStore().importDeviceProfiles(record.source.deviceProfiles.clone())?;
                 service.spaceStore().importTopologyRecords(record.source.topology.clone())?;
                 service.networkControlStore().applyBootstrapOperation(operation)?;
@@ -951,6 +1088,10 @@ pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: 
     };
     validateResponse(&inbox, &claim.record)?;
     if matches!(claim.record.request.status, SpaceJoinStatus::Approved | SpaceJoinStatus::Rejected) { return Ok(claim.record.request); }
+    // Only correlation identity is needed after the claim. Release the inbox's
+    // duplicate source snapshot before building admission and completion state.
+    let expected = responseIdentity(&inbox).map(str::to_owned);
+    drop(inbox);
     let saved = store(service).records::<Outcome>(RESULTS)?.remove(&id);
     let outcome = if let Some(saved) = saved {
         if saved.decision.assignmentVersion != version || saved.decision.approve != approve { return Err("Stored decision differs from the claim".into()); }
@@ -994,13 +1135,21 @@ pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: 
         if !onGateway { store(service).putRecord(RESULTS, &id, &outcome)?; }
         outcome
     };
+    // Completion reloads its own durable claim. Do not retain another source
+    // snapshot or the reviewer's snapshot across that transition.
+    drop(claim.record);
+    drop(claim.current.controlOperations);
+    drop(claim.current.deviceProfiles);
+    drop(claim.current.topology);
     let record: Record = if onGateway {
         let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
         completeDecision(service, &local, outcome, localDecisionContext(service)?)?
     } else {
-        approvalCall(service, &inbox.request.targetDeviceId, "complete", toCoreValue(outcome).map_err(|e| e.to_string())?).await?
+        approvalCall(service, &expected[2], "complete", toCoreValue(outcome).map_err(|e| e.to_string())?).await?
     };
-    validateResponse(&inbox, &record)?;
+    if expected.each_ref().map(String::as_str) != responseIdentity(&record) {
+        return Err("Join response identity mismatch".into());
+    }
     // Terminal gateway state wins subsequent claims; retain remote retry results.
     // Retain the completed claim outcome for duplicate decisions and restart recovery.
     Ok(record.request)
@@ -1075,7 +1224,9 @@ fn publishOutgoingResponse(service: &dyn NodeSpaceContext, id: &str, remote: &Re
         return Ok(current.request);
     }
     // Only a cancellation receipt can clear durable intent; a concurrent poll cannot.
-    saveRecord(service, OUTBOUND, id, remote)?;
+    // The gateway may compact its stored source log. Keep our original
+    // immutable submission for retry/cancellation, borrowing it for publication.
+    saveRecordWithSource(service, OUTBOUND, id, remote, &current.source)?;
     Ok(remote.request.clone())
 }
 

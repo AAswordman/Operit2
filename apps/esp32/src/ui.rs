@@ -150,14 +150,8 @@ impl Esp32Ui {
     /// Advances animations and flushes pending display regions.
     pub fn pump(&mut self, elapsedMs: u32) {
         if let Some(scene) = &self.context.scene {
-            let state = scene.summary();
-            unsafe {
-                operit_ui_set_scene(
-                    state["active"].as_bool().unwrap_or(false),
-                    state["revision"].as_u64().unwrap_or(0) as u32,
-                    scene.tick(),
-                );
-            }
+            let (active, revision) = scene.render_state();
+            unsafe { operit_ui_set_scene(active, revision, scene.tick()); }
         }
         unsafe { operit_ui_pump(elapsedMs) };
     }

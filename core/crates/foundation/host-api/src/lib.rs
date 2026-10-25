@@ -1796,6 +1796,13 @@ pub struct RuntimeStorageEntry {
 }
 
 pub trait RuntimeStorageHost: Send + Sync {
+    /// Whether parsed preferences should remain cached. Constrained hosts may
+    /// reload node-local durable bytes on reads and release idle store state.
+    /// Concurrent handles still share a transaction; returned snapshots are immutable.
+    fn retainPreferencesCache(&self) -> bool { true }
+    /// Explicit terminal Space-application retention for bounded endpoint storage.
+    /// Cache eviction alone never authorizes deleting durable application history.
+    fn nodeLocalApplicationHistoryLimit(&self) -> Option<usize> { None }
     /// Returns the physical root used for runtime storage entries.
     fn runtimeRootDir(&self) -> Option<PathBuf>;
     /// Returns the physical root used for workspace storage entries.

@@ -3,14 +3,184 @@
 //! with commit-last recovery and a 7 KB logical bound.
 use super::runtime_storage_pack as pack;
 use operit_host_api::{HostError, HostResult};
-use std::{
-    collections::BTreeMap,
-    io::{self, Write},
-    sync::Arc,
-};
+use std::io::{self, Write};
 
 pub const STORAGE_BUDGET: usize = 7000;
-pub type Files = BTreeMap<String, Arc<Vec<u8>>>;
+/// Small sorted index with fallible growth. Values are owned once; transactions
+/// borrow unchanged records instead of cloning a second tree of paths and Arcs.
+#[derive(Debug, Default, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone))]
+pub struct Files {
+    records: Vec<(String, Vec<u8>)>,
+}
+impl Files {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Vec<u8>)> {
+        self.records.iter().map(|(path, bytes)| (path, bytes))
+    }
+    fn position(&self, path: &str) -> Result<usize, usize> {
+        self.records
+            .binary_search_by(|(key, _)| key.as_str().cmp(path))
+    }
+    pub fn get(&self, path: &str) -> Option<&Vec<u8>> {
+        self.position(path).ok().map(|index| &self.records[index].1)
+    }
+    pub fn contains_key(&self, path: &str) -> bool {
+        self.position(path).is_ok()
+    }
+    fn reserve_entry(&mut self, path: &str) -> HostResult<()> {
+        if self.position(path).is_err() {
+            self.records.try_reserve_exact(1).map_err(|_| {
+                allocation_error("file index", std::mem::size_of::<(String, Vec<u8>)>())
+            })?;
+        }
+        Ok(())
+    }
+    pub fn insert(&mut self, path: String, bytes: Vec<u8>) -> HostResult<()> {
+        self.reserve_entry(&path)?;
+        self.insert_reserved(path, bytes);
+        Ok(())
+    }
+    fn insert_reserved(&mut self, path: String, bytes: Vec<u8>) {
+        match self.position(&path) {
+            Ok(index) => self.records[index].1 = bytes,
+            Err(index) => self.records.insert(index, (path, bytes)),
+        }
+    }
+    #[cfg(test)]
+    fn remove(&mut self, path: &str) {
+        if let Ok(index) = self.position(path) {
+            self.records.remove(index);
+        }
+    }
+}
+#[cfg(test)]
+impl<const N: usize> From<[(String, Vec<u8>); N]> for Files {
+    fn from(records: [(String, Vec<u8>); N]) -> Self {
+        let mut files = Self::new();
+        for (path, bytes) in records {
+            files.insert(path, bytes).unwrap();
+        }
+        files
+    }
+}
+#[cfg(test)]
+impl FromIterator<(String, Vec<u8>)> for Files {
+    fn from_iter<T: IntoIterator<Item = (String, Vec<u8>)>>(records: T) -> Self {
+        let mut files = Self::new();
+        for (path, bytes) in records {
+            files.insert(path, bytes).unwrap();
+        }
+        files
+    }
+}
+#[cfg(test)]
+impl std::ops::Index<&str> for Files {
+    type Output = Vec<u8>;
+    fn index(&self, path: &str) -> &Self::Output {
+        self.get(path).unwrap()
+    }
+}
+
+pub fn copy_path(path: &str) -> HostResult<String> {
+    let mut copy = String::new();
+    copy.try_reserve_exact(path.len())
+        .map_err(|_| allocation_error("record path", path.len()))?;
+    copy.push_str(path);
+    Ok(copy)
+}
+
+pub enum FileChange {
+    Put { path: String, bytes: Vec<u8> },
+    Delete { path: String, recursive: bool },
+}
+impl FileChange {
+    fn removes(&self, key: &str) -> bool {
+        match self {
+            Self::Put { path, .. } => key == path,
+            Self::Delete { path, recursive } => {
+                key == path
+                    || (*recursive
+                        && key
+                            .strip_prefix(path.as_str())
+                            .is_some_and(|suffix| suffix.starts_with('/')))
+            }
+        }
+    }
+}
+
+pub trait SnapshotFiles {
+    fn entries(&self) -> impl Iterator<Item = (&str, &[u8])>;
+}
+impl SnapshotFiles for Files {
+    fn entries(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.records
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+    }
+}
+struct ChangedFiles<'a> {
+    files: &'a Files,
+    change: &'a FileChange,
+}
+impl SnapshotFiles for ChangedFiles<'_> {
+    fn entries(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        let put = match self.change {
+            FileChange::Put { path, bytes } => Some((path.as_str(), bytes.as_slice())),
+            _ => None,
+        };
+        let before = self.files.entries().filter(move |(path, _)| {
+            !self.change.removes(path) && put.is_none_or(|(new, _)| *path < new)
+        });
+        let after = self.files.entries().filter(move |(path, _)| {
+            !self.change.removes(path) && put.is_some_and(|(new, _)| *path > new)
+        });
+        before.chain(put).chain(after)
+    }
+}
+/// Reserve before touching NVS. The selected bank and in-memory authority stay
+/// unchanged on every failure; after publication, applying the change cannot allocate.
+pub fn commit_file_change(
+    files: &mut Files,
+    active: &mut Option<u8>,
+    change: FileChange,
+    backend: &mut impl SnapshotBackend,
+) -> HostResult<()> {
+    match &change {
+        FileChange::Put { path, bytes } => {
+            if files.get(path) == Some(bytes) {
+                return Ok(());
+            }
+            files.reserve_entry(path)?;
+        }
+        FileChange::Delete { .. } => {
+            if !files.entries().any(|(path, _)| change.removes(path)) {
+                return Ok(());
+            }
+        }
+    }
+    let bank = commit_snapshot_transaction(
+        &ChangedFiles {
+            files,
+            change: &change,
+        },
+        *active,
+        backend,
+    )?;
+    match change {
+        FileChange::Put { path, bytes } => files.insert_reserved(path, bytes),
+        deletion @ FileChange::Delete { .. } => {
+            files.records.retain(|(path, _)| !deletion.removes(path))
+        }
+    }
+    *active = Some(bank);
+    Ok(())
+}
 
 pub fn copy_bytes(bytes: &[u8]) -> HostResult<Vec<u8>> {
     if bytes.len() > STORAGE_BUDGET {
@@ -23,13 +193,13 @@ pub fn copy_bytes(bytes: &[u8]) -> HostResult<Vec<u8>> {
     Ok(copy)
 }
 
-fn write_packed_files(mut writer: impl Write, files: &Files) -> io::Result<()> {
+fn write_packed_files(mut writer: impl Write, files: &impl SnapshotFiles) -> io::Result<()> {
     writer.write_all(b"ONV3")?;
-    let count =
-        u16::try_from(files.len()).map_err(|_| io::Error::other("Too many runtime records"))?;
+    let count = u16::try_from(files.entries().count())
+        .map_err(|_| io::Error::other("Too many runtime records"))?;
     writer.write_all(&count.to_le_bytes())?;
     let mut previous = "";
-    for (path, bytes) in files {
+    for (path, bytes) in files.entries() {
         let mut prefix = previous
             .as_bytes()
             .iter()
@@ -89,8 +259,8 @@ pub fn decode_packed_files(bytes: &[u8]) -> HostResult<Files> {
         if path.is_empty() || files.contains_key(&path) {
             return Err(invalid());
         }
-        previous = path.clone();
-        files.insert(path, Arc::new(copy_bytes(record)?));
+        previous = copy_path(&path)?;
+        files.insert(path, copy_bytes(record)?)?;
     }
     if at != bytes.len() {
         return Err(invalid());
@@ -124,7 +294,7 @@ pub fn recover_snapshot(backend: &mut impl SnapshotBackend, active: Option<u8>) 
     Ok(())
 }
 pub fn commit_snapshot_transaction(
-    files: &Files,
+    files: &impl SnapshotFiles,
     active: Option<u8>,
     backend: &mut impl SnapshotBackend,
 ) -> HostResult<u8> {
@@ -181,7 +351,7 @@ pub fn snapshot_length(marker: u32) -> HostResult<usize> {
     }
     Ok(length)
 }
-pub fn snapshot_required_entries(files: &Files) -> HostResult<usize> {
+pub fn snapshot_required_entries(files: &impl SnapshotFiles) -> HostResult<usize> {
     let mut entries = 2; // marker update + conservative page overhead
     commit_packed_snapshot(
         files,
@@ -212,7 +382,7 @@ pub fn decode_snapshot_chunk(stored: &[u8], destination: &mut [u8]) -> HostResul
 
 /// Streaming envelope writer, with publication strictly after all chunks.
 pub fn commit_packed_snapshot(
-    files: &Files,
+    files: &impl SnapshotFiles,
     bank: u8,
     mut sink: impl FnMut(usize, &[u8]) -> io::Result<()>,
     publish: impl FnOnce(u32) -> HostResult<()>,
@@ -299,9 +469,10 @@ impl<F: FnMut(usize, &[u8]) -> io::Result<()>, const SIZE: usize> Write for Chun
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     #[test]
     fn packed_snapshot_round_trip_and_commit_failure_are_bounded() {
-        let files: Files = [("runtime/test".into(), Arc::new(vec![1, 2, 3]))].into();
+        let files: Files = [("runtime/test".into(), vec![1, 2, 3])].into();
         let mut snapshot = Vec::new();
         let mut marker = 0;
         commit_packed_snapshot(
@@ -338,7 +509,7 @@ pub(crate) mod tests {
         )
         .is_err());
         assert!(!published);
-        let huge: Files = [("runtime/test".into(), Arc::new(vec![0; STORAGE_BUDGET]))].into();
+        let huge: Files = [("runtime/test".into(), vec![0; STORAGE_BUDGET])].into();
         assert!(commit_packed_snapshot(
             &huge,
             0,
@@ -362,7 +533,7 @@ pub(crate) mod tests {
 
     #[test]
     fn full_budget_streams_current_chunks_and_publishes_last() {
-        let files: Files = [("x".into(), Arc::new(vec![42; STORAGE_BUDGET - 13]))].into();
+        let files: Files = [("x".into(), vec![42; STORAGE_BUDGET - 13])].into();
         let chunks = std::cell::RefCell::new(Vec::new());
         commit_packed_snapshot(
             &files,
@@ -394,15 +565,15 @@ pub(crate) mod tests {
         let files: Files = [
             (
                 "runtime/space/device_profiles/你好.preferences.json".into(),
-                Arc::new(vec![1, 2]),
+                vec![1, 2],
             ),
             (
                 "runtime/space/device_profiles/你们.preferences.json".into(),
-                Arc::new(vec![3, 4]),
+                vec![3, 4],
             ),
             (
                 "runtime/space/members/local.preferences.json".into(),
-                Arc::new(vec![5, 6]),
+                vec![5, 6],
             ),
         ]
         .into();
@@ -523,7 +694,7 @@ pub(crate) mod tests {
                 .map(|i| {
                     (
             format!("runtime/space/device_profiles/core-shared-device-{i:03}.preferences.json"),
-            Arc::new(vec![i as u8; 240]),
+            vec![i as u8; 240],
         )
                 })
                 .collect();
@@ -586,18 +757,22 @@ pub(crate) mod tests {
     fn repeated_updates_deletions_and_reboots_keep_only_the_current_snapshot() {
         let mut files = Files::new();
         let mut nvs = PhysicalNvs::default();
-        let identity = Arc::new(pack::pack(b"stable-identity").unwrap());
-        files.insert(
-            "runtime/peer/local_identity.preferences.json".into(),
-            identity.clone(),
-        );
+        let identity = pack::pack(b"stable-identity").unwrap();
+        files
+            .insert(
+                "runtime/peer/local_identity.preferences.json".into(),
+                identity.clone(),
+            )
+            .unwrap();
         for generation in 0..256 {
             // Vary both content and geometry: old long snapshots must not leave tail chunks.
             let transient = format!("runtime/peer/session-{generation}.preferences.json");
-            files.insert(
-                transient.clone(),
-                Arc::new(pack::pack(&vec![generation as u8; 2048]).unwrap()),
-            );
+            files
+                .insert(
+                    transient.clone(),
+                    pack::pack(&vec![generation as u8; 2048]).unwrap(),
+                )
+                .unwrap();
             let active = nvs.active_bank();
             commit_snapshot_transaction(&files, active, &mut nvs).unwrap();
             files.remove(&transient);
@@ -644,11 +819,7 @@ pub(crate) mod tests {
         let (_, mut nvs) = physical_fixture();
         let old = nvs.selected();
         let old_marker = nvs.marker;
-        let huge: Files = [(
-            "runtime/too_large".into(),
-            Arc::new(vec![0; STORAGE_BUDGET]),
-        )]
-        .into();
+        let huge: Files = [("runtime/too_large".into(), vec![0; STORAGE_BUDGET])].into();
         assert!(commit_snapshot_transaction(&huge, Some(0), &mut nvs).is_err());
         assert_eq!(nvs.removals, 0);
         assert_eq!(nvs.marker, old_marker);
@@ -660,24 +831,160 @@ pub(crate) mod tests {
                 .filter(|((bank, _), _)| *bank == 1)
                 .map(|(_, bytes)| bytes.len().div_ceil(32) + 2)
                 .sum::<usize>();
-        let files: Files = [(
-            "runtime/large".into(),
-            Arc::new({
-                let mut seed = 0x12345678u32;
-                (0..STORAGE_BUDGET - 64)
-                    .map(|_| {
-                        seed ^= seed << 13;
-                        seed ^= seed >> 17;
-                        seed ^= seed << 5;
-                        seed as u8
-                    })
-                    .collect()
-            }),
-        )]
+        let files: Files = [("runtime/large".into(), {
+            let mut seed = 0x12345678u32;
+            (0..STORAGE_BUDGET - 64)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    seed as u8
+                })
+                .collect()
+        })]
         .into();
         assert!(commit_snapshot_transaction(&files, Some(0), &mut nvs).is_err());
         assert_eq!(nvs.marker, old_marker);
         assert_eq!(nvs.selected(), old);
         assert!(nvs.chunks.keys().all(|(bank, _)| *bank == 0));
+    }
+    #[test]
+    fn staged_change_preserves_cache_and_marker_on_write_or_publish_failure() {
+        for fail_publish in [false, true] {
+            let (mut files, mut nvs) = physical_fixture();
+            recover_snapshot(&mut nvs, Some(0)).unwrap();
+            let original = files.clone();
+            let selected = nvs.selected();
+            let marker = nvs.marker;
+            let mut active = Some(0);
+            if fail_publish {
+                nvs.fail_publish = true;
+            } else {
+                nvs.fail_chunk = Some(0);
+            }
+            let change = FileChange::Put {
+                path: "runtime/space/new.preferences.json".into(),
+                bytes: pack::pack(b"approved").unwrap(),
+            };
+            assert!(commit_file_change(&mut files, &mut active, change, &mut nvs).is_err());
+            assert_eq!(files, original);
+            assert_eq!(active, Some(0));
+            assert_eq!(nvs.marker, marker);
+            assert_eq!(nvs.selected(), selected);
+            nvs.fail_publish = false;
+            nvs.fail_chunk = None;
+            let change = FileChange::Put {
+                path: "runtime/space/new.preferences.json".into(),
+                bytes: pack::pack(b"approved").unwrap(),
+            };
+            commit_file_change(&mut files, &mut active, change, &mut nvs).unwrap();
+            assert_eq!(decode_packed_files(&nvs.selected()).unwrap(), files);
+            assert_eq!(active, Some(1));
+        }
+    }
+
+    #[test]
+    fn staged_changes_borrow_unchanged_records_and_recover_sorted_utf8_paths() {
+        let mut files = Files::new();
+        let mut nvs = PhysicalNvs::default();
+        let mut active = None;
+        for path in [
+            "runtime/中",
+            "runtime/a",
+            "runtime/z",
+            "runtime/你",
+            "runtime/中",
+        ] {
+            let stable = files.get("runtime/a").map(|bytes| bytes.as_ptr());
+            let change = FileChange::Put {
+                path: path.into(),
+                bytes: pack::pack(format!("{path}-{}", nvs.marker).as_bytes()).unwrap(),
+            };
+            commit_file_change(&mut files, &mut active, change, &mut nvs).unwrap();
+            if path != "runtime/a" {
+                assert_eq!(files.get("runtime/a").map(|bytes| bytes.as_ptr()), stable);
+            }
+            recover_snapshot(&mut nvs, active).unwrap();
+            assert_eq!(decode_packed_files(&nvs.selected()).unwrap(), files);
+            let keys: Vec<_> = files.entries().map(|(path, _)| path).collect();
+            assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
+        }
+    }
+
+    #[test]
+    fn staged_delete_rolls_back_and_respects_directory_boundaries() {
+        let mut files: Files = [
+            ("runtime/foo".into(), vec![1]),
+            ("runtime/foo/child".into(), vec![2]),
+            ("runtime/foobar".into(), vec![3]),
+        ]
+        .into();
+        let mut nvs = PhysicalNvs::default();
+        let mut active = Some(commit_snapshot_transaction(&files, None, &mut nvs).unwrap());
+        let original = files.clone();
+        nvs.fail_publish = true;
+        assert!(commit_file_change(
+            &mut files,
+            &mut active,
+            FileChange::Delete {
+                path: "runtime/foo".into(),
+                recursive: true
+            },
+            &mut nvs
+        )
+        .is_err());
+        assert_eq!(files, original);
+        assert_eq!(decode_packed_files(&nvs.selected()).unwrap(), original);
+        nvs.fail_publish = false;
+        commit_file_change(
+            &mut files,
+            &mut active,
+            FileChange::Delete {
+                path: "runtime/foo".into(),
+                recursive: false,
+            },
+            &mut nvs,
+        )
+        .unwrap();
+        assert!(!files.contains_key("runtime/foo"));
+        assert!(files.contains_key("runtime/foo/child"));
+        commit_file_change(
+            &mut files,
+            &mut active,
+            FileChange::Delete {
+                path: "runtime/foo".into(),
+                recursive: true,
+            },
+            &mut nvs,
+        )
+        .unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files.contains_key("runtime/foobar"));
+        assert_eq!(decode_packed_files(&nvs.selected()).unwrap(), files);
+        let removals = nvs.removals;
+        commit_file_change(
+            &mut files,
+            &mut active,
+            FileChange::Delete {
+                path: "runtime/missing".into(),
+                recursive: true,
+            },
+            &mut nvs,
+        )
+        .unwrap();
+        commit_file_change(
+            &mut files,
+            &mut active,
+            FileChange::Put {
+                path: "runtime/foobar".into(),
+                bytes: vec![3],
+            },
+            &mut nvs,
+        )
+        .unwrap();
+        assert_eq!(
+            nvs.removals, removals,
+            "no-op mutations must not touch Flash"
+        );
     }
 }

@@ -416,7 +416,7 @@ impl<'de> Visitor<'de> for CoreValueVisitor {
 
     /// Decodes a borrowed binary value.
     fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E> {
-        Ok(CoreValue::Bytes(crate::CoreBytes::copy_from_slice(value)))
+        Ok(CoreValue::Bytes(crate::codec::retain_decoded_slice(value).unwrap_or_else(|| crate::CoreBytes::copy_from_slice(value))))
     }
 
     /// Resolves a native shared-buffer extension only inside its explicit decode scope.

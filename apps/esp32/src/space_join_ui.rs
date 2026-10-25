@@ -40,14 +40,15 @@ impl SpaceJoinUi {
         let initialization = Some((router.clone(), profile.clone()));
         let initService = service.clone();
         let result = sender.clone();
-        scheduler.scheduleHostRuntimeTask(
+        scheduler.scheduleHostRuntimeBlockingAsyncTask(
             "edge-space-init",
-            Box::new(move || {
+            Box::new(move || Box::pin(async move {
+                let _work = crate::space_work::acquire().await;
                 let initialized = initService
                     .initialize(profile)
                     .and_then(|_| router.installSpace(initService));
                 let _ = result.try_send(Event::Ready(initialized));
-            }),
+            })),
         )?;
         Ok(Self {
             service,
@@ -62,6 +63,10 @@ impl SpaceJoinUi {
             initialization,
         })
     }
+    /// Defer unrelated display-state materialization while admission owns its
+    /// working snapshots. Routed operations still validate their own authority.
+    pub fn isBusy(&self) -> bool { self.busy || self.leaveRequested || crate::space_work::is_busy() }
+
     pub fn action(&mut self, action: &str, ui: &mut Esp32Ui) -> bool {
         if action == "edge_space_leave" {
             // A background review poll owns the single response slot. Queue
@@ -84,10 +89,11 @@ impl SpaceJoinUi {
         };
         let service = self.service.clone();
         let sender = self.sender.clone();
-        let scheduled = self.scheduler.scheduleHostRuntimeAsyncTask(
+        let scheduled = self.scheduler.scheduleHostRuntimeBlockingAsyncTask(
             "edge-space-decision",
             Box::new(move || {
                 Box::pin(async move {
+                    let _work = crate::space_work::acquire().await;
                     let result = service
                         .decideDeviceSpaceJoin(
                             request.requestId,
@@ -186,14 +192,15 @@ impl SpaceJoinUi {
             if let Some((router, profile)) = self.initialization.clone() {
                 let service = self.service.clone();
                 let sender = self.sender.clone();
-                let scheduled = self.scheduler.scheduleHostRuntimeTask(
+                let scheduled = self.scheduler.scheduleHostRuntimeBlockingAsyncTask(
                     "edge-space-init-retry",
-                    Box::new(move || {
+                    Box::new(move || Box::pin(async move {
+                        let _work = crate::space_work::acquire().await;
                         let initialized = service
                             .initialize(profile)
                             .and_then(|_| router.installSpace(service));
                         let _ = sender.try_send(Event::Ready(initialized));
-                    }),
+                    })),
                 );
                 if scheduled.is_ok() {
                     self.busy = true;
@@ -204,12 +211,13 @@ impl SpaceJoinUi {
         if self.ready && !self.busy && self.leaveRequested {
             let service = self.service.clone();
             let sender = self.sender.clone();
-            match self.scheduler.scheduleHostRuntimeTask(
+            match self.scheduler.scheduleHostRuntimeBlockingAsyncTask(
                 "edge-space-leave",
-                Box::new(move || {
+                Box::new(move || Box::pin(async move {
+                    let _work = crate::space_work::acquire().await;
                     let result = service.leaveDeviceSpace().map(|_| ());
                     let _ = sender.try_send(Event::Left(result));
-                }),
+                })),
             ) {
                 Ok(()) => {
                     self.busy = true;
@@ -224,10 +232,11 @@ impl SpaceJoinUi {
         if self.ready && !self.busy && Instant::now() >= self.nextPoll {
             let service = self.service.clone();
             let sender = self.sender.clone();
-            let scheduled = self.scheduler.scheduleHostRuntimeAsyncTask(
+            let scheduled = self.scheduler.scheduleHostRuntimeBlockingAsyncTask(
                 "edge-space-incoming",
                 Box::new(move || {
                     Box::pin(async move {
+                        let _work = crate::space_work::acquire().await;
                         let result = service.incomingDeviceSpaceJoins().await.map(|requests| {
                             requests.into_iter().find(|request| request.canApprove)
                         });

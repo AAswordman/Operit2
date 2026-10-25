@@ -52,6 +52,26 @@ pub enum PeerMessage {
     Response(CoreLinkResponse),
 }
 
+impl PeerMessage {
+    /// Decode the existing envelope without serde's untagged union content
+    /// buffer. Try requests first, matching the published union's precedence.
+    /// In particular, encrypted binary arguments are copied only once.
+    pub fn decode(bytes: &[u8]) -> Result<Self, operit_link::CoreLinkCodecError> {
+        match operit_link::decodeLink::<CoreLinkRequest>(bytes) {
+            Ok(request) => Ok(Self::Request(request)),
+            Err(_) => operit_link::decodeLink::<CoreLinkResponse>(bytes).map(Self::Response),
+        }
+    }
+    /// Retains binary arguments directly from an owned transport frame.
+    pub fn decodeOwned(bytes: operit_link::CoreBytes) -> Result<Self, operit_link::CoreLinkCodecError> {
+        match operit_link::decodeLinkOwned::<CoreLinkRequest>(bytes.clone()) {
+            Ok(request) => Ok(Self::Request(request)),
+            Err(_) => operit_link::decodeLinkOwned::<CoreLinkResponse>(bytes).map(Self::Response),
+        }
+    }
+
+}
+
 /// One bidirectional connection. Runtime consumes messages and decides how to dispatch them.
 /// Implementations must preserve message order and partial input across receive cancellation.
 #[async_trait]
@@ -175,5 +195,34 @@ async fn classifyEndpoint(
                 PeerTransport::Http
             });
         }
+    }
+}
+#[cfg(test)]
+mod message_decode_tests {
+    use super::*;
+    use operit_link::*;
+
+    #[test]
+    fn direct_decode_preserves_call_watch_push_envelopes_and_binary_payloads() {
+        let messages = vec![
+            PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new("cipher", "$peer.session", "data", CoreValue::Bytes(vec![0xa5; 8192].into())))),
+            PeerMessage::Request(CoreLinkRequest::Watch(CoreLinkWatchRequest::Close { requestId: CoreRequestId::new("watch") })),
+            PeerMessage::Request(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Close { pushId: "push".into() })),
+            PeerMessage::Response(CoreLinkResponse::Call(CoreCallResponse::err(CoreRequestId::new("call"), CoreLinkError::new("DENIED", "denied")))),
+            PeerMessage::Response(CoreLinkResponse::Watch { requestId: CoreRequestId::new("watch"), result: Ok(CoreLinkWatchResponse::Opened) }),
+            PeerMessage::Response(CoreLinkResponse::Push { pushId: "push".into(), result: Ok(CoreLinkPushResponse::ItemAccepted { sequence: 7 }) }),
+        ];
+        for message in messages {
+            let encoded = encodeLink(message).unwrap();
+            let old: PeerMessage = decodeLink(&encoded).unwrap();
+            let new = PeerMessage::decode(&encoded).unwrap();
+            match (old, new) {
+                (PeerMessage::Request(old), PeerMessage::Request(new)) => assert_eq!(old, new),
+                (PeerMessage::Response(old), PeerMessage::Response(new)) => assert_eq!(old, new),
+                _ => panic!("request/response classification changed"),
+            }
+        }
+        assert!(PeerMessage::decode(&[0xc1]).is_err());
+        assert!(PeerMessage::decode(&encodeLink(CoreValue::Null).unwrap()).is_err());
     }
 }

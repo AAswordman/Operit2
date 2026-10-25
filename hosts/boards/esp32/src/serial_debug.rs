@@ -33,6 +33,7 @@ struct State {
     parser: Parser,
     request: Option<DebugRequest>,
     response: Option<Vec<u8>>,
+    response_offset: usize,
     busy: bool,
 }
 impl SerialDebugIo {
@@ -68,18 +69,28 @@ impl SerialDebugIo {
         frame.extend_from_slice(&id.to_be_bytes());
         frame.extend_from_slice(json);
         frame.extend_from_slice(&crc32(&frame[8..]).to_be_bytes());
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .response = Some(frame);
-    }
-    pub(super) fn take_response(&self) -> Option<Vec<u8>> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let response = state.response.take();
-        if response.is_some() {
+        state.response = Some(frame);
+        state.response_offset = 0;
+    }
+    /// Commit each nonblocking UART write before the caller can yield. A Link
+    /// idle timeout may cancel its reader while a debug reply is still sending.
+    pub(super) fn write_response<E>(
+        &self,
+        write: impl FnOnce(&[u8]) -> Result<usize, E>,
+    ) -> Result<bool, E> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(response) = state.response.as_ref() else { return Ok(true); };
+        let length = response.len();
+        let written = write(&response[state.response_offset..])?;
+        state.response_offset += written;
+        if state.response_offset == length {
+            state.response = None;
+            state.response_offset = 0;
             state.busy = false;
+            return Ok(true);
         }
-        response
+        Ok(false)
     }
 }
 
@@ -211,7 +222,11 @@ mod tests {
         assert_eq!(req.argument(), b"action:edge_pair");
         assert!(io.take_request().is_none());
         io.respond(req.id(), b"{\"ok\":true}");
-        let result = io.take_response().unwrap();
+        let mut result = Vec::new();
+        assert!(io.write_response(|bytes| {
+            result.extend_from_slice(bytes);
+            Ok::<_, ()>(bytes.len())
+        }).unwrap());
         assert_eq!(&result[..4], b"OPD2");
         assert_eq!(&result[8..12], &7u32.to_be_bytes());
         assert_eq!(
@@ -240,7 +255,10 @@ mod tests {
         io.observe(&request(1, 1, b""));
         assert!(io.take_request().is_some());
         io.respond(1, &vec![0; MAX_RESPONSE]);
-        assert!(io.take_response().unwrap().len() < 100);
+        assert!(io.write_response(|bytes| {
+            assert!(bytes.len() < 100);
+            Ok::<_, ()>(bytes.len())
+        }).unwrap());
     }
     #[test]
     fn abandoned_partial_frame_expires() {

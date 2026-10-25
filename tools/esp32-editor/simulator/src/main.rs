@@ -8,11 +8,19 @@ mod standalone_chat;
 mod device_preferences;
 #[path = "../../../../apps/esp32/src/edge_chat.rs"]
 mod edge_chat;
+#[cfg(test)]
+#[path = "../../../../apps/esp32/src/runtime_storage_codec.rs"]
+mod runtime_storage_codec;
+#[cfg(test)]
+#[path = "../../../../apps/esp32/src/runtime_storage_pack.rs"]
+mod runtime_storage_pack;
 mod memory;
 mod core_access;
 mod send_receipt;
 #[path = "../../../../apps/esp32/src/device_space_ui.rs"]
 mod device_space_ui;
+#[path = "../../../../apps/esp32/src/space_work.rs"]
+mod space_work;
 use operit_link::protocol::LinkDeviceInfo;
 use operit_node_edge::PeerRouter::EdgePeerRouter;
 use operit_node_runtime::{
@@ -169,7 +177,9 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
     let preferenceSpace = spaceService.clone();
     operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(scheduler.as_ref(), "device-preferences", Box::new(move || Box::pin(async move {
         loop {
-            let _ = preferenceSpace.synchronizePreferences().await;
+            if let Some(_work) = space_work::try_acquire() {
+                let _ = preferenceSpace.synchronizePreferences().await;
+            }
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
     })))?;

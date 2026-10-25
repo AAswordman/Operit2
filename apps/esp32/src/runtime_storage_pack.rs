@@ -1,5 +1,5 @@
 //! Small bounded LZSS records for the ESP32 virtual storage cache.
-//! No dictionary allocation or whole-database decompression is required.
+//! Records and range-read history are bounded; no whole-database decompression.
 use operit_host_api::{HostError, HostResult};
 use std::io::{self, Write};
 
@@ -153,6 +153,53 @@ pub fn unpack(input: &[u8]) -> HostResult<Vec<u8>> {
     }
     Ok(output)
 }
+/// Decodes a requested slice using at most one fixed LZSS window plus the
+/// returned bytes, rather than allocating the whole expanded record for a page.
+/// Validate the entire encoding, including corruption after the requested slice.
+pub fn unpack_range(input: &[u8], offset: u64, requested: usize) -> HostResult<Vec<u8>> {
+    let length = expanded_size(input)?;
+    let start = usize::try_from(offset).unwrap_or(length).min(length);
+    let count = requested.min(length - start);
+    if start == 0 && count == length { return unpack(input); }
+    let mut output = Vec::new();
+    output.try_reserve_exact(count).map_err(|_| allocation(count))?;
+    if input[0] == 0 {
+        if input.len() != length + 3 { return Err(invalid()); }
+        output.extend_from_slice(&input[3 + start..3 + start + count]);
+        return Ok(output);
+    }
+    let window_size = WINDOW.min(length);
+    let mut history = Vec::new();
+    history.try_reserve_exact(window_size).map_err(|_| allocation(window_size))?;
+    history.resize(window_size, 0);
+    let (mut at, mut produced) = (3, 0);
+    while produced < length {
+        let flags = *input.get(at).ok_or_else(invalid)?;
+        at += 1;
+        for bit in 0..8 {
+            if produced == length { break; }
+            let (distance, token_count, literal) = if flags & (1 << bit) == 0 {
+                let byte = *input.get(at).ok_or_else(invalid)?;
+                at += 1;
+                (0, 1, byte)
+            } else {
+                let bytes = input.get(at..at + 2).ok_or_else(invalid)?;
+                at += 2;
+                let code = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
+                ((code >> 4) + 1, (code & 15) + 3, 0)
+            };
+            if distance > produced || token_count > length - produced { return Err(invalid()); }
+            for _ in 0..token_count {
+                let byte = if distance == 0 { literal } else { history[(produced - distance) % window_size] };
+                history[produced % window_size] = byte;
+                if produced >= start && produced - start < count { output.push(byte); }
+                produced += 1;
+            }
+        }
+    }
+    if at != input.len() { return Err(invalid()); }
+    Ok(output)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +219,35 @@ mod tests {
             let bytes = vec![b'x'; length];
             assert_eq!(unpack(&pack(&bytes).unwrap()).unwrap(), bytes);
         }
+    }
+    #[test]
+    fn bounded_ranges_match_plain_and_compressed_records_across_window_wraps() {
+        let mut random = 123456789u32;
+        let binary: Vec<u8> = (0..MAX_RECORD_SIZE).map(|_| {
+            random ^= random << 13;
+            random ^= random >> 17;
+            random ^= random << 5;
+            random as u8
+        }).collect();
+        let repeat: Vec<u8> = (0..MAX_RECORD_SIZE).map(|i| (i % 127) as u8).collect();
+        for bytes in [Vec::new(), binary, repeat] {
+            let packed = pack(&bytes).unwrap();
+            for (offset, count) in [(0, 1), (7, 19), (4090, 32), (8190, 64),
+                (16380, usize::MAX), (u64::MAX, usize::MAX), (0, usize::MAX), (12, 0)] {
+                let start = usize::try_from(offset).unwrap_or(bytes.len()).min(bytes.len());
+                let end = start.saturating_add(count).min(bytes.len());
+                assert_eq!(unpack_range(&packed, offset, count).unwrap(), bytes[start..end]);
+            }
+        }
+    }
+    #[test]
+    fn bounded_ranges_reject_truncated_and_trailing_data_beyond_the_slice() {
+        let packed = pack(&vec![b'x'; MAX_RECORD_SIZE]).unwrap();
+        for end in 0..packed.len() { assert!(unpack_range(&packed[..end], 0, 1).is_err()); }
+        let mut extra = packed;
+        extra.push(0);
+        assert!(unpack_range(&extra, 0, 1).is_err());
+        assert!(unpack_range(&[0, 2, 0, 1], 0, 1).is_err());
     }
     #[test]
     fn rejects_corruption_truncation_and_expansion_bombs() {

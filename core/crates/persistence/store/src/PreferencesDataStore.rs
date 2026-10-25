@@ -41,6 +41,31 @@ pub enum PreferencesDataStoreError {
     Message(String),
 }
 
+/// One serializer specialization for measuring bounded JSON and emitting it.
+/// A constrained write reserves the measured size once, avoiding Vec growth's
+/// simultaneous old/new buffers; an unexpected size change returns an error.
+struct PreferencesJsonBuffer {
+    bytes: Vec<u8>,
+    measured: usize,
+    countOnly: bool,
+    bounded: bool,
+}
+impl std::io::Write for PreferencesJsonBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.countOnly {
+            self.measured = self.measured.checked_add(bytes.len())
+                .ok_or(std::io::ErrorKind::OutOfMemory)?;
+        } else {
+            if self.bounded && bytes.len() > self.bytes.capacity() - self.bytes.len() {
+                return Err(std::io::ErrorKind::OutOfMemory.into());
+            }
+            self.bytes.extend_from_slice(bytes);
+        }
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
+
 const PREFERENCES_REPLICATION_KEY: &str = "__operit_preferences_replication";
 
 pub const PREFERENCES_SCHEMA_VERSION_KEY_NAME: &str = "__operit_preferences_schema_version";
@@ -1606,6 +1631,20 @@ impl Preferences {
             .map_err(Into::into)
     }
 
+    /// Copy retained entries only: a replaced/deleted value never enters the
+    /// new snapshot. Other readers keep their immutable snapshot for rollback.
+    fn writableValuesExcluding(&mut self, key: &str) -> &mut HashMap<String, Value> {
+        if Arc::strong_count(&self.values) > 1 {
+            self.values = Arc::new(self.values.iter()
+                .filter(|(name, _)| name.as_str() != key)
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect());
+        }
+        // A weak mutation witness must not force a deep clone. make_mut moves
+        // the unique map and disconnects weak observers without cloning values.
+        Arc::make_mut(&mut self.values)
+    }
+
     /// Updates a preference value and clones the shared map only when needed.
     pub fn set(&mut self, key: &PreferencesKey, value: impl Into<Value>) {
         let value = value.into();
@@ -1617,10 +1656,12 @@ impl Preferences {
             PreferencesTransactionMutation {
                 key: key.name.clone(),
                 operation: "set".into(),
-                value: value.clone(),
+                // The final value already belongs to this snapshot. Resolve it
+                // when exporting the mutation instead of keeping a second tree.
+                value: Value::Null,
             },
         );
-        Arc::make_mut(&mut self.values).insert(key.name.clone(), value);
+        self.writableValuesExcluding(&key.name).insert(key.name.clone(), value);
     }
 
     /// Removes a preference value and clones the shared map only when needed.
@@ -1636,7 +1677,7 @@ impl Preferences {
                 value: Value::Null,
             },
         );
-        Arc::make_mut(&mut self.values).remove(&key.name);
+        self.writableValuesExcluding(&key.name).remove(&key.name);
     }
 
     /// Adds one integer delta and records the operation rather than an absolute replacement.
@@ -1840,6 +1881,206 @@ pub struct CoreNodeStateStore {
 }
 
 impl CoreNodeStateStore {
+    /// Reads node-local records directly on constrained hosts. Validate the
+    /// schema first; migrations and retained/live caches use the regular path.
+    pub fn typedEntries<T: serde::de::DeserializeOwned>(&self) -> Result<Vec<(String, T)>, PreferencesDataStoreError> {
+        self.typedEntriesMatching(None)
+    }
+
+    /// Decode only the requested node-local record; unrelated payloads are
+    /// skipped without constructing JSON trees or typed records.
+    pub fn typedEntry<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<Option<T>, PreferencesDataStoreError> {
+        self.typedEntriesMatching(Some(key)).map(|mut entries| entries.pop().map(|(_, record)| record))
+    }
+
+    fn typedEntriesMatching<T: serde::de::DeserializeOwned>(&self, only: Option<&str>) -> Result<Vec<(String, T)>, PreferencesDataStoreError> {
+        if !self.inner.storageHost.retainPreferencesCache() {
+            let transaction = self.inner.sharedState.transaction.lock()
+                .expect("PreferencesDataStore transaction mutex must not be poisoned");
+            self.inner.releaseNodeLocalCacheUnlocked();
+            if self.inner.storageHost.exists(&self.inner.storagePath)? {
+                let bytes = self.inner.storageHost.readBytes(&self.inner.storagePath)?;
+                if !bytes.iter().all(u8::is_ascii_whitespace) {
+                    #[derive(Deserialize)]
+                    struct Header {
+                        #[serde(default, rename = "__operit_preferences_schema_version")]
+                        version: Option<Value>,
+                    }
+                    let header: Header = serde_json::from_slice(&bytes)?;
+                    let mut probe = emptyPreferences();
+                    if let Some(version) = header.version {
+                        probe.set(&PreferencesDataStore::schemaVersionKey(), version);
+                    }
+                    if self.inner.schemaIsCurrent(&probe)? {
+                        return deserializeTypedNodeEntries(&bytes, only).map_err(Into::into);
+                    }
+                }
+            }
+            drop(transaction);
+        }
+        self.data()?.iterEntries()
+            .filter(|(key, _)| *key != PREFERENCES_SCHEMA_VERSION_KEY_NAME && only.is_none_or(|selected| *key == selected))
+            .map(|(key, value)| T::deserialize(value).map(|value| (key.to_owned(), value)).map_err(Into::into))
+            .collect()
+    }
+
+    /// Inspect a consistent encoded snapshot without copying its payloads.
+    /// The transaction ends before the callback; borrowed values remain tied to
+    /// these immutable bytes, and cannot escape through the returned result.
+    pub fn withEncodedEntries<R>(
+        &self, read: impl FnOnce(BTreeMap<String, &serde_json::value::RawValue>) -> R,
+    ) -> Result<R, PreferencesDataStoreError> {
+        let current = if !self.inner.storageHost.retainPreferencesCache() {
+            let _transaction = self.inner.sharedState.transaction.lock()
+                .expect("PreferencesDataStore transaction mutex must not be poisoned");
+            self.inner.releaseNodeLocalCacheUnlocked();
+            if self.inner.storageHost.exists(&self.inner.storagePath)? {
+                let bytes = self.inner.storageHost.readBytes(&self.inner.storagePath)?;
+                if bytes.iter().all(u8::is_ascii_whitespace) { None } else {
+                    #[derive(Deserialize)]
+                    struct Header {
+                        #[serde(default, rename = "__operit_preferences_schema_version")]
+                        version: Option<Value>,
+                    }
+                    let header: Header = serde_json::from_slice(&bytes)?;
+                    let mut probe = emptyPreferences();
+                    if let Some(version) = header.version { probe.set(&PreferencesDataStore::schemaVersionKey(), version); }
+                    self.inner.schemaIsCurrent(&probe)?.then_some(bytes)
+                }
+            } else { None }
+        } else { None };
+        let bytes = match current {
+            Some(bytes) => bytes,
+            None => {
+                let preferences = self.data()?;
+                serde_json::to_vec(&preferences.iterEntries().collect::<BTreeMap<_, _>>())?
+            }
+        };
+        let mut entries: BTreeMap<String, &serde_json::value::RawValue> = serde_json::from_slice(&bytes)?;
+        entries.remove(PREFERENCES_SCHEMA_VERSION_KEY_NAME);
+        entries.remove(PREFERENCES_REPLICATION_KEY);
+        Ok(read(entries))
+    }
+
+    /// Replace one record without expanding unrelated JSON on constrained hosts.
+    /// The shared transaction and atomic host publication remain the commit boundary.
+    pub fn setTypedEntry<T: Serialize>(&self, key: &str, value: &T) -> Result<(), PreferencesDataStoreError> {
+        self.editTypedEntry(key, Some(value))
+    }
+
+    /// Atomically merge immutable records while retaining unrelated payloads as raw JSON.
+    /// Every existing value and duplicate in the batch must agree before publication.
+    pub fn mergeImmutableEntries<T: Serialize + serde::de::DeserializeOwned + PartialEq>(
+        &self, incoming: &[(&str, &T)],
+    ) -> Result<(), PreferencesDataStoreError> {
+        let conflict = || PreferencesDataStoreError::Message("Conflicting immutable entry".into());
+        for (key, _) in incoming {
+            if matches!(*key, PREFERENCES_SCHEMA_VERSION_KEY_NAME | PREFERENCES_REPLICATION_KEY) {
+                return Err(PreferencesDataStoreError::Message("Reserved immutable entry key".into()));
+            }
+        }
+        if !self.inner.storageHost.retainPreferencesCache() {
+            let transaction = self.inner.sharedState.transaction.lock()
+                .expect("PreferencesDataStore transaction mutex must not be poisoned");
+            self.inner.releaseNodeLocalCacheUnlocked();
+            let bytes = if self.inner.storageHost.exists(&self.inner.storagePath)? {
+                self.inner.storageHost.readBytes(&self.inner.storagePath)?
+            } else { Vec::new() };
+            let entries: BTreeMap<String, &serde_json::value::RawValue> = if bytes.iter().all(u8::is_ascii_whitespace) {
+                BTreeMap::new()
+            } else { serde_json::from_slice(&bytes)? };
+            let mut probe = emptyPreferences();
+            if let Some(version) = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME) {
+                probe.set(&PreferencesDataStore::schemaVersionKey(), serde_json::from_str::<Value>(version.get())?);
+            }
+            if self.inner.schemaIsCurrent(&probe)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
+                let mut added = BTreeMap::new();
+                for &(key, value) in incoming {
+                    if let Some(old) = entries.get(key) {
+                        let old: T = serde_json::from_str(old.get())?;
+                        if &old != value { return Err(conflict()); }
+                    } else if let Some(old) = added.insert(key, value) {
+                        if old != value { return Err(conflict()); }
+                    }
+                }
+                if added.is_empty() { return Ok(()); }
+                let merged = NodeEntryBatch { entries: &entries, added: &added };
+                let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
+                let encode = |output: &mut PreferencesJsonBuffer| merged.serialize(&mut serde_json::Serializer::with_formatter(
+                    output, serde_json::ser::PrettyFormatter::with_indent(b"")));
+                encode(&mut content)?;
+                content.bytes.try_reserve_exact(content.measured)
+                    .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+                content.countOnly = false;
+                encode(&mut content)?;
+                drop(entries);
+                drop(bytes);
+                self.inner.storageHost.writeBytesAtomically(&self.inner.storagePath, &content.bytes)?;
+                drop(transaction);
+                self.inner.notifyChanged();
+                return Ok(());
+            }
+            drop(transaction);
+        }
+        self.try_edit_result(|preferences| {
+            for &(key, value) in incoming {
+                let key = stringPreferencesKey(key);
+                if let Some(old) = preferences.get(&key) {
+                    if T::deserialize(old)? != *value { return Err(conflict()); }
+                } else { preferences.set(&key, serde_json::to_value(value)?); }
+            }
+            Ok(())
+        })
+    }
+
+    /// Remove one record through the same transaction without decoding its neighbours.
+    pub fn removeEntry(&self, key: &str) -> Result<(), PreferencesDataStoreError> {
+        self.editTypedEntry::<Value>(key, None)
+    }
+
+    fn editTypedEntry<T: Serialize>(&self, key: &str, value: Option<&T>) -> Result<(), PreferencesDataStoreError> {
+        if !self.inner.storageHost.retainPreferencesCache()
+            && !matches!(key, PREFERENCES_SCHEMA_VERSION_KEY_NAME | PREFERENCES_REPLICATION_KEY) {
+            let transaction = self.inner.sharedState.transaction.lock()
+                .expect("PreferencesDataStore transaction mutex must not be poisoned");
+            self.inner.releaseNodeLocalCacheUnlocked();
+            let bytes = if self.inner.storageHost.exists(&self.inner.storagePath)? {
+                self.inner.storageHost.readBytes(&self.inner.storagePath)?
+            } else { Vec::new() };
+            let entries: BTreeMap<String, &serde_json::value::RawValue> = if bytes.iter().all(u8::is_ascii_whitespace) {
+                BTreeMap::new()
+            } else { serde_json::from_slice(&bytes)? };
+            let mut probe = emptyPreferences();
+            if let Some(version) = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME) {
+                probe.set(&PreferencesDataStore::schemaVersionKey(), serde_json::from_str::<Value>(version.get())?);
+            }
+            if self.inner.schemaIsCurrent(&probe)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
+                let replacement = NodeEntryReplacement { entries: &entries, key, value };
+                let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
+                let encode = |output: &mut PreferencesJsonBuffer| replacement.serialize(&mut serde_json::Serializer::with_formatter(
+                    output, serde_json::ser::PrettyFormatter::with_indent(b"")));
+                encode(&mut content)?;
+                content.bytes.try_reserve_exact(content.measured)
+                    .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+                content.countOnly = false;
+                encode(&mut content)?;
+                if content.bytes == bytes { return Ok(()); }
+                drop(entries);
+                drop(bytes);
+                self.inner.storageHost.writeBytesAtomically(&self.inner.storagePath, &content.bytes)?;
+                drop(transaction);
+                self.inner.notifyChanged();
+                return Ok(());
+            }
+            drop(transaction);
+        }
+        let encoded = value.map(serde_json::to_value).transpose()?;
+        self.edit(|preferences| match encoded {
+            Some(value) => preferences.set(&stringPreferencesKey(key), value),
+            None => { preferences.remove(&stringPreferencesKey(key)); }
+        })
+    }
+
     /// Deletes a node-local record and its shared preferences snapshot together.
     /// A raw host deletion would leave an identical later import cached and
     /// silently skip recreating the durable file. Failed deletion preserves cache.
@@ -1892,6 +2133,79 @@ impl CoreNodeStateStore {
             inner: PreferencesDataStore::newNodeLocalWithStorage(storageHost, storagePath, false),
         }
     }
+}
+
+/// Borrow old JSON payloads and serialize only the replaced typed value.
+struct NodeEntryReplacement<'a, T> {
+    entries: &'a BTreeMap<String, &'a serde_json::value::RawValue>,
+    key: &'a str,
+    value: Option<&'a T>,
+}
+impl<T: Serialize> Serialize for NodeEntryReplacement<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let count = self.entries.len() - usize::from(self.entries.contains_key(self.key)) + usize::from(self.value.is_some());
+        let mut map = serializer.serialize_map(Some(count))?;
+        let mut inserted = false;
+        for (key, value) in self.entries {
+            if !inserted && key.as_str() >= self.key {
+                if let Some(value) = self.value { map.serialize_entry(self.key, value)?; }
+                inserted = true;
+            }
+            if key != self.key { map.serialize_entry(key, value)?; }
+        }
+        if !inserted { if let Some(value) = self.value { map.serialize_entry(self.key, value)?; } }
+        map.end()
+    }
+}
+
+/// Merge two sorted maps without cloning any unchanged business value.
+struct NodeEntryBatch<'a, T> {
+    entries: &'a BTreeMap<String, &'a serde_json::value::RawValue>,
+    added: &'a BTreeMap<&'a str, &'a T>,
+}
+impl<T: Serialize> Serialize for NodeEntryBatch<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.entries.len() + self.added.len()))?;
+        let mut added = self.added.iter().peekable();
+        for (key, value) in self.entries {
+            while added.peek().is_some_and(|(next, _)| **next < key.as_str()) {
+                let (key, value) = added.next().unwrap();
+                map.serialize_entry(key, value)?;
+            }
+            map.serialize_entry(key, value)?;
+        }
+        for (key, value) in added { map.serialize_entry(key, value)?; }
+        map.end()
+    }
+}
+
+/// Stream typed records without constructing an intermediate JSON Value tree.
+fn deserializeTypedNodeEntries<T: serde::de::DeserializeOwned>(bytes: &[u8], only: Option<&str>) -> Result<Vec<(String, T)>, serde_json::Error> {
+    struct Entries<'a, T>(Option<&'a str>, std::marker::PhantomData<T>);
+    impl<'de, T: serde::de::DeserializeOwned> serde::de::Visitor<'de> for Entries<'_, T> {
+        type Value = Vec<(String, T)>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a node-local preferences map")
+        }
+        fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+            let mut entries = Vec::new();
+            while let Some(key) = map.next_key::<String>()? {
+                if matches!(key.as_str(), PREFERENCES_SCHEMA_VERSION_KEY_NAME | PREFERENCES_REPLICATION_KEY)
+                    || self.0.is_some_and(|selected| key != selected) {
+                    map.next_value::<serde::de::IgnoredAny>()?;
+                } else {
+                    entries.push((key, map.next_value::<T>()?));
+                }
+            }
+            Ok(entries)
+        }
+    }
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let entries = serde::de::Deserializer::deserialize_map(&mut deserializer, Entries(only, std::marker::PhantomData))?;
+    deserializer.end()?;
+    Ok(entries)
 }
 
 impl std::ops::Deref for CoreNodeStateStore {
@@ -2965,9 +3279,12 @@ impl PreferencesDataStore {
 
     /// Reads the current preferences snapshot.
     pub fn data(&self) -> Result<Preferences, PreferencesDataStoreError> {
-        if let Some(preferences) = self.loadedPreferences() {
-            if self.schemaIsCurrent(&preferences)? {
-                return Ok(preferences);
+        let retain = self.syncDescriptor.is_some() || self.storageHost.retainPreferencesCache();
+        if retain {
+            if let Some(preferences) = self.loadedPreferences() {
+                if self.schemaIsCurrent(&preferences)? {
+                    return Ok(preferences);
+                }
             }
         }
         let _transaction = self
@@ -2977,9 +3294,21 @@ impl PreferencesDataStore {
             .expect("PreferencesDataStore transaction mutex must not be poisoned");
         self.loadUnlocked()?;
         self.migrateSchemaUnlocked()?;
-        Ok(self
-            .loadedPreferences()
-            .expect("PreferencesDataStore must be loaded after a successful load"))
+        let preferences = self.loadedPreferences()
+            .expect("PreferencesDataStore must be loaded after a successful load");
+        self.releaseNodeLocalCacheUnlocked();
+        Ok(preferences)
+    }
+
+    /// Called under the transaction lock, after reading or an unchanged edit.
+    /// Immutable snapshots held by callers remain valid independently.
+    fn releaseNodeLocalCacheUnlocked(&self) {
+        if self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache() {
+            let mut loaded = self.sharedState.preferences.lock()
+                .expect("PreferencesDataStore shared state mutex must not be poisoned");
+            loaded.loaded = false;
+            loaded.preferences = emptyPreferences();
+        }
     }
 
     /// Returns the current cached snapshot when this store has already loaded it.
@@ -3211,21 +3540,42 @@ impl PreferencesDataStore {
             .lock()
             .expect("PreferencesDataStore transaction mutex must not be poisoned");
         self.loadUnlocked().map_err(E::from)?;
-        self.migrateSchemaUnlocked().map_err(E::from)?;
-        let currentPreferences = self
+        if self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache() {
+            // The durable snapshot supplies rollback. Move the parsed state out
+            // before editing so a new record does not copy every retained tree.
+            let mut preferences = {
+                let mut loaded = self.sharedState.preferences.lock()
+                    .expect("PreferencesDataStore shared state mutex must not be poisoned");
+                loaded.loaded = false;
+                std::mem::replace(&mut loaded.preferences, emptyPreferences())
+            };
+            preferences.pendingMutations.clear();
+            let before = Arc::downgrade(&preferences.values);
+            let migrated = self.migratePreferencesToCurrentSchema(&mut preferences).map_err(E::from)?;
+            let result = transform(&mut preferences)?;
+            let unchanged = before.upgrade().is_some_and(|old| Arc::ptr_eq(&old, &preferences.values));
+            if !migrated && unchanged { return Ok(result); }
+            self.writeStoredPreferencesUnlocked(&preferences).map_err(E::from)?;
+            drop(_transaction);
+            self.notifyChanged();
+            return Ok(result);
+        }
+        let mut currentPreferences = self
             .loadedPreferences()
             .expect("PreferencesDataStore must be loaded before editing");
+        // Stage schema changes with the edit. A failed first write must not
+        // leave a schema-only file where readers expect a complete record.
+        let migrated = self.migratePreferencesToCurrentSchema(&mut currentPreferences).map_err(E::from)?;
         let mut preferences = currentPreferences.clone();
         preferences.pendingMutations.clear();
         let result = transform(&mut preferences)?;
-        if Arc::ptr_eq(&preferences.values, &currentPreferences.values) {
-            return Ok(result);
-        }
-        if preferences == currentPreferences {
+        if !migrated && (Arc::ptr_eq(&preferences.values, &currentPreferences.values)
+            || preferences == currentPreferences) {
+            self.releaseNodeLocalCacheUnlocked();
             return Ok(result);
         }
         if recordSyncOperations {
-            self.persistUnlocked(&currentPreferences, &mut preferences)
+            self.persistEditUnlocked(currentPreferences, &mut preferences)
                 .map_err(E::from)?;
         } else {
             self.writeStoredPreferencesUnlocked(&preferences)
@@ -3237,7 +3587,9 @@ impl PreferencesDataStore {
             .preferences
             .lock()
             .expect("PreferencesDataStore shared state mutex must not be poisoned");
-        loaded.preferences = preferences;
+        let retain = self.syncDescriptor.is_some() || self.storageHost.retainPreferencesCache();
+        loaded.loaded = retain;
+        loaded.preferences = if retain { preferences } else { emptyPreferences() };
         drop(loaded);
         drop(_transaction);
         self.notifyChanged();
@@ -3251,25 +3603,57 @@ impl PreferencesDataStore {
             .transaction
             .lock()
             .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        if self.syncDescriptor.is_none() && self.encryption.is_none() && !self.storageHost.retainPreferencesCache() {
+            self.releaseNodeLocalCacheUnlocked();
+            let bytes = if self.storageHost.exists(&self.storagePath)? {
+                self.storageHost.readBytes(&self.storagePath)?
+            } else { Vec::new() };
+            let entries: BTreeMap<String, &serde_json::value::RawValue> = if bytes.iter().all(u8::is_ascii_whitespace) {
+                BTreeMap::new()
+            } else { serde_json::from_slice(&bytes)? };
+            let mut probe = emptyPreferences();
+            if let Some(version) = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME) {
+                probe.set(&Self::schemaVersionKey(), serde_json::from_str::<Value>(version.get())?);
+            }
+            if self.schemaIsCurrent(&probe)? {
+                if let Some(schema) = &self.schema {
+                    preferences.set(&Self::schemaVersionKey(), schema.currentVersion);
+                }
+                preferences.replication = match entries.get(PREFERENCES_REPLICATION_KEY) {
+                    Some(replication) => serde_json::from_str(replication.get())?,
+                    None => PreferencesReplicationState::default(),
+                };
+                drop(entries);
+                let content = self.encodeStoredPreferences(&preferences)?;
+                if content == bytes { return Ok(()); }
+                drop(bytes);
+                self.storageHost.writeBytesAtomically(&self.storagePath, &content)?;
+                drop(_transaction);
+                self.notifyChanged();
+                return Ok(());
+            }
+        }
         self.loadUnlocked()?;
-        self.migrateSchemaUnlocked()?;
+        let mut currentPreferences = self
+            .loadedPreferences()
+            .expect("PreferencesDataStore must be loaded before replacement");
+        let migrated = self.migratePreferencesToCurrentSchema(&mut currentPreferences)?;
         if let Some(schema) = &self.schema {
             preferences.set(&Self::schemaVersionKey(), schema.currentVersion);
         }
-        let currentPreferences = self
-            .loadedPreferences()
-            .expect("PreferencesDataStore must be loaded before replacement");
-        if currentPreferences == preferences {
+        if !migrated && currentPreferences == preferences {
+            self.releaseNodeLocalCacheUnlocked();
             return Ok(());
         }
-        self.persistUnlocked(&currentPreferences, &mut preferences)?;
+        self.persistEditUnlocked(currentPreferences, &mut preferences)?;
         let mut loaded = self
             .sharedState
             .preferences
             .lock()
             .expect("PreferencesDataStore shared state mutex must not be poisoned");
-        loaded.loaded = true;
-        loaded.preferences = preferences;
+        let retain = self.syncDescriptor.is_some() || self.storageHost.retainPreferencesCache();
+        loaded.loaded = retain;
+        loaded.preferences = if retain { preferences } else { emptyPreferences() };
         drop(loaded);
         drop(_transaction);
         self.notifyChanged();
@@ -3290,23 +3674,43 @@ impl PreferencesDataStore {
         &self,
         preferences: &Preferences,
     ) -> Result<(), PreferencesDataStoreError> {
+        let content = self.encodeStoredPreferences(preferences)?;
+        self.storageHost.writeBytesAtomically(&self.storagePath, &content)?;
+        Ok(())
+    }
+
+    fn encodeStoredPreferences(&self, preferences: &Preferences) -> Result<Vec<u8>, PreferencesDataStoreError> {
         if preferences.values.contains_key(PREFERENCES_REPLICATION_KEY) {
             return Err(PreferencesDataStoreError::Message(
                 "Replication metadata is reserved for the dataset commit protocol".into(),
             ));
         }
-        let mut values = serde_json::to_value(preferences)?;
-        if preferences.replication != PreferencesReplicationState::default() {
-            values[PREFERENCES_REPLICATION_KEY] = serde_json::to_value(&preferences.replication)?;
+        // Preserve the existing sorted JSON encoding without copying business
+        // value trees while both the old and new snapshots are still live.
+        let mut values = preferences.iterEntries().collect::<BTreeMap<_, _>>();
+        let replication = if preferences.replication != PreferencesReplicationState::default() {
+            Some(serde_json::to_value(&preferences.replication)?)
+        } else { None };
+        if let Some(ref replication) = replication {
+            values.insert(PREFERENCES_REPLICATION_KEY, replication);
         }
-        let content = serde_json::to_string_pretty(&values)?;
+        let bounded = self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache();
+        let indent: &[u8] = if bounded { b"" } else { b"  " };
+        let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: bounded, bounded };
+        if bounded {
+            let formatter = serde_json::ser::PrettyFormatter::with_indent(indent);
+            values.serialize(&mut serde_json::Serializer::with_formatter(&mut content, formatter))?;
+            content.bytes.try_reserve_exact(content.measured)
+                .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+            content.countOnly = false;
+        }
+        let formatter = serde_json::ser::PrettyFormatter::with_indent(indent);
+        values.serialize(&mut serde_json::Serializer::with_formatter(&mut content, formatter))?;
         let storedContent = match &self.encryption {
-            Some(encryption) => encryption.encrypt(&self.storagePath, content.as_bytes())?,
-            None => content.into_bytes(),
+            Some(encryption) => encryption.encrypt(&self.storagePath, &content.bytes)?,
+            None => content.bytes,
         };
-        self.storageHost
-            .writeBytesAtomically(&self.storagePath, &storedContent)?;
-        Ok(())
+        Ok(storedContent)
     }
 
     /// Imports values not anchored by a recorded root assignment exactly once.
@@ -3399,6 +3803,29 @@ impl PreferencesDataStore {
         preferences.replication.logicalTime = preferences.replication.logicalTime.max(logicalTime);
         preferences.replication.sequences.insert(origin, sequence);
         Self::stageAppliedOperation(preferences, &operation)
+    }
+
+    /// Node-local edits on constrained Hosts may discard the old parsed cache
+    /// while the transaction lock protects publication. Durable rollback bytes
+    /// remain authoritative; after failure all handles reload them on demand.
+    fn persistEditUnlocked(
+        &self,
+        previous: Preferences,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        if self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache() {
+            preferences.replication = previous.replication.clone();
+            {
+                let mut loaded = self.sharedState.preferences.lock()
+                    .expect("PreferencesDataStore shared state mutex must not be poisoned");
+                loaded.loaded = false;
+                loaded.preferences = emptyPreferences();
+            }
+            drop(previous);
+            self.writeStoredPreferencesUnlocked(preferences)
+        } else {
+            self.persistUnlocked(&previous, preferences)
+        }
     }
 
     /// Persists imported initial values and the new business edit at one publication point.
@@ -3537,7 +3964,9 @@ impl PreferencesDataStore {
         preferences: &Preferences,
     ) -> Result<PreferencesTransactionMutation, PreferencesDataStoreError> {
         if let Some(mutation) = preferences.pendingMutations.get(key) {
-            return Ok(mutation.clone());
+            if mutation.operation != "set" {
+                return Ok(mutation.clone());
+            }
         }
         let value = preferences.get(&stringPreferencesKey(key));
         Ok(PreferencesTransactionMutation {
@@ -3853,6 +4282,25 @@ fn preferencesDataStoreRegistryKey(
     }
 }
 
+enum PreferencesCacheEntry {
+    Retained(Arc<PreferencesDataStoreSharedState>),
+    Live(Weak<PreferencesDataStoreSharedState>),
+}
+impl PreferencesCacheEntry {
+    fn upgrade(&self) -> Option<Arc<PreferencesDataStoreSharedState>> {
+        match self {
+            Self::Retained(state) => Some(state.clone()),
+            Self::Live(state) => state.upgrade(),
+        }
+    }
+    fn isLive(&self) -> bool {
+        match self {
+            Self::Retained(_) => true,
+            Self::Live(state) => state.strong_count() > 0,
+        }
+    }
+}
+
 #[allow(non_snake_case)]
 /// Returns the preference cache shared by stores using the same storage host and path.
 fn preferencesDataStoreSharedState(
@@ -3860,18 +4308,24 @@ fn preferencesDataStoreSharedState(
     storagePath: &str,
 ) -> Arc<PreferencesDataStoreSharedState> {
     static SHARED_STATES: OnceLock<
-        Mutex<HashMap<PreferencesDataStoreRegistryKey, Arc<PreferencesDataStoreSharedState>>>,
+        Mutex<HashMap<PreferencesDataStoreRegistryKey, PreferencesCacheEntry>>,
     > = OnceLock::new();
     let states = SHARED_STATES.get_or_init(|| Mutex::new(HashMap::new()));
     let key = preferencesDataStoreRegistryKey(storageHost, storagePath);
     let mut states = states
         .lock()
         .expect("PreferencesDataStore shared state registry mutex must not be poisoned");
-    if let Some(state) = states.get(&key) {
-        return Arc::clone(state);
+    if let Some(state) = states.get(&key).and_then(PreferencesCacheEntry::upgrade) {
+        return state;
     }
+    states.retain(|_, state| state.isLive());
     let state = Arc::new(PreferencesDataStoreSharedState::default());
-    states.insert(key, Arc::clone(&state));
+    let entry = if storageHost.retainPreferencesCache() {
+        PreferencesCacheEntry::Retained(state.clone())
+    } else {
+        PreferencesCacheEntry::Live(Arc::downgrade(&state))
+    };
+    states.insert(key, entry);
     state
 }
 
