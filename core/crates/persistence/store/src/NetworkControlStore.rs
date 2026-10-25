@@ -1457,9 +1457,6 @@ fn validateNodeId(nodeId: &str) -> Result<(), String> {
 /// Validates one named capability without parsing or inferring capability syntax.
 #[allow(non_snake_case)]
 fn validateCapability(capability: &str) -> Result<(), String> {
-    if matches!(capability, "chat.read" | "chat.write") {
-        return Err(format!("removed Space capability: {capability}"));
-    }
     validateIdentifier("capability", capability, 160)
 }
 

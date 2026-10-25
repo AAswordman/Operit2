@@ -69,11 +69,11 @@ var OperitComposeNodes = function () {
     entry.handles.set(node, target);
     return target;
   }
-  /// Builds runtime-defined UI with the ordinary dynamic-node program instruction.
+  /// Retains runtime-defined UI sources within their owning reactive execution unit.
   function build(runtime, type, props, children) {
     var program = { id: '@dynamic:' + type + ':' + (children !== undefined), root: 0,
       nodes: [{ type: String(type), props: [1, 0], children: [1, 1], explicitChildren: children !== undefined }] };
-    return runtime.composition.instance({}, program, [props, children]);
+    return runtime.composition.instance(OperitComposeReactive.scope(runtime.ctx, program.id), program, [props, children]);
   }
   /// Provides arbitrary UI type access without storing a second node registry.
   function registry(runtime) {

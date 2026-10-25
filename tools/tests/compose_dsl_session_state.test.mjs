@@ -331,6 +331,92 @@ test('same-entry render refreshes environment-dependent compiled expressions', (
   assert.ok(s.context.OperitComposeReactive.metrics(bundle.ctx).rootRuns >= 2);
 });
 
+for (const [name, registry, argumentsSource] of [
+  ['UI alias', 'UI.WebView', '{ ...props }'],
+  ['computed UI constructor', 'ctx.UI[type]', 'props'],
+  ['spread UI arguments', 'ctx.UI.WebView', '...[props]'],
+]) {
+  /** Keeps queued WebView events callable across redraws through each dynamic construction path. */
+  test(`${name} retains its live WebView callback through repeated console events`, async () => {
+    const s = session(`module.exports.default = function(ctx) {
+      var UI = ctx.UI;
+      var type = 'WebView';
+      var count = ctx.useState('count', 0);
+      var props = { key: 'jinli-flow', html: '<html></html>',
+        /** Models Jinli's console event callback and observes its latest render closure. */
+        onConsoleMessage: function(event) {
+          if (event.message === 'JL_COVER_DONE') count[1](count[0] + 1);
+          return count[0];
+        }
+      };
+      return UI.Box({}, [${registry}(${argumentsSource})]);
+    };`);
+    const initial = s.render();
+    const webview = initial.nodes.find(node => node.nodeType === 'WebView');
+    const actionId = webview.props.onConsoleMessage.__actionId;
+    for (let index = 0; index < 6; index++) {
+      const response = await s.context.__operit_dispatch_compose_dsl_action({
+        actionId, payload: { message: index % 2 === 0 ? 'JL_COVER_TAP' : 'JL_COVER_DONE' },
+      });
+      assert.equal(response.actionResult, Math.floor(index / 2));
+      const current = response.nodes.find(node => node.nodeType === 'WebView');
+      assert.equal(current.id, webview.id);
+      assert.equal(current.props.onConsoleMessage.__actionId, actionId);
+      assert.equal(response.update.removed.length, 0);
+    }
+    assert.equal(s.context.__operit_compose_bundle.stateStore.count, 3);
+    const refreshed = s.render({ __operit_update_inputs: true, __operit_input_state: { count: 9 } });
+    assert.equal(refreshed.nodes.find(node => node.nodeType === 'WebView').props.onConsoleMessage.__actionId, actionId);
+    assert.equal((await s.context.__operit_dispatch_compose_dsl_action({ actionId, payload: { message: 'inspect' } })).actionResult, 9);
+  });
+}
+
+/** Preserves separate event slots for dynamic occurrences while refreshing their current row closures. */
+test('dynamic UI occurrences keep independent callbacks across a row reorder', async () => {
+  const s = session(`module.exports.default = function(ctx) {
+    var UI = ctx.UI;
+    var rows = ctx.useState('rows', ['first', 'second']);
+    return UI.Column({}, rows[0].map(
+      /** Builds independently owned callbacks through the public dynamic UI registry. */
+      function(row) { return UI.Button({ text: row,
+        /** Reports the row captured by the latest composition. */
+        onClick: function() { return row; }
+      }); }
+    ));
+  };`);
+  const initial = s.render();
+  const ids = initial.nodes.filter(node => node.nodeType === 'Button').map(node => node.props.onClick.__actionId);
+  assert.notEqual(ids[0], ids[1]);
+  s.render({ __operit_update_inputs: true, __operit_input_state: { rows: ['second', 'first'] } });
+  assert.equal((await s.context.__operit_dispatch_compose_dsl_action({ actionId: ids[0] })).actionResult, 'second');
+  assert.equal((await s.context.__operit_dispatch_compose_dsl_action({ actionId: ids[1] })).actionResult, 'first');
+});
+
+/** Expires removed dynamic sources so retaining live identities cannot keep detached callbacks callable. */
+test('removed dynamic UI callbacks expire and a returning branch gets a fresh address', async () => {
+  const s = session(`module.exports.default = function(ctx) {
+    var UI = ctx.UI;
+    var visible = ctx.useState('visible', true);
+    return UI.Box({
+      /** Toggles the source branch without changing the root event owner. */
+      toggle: function() { visible[1](!visible[0]); }
+    }, [visible[0] ? UI.WebView({ key: 'jinli-flow',
+      /** Identifies the currently mounted dynamic WebView source. */
+      onConsoleMessage: function() { return 'live'; }
+    }) : UI.Text({ text: 'hidden' })]);
+  };`);
+  const initial = s.render();
+  const webview = initial.nodes.find(node => node.nodeType === 'WebView');
+  const expired = webview.props.onConsoleMessage.__actionId;
+  const hidden = await s.action('toggle');
+  assert.ok(hidden.update.removed.includes(webview.id.split('#')[0]));
+  assert.throws(() => s.context.__operit_dispatch_compose_dsl_action({ actionId: expired }), /compose action not found/);
+  const restored = await s.action('toggle');
+  const current = restored.nodes.find(node => node.nodeType === 'WebView').props.onConsoleMessage.__actionId;
+  assert.notEqual(current, expired);
+  assert.equal((await s.context.__operit_dispatch_compose_dsl_action({ actionId: current })).actionResult, 'live');
+});
+
 /** Loads the same controller registration pattern used by the character-card HTML screen. */
 function webViewSession() {
   const commands = [];
