@@ -1,8 +1,9 @@
 import type { Storage } from "../../../../../types/storage";
 import type { CharacterState } from "../model";
 
+import { readCharacter } from "../drafts";
 import { assertObject, requireId } from "../validation";
-import { assertCharacterState, normalizeMemoryRecallSettings } from "./state";
+import { normalizeMemoryRecallSettings } from "./state";
 
 export const collections = [
   "cards",
@@ -124,8 +125,9 @@ export function records(state: CharacterState): StoredRecord[] {
 export function decodeStateFromRecords(
   metadata: Storage.Value,
   rows: StoredRecord[],
-) {
+): CharacterState {
   assertObject(metadata, "character database metadata");
+  if (metadata.version !== 1) throw new Error("Unsupported character database version");
   if (metadata.migrationStatus === "writing" || metadata.legacyImportPending === true)
     throw new Error("Character migration has not completed");
   const state = {
@@ -162,6 +164,8 @@ export function decodeStateFromRecords(
         break;
       }
       case "cards":
+        state.cards.push(readCharacter(row.value, row.key) as unknown as Storage.Value);
+        break;
       case "groups":
       case "tags":
       case "stores":
@@ -191,12 +195,5 @@ export function decodeStateFromRecords(
     }
     entries.push(row.value.record);
   }
-  return state;
-}
-
-/** Reconstructs and validates the current business snapshot after any released-data migration. */
-export function stateFromRecords(metadata: Storage.Value, rows: StoredRecord[]): CharacterState {
-  const state = decodeStateFromRecords(metadata, rows);
-  assertCharacterState(state);
-  return state;
+  return state as unknown as CharacterState;
 }

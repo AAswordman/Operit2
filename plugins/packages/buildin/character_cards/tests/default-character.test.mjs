@@ -22,24 +22,20 @@ test("the installation card retains the Operit template and exact packaged avata
 
 test("initial state installs the template card as an ordinary card", () => {
   const initial = state.createInitialState(123);
-  state.assertCharacterState(initial);
   assert.equal(initial.cards[0].name, "Operit");
   assert.deepEqual(plain(initial.active), { CharacterCard: { id: initial.cards[0].id } });
   assert.equal(initial.owners[0].ownerKey, "character:" + initial.cards[0].id);
   assert.equal(state.decodeCharacterState, undefined);
 });
 
-test("avatar import reads fresh bytes on each selection and failed reads can retry", async () => {
-  let reads = 0;
-  const source = loadModule("src/image-source.ts", { Tools: { Files: { async readBinary(path) {
-    reads++; if (reads === 1) throw new Error("resource temporarily unavailable");
-    const image = await readFile(new URL("../resources/operit-avatar.png", import.meta.url));
-    return { path, size: image.length, contentBase64: image.toString("base64") };
-  } } } });
-  await assert.rejects(source.readAvatarImport("/app/data/avatar.png"), /temporarily unavailable/);
-  const image = await source.readAvatarImport("/app/data/avatar.png"); assert.ok(image.startsWith("iVBOR"));
-  assert.equal(await source.readAvatarImport("/app/data/avatar.png"), image); assert.equal(reads, 3);
-  assert.equal(source.pickedImagePath("/Users/test/avatar.png", "macos"), "/mnt/macos/Users/test/avatar.png");
-  assert.equal(source.pickedImagePath("C:\\Users\\test\\avatar.png", "windows"), "/mnt/windows/c/Users/test/avatar.png");
-  assert.throws(() => source.pickedImagePath("blob:fake", "web"), /文件路径/);
+test("avatar import validates picker bytes without accessing the source file or terminal", async () => {
+  const source = loadModule("src/image-source.ts");
+  const image = await readFile(new URL("../resources/operit-avatar.png", import.meta.url));
+  const file = { size: image.length, contentBase64: image.toString("base64") };
+  assert.equal(source.readAvatarImport(file), file.contentBase64);
+  assert.equal(source.readAvatarImport(file), file.contentBase64);
+  assert.throws(() => source.readAvatarImport({ size: 5 }), /没有返回头像图片内容/);
+  assert.throws(() => source.readAvatarImport({ ...file, size: file.size + 1 }), /内容不完整/);
+  assert.throws(() => source.readAvatarImport({ ...file, size: 8 * 1024 * 1024 + 1 }), /不能超过 8 MB/);
+  assert.throws(() => source.readAvatarImport({ size: 4, contentBase64: "dGV4dA==" }), /请选择 PNG/);
 });

@@ -1,7 +1,7 @@
 use super::*;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 
 use operit_host_api::{HostError, RuntimeStorageEntry};
@@ -15,6 +15,9 @@ struct MemoryStorageHost {
     files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     writeCount: Arc<AtomicUsize>,
     readCount: Arc<AtomicUsize>,
+    rangeBytes: Arc<AtomicUsize>,
+    forbidWholeJournalReads: Arc<AtomicBool>,
+    failAtomic: Arc<AtomicUsize>,
 }
 
 impl MemoryStorageHost {
@@ -42,6 +45,9 @@ impl RuntimeStorageHost for MemoryStorageHost {
     }
 
     fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
+        if self.forbidWholeJournalReads.load(Ordering::SeqCst) && path.ends_with(".jsonl") {
+            return Err(HostError::new("unbounded journal read"));
+        }
         self.readCount.fetch_add(1, Ordering::SeqCst);
         let files = self
             .files
@@ -62,7 +68,12 @@ impl RuntimeStorageHost for MemoryStorageHost {
         offset: u64,
         length: usize,
     ) -> operit_host_api::HostResult<Vec<u8>> {
-        let content = self.readBytes(path)?;
+        if self.forbidWholeJournalReads.load(Ordering::SeqCst) && path.ends_with(".jsonl") {
+            assert!(length <= crate::SyncOperationJournal::JOURNAL_READ_BYTES);
+        }
+        self.readCount.fetch_add(1, Ordering::SeqCst);
+        let files = self.files.lock().map_err(|error| HostError::new(error.to_string()))?;
+        let content = files.get(path).ok_or_else(|| HostError::new("missing runtime storage file"))?;
         let start = usize::try_from(offset)
             .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
         if start >= content.len() {
@@ -72,12 +83,18 @@ impl RuntimeStorageHost for MemoryStorageHost {
             .checked_add(length)
             .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
             .min(content.len());
+        self.rangeBytes.fetch_add(end - start, Ordering::SeqCst);
         Ok(content[start..end].to_vec())
     }
 
     /// Atomically replaces one in-memory file.
 
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        match self.failAtomic.load(Ordering::SeqCst) {
+            1 if path.ends_with("receive_state.json") => return Err(HostError::new("receive ledger commit failed")),
+            2 if path.contains("/pending/") => return Err(HostError::new("pending record commit failed")),
+            _ => {},
+        }
         self.writeBytes(path, content)
     }
 
@@ -555,19 +572,15 @@ fn repeated_domain_queries_do_not_rescan_large_history() {
     let domains = vec!["network_control".to_string()];
     assert_eq!(store.operationsSince(&SyncClock::empty(), &domains, usize::MAX).unwrap(), vec![policy.clone()]);
     let reads = storage.readCount.load(Ordering::SeqCst);
-    let started = std::time::Instant::now();
+    let bytes = storage.rangeBytes.load(Ordering::SeqCst);
     for _ in 0..100 {
         assert_eq!(store.operationsSince(&SyncClock::empty(), &domains, usize::MAX).unwrap(), vec![policy.clone()]);
     }
-    let indexed = started.elapsed();
-    assert_eq!(storage.readCount.load(Ordering::SeqCst), reads);
-    let started = std::time::Instant::now();
-    for _ in 0..100 {
-        let content = store.readOperationLog("peer").unwrap();
-        let decoded = store.decodeOperationLog(&content).unwrap();
-        assert_eq!(decoded.into_iter().filter(|operation| operation.domain == "network_control").count(), 1);
-    }
-    eprintln!("domain-query comparison: 100 queries, 5000 history records; indexed={indexed:?}, full_log_decode={:?}; warm_storage_reads=0", started.elapsed());
+    // Each query opens just its selected record. Business history is not cached
+    // and neither the index nor an unrelated payload is read again.
+    assert_eq!(storage.readCount.load(Ordering::SeqCst) - reads, 100);
+    assert_eq!(storage.rangeBytes.load(Ordering::SeqCst) - bytes,
+        100 * (serde_json::to_vec(&policy).unwrap().len() + 1));
 }
 
 /// Verifies a synchronization clock includes every required origin sequence.
@@ -1236,8 +1249,9 @@ fn corrupt_lines_are_skipped_by_reads_and_reported_by_scans() {
     corrupted.extend_from_slice(lines[2]);
     storage.writeBytes(path, &corrupted).unwrap();
 
-    // A fresh instance rebuilds its index from the damaged journal and must
-    // still export the two intact operations.
+    // Close the journal owner before simulating offline file damage. Reopening
+    // must rebuild from disk rather than keeping a process-pinned cache alive.
+    drop(store);
     let reopened = SyncOperationStore::new(storage.clone(), "corrupt-journal");
     let readable = reopened
         .operationsSince(&SyncClock::empty(), &[], 100)
@@ -1413,12 +1427,7 @@ fn received_work_survives_restart_and_completion_keeps_sparse_receipts() {
         .receiveOperations(&[earlier.clone(), later.clone()])
         .unwrap();
     assert!(store.preferenceHistory().unwrap().is_empty());
-    assert!(
-        store
-            .operationsSince(&SyncClock::empty(), &[], 10)
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(store.operationsSince(&SyncClock::empty(), &[], 10).unwrap(), vec![earlier.clone(), later.clone()]);
     store
         .completeOperations(std::slice::from_ref(&later))
         .unwrap();
@@ -1586,6 +1595,10 @@ fn pending_preferences_are_encrypted_at_rest() {
             .unwrap()
             .contains("pending-secret-token")
     );
+    let pending = host.readBytes(&pending_path("encrypted-receive", &incoming.opId)).unwrap();
+    let encoded: Value = serde_json::from_slice(&pending).unwrap();
+    assert_eq!(encoded["payload"]["format"], ENCRYPTED_SYNC_PAYLOAD_FORMAT);
+    assert!(!String::from_utf8(pending).unwrap().contains("pending-secret-token"));
     let reopened = SyncOperationStore::new(Arc::new((*host).clone()), "encrypted-receive");
     assert_eq!(reopened.pendingOperations().unwrap(), vec![incoming]);
 }
@@ -1697,4 +1710,109 @@ fn intact_operations_survive_retry_after_partial_journal_tail() {
         let restarted = SyncOperationStore::new(Arc::new((*host).clone()), "runtime/sync");
         assert_eq!(restarted.operationsSince(&SyncClock::empty(), &[], 100).unwrap(), vec![first, second]);
     }
+}
+
+/// Cold receipt/index construction and every query intent use the same bounded reader.
+#[test]
+fn journal_queries_use_bounded_ranges_after_reopen() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(host.clone(), "bounded");
+    let operations = (1..=40).map(|sequence| operation(sequence, "message", &format!("m{sequence}"),
+        "upsert", SyncOperationSemantics::EntityState, json!({"text":"x".repeat(8192)}))).collect::<Vec<_>>();
+    store.appendOperations(&operations).unwrap();
+    drop(store);
+    host.forbidWholeJournalReads.store(true, Ordering::SeqCst);
+    let reopened = SyncOperationStore::new(host.clone(), "bounded");
+    assert!(reopened.receipt().unwrap().containsSequence("device-a", 40));
+    for domains in [vec![], vec![operations[0].domain.clone()]] {
+        assert_eq!(reopened.operationsSinceWithBudget(&SyncClock::empty(), &domains, 1, 1024, |_|true).unwrap(),
+            vec![operations[0].clone()]);
+    }
+    assert!(reopened.preferenceMergeHistory().unwrap().is_empty());
+    assert_eq!(reopened.scanOperationLog("device-a").unwrap().decodedLines, 40);
+}
+
+/// Shared handles serialize writes; the registry owns neither the state nor its Host.
+#[test]
+fn journal_registry_releases_state_after_last_handle() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let first = SyncOperationStore::new(host.clone(), "lifecycle");
+    let second = SyncOperationStore::new(host.clone(), "lifecycle");
+    assert!(Arc::ptr_eq(&first.sharedState, &second.sharedState));
+    let state = Arc::downgrade(&first.sharedState);
+    drop(first);
+    assert!(state.upgrade().is_some());
+    drop(second);
+    assert!(state.upgrade().is_none());
+    let weak_host = Arc::downgrade(&host);
+    drop(host);
+    assert!(weak_host.upgrade().is_none());
+}
+
+/// Pending originals are planned with archived states before compaction and paging.
+#[test]
+fn relay_pages_compact_archived_and_pending_records_together() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(host, "combined-export");
+    let first = operation(1, "message", "same", "upsert", SyncOperationSemantics::EntityState, json!(1));
+    let newer = operation(2, "message", "same", "upsert", SyncOperationSemantics::EntityState, json!(2));
+    let other = operation(3, "message", "other", "upsert", SyncOperationSemantics::EntityState, json!(3));
+    store.appendOperation(&first).unwrap();
+    store.receiveOperations(&[newer.clone(), other]).unwrap();
+    assert_eq!(store.operationsSinceWithBudget(&SyncClock::empty(), &[], 1, 1024, |_|true).unwrap(), vec![newer.clone()]);
+    // A caller's retention rule still runs before state compaction.
+    assert_eq!(store.operationsSinceWithBudget(&SyncClock::empty(), &[], 1, 1024, |op|op.sequence != 2).unwrap(), vec![first]);
+    assert_eq!(store.pendingOperationCount().unwrap(), 2);
+    store.completeOperations(&[newer]).unwrap();
+    assert_eq!(store.pendingOperationCount().unwrap(), 1);
+}
+
+/// Migrating inline pending data publishes payloads before replacing its receipt ledger.
+#[test]
+fn legacy_receive_migration_is_streamed_and_retryable_after_commit_failure() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let incoming = operation(7, "message", "old", "upsert", SyncOperationSemantics::EntityState,
+        json!({"text":"legacy-pending-data".repeat(8192)}));
+    let mut receipt = SyncReceipt::default();
+    receipt.observe("device-a", 7);
+    let original = serde_json::to_vec(&json!({"receipt":receipt,"pending":{incoming.opId.clone():incoming},"fingerprints":{}})).unwrap();
+    let path = "legacy-receive/receive_state.json";
+    host.writeBytes(path, &original).unwrap();
+    host.failAtomic.store(1, Ordering::SeqCst);
+    let store = SyncOperationStore::new(host.clone(), "legacy-receive");
+    assert!(store.receipt().is_err());
+    assert_eq!(host.readBytes(path).unwrap(), original);
+    drop(store);
+    host.failAtomic.store(0, Ordering::SeqCst);
+    let reopened = SyncOperationStore::new(host.clone(), "legacy-receive");
+    assert_eq!(reopened.receipt().unwrap(), receipt);
+    assert_eq!(reopened.pendingOperations().unwrap(), vec![incoming.clone()]);
+    let migrated = host.readBytes(path).unwrap();
+    assert!(migrated.len() < 2048);
+    assert_eq!(serde_json::from_slice::<Value>(&migrated).unwrap()["formatVersion"], 2);
+    assert!(host.exists(&pending_path("legacy-receive", &incoming.opId)).unwrap());
+}
+
+/// A receipt never acknowledges a payload whose durable file failed, and completion
+/// never removes a file before its metadata commit succeeds.
+#[test]
+fn receive_and_completion_keep_payloads_and_receipts_atomic() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(host.clone(), "receive-atomic");
+    let incoming = operation(1, "message", "one", "upsert", SyncOperationSemantics::EntityState, json!("data"));
+    host.failAtomic.store(2, Ordering::SeqCst);
+    assert!(store.receiveOperations(&[incoming.clone()]).is_err());
+    assert!(!store.receipt().unwrap().containsSequence("device-a", 1));
+    assert_eq!(store.pendingOperationCount().unwrap(), 0);
+    host.failAtomic.store(0, Ordering::SeqCst);
+    store.receiveOperations(&[incoming.clone()]).unwrap();
+    let path = pending_path("receive-atomic", &incoming.opId);
+    host.failAtomic.store(1, Ordering::SeqCst);
+    assert!(store.completeOperations(&[incoming.clone()]).is_err());
+    assert!(host.exists(&path).unwrap());
+    assert_eq!(store.pendingOperations().unwrap(), vec![incoming.clone()]);
+    host.failAtomic.store(0, Ordering::SeqCst);
+    store.completeOperations(&[incoming]).unwrap();
+    assert!(!host.exists(&path).unwrap());
+    assert!(store.receipt().unwrap().containsSequence("device-a", 1));
 }

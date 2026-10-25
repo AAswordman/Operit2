@@ -7,7 +7,7 @@ import { loadModule, plain } from "./runtime.mjs";
 async function environment(t) {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" });
   const repository = await loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
-  const service = loadModule("src/service.ts", disk.globals).createCharacterCardsService(repository);
+  const service = loadModule("src/service-runtime.ts", disk.globals).createCharacterCardsService(repository);
   let author = "default";
   const chat = loadModule("src/memory-jobs/chat.ts", { ...disk.globals, Tools: {
     ...disk.globals.Tools,

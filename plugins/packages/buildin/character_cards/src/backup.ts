@@ -1,6 +1,7 @@
+import { readCharacter } from "./drafts";
 import type { CharacterRepository } from "./canonical";
 import type { Card, ConversationGroupRecord, Group, MemorySpace, Tag } from "./model";
-import { assertCard, assertConversationGroups, assertGroup, assertInteger, assertObject, assertString, assertTag } from "./validation";
+import { assertConversationGroups, assertGroup, assertInteger, assertObject, assertString, assertTag } from "./validation";
 import { assertMemorySpace } from "./storage/state";
 
 /** Requires complete character and tag backups without manufacturing absent arrays. */
@@ -9,9 +10,9 @@ export function decodeCharacterBackup(content: string): { version: 2; characterC
   if (document.version !== 2) throw new Error("Unsupported plugin character backup version");
   assertConversationGroups(document.conversationGroups);
   if (!Array.isArray(document.characterCards) || !Array.isArray(document.promptTags)) throw new Error("Character backup requires complete characterCards and promptTags arrays");
-  for (const card of document.characterCards) assertCard(card);
+  const characterCards = document.characterCards.map(card => readCharacter(card));
   for (const tag of document.promptTags) assertTag(tag);
-  return { version: 2, characterCards: document.characterCards, promptTags: document.promptTags, conversationGroups: document.conversationGroups };
+  return { version: 2, characterCards, promptTags: document.promptTags, conversationGroups: document.conversationGroups };
 }
 /** Requires complete group backups rather than defaulting missing groups to an empty library. */
 export function decodeGroupBackup(content: string): { characterGroups: Group[] } {

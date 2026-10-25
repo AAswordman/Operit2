@@ -2,7 +2,7 @@ import type { CharacterRepository } from "../canonical";
 import type { Card, MemoryChat, MemoryChatListing, MemoryChatMessage, MemoryJobWindow, MemoryRebuild } from "../model";
 import { requireChatSelection } from "../chat-bindings";
 import type { ChatResourceRoute } from "../api";
-import { readMessageAuthor, chatsForMemoryOwner } from "../chat-storage";
+import { readMessageAuthor } from "../chat-storage";
 import { assertBoolean, assertInteger, assertMemoryChatMessage, assertObject, assertString, requireId } from "../validation";
 
 /** Requires exact generic chat-summary fields without inventing unavailable history metadata. */
@@ -25,7 +25,7 @@ export async function requireChat(chatId: string): Promise<MemoryChat> {
 
 /** Resolves participants solely from the real persisted plugin chat selection. */
 export async function chatParticipants(chatId: string, repository: CharacterRepository): Promise<Card[]> {
-  const binding = await repository.readChatBinding(chatId), cards = await repository.listCharacters(), groups = await repository.listGroups();
+  const binding = await repository.chatBindings.readChatBinding(chatId), cards = await repository.listCharacters(), groups = await repository.listGroups();
   const selection = requireChatSelection(binding.selection, cards, groups);
   if (selection.kind === "model") return [];
   if (selection.kind === "card") return [await repository.getCharacter(selection.id)];
@@ -102,9 +102,9 @@ export async function requireMessagesOwner(chatId: string, messages: MemoryChatM
   throw new Error("History has no assistant author currently writable for this memory owner: " + ownerKey);
 }
 /** Lists real host summaries under their stored plugin binding, reporting bindings whose Core conversation disappeared instead of failing the whole listing. */
-export async function listMemoryChats(ownerKey: string, repository: Pick<CharacterRepository, "readMemorySettings">): Promise<MemoryChatListing> {
+export async function listMemoryChats(ownerKey: string, repository: Pick<CharacterRepository, "readMemorySettings" | "chatBindings">): Promise<MemoryChatListing> {
   await repository.readMemorySettings(ownerKey);
-  const selected = await chatsForMemoryOwner(ownerKey);
+  const selected = await repository.chatBindings.chatsForMemoryOwner(ownerKey);
   const chats: MemoryChat[] = [], missingChatIds: string[] = [];
   for (let offset = 0; offset < selected.length; offset += 200) {
     const ids = selected.slice(offset, offset + 200), result = await Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
@@ -128,12 +128,12 @@ export async function listMemoryChats(ownerKey: string, repository: Pick<Charact
 /** Deletes bindings and extraction candidates whose Core conversation or source message no longer exists. */
 export async function pruneMissingMemoryChats(
   ownerKey: string,
-  repository: Pick<CharacterRepository, "readMemorySettings" | "deleteChatBinding" | "readMemorySpace" | "writeMemorySpace">,
+  repository: Pick<CharacterRepository, "readMemorySettings" | "chatBindings" | "readMemorySpace" | "writeMemorySpace">,
 ): Promise<{ removedChatIds: string[]; removedCandidateIds: string[] }> {
   const { missingChatIds } = await listMemoryChats(ownerKey, repository);
   const removedChatIds: string[] = [];
   for (const chatId of missingChatIds) {
-    if ((await repository.deleteChatBinding(chatId)).deleted) removedChatIds.push(chatId);
+    if ((await repository.chatBindings.deleteChatBinding(chatId)).deleted) removedChatIds.push(chatId);
   }
   const space = await repository.readMemorySpace(ownerKey);
   const candidateChats = [...new Set(space.candidates.map(candidate => candidate.chatId))];

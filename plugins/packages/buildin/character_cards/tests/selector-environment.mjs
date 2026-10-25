@@ -50,17 +50,18 @@ export async function selectorEnvironment(t, configurationSettings = {}, runtime
     },
   } } });
   assert.equal(disk.calls.length, 0); assert.deepEqual(calls, []); assert.deepEqual(directoryCalls, []);
-  const storage = loadModule("src/chat-storage.ts", { ...disk.globals, Tools: tools });
+  // Assertions and deliberate malformed seeds use generic preference IO, never a second business owner.
+  const chatPreferences = () => disk.storage.dataStore.open({ path: disk.directory + "/chats.preferences.json" });
   return {
     ...plugin, disk, records, calls, tools,
     /** Reads actual plugin binding rows for independent persistence assertions. */
     async binding(chatId = "selector-chat") {
-      const value = (await (await storage.chatDatabase()).chats.data()).get("binding_" + chatId);
+      const value = (await (await chatPreferences()).data()).get("binding_" + chatId);
       return value === undefined ? null : plain(value);
     },
     /** Seeds a complete JSON binding instead of modifying a Core extension fixture. */
     async seedBinding(chatId, value) {
-      await (await storage.chatDatabase()).chats.edit(preferences => { preferences.set("binding_" + chatId, value); });
+      await (await chatPreferences()).edit(preferences => { preferences.set("binding_" + chatId, value); });
     },
     /** Schedules an original error on the object commit boundary exercised by selection writes. */
     failNext(method, failure) { disk.failNext(method, failure); },

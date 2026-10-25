@@ -60,8 +60,8 @@ test("registered API command and Web IPC share actual file-backed character reco
   assert.deepEqual(plain(await reopened.web({ action: "getCharacter", id: created.id })), plain(viaApi));
 });
 
-/** Keeps partial synchronized domain state out of the retained storage initialization result. */
-test("registered service reads current data after an alias source disappears without restarting", async t => {
+/** An incomplete synchronized peer must not prevent edits to a healthy character. */
+test("registered service isolates a missing peer memory owner and refreshes external changes", async t => {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" });
   await loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
   disk.storage.inspectPreferences("cards", values => {
@@ -70,35 +70,35 @@ test("registered service reads current data after an alias source disappears wit
   disk.clearCalls();
   const plugin = openPlugin(disk);
   assert.deepEqual(plain(await plugin.api("character.list", {})).map(card => card.id).sort(), ["default", "pending"]);
-  await assert.rejects(plugin.api("character.update", { id: "default", changes: { name: "Blocked" } }), /missing an owner memory space/);
+  assertNoMutations(disk);
+  assert.equal((await plugin.api("character.update", { id: "default", changes: { name: "Healthy edit" } })).name, "Healthy edit");
+  disk.clearCalls();
+  await assert.rejects(plugin.api("memory.settings.read", { ownerKey: "character:pending" }), /[Mm]issing.*memory|memory.*missing/i);
   assertNoMutations(disk);
   disk.storage.inspectPreferences("cards", values => { delete values.record_pending; });
   assert.deepEqual(plain(await plugin.api("character.list", {})).map(card => card.id), ["default"]);
   assert.equal((await plugin.api("character.update", { id: "default", changes: { name: "Synchronized" } })).name, "Synchronized");
 });
 
-/** Validates malformed current records through each entrypoint without publishing changes. */
-test("registered API command and Web IPC reject malformed current records without partial writes", async t => {
-  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), files = loadModule("src/storage/database.ts", disk.globals);
-  await files.DatabaseCharacterRepository.open();
-  disk.storage.inspectPreferences("cards", values => { values.record_default.memoryBindingMode = "BROKEN"; });
-  disk.clearCalls(); const plugin = openPlugin(disk); let original;
-  await assert.rejects(plugin.api("character.list", {}),
-    /** Captures the actual validation error from the real provider path. */
-    error => { original = error; return error.message === "Invalid memory binding mode"; },
-  );
-  await assert.rejects(plugin.web({ action: "getCharacter", id: "default" }),
-    /** Requires the same record validation on the actual IPC handler. */
-    error => error.message === original.message,
-  );
+/** All entrypoints decode the same defaults without performing a repair write. */
+test("registered API command and Web IPC read partial current cards without startup writes", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" });
+  await loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
+  disk.storage.inspectPreferences("cards", values => {
+    delete values.record_default.createdAt;
+    delete values.record_default.toolAccessConfig;
+    values.record_default.memoryBindingMode = "BROKEN";
+  });
+  disk.clearCalls(); const plugin = openPlugin(disk);
+  const cards = plain(await plugin.api("character.list", {}));
+  const card = plain(await plugin.web({ action: "getCharacter", id: "default" }));
+  assert.deepEqual(card, cards[0]);
+  assert.equal(card.createdAt, 0); assert.equal(card.memoryBindingMode, "CHARACTER");
+  assert.equal(card.toolAccessConfig.enabled, false);
   const command = await plugin.command("character", ["list"]);
-  assert.equal(command.json.ok, false); assert.equal(command.json.error.code, "domain_operation_failed");
-  assert.equal(command.json.error.message, original.message);
+  assert.deepEqual(plain(command.json), cards);
   assert.equal(disk.storage.inspectPreferences("cards", values => values.record_default.memoryBindingMode), "BROKEN");
-  assert.equal(disk.calls.filter(
-    /** Rejects any repair or new-install publication during bad-file provider calls. */
-    call => call.method === "write" || call.method === "move" || call.method === "mkdir",
-  ).length, 0);
+  assertNoMutations(disk);
 });
 
 /** Executes real main and file-backed snapshot logic with explicit SDK directory inputs, not native-host integration. */

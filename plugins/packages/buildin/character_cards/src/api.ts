@@ -233,6 +233,7 @@ export interface DomainOperations {
   "memory.candidates.retryFailed": { input: { ownerKey: string }; output: { retried: number } };
   "memory.candidates.clearFailed": { input: { ownerKey: string }; output: { cleared: number } };
   "chat.configuration.resolve": { input: ChatConfigurationRequest; output: ChatConfigurationResult };
+  "chat.configuration.binding.find": { input: { chatId: string }; output: ChatBindingRecord | null };
   "chat.configuration.binding.read": { input: { chatId: string }; output: ChatBindingRecord };
   "chat.configuration.binding.write": { input: ChatBindingRecord; output: ChatBindingRecord };
   "chat.configuration.binding.delete": { input: { chatId: string }; output: { chatId: string; deleted: boolean } };

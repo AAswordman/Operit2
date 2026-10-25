@@ -1,9 +1,9 @@
 import type { BindableChat } from "./model";
-import { bindingsForChats } from "./chat-storage";
+import type { CharacterChatBindings } from "./chat-bindings";
 import { assertBoolean, assertInteger, assertString, requireId } from "./validation";
 
 /** Joins complete host history metadata with indexed plugin bindings for the batch picker. */
-export async function listBindableChats(): Promise<BindableChat[]> {
+export async function listBindableChats(bindings: Pick<CharacterChatBindings, "bindingsForChats">): Promise<BindableChat[]> {
   const result = await Tools.Chat.listAll();
   assertInteger(result.totalCount, "conversation count", 0);
   if (!Array.isArray(result.chats) || result.chats.length !== result.totalCount)
@@ -18,11 +18,11 @@ export async function listBindableChats(): Promise<BindableChat[]> {
     assertInteger(chat.messageCount, "message count", 0);
     assertBoolean(chat.isCurrent, "current conversation");
   }
-  const bindings = await bindingsForChats([...ids]);
+  const selections = await bindings.bindingsForChats([...ids]);
   return result.chats.map(chat => ({
     id: chat.id, title: chat.title, updatedAt: chat.updatedAt,
     messageCount: chat.messageCount, isCurrent: chat.isCurrent,
-    selection: bindings.get(chat.id) ?? null,
+    selection: selections.get(chat.id) ?? null,
   })).sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt) || left.id.localeCompare(right.id));
 }
 

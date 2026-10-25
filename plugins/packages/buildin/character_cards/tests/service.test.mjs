@@ -47,7 +47,8 @@ test("complete memory record fields are retained and lossy record shapes are rej
   const incomplete = plain(item); delete incomplete.properties;
   assert.throws(() => validation.assertMemory(incomplete), /标签和属性/);
   const incompleteCard = fixture().snapshot.cards[1]; delete incompleteCard.toolAccessConfig;
-  assert.throws(() => validation.assertCard(incompleteCard), /工具访问配置/);
+  const completedCard = loadModule("src/drafts.ts").readCharacter(incompleteCard);
+  assert.deepEqual(plain(completedCard.toolAccessConfig), plain(loadModule("src/drafts.ts").createCharacterDraft().toolAccessConfig));
 });
 
 /** Verifies graph UUIDs and real link IDs are validated without manufacturing nodes or edges. */
@@ -99,7 +100,7 @@ test("domain validation rejects malformed scores owners and unsupported input fi
 
 /** Injects only a rejected dependency; it supplies no successful host, record, or production adapter. */
 test("service dependency failures propagate unchanged instead of becoming empty snapshots", async () => {
-  const api = loadModule("src/service.ts"), failure = new Error("PERSISTENCE_NOT_CONNECTED_TEST"), reads = [];
+  const api = loadModule("src/operations.ts"), failure = new Error("PERSISTENCE_NOT_CONNECTED_TEST"), reads = [];
   const rejected = new Proxy({}, {
     /** Rejects every explicitly requested catalog read with the same original failure. */
     get(_target, method) {

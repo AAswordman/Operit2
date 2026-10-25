@@ -3245,6 +3245,8 @@ pub struct ComposeFilePickerOptions {
     pub allowMultiple: Option<bool>,
     /// MIME types accepted by the document selector.
     pub mimeTypes: Option<Vec<String>>,
+    /// Includes base64 file contents when set; the host rejects files larger than this positive byte limit before reading.
+    pub maxContentBytes: Option<u64>,
 }
 /// File metadata returned by the host picker.
 pub struct ComposePickedFile {
@@ -3258,6 +3260,8 @@ pub struct ComposePickedFile {
     pub mimeType: Option<String>,
     /// File size in bytes.
     pub size: f64,
+    /// Selected file contents when maxContentBytes was requested; no source path access is required.
+    pub contentBase64: Option<String>,
 }
 /// Outcome of a host file-picker request.
 pub struct ComposeFilePickerResult {

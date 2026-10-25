@@ -1,7 +1,8 @@
+import { readCharacter } from "./drafts";
 import type { Card, Group, Tag, TagChanges, TagValues } from "./model";
 import { createCharacterDraft } from "./drafts";
 import {
-  assertCard, assertGroup, assertObject, assertString,
+  assertGroup, assertObject, assertString,
   assertStrings, assertTagValues, normalizeNames, requireId, requireName,
 } from "./validation";
 
@@ -84,8 +85,7 @@ function decodeOperitExtension(value: unknown, tags: Tag[], changes: TagChanges)
     for (const id of payload.attachedTagIds) attachedIds.push(canonicalTag(tags, id).id);
   }
   const card = { ...payload, id: "", createdAt: 0, updatedAt: 0, attachedTagIds: normalizeNames(attachedIds) };
-  assertCard(card);
-  return card;
+  return readCharacter(card);
 }
 
 /** Decodes world-book content into one staged FUNCTION tag using the original labels and ordering. */
@@ -149,9 +149,9 @@ export function decodeCharacterImport(content: string, format: "operit" | "taver
   const document: unknown = JSON.parse(content);
   const tagChanges: TagChanges = { created: [], updated: [], deleted: [] };
   if (format === "operit") {
-    assertCard(document);
-    for (const id of document.attachedTagIds) canonicalTag(tags, id);
-    return { card: { ...document, id: "", createdAt: 0, updatedAt: 0 }, tagChanges };
+    const card = readCharacter(document);
+    for (const id of card.attachedTagIds) canonicalTag(tags, id);
+    return { card: { ...card, id: "", createdAt: 0, updatedAt: 0 }, tagChanges };
   }
   if (format !== "tavern") throw new Error("角色卡导入格式无效");
   assertObject(document, "酒馆角色卡");
@@ -164,13 +164,11 @@ export function decodeCharacterImport(content: string, format: "operit" | "taver
   else card = convertStandardTavern(data, envelope.spec, envelope.spec_version);
   const worldBookTag = stageWorldBook(data, tags, tagChanges);
   if (worldBookTag !== null) card.attachedTagIds = normalizeNames([...card.attachedTagIds, worldBookTag]);
-  assertCard(card);
   return { card, tagChanges };
 }
 
 /** Exports all character fields and attached tag content in the explicitly selected format. */
 export function encodeCharacterExport(card: Card, format: "operit" | "tavern", tags: Tag[]): string {
-  assertCard(card);
   if (format === "operit") return JSON.stringify(card, null, 2);
   if (format !== "tavern") throw new Error("角色卡导出格式无效");
   const attachedTags: { id: string; name: string; description: string; promptContent: string; tagType: string }[] = [];

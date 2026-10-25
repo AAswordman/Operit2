@@ -1,6 +1,6 @@
 // @operit-compose-artifact 4
 "use strict";
-var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/memory-status/index.ui.js:1si3s1l:16822","root":0,"nodes":[{"type":"AlertDialog","props":[2,["key","title","text","confirmText","onConfirm","onDismissRequest"],[[0,"memory-status"],[0,"记忆状态"],[1,0],[0,"关闭"],[1,1],[1,2]]],"children":[0,null],"explicitChildren":false}]}];
+var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/memory-status/index.ui.js:ezbrz3:16898","root":0,"nodes":[{"type":"AlertDialog","props":[2,["key","title","text","confirmText","onConfirm","onDismissRequest"],[[0,"memory-status"],[0,"记忆状态"],[1,0],[0,"关闭"],[1,1],[1,2]]],"children":[0,null],"explicitChildren":false}]}];
 
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -229,6 +229,7 @@ var validators = {
   "memory.candidates.retryFailed": ownerOnly,
   "memory.candidates.clearFailed": ownerOnly,
   "chat.configuration.resolve": parseChatConfigurationRequest,
+  "chat.configuration.binding.find": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.read": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.write": shape({ chatId: required(nonblank), selection: required(nonblank) }),
   "chat.configuration.binding.delete": shape({ chatId: required(nonblank) }),
@@ -327,5 +328,5 @@ function Screen(ctx) {
   function close() {
     return { type: "toolpkg.presentation.cancel", requestId };
   }
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-status/index.ui.js:16822",__operitUiPrograms_[0],[input.description,close,close]);
+  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-status/index.ui.js:16898",__operitUiPrograms_[0],[input.description,close,close]);
 }

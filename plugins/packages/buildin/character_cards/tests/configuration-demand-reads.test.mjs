@@ -16,7 +16,7 @@ async function environment(t) {
     /** Records tool reads so execution tests can reject unnecessary catalog loads. */
     async readToolCatalog() { calls.push("tools"); return plain(directories.toolCatalog); },
   });
-  const service = loadModule("src/service.ts", disk.globals).createCharacterCardsService(repository);
+  const service = loadModule("src/service-runtime.ts", disk.globals).createCharacterCardsService(repository);
   /** Discards setup reads while retaining the actual database and all service state. */
   function reset() { disk.clearCalls(); calls.length = 0; }
   /** Resolves through the real service dispatcher and its live privacy check. */

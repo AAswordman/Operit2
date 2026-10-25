@@ -2,7 +2,9 @@ import type { Storage } from "../../../../../types/storage";
 import declarations from "./merge.json";
 import type { StoragePreferencesMergeDescriptor } from "../../../../../types/storage.generated";
 const merge = declarations as Record<keyof typeof declarations, StoragePreferencesMergeDescriptor>;
-import { migrateCharacterSchema } from "./schema";
+import { clone } from "./records";
+import { migrateCharacterStorage } from "./migrations/legacy-to-v1";
+import { assertObject } from "../validation";
 import { CharacterMemoryDatabase } from "./memory";
 
 export const configurationNames = ["cards", "groups", "tags", "stores", "conversationGroups"] as const;
@@ -12,12 +14,12 @@ export const recordPrefix = "record_";
 
 /** Reads complete configuration documents from an immutable native preference snapshot. */
 export function documents<T>(preferences: Storage.Preferences): T[] {
-  return preferences.entries().filter(([key]) => key.startsWith(recordPrefix)).map(([, value]) => value as T);
+  return preferences.entries().filter(([key]) => key.startsWith(recordPrefix)).map(([, value]) => clone(value) as T);
 }
 
 /** Selects one complete configuration document without a collection adapter or revision counter. */
 export function document<T>(preferences: Storage.Preferences, id: string): T | undefined {
-  return preferences.get<T>(recordPrefix + id);
+  return clone(preferences.get<T>(recordPrefix + id));
 }
 
 /** Retains the native preference owners independently of the memory object engine. */
@@ -51,16 +53,18 @@ export class CharacterStorage {
       handles.push(migration);
       memory = await CharacterMemoryDatabase.open();
       const storage = new CharacterStorage(configuration, metadata, chats, migration, memory);
-      metadata.withSchema(1, async (version, preferences) => {
-        switch (version) {
-          case 0: await migrateCharacterSchema(storage, preferences, directory); break;
-          default: throw new Error("Missing character schema migration: " + version);
+      // The schema callback only marks the format upgrade. File and record work belongs
+      // to the repository's initialization, outside any pending preferences edit.
+      metadata.withSchema(1, (version, preferences) => {
+        if (version !== 0) throw new Error("Missing character schema migration: " + version);
+        const state = preferences.get<Record<string, Storage.Value>>("state");
+        if (state !== undefined) {
+          assertObject(state, "character schema metadata");
+          preferences.set("state", { ...state, legacyImportPending: true });
         }
       });
-      const current = await metadata.data();
-      const state = current.get<Record<string, Storage.Value>>("state");
-      if (state !== undefined && state.legacyImportPending === true) await metadata.edit(preferences => migrateCharacterSchema(storage, preferences, directory));
-      if ((await migration.data()).contains("plan")) await migration.edit(preferences => { preferences.remove("plan"); });
+      await metadata.data();
+      await migrateCharacterStorage(storage, directory);
       return storage;
     } catch (error) {
       const closed = await Promise.allSettled([...handles.map(handle => handle.close()), ...(memory === undefined ? [] : [memory.close()])]);

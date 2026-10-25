@@ -85,6 +85,12 @@ export async function createDiskHarness(testContext, { legacyIdentity = null } =
         toString() { return this.content; },
       };
     },
+    /** Writes exact binary bytes through the same confined generic file boundary. */
+    async writeBinary(file, contentBase64) {
+      const target = confined(file); attempted("writeBinary", [file, contentBase64]);
+      await writeFile(target, Buffer.from(contentBase64, "base64"));
+      return operationResult("writeBinary", file);
+    },
     /** Writes the supplied content exactly once and does not create missing parent directories. */
     async write(file, content, append = false) {
       const target = confined(file); attempted("write", [file, content, append]);
@@ -182,7 +188,7 @@ export async function createDiskHarness(testContext, { legacyIdentity = null } =
         for (const row of sql.prepare("SELECT collection,key,value,version FROM records ORDER BY collection,key").all())
           if (schema.collections.includes(row.collection)) rows.push({ ...row, value: JSON.parse(row.value) });
       });
-      return schema.stateFromRecords(metadata, rows);
+      return schema.decodeStateFromRecords(metadata, rows);
     },
     /** Returns deterministic assertion bytes for the current authoritative records. */
     stateBytes() { return Buffer.from(JSON.stringify(this.readState())); },

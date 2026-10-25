@@ -5,7 +5,7 @@ import type { ThemeChoice } from "./selection-application";
 import type { UiPresentation, UiScreenSession } from "./ui-contributions";
 import { createUiScreenSession } from "./ui-contributions";
 import { createCharacterDraft, createGroupDraft } from "./drafts";
-import { readAvatarImport, pickedImagePath } from "./image-source";
+import { MAX_AVATAR_BYTES, readAvatarImport } from "./image-source";
 import { renderEntityPreview } from "./ui-entity-preview";
 import { characterModelBindingMode, characterModelBindingStatus, sameCharacterModelBinding } from "./model-binding";
 
@@ -228,10 +228,10 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
   /** Uses the existing host picker and file service; the selected asset remains plugin-owned. */
   async function chooseAvatar(): Promise<void> {
     await act(async () => {
-      const selected = await ctx.openFilePicker({ picker: "image", allowMultiple: false, mimeTypes: ["image/*"] }); assertOwner();
+      const selected = await ctx.openFilePicker({ picker: "image", allowMultiple: false, mimeTypes: ["image/*"], maxContentBytes: MAX_AVATAR_BYTES }); assertOwner();
       if (selected.cancelled) return;
       if (selected.files.length !== 1) throw new Error("请选择一个头像文件");
-      const platform = (await Tools.System.terminal.info()).platform, contentBase64 = await readAvatarImport(pickedImagePath(selected.files[0].path, platform)); assertOwner();
+      const contentBase64 = readAvatarImport(selected.files[0]); assertOwner();
       const directory = ToolPkg.getConfigDir().replace(/\/$/, "") + "/avatars";
       const created = await Tools.Files.mkdir(directory, true); if (!created.successful) throw new Error(created.details);
       const uri = directory + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + ".image";

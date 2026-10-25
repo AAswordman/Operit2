@@ -142,12 +142,17 @@ role command names and descriptions are supplied only by this package.
 
 ## Storage and released-data migration
 
-`Tools.Storage.objects` owns the plugin's `characters.sqlite` database in the stable
-Space data directory returned by `ToolPkg.getSpaceDataDir()`. Each domain record has
-its own collection/key and exact version; commits publish changed records, not an
-entire JSON library. Current operation sessions still load paged records into a
-validated domain snapshot. USER.md remains a real file for editing and attachment.
-Its staged publication and the SQLite transaction have separate failure boundaries.
+The request path is:
+
+- UI, commands and public APIs enter `service-runtime.ts`, which opens one lazy service.
+- Reads go directly to `storage/database.ts`. Writes use `operations.ts` and the repository's serialized session.
+- Configuration records live in native JSON preferences; memories and jobs live in `memory.sqlite`. USER.md stays a file.
+- `drafts.ts:readCharacter` decodes persisted and imported cards with the same defaults as new cards. It returns a new value and preserves existing content.
+
+There is no startup repair scan, whole-database record validation, or second service
+adapter. Missing fields are completed when read and persisted with the next normal
+write. A damaged unrelated memory job cannot block reading or editing a character.
+Released-data migration uses this same decoder before publishing its records.
 
 The unreleased plugin's former `state.json` format is removed without a compatibility
 reader. Released application data takes a distinct migration path: Core's centralized

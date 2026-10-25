@@ -112,7 +112,7 @@ async function prepareVersionOne(storage: CharacterStorage, metadata: Document, 
   for (const row of input) {
     if (row.collection === "cards") { assertObject(row.value, "legacy card"); delete row.value.isDefault; }
   }
-  const inputMetadata: Document = { ...metadata, version: 1 }; delete inputMetadata.legacyImportPending;
+  const inputMetadata: Document = { ...clone(metadata), version: 1 }; delete inputMetadata.legacyImportPending;
   // The released records have the same fields; repair their references before normal business reads.
   const state = decodeStateFromRecords(inputMetadata, input) as unknown as CharacterState;
   removeDeletedReferences(state);
@@ -305,12 +305,16 @@ async function applyChanges(storage: CharacterStorage, changes: RecordChange[]):
   if (mutations.length !== 0) await storage.memory.commit(mutations);
 }
 
-/** Resumes the released-data import work while the native schema callback retains the metadata snapshot. */
-export async function migrateLegacyToV1(storage: CharacterStorage, preferences: Storage.MutablePreferences, directory: string, source: Document): Promise<void> {
-  const metadata = clone(source);
-  let plan: MigrationPlan;
+/** Resumes durable conversion work without holding a preferences edit across host calls. */
+export async function migrateCharacterStorage(storage: CharacterStorage, directory: string): Promise<void> {
+  const source = clone((await storage.metadata.data()).get<Document>("state"));
   const persisted = (await storage.migration.data()).get("plan");
-  if (persisted === undefined) plan = await prepareVersionOne(storage, metadata, directory);
+  if (persisted === undefined && (source === undefined || source.legacyImportPending !== true)) return;
+  assertObject(source, "character schema metadata");
+  if (source.migrationStatus === "writing") throw new Error("Character migration has not completed: legacy import is still writing");
+  if (source.version !== 1) throw new Error("Unsupported character schema version: " + source.version);
+  let plan: MigrationPlan;
+  if (persisted === undefined) plan = await prepareVersionOne(storage, clone(source), directory);
   else { assertMigrationPlan(persisted); plan = clone(persisted); }
   let previous: Storage.Value | undefined = persisted === undefined ? undefined : storedValue(persisted);
   /** Saves the exact work cursor in a separate native preference edit for interruption recovery. */
@@ -368,15 +372,28 @@ export async function migrateLegacyToV1(storage: CharacterStorage, preferences: 
       case "verify":
         plan.phase = "cleanup"; plan.cursor = 0; await publish(); break;
       case "cleanup":
+        // Publish the converted identity before retiring any original resources.
+        // A failed final edit leaves both the checkpoint and original files available.
+        await storage.metadata.edit(preferences => {
+          const current = preferences.get<Document>("state");
+          assertObject(current, "character schema metadata");
+          if (current.version !== 1 || (!equal(current.active, source.active) && !equal(current.active, plan.active)))
+            throw new Error("Character migration metadata changed during conversion");
+          const completed: Document = { ...current, version: 1, active: plan.active };
+          delete completed.legacyImportPending;
+          if (!equal(current, completed)) preferences.set("state", completed);
+        });
         for (; plan.cursor < plan.directories.length;) {
-          const source = absolute(directory, plan.directories[plan.cursor].source);
-          if ((await Tools.Files.exists(source)).exists) {
-            completed(await Tools.Files.deleteFile(source, true));
+          const sourceDirectory = absolute(directory, plan.directories[plan.cursor].source);
+          if ((await Tools.Files.exists(sourceDirectory)).exists) {
+            completed(await Tools.Files.deleteFile(sourceDirectory, true));
           }
           plan.cursor += 1; await publish();
         }
-        metadata.version = 1; metadata.active = plan.active; delete metadata.legacyImportPending;
-        preferences.set("state", metadata);
+        await storage.migration.edit(preferences => {
+          if (!equal(preferences.get("plan"), previous)) throw new Error("Character migration plan changed concurrently");
+          preferences.remove("plan");
+        });
         return;
       default: throw new Error("Invalid character migration phase");
     }

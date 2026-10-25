@@ -4250,6 +4250,10 @@ export interface ComposeFilePickerOptions {
    * MIME types accepted by the document selector.
    */
   mimeTypes?: string[];
+  /**
+   * Includes base64 file contents when set; the host rejects files larger than this positive byte limit before reading.
+   */
+  maxContentBytes?: number;
 }
 
 /**
@@ -4276,6 +4280,10 @@ export interface ComposePickedFile {
    * File size in bytes.
    */
   size: number;
+  /**
+   * Selected file contents when maxContentBytes was requested; no source path access is required.
+   */
+  contentBase64?: string;
 }
 
 /**

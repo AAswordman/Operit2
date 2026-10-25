@@ -1,6 +1,6 @@
 import type { CharacterRepository } from "./canonical";
 import { parseChatSelection } from "./chat-bindings";
-import { assertCard, assertGroup, requireId, assertObject, assertString } from "./validation";
+import { assertGroup, requireId, assertObject, assertString } from "./validation";
 import type { DomainOperation, DomainInput } from "./api";
 import { parseDomainPayload } from "./domain";
 import type { Request } from "./model";
@@ -64,7 +64,7 @@ export async function readSelectionReferences(repository: Pick<CharacterReposito
   switch (parsed.kind) {
     case "model": return copyReferences({ selection, themeConfigId: null, ttsConfigId: null });
     case "card": {
-      const card = await repository.getCharacter(parsed.id); assertCard(card);
+      const card = await repository.getCharacter(parsed.id);
       if (card.id !== parsed.id) throw new Error("角色卡读取结果与选择标识不一致：" + selection);
       return copyReferences({ selection, themeConfigId: card.themeConfigId, ttsConfigId: card.ttsConfigId });
     }

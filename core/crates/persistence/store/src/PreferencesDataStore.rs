@@ -2863,17 +2863,19 @@ impl PreferencesDataStore {
             let previous = preferences.clone();
             prepare(preferences, &originals)?;
             let baseline = preferences.clone();
-            store.initializeReplicationUnlocked(&baseline, preferences)?;
+            store.initializeReplicationUnlocked(&baseline, preferences, &originals)?;
             originals.extend_from_slice(operations);
             originals.extend(preferences.replication.outbox.iter().cloned());
             let mut unique = BTreeMap::new();
             for operation in originals {
-                if let Some(existing) = unique.insert(operation.opId.clone(), operation.clone()) {
-                    if existing != operation {
+                if let Some(existing) = unique.get(&operation.opId) {
+                    if existing != &operation {
                         return Err(PreferencesDataStoreError::Message(
                             "Conflicting immutable preference operation".into(),
                         ));
                     }
+                } else {
+                    unique.insert(operation.opId.clone(), operation);
                 }
             }
             let originals = unique.into_values().collect::<Vec<_>>();
@@ -3313,14 +3315,12 @@ impl PreferencesDataStore {
         &self,
         baseline: &Preferences,
         preferences: &mut Preferences,
+        history: &[SyncOperation],
     ) -> Result<(), PreferencesDataStoreError> {
         if preferences.replication.initialized || self.syncDescriptor.is_none() {
             return Ok(());
         }
-        let journal = self.syncOperationStore.as_ref().expect("replicated dataset journal");
-        let mut history = journal.archivedPreferenceHistory(&self.storagePath)?;
-        history.extend(baseline.replication.outbox.iter().cloned());
-        let history = Self::prepareSyncedEntries(&[], &history)?;
+        let history = Self::prepareSyncedEntries(&[], history)?;
         let mut assigned = BTreeSet::new();
         let mut increments = BTreeMap::<String, i128>::new();
         fn effects(
@@ -3409,7 +3409,12 @@ impl PreferencesDataStore {
     ) -> Result<(), PreferencesDataStoreError> {
         preferences.replication = previous.replication.clone();
         if let Some(mutation) = self.localMutation(previous, preferences)? {
-            self.initializeReplicationUnlocked(previous, preferences)?;
+            if !preferences.replication.initialized {
+                let journal = self.syncOperationStore.as_ref().expect("replicated dataset journal");
+                let mut history = journal.archivedPreferenceHistory(&self.storagePath)?;
+                history.extend(previous.replication.outbox.iter().cloned());
+                self.initializeReplicationUnlocked(previous, preferences, &history)?;
+            }
             self.stageLocalMutation(preferences, mutation, false)?;
         }
         self.writeStoredPreferencesUnlocked(preferences)

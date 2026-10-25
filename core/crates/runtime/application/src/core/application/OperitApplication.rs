@@ -855,11 +855,9 @@ impl OperitApplication {
             }
             Err(error) => errors.push(format!("plugin_storage receipt: {error}")),
         }
-        let pending = store
-            .pendingOperations()
-            .map_err(|error| error.to_string())?;
+        let pending = store.pendingOperationCount().map_err(|error| error.to_string())?;
         let mut blobs = BTreeMap::new();
-        for operation in &pending {
+        store.visitPendingOperations(&[RUNTIME_FILE_SYNC_DOMAIN], |operation| {
             match RuntimeFileSyncStore::requiredBlob(operation) {
                 Ok(Some(reference)) => {
                     blobs.insert(reference.contentHash.clone(), reference);
@@ -867,10 +865,10 @@ impl OperitApplication {
                 Ok(None) => {}
                 Err(error) => errors.push(format!("pending blob op={}: {error}", operation.opId)),
             }
-        }
+        }).map_err(|error| error.to_string())?;
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
         result["protocolVersion"] = serde_json::json!(1);
-        result["pending"] = serde_json::json!(pending.len());
+        result["pending"] = serde_json::json!(pending);
         result["pendingBlobs"] = serde_json::to_value(blobs.into_values().collect::<Vec<_>>())
             .map_err(|error| error.to_string())?;
         result["errors"] = serde_json::json!(errors);
@@ -910,20 +908,6 @@ impl OperitApplication {
                 ]);
             }
         }
-        // Pending originals remain relayable even when this node cannot yet materialize them.
-        operations.extend(
-            store
-                .pendingOperations()
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .filter(|operation| {
-                    !receipt.containsSequence(&operation.originDeviceId, operation.sequence)
-                })
-                .filter(|operation| {
-                    domains.is_empty() || domains.iter().any(|domain| domain == &operation.domain)
-                })
-                .filter(|operation| !isRetiredCharacterOperation(operation)),
-        );
         match SqlChatSyncStore::default()
             .map_err(|error| error.to_string())
             .and_then(|store| {
@@ -1124,10 +1108,7 @@ impl OperitApplication {
         if let Err(error) = store.completeOperations(&applied) {
             errors.push(format!("complete pending operations: {error}"));
         }
-        let remaining = store
-            .pendingOperations()
-            .map_err(|error| error.to_string())?
-            .len();
+        let remaining = store.pendingOperationCount().map_err(|error| error.to_string())?;
         if !preferenceReferences.is_empty() {
             if let Err(error) = self.pluginSqliteHost().and_then(|host| {
                 PluginStorage::reconcilePreferenceReferences(host, &preferenceReferences)

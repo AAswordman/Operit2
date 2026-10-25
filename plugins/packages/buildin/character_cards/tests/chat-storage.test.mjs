@@ -37,8 +37,8 @@ async function environment(t, count = 3) {
   };
   const globals = { ...disk.globals, Tools: { Files: disk.files, Storage: disk.storage, Chat: chat } };
   const repository = await loadModule("src/storage/database.ts", globals).DatabaseCharacterRepository.open();
-  const service = loadModule("src/service.ts", globals).createCharacterCardsService(repository);
-  const storage = loadModule("src/chat-storage.ts", globals);
+  const service = loadModule("src/service-runtime.ts", globals).createCharacterCardsService(repository);
+  const storage = repository.chatBindings;
   return { disk, chats, messages, calls, repository, service, storage };
 }
 
@@ -57,8 +57,9 @@ test("binding CRUD persists solely in SQL and role deletion respects explicit bi
 });
 
 test("425 bound chats use three bounded metadata calls without listAll or extension reads", async t => {
-  const h = await environment(t, 425), database = await h.storage.chatDatabase();
-  await database.chats.edit(preferences => { for (const key of h.chats.keys()) preferences.set("binding_" + key, { version: 1, selection: "card:default" }); });
+  const h = await environment(t, 425), database = await h.disk.storage.dataStore.open({ path: h.disk.directory + "/chats.preferences.json" });
+  await database.edit(preferences => { for (const key of h.chats.keys()) preferences.set("binding_" + key, { version: 1, selection: "card:default" }); });
+  t.after(() => database.close());
   h.disk.clearCalls();
   const listing = plain(await h.service.dispatchDomain("memory.chat.list", { ownerKey: "character:default" }));
   assert.equal(listing.chats.length, 425);
@@ -76,8 +77,9 @@ test("425 bound chats use three bounded metadata calls without listAll or extens
 });
 
 test("pruning missing bindings deletes only the dangling ones and keeps the rest", async t => {
-  const h = await environment(t, 3), database = await h.storage.chatDatabase();
-  await database.chats.edit(preferences => {
+  const h = await environment(t, 3), database = await h.disk.storage.dataStore.open({ path: h.disk.directory + "/chats.preferences.json" });
+  t.after(() => database.close());
+  await database.edit(preferences => {
     for (const key of h.chats.keys()) preferences.set("binding_" + key, { version: 1, selection: "card:default" });
   });
   h.chats.delete("chat-1");
@@ -140,10 +142,11 @@ test("draft commit is atomic and a stale edit publishes neither the new draft no
   assert.equal(await h.storage.findChatBinding(binding.chatId), null);
   await h.storage.commitDraftBinding(binding.chatId);
   assert.deepEqual(plain(await h.storage.readChatBinding(binding.chatId)), binding);
-  const database = await h.storage.chatDatabase();
+  const database = await h.disk.storage.dataStore.open({ path: h.disk.directory + "/chats.preferences.json" });
+  t.after(() => database.close());
   let entered, release;
   const ready = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
-  const pending = database.chats.edit(async preferences => {
+  const pending = database.edit(async preferences => {
     preferences.set("draft_other", { version: 1, selection: binding.selection });
     entered(); await gate;
     preferences.remove("binding_" + binding.chatId);
@@ -152,10 +155,10 @@ test("draft commit is atomic and a stale edit publishes neither the new draft no
   const other = await h.disk.storage.dataStore.open({ path: h.disk.directory + "/chats.preferences.json" });
   await other.edit(preferences => { preferences.set("binding_" + binding.chatId, { version: 1, selection: "model:chat" }); });
   release(); await assert.rejects(pending, /edit conflict/); await other.close();
-  assert.equal((await database.chats.data()).get("draft_other"), undefined);
+  assert.equal((await database.data()).get("draft_other"), undefined);
   await h.storage.prepareChatBinding({ ...binding, chatId: "aborted" });
   await h.storage.abortDraftBinding("aborted");
-  assert.equal((await database.chats.data()).get("draft_aborted"), undefined);
+  assert.equal((await database.data()).get("draft_aborted"), undefined);
 });
 
 test("memory settings and USER reads never query bodies or vectors", async t => {

@@ -61,12 +61,12 @@ export async function groupEnvironment(t, transport) {
     /** Reads only the explicitly supplied complete controlled tool-source catalog. */
     readToolCatalog: () => tools.Catalog.readToolSources(),
   });
-  const service = loadModule("src/service.ts", globals).createCharacterCardsService(repository);
+  const service = loadModule("src/service-runtime.ts", globals).createCharacterCardsService(repository);
   const a = await service.dispatchDomain("character.create", { values: { name: "Participant A", avatarUri: "a.png" } });
   const b = await service.dispatchDomain("character.create", { values: { name: "Participant B", avatarUri: "b.png" } });
   const group = await service.dispatchDomain("group.create", { values: { name: "Controlled saved group", members: [{ characterCardId: a.id, orderIndex: 1 }, { characterCardId: b.id, orderIndex: 0 }] } });
   const selection = "group:" + group.id;
-  await loadModule("src/chat-storage.ts", globals).writeChatBinding({ chatId, selection });
+  await repository.chatBindings.writeChatBinding({ chatId, selection });
   records.set(chatId, { [otherOwner]: { version: 37, selection: "not-this-owner" } });
   const wrapped = {
     /** Captures the exact full initial input before invoking the controlled turn boundary. */

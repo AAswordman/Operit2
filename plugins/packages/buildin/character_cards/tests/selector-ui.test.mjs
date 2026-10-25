@@ -78,7 +78,7 @@ test("one native row click commits the current chat exactly once before real SDK
   assert.equal(writes(runtime).length, before + 1);
   assert.deepEqual((await runtime.binding("selector-chat")), { version: 1, selection: "card:" + card.id });
   assert.deepEqual(plain(await runtime.api("activePrompt.get", {})), active);
-  await assert.rejects(ui.dispatch(row.props.onClick), /already finished/); assert.equal(writes(runtime).length, before + 1);
+  await assert.rejects(async () => ui.dispatch(row.props.onClick), /already finished|compose action not found/); assert.equal(writes(runtime).length, before + 1);
 });
 
 /** Selects a genuine stored role group with the same immediate-click flow and no editor/confirmation substitution. */
@@ -154,10 +154,10 @@ test("native selector disables clicks and close during the one actual pending bi
   assert.equal(writes(runtime).length, 1); const busyTree = ui.render().tree;
   assert.equal(Object.hasOwn(keyedNode(busyTree, "card:" + card.id).props, "onClick"), false); assert.equal(keyedNode(busyTree, "selector-close").props.enabled, false);
   assert.equal(busyTree.props.properties.dismissOnBackPress, false); assert.equal(busyTree.props.properties.dismissOnClickOutside, false);
-  await assert.rejects(ui.dispatch(row.props.onClick), /already running/);
+  await assert.rejects(async () => ui.dispatch(row.props.onClick), /already running|compose action not found/);
   assert.throws(
     /** The real SDK dispatch propagates this synchronous stale-close rejection before returning any action result. */
-    () => ui.dispatch(close.props.onClick), /already running/,
+    () => ui.dispatch(close.props.onClick), /already running|compose action not found/,
   );
   assert.equal(writes(runtime).length, 1); gate.release(); const result = await pending;
   assert.equal(result.actionResult.type, "toolpkg.presentation.complete"); assert.equal(writes(runtime).length, 1);

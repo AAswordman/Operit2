@@ -69,6 +69,7 @@ __export(main_exports, {
   characterSetActiveApi: () => characterSetActiveApi,
   characterUpdateApi: () => characterUpdateApi,
   chatConfigurationBindingDeleteApi: () => chatConfigurationBindingDeleteApi,
+  chatConfigurationBindingFindApi: () => chatConfigurationBindingFindApi,
   chatConfigurationBindingReadApi: () => chatConfigurationBindingReadApi,
   chatConfigurationBindingWriteApi: () => chatConfigurationBindingWriteApi,
   chatConfigurationDeleteApi: () => chatConfigurationDeleteApi,
@@ -173,25 +174,71 @@ var import_index_ui7 = __toESM(require("./ui/selection/index.ui.js"));
 var import_index_ui8 = __toESM(require("./ui/chat-input-menu/index.ui.js"));
 var import_index_ui9 = __toESM(require("./ui/group-execution/index.ui.js"));
 
+// src/drafts.ts
+function createCharacterDraft() {
+  return {
+    id: "",
+    name: "",
+    description: "",
+    characterSetting: "",
+    openingStatement: "",
+    otherContentChat: "",
+    otherContentVoice: "",
+    avatarUri: null,
+    attachedTagIds: [],
+    advancedCustomPrompt: "",
+    marks: "",
+    chatModelBindingMode: "FOLLOW_GLOBAL",
+    chatModelId: null,
+    chatProviderId: null,
+    ttsConfigId: null,
+    themeConfigId: null,
+    memoryBindingMode: "CHARACTER",
+    sharedMemoryId: null,
+    sharedMemoryMounts: [],
+    toolAccessConfig: { enabled: false, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] },
+    createdAt: 0,
+    updatedAt: 0
+  };
+}
+function createGroupDraft() {
+  return { id: "", name: "", description: "", members: [], themeConfigId: null, createdAt: 0, updatedAt: 0 };
+}
+function createTagDraft() {
+  return { name: "", description: "", promptContent: "", tagType: "CUSTOM" };
+}
+function readCharacter(value, id2 = "") {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("\u89D2\u8272\u5361\u5FC5\u987B\u662F\u5BF9\u8C61");
+  const source = value, defaults = createCharacterDraft();
+  const card = { ...source };
+  for (const [field, fallback] of Object.entries(defaults)) {
+    const supplied = source[field];
+    const valid = fallback === null ? typeof supplied === "string" : Array.isArray(fallback) ? Array.isArray(supplied) : supplied !== null && typeof supplied === typeof fallback;
+    Object.assign(card, { [field]: valid ? supplied : fallback });
+  }
+  card.id = typeof source.id === "string" ? source.id : id2;
+  if (card.themeConfigId?.trim() === "") card.themeConfigId = null;
+  card.attachedTagIds = card.attachedTagIds.filter((tag) => typeof tag === "string");
+  if (card.memoryBindingMode !== "SHARED") card.memoryBindingMode = "CHARACTER";
+  for (const field of ["createdAt", "updatedAt"]) {
+    const timestamp2 = typeof source[field] === "string" ? Number(source[field]) : source[field];
+    card[field] = typeof timestamp2 === "number" && Number.isSafeInteger(timestamp2) && timestamp2 >= 0 ? timestamp2 : 0;
+  }
+  const policy = card.toolAccessConfig;
+  card.toolAccessConfig = { ...defaults.toolAccessConfig };
+  card.toolAccessConfig.enabled = policy.enabled === true;
+  for (const field of ["allowedBuiltinTools", "allowedPackages", "allowedSkills", "allowedMcpServers"])
+    card.toolAccessConfig[field] = Array.isArray(policy[field]) ? policy[field].filter((item) => typeof item === "string") : [];
+  card.sharedMemoryMounts = card.sharedMemoryMounts.filter((mount2) => mount2 !== null && typeof mount2 === "object" && typeof mount2.sharedMemoryId === "string" && mount2.sharedMemoryId.trim() !== "").map((mount2) => ({ sharedMemoryId: mount2.sharedMemoryId, readable: mount2.readable === true, writable: mount2.writable === true }));
+  return card;
+}
+
 // src/model-binding.ts
 function characterModelBindingMode(mode) {
   return mode === "FIXED_CONFIG" ? "FIXED_MODEL" : mode;
 }
 function sameCharacterModelBinding(left, right) {
   return left.chatModelBindingMode === right.chatModelBindingMode && left.chatProviderId === right.chatProviderId && left.chatModelId === right.chatModelId;
-}
-
-// src/identity.ts
-function uuid() {
-  const bytes = [];
-  for (let index = 0; index < 16; index += 1) bytes.push(Math.floor(Math.random() * 256));
-  bytes[6] = bytes[6] & 15 | 64;
-  bytes[8] = bytes[8] & 63 | 128;
-  const text2 = bytes.map(
-    /** Encodes every byte as two hexadecimal digits. */
-    (byte) => byte.toString(16).padStart(2, "0")
-  ).join("");
-  return text2.slice(0, 8) + "-" + text2.slice(8, 12) + "-" + text2.slice(12, 16) + "-" + text2.slice(16, 20) + "-" + text2.slice(20);
 }
 
 // src/validation.ts
@@ -275,29 +322,6 @@ function assertConversationGroups(value) {
     if (count === void 0 || group.displayOrder >= count) throw new Error("Conversation group order must be a complete zero-based scoped sequence");
   }
 }
-function assertToolAccess(value) {
-  assertObject(value, "\u5DE5\u5177\u8BBF\u95EE\u914D\u7F6E");
-  assertBoolean(value.enabled, "\u5DE5\u5177\u8BBF\u95EE\u5F00\u5173");
-  for (const field of ["allowedBuiltinTools", "allowedPackages", "allowedSkills", "allowedMcpServers"]) assertStrings(value[field], field);
-}
-function assertCard(value) {
-  assertObject(value, "\u89D2\u8272\u5361");
-  for (const field of ["id", "name", "description", "characterSetting", "openingStatement", "otherContentChat", "otherContentVoice", "advancedCustomPrompt", "marks", "chatModelBindingMode", "memoryBindingMode"]) assertString(value[field], field);
-  for (const field of ["avatarUri", "chatProviderId", "chatModelId", "ttsConfigId", "themeConfigId", "sharedMemoryId"]) assertNullableString(value[field], field);
-  if (value.themeConfigId !== null) requireId(value.themeConfigId, "\u89D2\u8272\u4E3B\u9898\u914D\u7F6E");
-  if (value.memoryBindingMode !== "CHARACTER" && value.memoryBindingMode !== "SHARED") throw new Error("Invalid memory binding mode");
-  assertStrings(value.attachedTagIds, "\u89D2\u8272\u6807\u7B7E");
-  assertInteger(value.createdAt, "\u89D2\u8272\u521B\u5EFA\u65F6\u95F4", 0);
-  assertInteger(value.updatedAt, "\u89D2\u8272\u4FEE\u6539\u65F6\u95F4", 0);
-  assertToolAccess(value.toolAccessConfig);
-  if (!Array.isArray(value.sharedMemoryMounts)) throw new Error("\u5171\u4EAB\u8BB0\u5FC6\u6302\u8F7D\u5FC5\u987B\u662F\u6570\u7EC4");
-  for (const mount2 of value.sharedMemoryMounts) {
-    assertObject(mount2, "\u5171\u4EAB\u8BB0\u5FC6\u6302\u8F7D");
-    requireId(mount2.sharedMemoryId, "\u5171\u4EAB\u8BB0\u5FC6\u6302\u8F7D\u6807\u8BC6");
-    assertBoolean(mount2.readable, "\u5171\u4EAB\u8BB0\u5FC6\u8BFB\u53D6\u5F00\u5173");
-    assertBoolean(mount2.writable, "\u5171\u4EAB\u8BB0\u5FC6\u5199\u5165\u5F00\u5173");
-  }
-}
 function assertGroupValues(value) {
   assertObject(value, "\u89D2\u8272\u7FA4\u7EC4");
   for (const field of ["id", "name", "description"]) assertString(value[field], field);
@@ -370,31 +394,6 @@ function assertMemoryChatMessage(value) {
   assertInteger(value.variantCount, "message variant count", 1);
   if (value.variantIndex > 2147483647 || value.variantCount > 2147483647 || value.variantIndex >= value.variantCount) throw new Error("Invalid persisted message variant identity");
 }
-function assertGraph(value) {
-  assertObject(value, "\u8BB0\u5FC6\u56FE\u8C31");
-  if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) throw new Error("\u8BB0\u5FC6\u56FE\u8C31\u8282\u70B9\u548C\u5173\u7CFB\u5FC5\u987B\u662F\u6570\u7EC4");
-  for (const node of value.nodes) {
-    assertObject(node, "\u8BB0\u5FC6\u56FE\u8C31\u8282\u70B9");
-    requireId(node.id, "\u56FE\u8C31\u8282\u70B9 UUID");
-    assertString(node.label, "\u56FE\u8C31\u8282\u70B9\u6807\u9898");
-    assertInteger(node.color, "\u56FE\u8C31\u8282\u70B9\u989C\u8272", 0);
-    assertMetadata(node.metadata);
-  }
-  for (const edge of value.edges) {
-    assertObject(edge, "\u8BB0\u5FC6\u56FE\u8C31\u5173\u7CFB");
-    requireId(edge.id, "\u56FE\u8C31\u5173\u7CFB\u6807\u8BC6");
-    requireId(edge.sourceId, "\u56FE\u8C31\u6E90\u8282\u70B9 UUID");
-    requireId(edge.targetId, "\u56FE\u8C31\u76EE\u6807\u8282\u70B9 UUID");
-    assertNullableString(edge.label, "\u56FE\u8C31\u5173\u7CFB\u6807\u9898");
-    assertNumber(edge.weight, "\u5173\u7CFB\u5F3A\u5EA6", 0, 1);
-    assertBoolean(edge.isCrossFolderLink, "\u8DE8\u6587\u4EF6\u5939\u5173\u7CFB\u6807\u8BC6");
-    assertMetadata(edge.metadata);
-  }
-}
-function assertMetadata(value) {
-  assertObject(value, "\u56FE\u8C31\u5143\u6570\u636E");
-  for (const item of Object.values(value)) assertString(item, "\u56FE\u8C31\u5143\u6570\u636E\u503C");
-}
 function assertSearchOptions(value) {
   assertObject(value, "\u8BB0\u5FC6\u641C\u7D22\u53C2\u6570");
   assertString(value.ownerKey, "\u8BB0\u5FC6\u5E93\u6807\u8BC6");
@@ -427,6 +426,801 @@ function normalizeNames(values) {
     result2.push(normalized);
   }
   return result2;
+}
+
+// src/chat-bindings.ts
+function parseChatSelection(selection) {
+  requireId(selection, "chat selection");
+  const parsed = /^(card|group|model):([^\s]+)$/u.exec(selection);
+  if (parsed === null) throw new Error("Invalid plugin chat selection: " + selection);
+  const kind = parsed[1];
+  if (kind === "model" && parsed[2] !== "chat") throw new Error("Invalid model selection: " + selection);
+  if (kind !== "card" && kind !== "group" && kind !== "model") throw new Error("Invalid chat selection kind: " + kind);
+  return { kind, id: parsed[2] };
+}
+function requireChatSelection(selection, cards, groups) {
+  const parsed = parseChatSelection(selection);
+  if (parsed.kind === "model") return parsed;
+  const records2 = parsed.kind === "card" ? cards : groups;
+  let matches = 0;
+  for (const record2 of records2) if (record2.id === parsed.id) matches += 1;
+  if (matches !== 1) throw new Error("Chat selection does not identify exactly one stored record: " + selection);
+  if (parsed.kind === "group") {
+    for (const group of groups) if (group.id === parsed.id && group.members.length === 0) throw new Error("A bound chat group must have actual participants: " + group.id);
+  }
+  return parsed;
+}
+function selectionForActive(active) {
+  if ("Model" in active) return "model:chat";
+  if ("CharacterCard" in active) return "card:" + active.CharacterCard.id;
+  return "group:" + active.CharacterGroup.id;
+}
+
+// src/configuration-reads.ts
+function recordRead(cache, id2, read) {
+  const existing = cache.get(id2);
+  if (existing !== void 0) return existing;
+  const pending = read().then(
+    /** Requires the requested identity before sharing the record with another consumer. */
+    (record2) => {
+      if (record2.id !== id2) throw new Error("Configuration read returned a different identity: " + id2);
+      return record2;
+    }
+  );
+  cache.set(id2, pending);
+  return pending;
+}
+function configurationReadScope(service2) {
+  const cards = /* @__PURE__ */ new Map(), groups = /* @__PURE__ */ new Map();
+  const tags = /* @__PURE__ */ new Map(), stores = /* @__PURE__ */ new Map();
+  let models;
+  let tts;
+  let preferences;
+  return {
+    /** Reads each requested character once. */
+    getCharacter: (id2) => recordRead(cards, id2, service2.getCharacter.bind(service2, id2)),
+    /** Reads each requested group once. */
+    getGroup: (id2) => recordRead(groups, id2, service2.getGroup.bind(service2, id2)),
+    /** Reads each referenced tag once across all group participants. */
+    getTag: (id2) => recordRead(tags, id2, service2.getTag.bind(service2, id2)),
+    /** Reads each referenced shared library once across bindings and mounts. */
+    getStore: (id2) => recordRead(stores, id2, service2.getStore.bind(service2, id2)),
+    /** Loads the model directory once when required. */
+    listModels: () => {
+      if (models === void 0) models = service2.listModels();
+      return models;
+    },
+    /** Loads the speech directory once when required. */
+    listTtsConfigs: () => {
+      if (tts === void 0) tts = service2.listTtsConfigs();
+      return tts;
+    },
+    /** Shares prompt privacy flags while the caller retains its final live privacy check. */
+    readGlobalMemoryPreferences: () => {
+      if (preferences === void 0) preferences = service2.readGlobalMemoryPreferences();
+      return preferences;
+    },
+    /** Preserves typed domain operations on the existing service. */
+    dispatchDomain: (operation, input) => service2.dispatchDomain(operation, input)
+  };
+}
+
+// src/character-prompt.ts
+function combineCharacterPrompt(card, additionalTagIds, promptFunctionType, host) {
+  return __async(this, null, function* () {
+    assertStrings(additionalTagIds, "\u9644\u52A0\u6807\u7B7E");
+    if (promptFunctionType !== "CHAT" && promptFunctionType !== "VOICE") throw new Error("\u63D0\u793A\u8BCD\u529F\u80FD\u7C7B\u578B\u65E0\u6548");
+    const parts = [];
+    const setting = card.characterSetting.trim();
+    if (setting !== "") parts.push(setting);
+    const otherContent = (promptFunctionType === "CHAT" ? card.otherContentChat : card.otherContentVoice).trim();
+    if (otherContent !== "") parts.push(otherContent);
+    for (const id2 of normalizeNames([...card.attachedTagIds, ...additionalTagIds])) {
+      const tag = yield host.getTag(id2);
+      assertTag(tag);
+      if (tag.id !== id2) throw new Error("Prompt tag read returned a different identity: " + id2);
+      const content = tag.promptContent.trim();
+      if (content !== "") parts.push(content);
+    }
+    const advanced = card.advancedCustomPrompt.trim();
+    if (advanced !== "") parts.push(advanced);
+    return parts.join("\n\n").trim();
+  });
+}
+
+// src/chat-markers.ts
+function markerValue(value, path) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(path + " must be a finite JSON number");
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(
+    /** Validates and copies every actual nested JSON value. */
+    (item, index) => markerValue(item, path + "[" + index + "]")
+  );
+  return markerObject(value, path);
+}
+function markerObject(value, path) {
+  assertObject(value, path);
+  const result2 = {};
+  for (const [key, item] of Object.entries(value)) Object.defineProperty(result2, key, { value: markerValue(item, path + "." + key), enumerable: true, configurable: true, writable: true });
+  return result2;
+}
+function markerVersion(value, path) {
+  if (value.version !== 1) throw new Error("Unsupported " + path + " version");
+}
+function decodeChatMarker(value) {
+  const extension = markerObject(value, "chat extension");
+  markerVersion(extension, "chat marker");
+  const selection = requireId(extension.selection, "chat marker selection");
+  parseChatSelection(selection);
+  if (Object.prototype.hasOwnProperty.call(extension, "groupId")) throw new Error("Conversation membership is owned by plugin files, not chat extension.groupId");
+  return { version: 1, selection };
+}
+function encodeChatMarker(selection, extension) {
+  parseChatSelection(selection);
+  if (extension === null) return { version: 1, selection };
+  decodeChatMarker(extension);
+  return { ...markerObject(extension, "chat extension"), version: 1, selection };
+}
+function policyNames(value, path) {
+  if (!Array.isArray(value)) throw new Error(path + " must be an array");
+  const names = [], seen = /* @__PURE__ */ new Set();
+  for (const item of value) {
+    const name = requireId(item, path);
+    if (seen.has(name)) throw new Error("Duplicate " + path + ": " + name);
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
+}
+function markerProfile(value) {
+  assertObject(value, "message participant");
+  const id2 = requireId(value.id, "message participant id"), name = requireId(value.name, "message participant name");
+  assertNullableString(value.avatarUri, "message participant avatar");
+  assertString(value.introPrompt, "message participant introPrompt");
+  assertString(value.userPreferencesText, "message participant userPreferencesText");
+  assertString(value.openingStatement, "message participant openingStatement");
+  assertObject(value.modelBinding, "message model binding");
+  const providerId = requireId(value.modelBinding.providerId, "message model provider"), modelId = requireId(value.modelBinding.modelId, "message model id");
+  const ttsConfigId = requireId(value.ttsConfigId, "message TTS config");
+  assertObject(value.toolAccess, "message tool policy");
+  assertBoolean(value.toolAccess.enabled, "message tool policy enabled");
+  const toolAccess2 = {
+    enabled: value.toolAccess.enabled,
+    allowedBuiltinTools: policyNames(value.toolAccess.allowedBuiltinTools, "message builtin tools"),
+    allowedPackages: policyNames(value.toolAccess.allowedPackages, "message packages"),
+    allowedSkills: policyNames(value.toolAccess.allowedSkills, "message skills"),
+    allowedMcpServers: policyNames(value.toolAccess.allowedMcpServers, "message MCP servers")
+  };
+  if (!Array.isArray(value.resources)) throw new Error("Message resources must be an array");
+  const resources = [], keys = /* @__PURE__ */ new Set();
+  for (const resource of value.resources) {
+    assertObject(resource, "message resource");
+    const key = requireId(resource.key, "message resource key");
+    if (keys.has(key)) throw new Error("Duplicate message resource: " + key);
+    keys.add(key);
+    assertBoolean(resource.readable, "message resource readable");
+    assertBoolean(resource.writable, "message resource writable");
+    resources.push({ key, readable: resource.readable, writable: resource.writable });
+  }
+  return {
+    id: id2,
+    name,
+    avatarUri: value.avatarUri,
+    introPrompt: value.introPrompt,
+    userPreferencesText: value.userPreferencesText,
+    openingStatement: value.openingStatement,
+    modelBinding: { providerId, modelId },
+    ttsConfigId,
+    toolAccess: toolAccess2,
+    resources
+  };
+}
+function decodeExecutionData(value) {
+  const extension = markerObject(value, "message extension");
+  markerVersion(extension, "execution data");
+  const selection = requireId(extension.selection, "execution data selection"), parsed = parseChatSelection(selection);
+  if (extension.promptFunctionType !== "CHAT" && extension.promptFunctionType !== "VOICE") throw new Error("Invalid execution data prompt function");
+  if (!Array.isArray(extension.participants) || extension.participants.length === 0) throw new Error("Message marker requires complete participants");
+  const participants = extension.participants.map(
+    /** Constructs each complete resolved participant independently from current domain records. */
+    (item) => markerProfile(item)
+  ), ids = /* @__PURE__ */ new Set();
+  for (const participant of participants) {
+    if (ids.has(participant.id)) throw new Error("Duplicate message participant: " + participant.id);
+    ids.add(participant.id);
+  }
+  const profile = markerProfile(extension.profile), matches = participants.filter(
+    /** Requires the original execution participant to be one exact complete resolved participant. */
+    (participant) => participant.id === profile.id
+  );
+  if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(profile)) throw new Error("Message execution profile does not match its resolved participant data");
+  if (parsed.kind === "card" && (participants.length !== 1 || profile.id !== parsed.id)) throw new Error("Message card selection does not match its resolved participant");
+  if (parsed.kind === "model") {
+    if (participants.length !== 1 || profile.id !== "model:chat" || profile.name !== profile.modelBinding.modelId || extension.primaryOwnerKey !== "" || profile.resources.length !== 0 || profile.introPrompt !== "" || profile.userPreferencesText !== "" || profile.openingStatement !== "") throw new Error("Invalid model-only execution data");
+    return { version: 1, selection, promptFunctionType: extension.promptFunctionType, primaryOwnerKey: "", profile, participants };
+  }
+  const primaryOwnerKey = requireId(extension.primaryOwnerKey, "message primary memory owner");
+  if (!/^(character|shared):[^:\s]+$/u.test(primaryOwnerKey)) throw new Error("Invalid message primary memory owner");
+  if (!profile.resources.some(
+    /** Requires the primary memory destination to be permitted by this exact current execution profile. */
+    (resource) => resource.key === primaryOwnerKey && resource.writable
+  )) throw new Error("Message primary memory owner is not writable in its saved profile");
+  return { version: 1, selection, promptFunctionType: extension.promptFunctionType, primaryOwnerKey, profile, participants };
+}
+function encodeExecutionData(marker) {
+  const validated = decodeExecutionData(marker);
+  return markerObject(validated, "message extension");
+}
+
+// src/model-participant.ts
+function modelIdentity(request, directory) {
+  const models = directory.models.filter(
+    /** Requires one real model on the configured provider rather than guessing from a display name. */
+    (model) => model.providerId === request.defaultModelBinding.providerId && model.modelId === request.defaultModelBinding.modelId
+  );
+  if (models.length !== 1 || models[0].providerTypeId.trim() === "") throw new Error("Model-only binding is unavailable or duplicated");
+  return { id: "model:chat", name: models[0].modelId, avatarUri: "provider-logo:" + encodeURIComponent(models[0].providerTypeId) };
+}
+function modelParticipant(request, directory) {
+  if (request.participantId !== null && request.participantId !== "model:chat") throw new Error("Invalid model-only execution participant");
+  if (directory.ttsConfigs.filter((config) => config.id === request.defaultTtsConfigId).length !== 1) throw new Error("Model-only speech configuration is unavailable or duplicated");
+  return {
+    ...modelIdentity(request, directory),
+    introPrompt: "",
+    userPreferencesText: "",
+    openingStatement: "",
+    modelBinding: { ...request.defaultModelBinding },
+    ttsConfigId: request.defaultTtsConfigId,
+    toolAccess: { enabled: false, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] },
+    resources: []
+  };
+}
+
+// src/group-execution/display.ts
+function identity(card) {
+  if (card.id.trim().length === 0 || card.name.trim().length === 0) throw new Error("Display participant identity is empty");
+  return { id: card.id, name: card.name, avatarUri: card.avatarUri };
+}
+function orderedGroupParticipants(group, service2) {
+  return __async(this, null, function* () {
+    if (group.members.length === 0) throw new Error("Selected group has no participants: " + group.id);
+    const members2 = [...group.members].sort(
+      /** Uses the saved order without choosing an execution participant. */
+      (left, right) => left.orderIndex - right.orderIndex
+    );
+    const ids = /* @__PURE__ */ new Set(), participants = [];
+    for (const member2 of members2) {
+      if (ids.has(member2.characterCardId)) throw new Error("Duplicate group participant: " + member2.characterCardId);
+      ids.add(member2.characterCardId);
+      const card = yield service2.getCharacter(member2.characterCardId);
+      if (card.id !== member2.characterCardId) throw new Error("Group participant read returned a different identity");
+      participants.push(identity(card));
+    }
+    return participants;
+  });
+}
+function resolveChatDisplay(request, service2) {
+  return __async(this, null, function* () {
+    if (request.purpose !== "display" || request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
+    const marker = decodeChatMarker(request.chatExtension), selection = parseChatSelection(marker.selection);
+    if (selection.kind === "model") {
+      const participant = modelIdentity(request, { models: yield service2.listModels() });
+      return { contextKey: marker.selection, identity: { title: participant.name, avatarUri: participant.avatarUri }, participants: [participant], initialMessages: [] };
+    }
+    if (selection.kind === "group") {
+      const group = yield service2.getGroup(selection.id);
+      if (group.id !== selection.id || group.name.trim().length === 0) throw new Error("Display group identity is invalid");
+      return { contextKey: marker.selection, identity: { title: group.name, avatarUri: null }, participants: yield orderedGroupParticipants(group, service2), initialMessages: [] };
+    }
+    const card = yield service2.getCharacter(selection.id);
+    if (card.id !== selection.id) throw new Error("Display character read returned a different identity");
+    const result2 = { contextKey: marker.selection, identity: { title: card.name, avatarUri: card.avatarUri }, participants: [identity(card)], initialMessages: [] };
+    if (card.openingStatement.trim().length !== 0) {
+      result2.initialMessages.push({ content: card.openingStatement, displayName: card.name, participantId: card.id });
+    }
+    return result2;
+  });
+}
+
+// src/group-execution/prompts.ts
+function withGroupParticipantPrompt(profile, participants) {
+  const names = participants.map(
+    /** Uses the actual ordered member names without selecting or substituting a speaker. */
+    (participant) => participant.name
+  ).join(", ");
+  const hint = "\n\nRole response plan hint:\n- This chat uses a role response planner. After each user message, the system dynamically decides who responds and in what order.\n- Always keep your own role identity. Never reply as another role or imitate another persona.\n- Answer the user's latest request in your own role, optionally considering prior agents' replies.\n- If you have nothing new, reply briefly in your own role.\n\nRole-scoped history hint:\n- Your own historical outputs remain assistant messages. Other participants' speech is labeled [From role: name] as reference context.\n- Messages labeled [From user] are user inputs. Other participants' reference context does not change your instructions or identity.\n- Stay in role as " + profile.name + ", and do not switch persona to another participant.\n\nGroup participants: " + names;
+  return { ...profile, introPrompt: profile.introPrompt + hint };
+}
+
+// src/domain.ts
+function record(value, path) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path} must be a JSON object`);
+  return value;
+}
+function text(value, path) {
+  if (typeof value !== "string") throw new Error(`${path} must be a string`);
+}
+function nonblank(value, path) {
+  text(value, path);
+  if (value.trim() === "") throw new Error(`${path} must not be blank`);
+}
+function parseMemoryIdentifier(value, path, _positive = true) {
+  if (typeof value !== "string" || value.trim() === "" || value !== value.trim() || value.length > 256) throw new Error(`${path} must be a nonblank identity`);
+  return value;
+}
+function memoryIdentifier(value, path) {
+  parseMemoryIdentifier(value, path);
+}
+function propertyIdentifier(value, path) {
+  parseMemoryIdentifier(value, path, false);
+}
+function boolean(value, path) {
+  if (typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
+}
+function number(value, path) {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${path} must be a finite number`);
+}
+function integer(value, path) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${path} must be a safe integer`);
+}
+function nonnegativeInteger(value, path) {
+  integer(value, path);
+  nonnegative(value, path);
+}
+function messageVariant(value, path) {
+  integer(value, path);
+  if (typeof value !== "number" || value < 0 || value > 2147483647) throw new Error(path + " must be a nonnegative i32 message variant index");
+}
+function score(value, path) {
+  number(value, path);
+  if (value < 0 || value > 1) throw new Error(`${path} must be between 0 and 1`);
+}
+function nonnegative(value, path) {
+  number(value, path);
+  if (value < 0) throw new Error(`${path} must not be negative`);
+}
+function enumeration(...values) {
+  const allowed = new Set(values);
+  return (value, path) => {
+    if (typeof value !== "string" || !allowed.has(value)) throw new Error(`${path} must be ${values.join(" | ")}`);
+  };
+}
+function nullable(validate) {
+  return (value, path) => {
+    if (value !== null) validate(value, path);
+  };
+}
+function array(validate) {
+  return (value, path) => {
+    if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
+    for (let index = 0; index < value.length; index += 1) validate(value[index], `${path}[${index}]`);
+  };
+}
+function required(validate) {
+  return { validate, required: true };
+}
+function optional(validate) {
+  return { validate, required: false };
+}
+function shape(fields4, nonempty = false) {
+  return (value, path) => {
+    const object3 = record(value, path);
+    const keys = Object.keys(object3);
+    if (nonempty && keys.length === 0) throw new Error(`${path} must contain at least one field`);
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(fields4, key)) throw new Error(`${path}.${key} is not a supported field`);
+      fields4[key].validate(object3[key], `${path}.${key}`);
+    }
+    for (const key of Object.keys(fields4)) {
+      if (fields4[key].required && !Object.prototype.hasOwnProperty.call(object3, key)) throw new Error(`${path}.${key} is required`);
+    }
+  };
+}
+function owner(value, path) {
+  if (typeof value !== "string" || !/^(character|shared):[^:\s]+$/.test(value)) throw new Error(`${path} must be character:<id> or shared:<id>`);
+}
+var strings = array(text);
+var identifiers = array(nonblank);
+var member = shape({ characterCardId: required(nonblank), orderIndex: required(integer) });
+var mount = shape({ sharedMemoryId: required(nonblank), readable: required(boolean), writable: required(boolean) });
+var toolAccess = shape({ enabled: required(boolean), allowedBuiltinTools: required(strings), allowedPackages: required(strings), allowedSkills: required(strings), allowedMcpServers: required(strings) });
+var property = shape({ id: required(propertyIdentifier), key: required(text), value: required(text) });
+var characterFields = {
+  name: optional(nonblank),
+  description: optional(text),
+  characterSetting: optional(text),
+  openingStatement: optional(text),
+  otherContentChat: optional(text),
+  otherContentVoice: optional(text),
+  avatarUri: optional(nullable(text)),
+  attachedTagIds: optional(identifiers),
+  advancedCustomPrompt: optional(text),
+  marks: optional(text),
+  chatModelBindingMode: optional(enumeration("FOLLOW_GLOBAL", "FIXED_MODEL")),
+  chatModelId: optional(nullable(text)),
+  chatProviderId: optional(nullable(text)),
+  ttsConfigId: optional(nullable(text)),
+  themeConfigId: optional(nullable(text)),
+  memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
+  sharedMemoryId: optional(nullable(text)),
+  sharedMemoryMounts: optional(array(mount)),
+  toolAccessConfig: optional(toolAccess),
+  createdAt: optional(integer),
+  updatedAt: optional(integer)
+};
+var groupFields = { name: optional(nonblank), description: optional(text), themeConfigId: optional(nullable(text)), members: optional(array(member)), createdAt: optional(integer), updatedAt: optional(integer) };
+var tagFields = { name: optional(nonblank), description: optional(text), promptContent: optional(text), tagType: optional(enumeration("TONE", "CHARACTER", "FUNCTION", "CUSTOM")), createdAt: optional(integer), updatedAt: optional(integer) };
+var memoryFields = {
+  uuid: optional(text),
+  title: optional(nonblank),
+  content: optional(text),
+  contentType: optional(text),
+  source: optional(text),
+  credibility: optional(score),
+  importance: optional(score),
+  documentPath: optional(nullable(text)),
+  isDocumentNode: optional(boolean),
+  chunkIndexFilePath: optional(nullable(text)),
+  folderPath: optional(nullable(text)),
+  createdAt: optional(integer),
+  updatedAt: optional(integer),
+  lastAccessedAt: optional(integer),
+  tags: optional(strings),
+  properties: optional(array(property))
+};
+var settings = shape({
+  autoSaveIntervalMinutes: required(nonnegative),
+  nextAutoSaveRunAtMs: required(integer),
+  memoryExtractionCustomRules: required(text),
+  profileAutoUpdateEnabled: required(boolean),
+  profileAutoUpdateLocked: required(boolean),
+  cloudEmbeddingEnabled: required(boolean),
+  cloudEmbeddingEndpoint: required(text),
+  cloudEmbeddingApiKey: required(text),
+  cloudEmbeddingModel: required(text)
+});
+var searchConfig = shape({ scoreMode: required(enumeration("BALANCED", "KEYWORD_FIRST", "SEMANTIC_FIRST")), keywordWeight: required(nonnegative), tagWeight: required(nonnegative), vectorWeight: required(nonnegative), edgeWeight: required(nonnegative) });
+var empty = shape({});
+var id = shape({ id: required(nonblank) });
+var ownerOnly = shape({ ownerKey: required(owner) });
+var contentOnly = shape({ content: required(text) });
+var format = enumeration("operit", "tavern");
+var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
+function parseMemoryQueryRequest(payload) {
+  memoryQueryRequest(payload, "memory.query");
+  return payload;
+}
+var validators = {
+  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
+  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.chat.list": ownerOnly,
+  "memory.chat.pruneMissing": ownerOnly,
+  "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
+  "memory.categorize": ownerOnly,
+  "memory.rebuild.start": shape({ ownerKey: required(owner), rebuild: required(shape({ chatIds: required(strings), windowMessageCount: required(integer), fromInclusive: required(nullable(integer)), toInclusive: required(nullable(integer)) })) }),
+  "memory.rebuild.progress": ownerOnly,
+  "memory.rebuild.cancel": ownerOnly,
+  "memory.embeddings.rebuild": ownerOnly,
+  "memory.candidate.enqueue": shape({ chatId: required(nonblank), timestamp: required(integer), variantIndex: required(messageVariant), sourceType: required(enumeration("reply_finalized_auto", "selected_user_message")), ownerKey: required(nullable(owner)) }),
+  "memory.candidates.retryFailed": ownerOnly,
+  "memory.candidates.clearFailed": ownerOnly,
+  "chat.configuration.resolve": parseChatConfigurationRequest,
+  "chat.configuration.binding.find": shape({ chatId: required(nonblank) }),
+  "chat.configuration.binding.read": shape({ chatId: required(nonblank) }),
+  "chat.configuration.binding.write": shape({ chatId: required(nonblank), selection: required(nonblank) }),
+  "chat.configuration.binding.delete": shape({ chatId: required(nonblank) }),
+  snapshot: empty,
+  "character.list": empty,
+  "character.get": id,
+  "character.create": shape({ values: required(shape({ ...characterFields, id: optional(text), name: required(nonblank) })) }),
+  "character.update": shape({ id: required(nonblank), changes: required(shape(characterFields, true)) }),
+  "character.delete": id,
+  "character.setActive": id,
+  "character.combine": shape({ id: required(nonblank), promptFunctionType: optional(enumeration("CHAT", "VOICE")), additionalTagIds: optional(identifiers) }),
+  "character.export": shape({ id: required(nonblank), format: required(format) }),
+  "character.import": shape({ format: required(format), content: required(nonblank) }),
+  "character.exportBackup": empty,
+  "character.importBackup": contentOnly,
+  "group.list": empty,
+  "group.get": id,
+  "group.create": shape({ values: required(shape({ ...groupFields, id: optional(text), name: required(nonblank) })) }),
+  "group.update": shape({ id: required(nonblank), changes: required(shape(groupFields, true)) }),
+  "group.delete": id,
+  "group.setActive": id,
+  "group.duplicate": shape({ id: required(nonblank), newName: optional(nonblank) }),
+  "group.export": id,
+  "group.import": contentOnly,
+  "group.exportBackup": empty,
+  "group.importBackup": contentOnly,
+  "activePrompt.get": empty,
+  "activePrompt.setModel": empty,
+  "activePrompt.setCard": id,
+  "activePrompt.setGroup": id,
+  "activePrompt.activateForChat": shape({ characterCardName: required(nullable(nonblank)), characterGroupId: required(nullable(nonblank)) }),
+  "activePrompt.resolvedCard": empty,
+  "tag.list": empty,
+  "tag.get": id,
+  "tag.create": shape({ values: required(shape({ ...tagFields, id: optional(text), name: required(nonblank) })) }),
+  "tag.update": shape({ id: required(nonblank), changes: required(shape(tagFields, true)) }),
+  "tag.delete": id,
+  "memory.shared.list": empty,
+  "memory.shared.create": shape({ name: required(nonblank) }),
+  "memory.shared.rename": shape({ id: required(nonblank), name: required(nonblank) }),
+  "memory.shared.delete": id,
+  "memory.mount": shape({ characterId: required(nonblank), sharedId: required(nonblank), readable: required(boolean), writable: required(boolean) }),
+  "memory.unmount": shape({ characterId: required(nonblank), sharedId: required(nonblank) }),
+  "memory.user.read": ownerOnly,
+  "memory.user.write": shape({ ownerKey: required(owner), content: required(text) }),
+  "memory.user.path": ownerOnly,
+  "memory.resolveOwner": shape({ characterId: required(nonblank) }),
+  "memory.settings.read": ownerOnly,
+  "memory.settings.write": shape({ ownerKey: required(owner), settings: required(settings) }),
+  "memory.searchConfig.read": ownerOnly,
+  "memory.searchConfig.write": shape({ ownerKey: required(owner), config: required(searchConfig) }),
+  "memory.graph": ownerOnly,
+  "memory.list": ownerOnly,
+  "memory.search": shape({ ownerKey: required(owner), query: required(nonblank) }),
+  "memory.get": shape({ ownerKey: required(owner), title: required(nonblank) }),
+  "memory.create": shape({ ownerKey: required(owner), values: required(shape({ ...memoryFields, id: optional(memoryIdentifier), title: required(nonblank), content: required(text) })) }),
+  "memory.update": shape({ ownerKey: required(owner), originalTitle: required(nonblank), expectedId: optional(memoryIdentifier), changes: required(shape(memoryFields, true)) }),
+  "memory.delete": shape({ ownerKey: required(owner), id: required(memoryIdentifier) }),
+  "memory.move": shape({ ownerKey: required(owner), ids: required(array(memoryIdentifier)), folderPath: required(text) }),
+  "memory.link.create": shape({ ownerKey: required(owner), sourceTitle: required(nonblank), targetTitle: required(nonblank), linkType: required(nonblank), weight: required(score), description: required(text) }),
+  "memory.link.update": shape({ ownerKey: required(owner), linkId: required(memoryIdentifier), changes: required(shape({ linkType: optional(nonblank), weight: optional(score), description: optional(text) }, true)) }),
+  "memory.link.delete": shape({ ownerKey: required(owner), linkId: required(memoryIdentifier) }),
+  "memory.export": ownerOnly,
+  "memory.import": shape({ ownerKey: required(owner), content: required(nonblank), strategy: required(enumeration("SKIP", "UPDATE", "CREATE_NEW")) })
+};
+function parseDomainPayload(operation, payload) {
+  if (!Object.prototype.hasOwnProperty.call(validators, operation)) throw new Error(`Unknown character domain operation: ${String(operation)}`);
+  validators[operation](payload, operation);
+  return payload;
+}
+function parseJsonObject(raw, path) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${path}: invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return record(value, path);
+}
+function parseCharacterChanges(value) {
+  shape(characterFields, true)(value, "character changes");
+  return value;
+}
+function parseGroupChanges(value) {
+  shape(groupFields, true)(value, "group changes");
+  return value;
+}
+function parseTagChanges(value) {
+  shape(tagFields, true)(value, "tag changes");
+  return value;
+}
+function jsonValue(value, path = "result") {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    number(value, path);
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => jsonValue(item, `${path}[${index}]`));
+  }
+  const object3 = record(value, path);
+  const result2 = {};
+  for (const key of Object.keys(object3)) result2[key] = jsonValue(object3[key], `${path}.${key}`);
+  return result2;
+}
+function parseChatConfigurationRequest(value) {
+  shape({
+    purpose: required(enumeration("display", "execution")),
+    chatId: required(nullable(nonblank)),
+    chatExtension: required(nullable(markerObject)),
+    participantId: required(nullable(nonblank)),
+    promptFunctionType: required(enumeration("CHAT", "VOICE")),
+    defaultModelBinding: required(shape({ providerId: required(text), modelId: required(text) })),
+    defaultTtsConfigId: required(text)
+  })(value, "chat.configuration.resolve");
+  const request = value;
+  if (request.purpose === "display") {
+    if (request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
+  } else {
+    nonblank(request.defaultModelBinding.providerId, "execution default provider");
+    nonblank(request.defaultModelBinding.modelId, "execution default model");
+    nonblank(request.defaultTtsConfigId, "execution default TTS configuration");
+  }
+  return request;
+}
+function chatRecord(records2, id2, kind) {
+  const matches = records2.filter(
+    /** Matches the supplied identifier without interpreting its spelling. */
+    (item) => item.id === id2
+  );
+  if (matches.length !== 1) throw new Error(
+    matches.length === 0 ? kind + " not found: " + id2 : "Duplicate " + kind + ": " + id2
+  );
+  return matches[0];
+}
+function chatParticipant(card, request, service2) {
+  return __async(this, null, function* () {
+    nonblank(card.name, "profile.name");
+    const models = yield service2.listModels();
+    let modelBinding;
+    switch (characterModelBindingMode(card.chatModelBindingMode)) {
+      case "FOLLOW_GLOBAL":
+        modelBinding = { ...request.defaultModelBinding };
+        break;
+      case "FIXED_MODEL": {
+        nonblank(card.chatModelId, "profile.fixedModelId");
+        nonblank(card.chatProviderId, "Fixed model provider must be explicitly selected");
+        const candidates = models.filter(
+          /** Resolves the exact provider-scoped model selected by the user. */
+          (model) => model.providerId === card.chatProviderId && model.modelId === card.chatModelId
+        );
+        if (candidates.length !== 1) throw new Error(
+          candidates.length === 0 ? "Fixed model unavailable: " + card.chatModelId : "Fixed model ambiguous: " + card.chatModelId
+        );
+        modelBinding = { providerId: candidates[0].providerId, modelId: candidates[0].modelId };
+        break;
+      }
+      default:
+        throw new Error("\u89D2\u8272\u5361\u201C" + card.name + "\u201D\u7684\u6A21\u578B\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548\uFF0C\u8BF7\u5728\u89D2\u8272\u5361\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u7ED1\u5B9A\u6A21\u578B\uFF1A" + card.chatModelBindingMode);
+    }
+    const resolvedModels = models.filter(
+      /** Requires the actual configured provider/model pair. */
+      (model) => model.providerId === modelBinding.providerId && model.modelId === modelBinding.modelId
+    );
+    if (resolvedModels.length !== 1) throw new Error("Model binding unavailable or duplicated: " + modelBinding.providerId + "/" + modelBinding.modelId);
+    const ttsConfigId = card.ttsConfigId === null ? request.defaultTtsConfigId : card.ttsConfigId;
+    nonblank(ttsConfigId, "profile.ttsConfigId");
+    chatRecord(yield service2.listTtsConfigs(), ttsConfigId, "TTS configuration");
+    let primary;
+    switch (card.memoryBindingMode) {
+      case "CHARACTER":
+        primary = "character:" + card.id;
+        break;
+      case "SHARED":
+        nonblank(card.sharedMemoryId, "profile.sharedMemoryId");
+        yield service2.getStore(card.sharedMemoryId);
+        primary = "shared:" + card.sharedMemoryId;
+        break;
+      default:
+        throw new Error("Invalid memory binding mode: " + card.memoryBindingMode);
+    }
+    const routes = /* @__PURE__ */ new Map();
+    routes.set(primary, { key: primary, readable: true, writable: true });
+    for (const mount2 of card.sharedMemoryMounts) {
+      yield service2.getStore(mount2.sharedMemoryId);
+      const key = "shared:" + mount2.sharedMemoryId;
+      const existing = routes.get(key);
+      routes.set(key, { key, readable: mount2.readable || existing?.readable === true, writable: mount2.writable || existing?.writable === true });
+    }
+    const prompt = yield combineCharacterPrompt(card, [], request.promptFunctionType, service2);
+    const userPreferencesText = (yield service2.readGlobalMemoryPreferences()).userDescriptionEnabled ? (yield service2.dispatchDomain("memory.user.read", { ownerKey: primary })).content : "";
+    return {
+      id: card.id,
+      name: card.name,
+      avatarUri: card.avatarUri,
+      introPrompt: prompt,
+      userPreferencesText,
+      openingStatement: card.openingStatement,
+      modelBinding,
+      ttsConfigId,
+      toolAccess: {
+        ...card.toolAccessConfig,
+        allowedBuiltinTools: [...card.toolAccessConfig.allowedBuiltinTools],
+        allowedPackages: [...card.toolAccessConfig.allowedPackages],
+        allowedSkills: [...card.toolAccessConfig.allowedSkills],
+        allowedMcpServers: [...card.toolAccessConfig.allowedMcpServers]
+      },
+      resources: [...routes.values()]
+    };
+  });
+}
+function resolveChatConfiguration(request, service2) {
+  return __async(this, null, function* () {
+    const reads = configurationReadScope(service2);
+    if (request.purpose === "display") return resolveChatDisplay(request, reads);
+    return resolveChatExecution(request, reads);
+  });
+}
+function resolveChatExecution(request, service2) {
+  return __async(this, null, function* () {
+    if (request.purpose !== "execution") throw new Error("Execution configuration requires purpose execution");
+    const marker = decodeChatMarker(request.chatExtension);
+    const selection = parseChatSelection(marker.selection);
+    if (selection.kind === "model") {
+      const [models, ttsConfigs] = yield Promise.all([service2.listModels(), service2.listTtsConfigs()]);
+      const profile2 = modelParticipant(request, { models, ttsConfigs }), participants2 = [profile2];
+      const executionData2 = encodeExecutionData({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey: "", profile: profile2, participants: participants2 });
+      return { contextKey: marker.selection, historyPolicy: { isolateParticipants: false, labelUserMessages: false }, profile: profile2, participants: participants2, executionData: executionData2 };
+    }
+    let cards;
+    if (selection.kind === "card") cards = [yield service2.getCharacter(selection.id)];
+    else {
+      const group = yield service2.getGroup(selection.id);
+      const members2 = [...group.members].sort(
+        /** Preserves the persisted participant order without planning turns in Core. */
+        (left, right) => left.orderIndex - right.orderIndex
+      );
+      if (members2.length === 0) throw new Error("Selected group has no participants: " + group.id);
+      const ids = /* @__PURE__ */ new Set();
+      cards = yield Promise.all(members2.map(
+        /** Rejects duplicate or deleted group members before producing any execution profile. */
+        (member2) => {
+          if (ids.has(member2.characterCardId)) throw new Error("Duplicate group participant: " + member2.characterCardId);
+          ids.add(member2.characterCardId);
+          return service2.getCharacter(member2.characterCardId);
+        }
+      ));
+    }
+    if (request.participantId === null && cards.length !== 1) throw new Error("A planned conversation requires an explicit execution participant");
+    if (request.participantId !== null) chatRecord(cards, request.participantId, "selected participant");
+    const participants = [];
+    for (const card2 of cards) {
+      const participant = yield chatParticipant(card2, request, service2);
+      participants.push(selection.kind === "group" ? withGroupParticipantPrompt(participant, cards) : participant);
+    }
+    let profile;
+    if (request.participantId !== null) profile = chatRecord(participants, request.participantId, "selected participant");
+    else {
+      if (participants.length !== 1) throw new Error("A planned conversation requires an explicit execution participant");
+      profile = participants[0];
+    }
+    const card = chatRecord(cards, profile.id, "selected participant");
+    const primaryOwnerKey = card.memoryBindingMode === "CHARACTER" ? "character:" + card.id : "shared:" + card.sharedMemoryId;
+    const executionData = encodeExecutionData({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey, profile, participants });
+    return { contextKey: marker.selection, historyPolicy: { isolateParticipants: true, labelUserMessages: selection.kind === "group" }, profile, participants, executionData };
+  });
+}
+
+// src/chat-binding-catalog.ts
+function listBindableChats(bindings) {
+  return __async(this, null, function* () {
+    const result2 = yield Tools.Chat.listAll();
+    assertInteger(result2.totalCount, "conversation count", 0);
+    if (!Array.isArray(result2.chats) || result2.chats.length !== result2.totalCount)
+      throw new Error("\u5BF9\u8BDD\u5217\u8868\u4E0D\u5B8C\u6574\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5");
+    const ids = /* @__PURE__ */ new Set();
+    for (const chat of result2.chats) {
+      requireId(chat.id, "conversation id");
+      if (ids.has(chat.id)) throw new Error("\u5BF9\u8BDD\u5217\u8868\u5305\u542B\u91CD\u590D\u8BB0\u5F55");
+      ids.add(chat.id);
+      assertString(chat.title, "conversation title");
+      assertString(chat.updatedAt, "conversation update time");
+      assertInteger(chat.messageCount, "message count", 0);
+      assertBoolean(chat.isCurrent, "current conversation");
+    }
+    const selections = yield bindings.bindingsForChats([...ids]);
+    return result2.chats.map((chat) => ({
+      id: chat.id,
+      title: chat.title,
+      updatedAt: chat.updatedAt,
+      messageCount: chat.messageCount,
+      isCurrent: chat.isCurrent,
+      selection: selections.get(chat.id) ?? null
+    })).sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt) || left.id.localeCompare(right.id));
+  });
+}
+function timestamp(value) {
+  const parsed = /^\d+$/.test(value) ? Number(value) : Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+// src/identity.ts
+function uuid() {
+  const bytes = [];
+  for (let index = 0; index < 16; index += 1) bytes.push(Math.floor(Math.random() * 256));
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const text2 = bytes.map(
+    /** Encodes every byte as two hexadecimal digits. */
+    (byte) => byte.toString(16).padStart(2, "0")
+  ).join("");
+  return text2.slice(0, 8) + "-" + text2.slice(8, 12) + "-" + text2.slice(12, 16) + "-" + text2.slice(16, 20) + "-" + text2.slice(20);
 }
 
 // src/memory-jobs/embeddings.ts
@@ -513,9 +1307,9 @@ function cosineSimilarity(left, right) {
   if (leftNorm === 0 || rightNorm === 0) throw new Error("Embedding norm must be positive");
   return Math.max(-1, Math.min(1, dot / Math.sqrt(leftNorm * rightNorm)));
 }
-function rebuildMemoryEmbeddings(ownerKey, repository) {
+function rebuildMemoryEmbeddings(ownerKey, repository2) {
   return __async(this, null, function* () {
-    const space = yield repository.readMemorySpace(ownerKey);
+    const space = yield repository2.readMemorySpace(ownerKey);
     embeddingSource(space.settings);
     const texts = /* @__PURE__ */ new Set();
     for (const memory of space.memories) texts.add(memory.isDocumentNode ? memory.title : memory.content);
@@ -523,7 +1317,7 @@ function rebuildMemoryEmbeddings(ownerKey, repository) {
     const computed = [];
     for (const text2 of texts) computed.push(yield requestEmbedding(text2, space.settings));
     space.embeddings = computed;
-    yield repository.writeMemorySpace(ownerKey, space);
+    yield repository2.writeMemorySpace(ownerKey, space);
     return space.memories.length;
   });
 }
@@ -777,789 +1571,6 @@ function searchMemoryChunks(space, memoryId, query, count) {
       }
     ).slice(0, count);
     return { total: chunks.length, chunks: selected };
-  });
-}
-
-// src/drafts.ts
-function createCharacterDraft() {
-  return {
-    id: "",
-    name: "",
-    description: "",
-    characterSetting: "",
-    openingStatement: "",
-    otherContentChat: "",
-    otherContentVoice: "",
-    avatarUri: null,
-    attachedTagIds: [],
-    advancedCustomPrompt: "",
-    marks: "",
-    chatModelBindingMode: "FOLLOW_GLOBAL",
-    chatModelId: null,
-    chatProviderId: null,
-    ttsConfigId: null,
-    themeConfigId: null,
-    memoryBindingMode: "CHARACTER",
-    sharedMemoryId: null,
-    sharedMemoryMounts: [],
-    toolAccessConfig: { enabled: false, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] },
-    createdAt: 0,
-    updatedAt: 0
-  };
-}
-function createGroupDraft() {
-  return { id: "", name: "", description: "", members: [], themeConfigId: null, createdAt: 0, updatedAt: 0 };
-}
-function createTagDraft() {
-  return { name: "", description: "", promptContent: "", tagType: "CUSTOM" };
-}
-
-// src/chat-bindings.ts
-function parseChatSelection(selection) {
-  requireId(selection, "chat selection");
-  const parsed = /^(card|group|model):([^\s]+)$/u.exec(selection);
-  if (parsed === null) throw new Error("Invalid plugin chat selection: " + selection);
-  const kind = parsed[1];
-  if (kind === "model" && parsed[2] !== "chat") throw new Error("Invalid model selection: " + selection);
-  if (kind !== "card" && kind !== "group" && kind !== "model") throw new Error("Invalid chat selection kind: " + kind);
-  return { kind, id: parsed[2] };
-}
-function requireChatSelection(selection, cards, groups) {
-  const parsed = parseChatSelection(selection);
-  if (parsed.kind === "model") return parsed;
-  const records3 = parsed.kind === "card" ? cards : groups;
-  let matches = 0;
-  for (const record2 of records3) if (record2.id === parsed.id) matches += 1;
-  if (matches !== 1) throw new Error("Chat selection does not identify exactly one stored record: " + selection);
-  if (parsed.kind === "group") {
-    for (const group of groups) if (group.id === parsed.id && group.members.length === 0) throw new Error("A bound chat group must have actual participants: " + group.id);
-  }
-  return parsed;
-}
-function selectionForActive(active) {
-  if ("Model" in active) return "model:chat";
-  if ("CharacterCard" in active) return "card:" + active.CharacterCard.id;
-  return "group:" + active.CharacterGroup.id;
-}
-
-// src/configuration-reads.ts
-function recordRead(cache, id2, read) {
-  const existing = cache.get(id2);
-  if (existing !== void 0) return existing;
-  const pending = read().then(
-    /** Requires the requested identity before sharing the record with another consumer. */
-    (record2) => {
-      if (record2.id !== id2) throw new Error("Configuration read returned a different identity: " + id2);
-      return record2;
-    }
-  );
-  cache.set(id2, pending);
-  return pending;
-}
-function configurationReadScope(service) {
-  const cards = /* @__PURE__ */ new Map(), groups = /* @__PURE__ */ new Map();
-  const tags = /* @__PURE__ */ new Map(), stores = /* @__PURE__ */ new Map();
-  let models;
-  let tts;
-  let preferences;
-  return {
-    /** Reads each requested character once. */
-    getCharacter: (id2) => recordRead(cards, id2, service.getCharacter.bind(service, id2)),
-    /** Reads each requested group once. */
-    getGroup: (id2) => recordRead(groups, id2, service.getGroup.bind(service, id2)),
-    /** Reads each referenced tag once across all group participants. */
-    getTag: (id2) => recordRead(tags, id2, service.getTag.bind(service, id2)),
-    /** Reads each referenced shared library once across bindings and mounts. */
-    getStore: (id2) => recordRead(stores, id2, service.getStore.bind(service, id2)),
-    /** Loads the model directory once when required. */
-    listModels: () => {
-      if (models === void 0) models = service.listModels();
-      return models;
-    },
-    /** Loads the speech directory once when required. */
-    listTtsConfigs: () => {
-      if (tts === void 0) tts = service.listTtsConfigs();
-      return tts;
-    },
-    /** Shares prompt privacy flags while the caller retains its final live privacy check. */
-    readGlobalMemoryPreferences: () => {
-      if (preferences === void 0) preferences = service.readGlobalMemoryPreferences();
-      return preferences;
-    },
-    /** Preserves typed domain operations on the existing service. */
-    dispatchDomain: (operation, input) => service.dispatchDomain(operation, input)
-  };
-}
-
-// src/character-prompt.ts
-function combineCharacterPrompt(card, additionalTagIds, promptFunctionType, host) {
-  return __async(this, null, function* () {
-    assertCard(card);
-    assertStrings(additionalTagIds, "\u9644\u52A0\u6807\u7B7E");
-    if (promptFunctionType !== "CHAT" && promptFunctionType !== "VOICE") throw new Error("\u63D0\u793A\u8BCD\u529F\u80FD\u7C7B\u578B\u65E0\u6548");
-    const parts = [];
-    const setting = card.characterSetting.trim();
-    if (setting !== "") parts.push(setting);
-    const otherContent = (promptFunctionType === "CHAT" ? card.otherContentChat : card.otherContentVoice).trim();
-    if (otherContent !== "") parts.push(otherContent);
-    for (const id2 of normalizeNames([...card.attachedTagIds, ...additionalTagIds])) {
-      const tag = yield host.getTag(id2);
-      assertTag(tag);
-      if (tag.id !== id2) throw new Error("Prompt tag read returned a different identity: " + id2);
-      const content = tag.promptContent.trim();
-      if (content !== "") parts.push(content);
-    }
-    const advanced = card.advancedCustomPrompt.trim();
-    if (advanced !== "") parts.push(advanced);
-    return parts.join("\n\n").trim();
-  });
-}
-
-// src/chat-markers.ts
-function markerValue(value, path) {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error(path + " must be a finite JSON number");
-    return value;
-  }
-  if (Array.isArray(value)) return value.map(
-    /** Validates and copies every actual nested JSON value. */
-    (item, index) => markerValue(item, path + "[" + index + "]")
-  );
-  return markerObject(value, path);
-}
-function markerObject(value, path) {
-  assertObject(value, path);
-  const result2 = {};
-  for (const [key, item] of Object.entries(value)) Object.defineProperty(result2, key, { value: markerValue(item, path + "." + key), enumerable: true, configurable: true, writable: true });
-  return result2;
-}
-function markerVersion(value, path) {
-  if (value.version !== 1) throw new Error("Unsupported " + path + " version");
-}
-function decodeChatMarker(value) {
-  const extension = markerObject(value, "chat extension");
-  markerVersion(extension, "chat marker");
-  const selection = requireId(extension.selection, "chat marker selection");
-  parseChatSelection(selection);
-  if (Object.prototype.hasOwnProperty.call(extension, "groupId")) throw new Error("Conversation membership is owned by plugin files, not chat extension.groupId");
-  return { version: 1, selection };
-}
-function encodeChatMarker(selection, extension) {
-  parseChatSelection(selection);
-  if (extension === null) return { version: 1, selection };
-  decodeChatMarker(extension);
-  return { ...markerObject(extension, "chat extension"), version: 1, selection };
-}
-function policyNames(value, path) {
-  if (!Array.isArray(value)) throw new Error(path + " must be an array");
-  const names = [], seen = /* @__PURE__ */ new Set();
-  for (const item of value) {
-    const name = requireId(item, path);
-    if (seen.has(name)) throw new Error("Duplicate " + path + ": " + name);
-    seen.add(name);
-    names.push(name);
-  }
-  return names;
-}
-function markerProfile(value) {
-  assertObject(value, "message participant");
-  const id2 = requireId(value.id, "message participant id"), name = requireId(value.name, "message participant name");
-  assertNullableString(value.avatarUri, "message participant avatar");
-  assertString(value.introPrompt, "message participant introPrompt");
-  assertString(value.userPreferencesText, "message participant userPreferencesText");
-  assertString(value.openingStatement, "message participant openingStatement");
-  assertObject(value.modelBinding, "message model binding");
-  const providerId = requireId(value.modelBinding.providerId, "message model provider"), modelId = requireId(value.modelBinding.modelId, "message model id");
-  const ttsConfigId = requireId(value.ttsConfigId, "message TTS config");
-  assertObject(value.toolAccess, "message tool policy");
-  assertBoolean(value.toolAccess.enabled, "message tool policy enabled");
-  const toolAccess2 = {
-    enabled: value.toolAccess.enabled,
-    allowedBuiltinTools: policyNames(value.toolAccess.allowedBuiltinTools, "message builtin tools"),
-    allowedPackages: policyNames(value.toolAccess.allowedPackages, "message packages"),
-    allowedSkills: policyNames(value.toolAccess.allowedSkills, "message skills"),
-    allowedMcpServers: policyNames(value.toolAccess.allowedMcpServers, "message MCP servers")
-  };
-  if (!Array.isArray(value.resources)) throw new Error("Message resources must be an array");
-  const resources = [], keys = /* @__PURE__ */ new Set();
-  for (const resource of value.resources) {
-    assertObject(resource, "message resource");
-    const key = requireId(resource.key, "message resource key");
-    if (keys.has(key)) throw new Error("Duplicate message resource: " + key);
-    keys.add(key);
-    assertBoolean(resource.readable, "message resource readable");
-    assertBoolean(resource.writable, "message resource writable");
-    resources.push({ key, readable: resource.readable, writable: resource.writable });
-  }
-  return {
-    id: id2,
-    name,
-    avatarUri: value.avatarUri,
-    introPrompt: value.introPrompt,
-    userPreferencesText: value.userPreferencesText,
-    openingStatement: value.openingStatement,
-    modelBinding: { providerId, modelId },
-    ttsConfigId,
-    toolAccess: toolAccess2,
-    resources
-  };
-}
-function decodeExecutionData(value) {
-  const extension = markerObject(value, "message extension");
-  markerVersion(extension, "execution data");
-  const selection = requireId(extension.selection, "execution data selection"), parsed = parseChatSelection(selection);
-  if (extension.promptFunctionType !== "CHAT" && extension.promptFunctionType !== "VOICE") throw new Error("Invalid execution data prompt function");
-  if (!Array.isArray(extension.participants) || extension.participants.length === 0) throw new Error("Message marker requires complete participants");
-  const participants = extension.participants.map(
-    /** Constructs each complete resolved participant independently from current domain records. */
-    (item) => markerProfile(item)
-  ), ids = /* @__PURE__ */ new Set();
-  for (const participant of participants) {
-    if (ids.has(participant.id)) throw new Error("Duplicate message participant: " + participant.id);
-    ids.add(participant.id);
-  }
-  const profile = markerProfile(extension.profile), matches = participants.filter(
-    /** Requires the original execution participant to be one exact complete resolved participant. */
-    (participant) => participant.id === profile.id
-  );
-  if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(profile)) throw new Error("Message execution profile does not match its resolved participant data");
-  if (parsed.kind === "card" && (participants.length !== 1 || profile.id !== parsed.id)) throw new Error("Message card selection does not match its resolved participant");
-  if (parsed.kind === "model") {
-    if (participants.length !== 1 || profile.id !== "model:chat" || profile.name !== profile.modelBinding.modelId || extension.primaryOwnerKey !== "" || profile.resources.length !== 0 || profile.introPrompt !== "" || profile.userPreferencesText !== "" || profile.openingStatement !== "") throw new Error("Invalid model-only execution data");
-    return { version: 1, selection, promptFunctionType: extension.promptFunctionType, primaryOwnerKey: "", profile, participants };
-  }
-  const primaryOwnerKey = requireId(extension.primaryOwnerKey, "message primary memory owner");
-  if (!/^(character|shared):[^:\s]+$/u.test(primaryOwnerKey)) throw new Error("Invalid message primary memory owner");
-  if (!profile.resources.some(
-    /** Requires the primary memory destination to be permitted by this exact current execution profile. */
-    (resource) => resource.key === primaryOwnerKey && resource.writable
-  )) throw new Error("Message primary memory owner is not writable in its saved profile");
-  return { version: 1, selection, promptFunctionType: extension.promptFunctionType, primaryOwnerKey, profile, participants };
-}
-function encodeExecutionData(marker) {
-  const validated = decodeExecutionData(marker);
-  return markerObject(validated, "message extension");
-}
-
-// src/model-participant.ts
-function modelIdentity(request, directory) {
-  const models = directory.models.filter(
-    /** Requires one real model on the configured provider rather than guessing from a display name. */
-    (model) => model.providerId === request.defaultModelBinding.providerId && model.modelId === request.defaultModelBinding.modelId
-  );
-  if (models.length !== 1 || models[0].providerTypeId.trim() === "") throw new Error("Model-only binding is unavailable or duplicated");
-  return { id: "model:chat", name: models[0].modelId, avatarUri: "provider-logo:" + encodeURIComponent(models[0].providerTypeId) };
-}
-function modelParticipant(request, directory) {
-  if (request.participantId !== null && request.participantId !== "model:chat") throw new Error("Invalid model-only execution participant");
-  if (directory.ttsConfigs.filter((config) => config.id === request.defaultTtsConfigId).length !== 1) throw new Error("Model-only speech configuration is unavailable or duplicated");
-  return {
-    ...modelIdentity(request, directory),
-    introPrompt: "",
-    userPreferencesText: "",
-    openingStatement: "",
-    modelBinding: { ...request.defaultModelBinding },
-    ttsConfigId: request.defaultTtsConfigId,
-    toolAccess: { enabled: false, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] },
-    resources: []
-  };
-}
-
-// src/group-execution/display.ts
-function identity(card) {
-  if (card.id.trim().length === 0 || card.name.trim().length === 0) throw new Error("Display participant identity is empty");
-  return { id: card.id, name: card.name, avatarUri: card.avatarUri };
-}
-function orderedGroupParticipants(group, service) {
-  return __async(this, null, function* () {
-    if (group.members.length === 0) throw new Error("Selected group has no participants: " + group.id);
-    const members2 = [...group.members].sort(
-      /** Uses the saved order without choosing an execution participant. */
-      (left, right) => left.orderIndex - right.orderIndex
-    );
-    const ids = /* @__PURE__ */ new Set(), participants = [];
-    for (const member2 of members2) {
-      if (ids.has(member2.characterCardId)) throw new Error("Duplicate group participant: " + member2.characterCardId);
-      ids.add(member2.characterCardId);
-      const card = yield service.getCharacter(member2.characterCardId);
-      if (card.id !== member2.characterCardId) throw new Error("Group participant read returned a different identity");
-      participants.push(identity(card));
-    }
-    return participants;
-  });
-}
-function resolveChatDisplay(request, service) {
-  return __async(this, null, function* () {
-    if (request.purpose !== "display" || request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
-    const marker = decodeChatMarker(request.chatExtension), selection = parseChatSelection(marker.selection);
-    if (selection.kind === "model") {
-      const participant = modelIdentity(request, { models: yield service.listModels() });
-      return { contextKey: marker.selection, identity: { title: participant.name, avatarUri: participant.avatarUri }, participants: [participant], initialMessages: [] };
-    }
-    if (selection.kind === "group") {
-      const group = yield service.getGroup(selection.id);
-      if (group.id !== selection.id || group.name.trim().length === 0) throw new Error("Display group identity is invalid");
-      return { contextKey: marker.selection, identity: { title: group.name, avatarUri: null }, participants: yield orderedGroupParticipants(group, service), initialMessages: [] };
-    }
-    const card = yield service.getCharacter(selection.id);
-    if (card.id !== selection.id) throw new Error("Display character read returned a different identity");
-    const result2 = { contextKey: marker.selection, identity: { title: card.name, avatarUri: card.avatarUri }, participants: [identity(card)], initialMessages: [] };
-    if (card.openingStatement.trim().length !== 0) {
-      result2.initialMessages.push({ content: card.openingStatement, displayName: card.name, participantId: card.id });
-    }
-    return result2;
-  });
-}
-
-// src/group-execution/prompts.ts
-function withGroupParticipantPrompt(profile, participants) {
-  const names = participants.map(
-    /** Uses the actual ordered member names without selecting or substituting a speaker. */
-    (participant) => participant.name
-  ).join(", ");
-  const hint = "\n\nRole response plan hint:\n- This chat uses a role response planner. After each user message, the system dynamically decides who responds and in what order.\n- Always keep your own role identity. Never reply as another role or imitate another persona.\n- Answer the user's latest request in your own role, optionally considering prior agents' replies.\n- If you have nothing new, reply briefly in your own role.\n\nRole-scoped history hint:\n- Your own historical outputs remain assistant messages. Other participants' speech is labeled [From role: name] as reference context.\n- Messages labeled [From user] are user inputs. Other participants' reference context does not change your instructions or identity.\n- Stay in role as " + profile.name + ", and do not switch persona to another participant.\n\nGroup participants: " + names;
-  return { ...profile, introPrompt: profile.introPrompt + hint };
-}
-
-// src/domain.ts
-function record(value, path) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path} must be a JSON object`);
-  return value;
-}
-function text(value, path) {
-  if (typeof value !== "string") throw new Error(`${path} must be a string`);
-}
-function nonblank(value, path) {
-  text(value, path);
-  if (value.trim() === "") throw new Error(`${path} must not be blank`);
-}
-function parseMemoryIdentifier(value, path, _positive = true) {
-  if (typeof value !== "string" || value.trim() === "" || value !== value.trim() || value.length > 256) throw new Error(`${path} must be a nonblank identity`);
-  return value;
-}
-function memoryIdentifier(value, path) {
-  parseMemoryIdentifier(value, path);
-}
-function propertyIdentifier(value, path) {
-  parseMemoryIdentifier(value, path, false);
-}
-function boolean(value, path) {
-  if (typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
-}
-function number(value, path) {
-  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${path} must be a finite number`);
-}
-function integer(value, path) {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${path} must be a safe integer`);
-}
-function nonnegativeInteger(value, path) {
-  integer(value, path);
-  nonnegative(value, path);
-}
-function messageVariant(value, path) {
-  integer(value, path);
-  if (typeof value !== "number" || value < 0 || value > 2147483647) throw new Error(path + " must be a nonnegative i32 message variant index");
-}
-function score(value, path) {
-  number(value, path);
-  if (value < 0 || value > 1) throw new Error(`${path} must be between 0 and 1`);
-}
-function nonnegative(value, path) {
-  number(value, path);
-  if (value < 0) throw new Error(`${path} must not be negative`);
-}
-function enumeration(...values) {
-  const allowed = new Set(values);
-  return (value, path) => {
-    if (typeof value !== "string" || !allowed.has(value)) throw new Error(`${path} must be ${values.join(" | ")}`);
-  };
-}
-function nullable(validate) {
-  return (value, path) => {
-    if (value !== null) validate(value, path);
-  };
-}
-function array(validate) {
-  return (value, path) => {
-    if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
-    for (let index = 0; index < value.length; index += 1) validate(value[index], `${path}[${index}]`);
-  };
-}
-function required(validate) {
-  return { validate, required: true };
-}
-function optional(validate) {
-  return { validate, required: false };
-}
-function shape(fields4, nonempty = false) {
-  return (value, path) => {
-    const object3 = record(value, path);
-    const keys = Object.keys(object3);
-    if (nonempty && keys.length === 0) throw new Error(`${path} must contain at least one field`);
-    for (const key of keys) {
-      if (!Object.prototype.hasOwnProperty.call(fields4, key)) throw new Error(`${path}.${key} is not a supported field`);
-      fields4[key].validate(object3[key], `${path}.${key}`);
-    }
-    for (const key of Object.keys(fields4)) {
-      if (fields4[key].required && !Object.prototype.hasOwnProperty.call(object3, key)) throw new Error(`${path}.${key} is required`);
-    }
-  };
-}
-function owner(value, path) {
-  if (typeof value !== "string" || !/^(character|shared):[^:\s]+$/.test(value)) throw new Error(`${path} must be character:<id> or shared:<id>`);
-}
-var strings = array(text);
-var identifiers = array(nonblank);
-var member = shape({ characterCardId: required(nonblank), orderIndex: required(integer) });
-var mount = shape({ sharedMemoryId: required(nonblank), readable: required(boolean), writable: required(boolean) });
-var toolAccess = shape({ enabled: required(boolean), allowedBuiltinTools: required(strings), allowedPackages: required(strings), allowedSkills: required(strings), allowedMcpServers: required(strings) });
-var property = shape({ id: required(propertyIdentifier), key: required(text), value: required(text) });
-var characterFields = {
-  name: optional(nonblank),
-  description: optional(text),
-  characterSetting: optional(text),
-  openingStatement: optional(text),
-  otherContentChat: optional(text),
-  otherContentVoice: optional(text),
-  avatarUri: optional(nullable(text)),
-  attachedTagIds: optional(identifiers),
-  advancedCustomPrompt: optional(text),
-  marks: optional(text),
-  chatModelBindingMode: optional(enumeration("FOLLOW_GLOBAL", "FIXED_MODEL")),
-  chatModelId: optional(nullable(text)),
-  chatProviderId: optional(nullable(text)),
-  ttsConfigId: optional(nullable(text)),
-  themeConfigId: optional(nullable(text)),
-  memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
-  sharedMemoryId: optional(nullable(text)),
-  sharedMemoryMounts: optional(array(mount)),
-  toolAccessConfig: optional(toolAccess),
-  createdAt: optional(integer),
-  updatedAt: optional(integer)
-};
-var groupFields = { name: optional(nonblank), description: optional(text), themeConfigId: optional(nullable(text)), members: optional(array(member)), createdAt: optional(integer), updatedAt: optional(integer) };
-var tagFields = { name: optional(nonblank), description: optional(text), promptContent: optional(text), tagType: optional(enumeration("TONE", "CHARACTER", "FUNCTION", "CUSTOM")), createdAt: optional(integer), updatedAt: optional(integer) };
-var memoryFields = {
-  uuid: optional(text),
-  title: optional(nonblank),
-  content: optional(text),
-  contentType: optional(text),
-  source: optional(text),
-  credibility: optional(score),
-  importance: optional(score),
-  documentPath: optional(nullable(text)),
-  isDocumentNode: optional(boolean),
-  chunkIndexFilePath: optional(nullable(text)),
-  folderPath: optional(nullable(text)),
-  createdAt: optional(integer),
-  updatedAt: optional(integer),
-  lastAccessedAt: optional(integer),
-  tags: optional(strings),
-  properties: optional(array(property))
-};
-var settings = shape({
-  autoSaveIntervalMinutes: required(nonnegative),
-  nextAutoSaveRunAtMs: required(integer),
-  memoryExtractionCustomRules: required(text),
-  profileAutoUpdateEnabled: required(boolean),
-  profileAutoUpdateLocked: required(boolean),
-  cloudEmbeddingEnabled: required(boolean),
-  cloudEmbeddingEndpoint: required(text),
-  cloudEmbeddingApiKey: required(text),
-  cloudEmbeddingModel: required(text)
-});
-var searchConfig = shape({ scoreMode: required(enumeration("BALANCED", "KEYWORD_FIRST", "SEMANTIC_FIRST")), keywordWeight: required(nonnegative), tagWeight: required(nonnegative), vectorWeight: required(nonnegative), edgeWeight: required(nonnegative) });
-var empty = shape({});
-var id = shape({ id: required(nonblank) });
-var ownerOnly = shape({ ownerKey: required(owner) });
-var contentOnly = shape({ content: required(text) });
-var format = enumeration("operit", "tavern");
-var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
-function parseMemoryQueryRequest(payload) {
-  memoryQueryRequest(payload, "memory.query");
-  return payload;
-}
-var validators = {
-  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
-  "memory.chat.list": ownerOnly,
-  "memory.chat.pruneMissing": ownerOnly,
-  "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
-  "memory.categorize": ownerOnly,
-  "memory.rebuild.start": shape({ ownerKey: required(owner), rebuild: required(shape({ chatIds: required(strings), windowMessageCount: required(integer), fromInclusive: required(nullable(integer)), toInclusive: required(nullable(integer)) })) }),
-  "memory.rebuild.progress": ownerOnly,
-  "memory.rebuild.cancel": ownerOnly,
-  "memory.embeddings.rebuild": ownerOnly,
-  "memory.candidate.enqueue": shape({ chatId: required(nonblank), timestamp: required(integer), variantIndex: required(messageVariant), sourceType: required(enumeration("reply_finalized_auto", "selected_user_message")), ownerKey: required(nullable(owner)) }),
-  "memory.candidates.retryFailed": ownerOnly,
-  "memory.candidates.clearFailed": ownerOnly,
-  "chat.configuration.resolve": parseChatConfigurationRequest,
-  "chat.configuration.binding.read": shape({ chatId: required(nonblank) }),
-  "chat.configuration.binding.write": shape({ chatId: required(nonblank), selection: required(nonblank) }),
-  "chat.configuration.binding.delete": shape({ chatId: required(nonblank) }),
-  snapshot: empty,
-  "character.list": empty,
-  "character.get": id,
-  "character.create": shape({ values: required(shape({ ...characterFields, id: optional(text), name: required(nonblank) })) }),
-  "character.update": shape({ id: required(nonblank), changes: required(shape(characterFields, true)) }),
-  "character.delete": id,
-  "character.setActive": id,
-  "character.combine": shape({ id: required(nonblank), promptFunctionType: optional(enumeration("CHAT", "VOICE")), additionalTagIds: optional(identifiers) }),
-  "character.export": shape({ id: required(nonblank), format: required(format) }),
-  "character.import": shape({ format: required(format), content: required(nonblank) }),
-  "character.exportBackup": empty,
-  "character.importBackup": contentOnly,
-  "group.list": empty,
-  "group.get": id,
-  "group.create": shape({ values: required(shape({ ...groupFields, id: optional(text), name: required(nonblank) })) }),
-  "group.update": shape({ id: required(nonblank), changes: required(shape(groupFields, true)) }),
-  "group.delete": id,
-  "group.setActive": id,
-  "group.duplicate": shape({ id: required(nonblank), newName: optional(nonblank) }),
-  "group.export": id,
-  "group.import": contentOnly,
-  "group.exportBackup": empty,
-  "group.importBackup": contentOnly,
-  "activePrompt.get": empty,
-  "activePrompt.setModel": empty,
-  "activePrompt.setCard": id,
-  "activePrompt.setGroup": id,
-  "activePrompt.activateForChat": shape({ characterCardName: required(nullable(nonblank)), characterGroupId: required(nullable(nonblank)) }),
-  "activePrompt.resolvedCard": empty,
-  "tag.list": empty,
-  "tag.get": id,
-  "tag.create": shape({ values: required(shape({ ...tagFields, id: optional(text), name: required(nonblank) })) }),
-  "tag.update": shape({ id: required(nonblank), changes: required(shape(tagFields, true)) }),
-  "tag.delete": id,
-  "memory.shared.list": empty,
-  "memory.shared.create": shape({ name: required(nonblank) }),
-  "memory.shared.rename": shape({ id: required(nonblank), name: required(nonblank) }),
-  "memory.shared.delete": id,
-  "memory.mount": shape({ characterId: required(nonblank), sharedId: required(nonblank), readable: required(boolean), writable: required(boolean) }),
-  "memory.unmount": shape({ characterId: required(nonblank), sharedId: required(nonblank) }),
-  "memory.user.read": ownerOnly,
-  "memory.user.write": shape({ ownerKey: required(owner), content: required(text) }),
-  "memory.user.path": ownerOnly,
-  "memory.resolveOwner": shape({ characterId: required(nonblank) }),
-  "memory.settings.read": ownerOnly,
-  "memory.settings.write": shape({ ownerKey: required(owner), settings: required(settings) }),
-  "memory.searchConfig.read": ownerOnly,
-  "memory.searchConfig.write": shape({ ownerKey: required(owner), config: required(searchConfig) }),
-  "memory.graph": ownerOnly,
-  "memory.list": ownerOnly,
-  "memory.search": shape({ ownerKey: required(owner), query: required(nonblank) }),
-  "memory.get": shape({ ownerKey: required(owner), title: required(nonblank) }),
-  "memory.create": shape({ ownerKey: required(owner), values: required(shape({ ...memoryFields, id: optional(memoryIdentifier), title: required(nonblank), content: required(text) })) }),
-  "memory.update": shape({ ownerKey: required(owner), originalTitle: required(nonblank), expectedId: optional(memoryIdentifier), changes: required(shape(memoryFields, true)) }),
-  "memory.delete": shape({ ownerKey: required(owner), id: required(memoryIdentifier) }),
-  "memory.move": shape({ ownerKey: required(owner), ids: required(array(memoryIdentifier)), folderPath: required(text) }),
-  "memory.link.create": shape({ ownerKey: required(owner), sourceTitle: required(nonblank), targetTitle: required(nonblank), linkType: required(nonblank), weight: required(score), description: required(text) }),
-  "memory.link.update": shape({ ownerKey: required(owner), linkId: required(memoryIdentifier), changes: required(shape({ linkType: optional(nonblank), weight: optional(score), description: optional(text) }, true)) }),
-  "memory.link.delete": shape({ ownerKey: required(owner), linkId: required(memoryIdentifier) }),
-  "memory.export": ownerOnly,
-  "memory.import": shape({ ownerKey: required(owner), content: required(nonblank), strategy: required(enumeration("SKIP", "UPDATE", "CREATE_NEW")) })
-};
-function parseDomainPayload(operation, payload) {
-  if (!Object.prototype.hasOwnProperty.call(validators, operation)) throw new Error(`Unknown character domain operation: ${String(operation)}`);
-  validators[operation](payload, operation);
-  return payload;
-}
-function parseJsonObject(raw, path) {
-  let value;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`${path}: invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  return record(value, path);
-}
-function parseCharacterChanges(value) {
-  shape(characterFields, true)(value, "character changes");
-  return value;
-}
-function parseGroupChanges(value) {
-  shape(groupFields, true)(value, "group changes");
-  return value;
-}
-function parseTagChanges(value) {
-  shape(tagFields, true)(value, "tag changes");
-  return value;
-}
-function jsonValue(value, path = "result") {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (typeof value === "number") {
-    number(value, path);
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item, index) => jsonValue(item, `${path}[${index}]`));
-  }
-  const object3 = record(value, path);
-  const result2 = {};
-  for (const key of Object.keys(object3)) result2[key] = jsonValue(object3[key], `${path}.${key}`);
-  return result2;
-}
-function parseChatConfigurationRequest(value) {
-  shape({
-    purpose: required(enumeration("display", "execution")),
-    chatId: required(nullable(nonblank)),
-    chatExtension: required(nullable(markerObject)),
-    participantId: required(nullable(nonblank)),
-    promptFunctionType: required(enumeration("CHAT", "VOICE")),
-    defaultModelBinding: required(shape({ providerId: required(text), modelId: required(text) })),
-    defaultTtsConfigId: required(text)
-  })(value, "chat.configuration.resolve");
-  const request = value;
-  if (request.purpose === "display") {
-    if (request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
-  } else {
-    nonblank(request.defaultModelBinding.providerId, "execution default provider");
-    nonblank(request.defaultModelBinding.modelId, "execution default model");
-    nonblank(request.defaultTtsConfigId, "execution default TTS configuration");
-  }
-  return request;
-}
-function chatRecord(records3, id2, kind) {
-  const matches = records3.filter(
-    /** Matches the supplied identifier without interpreting its spelling. */
-    (item) => item.id === id2
-  );
-  if (matches.length !== 1) throw new Error(
-    matches.length === 0 ? kind + " not found: " + id2 : "Duplicate " + kind + ": " + id2
-  );
-  return matches[0];
-}
-function chatParticipant(card, request, service) {
-  return __async(this, null, function* () {
-    nonblank(card.name, "profile.name");
-    const models = yield service.listModels();
-    let modelBinding;
-    switch (characterModelBindingMode(card.chatModelBindingMode)) {
-      case "FOLLOW_GLOBAL":
-        modelBinding = { ...request.defaultModelBinding };
-        break;
-      case "FIXED_MODEL": {
-        nonblank(card.chatModelId, "profile.fixedModelId");
-        nonblank(card.chatProviderId, "Fixed model provider must be explicitly selected");
-        const candidates = models.filter(
-          /** Resolves the exact provider-scoped model selected by the user. */
-          (model) => model.providerId === card.chatProviderId && model.modelId === card.chatModelId
-        );
-        if (candidates.length !== 1) throw new Error(
-          candidates.length === 0 ? "Fixed model unavailable: " + card.chatModelId : "Fixed model ambiguous: " + card.chatModelId
-        );
-        modelBinding = { providerId: candidates[0].providerId, modelId: candidates[0].modelId };
-        break;
-      }
-      default:
-        throw new Error("\u89D2\u8272\u5361\u201C" + card.name + "\u201D\u7684\u6A21\u578B\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548\uFF0C\u8BF7\u5728\u89D2\u8272\u5361\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u7ED1\u5B9A\u6A21\u578B\uFF1A" + card.chatModelBindingMode);
-    }
-    const resolvedModels = models.filter(
-      /** Requires the actual configured provider/model pair. */
-      (model) => model.providerId === modelBinding.providerId && model.modelId === modelBinding.modelId
-    );
-    if (resolvedModels.length !== 1) throw new Error("Model binding unavailable or duplicated: " + modelBinding.providerId + "/" + modelBinding.modelId);
-    const ttsConfigId = card.ttsConfigId === null ? request.defaultTtsConfigId : card.ttsConfigId;
-    nonblank(ttsConfigId, "profile.ttsConfigId");
-    chatRecord(yield service.listTtsConfigs(), ttsConfigId, "TTS configuration");
-    let primary;
-    switch (card.memoryBindingMode) {
-      case "CHARACTER":
-        primary = "character:" + card.id;
-        break;
-      case "SHARED":
-        nonblank(card.sharedMemoryId, "profile.sharedMemoryId");
-        yield service.getStore(card.sharedMemoryId);
-        primary = "shared:" + card.sharedMemoryId;
-        break;
-      default:
-        throw new Error("Invalid memory binding mode: " + card.memoryBindingMode);
-    }
-    const routes = /* @__PURE__ */ new Map();
-    routes.set(primary, { key: primary, readable: true, writable: true });
-    for (const mount2 of card.sharedMemoryMounts) {
-      yield service.getStore(mount2.sharedMemoryId);
-      const key = "shared:" + mount2.sharedMemoryId;
-      const existing = routes.get(key);
-      routes.set(key, { key, readable: mount2.readable || existing?.readable === true, writable: mount2.writable || existing?.writable === true });
-    }
-    const prompt = yield combineCharacterPrompt(card, [], request.promptFunctionType, service);
-    const userPreferencesText = (yield service.readGlobalMemoryPreferences()).userDescriptionEnabled ? (yield service.dispatchDomain("memory.user.read", { ownerKey: primary })).content : "";
-    return {
-      id: card.id,
-      name: card.name,
-      avatarUri: card.avatarUri,
-      introPrompt: prompt,
-      userPreferencesText,
-      openingStatement: card.openingStatement,
-      modelBinding,
-      ttsConfigId,
-      toolAccess: {
-        ...card.toolAccessConfig,
-        allowedBuiltinTools: [...card.toolAccessConfig.allowedBuiltinTools],
-        allowedPackages: [...card.toolAccessConfig.allowedPackages],
-        allowedSkills: [...card.toolAccessConfig.allowedSkills],
-        allowedMcpServers: [...card.toolAccessConfig.allowedMcpServers]
-      },
-      resources: [...routes.values()]
-    };
-  });
-}
-function resolveChatConfiguration(request, service) {
-  return __async(this, null, function* () {
-    const reads = configurationReadScope(service);
-    if (request.purpose === "display") return resolveChatDisplay(request, reads);
-    return resolveChatExecution(request, reads);
-  });
-}
-function resolveChatExecution(request, service) {
-  return __async(this, null, function* () {
-    if (request.purpose !== "execution") throw new Error("Execution configuration requires purpose execution");
-    const marker = decodeChatMarker(request.chatExtension);
-    const selection = parseChatSelection(marker.selection);
-    if (selection.kind === "model") {
-      const [models, ttsConfigs] = yield Promise.all([service.listModels(), service.listTtsConfigs()]);
-      const profile2 = modelParticipant(request, { models, ttsConfigs }), participants2 = [profile2];
-      const executionData2 = encodeExecutionData({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey: "", profile: profile2, participants: participants2 });
-      return { contextKey: marker.selection, historyPolicy: { isolateParticipants: false, labelUserMessages: false }, profile: profile2, participants: participants2, executionData: executionData2 };
-    }
-    let cards;
-    if (selection.kind === "card") cards = [yield service.getCharacter(selection.id)];
-    else {
-      const group = yield service.getGroup(selection.id);
-      const members2 = [...group.members].sort(
-        /** Preserves the persisted participant order without planning turns in Core. */
-        (left, right) => left.orderIndex - right.orderIndex
-      );
-      if (members2.length === 0) throw new Error("Selected group has no participants: " + group.id);
-      const ids = /* @__PURE__ */ new Set();
-      cards = yield Promise.all(members2.map(
-        /** Rejects duplicate or deleted group members before producing any execution profile. */
-        (member2) => {
-          if (ids.has(member2.characterCardId)) throw new Error("Duplicate group participant: " + member2.characterCardId);
-          ids.add(member2.characterCardId);
-          return service.getCharacter(member2.characterCardId);
-        }
-      ));
-    }
-    if (request.participantId === null && cards.length !== 1) throw new Error("A planned conversation requires an explicit execution participant");
-    if (request.participantId !== null) chatRecord(cards, request.participantId, "selected participant");
-    const participants = [];
-    for (const card2 of cards) {
-      const participant = yield chatParticipant(card2, request, service);
-      participants.push(selection.kind === "group" ? withGroupParticipantPrompt(participant, cards) : participant);
-    }
-    let profile;
-    if (request.participantId !== null) profile = chatRecord(participants, request.participantId, "selected participant");
-    else {
-      if (participants.length !== 1) throw new Error("A planned conversation requires an explicit execution participant");
-      profile = participants[0];
-    }
-    const card = chatRecord(cards, profile.id, "selected participant");
-    const primaryOwnerKey = card.memoryBindingMode === "CHARACTER" ? "character:" + card.id : "shared:" + card.sharedMemoryId;
-    const executionData = encodeExecutionData({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey, profile, participants });
-    return { contextKey: marker.selection, historyPolicy: { isolateParticipants: true, labelUserMessages: selection.kind === "group" }, profile, participants, executionData };
   });
 }
 
@@ -1998,76 +2009,15 @@ function createInitialState(now) {
 function array2(value, label) {
   if (!Array.isArray(value)) throw new Error(label + " must be an array");
 }
-function identities(records3, label) {
+function identities(records2, label) {
   const ids = /* @__PURE__ */ new Set();
-  for (const record2 of records3) {
+  for (const record2 of records2) {
     assertObject(record2, label);
     const id2 = requireId(record2.id, label + " id");
     if (ids.has(id2)) throw new Error(label + " has duplicate id: " + id2);
     ids.add(id2);
   }
   return ids;
-}
-function assertCharacterState(value) {
-  assertObject(value, "character state");
-  if (value.version !== 1) throw new Error("Unsupported character database version");
-  const fields4 = /* @__PURE__ */ new Set(["memoryPreferences", "memoryRecall", "version", "cards", "groups", "tags", "stores", "active", "owners", "conversationGroups"]);
-  for (const key of Object.keys(value)) if (!fields4.has(key)) throw new Error("Unsupported character state field: " + key);
-  assertObject(value.memoryPreferences, "global memory preferences");
-  assertBoolean(value.memoryPreferences.userDescriptionEnabled, "user description enabled");
-  assertBoolean(value.memoryPreferences.autoUpdateEnabled, "auto update enabled");
-  normalizeMemoryRecallSettings(value.memoryRecall);
-  assertConversationGroups(value.conversationGroups);
-  const cards = value.cards, groups = value.groups, tags = value.tags, stores = value.stores, owners = value.owners;
-  array2(cards, "cards");
-  array2(groups, "groups");
-  array2(tags, "tags");
-  array2(stores, "stores");
-  array2(owners, "owners");
-  const cardIds = identities(cards, "cards"), groupIds = identities(groups, "groups"), tagIds = identities(tags, "tags"), storeIds = identities(stores, "stores");
-  for (const card of cards) {
-    assertCard(card);
-    requireId(card.id, "card id");
-    for (const id2 of card.attachedTagIds) if (!tagIds.has(id2)) throw new Error("Missing attached tag: " + id2);
-    for (const mount2 of card.sharedMemoryMounts) if (!storeIds.has(mount2.sharedMemoryId)) throw new Error("Missing shared memory mount: " + mount2.sharedMemoryId);
-  }
-  for (const group of groups) {
-    assertGroup(group);
-    const members2 = /* @__PURE__ */ new Set();
-    for (const member2 of group.members) {
-      if (!cardIds.has(member2.characterCardId)) throw new Error("Missing group member: " + member2.characterCardId);
-      if (members2.has(member2.characterCardId)) throw new Error("Duplicate group member: " + member2.characterCardId);
-      members2.add(member2.characterCardId);
-    }
-  }
-  for (const tag of tags) assertTag(tag);
-  for (const store of stores) {
-    assertObject(store, "store");
-    assertString(store.name, "store name");
-    assertInteger(store.createdAt, "store createdAt", 0);
-    assertInteger(store.updatedAt, "store updatedAt", 0);
-  }
-  assertObject(value.active, "active");
-  const activeKeys = Object.keys(value.active);
-  if (activeKeys.length !== 1) throw new Error("Active prompt must select exactly one entity");
-  const activeKey = activeKeys[0];
-  if (activeKey !== "CharacterCard" && activeKey !== "CharacterGroup" && activeKey !== "Model") throw new Error("Invalid active prompt kind");
-  const selected = value.active[activeKey];
-  assertObject(selected, "active selection");
-  const activeId = requireId(selected.id, "active id");
-  if (activeKey === "Model" && activeId !== "chat") throw new Error("Invalid active model selection: " + activeId);
-  const expectedOwners = /* @__PURE__ */ new Set();
-  for (const id2 of cardIds) expectedOwners.add("character:" + id2);
-  for (const id2 of storeIds) expectedOwners.add("shared:" + id2);
-  const actualOwners = /* @__PURE__ */ new Set();
-  for (const owner2 of owners) {
-    assertObject(owner2, "memory space");
-    const ownerKey = requireId(owner2.ownerKey, "owner key");
-    if (!expectedOwners.has(ownerKey) || actualOwners.has(ownerKey)) throw new Error("Invalid or duplicate memory owner: " + ownerKey);
-    actualOwners.add(ownerKey);
-    assertMemorySpace(owner2);
-  }
-  if (actualOwners.size !== expectedOwners.size) throw new Error("Character state is missing an owner memory space");
 }
 function assertMemorySpace(value) {
   assertObject(value, "memory space");
@@ -2252,6 +2202,7 @@ function records(state) {
 }
 function decodeStateFromRecords(metadata, rows) {
   assertObject(metadata, "character database metadata");
+  if (metadata.version !== 1) throw new Error("Unsupported character database version");
   if (metadata.migrationStatus === "writing" || metadata.legacyImportPending === true)
     throw new Error("Character migration has not completed");
   const state = {
@@ -2288,6 +2239,8 @@ function decodeStateFromRecords(metadata, rows) {
         break;
       }
       case "cards":
+        state.cards.push(readCharacter(row.value, row.key));
+        break;
       case "groups":
       case "tags":
       case "stores":
@@ -2312,11 +2265,6 @@ function decodeStateFromRecords(metadata, rows) {
     }
     entries.push(row.value.record);
   }
-  return state;
-}
-function stateFromRecords(metadata, rows) {
-  const state = decodeStateFromRecords(metadata, rows);
-  assertCharacterState(state);
   return state;
 }
 
@@ -2398,7 +2346,7 @@ function prepareVersionOne(storage, metadata, directory) {
         delete row.value.isDefault;
       }
     }
-    const inputMetadata = { ...metadata, version: 1 };
+    const inputMetadata = { ...clone(metadata), version: 1 };
     delete inputMetadata.legacyImportPending;
     const state = decodeStateFromRecords(inputMetadata, input);
     removeDeletedReferences(state);
@@ -2437,14 +2385,14 @@ function prepareVersionOne(storage, metadata, directory) {
     }
     if ("CharacterCard" in state.active && sourceCardIds.has(state.active.CharacterCard.id)) state.active.CharacterCard.id = reference("cards", state.active.CharacterCard.id);
     if ("CharacterGroup" in state.active && sourceGroupIds.has(state.active.CharacterGroup.id)) state.active.CharacterGroup.id = reference("groups", state.active.CharacterGroup.id);
-    const directories = [];
+    const directories2 = [];
     for (const owner2 of state.owners) {
       const old = owner2.ownerKey;
       if (old.startsWith("character:")) owner2.ownerKey = "character:" + reference("cards", old.slice(10));
       else if (old.startsWith("shared:")) owner2.ownerKey = "shared:" + reference("stores", old.slice(7));
       else throw new Error("Invalid migration owner: " + old);
       owner2.userDocumentPath = userDocumentPath(owner2.ownerKey);
-      if (old !== owner2.ownerKey) directories.push({ source: "owners/" + encodeURIComponent(old), destination: "owners/" + encodeURIComponent(owner2.ownerKey) });
+      if (old !== owner2.ownerKey) directories2.push({ source: "owners/" + encodeURIComponent(old), destination: "owners/" + encodeURIComponent(owner2.ownerKey) });
       const scope = owner2.ownerKey;
       for (const collection of ["memories", "links", "chunks", "candidates", "embeddings"])
         for (const record2 of owner2[collection]) record2.id = identity3(scope + "/" + collection, record2.id);
@@ -2461,7 +2409,7 @@ function prepareVersionOne(storage, metadata, directory) {
       if (owner2.rebuildTask !== null) owner2.rebuildTask.id = identity3(scope + "/rebuildTask", owner2.rebuildTask.id);
     }
     const resourceMoves = [];
-    for (const move of directories) {
+    for (const move of directories2) {
       resourceMoves.push(move, { source: absolute(directory, move.source), destination: absolute(directory, move.destination) });
     }
     for (const owner2 of state.owners) for (const memory of owner2.memories)
@@ -2510,7 +2458,7 @@ function prepareVersionOne(storage, metadata, directory) {
       if (!equal(value, originalValue)) changes2.push([{ op: "put", collection, key: id2, value, expectedValue: originalValue }]);
     }
     const files = [];
-    for (const move of directories) {
+    for (const move of directories2) {
       const entries = yield ownerFiles(directory, move.source, move.destination);
       files.push(...entries);
     }
@@ -2531,7 +2479,7 @@ function prepareVersionOne(storage, metadata, directory) {
         }
       }
     }
-    return { from: "released", to: 1, phase: "files", cursor: 0, active: storedValue(state.active), identities: identities2, files, directories, authors, changes: changes2 };
+    return { from: "released", to: 1, phase: "files", cursor: 0, active: storedValue(state.active), identities: identities2, files, directories: directories2, authors, changes: changes2 };
   });
 }
 function verifyFile(directory, file) {
@@ -2585,12 +2533,16 @@ function applyChanges(storage, changes2) {
     if (mutations.length !== 0) yield storage.memory.commit(mutations);
   });
 }
-function migrateLegacyToV1(storage, preferences, directory, source) {
+function migrateCharacterStorage(storage, directory) {
   return __async(this, null, function* () {
-    const metadata = clone(source);
-    let plan;
+    const source = clone((yield storage.metadata.data()).get("state"));
     const persisted = (yield storage.migration.data()).get("plan");
-    if (persisted === void 0) plan = yield prepareVersionOne(storage, metadata, directory);
+    if (persisted === void 0 && (source === void 0 || source.legacyImportPending !== true)) return;
+    assertObject(source, "character schema metadata");
+    if (source.migrationStatus === "writing") throw new Error("Character migration has not completed: legacy import is still writing");
+    if (source.version !== 1) throw new Error("Unsupported character schema version: " + source.version);
+    let plan;
+    if (persisted === void 0) plan = yield prepareVersionOne(storage, clone(source), directory);
     else {
       assertMigrationPlan(persisted);
       plan = clone(persisted);
@@ -2666,35 +2618,32 @@ function migrateLegacyToV1(storage, preferences, directory, source) {
           yield publish();
           break;
         case "cleanup":
+          yield storage.metadata.edit((preferences) => {
+            const current = preferences.get("state");
+            assertObject(current, "character schema metadata");
+            if (current.version !== 1 || !equal(current.active, source.active) && !equal(current.active, plan.active))
+              throw new Error("Character migration metadata changed during conversion");
+            const completed3 = { ...current, version: 1, active: plan.active };
+            delete completed3.legacyImportPending;
+            if (!equal(current, completed3)) preferences.set("state", completed3);
+          });
           for (; plan.cursor < plan.directories.length; ) {
-            const source2 = absolute(directory, plan.directories[plan.cursor].source);
-            if ((yield Tools.Files.exists(source2)).exists) {
-              completed(yield Tools.Files.deleteFile(source2, true));
+            const sourceDirectory = absolute(directory, plan.directories[plan.cursor].source);
+            if ((yield Tools.Files.exists(sourceDirectory)).exists) {
+              completed(yield Tools.Files.deleteFile(sourceDirectory, true));
             }
             plan.cursor += 1;
             yield publish();
           }
-          metadata.version = 1;
-          metadata.active = plan.active;
-          delete metadata.legacyImportPending;
-          preferences.set("state", metadata);
+          yield storage.migration.edit((preferences) => {
+            if (!equal(preferences.get("plan"), previous)) throw new Error("Character migration plan changed concurrently");
+            preferences.remove("plan");
+          });
           return;
         default:
           throw new Error("Invalid character migration phase");
       }
     }
-  });
-}
-
-// src/storage/schema.ts
-function migrateCharacterSchema(storage, preferences, directory) {
-  return __async(this, null, function* () {
-    const metadata = preferences.get("state");
-    if (metadata === void 0) return;
-    assertObject(metadata, "character schema metadata");
-    if (metadata.migrationStatus === "writing") throw new Error("Character migration has not completed: legacy import is still writing");
-    if (metadata.version !== 1) throw new Error("Unsupported character schema version: " + metadata.version);
-    yield migrateLegacyToV1(storage, preferences, directory, metadata);
   });
 }
 
@@ -2887,8 +2836,8 @@ var memory_merge_default = {
 var characterMerge = memory_merge_default;
 var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
   /** Retains one authenticated object handle without declaring business SQL tables. */
-  constructor(database2) {
-    this.database = database2;
+  constructor(database) {
+    this.database = database;
   }
   /** Opens the sole synchronized character namespace independently of plugin installation scope. */
   static open() {
@@ -2896,8 +2845,8 @@ var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
       const directory = ToolPkg.getSpaceDataDir();
       if (typeof directory !== "string" || directory.trim() === "")
         throw new Error("Plugin data directory is unavailable");
-      const database2 = new _CharacterMemoryDatabase(yield Tools.Storage.objects.open({ path: directory + "/memory.sqlite", merge: characterMerge }));
-      return database2;
+      const database = new _CharacterMemoryDatabase(yield Tools.Storage.objects.open({ path: directory + "/memory.sqlite", merge: characterMerge }));
+      return database;
     });
   }
   /** Closes the retained memory engine handle. */
@@ -2937,10 +2886,10 @@ var merge = merge_default;
 var configurationNames = ["cards", "groups", "tags", "stores", "conversationGroups"];
 var recordPrefix = "record_";
 function documents(preferences) {
-  return preferences.entries().filter(([key]) => key.startsWith(recordPrefix)).map(([, value]) => value);
+  return preferences.entries().filter(([key]) => key.startsWith(recordPrefix)).map(([, value]) => clone(value));
 }
 function document(preferences, id2) {
-  return preferences.get(recordPrefix + id2);
+  return clone(preferences.get(recordPrefix + id2));
 }
 var CharacterStorage = class _CharacterStorage {
   /** Retains explicit storage owners without emulating a cross-engine transaction. */
@@ -2973,21 +2922,16 @@ var CharacterStorage = class _CharacterStorage {
         handles.push(migration);
         memory = yield CharacterMemoryDatabase.open();
         const storage = new _CharacterStorage(configuration, metadata, chats, migration, memory);
-        metadata.withSchema(1, (version, preferences) => __async(null, null, function* () {
-          switch (version) {
-            case 0:
-              yield migrateCharacterSchema(storage, preferences, directory);
-              break;
-            default:
-              throw new Error("Missing character schema migration: " + version);
+        metadata.withSchema(1, (version, preferences) => {
+          if (version !== 0) throw new Error("Missing character schema migration: " + version);
+          const state = preferences.get("state");
+          if (state !== void 0) {
+            assertObject(state, "character schema metadata");
+            preferences.set("state", { ...state, legacyImportPending: true });
           }
-        }));
-        const current = yield metadata.data();
-        const state = current.get("state");
-        if (state !== void 0 && state.legacyImportPending === true) yield metadata.edit((preferences) => migrateCharacterSchema(storage, preferences, directory));
-        if ((yield migration.data()).contains("plan")) yield migration.edit((preferences) => {
-          preferences.remove("plan");
         });
+        yield metadata.data();
+        yield migrateCharacterStorage(storage, directory);
         return storage;
       } catch (error) {
         const closed = yield Promise.allSettled([...handles.map((handle) => handle.close()), ...memory === void 0 ? [] : [memory.close()]]);
@@ -3007,3240 +2951,167 @@ var CharacterStorage = class _CharacterStorage {
   }
 };
 
-// src/chat-storage.ts
-var database = null;
-function chatDatabase() {
-  if (database === null) database = CharacterStorage.open();
-  return database;
-}
-function findChatBinding(chatId) {
-  return __async(this, null, function* () {
-    requireId(chatId, "chat id");
-    const value = (yield (yield chatDatabase()).chats.data()).get("binding_" + chatId);
-    return value === void 0 ? null : { chatId, selection: decodeChatMarker(value).selection };
-  });
-}
-function readChatBinding(chatId) {
-  return __async(this, null, function* () {
-    const binding = yield findChatBinding(chatId);
-    if (binding === null) throw new Error("Chat binding is unavailable: " + chatId);
-    return binding;
-  });
-}
-function readMessageAuthor(chatId, messageTimestamp, variantIndex) {
-  return __async(this, null, function* () {
-    requireId(chatId, "chat id");
-    assertInteger(messageTimestamp, "message timestamp", 0);
-    assertInteger(variantIndex, "message variant index", 0);
-    const { extension } = yield Tools.Chat.readExtension({ kind: "message", chatId, messageTimestamp, variantIndex });
-    if (extension === null) return null;
-    const identity3 = markerObject(extension, "message author identity");
-    if (Object.keys(identity3).length !== 1) throw new Error("Invalid message author identity");
-    return requireId(identity3.participantId, "message author participant id");
-  });
-}
-function listChatBindings() {
-  return __async(this, null, function* () {
-    return (yield (yield chatDatabase()).chats.data()).entries().filter(([key]) => key.startsWith("binding_")).map(([key, value]) => ({ chatId: requireId(key.slice(8), "stored chat id"), selection: decodeChatMarker(value).selection }));
-  });
-}
-function bindingsForChats(chatIds) {
-  return __async(this, null, function* () {
-    const preferences = yield (yield chatDatabase()).chats.data(), result2 = /* @__PURE__ */ new Map();
-    for (const chatId of chatIds) {
+// src/storage/chats.ts
+var CharacterChatStore = class {
+  constructor(storage) {
+    this.storage = storage;
+  }
+  /** Validates role references against the same repository's configuration owners. */
+  requireSelection(selection) {
+    return __async(this, null, function* () {
+      const configuration = yield this.storage.data();
+      requireChatSelection(selection, documents(configuration.cards).map((card) => readCharacter(card)), documents(configuration.groups));
+    });
+  }
+  /** Reads the explicitly nullable binding from the plugin's own preference file. */
+  findChatBinding(chatId) {
+    return __async(this, null, function* () {
       requireId(chatId, "chat id");
-      const value = preferences.get("binding_" + chatId);
-      if (value !== void 0) result2.set(chatId, decodeChatMarker(value).selection);
-    }
-    return result2;
-  });
-}
-function chatsForMemoryOwner(ownerKey) {
-  return __async(this, null, function* () {
-    requireId(ownerKey, "memory owner");
-    const database2 = yield chatDatabase();
-    const before = yield database2.data();
-    const [cards, groups, bindings] = yield Promise.all([
-      Promise.resolve(documents(before.cards)),
-      Promise.resolve(documents(before.groups)),
-      listChatBindings()
-    ]);
-    const owners = /* @__PURE__ */ new Set(), selections = /* @__PURE__ */ new Set();
-    for (const card of cards) {
-      assertCard(card);
-      const primary = card.memoryBindingMode === "CHARACTER" ? "character:" + card.id : "shared:" + card.sharedMemoryId;
-      if (primary === ownerKey || card.sharedMemoryMounts.some((mount2) => mount2.writable && "shared:" + mount2.sharedMemoryId === ownerKey)) {
-        owners.add(card.id);
-        selections.add("card:" + card.id);
-      }
-    }
-    for (const group of groups) {
-      assertGroup(group);
-      if (group.members.some((member2) => owners.has(member2.characterCardId))) selections.add("group:" + group.id);
-    }
-    const after = yield database2.data();
-    if (!equal(before.cards.entries(), after.cards.entries()) || !equal(before.groups.entries(), after.groups.entries())) throw new Error("Character configuration changed during the read");
-    return bindings.filter((binding) => selections.has(binding.selection)).map((binding) => binding.chatId);
-  });
-}
-function writeChatBinding(binding) {
-  return __async(this, null, function* () {
-    requireId(binding.chatId, "chat id");
-    const marker = decodeChatMarker({ version: 1, selection: binding.selection });
-    yield (yield chatDatabase()).chats.edit((preferences) => {
-      preferences.set("binding_" + binding.chatId, { ...marker });
+      const value = (yield this.storage.chats.data()).get("binding_" + chatId);
+      return value === void 0 ? null : { chatId, selection: decodeChatMarker(value).selection };
     });
-    return binding;
-  });
-}
-function prepareChatBinding(binding) {
-  return __async(this, null, function* () {
-    requireId(binding.chatId, "draft id");
-    const marker = decodeChatMarker({ version: 1, selection: binding.selection });
-    yield (yield chatDatabase()).chats.edit((preferences) => {
-      const key = "draft_" + binding.chatId;
-      if (preferences.contains(key)) throw new Error("Chat draft binding already exists: " + binding.chatId);
-      preferences.set(key, { ...marker });
-    });
-  });
-}
-function readDraftBinding(chatId) {
-  return __async(this, null, function* () {
-    requireId(chatId, "draft id");
-    const value = (yield (yield chatDatabase()).chats.data()).get("draft_" + chatId);
-    if (value === void 0) throw new Error("Chat draft binding is unavailable: " + chatId);
-    return { chatId, selection: decodeChatMarker(value).selection };
-  });
-}
-function commitDraftBinding(chatId) {
-  return __async(this, null, function* () {
-    requireId(chatId, "draft id");
-    yield (yield chatDatabase()).chats.edit((preferences) => {
-      const value = preferences.get("draft_" + chatId);
-      if (value === void 0) throw new Error("Chat draft binding is unavailable: " + chatId);
-      decodeChatMarker(value);
-      if (preferences.contains("binding_" + chatId)) throw new Error("Chat binding already exists: " + chatId);
-      preferences.set("binding_" + chatId, value);
-      preferences.remove("draft_" + chatId);
-    });
-  });
-}
-function abortDraftBinding(chatId) {
-  return __async(this, null, function* () {
-    requireId(chatId, "draft id");
-    yield (yield chatDatabase()).chats.edit((preferences) => {
-      if (!preferences.contains("draft_" + chatId)) throw new Error("Chat draft binding is unavailable: " + chatId);
-      preferences.remove("draft_" + chatId);
-    });
-  });
-}
-function deleteChatBinding(chatId) {
-  return __async(this, null, function* () {
-    requireId(chatId, "chat id");
-    let deleted = false;
-    yield (yield chatDatabase()).chats.edit((preferences) => {
-      deleted = preferences.contains("binding_" + chatId);
-      preferences.remove("binding_" + chatId);
-    });
-    return { chatId, deleted };
-  });
-}
-
-// src/memory-jobs/chat.ts
-function assertChat(value) {
-  assertObject(value, "chat");
-  requireId(value.id, "chat id");
-  assertString(value.title, "chat title");
-  for (const key of ["messageCount", "inputTokens", "outputTokens"]) assertInteger(value[key], key, 0);
-  for (const key of ["createdAt", "updatedAt"]) assertString(value[key], key);
-  assertBoolean(value.isCurrent, "current chat");
-}
-function requireChat(chatId) {
-  return __async(this, null, function* () {
-    requireId(chatId, "chat id");
-    const result2 = yield Tools.Chat.findChat({ query: chatId, match: "exact", index: 0 });
-    assertInteger(result2.matchedCount, "matched chat count", 1);
-    assertChat(result2.chat);
-    if (result2.matchedCount !== 1 || result2.chat.id !== chatId) throw new Error("Chat lookup does not identify exactly one host record: " + chatId);
-    return result2.chat;
-  });
-}
-function chatParticipants(chatId, repository) {
-  return __async(this, null, function* () {
-    const binding = yield repository.readChatBinding(chatId), cards = yield repository.listCharacters(), groups = yield repository.listGroups();
-    const selection = requireChatSelection(binding.selection, cards, groups);
-    if (selection.kind === "model") return [];
-    if (selection.kind === "card") return [yield repository.getCharacter(selection.id)];
-    const group = yield repository.getGroup(selection.id);
-    if (group.members.length === 0) throw new Error("Selected chat group has no participants: " + group.id);
-    const members2 = [...group.members].sort(
-      /** Preserves the exact stored participant order. */
-      (left, right) => left.orderIndex - right.orderIndex
-    );
-    const result2 = [];
-    for (const member2 of members2) result2.push(yield repository.getCharacter(member2.characterCardId));
-    return result2;
-  });
-}
-function primaryOwner(card, repository) {
-  return __async(this, null, function* () {
-    switch (card.memoryBindingMode) {
-      case "CHARACTER":
-        return "character:" + card.id;
-      case "SHARED": {
-        const id2 = requireId(card.sharedMemoryId, "primary shared library");
-        yield repository.getStore(id2);
-        return "shared:" + id2;
-      }
-      default:
-        throw new Error("Invalid memory binding mode: " + card.memoryBindingMode);
-    }
-  });
-}
-function requireChatOwner(chatId, ownerKey, repository) {
-  return __async(this, null, function* () {
-    yield repository.readMemorySpace(ownerKey);
-    const cards = yield chatParticipants(chatId, repository);
-    for (const card of cards) {
-      if ((yield primaryOwner(card, repository)) === ownerKey) return;
-      for (const mount2 of card.sharedMemoryMounts) if (mount2.writable && "shared:" + mount2.sharedMemoryId === ownerKey) {
-        yield repository.getStore(mount2.sharedMemoryId);
-        return;
-      }
-    }
-    throw new Error("Chat is not writable for this memory owner: " + chatId + " / " + ownerKey);
-  });
-}
-function currentMessageMemoryAccess(chatId, message, repository) {
-  return __async(this, null, function* () {
-    assertMemoryChatMessage(message);
-    const participantId = yield readMessageAuthor(chatId, message.timestamp, message.variantIndex);
-    if (participantId === "model:chat") return { primaryOwnerKey: "", resources: [] };
-    if (participantId === null) throw new Error("Message has no character author identity");
-    const card = yield repository.getCharacter(participantId);
-    const primaryOwnerKey = yield primaryOwner(card, repository);
-    const resources = [{ key: primaryOwnerKey, readable: true, writable: true }];
-    for (const mount2 of card.sharedMemoryMounts) {
-      yield repository.getStore(mount2.sharedMemoryId);
-      const key = "shared:" + mount2.sharedMemoryId;
-      const existing = resources.find((resource) => resource.key === key);
-      if (existing) {
-        existing.readable || (existing.readable = mount2.readable);
-        existing.writable || (existing.writable = mount2.writable);
-      } else resources.push({ key, readable: mount2.readable, writable: mount2.writable });
-    }
-    return { primaryOwnerKey, resources };
-  });
-}
-function requireMessageOwner(chatId, message, ownerKey, repository) {
-  return __async(this, null, function* () {
-    yield repository.readMemorySpace(ownerKey);
-    const access = yield currentMessageMemoryAccess(chatId, message, repository);
-    if (!access.resources.some((resource) => resource.key === ownerKey && resource.writable)) throw new Error("Message author is not currently writable for this memory owner: " + ownerKey);
-    return access;
-  });
-}
-function requireMessagesOwner(chatId, messages, ownerKey, repository) {
-  return __async(this, null, function* () {
-    yield repository.readMemorySpace(ownerKey);
-    for (const message of messages) {
-      if (message.sender !== "ai" && message.sender !== "assistant") continue;
-      const access = yield currentMessageMemoryAccess(chatId, message, repository);
-      if (access.resources.some((resource) => resource.key === ownerKey && resource.writable)) return;
-    }
-    throw new Error("History has no assistant author currently writable for this memory owner: " + ownerKey);
-  });
-}
-function listMemoryChats(ownerKey, repository) {
-  return __async(this, null, function* () {
-    yield repository.readMemorySettings(ownerKey);
-    const selected = yield chatsForMemoryOwner(ownerKey);
-    const chats = [], missingChatIds = [];
-    for (let offset = 0; offset < selected.length; offset += 200) {
-      const ids = selected.slice(offset, offset + 200), result2 = yield Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
-      const remaining = new Set(ids);
-      for (const chat of result2.chats) {
-        assertChat(chat);
-        if (!remaining.delete(chat.id)) throw new Error("Chat batch returned an unrelated or duplicate identity");
-        chats.push(chat);
-      }
-      for (const chatId of remaining) missingChatIds.push(chatId);
-    }
-    return {
-      chats: chats.sort(
-        /** Keeps the host directory's updated-at descending presentation without limiting the bound records. */
-        (left, right) => {
-          const leftTime = Number(left.updatedAt), rightTime = Number(right.updatedAt);
-          assertInteger(leftTime, "chat updated timestamp", 0);
-          assertInteger(rightTime, "chat updated timestamp", 0);
-          return rightTime - leftTime;
-        }
-      ),
-      missingChatIds: missingChatIds.sort()
-    };
-  });
-}
-function pruneMissingMemoryChats(ownerKey, repository) {
-  return __async(this, null, function* () {
-    const { missingChatIds } = yield listMemoryChats(ownerKey, repository);
-    const removedChatIds = [];
-    for (const chatId of missingChatIds) {
-      if ((yield repository.deleteChatBinding(chatId)).deleted) removedChatIds.push(chatId);
-    }
-    const space = yield repository.readMemorySpace(ownerKey);
-    const candidateChats = [...new Set(space.candidates.map((candidate) => candidate.chatId))];
-    const messagesByChat = /* @__PURE__ */ new Map();
-    for (let offset = 0; offset < candidateChats.length; offset += 200) {
-      const ids = candidateChats.slice(offset, offset + 200), result2 = yield Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
-      const found = new Set(result2.chats.map((chat) => String(chat.id)));
-      for (const chatId of ids) messagesByChat.set(chatId, found.has(chatId) ? yield readMessages(chatId) : null);
-    }
-    const removedCandidateIds = [];
-    const survivors = space.candidates.filter((candidate) => {
-      const messages = messagesByChat.get(candidate.chatId) ?? null;
-      const orphaned = messages === null || !messages.some(
-        /** Matches the exact claimed source revision before keeping the queued extraction. */
-        (message) => message.timestamp === candidate.triggerMessageTimestamp && message.variantIndex === candidate.triggerVariantIndex
-      );
-      if (orphaned) removedCandidateIds.push(candidate.id);
-      return !orphaned;
-    });
-    if (survivors.length !== space.candidates.length) {
-      space.candidates = survivors;
-      yield repository.writeMemorySpace(ownerKey, space);
-    }
-    return { removedChatIds, removedCandidateIds };
-  });
-}
-function readMessages(chatId) {
-  return __async(this, null, function* () {
-    const chat = yield requireChat(chatId);
-    if (chat.messageCount > 2147483647) throw new Error("Chat message count exceeds the host's supported index range");
-    const end = chat.messageCount === 0 ? 0 : chat.messageCount - 1;
-    const result2 = yield Tools.Chat.getMessagesRange(chatId, { order: "asc", start: 0, end });
-    if (result2.order !== "asc" || result2.start !== 0 || result2.end !== end || result2.limit !== end + 1) throw new Error("Chat message result does not match the requested source range");
-    if (result2.chatId !== chatId || !Array.isArray(result2.messages)) throw new Error("Chat message result has a different identity or missing records");
-    if (result2.messages.length > chat.messageCount) throw new Error("Chat history changed while reading the planned source range");
-    const messages = [], timestamps = /* @__PURE__ */ new Set();
-    for (const message of result2.messages) {
-      assertMemoryChatMessage(message);
-      if (timestamps.has(message.timestamp)) throw new Error("Chat range returned duplicate selected message revisions");
-      timestamps.add(message.timestamp);
-      messages.push({ sender: message.sender, content: message.content, timestamp: message.timestamp, variantIndex: message.variantIndex, variantCount: message.variantCount, provider: message.provider, modelName: message.modelName });
-    }
-    const current = yield requireChat(chatId);
-    if (current.messageCount !== chat.messageCount || current.updatedAt !== chat.updatedAt) throw new Error("Chat history changed while reading the planned source range");
-    return messages.sort(
-      /** Orders genuine message timestamps with stable source ordering. */
-      (left, right) => left.timestamp - right.timestamp
-    );
-  });
-}
-function planWindows(chat, messages, options) {
-  const size = Math.max(8, Math.min(48, options.windowMessageCount)), windows = [];
-  let source = [], context = [], user = null;
-  function emit() {
-    if (source.length === 0) return;
-    windows.push({ chatId: chat.id, chatTitle: chat.title, messages: [...context, ...source], sourceMessageCount: source.length });
-    source = [];
-    context = [];
   }
-  for (const message of messages) {
-    if (options.fromInclusive !== null && message.timestamp < options.fromInclusive) continue;
-    if (options.toInclusive !== null && message.timestamp > options.toInclusive) continue;
-    if (message.content.trim() === "") continue;
-    switch (message.sender) {
-      case "user":
-        if (source.length >= size - 1) emit();
-        user = message;
-        source.push(message);
-        break;
-      case "ai":
-      case "assistant":
-        if (user === null) continue;
-        if (source.length >= size) {
-          emit();
-          context.push(user);
-        }
-        source.push(message);
-        break;
-    }
-  }
-  emit();
-  return windows;
-}
-
-// src/memory-jobs/analysis.ts
-function parseModelJson(text2) {
-  assertString(text2, "model output");
-  const cleaned = text2.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, " ").trim();
-  const fence = /```(?:json)?\s*([\s\S]*?)```/u.exec(cleaned);
-  const payload = (fence === null ? cleaned : fence[1]).trim();
-  try {
-    return JSON.parse(payload);
-  } catch (error) {
-    const start = payload.indexOf("{"), end = payload.lastIndexOf("}");
-    if (start < 0 || end <= start) throw error;
-    return JSON.parse(payload.slice(start, end + 1));
-  }
-}
-function entity(value, alias) {
-  assertObject(value, "analysis entity");
-  requireName(value.title, "entity title");
-  assertString(value.content, "entity content");
-  assertStrings(value.tags, "entity tags");
-  assertString(value.folder_path, "entity folder");
-  if (alias && value.alias_for !== void 0 && value.alias_for !== null) requireName(value.alias_for, "alias target");
-}
-function newEntity(value) {
-  entity(value, true);
-}
-function update(value) {
-  assertObject(value, "memory update");
-  requireName(value.title, "update title");
-  assertString(value.content, "update content");
-  assertString(value.reason, "update reason");
-  for (const key of ["credibility", "importance"]) if (value[key] !== void 0 && value[key] !== null) assertNumber(value[key], key, 0, 1);
-}
-function merge2(value) {
-  assertObject(value, "memory merge");
-  assertStrings(value.source_titles, "merge sources");
-  if (value.source_titles.length === 0) throw new Error("Memory merge requires source titles");
-  for (const title of value.source_titles) requireName(title, "merge source title");
-  entity(value, false);
-  assertString(value.reason, "merge reason");
-}
-function link(value) {
-  assertObject(value, "memory relationship");
-  for (const key of ["source", "target", "type"]) requireName(value[key], key);
-  assertString(value.description, "relationship description");
-  assertNumber(value.weight, "relationship weight", 0, 1);
-}
-function objectArray(value, check, skipped) {
-  if (!Array.isArray(value)) return [];
-  const result2 = [];
-  for (const item of value) try {
-    check(item);
-    result2.push(item);
-  } catch {
-    skipped.count += 1;
-  }
-  return result2;
-}
-function analysis(value) {
-  assertObject(value, "memory analysis");
-  if (Object.keys(value).length === 0) return null;
-  const skipped = { count: 0 };
-  let main = null;
-  if (value.main !== null && value.main !== void 0) try {
-    entity(value.main, false);
-    main = value.main;
-  } catch {
-    skipped.count += 1;
-  }
-  const result2 = {
-    main,
-    new: objectArray(value.new, newEntity, skipped),
-    update: objectArray(value.update, update, skipped),
-    merge: objectArray(value.merge, merge2, skipped),
-    links: objectArray(value.links, link, skipped),
-    skipped: 0
-  };
-  if (result2.new.length > 5) throw new Error("Memory extraction exceeds the five-entity gate");
-  if (Object.prototype.hasOwnProperty.call(value, "profile_markdown")) {
-    if (value.profile_markdown === null) result2.profile_markdown = null;
-    else if (typeof value.profile_markdown === "string") result2.profile_markdown = value.profile_markdown;
-    else skipped.count += 1;
-  }
-  result2.skipped = skipped.count;
-  return result2;
-}
-function normalizeCandidateSearchText(text2, limit2) {
-  return text2.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, " ").replace(/<tool(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool(?:_[A-Za-z0-9_]+)?>/giu, " ").replace(/<tool_result(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool_result(?:_[A-Za-z0-9_]+)?>/giu, " ").replace(/<memory\b[^>]*>[\s\S]*?<\/memory>/giu, " ").replace(/https?:\/\/\S+/gu, " ").replace(/[\s`*_#>]+/gu, " ").trim().slice(0, limit2);
-}
-function buildCandidateSearchQuery(messages) {
-  const recentFirst = [...messages].reverse();
-  const user = recentFirst.find(
-    /** Selects the last actual user question in chronological history. */
-    (message) => message.sender === "user"
-  );
-  const assistant2 = recentFirst.find(
-    /** Selects the last actual assistant answer in chronological history. */
-    (message) => message.sender === "ai" || message.sender === "assistant"
-  );
-  const question = user === void 0 ? "" : normalizeCandidateSearchText(user.content, 500);
-  const solution = assistant2 === void 0 ? "" : normalizeCandidateSearchText(assistant2.content, 180);
-  const context = normalizeCandidateSearchText(messages.slice(-12).map(
-    /** Includes only message text in the shared recent-context budget. */
-    (message) => message.content
-  ).join("\n"), 1200);
-  return [question, solution, context].filter(
-    /** Omits absent conversation components from the retrieval query. */
-    (value) => value !== ""
-  ).join("\n");
-}
-function cleanMessage(message) {
-  let content = message.content.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, "").replace(/<tool_result(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool_result(?:_[A-Za-z0-9_]+)?>/giu, "[\u5DE5\u5177\u7ED3\u679C\u5DF2\u7701\u7565]");
-  if (message.sender === "user") content = content.replace(/<memory\b[^>]*>[\s\S]*?<\/memory>/giu, "");
-  return { ...message, content: content.trim() };
-}
-function memoryByTitle(memories, title) {
-  const matches = memories.filter(
-    /** Matches the complete authored title without substring inference. */
-    (memory) => memory.title === title
-  );
-  if (matches.length !== 1) throw new Error("Memory title does not identify exactly one record: " + title);
-  return matches[0];
-}
-function extractionPrompt(candidates, memories, folders, settings2, profile) {
-  const existing = candidates.length === 0 ? "\u6CA1\u6709\u5DF2\u6709\u8BB0\u5FC6\u3002" : "\u5DF2\u6709\u8BB0\u5FC6\uFF08\u4EC5\u662F\u68C0\u7D22\u7EBF\u7D22\uFF0C\u4E0D\u662F\u4E8B\u5B9E\u8BC1\u636E\uFF09\uFF1A\n" + candidates.map(
-    /** Preserves the title and a bounded real-record content sample. */
-    (memory) => "- " + JSON.stringify(memory.title) + ": " + [...memory.content.replace(/\n/g, " ")].slice(0, 150).join("")
-  ).join("\n");
-  const titleCounts = /* @__PURE__ */ new Map();
-  for (const memory of memories) {
-    const count = titleCounts.get(memory.title);
-    titleCounts.set(memory.title, count === void 0 ? 1 : count + 1);
-  }
-  const duplicateTitles = /* @__PURE__ */ new Set();
-  for (const candidate of candidates) {
-    const count = titleCounts.get(candidate.title);
-    if (count !== void 0 && count > 1) duplicateTitles.add(candidate.title);
-  }
-  const duplicates = [...duplicateTitles].map(
-    /** Describes exact duplicate clusters that the model can explicitly merge. */
-    (title) => "\u53D1\u73B0 " + titleCounts.get(title) + " \u4E2A\u6807\u9898\u5B8C\u5168\u76F8\u540C\u7684\u8BB0\u5FC6: " + JSON.stringify(title) + "\u3002\u672C\u6B21\u5206\u6790\u5E94\u5F3A\u70C8\u4F18\u5148\u4F7F\u7528 `merge`\uFF0C\u4E0D\u8981\u518D\u4E3A\u540C\u4E00\u4E8B\u5B9E\u521B\u5EFA\u5E73\u884C `new` \u8BB0\u5FC6\u3002"
-  ).join("\n");
-  const enabled = settings2.profileAutoUpdateEnabled && !settings2.profileAutoUpdateLocked;
-  const profileInstruction = enabled ? "\u3010\u5F53\u524D\u8BB0\u5FC6\u7A7A\u95F4\u8D44\u6599\u3011\n<user_profile_document>\n" + profile + "\n</user_profile_document>\n\u7A33\u5B9A\u7528\u6237\u504F\u597D\u3001\u7EA6\u675F\u3001\u8EAB\u4EFD\u4E8B\u5B9E\u6216\u4EA4\u6D41\u65B9\u5F0F\u88AB\u786E\u8BA4\u65F6\uFF0C\u4FDD\u7559\u5DF2\u6709\u6709\u6548 Markdown\uFF0C\u8FD4\u56DE\u5B8C\u6574\u66FF\u6362 profile_markdown\uFF1B\u6CA1\u6709\u5145\u5206\u4F9D\u636E\u8FD4\u56DE null\uFF0C\u4E0D\u8BB0\u5F55\u4E34\u65F6\u8BF7\u6C42\u6216\u5E38\u8BC6\u3002" : "";
-  const custom = "\u3010\u7528\u6237\u6307\u5B9A\u7684\u8BB0\u5FC6\u63D0\u53D6\u9644\u52A0\u89C4\u5219\u3011\n<memory_extraction_custom_rules>\n" + settings2.memoryExtractionCustomRules + "\n</memory_extraction_custom_rules>\n\u7B5B\u9009\u3001\u8BC1\u636E\u8981\u6C42\u548C\u4E25\u683C JSON \u8F93\u51FA\u534F\u8BAE\u4ECD\u7136\u5FC5\u987B\u9075\u5B88\u3002";
-  const fields4 = [
-    ["$duplicatesPromptPart", duplicates],
-    ["$existingMemoriesPrompt", existing],
-    ["$existingFoldersPrompt", "\u5DF2\u6709\u6587\u4EF6\u5939\uFF1A" + folders.join(", ")],
-    ["$profileOptionalKey", enabled ? "\u3001profile_markdown" : ""],
-    ["$profileMarkdownSchemaLine", enabled ? "- profile_markdown\uFF1A\u5B8C\u6574\u66FF\u6362 Markdown\uFF0C\u672A\u66F4\u65B0\u65F6\u4E3A null\u3002" : ""],
-    ["$profileUpdateInstruction", profileInstruction],
-    ["$memoryExtractionCustomRulesInstruction", custom]
-  ];
-  let prompt = extractionTemplate;
-  for (const [token, content] of fields4) prompt = prompt.split(token).join(content);
-  return prompt;
-}
-function unresolvedReference(error) {
-  if (!(error instanceof Error)) return false;
-  const message = error.message;
-  return message.startsWith("Memory title does not identify exactly one record: ") || message.startsWith("Memory merge source does not exist: ") || message === "Memory merge requires at least two unique source records" || message.startsWith("Name already exists: ") || message === "Self relationships are not allowed";
-}
-function applyAnalysis(ownerKey, result2, settings2, repository) {
-  return __async(this, null, function* () {
-    const report = { ownerKey, created: 0, updated: 0, merged: 0, links: 0, profileUpdated: false, skipped: 0 };
-    if (result2 === null) return report;
-    report.skipped = result2.skipped;
-    if (result2.profile_markdown !== void 0 && result2.profile_markdown !== null && (!settings2.profileAutoUpdateEnabled || settings2.profileAutoUpdateLocked))
-      throw new Error("Model returned a profile update forbidden by the owner settings");
-    const index = /* @__PURE__ */ new Map();
-    for (const memory of yield repository.listMemories(ownerKey)) {
-      const matches = index.get(memory.title);
-      if (matches === void 0) index.set(memory.title, [memory]);
-      else matches.push(memory);
-    }
-    function resolve(title) {
-      const matches = index.get(title);
-      if (matches === void 0 || matches.length !== 1) throw new Error("Memory title does not identify exactly one record: " + title);
-      return matches[0];
-    }
-    for (const item of result2.merge) try {
-      const memory = yield repository.mergeMemories(ownerKey, item.source_titles, {
-        title: item.title,
-        content: item.content,
-        contentType: "text/plain",
-        source: "merged_from_memory",
-        credibility: 0.5,
-        importance: 0.5,
-        folderPath: item.folder_path,
-        tags: item.tags
-      });
-      for (const title of item.source_titles) index.delete(title);
-      index.set(memory.title, [memory]);
-      report.merged += 1;
-    } catch (error) {
-      if (!unresolvedReference(error)) throw error;
-      report.skipped += 1;
-    }
-    for (const item of result2.update) try {
-      const memory = { ...resolve(item.title), content: item.content };
-      if (item.credibility !== void 0 && item.credibility !== null) memory.credibility = item.credibility;
-      if (item.importance !== void 0 && item.importance !== null) memory.importance = item.importance;
-      const saved = yield repository.saveMemory(ownerKey, memory);
-      index.set(saved.title, [saved]);
-      report.updated += 1;
-    } catch (error) {
-      if (!unresolvedReference(error)) throw error;
-      report.skipped += 1;
-    }
-    if (result2.main !== null) {
-      const item = result2.main;
-      try {
-        let saved;
-        if (index.has(item.title)) {
-          saved = yield repository.saveMemory(ownerKey, { ...resolve(item.title), content: item.content });
-          report.updated += 1;
-        } else {
-          saved = yield repository.createMemory(ownerKey, {
-            title: item.title,
-            content: item.content,
-            contentType: "text/plain",
-            source: "memory_analysis",
-            credibility: 1,
-            importance: 0.8,
-            folderPath: item.folder_path,
-            tags: item.tags
-          });
-          report.created += 1;
-        }
-        index.set(saved.title, [saved]);
-      } catch (error) {
-        if (!unresolvedReference(error)) throw error;
-        report.skipped += 1;
-      }
-    }
-    for (const item of result2.new) try {
-      if (item.alias_for !== void 0 && item.alias_for !== null) index.set(item.title, [resolve(item.alias_for)]);
-      else {
-        const saved = yield repository.createMemory(ownerKey, {
-          title: item.title,
-          content: item.content,
-          contentType: "text/plain",
-          source: "memory_analysis",
-          credibility: 0.5,
-          importance: 0.5,
-          folderPath: item.folder_path,
-          tags: item.tags
-        });
-        index.set(saved.title, [saved]);
-        report.created += 1;
-      }
-    } catch (error) {
-      if (!unresolvedReference(error)) throw error;
-      report.skipped += 1;
-    }
-    for (const item of result2.links) try {
-      yield repository.createLink(ownerKey, {
-        sourceMemoryId: resolve(item.source).id,
-        targetMemoryId: resolve(item.target).id,
-        type_: item.type,
-        description: item.description,
-        weight: item.weight
-      });
-      report.links += 1;
-    } catch (error) {
-      if (!unresolvedReference(error)) throw error;
-      report.skipped += 1;
-    }
-    if (result2.profile_markdown !== void 0 && result2.profile_markdown !== null) {
-      yield repository.writeUser(ownerKey, result2.profile_markdown);
-      report.profileUpdated = true;
-    }
-    return report;
-  });
-}
-function extractMessages(ownerKey, messages, repository) {
-  return __async(this, null, function* () {
-    const history = messages.map(cleanMessage).filter(
-      /** Selects actual conversation content, excluding unsupported senders and blank records. */
-      (message) => (message.sender === "user" || message.sender === "ai" || message.sender === "assistant") && message.content !== ""
-    );
-    const user = [...history].reverse().find(
-      /** Requires genuine user context rather than analyzing an orphan assistant reply. */
-      (message) => message.sender === "user"
-    );
-    if (user === void 0) throw new Error("Memory extraction requires user context");
-    const space = yield repository.readMemorySpace(ownerKey);
-    const profile = space.settings.profileAutoUpdateEnabled && !space.settings.profileAutoUpdateLocked ? (yield repository.readUser(ownerKey)).content : "";
-    const query = buildCandidateSearchQuery(history);
-    const candidates = yield repository.searchMemories({ ownerKey, query, folderPath: null, relevanceThreshold: MEMORY_SEARCH_THRESHOLD, createdAtStartMs: null, createdAtEndMs: null });
-    const folders = yield repository.listMemoryFolders(ownerKey), prompt = extractionPrompt(candidates.slice(0, 15), space.memories, folders, space.settings, profile);
-    const response = yield Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: prompt }, { kind: "USER", content: "\u5BF9\u8BDD\u8BB0\u5F55\uFF1A\n" + history.map(
-      /** Retains the real user and assistant sequence in the selected extraction window. */
-      (message) => message.sender + ": " + message.content
-    ).join("\n\n") }], recordTokenUsage: true, enableThinking: false });
-    return applyAnalysis(ownerKey, analysis(parseModelJson(response.text)), space.settings, repository);
-  });
-}
-function updateChatMemory(ownerKey, chatId, repository) {
-  return __async(this, null, function* () {
-    const messages = yield readMessages(chatId), assistant2 = [...messages].reverse().find(
-      /** Selects the last real finalized assistant reply for the manual update. */
-      (message) => (message.sender === "ai" || message.sender === "assistant") && message.content.trim() !== ""
-    );
-    if (assistant2 === void 0) throw new Error("Manual memory update requires an assistant reply");
-    yield requireMessageOwner(chatId, assistant2, ownerKey, repository);
-    return extractMessages(ownerKey, messages.filter(
-      /** Bounds the manual analysis to real messages at or before that reply. */
-      (message) => message.timestamp <= assistant2.timestamp
-    ).slice(-10), repository);
-  });
-}
-function autoCategorizeMemory(ownerKey, repository) {
-  return __async(this, null, function* () {
-    const memories = (yield repository.listMemories(ownerKey)).filter(
-      /** Selects only records genuinely stored in the root folder. */
-      (memory) => memory.folderPath === null || memory.folderPath === ""
-    ), folders = yield repository.listMemoryFolders(ownerKey);
-    let changed = 0;
-    for (let index = 0; index < memories.length; index += 10) {
-      const batch = memories.slice(index, index + 10), digest = batch.map(
-        /** Supplies real titles and a bounded full-record content preview. */
-        (memory) => "- title: " + memory.title + ", content: " + [...memory.content].slice(0, 100).join("")
-      ).join("\n");
-      const response = yield Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: "\u4F60\u662F\u77E5\u8BC6\u5206\u7C7B\u4E13\u5BB6\u3002\u6839\u636E\u8BB0\u5FC6\u5185\u5BB9\uFF0C\u4E3A\u6BCF\u6761\u8BB0\u5FC6\u5206\u914D\u5408\u9002\u7684\u6587\u4EF6\u5939\u8DEF\u5F84\u3002\n\u5DF2\u6709\u6587\u4EF6\u5939\uFF1A" + folders.join(", ") + '\n\u4F18\u5148\u4F7F\u7528\u5DF2\u6709\u6587\u4EF6\u5939\uFF0C\u5FC5\u8981\u65F6\u521B\u5EFA\u65B0\u6587\u4EF6\u5939\u3002\u4EC5\u8FD4\u56DE\u4E25\u683C JSON \u6570\u7EC4 [{"title":"\u8BB0\u5FC6\u6807\u9898","folder":"\u6587\u4EF6\u5939\u8DEF\u5F84"}]\u3002\n\u8BB0\u5FC6\u5217\u8868\uFF1A\n' + digest }, { kind: "USER", content: "\u8BF7\u4E3A\u8FD9\u4E9B\u8BB0\u5FC6\u5206\u7C7B\u3002" }], recordTokenUsage: true, enableThinking: false });
-      const rows = parseModelJson(response.text);
-      if (!Array.isArray(rows) || rows.length !== batch.length) throw new Error("Categorization must return exactly one folder for each supplied memory");
-      const seen = /* @__PURE__ */ new Set();
-      for (const row of rows) {
-        assertObject(row, "category");
-        const title = requireName(row.title, "category title");
-        assertString(row.folder, "category folder");
-        if (seen.has(title)) throw new Error("Duplicate category title: " + title);
-        seen.add(title);
-        const memory = memoryByTitle(batch, title);
-        yield repository.moveMemories(ownerKey, [memory.id], row.folder);
-        changed += 1;
-      }
-    }
-    return changed;
-  });
-}
-
-// src/memory-jobs/scheduler.ts
-function errorText(error) {
-  if (error !== null && typeof error === "object" && "message" in error && typeof error.message === "string") return error.message;
-  return String(error);
-}
-var MemoryJobStatusError = class extends Error {
-  /** Exposes the original execution error together with the status write that also failed. */
-  constructor(executionError, statusPublicationError) {
-    super("Memory job failed: " + errorText(executionError) + "; status publication also failed: " + errorText(statusPublicationError));
-    this.executionError = executionError;
-    this.statusPublicationError = statusPublicationError;
-    this.name = "MemoryJobStatusError";
-  }
-};
-function publishJobFailure(error, publishStatus) {
-  return __async(this, null, function* () {
-    try {
-      yield publishStatus();
-    } catch (statusError) {
-      throw new MemoryJobStatusError(error, statusError);
-    }
-  });
-}
-function sameMessageRevision(current, planned) {
-  return current.sender === planned.sender && current.content === planned.content && current.timestamp === planned.timestamp && current.variantIndex === planned.variantIndex && current.variantCount === planned.variantCount && current.provider === planned.provider && current.modelName === planned.modelName;
-}
-function enqueueCandidate(input, repository) {
-  return __async(this, null, function* () {
-    if (input.sourceType === "reply_finalized_auto" && !(yield repository.readGlobalMemoryPreferences()).autoUpdateEnabled) return { owners: [], candidateIds: [] };
-    assertInteger(input.timestamp, "candidate message timestamp", 0);
-    assertInteger(input.variantIndex, "candidate variant index", 0);
-    if (input.variantIndex > 2147483647) throw new Error("Candidate variant exceeds the host range");
-    const messages = yield readMessages(input.chatId), matches = messages.filter(
-      /** Resolves the message by its genuine persisted timestamp. */
-      (message2) => message2.timestamp === input.timestamp && message2.variantIndex === input.variantIndex
-    );
-    if (matches.length !== 1) throw new Error("Candidate does not identify exactly one source message");
-    const message = matches[0];
-    switch (input.sourceType) {
-      case "reply_finalized_auto":
-        if (message.sender !== "ai" && message.sender !== "assistant") throw new Error("Automatic candidate requires an assistant reply");
-        break;
-      case "selected_user_message":
-        if (message.sender !== "user") throw new Error("Selected candidate requires a user message");
-        break;
-      default:
-        throw new Error("Unknown candidate source");
-    }
-    if (message.content.trim() === "") throw new Error("Memory candidate source is blank");
-    const owners = /* @__PURE__ */ new Set();
-    if (input.sourceType === "reply_finalized_auto") {
-      const access = yield currentMessageMemoryAccess(input.chatId, message, repository);
-      const ownerKey = input.ownerKey === null ? access.primaryOwnerKey : input.ownerKey;
-      if (ownerKey === "") return { owners: [], candidateIds: [] };
-      if (!access.resources.some(
-        /** Authorizes only the exact submitted resource through the already-read current author permissions. */
-        (resource) => resource.key === ownerKey && resource.writable
-      )) throw new Error("Current message author cannot write this memory owner: " + ownerKey);
-      yield repository.readMemorySpace(ownerKey);
-      owners.add(ownerKey);
-    } else if (input.ownerKey !== null) {
-      yield requireChatOwner(input.chatId, input.ownerKey, repository);
-      owners.add(input.ownerKey);
-    } else {
-      const participants = yield chatParticipants(input.chatId, repository);
-      if (participants.length !== 1) throw new Error("A group selected-user candidate requires an explicit owner");
-      owners.add(yield primaryOwner(participants[0], repository));
-    }
-    const result2 = { owners: [...owners], candidateIds: [] }, now = Date.now();
-    for (const ownerKey of owners) {
-      const space = yield repository.readMemorySpace(ownerKey), previous = space.candidates.filter(
-        /** Uses the full owner-scoped source identity for genuine hook idempotency. */
-        (candidate) => candidate.chatId === input.chatId && candidate.triggerMessageTimestamp === input.timestamp && candidate.triggerVariantIndex === input.variantIndex && candidate.sourceType === input.sourceType
-      );
-      if (previous.length !== 0) {
-        for (const candidate of previous) result2.candidateIds.push(candidate.id);
-        continue;
-      }
-      const id2 = yield repository.allocateRecordId();
-      space.candidates.push({ id: id2, chatId: input.chatId, triggerMessageTimestamp: input.timestamp, triggerVariantIndex: input.variantIndex, createdAt: now, updatedAt: now, status: "pending", attemptCount: 0, lastError: "", sourceType: input.sourceType });
-      if (space.settings.autoSaveIntervalMinutes > 0 && space.settings.nextAutoSaveRunAtMs === 0) space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
-      yield repository.writeMemorySpace(ownerKey, space);
-      result2.candidateIds.push(id2);
-    }
-    return result2;
-  });
-}
-function retryFailedCandidates(ownerKey, repository) {
-  return __async(this, null, function* () {
-    const space = yield repository.readMemorySpace(ownerKey), now = Date.now();
-    let retried = 0;
-    for (const candidate of space.candidates) if (candidate.status === "failed") {
-      candidate.status = "pending";
-      candidate.lastError = "";
-      candidate.updatedAt = now;
-      retried += 1;
-    }
-    if (retried !== 0) yield repository.writeMemorySpace(ownerKey, space);
-    return { retried };
-  });
-}
-function clearFailedCandidates(ownerKey, repository) {
-  return __async(this, null, function* () {
-    const space = yield repository.readMemorySpace(ownerKey);
-    const remaining = space.candidates.filter(
-      /** Retains pending and processing records for their real owners. */
-      (candidate) => candidate.status !== "failed"
-    ), cleared = space.candidates.length - remaining.length;
-    if (cleared !== 0) {
-      space.candidates = remaining;
-      yield repository.writeMemorySpace(ownerKey, space);
-    }
-    return { cleared };
-  });
-}
-function startMemoryRebuild(ownerKey, rebuild, repository) {
-  return __async(this, null, function* () {
-    assertObject(rebuild, "memory rebuild");
-    assertStrings(rebuild.chatIds, "rebuild chat ids");
-    assertInteger(rebuild.windowMessageCount, "rebuild window size", 1);
-    for (const key of ["fromInclusive", "toInclusive"]) if (rebuild[key] !== null) assertInteger(rebuild[key], key, 0);
-    if (rebuild.fromInclusive !== null && rebuild.toInclusive !== null && rebuild.fromInclusive > rebuild.toInclusive) throw new Error("Rebuild start must not follow its end");
-    if (rebuild.chatIds.length === 0) throw new Error("Rebuild requires selected chats");
-    const space = yield repository.readMemorySpace(ownerKey);
-    if (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") throw new Error("Memory rebuild is already active");
-    const task = { id: yield repository.allocateRecordId(), windows: [], nextWindow: 0 }, ids = /* @__PURE__ */ new Set();
-    for (const id2 of rebuild.chatIds) {
-      requireId(id2, "rebuild chat id");
-      if (ids.has(id2)) throw new Error("Duplicate selected rebuild chat: " + id2);
-      ids.add(id2);
-      const chat = yield requireChat(id2), messages = yield readMessages(id2);
-      yield requireMessagesOwner(id2, messages, ownerKey, repository);
-      const windows = planWindows(chat, messages, rebuild);
-      for (const window of windows) yield requireMessagesOwner(id2, window.messages, ownerKey, repository);
-      task.windows.push(...windows);
-    }
-    if (task.windows.length === 0) throw new Error("Selected histories have no user context in the specified range");
-    let totalSourceMessages = 0;
-    const plannedChats = /* @__PURE__ */ new Set();
-    for (const window of task.windows) {
-      totalSourceMessages += window.sourceMessageCount;
-      plannedChats.add(window.chatId);
-    }
-    space.rebuildTask = task;
-    space.rebuildProgress = {
-      status: "preparing",
-      totalChats: plannedChats.size,
-      completedChats: 0,
-      totalWindows: task.windows.length,
-      completedWindows: 0,
-      totalSourceMessages,
-      processedSourceMessages: 0,
-      failedWindows: 0,
-      currentChatTitle: "",
-      lastError: ""
-    };
-    yield repository.writeMemorySpace(ownerKey, space);
-    return space.rebuildProgress;
-  });
-}
-function advanceRebuildWindow(task, progress) {
-  const window = task.windows[task.nextWindow];
-  if (window === void 0) throw new Error("Rebuild cursor has no source window");
-  task.nextWindow += 1;
-  progress.completedWindows += 1;
-  progress.processedSourceMessages += window.sourceMessageCount;
-  progress.currentChatTitle = window.chatTitle;
-  const next = task.windows[task.nextWindow];
-  if (next === void 0 || next.chatId !== window.chatId) progress.completedChats += 1;
-  progress.status = next === void 0 ? "completed" : "running";
-}
-function processRebuildWindow(ownerKey, taskId, owner2) {
-  return __async(this, null, function* () {
-    try {
-      yield owner2.run(
-        /** Keeps one model result, graph mutation and progress checkpoint in the same publication. */
-        (repository) => __async(null, null, function* () {
-          const space = yield repository.readMemorySpace(ownerKey), task = space.rebuildTask;
-          if (task === null || task.id !== taskId) throw new Error("Rebuild task identity changed");
-          if (space.rebuildProgress.status === "cancelled") return;
-          if (space.rebuildProgress.status !== "preparing" && space.rebuildProgress.status !== "running") throw new Error("Rebuild task is not runnable");
-          const window = task.windows[task.nextWindow];
-          if (window === void 0) throw new Error("Rebuild cursor has no source window");
-          const currentMessages = yield readMessages(window.chatId);
-          for (const source of window.messages) {
-            const present = currentMessages.filter(
-              /** Matches the exact planned revision before trusting its original extraction content. */
-              (message) => message.timestamp === source.timestamp && message.variantIndex === source.variantIndex
-            );
-            if (present.length !== 1 || !sameMessageRevision(present[0], source)) throw new Error("A planned rebuild source message revision changed or was deleted: " + window.chatId + " at " + source.timestamp + "/" + source.variantIndex);
-          }
-          yield requireMessagesOwner(window.chatId, window.messages, ownerKey, repository);
-          yield extractMessages(ownerKey, window.messages, repository);
-          const updated = yield repository.readMemorySpace(ownerKey), savedTask = updated.rebuildTask;
-          if (savedTask === null || savedTask.id !== taskId || savedTask.nextWindow !== task.nextWindow) throw new Error("Rebuild cursor changed within execution");
-          advanceRebuildWindow(savedTask, updated.rebuildProgress);
-          yield repository.writeMemorySpace(ownerKey, updated);
-        })
-      );
-    } catch (error) {
-      yield publishJobFailure(
-        error,
-        /** Commits the failed window and its cursor before later work is allowed to run. */
-        () => owner2.run(
-          /** Retains the error and skips the failed window without publishing partial memory edits. */
-          (repository) => __async(null, null, function* () {
-            const space = yield repository.readMemorySpace(ownerKey);
-            if (space.rebuildTask === null || space.rebuildTask.id !== taskId) throw new Error("Failed rebuild task identity changed");
-            if (space.rebuildProgress.status === "cancelled") return;
-            space.rebuildProgress.failedWindows += 1;
-            space.rebuildProgress.lastError = errorText(error);
-            advanceRebuildWindow(space.rebuildTask, space.rebuildProgress);
-            yield repository.writeMemorySpace(ownerKey, space);
-          })
-        )
-      );
-    }
-  });
-}
-var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
-function failCandidate(candidate, error) {
-  candidate.status = "failed";
-  candidate.lastError = error;
-  candidate.updatedAt = Date.now();
-}
-function processCandidates(ownerKey, candidates, owner2) {
-  return __async(this, null, function* () {
-    const failures = /* @__PURE__ */ new Map(), chatId = candidates[0].chatId;
-    try {
-      yield owner2.run(
-        /** Validates each source independently before committing valid extraction and failed metadata together. */
-        (repository) => __async(null, null, function* () {
-          let messages = yield readMessages(chatId);
-          const valid = [], excludedTimestamps = /* @__PURE__ */ new Set();
-          for (const candidate of candidates) {
-            try {
-              const source = messages.filter(
-                /** Resolves only the queued revision rather than substituting another message. */
-                (message) => message.timestamp === candidate.triggerMessageTimestamp && message.variantIndex === candidate.triggerVariantIndex
-              );
-              if (source.length === 0) throw new Error("\u6E90\u6D88\u606F\u5DF2\u5220\u9664\u6216\u6240\u9009\u7248\u672C\u5DF2\u53D8\u5316\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u5019\u9009\uFF1A" + candidate.id);
-              if (source.length !== 1) throw new Error("\u6E90\u6D88\u606F\u65E0\u6CD5\u552F\u4E00\u5B9A\u4F4D\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u5019\u9009\uFF1A" + candidate.id);
-              const sender = source[0].sender;
-              if (candidate.sourceType === "selected_user_message" ? sender !== "user" : sender !== "ai" && sender !== "assistant") throw new Error("\u6E90\u6D88\u606F\u7684\u53D1\u9001\u8005\u5DF2\u53D8\u5316\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u5019\u9009\uFF1A" + candidate.id);
-              if (candidate.sourceType === "reply_finalized_auto") yield requireMessageOwner(chatId, source[0], ownerKey, repository);
-              else yield requireChatOwner(chatId, ownerKey, repository);
-              valid.push(candidate);
-            } catch (error) {
-              failures.set(candidate.id, errorText(error));
-              excludedTimestamps.add(candidate.triggerMessageTimestamp);
-            }
-          }
-          const completed3 = /* @__PURE__ */ new Set();
-          for (const candidate of valid) {
-            completed3.add(candidate.id);
-            excludedTimestamps.delete(candidate.triggerMessageTimestamp);
-          }
-          if (valid.length !== 0) {
-            if (valid[0].sourceType === "selected_user_message") {
-              const timestamps = /* @__PURE__ */ new Set();
-              for (const candidate of valid) timestamps.add(candidate.triggerMessageTimestamp);
-              messages = messages.filter(
-                /** Extracts only the selected user messages that passed source validation. */
-                (message) => message.sender === "user" && timestamps.has(message.timestamp)
-              );
-            } else {
-              let lastTimestamp = 0;
-              for (const candidate of valid) lastTimestamp = Math.max(lastTimestamp, candidate.triggerMessageTimestamp);
-              messages = messages.filter(
-                /** Keeps bounded context while excluding rejected sources and their changed revisions. */
-                (message) => message.timestamp <= lastTimestamp && !excludedTimestamps.has(message.timestamp)
-              ).slice(-48);
-            }
-            yield extractMessages(ownerKey, messages, repository);
-          }
-          const space = yield repository.readMemorySpace(ownerKey);
-          for (const candidate of space.candidates) {
-            const failure2 = failures.get(candidate.id);
-            if (failure2 !== void 0) failCandidate(candidate, failure2);
-          }
-          space.candidates = space.candidates.filter(
-            /** Deletes only candidates included in the committed extraction. */
-            (candidate) => !completed3.has(candidate.id)
-          );
-          yield repository.writeMemorySpace(ownerKey, space);
-        })
-      );
-    } catch (error) {
-      for (const candidate of candidates) if (!failures.has(candidate.id)) failures.set(candidate.id, errorText(error));
-      yield publishJobFailure(
-        error,
-        /** Commits this batch's failures before continuing independent batches and owners. */
-        () => owner2.run(
-          /** Preserves individual source errors when a later extraction also fails. */
-          (repository) => __async(null, null, function* () {
-            const space = yield repository.readMemorySpace(ownerKey);
-            for (const candidate of space.candidates) {
-              const failure2 = failures.get(candidate.id);
-              if (failure2 !== void 0) failCandidate(candidate, failure2);
-            }
-            yield repository.writeMemorySpace(ownerKey, space);
-          })
-        )
-      );
-    }
-  });
-}
-var MemoryJobRunner = class {
-  /** Uses the shared transactional repository for all job and failure publications. */
-  constructor(owner2) {
-    this.owner = owner2;
-    this.running = null;
-  }
-  /** Shares the active pass while durable job failures remain visible in their own statuses. */
-  tick() {
-    if (this.running === null) {
-      this.running = this.runTick().finally(() => {
-        this.running = null;
-      });
-    }
-    return this.running;
-  }
-  /** Advances persisted rebuild windows and due candidates once. */
-  runTick() {
+  /** Requires a persisted binding without consulting global active selection. */
+  readChatBinding(chatId) {
     return __async(this, null, function* () {
-      const keys = yield this.owner.run(
-        /** Enumerates only genuine initialized memory spaces. */
-        (repository) => repository.listMemoryOwnerKeys()
-      ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0 };
-      for (const ownerKey of keys) {
-        yield this.owner.run(
-          /** Reclaims only outdated processing claims so interrupted batches can genuinely run again. */
-          (repository) => __async(this, null, function* () {
-            const space = yield repository.readMemorySpace(ownerKey), now = Date.now();
-            let reclaimed = 0;
-            for (const candidate of space.candidates) if (candidate.status === "processing" && now - candidate.updatedAt >= CANDIDATE_PROCESSING_LEASE_MS) {
-              candidate.status = "pending";
-              candidate.updatedAt = now;
-              reclaimed += 1;
-            }
-            if (reclaimed !== 0) yield repository.writeMemorySpace(ownerKey, space);
-          })
-        );
-        const taskId = yield this.owner.run(
-          /** Reads a persisted runnable rebuild identity without fabricating a job. */
-          (repository) => __async(this, null, function* () {
-            const space = yield repository.readMemorySpace(ownerKey);
-            return space.rebuildTask !== null && (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") ? space.rebuildTask.id : null;
-          })
-        );
-        if (taskId !== null) {
-          yield processRebuildWindow(ownerKey, taskId, this.owner);
-          report.rebuildWindows += 1;
-        }
-        const batches = yield this.owner.run(
-          /** Claims only due pending records; failed attempts are never automatically retried. */
-          (repository) => __async(this, null, function* () {
-            if (!(yield repository.readGlobalMemoryPreferences()).autoUpdateEnabled) return [];
-            const space = yield repository.readMemorySpace(ownerKey), now = Date.now();
-            if (space.settings.autoSaveIntervalMinutes === 0 || now < space.settings.nextAutoSaveRunAtMs) return [];
-            const pending = space.candidates.filter(
-              /** Selects genuinely pending records, not terminal failures. */
-              (candidate) => candidate.status === "pending"
-            );
-            const batches2 = [];
-            if (pending.length >= 5) {
-              const grouped = /* @__PURE__ */ new Map();
-              for (const candidate of pending) {
-                const list = grouped.get(candidate.chatId);
-                if (list === void 0) grouped.set(candidate.chatId, [candidate]);
-                else list.push(candidate);
-              }
-              for (const records3 of grouped.values()) {
-                const capped = records3.sort(
-                  /** Applies the Kotlin oldest-source order before the per-chat twenty-record cap. */
-                  (left, right) => left.triggerMessageTimestamp - right.triggerMessageTimestamp || left.createdAt - right.createdAt
-                ).slice(0, 20);
-                for (const sourceType of ["selected_user_message", "reply_finalized_auto"]) {
-                  const batch = capped.filter(
-                    /** Preserves the original selected/automatic source partition. */
-                    (candidate) => candidate.sourceType === sourceType
-                  );
-                  if (batch.length !== 0) batches2.push(batch);
-                }
-              }
-            }
-            space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
-            yield repository.writeMemorySpace(ownerKey, space);
-            return batches2;
-          })
-        );
-        for (const batch of batches) {
-          const claimed = yield this.owner.run(
-            /** Claims each batch immediately before processing so independent failures cannot strand later work. */
-            (repository) => __async(this, null, function* () {
-              if (!(yield repository.readGlobalMemoryPreferences()).autoUpdateEnabled) return false;
-              const space = yield repository.readMemorySpace(ownerKey), ids = /* @__PURE__ */ new Set();
-              for (const candidate of batch) ids.add(candidate.id);
-              let count = 0;
-              for (const candidate of space.candidates) if (ids.has(candidate.id)) {
-                if (candidate.status !== "pending") throw new Error("Candidate is no longer pending: " + candidate.id);
-                candidate.status = "processing";
-                candidate.attemptCount += 1;
-                candidate.updatedAt = Date.now();
-                count += 1;
-              }
-              if (count !== batch.length) throw new Error("A selected candidate no longer exists");
-              yield repository.writeMemorySpace(ownerKey, space);
-              return true;
-            })
-          );
-          if (!claimed) break;
-          yield processCandidates(ownerKey, batch, this.owner);
-          report.candidateBatches += 1;
-        }
-      }
-      return report;
+      const binding = yield this.findChatBinding(chatId);
+      if (binding === null) throw new Error("Chat binding is unavailable: " + chatId);
+      yield this.requireSelection(binding.selection);
+      return binding;
     });
   }
-};
-
-// src/backup.ts
-function decodeCharacterBackup(content) {
-  assertString(content, "character backup");
-  const document2 = JSON.parse(content);
-  assertObject(document2, "character backup");
-  if (document2.version !== 2) throw new Error("Unsupported plugin character backup version");
-  assertConversationGroups(document2.conversationGroups);
-  if (!Array.isArray(document2.characterCards) || !Array.isArray(document2.promptTags)) throw new Error("Character backup requires complete characterCards and promptTags arrays");
-  for (const card of document2.characterCards) assertCard(card);
-  for (const tag of document2.promptTags) assertTag(tag);
-  return { version: 2, characterCards: document2.characterCards, promptTags: document2.promptTags, conversationGroups: document2.conversationGroups };
-}
-function decodeGroupBackup(content) {
-  assertString(content, "group backup");
-  const document2 = JSON.parse(content);
-  assertObject(document2, "group backup");
-  if (!Array.isArray(document2.characterGroups)) throw new Error("Group backup requires complete characterGroups records");
-  for (const group of document2.characterGroups) assertGroup(group);
-  return { characterGroups: document2.characterGroups };
-}
-function exportCharacterBackup(repository) {
-  return __async(this, null, function* () {
-    const characterCards = yield repository.listCharacters(), promptTags = yield repository.listTags(), conversationGroups = yield repository.readConversationGroupsForBackup();
-    assertConversationGroups(conversationGroups);
-    return JSON.stringify({ version: 2, characterCards, promptTags, conversationGroups }, null, 2);
-  });
-}
-function exportGroupBackup(repository) {
-  return __async(this, null, function* () {
-    return JSON.stringify({ characterGroups: yield repository.listGroups() }, null, 2);
-  });
-}
-function decodeMemoryBackup(content) {
-  assertString(content, "memory backup");
-  const document2 = JSON.parse(content);
-  assertObject(document2, "memory backup");
-  if (document2.version !== "2.0") throw new Error("Unsupported memory backup version; this plugin uses full-record version 2.0");
-  assertInteger(document2.exportDate, "exportDate", 0);
-  assertMemorySpace(document2.space);
-  assertString(document2.userMarkdown, "USER.md backup content");
-  return { version: "2.0", exportDate: document2.exportDate, space: document2.space, userMarkdown: document2.userMarkdown };
-}
-function exportMemoryBackup(ownerKey, repository) {
-  return __async(this, null, function* () {
-    const backup = { version: "2.0", exportDate: Date.now(), space: yield repository.readMemorySpace(ownerKey), userMarkdown: (yield repository.readUser(ownerKey)).content };
-    return JSON.stringify(backup, null, 2);
-  });
-}
-
-// src/serialization.ts
-function decodeTavernData(value) {
-  assertObject(value, "\u9152\u9986\u89D2\u8272\u6570\u636E");
-  const data = {
-    name: "",
-    description: "",
-    personality: "",
-    first_mes: "",
-    avatar: "",
-    mes_example: "",
-    scenario: "",
-    creator_notes: "",
-    system_prompt: "",
-    post_history_instructions: "",
-    alternate_greetings: [],
-    tags: [],
-    creator: "",
-    character_version: "",
-    extensions: null,
-    character_book: null,
-    ...value
-  };
-  for (const field of ["name", "description", "personality", "first_mes", "avatar", "mes_example", "scenario", "creator_notes", "system_prompt", "post_history_instructions", "creator", "character_version"]) assertString(data[field], `data.${field}`);
-  assertStrings(data.alternate_greetings, "\u5907\u7528\u5F00\u573A\u767D");
-  assertStrings(data.tags, "\u9152\u9986\u6807\u7B7E");
-  if (data.extensions !== null) assertObject(data.extensions, "\u9152\u9986\u6269\u5C55");
-  if (data.character_book !== null) assertObject(data.character_book, "\u9152\u9986\u4E16\u754C\u4E66");
-  return data;
-}
-function labeledBlock(label, value) {
-  const content = value.trim();
-  return content === "" ? "" : `${label}
-${content}`;
-}
-function joinBlocks(values) {
-  const parts = [];
-  for (const value of values) if (value.trim() !== "") parts.push(value.trim());
-  return parts.join("\n\n");
-}
-function stageImportedTag(values, tags, changes2) {
-  assertTagValues(values);
-  const prompt = values.promptContent.trim();
-  for (const tag of tags) if (tag.promptContent.trim() === prompt) return tag.id;
-  for (const draft of changes2.created) if (draft.values.promptContent.trim() === prompt) return draft.draftId;
-  const draftId = `import-tag:${changes2.created.length}`;
-  changes2.created.push({ draftId, values: { ...values, name: requireName(values.name, "\u5BFC\u5165\u6807\u7B7E\u540D\u79F0") } });
-  return draftId;
-}
-function canonicalTag(tags, id2) {
-  requireId(id2, "\u89D2\u8272\u6807\u7B7E\u6807\u8BC6");
-  for (const tag of tags) if (tag.id === id2) return tag;
-  throw new Error(`\u5BFC\u5165\u89D2\u8272\u5F15\u7528\u7684\u6807\u7B7E\u4E0D\u5B58\u5728\uFF1A${id2}`);
-}
-function decodeOperitExtension(value, tags, changes2) {
-  assertObject(value, "Operit \u9152\u9986\u6269\u5C55");
-  const extension = { schema: "operit_character_card_v1", ...value };
-  assertString(extension.schema, "Operit \u6269\u5C55 schema");
-  assertObject(extension.character_card, "Operit \u6269\u5C55\u89D2\u8272\u5361");
-  const payload = { ...createCharacterDraft(), attachedTags: [], ...extension.character_card };
-  assertStrings(payload.attachedTagIds, "\u6269\u5C55\u89D2\u8272\u6807\u7B7E\u6807\u8BC6");
-  if (!Array.isArray(payload.attachedTags)) throw new Error("\u6269\u5C55\u89D2\u8272\u6807\u7B7E\u5FC5\u987B\u662F\u6570\u7EC4");
-  const attachedIds = [];
-  if (payload.attachedTags.length !== 0) {
-    for (const value2 of payload.attachedTags) {
-      assertObject(value2, "\u6269\u5C55\u6807\u7B7E");
-      const tag = { id: "", name: "", description: "", promptContent: "", tagType: "CUSTOM", ...value2 };
-      assertTagValues(tag);
-      if (tag.promptContent.trim() === "") continue;
-      attachedIds.push(stageImportedTag(tag, tags, changes2));
-    }
-  } else {
-    for (const id2 of payload.attachedTagIds) attachedIds.push(canonicalTag(tags, id2).id);
-  }
-  const card = { ...payload, id: "", createdAt: 0, updatedAt: 0, attachedTagIds: normalizeNames(attachedIds) };
-  assertCard(card);
-  return card;
-}
-function stageWorldBook(data, tags, changes2) {
-  if (data.character_book === null) return null;
-  const book = { entries: [], ...data.character_book };
-  if (!Array.isArray(book.entries)) throw new Error("\u4E16\u754C\u4E66 entries \u5FC5\u987B\u662F\u6570\u7EC4");
-  const parts = [];
-  for (const value of book.entries) {
-    assertObject(value, "\u4E16\u754C\u4E66\u6761\u76EE");
-    const entry = { name: "", content: "", ...value };
-    assertString(entry.name, "\u4E16\u754C\u4E66\u6761\u76EE\u540D\u79F0");
-    assertString(entry.content, "\u4E16\u754C\u4E66\u6761\u76EE\u5185\u5BB9");
-    if (entry.content.trim() !== "") parts.push(`[${entry.name}]
-${entry.content}`);
-  }
-  const content = parts.join("\n\n").trim();
-  if (content === "") return null;
-  return stageImportedTag({ name: `\u4E16\u754C\u4E66: ${data.name}`, description: `\u4E3A\u89D2\u8272'${data.name}'\u81EA\u52A8\u751F\u6210\u7684\u4E16\u754C\u4E66\u3002`, promptContent: content, tagType: "FUNCTION" }, tags, changes2);
-}
-function convertStandardTavern(data, spec, version) {
-  const card = createCharacterDraft();
-  card.name = data.name;
-  if (data.tags.length !== 0) card.description = `\u6807\u7B7E\uFF1A${data.tags.slice(0, 5).join(", ")}${data.tags.length > 5 ? `\u7B49${data.tags.length}` : ""}`;
-  card.characterSetting = joinBlocks([
-    labeledBlock("\u89D2\u8272\u63CF\u8FF0\uFF1A", data.description),
-    labeledBlock("\u6027\u683C\u7279\u5F81\uFF1A", data.personality),
-    labeledBlock("\u573A\u666F\u8BBE\u5B9A\uFF1A", data.scenario)
-  ]);
-  let greetings = "";
-  if (data.alternate_greetings.length !== 0) {
-    greetings = "\u5907\u7528\u95EE\u5019\u8BED\uFF1A\n";
-    for (let index = 0; index < data.alternate_greetings.length; index += 1) greetings += `${index + 1}. ${data.alternate_greetings[index]}
-`;
-  }
-  card.otherContentChat = joinBlocks([
-    labeledBlock("\u5BF9\u8BDD\u793A\u4F8B\uFF1A", data.mes_example),
-    labeledBlock("\u7CFB\u7EDF\u63D0\u793A\u8BCD\uFF1A", data.system_prompt),
-    labeledBlock("\u5386\u53F2\u6307\u4EE4\uFF1A", data.post_history_instructions),
-    greetings
-  ]);
-  if (data.extensions !== null) {
-    const extensions = { depth_prompt: null, ...data.extensions };
-    if (extensions.depth_prompt !== null) {
-      assertObject(extensions.depth_prompt, "\u6DF1\u5EA6\u63D0\u793A\u8BCD");
-      const depth = { prompt: "", ...extensions.depth_prompt };
-      assertString(depth.prompt, "\u6DF1\u5EA6\u63D0\u793A\u8BCD\u5185\u5BB9");
-      card.advancedCustomPrompt = labeledBlock("\u6DF1\u5EA6\u63D0\u793A\u8BCD\uFF1A", depth.prompt);
-    }
-  }
-  card.openingStatement = data.first_mes;
-  if (data.avatar.trim() !== "") card.avatarUri = data.avatar;
-  let marks = "\u6765\u6E90\uFF1A\u9152\u9986\u89D2\u8272\u5361\n";
-  if (data.creator.trim() !== "") marks += `\u4F5C\u8005\uFF1A${data.creator}
-`;
-  if (data.creator_notes.trim() !== "") marks += `\u4F5C\u8005\u5907\u6CE8\uFF1A
-
-${data.creator_notes}
-
-`;
-  if (data.character_version.trim() !== "") marks += `\u7248\u672C\uFF1A${data.character_version}
-`;
-  if (data.tags.length !== 0) marks += `\u539F\u59CB\u6807\u7B7E\uFF1A${data.tags.join(", ")}
-`;
-  if (spec.trim() !== "") marks += `\u683C\u5F0F\uFF1A${spec}${version.trim() !== "" ? ` v${version}` : ""}
-`;
-  card.marks = marks.trim();
-  return card;
-}
-function decodeCharacterImport(content, format2, tags) {
-  assertString(content, "\u89D2\u8272\u5361\u5BFC\u5165\u5185\u5BB9");
-  const document2 = JSON.parse(content);
-  const tagChanges = { created: [], updated: [], deleted: [] };
-  if (format2 === "operit") {
-    assertCard(document2);
-    for (const id2 of document2.attachedTagIds) canonicalTag(tags, id2);
-    return { card: { ...document2, id: "", createdAt: 0, updatedAt: 0 }, tagChanges };
-  }
-  if (format2 !== "tavern") throw new Error("\u89D2\u8272\u5361\u5BFC\u5165\u683C\u5F0F\u65E0\u6548");
-  assertObject(document2, "\u9152\u9986\u89D2\u8272\u5361");
-  const envelope = { spec: "", spec_version: "", ...document2 };
-  assertString(envelope.spec, "\u9152\u9986 spec");
-  assertString(envelope.spec_version, "\u9152\u9986 spec_version");
-  const data = decodeTavernData(envelope.data);
-  requireName(data.name, "\u89D2\u8272\u5361\u540D\u79F0");
-  let card;
-  if (data.extensions !== null && Object.prototype.hasOwnProperty.call(data.extensions, "operit") && data.extensions.operit !== null) card = decodeOperitExtension(data.extensions.operit, tags, tagChanges);
-  else card = convertStandardTavern(data, envelope.spec, envelope.spec_version);
-  const worldBookTag = stageWorldBook(data, tags, tagChanges);
-  if (worldBookTag !== null) card.attachedTagIds = normalizeNames([...card.attachedTagIds, worldBookTag]);
-  assertCard(card);
-  return { card, tagChanges };
-}
-function encodeCharacterExport(card, format2, tags) {
-  assertCard(card);
-  if (format2 === "operit") return JSON.stringify(card, null, 2);
-  if (format2 !== "tavern") throw new Error("\u89D2\u8272\u5361\u5BFC\u51FA\u683C\u5F0F\u65E0\u6548");
-  const attachedTags = [];
-  const tagNames = [];
-  for (const id2 of card.attachedTagIds) {
-    const tag = canonicalTag(tags, id2);
-    attachedTags.push({ id: tag.id, name: tag.name, description: tag.description, promptContent: tag.promptContent, tagType: tag.tagType });
-    tagNames.push(tag.name);
-  }
-  const avatar = card.avatarUri === null ? "" : card.avatarUri;
-  const document2 = {
-    spec: "chara_card_v2",
-    spec_version: "2.0",
-    data: {
-      name: card.name,
-      description: card.description,
-      personality: "",
-      first_mes: card.openingStatement,
-      avatar,
-      mes_example: card.otherContentChat,
-      scenario: "",
-      creator_notes: card.marks,
-      system_prompt: card.characterSetting,
-      post_history_instructions: card.advancedCustomPrompt,
-      alternate_greetings: [],
-      tags: tagNames,
-      creator: "",
-      character_version: "",
-      character_book: null,
-      extensions: {
-        chub: null,
-        depth_prompt: null,
-        operit: {
-          schema: "operit_character_card_v1",
-          character_card: {
-            name: card.name,
-            description: card.description,
-            characterSetting: card.characterSetting,
-            openingStatement: card.openingStatement,
-            otherContent: card.otherContentChat,
-            otherContentChat: card.otherContentChat,
-            otherContentVoice: card.otherContentVoice,
-            avatarUri: card.avatarUri,
-            attachedTagIds: [...card.attachedTagIds],
-            attachedTags,
-            advancedCustomPrompt: card.advancedCustomPrompt,
-            marks: card.marks,
-            chatModelBindingMode: card.chatModelBindingMode,
-            chatModelId: card.chatModelId,
-            chatProviderId: card.chatProviderId,
-            ttsConfigId: card.ttsConfigId,
-            themeConfigId: card.themeConfigId,
-            memoryBindingMode: card.memoryBindingMode,
-            sharedMemoryId: card.sharedMemoryId,
-            sharedMemoryMounts: card.sharedMemoryMounts,
-            toolAccessConfig: card.toolAccessConfig
-          }
-        }
-      }
-    }
-  };
-  return JSON.stringify(document2, null, 2);
-}
-function decodeGroupImport(content) {
-  assertString(content, "\u7FA4\u7EC4\u5BFC\u5165\u5185\u5BB9");
-  const document2 = JSON.parse(content);
-  assertGroup(document2);
-  return { ...document2, id: "", createdAt: 0, updatedAt: 0 };
-}
-
-// src/operations.ts
-function findMemory(items, title) {
-  const name = requireName(title, "\u8BB0\u5FC6\u6807\u9898");
-  let found;
-  for (const memory of items) {
-    if (memory.title !== name) continue;
-    if (found !== void 0) throw new Error(`\u8BB0\u5FC6\u6807\u9898\u4E0D\u552F\u4E00\uFF1A${name}`);
-    found = memory;
-  }
-  if (found === void 0) throw new Error(`\u8BB0\u5FC6\u4E0D\u5B58\u5728\uFF1A${name}`);
-  return found;
-}
-function deleteCharacter(id2, host) {
-  return __async(this, null, function* () {
-    requireId(id2, "\u89D2\u8272\u5361\u6807\u8BC6");
-    const card = yield host.getCharacter(id2);
-    assertCard(card);
-    yield host.deleteCharacter(id2);
-    return { id: id2, deleted: true };
-  });
-}
-function updateLink(input, host) {
-  return __async(this, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    const original = yield host.readMemoryLink(input.ownerKey, input.linkId);
-    const changes2 = {};
-    if (Object.prototype.hasOwnProperty.call(input.changes, "linkType")) changes2.type_ = requireName(input.changes.linkType, "\u5173\u7CFB\u7C7B\u578B");
-    if (Object.prototype.hasOwnProperty.call(input.changes, "weight")) {
-      assertNumber(input.changes.weight, "\u5173\u7CFB\u5F3A\u5EA6", 0, 1);
-      changes2.weight = input.changes.weight;
-    }
-    if (Object.prototype.hasOwnProperty.call(input.changes, "description")) changes2.description = input.changes.description;
-    const value = { ...original, ...changes2 };
-    const link2 = yield host.updateLink(input.ownerKey, original.id, { type_: value.type_, weight: value.weight, description: value.description });
-    return { ownerKey: input.ownerKey, link: link2 };
-  });
-}
-function activateForChat(input, host) {
-  return __async(this, null, function* () {
-    if (input.characterGroupId !== null && input.characterCardName !== null) throw new Error("Chat activation cannot select both a card and a group");
-    if (input.characterGroupId !== null && input.characterGroupId.trim() !== "") yield activate("group", input.characterGroupId.trim(), host);
-    else if (input.characterCardName !== null && input.characterCardName.trim() !== "") {
-      const name = input.characterCardName.trim(), cards = yield host.listCharacters();
-      let target;
-      for (const card of cards) if (card.name === name) {
-        if (target !== void 0) throw new Error("\u804A\u5929\u89D2\u8272\u540D\u79F0\u4E0D\u552F\u4E00");
-        target = card;
-      }
-      if (target === void 0) throw new Error(`\u804A\u5929\u89D2\u8272\u4E0D\u5B58\u5728\uFF1A${name}`);
-      yield activate("card", target.id, host);
-    } else throw new Error("Chat activation requires an explicit character or group selection");
-    return { characterCardName: input.characterCardName, characterGroupId: input.characterGroupId, updated: true };
-  });
-}
-function resolveConfiguration(input, service) {
-  return __async(this, null, function* () {
-    const result2 = yield resolveChatConfiguration(input, service);
-    if (!("profile" in result2) || (yield service.readGlobalMemoryPreferences()).userDescriptionEnabled) return result2;
-    return {
-      ...result2,
-      profile: { ...result2.profile, userPreferencesText: "" },
-      participants: result2.participants.map((profile) => ({ ...profile, userPreferencesText: "" }))
-    };
-  });
-}
-var handlers = {
-  /** Ranks original chunks and commits provider vectors in the same repository operation. */
-  "memory.chunks": (input, repository) => __async(null, null, function* () {
-    const space = yield repository.readMemorySpace(input.ownerKey), cached = space.embeddings.length;
-    const result2 = yield searchMemoryChunks(space, input.memoryId, input.query, input.count);
-    if (space.embeddings.length !== cached) yield repository.writeMemorySpace(input.ownerKey, space);
-    return result2;
-  }),
-  /** Keeps full-filter searches and provider embedding persistence on the same serialized service. */
-  "memory.searchWithOptions": (input, repository) => __async(null, null, function* () {
-    return { ownerKey: input.ownerKey, items: yield searchMemories(input, repository) };
-  }),
-  /** Lists actual owner-bound generic chat summaries. */
-  "memory.chat.list": (input, repository) => listMemoryChats(input.ownerKey, repository),
-  "memory.chat.pruneMissing": (input, repository) => pruneMissingMemoryChats(input.ownerKey, repository),
-  /** Extracts real chat messages through the configured functional MEMORY model. */
-  "memory.chat.update": (input, repository) => updateChatMemory(input.ownerKey, input.chatId, repository),
-  /** Performs genuine ten-record functional categorization in the same operation. */
-  "memory.categorize": (input, repository) => autoCategorizeMemory(input.ownerKey, repository),
-  /** Stores a complete requested rebuild plan for real interval execution. */
-  "memory.rebuild.start": (input, repository) => startMemoryRebuild(input.ownerKey, input.rebuild, repository),
-  /** Reads the real durable job counters. */
-  "memory.rebuild.progress": (input, repository) => repository.readMemoryRebuildProgress(input.ownerKey),
-  /** Records an explicit cancellation before another source window may be processed. */
-  "memory.rebuild.cancel": (input, repository) => __async(null, null, function* () {
-    yield repository.cancelMemoryRebuild(input.ownerKey);
-    return repository.readMemoryRebuildProgress(input.ownerKey);
-  }),
-  /** Rebuilds actual configured provider embeddings using generic HTTP. */
-  "memory.embeddings.rebuild": (input, repository) => rebuildMemoryEmbeddings(input.ownerKey, repository),
-  /** Enqueues only actual persisted message sources and genuine bound owners. */
-  "memory.candidate.enqueue": (input, repository) => enqueueCandidate(input, repository),
-  /** Returns genuine terminal failures to the pending queue for one later interval retry. */
-  "memory.candidates.retryFailed": (input, repository) => retryFailedCandidates(input.ownerKey, repository),
-  /** Removes genuine terminal failures from the owner queue. */
-  "memory.candidates.clearFailed": (input, repository) => clearFailedCandidates(input.ownerKey, repository),
-  /** Resolves chat configuration using this operation's existing repository snapshot. */
-  "chat.configuration.resolve": (input, repository) => resolveConfiguration(input, {
-    /** Reads only the requested character. */
-    getCharacter: (id2) => repository.getCharacter(id2),
-    /** Reads only the requested group. */
-    getGroup: (id2) => repository.getGroup(id2),
-    /** Reads only a referenced tag. */
-    getTag: (id2) => repository.getTag(id2),
-    /** Reads only a referenced shared library. */
-    getStore: (id2) => repository.getStore(id2),
-    /** Reads only the model directory. */
-    listModels: () => repository.listModels(),
-    /** Reads only the speech directory. */
-    listTtsConfigs: () => repository.listTtsConfigs(),
-    readGlobalMemoryPreferences: () => repository.readGlobalMemoryPreferences(),
-    dispatchDomain: (operation, payload) => executeDomain(operation, payload, repository)
-  }),
-  /** Requires the chat's persisted selection rather than global active state. */
-  "chat.configuration.binding.read": (input, repository) => repository.readChatBinding(input.chatId),
-  /** Stages a genuine selector submission in the shared publication. */
-  "chat.configuration.binding.write": (input, repository) => __async(null, null, function* () {
-    yield requireChat(input.chatId);
-    return repository.writeChatBinding(input);
-  }),
-  /** Deletes the requested existing binding through the same file operation. */
-  "chat.configuration.binding.delete": (input, repository) => repository.deleteChatBinding(input.chatId),
-  /** Reads the complete real editor directories. */
-  snapshot: (_input, host) => snapshot(host),
-  /** Reads complete canonical character cards. */
-  "character.list": (_input, host) => __async(null, null, function* () {
-    const cards = yield host.listCharacters();
-    for (const card of cards) assertCard(card);
-    return cards;
-  }),
-  /** Requires the selected canonical character. */
-  "character.get": (input, host) => __async(null, null, function* () {
-    const card = yield host.getCharacter(input.id);
-    assertCard(card);
-    return card;
-  }),
-  /** Initializes an explicit new form and persists all provided character fields. */
-  "character.create": (input, host) => saveCharacter({ ...createCharacterDraft(), ...input.values }, true, { created: [], updated: [], deleted: [] }, host),
-  /** Merges an explicit edit into the complete canonical record before one manager write. */
-  "character.update": (input, host) => __async(null, null, function* () {
-    const original = yield host.getCharacter(input.id);
-    return saveCharacter({ ...original, ...input.changes, id: original.id }, false, { created: [], updated: [], deleted: [] }, host);
-  }),
-  /** Deletes any existing character using the canonical lifecycle. */
-  "character.delete": (input, host) => deleteCharacter(input.id, host),
-  /** Activates the selected canonical character. */
-  "character.setActive": (input, host) => __async(null, null, function* () {
-    yield activate("card", input.id, host);
-    return { type: "character_card", id: input.id, active: true };
-  }),
-  /** Composes the actual canonical prompt using the explicitly selected function and tags. */
-  "character.combine": (input, host) => __async(null, null, function* () {
-    const options = { promptFunctionType: "CHAT", additionalTagIds: [], ...input };
-    const prompt = yield combinePrompts(input.id, options.additionalTagIds, options.promptFunctionType, host);
-    return { id: input.id, promptFunctionType: options.promptFunctionType, additionalTagIds: options.additionalTagIds, prompt };
-  }),
-  /** Serializes the plugin-owned character interchange representation. */
-  "character.export": (input, host) => __async(null, null, function* () {
-    const card = yield host.getCharacter(input.id), tags = yield host.listTags();
-    return { id: input.id, format: input.format, content: encodeCharacterExport(card, input.format, tags) };
-  }),
-  /** Parses and stages interchange imports in the plugin before full canonical persistence. */
-  "character.import": (input, host) => __async(null, null, function* () {
-    const plan = decodeCharacterImport(input.content, input.format, yield host.listTags());
-    return saveCharacter(plan.card, true, plan.tagChanges, host);
-  }),
-  /** Exports the actual canonical records using the original manager backup format. */
-  "character.exportBackup": (_input, host) => __async(null, null, function* () {
-    return { content: yield exportCharacterBackup(host) };
-  }),
-  /** Validates the backup in the plugin before invoking canonical identity-preserving restore. */
-  "character.importBackup": (input, host) => __async(null, null, function* () {
-    const document2 = decodeCharacterBackup(input.content);
-    const result2 = yield host.restoreCharacters(document2.characterCards, document2.promptTags);
-    yield host.restoreConversationGroups(document2.conversationGroups);
-    return result2;
-  }),
-  /** Reads complete canonical groups. */
-  "group.list": (_input, host) => __async(null, null, function* () {
-    const groups = yield host.listGroups();
-    for (const group of groups) assertGroup(group);
-    return groups;
-  }),
-  /** Requires the selected canonical group. */
-  "group.get": (input, host) => __async(null, null, function* () {
-    const group = yield host.getGroup(input.id);
-    assertGroup(group);
-    return group;
-  }),
-  /** Persists every field of an explicit new group. */
-  "group.create": (input, host) => saveGroup({ ...createGroupDraft(), ...input.values }, true, host),
-  /** Merges an explicit edit into the full canonical group before saving. */
-  "group.update": (input, host) => __async(null, null, function* () {
-    const original = yield host.getGroup(input.id);
-    return saveGroup({ ...original, ...input.changes, id: original.id }, false, host);
-  }),
-  /** Deletes the group through the plugin repository lifecycle. */
-  "group.delete": (input, host) => __async(null, null, function* () {
-    yield host.getGroup(input.id);
-    yield host.deleteGroup(input.id);
-    return { id: input.id, deleted: true };
-  }),
-  /** Activates the selected real group. */
-  "group.setActive": (input, host) => __async(null, null, function* () {
-    yield activate("group", input.id, host);
-    return { type: "character_group", id: input.id, active: true };
-  }),
-  /** Copies the full canonical group's editable state into an intentional new group. */
-  "group.duplicate": (input, host) => __async(null, null, function* () {
-    const group = yield host.getGroup(input.id);
-    const options = { newName: group.name, ...input };
-    return saveGroup({ ...group, id: "", name: requireName(options.newName, "\u65B0\u7FA4\u7EC4\u540D\u79F0") }, true, host);
-  }),
-  /** Exports the complete canonical group serde record. */
-  "group.export": (input, host) => __async(null, null, function* () {
-    const group = yield host.getGroup(input.id);
-    assertGroup(group);
-    return { id: input.id, content: JSON.stringify(group, null, 2) };
-  }),
-  /** Parses and validates a full imported group before canonical creation. */
-  "group.import": (input, host) => saveGroup(decodeGroupImport(input.content), true, host),
-  /** Exports the actual canonical group backup shape. */
-  "group.exportBackup": (_input, host) => __async(null, null, function* () {
-    return { content: yield exportGroupBackup(host) };
-  }),
-  /** Validates the group backup before canonical identity-preserving restoration. */
-  "group.importBackup": (input, host) => host.restoreGroups(decodeGroupBackup(input.content).characterGroups),
-  /** Reads the canonical externally tagged active prompt. */
-  "activePrompt.get": (_input, host) => host.readActive(),
-  /** Selects model execution explicitly without applying any role-owned configuration. */
-  "activePrompt.setModel": (_input, host) => __async(null, null, function* () {
-    yield host.writeActive({ Model: { id: "chat" } });
-    return { type: "model", id: "chat", active: true };
-  }),
-  /** Activates the selected canonical character. */
-  "activePrompt.setCard": (input, host) => __async(null, null, function* () {
-    yield activate("card", input.id, host);
-    return { type: "character_card", id: input.id, active: true };
-  }),
-  /** Activates the selected canonical group. */
-  "activePrompt.setGroup": (input, host) => __async(null, null, function* () {
-    yield activate("group", input.id, host);
-    return { type: "character_group", id: input.id, active: true };
-  }),
-  /** Applies the plugin's explicit chat-binding selection logic. */
-  "activePrompt.activateForChat": (input, host) => activateForChat(input, host),
-  /** Resolves the real next-send actor under the canonical active card or group selection. */
-  "activePrompt.resolvedCard": (_input, host) => __async(null, null, function* () {
-    const active = yield host.readActive();
-    if (!("CharacterCard" in active)) throw new Error("An active group requires an explicit execution participant");
-    const card = yield host.getCharacter(active.CharacterCard.id);
-    return { id: card.id };
-  }),
-  /** Reads complete canonical tags. */
-  "tag.list": (_input, host) => __async(null, null, function* () {
-    const tags = yield host.listTags();
-    for (const tag of tags) assertTag(tag);
-    return tags;
-  }),
-  /** Requires an existing complete canonical tag. */
-  "tag.get": (input, host) => __async(null, null, function* () {
-    const tag = yield host.getTag(input.id);
-    assertTag(tag);
-    return tag;
-  }),
-  /** Initializes a new tag form and writes every provided editable field. */
-  "tag.create": (input, host) => saveTag({ id: "", ...createTagDraft(), ...input.values }, true, host),
-  /** Writes every editable field by merging the patch into the complete canonical tag. */
-  "tag.update": (input, host) => __async(null, null, function* () {
-    const original = yield host.getTag(input.id);
-    return saveTag({ ...original, ...input.changes, id: original.id }, false, host);
-  }),
-  /** Deletes an existing canonical prompt tag. */
-  "tag.delete": (input, host) => __async(null, null, function* () {
-    yield host.getTag(input.id);
-    yield host.deleteTag(input.id);
-    return { id: input.id, deleted: true };
-  }),
-  /** Reads complete canonical shared stores. */
-  "memory.shared.list": (_input, host) => host.listStores(),
-  /** Creates the canonical shared store. */
-  "memory.shared.create": (input, host) => saveStore({ id: "", name: input.name }, true, host),
-  /** Renames the selected canonical shared store. */
-  "memory.shared.rename": (input, host) => saveStore({ id: input.id, name: input.name }, false, host),
-  /** Removes the shared store and counts the actual canonical character bindings affected. */
-  "memory.shared.delete": (input, host) => __async(null, null, function* () {
-    const cards = yield host.listCharacters();
-    let cleanedCharacters = 0;
-    for (const card of cards) {
-      let affected = card.sharedMemoryId === input.id;
-      for (const mount2 of card.sharedMemoryMounts) if (mount2.sharedMemoryId === input.id) affected = true;
-      if (affected) cleanedCharacters += 1;
-    }
-    yield host.deleteStore(input.id);
-    return { sharedId: input.id, deleted: true, cleanedCharacters };
-  }),
-  /** Saves an explicit shared-store mount through the full canonical character writer. */
-  "memory.mount": (input, host) => __async(null, null, function* () {
-    yield host.getStore(input.sharedId);
-    const original = yield host.getCharacter(input.characterId);
-    const mount2 = { sharedMemoryId: input.sharedId, readable: input.readable, writable: input.writable };
-    const mounts = [];
-    for (const value of original.sharedMemoryMounts) if (value.sharedMemoryId !== input.sharedId) mounts.push(value);
-    mounts.push(mount2);
-    yield saveCharacter({ ...original, sharedMemoryMounts: mounts }, false, { created: [], updated: [], deleted: [] }, host);
-    return { characterId: input.characterId, sharedId: input.sharedId, mount: mount2, mounted: true };
-  }),
-  /** Removes only the explicitly selected mount through a full canonical character write. */
-  "memory.unmount": (input, host) => __async(null, null, function* () {
-    const original = yield host.getCharacter(input.characterId), mounts = [];
-    for (const mount2 of original.sharedMemoryMounts) if (mount2.sharedMemoryId !== input.sharedId) mounts.push(mount2);
-    yield saveCharacter({ ...original, sharedMemoryMounts: mounts }, false, { created: [], updated: [], deleted: [] }, host);
-    return { characterId: input.characterId, sharedId: input.sharedId, unmounted: true };
-  }),
-  /** Reads the selected real USER.md contents. */
-  "memory.user.read": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    return host.readUser(input.ownerKey);
-  }),
-  /** Writes owner-scoped USER.md without touching preference files. */
-  "memory.user.write": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    yield host.writeUser(input.ownerKey, input.content);
-    return { ownerKey: input.ownerKey, contentLength: input.content.length, updated: true };
-  }),
-  /** Reads the real plugin-owned USER.md path accepted by Files. */
-  "memory.user.path": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    return { ownerKey: input.ownerKey, path: yield host.readUserPath(input.ownerKey) };
-  }),
-  /** Resolves the primary canonical memory binding to its real owner enum. */
-  "memory.resolveOwner": (input, host) => __async(null, null, function* () {
-    return parseOwner(yield resolveMemoryOwner(input.characterId, host));
-  }),
-  /** Reads complete canonical owner settings. */
-  "memory.settings.read": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    return host.readMemorySettings(input.ownerKey);
-  }),
-  /** Writes complete canonical owner settings. */
-  "memory.settings.write": (input, host) => writeMemorySettings(input.ownerKey, input.settings, host),
-  /** Reads the complete persisted search configuration. */
-  "memory.searchConfig.read": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    return host.readMemorySearchConfig(input.ownerKey);
-  }),
-  /** Writes every persisted search configuration field. */
-  "memory.searchConfig.write": (input, host) => writeMemorySearchConfig(input.ownerKey, input.config, host),
-  /** Reads the actual repository graph with canonical UUID nodes. */
-  "memory.graph": (input, host) => __async(null, null, function* () {
-    return { ownerKey: input.ownerKey, graph: (yield graph(input.ownerKey, host)).graph };
-  }),
-  /** Reads complete repository memories in the selected owner scope. */
-  "memory.list": (input, host) => __async(null, null, function* () {
-    return { ownerKey: input.ownerKey, items: yield listMemories(input.ownerKey, host) };
-  }),
-  /** Searches complete repository records with the original explicit editor search filters. */
-  "memory.search": (input, host) => __async(null, null, function* () {
-    return { ownerKey: input.ownerKey, query: input.query, items: yield searchMemories({ ...input, folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null }, host) };
-  }),
-  /** Resolves an exact title to one complete canonical memory. */
-  "memory.get": (input, host) => __async(null, null, function* () {
-    return { ownerKey: input.ownerKey, item: findMemory(yield listMemories(input.ownerKey, host), input.title) };
-  }),
-  /** Initializes an intentional full new record and writes all memory metadata in the plugin snapshot. */
-  "memory.create": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    const values = {
-      id: "",
-      uuid: "",
-      contentType: "text",
-      source: "",
-      credibility: 0.5,
-      importance: 0.5,
-      documentPath: null,
-      isDocumentNode: false,
-      chunkIndexFilePath: null,
-      folderPath: null,
-      createdAt: 0,
-      updatedAt: 0,
-      lastAccessedAt: 0,
-      tags: [],
-      properties: [],
-      ...input.values
-    };
-    assertStrings(values.tags, "\u8BB0\u5FC6\u6807\u7B7E");
-    const tags = [];
-    for (const name of normalizeNames(values.tags)) tags.push({ id: uuid(), name });
-    const memory = { ...values, id: "", uuid: "", title: requireName(values.title, "\u8BB0\u5FC6\u6807\u9898"), tags };
-    const item = yield host.saveMemory(input.ownerKey, memory);
-    assertMemory(item);
-    return { ownerKey: input.ownerKey, item, created: true };
-  }),
-  /** Merges every supplied memory field into its full canonical record while preserving untouched metadata. */
-  "memory.update": (input, host) => __async(null, null, function* () {
-    const original = findMemory(yield listMemories(input.ownerKey, host), input.originalTitle);
-    if (input.expectedId !== void 0 && input.expectedId !== original.id) throw new Error("Memory identity changed since editing began");
-    const changes2 = { ...input.changes };
-    const tags = [];
-    if (Object.prototype.hasOwnProperty.call(changes2, "tags")) {
-      assertStrings(changes2.tags, "\u8BB0\u5FC6\u6807\u7B7E");
-      for (const name of normalizeNames(changes2.tags)) tags.push({ id: uuid(), name });
-    } else for (const tag of original.tags) tags.push(tag);
-    const memory = { ...original, ...changes2, id: original.id, tags };
-    assertMemory(memory);
-    const item = yield host.saveMemory(input.ownerKey, memory);
-    assertMemory(item);
-    return { ownerKey: input.ownerKey, item, updated: true };
-  }),
-  /** Deletes the exact owner-scoped canonical memory id. */
-  "memory.delete": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    yield host.deleteMemory(input.ownerKey, input.id);
-    return { ownerKey: input.ownerKey, id: input.id, deleted: true };
-  }),
-  /** Moves the explicitly selected ids using the canonical repository's bulk operation. */
-  "memory.move": (input, host) => __async(null, null, function* () {
-    const items = yield listMemories(input.ownerKey, host), existing = /* @__PURE__ */ new Set();
-    for (const item of items) existing.add(item.id);
-    const selected = /* @__PURE__ */ new Set();
-    for (const id2 of input.ids) {
-      if (!existing.has(id2)) throw new Error(`\u8BB0\u5FC6\u4E0D\u5B58\u5728\uFF1A${id2}`);
-      selected.add(id2);
-    }
-    yield host.moveMemories(input.ownerKey, [...selected], input.folderPath);
-    return { ownerKey: input.ownerKey, ids: [...selected], folder: input.folderPath, moved: selected.size };
-  }),
-  /** Resolves exact source and target records before creating a canonical relationship. */
-  "memory.link.create": (input, host) => __async(null, null, function* () {
-    const items = yield listMemories(input.ownerKey, host), source = findMemory(items, input.sourceTitle), target = findMemory(items, input.targetTitle);
-    if (source.id === target.id) throw new Error("\u4E0D\u80FD\u521B\u5EFA\u8BB0\u5FC6\u81EA\u8EAB\u5173\u7CFB");
-    const link2 = yield host.createLink(input.ownerKey, { sourceMemoryId: source.id, targetMemoryId: target.id, type_: requireName(input.linkType, "\u5173\u7CFB\u7C7B\u578B"), weight: input.weight, description: input.description });
-    return { ownerKey: input.ownerKey, link: link2 };
-  }),
-  /** Applies a full canonical relationship edit to the selected id. */
-  "memory.link.update": (input, host) => updateLink(input, host),
-  /** Deletes the exact owner-scoped canonical relationship id. */
-  "memory.link.delete": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    yield host.deleteLink(input.ownerKey, input.linkId);
-    return { ownerKey: input.ownerKey, linkId: input.linkId, deleted: true };
-  }),
-  /** Serializes the repository's portable backup format in the plugin. */
-  "memory.export": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    return { ownerKey: input.ownerKey, content: yield exportMemoryBackup(input.ownerKey, host) };
-  }),
-  /** Validates the complete portable backup before notification-preserving canonical restoration. */
-  "memory.import": (input, host) => __async(null, null, function* () {
-    yield requireOwner(input.ownerKey, host);
-    const document2 = decodeMemoryBackup(input.content);
-    const result2 = yield host.importMemorySpace(input.ownerKey, document2.space, input.strategy);
-    yield host.writeUser(input.ownerKey, document2.userMarkdown);
-    return { ownerKey: input.ownerKey, result: result2 };
-  })
-};
-function executeDomain(operation, input, host) {
-  return handlers[operation](parseDomainPayload(operation, input), host);
-}
-
-// src/chat-binding-catalog.ts
-function listBindableChats() {
-  return __async(this, null, function* () {
-    const result2 = yield Tools.Chat.listAll();
-    assertInteger(result2.totalCount, "conversation count", 0);
-    if (!Array.isArray(result2.chats) || result2.chats.length !== result2.totalCount)
-      throw new Error("\u5BF9\u8BDD\u5217\u8868\u4E0D\u5B8C\u6574\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5");
-    const ids = /* @__PURE__ */ new Set();
-    for (const chat of result2.chats) {
-      requireId(chat.id, "conversation id");
-      if (ids.has(chat.id)) throw new Error("\u5BF9\u8BDD\u5217\u8868\u5305\u542B\u91CD\u590D\u8BB0\u5F55");
-      ids.add(chat.id);
-      assertString(chat.title, "conversation title");
-      assertString(chat.updatedAt, "conversation update time");
-      assertInteger(chat.messageCount, "message count", 0);
-      assertBoolean(chat.isCurrent, "current conversation");
-    }
-    const bindings = yield bindingsForChats([...ids]);
-    return result2.chats.map((chat) => ({
-      id: chat.id,
-      title: chat.title,
-      updatedAt: chat.updatedAt,
-      messageCount: chat.messageCount,
-      isCurrent: chat.isCurrent,
-      selection: bindings.get(chat.id) ?? null
-    })).sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt) || left.id.localeCompare(right.id));
-  });
-}
-function timestamp(value) {
-  const parsed = /^\d+$/.test(value) ? Number(value) : Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-// src/selection-application.ts
-function copyReferences(references) {
-  parseChatSelection(references.selection);
-  if (references.themeConfigId !== null) requireId(references.themeConfigId, "\u4E3B\u9898\u914D\u7F6E\u6807\u8BC6");
-  if (references.ttsConfigId !== null) requireId(references.ttsConfigId, "TTS \u914D\u7F6E\u6807\u8BC6");
-  return Object.freeze({ selection: references.selection, themeConfigId: references.themeConfigId, ttsConfigId: references.ttsConfigId });
-}
-function readSelectionReferences(repository, selection) {
-  return __async(this, null, function* () {
-    const parsed = parseChatSelection(selection);
-    switch (parsed.kind) {
-      case "model":
-        return copyReferences({ selection, themeConfigId: null, ttsConfigId: null });
-      case "card": {
-        const card = yield repository.getCharacter(parsed.id);
-        assertCard(card);
-        if (card.id !== parsed.id) throw new Error("\u89D2\u8272\u5361\u8BFB\u53D6\u7ED3\u679C\u4E0E\u9009\u62E9\u6807\u8BC6\u4E0D\u4E00\u81F4\uFF1A" + selection);
-        return copyReferences({ selection, themeConfigId: card.themeConfigId, ttsConfigId: card.ttsConfigId });
-      }
-      case "group": {
-        const group = yield repository.getGroup(parsed.id);
-        assertGroup(group);
-        if (group.id !== parsed.id) throw new Error("\u7FA4\u7EC4\u8BFB\u53D6\u7ED3\u679C\u4E0E\u9009\u62E9\u6807\u8BC6\u4E0D\u4E00\u81F4\uFF1A" + selection);
-        return copyReferences({ selection, themeConfigId: group.themeConfigId, ttsConfigId: null });
-      }
-    }
-  });
-}
-function describeConfirmed(steps) {
-  return steps.map(
-    /** Distinguishes the selection owner and each independent configuration owner's actual acknowledgement. */
-    (step) => {
-      switch (step.type) {
-        case "selection":
-          return "\u9009\u62E9\u5DF2\u63D0\u4EA4\uFF08" + step.selection + "\uFF09";
-        case "theme":
-          return "\u4E3B\u9898\u5DF2\u786E\u8BA4\u5E94\u7528\uFF08" + step.id + "\uFF09";
-        case "tts":
-          return "TTS \u5DF2\u786E\u8BA4\u5E94\u7528\uFF08" + step.id + "\uFF09";
-      }
-    }
-  ).join("\uFF1B");
-}
-var SelectionApplicationFailure = class extends Error {
-  /** Exposes confirmed progress and the unverified failed write on the same visible selector error. */
-  constructor(completed3, failedStep, cause) {
-    const label = failedStep.type === "theme" ? "\u4E3B\u9898" : "TTS";
-    super(describeConfirmed(completed3) + "\uFF1B" + label + "\u5E94\u7528\u5931\u8D25\uFF08" + failedStep.id + "\uFF09\uFF0C\u8BE5\u914D\u7F6E\u7684\u5B9E\u9645\u5B58\u50A8\u72B6\u6001\u5F85\u6838\u5BF9\u3002\u672A\u81EA\u52A8\u64A4\u9500\u6216\u91CD\u8BD5\u3002\u539F\u59CB\u9519\u8BEF\uFF1A" + String(cause));
-    this.name = "SelectionApplicationFailure";
-    this.cause = cause;
-    this.completed = Object.freeze(completed3.map(
-      /** Copies acknowledgement metadata so a caught error cannot rewrite the recorded application history. */
-      (step) => Object.freeze({ ...step })
-    ));
-    this.failedStep = Object.freeze({ ...failedStep });
-  }
-};
-function applyConfigurations(references, access) {
-  return __async(this, null, function* () {
-    const completed3 = [{ type: "selection", selection: references.selection }];
-    if (references.themeConfigId !== null) {
-      const id2 = references.themeConfigId;
-      try {
-        yield access.applyTheme(id2);
-      } catch (failure2) {
-        throw new SelectionApplicationFailure(completed3, { type: "theme", id: id2 }, failure2);
-      }
-      completed3.push({ type: "theme", id: id2 });
-    }
-    if (references.ttsConfigId !== null) {
-      const id2 = references.ttsConfigId;
-      try {
-        yield access.applyTts(id2);
-      } catch (failure2) {
-        throw new SelectionApplicationFailure(completed3, { type: "tts", id: id2 }, failure2);
-      }
-      completed3.push({ type: "tts", id: id2 });
-    }
-  });
-}
-function createSelectionApplication(access) {
-  let busy = false;
-  const waiters = [];
-  function acquire() {
+  /** Lists persisted bindings directly from one immutable preference snapshot. */
+  listChatBindings() {
     return __async(this, null, function* () {
-      if (!busy) {
-        busy = true;
-        return;
-      }
-      yield new Promise(
-        /** Retains only the continuation for a genuinely distinct waiting operation. */
-        (resolve) => waiters.push(resolve)
-      );
+      return (yield this.storage.chats.data()).entries().filter(([key]) => key.startsWith("binding_")).map(([key, value]) => ({ chatId: requireId(key.slice(8), "stored chat id"), selection: decodeChatMarker(value).selection }));
     });
   }
-  function release() {
-    const next = waiters.shift();
-    if (next === void 0) busy = false;
-    else next();
-  }
-  return {
-    /** Performs all explicit-reference validation before committing the selection, then awaits every requested apply. */
-    commit(prepareAndCommit) {
-      return __async(this, null, function* () {
-        yield acquire();
-        const validated = /* @__PURE__ */ new WeakSet();
-        let validations = 0;
-        try {
-          const committed = yield prepareAndCommit(
-            /** Issues one immutable validation receipt inside the selection owner's real record snapshot. */
-            (references) => __async(null, null, function* () {
-              validations += 1;
-              if (validations !== 1) throw new Error("A selection operation must validate exactly one reference plan");
-              const checked = copyReferences(references);
-              if (checked.themeConfigId !== null) yield access.validateTheme(checked.themeConfigId);
-              if (checked.ttsConfigId !== null) yield access.validateTts(checked.ttsConfigId);
-              validated.add(checked);
-              return checked;
-            })
-          );
-          if (!validated.has(committed.references)) throw new Error("Selection commit did not retain its exact validated reference plan");
-          yield applyConfigurations(committed.references, access);
-          return committed.value;
-        } finally {
-          release();
-        }
-      });
-    }
-  };
-}
-function isSelectionOperation(operation) {
-  switch (operation) {
-    case "character.setActive":
-    case "group.setActive":
-    case "activePrompt.setModel":
-    case "activePrompt.setCard":
-    case "activePrompt.setGroup":
-    case "activePrompt.activateForChat":
-    case "chat.configuration.binding.write":
-      return true;
-    default:
-      return false;
-  }
-}
-function isSelectionRequest(request) {
-  return request.action === "activate" || request.action === "writeChatBinding";
-}
-function editorSelection(request) {
-  if (request.action === "writeChatBinding") return request.selection;
-  switch (request.type) {
-    case "card":
-      return "card:" + request.id;
-    case "group":
-      return "group:" + request.id;
-    default:
-      throw new Error("Editor activation requires an explicit card or group type");
-  }
-}
-function domainSelection(operation, input, repository) {
-  return __async(this, null, function* () {
-    switch (operation) {
-      case "activePrompt.setModel":
-        parseDomainPayload("activePrompt.setModel", input);
-        return "model:chat";
-      case "character.setActive":
-      case "activePrompt.setCard":
-        return "card:" + parseDomainPayload("activePrompt.setCard", input).id;
-      case "group.setActive":
-      case "activePrompt.setGroup":
-        return "group:" + parseDomainPayload("activePrompt.setGroup", input).id;
-      case "chat.configuration.binding.write":
-        return parseDomainPayload("chat.configuration.binding.write", input).selection;
-      case "activePrompt.activateForChat": {
-        const parsed = parseDomainPayload("activePrompt.activateForChat", input);
-        if (parsed.characterGroupId !== null && parsed.characterCardName !== null) throw new Error("Chat activation cannot select both a card and a group");
-        if (parsed.characterGroupId !== null) return "group:" + parsed.characterGroupId.trim();
-        if (parsed.characterCardName === null) throw new Error("Chat activation requires an explicit character or group selection");
-        const name = parsed.characterCardName.trim(), matches = (yield repository.listCharacters()).filter(
-          /** Matches the established exact character-name operation without inventing a replacement selection. */
-          (card) => card.name === name
-        );
-        if (matches.length !== 1) throw new Error("Chat character name must identify exactly one persisted record: " + name);
-        return "card:" + matches[0].id;
-      }
-    }
-  });
-}
-function assertThemeChoices(value) {
-  if (!Array.isArray(value)) throw new Error("\u4E3B\u9898\u9009\u62E9\u76EE\u5F55\u5FC5\u987B\u662F\u6570\u7EC4");
-  const ids = /* @__PURE__ */ new Set();
-  for (const choice of value) {
-    assertObject(choice, "\u4E3B\u9898\u9009\u62E9\u9879");
-    const id2 = requireId(choice.id, "\u4E3B\u9898\u914D\u7F6E ID");
-    assertString(choice.label, "\u4E3B\u9898\u914D\u7F6E\u540D\u79F0");
-    if (choice.label.trim() === "") throw new Error("\u4E3B\u9898\u914D\u7F6E\u540D\u79F0\u65E0\u6548");
-    if (ids.has(id2)) throw new Error("\u4E3B\u9898\u914D\u7F6E ID \u91CD\u590D\uFF1A" + id2);
-    ids.add(id2);
-  }
-}
-function readThemeChoices(access) {
-  return __async(this, null, function* () {
-    const choices = yield access.readThemeChoices();
-    assertThemeChoices(choices);
-    return choices.map(
-      /** Keeps only private presentation fields, never an independent configuration's stored theme values. */
-      (choice) => ({ id: choice.id, label: choice.label })
-    );
-  });
-}
-
-// src/selection-settings.ts
-var configured = null;
-function connectIndependentConfigurations(access) {
-  if (configured !== null) throw new Error("Independent configuration access has already been connected");
-  configured = access;
-}
-function requiredAccess() {
-  if (configured === null) throw new Error("Independent Theme/TTS configuration capabilities have not been connected");
-  return configured;
-}
-var independentConfigurations = {
-  /** Requires an actual theme directory reader; a missing source cannot become an empty successful chooser. */
-  readThemeChoices: () => requiredAccess().readThemeChoices(),
-  /** Requires a real theme existence validator before any selection write. */
-  validateTheme: (id2) => requiredAccess().validateTheme(id2),
-  /** Requires a real speech existence validator before any selection write. */
-  validateTts: (id2) => requiredAccess().validateTts(id2),
-  /** Awaits the actual theme owner's acknowledgement without synthesizing a receipt. */
-  applyTheme: (id2) => requiredAccess().applyTheme(id2),
-  /** Awaits the actual speech owner's acknowledgement without applying a different config on rejection. */
-  applyTts: (id2) => requiredAccess().applyTts(id2)
-};
-function configurationRecords(values, label) {
-  if (!Array.isArray(values)) throw new Error(label + "\u76EE\u5F55\u5FC5\u987B\u662F\u6570\u7EC4");
-  const ids = /* @__PURE__ */ new Set();
-  for (const value of values) {
-    assertObject(value, label + "\u8BB0\u5F55");
-    const id2 = requireId(value.id, label + " ID");
-    if (ids.has(id2)) throw new Error(label + " ID \u91CD\u590D\uFF1A" + id2);
-    ids.add(id2);
-  }
-  return values;
-}
-function requireConfiguration(values, id2, label) {
-  requireId(id2, label + "\u5F15\u7528 ID");
-  const records3 = configurationRecords(values, label);
-  const matches = records3.filter(
-    /** Resolves an exact ID, not a role-prefixed target, configured global or inferred participant. */
-    (config) => config.id === id2
-  );
-  if (matches.length !== 1) throw new Error(label + "\u4E0D\u5B58\u5728\uFF1A" + id2);
-  return matches[0];
-}
-function createSettingsConfigurationAccess(readSettings) {
-  return {
-    /** Projects actual named Theme configs into the plugin's one private picker row contract. */
-    readThemeChoices() {
-      return __async(this, null, function* () {
-        const configs = configurationRecords((yield readSettings().Theme.listConfigs()).configs, "\u4E3B\u9898\u914D\u7F6E");
-        return configs.map(
-          /** Preserves the actual independent ID and display name without storing or rewriting its snapshot. */
-          (config) => {
-            assertString(config.name, "\u4E3B\u9898\u914D\u7F6E\u540D\u79F0");
-            if (config.name.trim() === "") throw new Error("\u4E3B\u9898\u914D\u7F6E\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A\uFF1A" + config.id);
-            return { id: config.id, label: config.name };
-          }
-        );
-      });
-    },
-    /** Verifies a genuine independent Theme ID before any active selection or chat namespace write. */
-    validateTheme(id2) {
-      return __async(this, null, function* () {
-        requireConfiguration((yield readSettings().Theme.listConfigs()).configs, id2, "\u4E3B\u9898\u914D\u7F6E");
-      });
-    },
-    /** Verifies a genuine independent TTS ID before any active selection or chat namespace write. */
-    validateTts(id2) {
-      return __async(this, null, function* () {
-        requireConfiguration((yield readSettings().Tts.listConfigs()).configs, id2, "TTS \u914D\u7F6E");
-      });
-    },
-    /** Awaits the canonical Theme transaction and validates its acknowledgement of this exact independent config. */
-    applyTheme(id2) {
-      return __async(this, null, function* () {
-        requireId(id2, "\u4E3B\u9898\u914D\u7F6E\u5F15\u7528 ID");
-        const applied = yield readSettings().Theme.applyConfig(id2);
-        assertObject(applied, "\u5DF2\u5E94\u7528\u4E3B\u9898\u914D\u7F6E");
-        if (applied.id !== id2) throw new Error("\u4E3B\u9898\u914D\u7F6E\u5E94\u7528\u8FD4\u56DE\u7684 ID \u4E0E\u8BF7\u6C42\u4E0D\u4E00\u81F4\uFF1A" + id2);
-      });
-    },
-    /** Awaits the canonical speech write and actual current-ID read; failures remain visible partial application errors. */
-    applyTts(id2) {
-      return __async(this, null, function* () {
-        requireId(id2, "TTS \u914D\u7F6E\u5F15\u7528 ID");
-        const applied = yield readSettings().Tts.setCurrentConfigId(id2);
-        if (applied.configId !== id2) throw new Error("TTS \u914D\u7F6E\u63D0\u4EA4\u8FD4\u56DE\u7684 ID \u4E0E\u8BF7\u6C42\u4E0D\u4E00\u81F4\uFF1A" + id2);
-        const current = yield readSettings().Tts.getCurrentConfigId();
-        if (current.configId !== id2) throw new Error("TTS \u5F53\u524D\u914D\u7F6E\u8BFB\u53D6\u7ED3\u679C\u672A\u786E\u8BA4\u8BF7\u6C42\u7684 ID\uFF1A" + id2);
-      });
-    }
-  };
-}
-function registerSelectionSettingsAccess() {
-  connectIndependentConfigurations(createSettingsConfigurationAccess(
-    /** Resolves the canonical Theme and Tts capabilities only when a real directory read or application is requested. */
-    () => ({ Theme: Tools.Theme, Tts: Tools.Tts })
-  ));
-}
-
-// src/service.ts
-function createCharacterCardsService(owner2, configurations = independentConfigurations) {
-  const jobs = new MemoryJobRunner(owner2), application = createSelectionApplication(configurations);
-  function dispatchRequest(request) {
-    if (request.action === "listThemeChoices")
-      return readThemeChoices(configurations);
-    switch (request.action) {
-      case "snapshot":
-        return owner2.readConfigurationSnapshot();
-      case "listBindableChats":
-        return listBindableChats();
-      case "listMemoryChats":
-        return listMemoryChats(request.ownerKey, owner2);
-      case "pruneMissingChatBindings":
-        return owner2.run((repository) => pruneMissingMemoryChats(request.ownerKey, repository));
-      case "readGlobalMemoryPreferences":
-        return owner2.readGlobalMemoryPreferences();
-      case "readMemoryRecallSettings":
-        return owner2.readMemoryRecallSettings();
-      case "readMemorySettings":
-        return owner2.readMemorySettings(request.ownerKey);
-      case "readMemorySearchConfig":
-        return owner2.readMemorySearchConfig(request.ownerKey);
-      case "readUser":
-        return owner2.readUser(request.ownerKey);
-    }
-    if (!isSelectionRequest(request))
-      return owner2.run(
-        /** Executes ordinary editor operations against this same serialized snapshot. */
-        (repository) => dispatch(request, repository)
-      );
-    return application.commit(
-      /** Publishes the actual selection once; independent preference writes are not included in this file publication. */
-      (validate) => owner2.run(
-        /** Prevalidates the chosen complete record inside the same immutable snapshot used by its actual mutation. */
-        (repository) => __async(null, null, function* () {
-          const references = yield validate(
-            yield readSelectionReferences(
-              repository,
-              editorSelection(request)
-            )
-          );
-          return { references, value: yield dispatch(request, repository) };
-        })
-      )
-    );
-  }
-  const service = {
-    /** Applies the exact persisted actor through the same validated operations used by explicit selection. */
-    activateChatSelection(chatId) {
-      return __async(this, null, function* () {
+  /** Reads selected chat identities from a single JSON preference snapshot. */
+  bindingsForChats(chatIds) {
+    return __async(this, null, function* () {
+      const preferences = yield this.storage.chats.data(), result2 = /* @__PURE__ */ new Map();
+      for (const chatId of chatIds) {
         requireId(chatId, "chat id");
-        const binding = yield findChatBinding(chatId);
-        if (binding === null) return;
-        const selection = parseChatSelection(binding.selection);
-        switch (selection.kind) {
-          case "card":
-            yield service.dispatchDomain("activePrompt.setCard", { id: selection.id });
-            break;
-          case "group":
-            yield service.dispatchDomain("activePrompt.setGroup", { id: selection.id });
-            break;
-          case "model":
-            yield service.dispatchDomain("activePrompt.setModel", {});
-            break;
-        }
-      });
-    },
-    /** Runs the private job scheduler without constructing another store or business service. */
-    runMemoryJobs: () => jobs.tick(),
-    /** Reads only the metadata flags needed by prompt composition. */
-    readGlobalMemoryPreferences: () => owner2.readGlobalMemoryPreferences(),
-    /** Reads only the selected character and its owned relations. */
-    getCharacter: (id2) => owner2.getCharacter(id2),
-    /** Reads only the selected group and its saved membership. */
-    getGroup: (id2) => owner2.getGroup(id2),
-    /** Reads only one referenced prompt tag. */
-    getTag: (id2) => owner2.getTag(id2),
-    /** Reads only one referenced shared memory library. */
-    getStore: (id2) => owner2.getStore(id2),
-    /** Reads the model directory independently of role and tool catalogs. */
-    listModels: () => owner2.listModels(),
-    /** Reads the speech directory independently of role and tool catalogs. */
-    listTtsConfigs: () => owner2.listTtsConfigs(),
-    /** Preserves action-specific results through the shared service dispatcher. */
-    dispatch: dispatchRequest,
-    /** Reads configuration records without loading memory data. */
-    snapshot: () => owner2.readConfigurationSnapshot(),
-    /** Reads role presentation without entering the editing queue. */
-    sidebarDirectory: () => owner2.readSidebarDirectory(),
-    /** Routes reads directly and keeps mutations in the editing transaction. */
-    dispatchDomain(operation, input) {
-      switch (operation) {
-        case "snapshot":
-          return owner2.readConfigurationSnapshot();
-        case "chat.configuration.resolve":
-          return resolveConfiguration(parseDomainPayload("chat.configuration.resolve", input), service);
-        case "character.combine": {
-          const { id: id2, promptFunctionType = "CHAT", additionalTagIds = [] } = parseDomainPayload("character.combine", input);
-          return combinePrompts(id2, additionalTagIds, promptFunctionType, owner2).then((prompt) => ({ id: id2, promptFunctionType, additionalTagIds, prompt }));
-        }
-        case "memory.resolveOwner": {
-          const { characterId } = parseDomainPayload("memory.resolveOwner", input);
-          return resolveMemoryOwner(characterId, owner2).then(parseOwner);
-        }
-        case "tag.list":
-          return owner2.listTags();
-        case "memory.shared.list":
-          return owner2.listStores();
-        case "activePrompt.get":
-          return owner2.readActive();
-        case "character.list":
-          return owner2.listCharacters();
-        case "group.list":
-          return owner2.listGroups();
-        case "character.get": {
-          const { id: id2 } = parseDomainPayload("character.get", input);
-          return owner2.getCharacter(id2);
-        }
-        case "group.get": {
-          const { id: id2 } = parseDomainPayload("group.get", input);
-          return owner2.getGroup(id2);
-        }
-        case "memory.chat.list":
-          return listMemoryChats(
-            parseDomainPayload("memory.chat.list", input).ownerKey,
-            owner2
-          );
-        case "memory.chat.pruneMissing":
-          return owner2.run((repository) => pruneMissingMemoryChats(
-            parseDomainPayload("memory.chat.pruneMissing", input).ownerKey,
-            repository
-          ));
-        case "memory.settings.read":
-          return owner2.readMemorySettings(
-            parseDomainPayload("memory.settings.read", input).ownerKey
-          );
-        case "memory.searchConfig.read":
-          return owner2.readMemorySearchConfig(
-            parseDomainPayload("memory.searchConfig.read", input).ownerKey
-          );
-        case "memory.user.read":
-          return owner2.readUser(
-            parseDomainPayload("memory.user.read", input).ownerKey
-          );
-        case "memory.user.path": {
-          const { ownerKey } = parseDomainPayload("memory.user.path", input);
-          return owner2.readUserPath(ownerKey).then((path) => ({ ownerKey, path }));
-        }
+        const value = preferences.get("binding_" + chatId);
+        if (value !== void 0) result2.set(chatId, decodeChatMarker(value).selection);
       }
-      if (!isSelectionOperation(operation))
-        return owner2.run(
-          /** Runs non-selection APIs without touching independent current configurations. */
-          (repository) => dispatchDomain(operation, input, repository)
-        );
-      return application.commit(
-        /** Returns a confirmed owner write before applying any independent preferences. */
-        (validate) => owner2.run(
-          /** Validates the actual domain request and all record references before writing the selected actor. */
-          (repository) => __async(null, null, function* () {
-            const selection = yield domainSelection(
-              operation,
-              input,
-              repository
-            );
-            const references = yield validate(
-              yield readSelectionReferences(repository, selection)
-            );
-            return {
-              references,
-              value: yield dispatchDomain(operation, input, repository)
-            };
-          })
-        )
-      );
-    }
-  };
-  return service;
-}
-function records2(value, check, label) {
-  if (!Array.isArray(value)) throw new Error(`${label} \u8FD4\u56DE\u683C\u5F0F\u4E0D\u6B63\u786E`);
-  for (const record2 of value) check(record2);
-  return value;
-}
-function assertStore(value) {
-  assertObject(value, "\u5171\u4EAB\u8BB0\u5FC6\u5E93");
-  requireId(value.id, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u6807\u8BC6");
-  assertString(value.name, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u540D\u79F0");
-  assertInteger(value.createdAt, "\u8BB0\u5FC6\u5E93\u521B\u5EFA\u65F6\u95F4", 0);
-  assertInteger(value.updatedAt, "\u8BB0\u5FC6\u5E93\u4FEE\u6539\u65F6\u95F4", 0);
-}
-function assertActive(value) {
-  assertObject(value, "\u5F53\u524D\u63D0\u793A\u8BCD");
-  const keys = Object.keys(value);
-  if (keys.length !== 1 || keys[0] !== "CharacterCard" && keys[0] !== "CharacterGroup" && keys[0] !== "Model")
-    throw new Error("\u5F53\u524D\u63D0\u793A\u8BCD\u7C7B\u578B\u65E0\u6548");
-  const selection = value[keys[0]];
-  assertObject(selection, "\u5F53\u524D\u63D0\u793A\u8BCD\u9009\u62E9");
-  requireId(selection.id, "\u5F53\u524D\u63D0\u793A\u8BCD\u6807\u8BC6");
-  if (keys[0] === "Model" && selection.id !== "chat") throw new Error("Invalid model selection");
-}
-function snapshot(host) {
-  return __async(this, null, function* () {
-    const [
-      cards,
-      groups,
-      stores,
-      tags,
-      active,
-      models,
-      ttsConfigs,
-      toolCatalog,
-      memoryPreferences
-    ] = yield Promise.all([
-      host.listCharacters(),
-      host.listGroups(),
-      host.listStores(),
-      host.listTags(),
-      host.readActive(),
-      Promise.resolve().then(() => host.listModels()),
-      Promise.resolve().then(() => host.listTtsConfigs()),
-      Promise.resolve().then(() => host.readToolCatalog()),
-      host.readGlobalMemoryPreferences()
-    ]);
-    records2(cards, assertCard, "\u89D2\u8272\u5361\u5217\u8868");
-    records2(groups, assertGroup, "\u89D2\u8272\u7EC4\u5217\u8868");
-    records2(stores, assertStore, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u5217\u8868");
-    records2(tags, assertTag, "\u6807\u7B7E\u5217\u8868");
-    assertActive(active);
-    if (!Array.isArray(models) || !Array.isArray(ttsConfigs))
-      throw new Error("\u6A21\u578B\u6216 TTS \u76EE\u5F55\u8FD4\u56DE\u683C\u5F0F\u4E0D\u6B63\u786E");
-    assertObject(toolCatalog, "\u5DE5\u5177\u6765\u6E90\u76EE\u5F55");
-    for (const field of [
-      "builtinTools",
-      "packages",
-      "skills",
-      "mcpServers"
-    ])
-      if (!Array.isArray(toolCatalog[field]))
-        throw new Error(`\u5DE5\u5177\u6765\u6E90\u76EE\u5F55\u7F3A\u5C11 ${field}`);
-    return {
-      cards,
-      groups,
-      stores,
-      tags,
-      active,
-      models,
-      ttsConfigs,
-      toolCatalog,
-      memoryPreferences
-    };
-  });
-}
-function findRecord(values, id2, label) {
-  let found;
-  for (const value of values) {
-    if (value.id !== id2) continue;
-    if (found !== void 0) throw new Error(`${label} \u6807\u8BC6\u91CD\u590D\uFF1A${id2}`);
-    found = value;
-  }
-  if (found === void 0) throw new Error(`${label} \u4E0D\u5B58\u5728\uFF1A${id2}`);
-  return found;
-}
-function prepareTagChanges(attachedIds, changes2, tags) {
-  assertStrings(attachedIds, "\u89D2\u8272\u6807\u7B7E");
-  assertObject(changes2, "\u6807\u7B7E\u4FEE\u6539");
-  if (!Array.isArray(changes2.created) || !Array.isArray(changes2.updated))
-    throw new Error("\u6807\u7B7E\u4FEE\u6539\u683C\u5F0F\u65E0\u6548");
-  assertStrings(changes2.deleted, "\u5220\u9664\u6807\u7B7E\u6807\u8BC6");
-  const created = [];
-  const updated = [];
-  const deleted = /* @__PURE__ */ new Set();
-  const changedIds = /* @__PURE__ */ new Set();
-  const draftIds = /* @__PURE__ */ new Set();
-  for (const id2 of changes2.deleted) {
-    requireId(id2, "\u5220\u9664\u6807\u7B7E\u6807\u8BC6");
-    findRecord(tags, id2, "\u6807\u7B7E");
-    if (deleted.has(id2)) throw new Error("\u6807\u7B7E\u5220\u9664\u9879\u91CD\u590D");
-    deleted.add(id2);
-  }
-  for (const draft of changes2.created) {
-    assertObject(draft, "\u65B0\u6807\u7B7E");
-    const draftId = requireId(draft.draftId, "\u65B0\u6807\u7B7E\u8349\u7A3F\u6807\u8BC6");
-    if (draftIds.has(draftId)) throw new Error("\u6807\u7B7E\u8349\u7A3F\u6807\u8BC6\u91CD\u590D");
-    for (const tag of tags)
-      if (tag.id === draftId) throw new Error("\u6807\u7B7E\u8349\u7A3F\u6807\u8BC6\u4E0E\u5DF2\u6709\u6807\u7B7E\u51B2\u7A81");
-    assertTagValues(draft.values);
-    const values = normalizedTagValues(draft.values);
-    draftIds.add(draftId);
-    created.push({ draftId, values });
-  }
-  for (const edit of changes2.updated) {
-    assertTagValues(edit);
-    const id2 = requireId(edit.id, "\u4FEE\u6539\u6807\u7B7E\u6807\u8BC6");
-    if (changedIds.has(id2) || deleted.has(id2))
-      throw new Error("\u540C\u4E00\u6807\u7B7E\u5B58\u5728\u51B2\u7A81\u4FEE\u6539");
-    const original = findRecord(tags, id2, "\u6807\u7B7E");
-    changedIds.add(id2);
-    updated.push({ ...original, ...normalizedTagValues(edit) });
-  }
-  const projected = [];
-  for (const tag of tags) {
-    if (deleted.has(tag.id)) continue;
-    let current = tag;
-    for (const update2 of updated) if (update2.id === tag.id) current = update2;
-    projected.push({ id: tag.id, name: current.name.trim() });
-  }
-  for (const draft of created)
-    projected.push({ id: draft.draftId, name: draft.values.name });
-  for (const draft of created)
-    for (const tag of projected)
-      if (tag.id !== draft.draftId && tag.name === draft.values.name)
-        throw new Error(`\u6807\u7B7E\u540D\u79F0\u5DF2\u5B58\u5728\uFF1A${draft.values.name}`);
-  for (const update2 of updated) {
-    const original = findRecord(tags, update2.id, "\u6807\u7B7E");
-    if (original.name.trim() === update2.name) continue;
-    for (const tag of projected)
-      if (tag.id !== update2.id && tag.name === update2.name)
-        throw new Error(`\u6807\u7B7E\u540D\u79F0\u5DF2\u5B58\u5728\uFF1A${update2.name}`);
-  }
-  const attached = [];
-  const attachedSet = /* @__PURE__ */ new Set();
-  for (const id2 of attachedIds) {
-    requireId(id2, "\u89D2\u8272\u6807\u7B7E\u6807\u8BC6");
-    if (deleted.has(id2)) continue;
-    if (!draftIds.has(id2)) findRecord(tags, id2, "\u89D2\u8272\u6807\u7B7E");
-    if (attachedSet.has(id2)) continue;
-    attachedSet.add(id2);
-    attached.push(id2);
-  }
-  return { created, updated, deleted: [...deleted], attachedIds: attached };
-}
-function normalizedTagValues(values) {
-  return {
-    name: requireName(values.name, "\u6807\u7B7E\u540D\u79F0"),
-    description: values.description.trim(),
-    promptContent: values.promptContent,
-    tagType: values.tagType
-  };
-}
-function commitTagChanges(plan, host) {
-  return __async(this, null, function* () {
-    const resolved = /* @__PURE__ */ new Map();
-    for (const draft of plan.created) {
-      const created = yield host.createTag(draft.values);
-      assertTag(created);
-      resolved.set(draft.draftId, created.id);
-    }
-    for (const tag of plan.updated) {
-      const saved = yield host.updateTag(tag);
-      assertTag(saved);
-    }
-    for (const id2 of plan.deleted) yield host.deleteTag(id2);
-    const ids = [];
-    for (const id2 of plan.attachedIds) {
-      if (resolved.has(id2)) {
-        const canonicalId = resolved.get(id2);
-        if (canonicalId === void 0)
-          throw new Error("\u65B0\u6807\u7B7E\u6CA1\u6709\u8FD4\u56DE canonical \u6807\u8BC6");
-        ids.push(canonicalId);
-      } else ids.push(id2);
-    }
-    return normalizeNames(ids);
-  });
-}
-function assertCharacterModelBinding(card) {
-  const mode = characterModelBindingMode(card.chatModelBindingMode);
-  if (mode !== "FOLLOW_GLOBAL" && mode !== "FIXED_MODEL")
-    throw new Error("\u804A\u5929\u6A21\u578B\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548\uFF0C\u8BF7\u91CD\u65B0\u7ED1\u5B9A\u6A21\u578B");
-  if (mode === "FIXED_MODEL") {
-    requireId(card.chatProviderId, "\u56FA\u5B9A\u804A\u5929\u6A21\u578B\u63D0\u4F9B\u5546");
-    requireId(card.chatModelId, "\u56FA\u5B9A\u804A\u5929\u6A21\u578B");
-  }
-}
-function normalizedCharacter(card) {
-  if (card.memoryBindingMode !== "CHARACTER" && card.memoryBindingMode !== "SHARED")
-    throw new Error("\u8BB0\u5FC6\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548");
-  if (card.ttsConfigId !== null) requireId(card.ttsConfigId, "TTS \u914D\u7F6E");
-  if (card.themeConfigId !== null) requireId(card.themeConfigId, "\u4E3B\u9898\u914D\u7F6E");
-  const policy = card.toolAccessConfig;
-  if (policy.enabled && (policy.allowedPackages.length !== 0 || policy.allowedSkills.length !== 0 || policy.allowedMcpServers.length !== 0) && !new Set(normalizeNames(policy.allowedBuiltinTools)).has("use_package"))
-    throw new Error("\u9009\u62E9\u5916\u90E8\u5DE5\u5177\u6765\u6E90\u65F6\u5FC5\u987B\u5141\u8BB8 use_package");
-  const mounts = [];
-  const mountIds = /* @__PURE__ */ new Set();
-  for (const mount2 of card.sharedMemoryMounts) {
-    if (mountIds.has(mount2.sharedMemoryId)) throw new Error("\u5171\u4EAB\u8BB0\u5FC6\u6302\u8F7D\u91CD\u590D");
-    mountIds.add(mount2.sharedMemoryId);
-    mounts.push({
-      sharedMemoryId: mount2.sharedMemoryId,
-      readable: mount2.readable,
-      writable: mount2.writable
+      return result2;
     });
   }
-  return {
-    ...card,
-    name: requireName(card.name, "\u89D2\u8272\u5361\u540D\u79F0"),
-    description: card.description.trim(),
-    attachedTagIds: [...card.attachedTagIds],
-    sharedMemoryMounts: mounts,
-    toolAccessConfig: {
-      enabled: card.toolAccessConfig.enabled,
-      allowedBuiltinTools: normalizeNames(
-        card.toolAccessConfig.allowedBuiltinTools
-      ),
-      allowedPackages: normalizeNames(card.toolAccessConfig.allowedPackages),
-      allowedSkills: normalizeNames(card.toolAccessConfig.allowedSkills),
-      allowedMcpServers: normalizeNames(
-        card.toolAccessConfig.allowedMcpServers
-      )
-    }
-  };
-}
-function saveCharacter(card, create, tagChanges, host) {
-  return __async(this, null, function* () {
-    assertCard(card);
-    assertBoolean(create, "\u89D2\u8272\u65B0\u5EFA\u6807\u8BC6");
-    let value = normalizedCharacter(card);
-    let validateMemoryBinding = create;
-    if (create) {
-      assertCharacterModelBinding(value);
-      value = { ...value, id: "", createdAt: 0, updatedAt: 0 };
-    } else {
-      const id2 = requireId(value.id, "\u89D2\u8272\u5361\u6807\u8BC6");
-      const original = yield host.getCharacter(id2);
-      assertCard(original);
-      if (!sameCharacterModelBinding(original, value)) assertCharacterModelBinding(value);
-      validateMemoryBinding = original.memoryBindingMode !== value.memoryBindingMode || original.sharedMemoryId !== value.sharedMemoryId;
-      value = {
-        ...value,
-        id: original.id,
-        createdAt: original.createdAt
-      };
-    }
-    const [tags, stores, cards] = yield Promise.all([
-      host.listTags(),
-      host.listStores(),
-      host.listCharacters()
-    ]);
-    records2(cards, assertCard, "\u89D2\u8272\u5361\u5217\u8868");
-    let retainedName = false;
-    if (!create) {
-      for (const existing of cards)
-        if (existing.id === value.id && existing.name.trim() === value.name)
-          retainedName = true;
-    }
-    if (!retainedName) {
-      for (const existing of cards)
-        if (existing.id !== value.id && existing.name.trim() === value.name)
-          throw new Error(`\u89D2\u8272\u5361\u540D\u79F0\u5DF2\u5B58\u5728\uFF1A${value.name}`);
-    }
-    if (value.ttsConfigId !== null) {
-      const configs = yield host.listTtsConfigs();
-      findRecord(configs, value.ttsConfigId, "TTS \u914D\u7F6E");
-    }
-    records2(tags, assertTag, "\u6807\u7B7E\u5217\u8868");
-    records2(stores, assertStore, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u5217\u8868");
-    const plan = prepareTagChanges(value.attachedTagIds, tagChanges, tags);
-    if (validateMemoryBinding && value.memoryBindingMode === "SHARED")
-      findRecord(
-        stores,
-        requireId(value.sharedMemoryId, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u6807\u8BC6"),
-        "\u5171\u4EAB\u8BB0\u5FC6\u5E93"
-      );
-    for (const mount2 of value.sharedMemoryMounts)
-      findRecord(stores, mount2.sharedMemoryId, "\u5171\u4EAB\u8BB0\u5FC6\u5E93");
-    value = { ...value, attachedTagIds: yield commitTagChanges(plan, host) };
-    const saved = create ? yield host.createCharacter(value) : yield host.updateCharacter(value);
-    assertCard(saved);
-    requireId(saved.id, "\u4FDD\u5B58\u7684\u89D2\u8272\u5361\u6807\u8BC6");
-    return saved;
-  });
-}
-function saveGroup(group, create, host) {
-  return __async(this, null, function* () {
-    assertGroupValues(group);
-    assertBoolean(create, "\u7FA4\u7EC4\u65B0\u5EFA\u6807\u8BC6");
-    const name = requireName(group.name, "\u89D2\u8272\u7EC4\u540D\u79F0");
-    const cards = records2(yield host.listCharacters(), assertCard, "\u89D2\u8272\u5361\u5217\u8868");
-    const members2 = [];
-    for (const member2 of group.members) {
-      findRecord(cards, member2.characterCardId, "\u7FA4\u7EC4\u89D2\u8272");
-      members2.push({
-        characterCardId: member2.characterCardId,
-        orderIndex: member2.orderIndex
-      });
-    }
-    let value;
-    if (create)
-      value = {
-        id: "",
-        name,
-        description: group.description.trim(),
-        members: members2,
-        themeConfigId: group.themeConfigId,
-        createdAt: 0,
-        updatedAt: 0
-      };
-    else {
-      const original = yield host.getGroup(requireId(group.id, "\u7FA4\u7EC4\u6807\u8BC6"));
-      assertGroup(original);
-      value = {
-        ...original,
-        name,
-        description: group.description.trim(),
-        members: members2,
-        themeConfigId: group.themeConfigId
-      };
-    }
-    const saved = create ? yield host.createGroup(value) : yield host.updateGroup(value);
-    assertGroup(saved);
-    return saved;
-  });
-}
-function saveTag(tag, create, host) {
-  return __async(this, null, function* () {
-    assertTagValues(tag);
-    assertBoolean(create, "\u6807\u7B7E\u65B0\u5EFA\u6807\u8BC6");
-    const values = normalizedTagValues(tag);
-    let saved;
-    if (create) saved = yield host.createTag(values);
-    else {
-      const tags = records2(yield host.listTags(), assertTag, "\u6807\u7B7E\u5217\u8868");
-      const original = findRecord(tags, requireId(tag.id, "\u6807\u7B7E\u6807\u8BC6"), "\u6807\u7B7E");
-      saved = yield host.updateTag({ ...original, ...values });
-    }
-    assertTag(saved);
-    return saved;
-  });
-}
-function saveStore(store, create, host) {
-  return __async(this, null, function* () {
-    assertObject(store, "\u5171\u4EAB\u8BB0\u5FC6\u5E93");
-    assertBoolean(create, "\u8BB0\u5FC6\u5E93\u65B0\u5EFA\u6807\u8BC6");
-    const name = requireName(store.name, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u540D\u79F0");
-    let saved;
-    if (create) saved = yield host.createStore(name);
-    else {
-      const id2 = requireId(store.id, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u6807\u8BC6");
-      findRecord(
-        records2(yield host.listStores(), assertStore, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u5217\u8868"),
-        id2,
-        "\u5171\u4EAB\u8BB0\u5FC6\u5E93"
-      );
-      saved = yield host.renameStore(id2, name);
-    }
-    assertStore(saved);
-    return saved;
-  });
-}
-function activate(type, id2, host) {
-  return __async(this, null, function* () {
-    requireId(id2, "\u5F53\u524D\u63D0\u793A\u8BCD\u6807\u8BC6");
-    if (type === "card") {
-      assertCard(yield host.getCharacter(id2));
-      yield host.writeActive({ CharacterCard: { id: id2 } });
-    } else if (type === "group") {
-      assertGroup(yield host.getGroup(id2));
-      yield host.writeActive({ CharacterGroup: { id: id2 } });
-    } else throw new Error("\u5F53\u524D\u63D0\u793A\u8BCD\u7C7B\u578B\u65E0\u6548");
-  });
-}
-function parseOwner(ownerKey) {
-  assertString(ownerKey, "\u8BB0\u5FC6\u5E93\u6807\u8BC6");
-  const parts = ownerKey.split(":");
-  if (parts.length !== 2 || !/^[^:\s]+$/.test(parts[1]))
-    throw new Error("\u8BB0\u5FC6\u5E93\u6807\u8BC6\u683C\u5F0F\u65E0\u6548");
-  if (parts[0] === "character") return { kind: "CHARACTER", id: parts[1] };
-  if (parts[0] === "shared") return { kind: "SHARED", id: parts[1] };
-  throw new Error("\u8BB0\u5FC6\u5E93\u547D\u540D\u7A7A\u95F4\u65E0\u6548");
-}
-function menuMemoryOwner(chatId, host) {
-  return __async(this, null, function* () {
-    requireId(chatId, "memory menu chat id");
-    const binding = yield findChatBinding(chatId);
-    const selection = binding === null ? null : parseChatSelection(binding.selection);
-    if (selection?.kind === "model") throw new Error("Model-only conversations have no role memory owner");
-    if (selection?.kind === "card") return resolveMemoryOwner(selection.id, host);
-    throw new Error("Select a character memory owner for this conversation");
-  });
-}
-function requireOwner(ownerKey, host) {
-  return __async(this, null, function* () {
-    const owner2 = parseOwner(ownerKey);
-    if (owner2.kind === "CHARACTER") assertCard(yield host.getCharacter(owner2.id));
-    else
-      findRecord(
-        records2(yield host.listStores(), assertStore, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u5217\u8868"),
-        owner2.id,
-        "\u5171\u4EAB\u8BB0\u5FC6\u5E93"
-      );
-    return owner2;
-  });
-}
-function resolveMemoryOwner(characterId, host) {
-  return __async(this, null, function* () {
-    const card = yield host.getCharacter(requireId(characterId, "\u89D2\u8272\u5361\u6807\u8BC6"));
-    assertCard(card);
-    let ownerKey;
-    if (card.memoryBindingMode === "CHARACTER") ownerKey = `character:${card.id}`;
-    else if (card.memoryBindingMode === "SHARED")
-      ownerKey = `shared:${requireId(card.sharedMemoryId, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u7ED1\u5B9A")}`;
-    else throw new Error("\u8BB0\u5FC6\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548");
-    yield requireOwner(ownerKey, host);
-    return ownerKey;
-  });
-}
-function listMemories(ownerKey, host) {
-  return __async(this, null, function* () {
-    yield requireOwner(ownerKey, host);
-    return records2(yield host.listMemories(ownerKey), assertMemory, "\u8BB0\u5FC6\u5217\u8868");
-  });
-}
-function graph(ownerKey, host) {
-  return __async(this, null, function* () {
-    yield requireOwner(ownerKey, host);
-    const [value, items] = yield Promise.all([
-      host.readMemoryGraph(ownerKey),
-      host.listMemories(ownerKey)
-    ]);
-    assertGraph(value);
-    records2(items, assertMemory, "\u8BB0\u5FC6\u5217\u8868");
-    return { graph: value, items };
-  });
-}
-function normalizeFolderPath(value) {
-  if (value === null) return null;
-  const parts = [];
-  for (const part of value.replace(/\\/g, "/").split("/")) {
-    const name = part.trim();
-    if (name !== "") parts.push(name);
+  /** Resolves primary owners and writable mounts from complete character and group JSON documents. */
+  chatsForMemoryOwner(ownerKey) {
+    return __async(this, null, function* () {
+      requireId(ownerKey, "memory owner");
+      const database = this.storage;
+      const before = yield database.data();
+      const [cards, groups, bindings] = yield Promise.all([
+        Promise.resolve(documents(before.cards).map((card) => readCharacter(card))),
+        Promise.resolve(documents(before.groups)),
+        this.listChatBindings()
+      ]);
+      const owners = /* @__PURE__ */ new Set(), selections = /* @__PURE__ */ new Set();
+      for (const card of cards) {
+        const primary = card.memoryBindingMode === "CHARACTER" ? "character:" + card.id : "shared:" + card.sharedMemoryId;
+        if (primary === ownerKey || card.sharedMemoryMounts.some((mount2) => mount2.writable && "shared:" + mount2.sharedMemoryId === ownerKey)) {
+          owners.add(card.id);
+          selections.add("card:" + card.id);
+        }
+      }
+      for (const group of groups) {
+        assertGroup(group);
+        if (group.members.some((member2) => owners.has(member2.characterCardId))) selections.add("group:" + group.id);
+      }
+      const after = yield database.data();
+      if (!equal(before.cards.entries(), after.cards.entries()) || !equal(before.groups.entries(), after.groups.entries())) throw new Error("Character configuration changed during the read");
+      return bindings.filter((binding) => selections.has(binding.selection)).map((binding) => binding.chatId);
+    });
   }
-  return parts.length === 0 ? null : parts.join("/");
-}
-function searchMemories(options, host) {
-  return __async(this, null, function* () {
-    assertSearchOptions(options);
-    yield requireOwner(options.ownerKey, host);
-    return records2(
-      yield host.searchMemories({
-        ...options,
-        folderPath: normalizeFolderPath(options.folderPath)
-      }),
-      assertMemory,
-      "\u8BB0\u5FC6\u641C\u7D22"
-    );
-  });
-}
-function combinePrompts(characterId, additionalTagIds, promptFunctionType, host) {
-  return __async(this, null, function* () {
-    const card = yield host.getCharacter(requireId(characterId, "\u89D2\u8272\u5361\u6807\u8BC6"));
-    return combineCharacterPrompt(card, additionalTagIds, promptFunctionType, host);
-  });
-}
-function writeMemorySettings(ownerKey, settings2, host) {
-  return __async(this, null, function* () {
-    assertMemorySettings(settings2);
-    yield requireOwner(ownerKey, host);
-    yield host.writeMemorySettings(ownerKey, { ...settings2 });
-    const saved = yield host.readMemorySettings(ownerKey);
-    assertMemorySettings(saved);
-    return saved;
-  });
-}
-function writeMemorySearchConfig(ownerKey, config, host) {
-  return __async(this, null, function* () {
-    assertSearchConfig(config);
-    yield requireOwner(ownerKey, host);
-    yield host.writeMemorySearchConfig(ownerKey, { ...config });
-    const saved = yield host.readMemorySearchConfig(ownerKey);
-    assertSearchConfig(saved);
-    return saved;
-  });
-}
-function dispatch(request, host) {
-  return __async(this, null, function* () {
-    assertObject(request, "\u89D2\u8272\u5361\u8BF7\u6C42");
-    switch (request.action) {
-      case "snapshot":
-        return snapshot(host);
-      case "readGlobalMemoryPreferences":
-        return host.readGlobalMemoryPreferences();
-      case "readChatMemoryAutoSaveStatus":
-        return host.readMemoryAutoSaveStatus(
-          yield menuMemoryOwner(request.chatId, host)
-        );
-      case "updateCurrentChatMemory":
-        return executeDomain(
-          "memory.chat.update",
-          {
-            ownerKey: yield menuMemoryOwner(request.chatId, host),
-            chatId: request.chatId
-          },
-          host
-        );
-      case "retryFailedCandidates":
-        return executeDomain(
-          "memory.candidates.retryFailed",
-          { ownerKey: "ownerKey" in request ? request.ownerKey : yield menuMemoryOwner(request.chatId, host) },
-          host
-        );
-      case "clearFailedCandidates":
-        return executeDomain(
-          "memory.candidates.clearFailed",
-          { ownerKey: "ownerKey" in request ? request.ownerKey : yield menuMemoryOwner(request.chatId, host) },
-          host
-        );
-      case "writeGlobalMemoryPreference":
-        return host.writeGlobalMemoryPreference(request.key, request.value);
-      case "readMemoryRecallSettings":
-        return host.readMemoryRecallSettings();
-      case "writeMemoryRecallSettings":
-        return host.writeMemoryRecallSettings(request.settings);
-      case "searchMemoryDebug": {
-        yield requireOwner(request.ownerKey, host);
-        assertSearchConfig(request.config);
-        return host.searchMemoryDebug(
-          {
-            ownerKey: request.ownerKey,
-            query: request.query,
-            folderPath: null,
-            relevanceThreshold: request.relevanceThreshold,
-            createdAtStartMs: null,
-            createdAtEndMs: null
-          },
-          request.config
-        );
-      }
-      case "readMemoryLink":
-        yield requireOwner(request.ownerKey, host);
-        return host.readMemoryLink(request.ownerKey, request.linkId);
-      case "listThemeChoices":
-        return readThemeChoices(independentConfigurations);
-      case "listCharacters":
-        return records2(yield host.listCharacters(), assertCard, "\u89D2\u8272\u5361\u5217\u8868");
-      case "getCharacter": {
-        const card = yield host.getCharacter(requireId(request.id, "\u89D2\u8272\u5361\u6807\u8BC6"));
-        assertCard(card);
-        return card;
-      }
-      case "saveCharacter":
-        yield saveCharacter(
-          request.card,
-          request.create,
-          request.tagChanges,
-          host
-        );
-        return snapshot(host);
-      case "deleteCharacter": {
-        const id2 = requireId(request.id, "\u89D2\u8272\u5361\u6807\u8BC6");
-        const card = yield host.getCharacter(id2);
-        assertCard(card);
-        yield host.deleteCharacter(id2);
-        return snapshot(host);
-      }
-      case "activate":
-        yield activate(request.type, request.id, host);
-        return snapshot(host);
-      case "readActive": {
-        const active = yield host.readActive();
-        assertActive(active);
-        return active;
-      }
-      case "listBindableChats":
-        return listBindableChats();
-      case "readChatBinding":
-        return executeDomain(
-          "chat.configuration.binding.read",
-          { chatId: request.chatId },
-          host
-        );
-      case "writeChatBinding":
-        return executeDomain(
-          "chat.configuration.binding.write",
-          { chatId: request.chatId, selection: request.selection },
-          host
-        );
-      case "deleteChatBinding":
-        return executeDomain(
-          "chat.configuration.binding.delete",
-          { chatId: request.chatId },
-          host
-        );
-      case "listGroups":
-        return records2(yield host.listGroups(), assertGroup, "\u89D2\u8272\u7EC4\u5217\u8868");
-      case "getGroup": {
-        const group = yield host.getGroup(requireId(request.id, "\u7FA4\u7EC4\u6807\u8BC6"));
-        assertGroup(group);
-        return group;
-      }
-      case "saveGroup":
-        yield saveGroup(request.group, request.create, host);
-        return snapshot(host);
-      case "deleteGroup":
-        yield host.deleteGroup(requireId(request.id, "\u7FA4\u7EC4\u6807\u8BC6"));
-        return snapshot(host);
-      case "listTags":
-        return records2(yield host.listTags(), assertTag, "\u6807\u7B7E\u5217\u8868");
-      case "saveTag":
-        return saveTag(request.tag, request.create, host);
-      case "deleteTag":
-        yield host.deleteTag(requireId(request.id, "\u6807\u7B7E\u6807\u8BC6"));
-        return snapshot(host);
-      case "listStores":
-        return records2(yield host.listStores(), assertStore, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u5217\u8868");
-      case "saveStore":
-        yield saveStore(request.store, request.create, host);
-        return snapshot(host);
-      case "deleteStore":
-        yield host.deleteStore(requireId(request.id, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u6807\u8BC6"));
-        return snapshot(host);
-      case "listModels":
-        return host.listModels();
-      case "listTtsConfigs":
-        return host.listTtsConfigs();
-      case "readToolCatalog":
-        return host.readToolCatalog();
-      case "resolveMemoryOwner":
-        return resolveMemoryOwner(request.characterId, host);
-      case "readUser":
-        return executeDomain("memory.user.read", { ownerKey: request.ownerKey }, host);
-      case "writeUser":
-        yield executeDomain("memory.user.write", { ownerKey: request.ownerKey, content: request.content }, host);
-        return { saved: true };
-      case "graph":
-        return graph(request.ownerKey, host);
-      case "listMemories":
-        return listMemories(request.ownerKey, host);
-      case "searchMemory":
-        return searchMemories(
-          {
-            ownerKey: request.ownerKey,
-            query: request.query,
-            folderPath: null,
-            relevanceThreshold: 0,
-            createdAtStartMs: null,
-            createdAtEndMs: null
-          },
-          host
-        );
-      case "searchMemories":
-        return searchMemories(request.options, host);
-      case "saveMemory": {
-        const values = {
-          title: request.title,
-          content: request.content,
-          contentType: request.contentType.trim(),
-          source: request.source.trim(),
-          credibility: request.credibility,
-          importance: request.importance,
-          folderPath: request.folderPath,
-          tags: normalizeNames(request.tags.split(","))
-        };
-        if (request.originalTitle === null) yield executeDomain("memory.create", { ownerKey: request.ownerKey, values }, host);
-        else yield executeDomain("memory.update", { ownerKey: request.ownerKey, originalTitle: request.originalTitle, changes: values }, host);
-        return graph(request.ownerKey, host);
-      }
-      case "deleteMemory": {
-        const { item } = yield executeDomain("memory.get", { ownerKey: request.ownerKey, title: request.title }, host);
-        yield executeDomain("memory.delete", { ownerKey: request.ownerKey, id: item.id }, host);
-        return graph(request.ownerKey, host);
-      }
-      case "createLink":
-        yield executeDomain("memory.link.create", { ownerKey: request.ownerKey, sourceTitle: request.sourceTitle, targetTitle: request.targetTitle, linkType: request.linkType, weight: request.weight, description: request.description }, host);
-        return graph(request.ownerKey, host);
-      case "deleteLink":
-        yield executeDomain("memory.link.delete", { ownerKey: request.ownerKey, linkId: request.linkId }, host);
-        return graph(request.ownerKey, host);
-      case "updateLink":
-        yield executeDomain("memory.link.update", { ownerKey: request.ownerKey, linkId: request.linkId, changes: { linkType: request.linkType, weight: request.weight, description: request.description } }, host);
-        return graph(request.ownerKey, host);
-      case "readMemorySettings": {
-        yield requireOwner(request.ownerKey, host);
-        const settings2 = yield host.readMemorySettings(request.ownerKey);
-        assertMemorySettings(settings2);
-        return settings2;
-      }
-      case "writeMemorySettings":
-        return writeMemorySettings(request.ownerKey, request.settings, host);
-      case "readMemorySearchConfig": {
-        yield requireOwner(request.ownerKey, host);
-        const config = yield host.readMemorySearchConfig(request.ownerKey);
-        assertSearchConfig(config);
-        return config;
-      }
-      case "writeMemorySearchConfig":
-        return writeMemorySearchConfig(request.ownerKey, request.config, host);
-      case "writeMemoryOwnerSettings": {
-        assertMemorySettings(request.settings);
-        assertSearchConfig(request.config);
-        yield requireOwner(request.ownerKey, host);
-        const current = yield host.readMemorySettings(request.ownerKey);
-        yield host.writeMemorySettings(request.ownerKey, {
-          ...request.settings,
-          nextAutoSaveRunAtMs: current.nextAutoSaveRunAtMs
-        });
-        yield host.writeMemorySearchConfig(request.ownerKey, request.config);
-        return {
-          settings: yield host.readMemorySettings(request.ownerKey),
-          config: yield host.readMemorySearchConfig(request.ownerKey)
-        };
-      }
-      case "combinePrompts":
-        return combinePrompts(
-          request.characterId,
-          request.additionalTagIds,
-          request.promptFunctionType,
-          host
-        );
-      case "importCharacter": {
-        const tags = records2(yield host.listTags(), assertTag, "\u6807\u7B7E\u5217\u8868");
-        const plan = decodeCharacterImport(request.content, request.format, tags);
-        yield saveCharacter(plan.card, true, plan.tagChanges, host);
-        return snapshot(host);
-      }
-      case "exportCharacter": {
-        const card = yield host.getCharacter(requireId(request.id, "\u89D2\u8272\u5361\u6807\u8BC6"));
-        assertCard(card);
-        const tags = records2(yield host.listTags(), assertTag, "\u6807\u7B7E\u5217\u8868");
-        return encodeCharacterExport(card, request.format, tags);
-      }
-      case "importGroup":
-        yield saveGroup(decodeGroupImport(request.content), true, host);
-        return snapshot(host);
-      case "exportGroup": {
-        const group = yield host.getGroup(requireId(request.id, "\u7FA4\u7EC4\u6807\u8BC6"));
-        assertGroup(group);
-        return JSON.stringify(group, null, 2);
-      }
-      case "listMemoryFolders":
-        yield requireOwner(request.ownerKey, host);
-        return host.listMemoryFolders(request.ownerKey);
-      case "readMemoryAutoSaveStatus":
-        yield requireOwner(request.ownerKey, host);
-        return host.readMemoryAutoSaveStatus(request.ownerKey);
-      case "listMemoryChats":
-        return executeDomain(
-          "memory.chat.list",
-          { ownerKey: request.ownerKey },
-          host
-        );
-      case "pruneMissingChatBindings":
-        return executeDomain(
-          "memory.chat.pruneMissing",
-          { ownerKey: request.ownerKey },
-          host
-        );
-      case "updateChatMemory":
-        return executeDomain(
-          "memory.chat.update",
-          { ownerKey: request.ownerKey, chatId: request.chatId },
-          host
-        );
-      case "autoCategorizeMemory":
-        return executeDomain(
-          "memory.categorize",
-          { ownerKey: request.ownerKey },
-          host
-        );
-      case "startMemoryRebuild":
-        return executeDomain(
-          "memory.rebuild.start",
-          { ownerKey: request.ownerKey, rebuild: request.rebuild },
-          host
-        );
-      case "readMemoryRebuildProgress":
-        return executeDomain(
-          "memory.rebuild.progress",
-          { ownerKey: request.ownerKey },
-          host
-        );
-      case "cancelMemoryRebuild":
-        return executeDomain(
-          "memory.rebuild.cancel",
-          { ownerKey: request.ownerKey },
-          host
-        );
-      case "rebuildMemoryEmbeddings":
-        return executeDomain(
-          "memory.embeddings.rebuild",
-          { ownerKey: request.ownerKey },
-          host
-        );
-      case "exportMemory":
-        return executeDomain("memory.export", { ownerKey: request.ownerKey }, host);
-      case "importMemory":
-        return executeDomain("memory.import", { ownerKey: request.ownerKey, content: request.content, strategy: request.strategy }, host);
-      default: {
-        const action = request;
-        throw new Error(`\u672A\u77E5\u89D2\u8272\u5361\u8BF7\u6C42\uFF1A${JSON.stringify(action)}`);
-      }
-    }
-  });
-}
-function dispatchDomain(operation, input, host) {
-  return executeDomain(operation, input, host);
-}
+  /** Edits a validated chat binding through the native preference transaction. */
+  writeChatBinding(binding) {
+    return __async(this, null, function* () {
+      requireId(binding.chatId, "chat id");
+      const marker = decodeChatMarker({ version: 1, selection: binding.selection });
+      yield this.requireSelection(binding.selection);
+      yield this.storage.chats.edit((preferences) => {
+        preferences.set("binding_" + binding.chatId, { ...marker });
+      });
+      return binding;
+    });
+  }
+  /** Allocates a draft binding without publishing it in the conversation catalog. */
+  prepareChatBinding(binding) {
+    return __async(this, null, function* () {
+      requireId(binding.chatId, "draft id");
+      const marker = decodeChatMarker({ version: 1, selection: binding.selection });
+      yield this.storage.chats.edit((preferences) => {
+        const key = "draft_" + binding.chatId;
+        if (preferences.contains(key)) throw new Error("Chat draft binding already exists: " + binding.chatId);
+        preferences.set(key, { ...marker });
+      });
+    });
+  }
+  /** Resolves only the explicitly prepared draft identity. */
+  readDraftBinding(chatId) {
+    return __async(this, null, function* () {
+      requireId(chatId, "draft id");
+      const value = (yield this.storage.chats.data()).get("draft_" + chatId);
+      if (value === void 0) throw new Error("Chat draft binding is unavailable: " + chatId);
+      return { chatId, selection: decodeChatMarker(value).selection };
+    });
+  }
+  /** Publishes the binding and removes its draft inside the same preference edit. */
+  commitDraftBinding(chatId) {
+    return __async(this, null, function* () {
+      requireId(chatId, "draft id");
+      yield this.storage.chats.edit((preferences) => {
+        const value = preferences.get("draft_" + chatId);
+        if (value === void 0) throw new Error("Chat draft binding is unavailable: " + chatId);
+        decodeChatMarker(value);
+        if (preferences.contains("binding_" + chatId)) throw new Error("Chat binding already exists: " + chatId);
+        preferences.set("binding_" + chatId, value);
+        preferences.remove("draft_" + chatId);
+      });
+    });
+  }
+  /** Aborts exactly one allocated draft without altering the committed binding. */
+  abortDraftBinding(chatId) {
+    return __async(this, null, function* () {
+      requireId(chatId, "draft id");
+      yield this.storage.chats.edit((preferences) => {
+        if (!preferences.contains("draft_" + chatId)) throw new Error("Chat draft binding is unavailable: " + chatId);
+        preferences.remove("draft_" + chatId);
+      });
+    });
+  }
+  /** Deletes the plugin-owned binding and reports whether it was present in the edit snapshot. */
+  deleteChatBinding(chatId) {
+    return __async(this, null, function* () {
+      requireId(chatId, "chat id");
+      let deleted = false;
+      yield this.storage.chats.edit((preferences) => {
+        deleted = preferences.contains("binding_" + chatId);
+        preferences.remove("binding_" + chatId);
+      });
+      return { chatId, deleted };
+    });
+  }
+};
 
 // src/repository.ts
 function copy(value) {
   return clone(value);
 }
-function get(records3, id2, label) {
+function get(records2, id2, label) {
   requireId(id2, label + " id");
-  const recordsWithId = records3.filter(
+  const recordsWithId = records2.filter(
     /** Resolves the exact identity rather than guessing names. */
     (record2) => record2.id === id2
   );
   if (recordsWithId.length !== 1) throw new Error(label + " does not identify exactly one record: " + id2);
   return recordsWithId[0];
 }
-function uniqueName(records3, name, id2) {
-  for (const record2 of records3) if (record2.id !== id2 && record2.name === name) throw new Error("Name already exists: " + name);
+function uniqueName(records2, name, id2) {
+  for (const record2 of records2) if (record2.id !== id2 && record2.name === name) throw new Error("Name already exists: " + name);
 }
 function folder(value) {
   if (value === null) return null;
@@ -6256,10 +3127,11 @@ function folder(value) {
 }
 var RepositorySession = class {
   /** Receives the operation snapshot and explicitly connected external directory readers. */
-  constructor(state, directory, directories = null) {
+  constructor(state, directory, chatBindings, directories2 = null) {
     this.state = state;
     this.directory = directory;
-    this.directories = directories;
+    this.chatBindings = chatBindings;
+    this.directories = directories2;
     this.documents = /* @__PURE__ */ new Map();
   }
   readGlobalMemoryPreferences() {
@@ -6340,7 +3212,6 @@ var RepositorySession = class {
   /** Creates all character fields and its genuine initialized memory space. */
   createCharacter(card) {
     return __async(this, null, function* () {
-      assertCard(card);
       const name = requireName(card.name, "character name");
       uniqueName(this.state.cards, name, "");
       const now = Date.now(), saved = { ...copy(card), id: uuid(), name, createdAt: now, updatedAt: now };
@@ -6352,7 +3223,6 @@ var RepositorySession = class {
   /** Writes the full editable character while preserving its stable creation identity. */
   updateCharacter(card) {
     return __async(this, null, function* () {
-      assertCard(card);
       const original = get(this.state.cards, card.id, "character"), name = requireName(card.name, "character name");
       uniqueName(this.state.cards, name, card.id);
       const saved = { ...copy(card), name, createdAt: original.createdAt, updatedAt: Date.now() };
@@ -6584,34 +3454,7 @@ var RepositorySession = class {
   /** Rejects deletion using only selections on existing authoritative host records. */
   requireUnboundSelection(selection) {
     return __async(this, null, function* () {
-      for (const binding of yield this.listChatBindings()) if (binding.selection === selection) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
-    });
-  }
-  /** Enumerates only real host records and their authenticated plugin extension markers. */
-  listChatBindings() {
-    return __async(this, null, function* () {
-      return listChatBindings();
-    });
-  }
-  /** Reads the sole record-extension source and validates its actual stored domain reference. */
-  readChatBinding(chatId) {
-    return __async(this, null, function* () {
-      const binding = yield readChatBinding(chatId);
-      requireChatSelection(binding.selection, this.state.cards, this.state.groups);
-      return binding;
-    });
-  }
-  /** Writes an explicit selector submission solely to the authenticated host record namespace. */
-  writeChatBinding(binding) {
-    return __async(this, null, function* () {
-      requireChatSelection(binding.selection, this.state.cards, this.state.groups);
-      return writeChatBinding(binding);
-    });
-  }
-  /** Deletes only the authenticated record namespace without touching manual membership or file state. */
-  deleteChatBinding(chatId) {
-    return __async(this, null, function* () {
-      return deleteChatBinding(chatId);
+      for (const binding of yield this.chatBindings.listChatBindings()) if (binding.selection === selection) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
     });
   }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */
@@ -6958,7 +3801,6 @@ var RepositorySession = class {
         else Object.assign(matches[0], copy(tag));
       }
       for (const card of cards) {
-        assertCard(card);
         requireId(card.id, "backup character id");
         const matches = this.state.cards.filter(
           /** Resolves the imported character by exact identity. */
@@ -7087,26 +3929,26 @@ function completed2(result2) {
 var HOST_OBJECT_COMMIT_LIMIT = 1e3;
 var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   /** Retains the host database handle and the explicit external directory readers. */
-  constructor(storage, directory, directories) {
+  constructor(storage, directory, directories2) {
     this.storage = storage;
     this.directory = directory;
-    this.directories = directories;
+    this.directories = directories2;
     this.busy = false;
     this.publicationFailure = null;
     this.waiters = [];
+    this.chatBindings = new CharacterChatStore(storage);
   }
   /** Opens storage and initializes first-install records without retaining a synchronized domain snapshot. */
-  static open(directories = null) {
+  static open(directories2 = null) {
     return __async(this, null, function* () {
       const directory = ToolPkg.getSpaceDataDir();
       if (typeof directory !== "string" || directory.trim() === "")
         throw new Error("Plugin data directory is unavailable");
       const storage = yield CharacterStorage.open();
-      const repository = new _DatabaseCharacterRepository(storage, directory, directories);
+      const repository2 = new _DatabaseCharacterRepository(storage, directory, directories2);
       const existing = (yield storage.metadata.data()).get("state");
       if (existing === void 0) {
         const state = createInitialState(Date.now());
-        assertCharacterState(state);
         for (const name of configurationNames) {
           yield storage.configuration[name].edit((preferences) => {
             if (preferences.entries().length !== 0) throw new Error("Character initialization found existing configuration: " + name);
@@ -7125,8 +3967,8 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
           preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
         });
       }
-      yield repository.readMetadata();
-      return repository;
+      yield repository2.readMetadata();
+      return repository2;
     });
   }
   /** Combines complete JSON preferences with independently stored memory records for a domain session. */
@@ -7135,7 +3977,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       const rows = [];
       for (const name of configurationNames) {
         for (const [key, value] of configuration[name].entries()) {
-          if (key.startsWith(recordPrefix)) rows.push({ collection: name, key: key.slice(recordPrefix.length), value, version: null });
+          if (key.startsWith(recordPrefix)) rows.push({ collection: name, key: key.slice(recordPrefix.length), value: clone(value), version: null });
         }
       }
       const results = yield Promise.allSettled(["owners", "memories", "links", "chunks", "candidates", "embeddings"].map(
@@ -7161,14 +4003,14 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
           throw new Error("Character database metadata disappeared");
         const configuration = yield this.storage.data(), rows = yield this.readRecords(configuration);
         assertObject(metadata, "character metadata");
-        const before = stateFromRecords(metadata, rows);
+        const before = decodeStateFromRecords(metadata, rows);
         const state = clone(before), session = new RepositorySession(
           state,
           this.directory,
+          this.chatBindings,
           this.directories
         );
         const result2 = yield action(session);
-        assertCharacterState(state);
         const documents2 = session.documentWrites();
         const removed = before.owners.filter(
           (owner2) => !state.owners.some(
@@ -7215,15 +4057,8 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   readSidebarDirectory() {
     return __async(this, null, function* () {
       this.requirePublicationReady();
-      const cards = yield this.storage.configuration.cards.data(), groups = yield this.storage.configuration.groups.data();
-      const value = { cards: documents(cards), groups: documents(groups) };
-      for (const card of value.cards) assertCard(card);
-      const ids = new Set(value.cards.map((card) => card.id));
-      for (const group of value.groups) {
-        assertGroup(group);
-        for (const member2 of group.members) if (!ids.has(member2.characterCardId)) throw new Error("Missing group member: " + member2.characterCardId);
-      }
-      return value;
+      const [cards, groups] = yield Promise.all([this.readCharacters(), this.readGroups()]);
+      return { cards, groups };
     });
   }
   /** Reads the explicitly stored active selection. */
@@ -7234,16 +4069,16 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   /** Reads configuration records only; memory content and vectors remain in their own queries. */
   readConfigurationSnapshot() {
     if (this.directories === null) throw new Error("External directory readers are unavailable");
-    const directories = this.directories;
+    const directories2 = this.directories;
     return this.readConsistent(() => __async(this, null, function* () {
       const [cards, groups, stores, tags, models, ttsConfigs, toolCatalog, metadata] = yield Promise.all([
         this.readCharacters(),
         this.readGroups(),
         this.storage.configuration.stores.data().then((preferences) => documents(preferences)),
         this.readTags(),
-        Promise.resolve().then(() => directories.listModels()),
-        Promise.resolve().then(() => directories.listTtsConfigs()),
-        Promise.resolve().then(() => directories.readToolCatalog()),
+        Promise.resolve().then(() => directories2.listModels()),
+        Promise.resolve().then(() => directories2.listTtsConfigs()),
+        Promise.resolve().then(() => directories2.readToolCatalog()),
         this.readMetadata()
       ]);
       return { cards, groups, stores, tags, models, ttsConfigs, toolCatalog, ...metadata };
@@ -7270,10 +4105,8 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   /** Validates complete character documents including nested configuration. */
   readCharacters() {
     return __async(this, null, function* () {
-      return documents(yield this.storage.configuration.cards.data()).map((value) => {
-        assertCard(value);
-        return value;
-      });
+      const snapshot2 = yield this.storage.configuration.cards.data();
+      return snapshot2.entries().filter(([key]) => key.startsWith(recordPrefix)).map(([key, value]) => readCharacter(value, key.slice(recordPrefix.length)));
     });
   }
   /** Validates complete group documents including ordered members. */
@@ -7300,8 +4133,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
     return this.readConsistent(() => __async(this, null, function* () {
       const value = document(yield this.storage.configuration.cards.data(), id2);
       if (value === void 0) throw new Error("Character not found: " + id2);
-      assertCard(value);
-      return value;
+      return readCharacter(value, id2);
     }));
   }
   /** Reads one group by its exact document identity. */
@@ -7531,44 +4363,3040 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   }
 };
 
-// src/service-runtime.ts
-function createServiceRuntime(initialize) {
-  let initialization = null;
+// src/repository-runtime.ts
+var directories = null;
+var repository;
+function connectDirectorySources(sources) {
+  if (repository !== void 0 || directories !== null) throw new Error("External directory readers must be connected exactly once before service initialization");
+  directories = sources;
+}
+function getRepository() {
+  return repository ?? (repository = Promise.resolve().then(() => DatabaseCharacterRepository.open(directories)));
+}
+
+// src/chat-storage.ts
+function findChatBinding(chatId) {
+  return __async(this, null, function* () {
+    return (yield getRepository()).chatBindings.findChatBinding(chatId);
+  });
+}
+function bindingsForChats(chatIds) {
+  return __async(this, null, function* () {
+    return (yield getRepository()).chatBindings.bindingsForChats(chatIds);
+  });
+}
+function prepareChatBinding(binding) {
+  return __async(this, null, function* () {
+    return (yield getRepository()).chatBindings.prepareChatBinding(binding);
+  });
+}
+function readDraftBinding(chatId) {
+  return __async(this, null, function* () {
+    return (yield getRepository()).chatBindings.readDraftBinding(chatId);
+  });
+}
+function commitDraftBinding(chatId) {
+  return __async(this, null, function* () {
+    return (yield getRepository()).chatBindings.commitDraftBinding(chatId);
+  });
+}
+function abortDraftBinding(chatId) {
+  return __async(this, null, function* () {
+    return (yield getRepository()).chatBindings.abortDraftBinding(chatId);
+  });
+}
+function readMessageAuthor(chatId, messageTimestamp, variantIndex) {
+  return __async(this, null, function* () {
+    requireId(chatId, "chat id");
+    assertInteger(messageTimestamp, "message timestamp", 0);
+    assertInteger(variantIndex, "message variant index", 0);
+    const { extension } = yield Tools.Chat.readExtension({ kind: "message", chatId, messageTimestamp, variantIndex });
+    if (extension === null) return null;
+    const identity3 = markerObject(extension, "message author identity");
+    if (Object.keys(identity3).length !== 1) throw new Error("Invalid message author identity");
+    return requireId(identity3.participantId, "message author participant id");
+  });
+}
+
+// src/memory-jobs/chat.ts
+function assertChat(value) {
+  assertObject(value, "chat");
+  requireId(value.id, "chat id");
+  assertString(value.title, "chat title");
+  for (const key of ["messageCount", "inputTokens", "outputTokens"]) assertInteger(value[key], key, 0);
+  for (const key of ["createdAt", "updatedAt"]) assertString(value[key], key);
+  assertBoolean(value.isCurrent, "current chat");
+}
+function requireChat(chatId) {
+  return __async(this, null, function* () {
+    requireId(chatId, "chat id");
+    const result2 = yield Tools.Chat.findChat({ query: chatId, match: "exact", index: 0 });
+    assertInteger(result2.matchedCount, "matched chat count", 1);
+    assertChat(result2.chat);
+    if (result2.matchedCount !== 1 || result2.chat.id !== chatId) throw new Error("Chat lookup does not identify exactly one host record: " + chatId);
+    return result2.chat;
+  });
+}
+function chatParticipants(chatId, repository2) {
+  return __async(this, null, function* () {
+    const binding = yield repository2.chatBindings.readChatBinding(chatId), cards = yield repository2.listCharacters(), groups = yield repository2.listGroups();
+    const selection = requireChatSelection(binding.selection, cards, groups);
+    if (selection.kind === "model") return [];
+    if (selection.kind === "card") return [yield repository2.getCharacter(selection.id)];
+    const group = yield repository2.getGroup(selection.id);
+    if (group.members.length === 0) throw new Error("Selected chat group has no participants: " + group.id);
+    const members2 = [...group.members].sort(
+      /** Preserves the exact stored participant order. */
+      (left, right) => left.orderIndex - right.orderIndex
+    );
+    const result2 = [];
+    for (const member2 of members2) result2.push(yield repository2.getCharacter(member2.characterCardId));
+    return result2;
+  });
+}
+function primaryOwner(card, repository2) {
+  return __async(this, null, function* () {
+    switch (card.memoryBindingMode) {
+      case "CHARACTER":
+        return "character:" + card.id;
+      case "SHARED": {
+        const id2 = requireId(card.sharedMemoryId, "primary shared library");
+        yield repository2.getStore(id2);
+        return "shared:" + id2;
+      }
+      default:
+        throw new Error("Invalid memory binding mode: " + card.memoryBindingMode);
+    }
+  });
+}
+function requireChatOwner(chatId, ownerKey, repository2) {
+  return __async(this, null, function* () {
+    yield repository2.readMemorySpace(ownerKey);
+    const cards = yield chatParticipants(chatId, repository2);
+    for (const card of cards) {
+      if ((yield primaryOwner(card, repository2)) === ownerKey) return;
+      for (const mount2 of card.sharedMemoryMounts) if (mount2.writable && "shared:" + mount2.sharedMemoryId === ownerKey) {
+        yield repository2.getStore(mount2.sharedMemoryId);
+        return;
+      }
+    }
+    throw new Error("Chat is not writable for this memory owner: " + chatId + " / " + ownerKey);
+  });
+}
+function currentMessageMemoryAccess(chatId, message, repository2) {
+  return __async(this, null, function* () {
+    assertMemoryChatMessage(message);
+    const participantId = yield readMessageAuthor(chatId, message.timestamp, message.variantIndex);
+    if (participantId === "model:chat") return { primaryOwnerKey: "", resources: [] };
+    if (participantId === null) throw new Error("Message has no character author identity");
+    const card = yield repository2.getCharacter(participantId);
+    const primaryOwnerKey = yield primaryOwner(card, repository2);
+    const resources = [{ key: primaryOwnerKey, readable: true, writable: true }];
+    for (const mount2 of card.sharedMemoryMounts) {
+      yield repository2.getStore(mount2.sharedMemoryId);
+      const key = "shared:" + mount2.sharedMemoryId;
+      const existing = resources.find((resource) => resource.key === key);
+      if (existing) {
+        existing.readable || (existing.readable = mount2.readable);
+        existing.writable || (existing.writable = mount2.writable);
+      } else resources.push({ key, readable: mount2.readable, writable: mount2.writable });
+    }
+    return { primaryOwnerKey, resources };
+  });
+}
+function requireMessageOwner(chatId, message, ownerKey, repository2) {
+  return __async(this, null, function* () {
+    yield repository2.readMemorySpace(ownerKey);
+    const access = yield currentMessageMemoryAccess(chatId, message, repository2);
+    if (!access.resources.some((resource) => resource.key === ownerKey && resource.writable)) throw new Error("Message author is not currently writable for this memory owner: " + ownerKey);
+    return access;
+  });
+}
+function requireMessagesOwner(chatId, messages, ownerKey, repository2) {
+  return __async(this, null, function* () {
+    yield repository2.readMemorySpace(ownerKey);
+    for (const message of messages) {
+      if (message.sender !== "ai" && message.sender !== "assistant") continue;
+      const access = yield currentMessageMemoryAccess(chatId, message, repository2);
+      if (access.resources.some((resource) => resource.key === ownerKey && resource.writable)) return;
+    }
+    throw new Error("History has no assistant author currently writable for this memory owner: " + ownerKey);
+  });
+}
+function listMemoryChats(ownerKey, repository2) {
+  return __async(this, null, function* () {
+    yield repository2.readMemorySettings(ownerKey);
+    const selected = yield repository2.chatBindings.chatsForMemoryOwner(ownerKey);
+    const chats = [], missingChatIds = [];
+    for (let offset = 0; offset < selected.length; offset += 200) {
+      const ids = selected.slice(offset, offset + 200), result2 = yield Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
+      const remaining = new Set(ids);
+      for (const chat of result2.chats) {
+        assertChat(chat);
+        if (!remaining.delete(chat.id)) throw new Error("Chat batch returned an unrelated or duplicate identity");
+        chats.push(chat);
+      }
+      for (const chatId of remaining) missingChatIds.push(chatId);
+    }
+    return {
+      chats: chats.sort(
+        /** Keeps the host directory's updated-at descending presentation without limiting the bound records. */
+        (left, right) => {
+          const leftTime = Number(left.updatedAt), rightTime = Number(right.updatedAt);
+          assertInteger(leftTime, "chat updated timestamp", 0);
+          assertInteger(rightTime, "chat updated timestamp", 0);
+          return rightTime - leftTime;
+        }
+      ),
+      missingChatIds: missingChatIds.sort()
+    };
+  });
+}
+function pruneMissingMemoryChats(ownerKey, repository2) {
+  return __async(this, null, function* () {
+    const { missingChatIds } = yield listMemoryChats(ownerKey, repository2);
+    const removedChatIds = [];
+    for (const chatId of missingChatIds) {
+      if ((yield repository2.chatBindings.deleteChatBinding(chatId)).deleted) removedChatIds.push(chatId);
+    }
+    const space = yield repository2.readMemorySpace(ownerKey);
+    const candidateChats = [...new Set(space.candidates.map((candidate) => candidate.chatId))];
+    const messagesByChat = /* @__PURE__ */ new Map();
+    for (let offset = 0; offset < candidateChats.length; offset += 200) {
+      const ids = candidateChats.slice(offset, offset + 200), result2 = yield Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
+      const found = new Set(result2.chats.map((chat) => String(chat.id)));
+      for (const chatId of ids) messagesByChat.set(chatId, found.has(chatId) ? yield readMessages(chatId) : null);
+    }
+    const removedCandidateIds = [];
+    const survivors = space.candidates.filter((candidate) => {
+      const messages = messagesByChat.get(candidate.chatId) ?? null;
+      const orphaned = messages === null || !messages.some(
+        /** Matches the exact claimed source revision before keeping the queued extraction. */
+        (message) => message.timestamp === candidate.triggerMessageTimestamp && message.variantIndex === candidate.triggerVariantIndex
+      );
+      if (orphaned) removedCandidateIds.push(candidate.id);
+      return !orphaned;
+    });
+    if (survivors.length !== space.candidates.length) {
+      space.candidates = survivors;
+      yield repository2.writeMemorySpace(ownerKey, space);
+    }
+    return { removedChatIds, removedCandidateIds };
+  });
+}
+function readMessages(chatId) {
+  return __async(this, null, function* () {
+    const chat = yield requireChat(chatId);
+    if (chat.messageCount > 2147483647) throw new Error("Chat message count exceeds the host's supported index range");
+    const end = chat.messageCount === 0 ? 0 : chat.messageCount - 1;
+    const result2 = yield Tools.Chat.getMessagesRange(chatId, { order: "asc", start: 0, end });
+    if (result2.order !== "asc" || result2.start !== 0 || result2.end !== end || result2.limit !== end + 1) throw new Error("Chat message result does not match the requested source range");
+    if (result2.chatId !== chatId || !Array.isArray(result2.messages)) throw new Error("Chat message result has a different identity or missing records");
+    if (result2.messages.length > chat.messageCount) throw new Error("Chat history changed while reading the planned source range");
+    const messages = [], timestamps = /* @__PURE__ */ new Set();
+    for (const message of result2.messages) {
+      assertMemoryChatMessage(message);
+      if (timestamps.has(message.timestamp)) throw new Error("Chat range returned duplicate selected message revisions");
+      timestamps.add(message.timestamp);
+      messages.push({ sender: message.sender, content: message.content, timestamp: message.timestamp, variantIndex: message.variantIndex, variantCount: message.variantCount, provider: message.provider, modelName: message.modelName });
+    }
+    const current = yield requireChat(chatId);
+    if (current.messageCount !== chat.messageCount || current.updatedAt !== chat.updatedAt) throw new Error("Chat history changed while reading the planned source range");
+    return messages.sort(
+      /** Orders genuine message timestamps with stable source ordering. */
+      (left, right) => left.timestamp - right.timestamp
+    );
+  });
+}
+function planWindows(chat, messages, options) {
+  const size = Math.max(8, Math.min(48, options.windowMessageCount)), windows = [];
+  let source = [], context = [], user = null;
+  function emit() {
+    if (source.length === 0) return;
+    windows.push({ chatId: chat.id, chatTitle: chat.title, messages: [...context, ...source], sourceMessageCount: source.length });
+    source = [];
+    context = [];
+  }
+  for (const message of messages) {
+    if (options.fromInclusive !== null && message.timestamp < options.fromInclusive) continue;
+    if (options.toInclusive !== null && message.timestamp > options.toInclusive) continue;
+    if (message.content.trim() === "") continue;
+    switch (message.sender) {
+      case "user":
+        if (source.length >= size - 1) emit();
+        user = message;
+        source.push(message);
+        break;
+      case "ai":
+      case "assistant":
+        if (user === null) continue;
+        if (source.length >= size) {
+          emit();
+          context.push(user);
+        }
+        source.push(message);
+        break;
+    }
+  }
+  emit();
+  return windows;
+}
+
+// src/memory-jobs/analysis.ts
+function parseModelJson(text2) {
+  assertString(text2, "model output");
+  const cleaned = text2.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, " ").trim();
+  const fence = /```(?:json)?\s*([\s\S]*?)```/u.exec(cleaned);
+  const payload = (fence === null ? cleaned : fence[1]).trim();
+  try {
+    return JSON.parse(payload);
+  } catch (error) {
+    const start = payload.indexOf("{"), end = payload.lastIndexOf("}");
+    if (start < 0 || end <= start) throw error;
+    return JSON.parse(payload.slice(start, end + 1));
+  }
+}
+function entity(value, alias) {
+  assertObject(value, "analysis entity");
+  requireName(value.title, "entity title");
+  assertString(value.content, "entity content");
+  assertStrings(value.tags, "entity tags");
+  assertString(value.folder_path, "entity folder");
+  if (alias && value.alias_for !== void 0 && value.alias_for !== null) requireName(value.alias_for, "alias target");
+}
+function newEntity(value) {
+  entity(value, true);
+}
+function update(value) {
+  assertObject(value, "memory update");
+  requireName(value.title, "update title");
+  assertString(value.content, "update content");
+  assertString(value.reason, "update reason");
+  for (const key of ["credibility", "importance"]) if (value[key] !== void 0 && value[key] !== null) assertNumber(value[key], key, 0, 1);
+}
+function merge2(value) {
+  assertObject(value, "memory merge");
+  assertStrings(value.source_titles, "merge sources");
+  if (value.source_titles.length === 0) throw new Error("Memory merge requires source titles");
+  for (const title of value.source_titles) requireName(title, "merge source title");
+  entity(value, false);
+  assertString(value.reason, "merge reason");
+}
+function link(value) {
+  assertObject(value, "memory relationship");
+  for (const key of ["source", "target", "type"]) requireName(value[key], key);
+  assertString(value.description, "relationship description");
+  assertNumber(value.weight, "relationship weight", 0, 1);
+}
+function objectArray(value, check, skipped) {
+  if (!Array.isArray(value)) return [];
+  const result2 = [];
+  for (const item of value) try {
+    check(item);
+    result2.push(item);
+  } catch {
+    skipped.count += 1;
+  }
+  return result2;
+}
+function analysis(value) {
+  assertObject(value, "memory analysis");
+  if (Object.keys(value).length === 0) return null;
+  const skipped = { count: 0 };
+  let main = null;
+  if (value.main !== null && value.main !== void 0) try {
+    entity(value.main, false);
+    main = value.main;
+  } catch {
+    skipped.count += 1;
+  }
+  const result2 = {
+    main,
+    new: objectArray(value.new, newEntity, skipped),
+    update: objectArray(value.update, update, skipped),
+    merge: objectArray(value.merge, merge2, skipped),
+    links: objectArray(value.links, link, skipped),
+    skipped: 0
+  };
+  if (result2.new.length > 5) throw new Error("Memory extraction exceeds the five-entity gate");
+  if (Object.prototype.hasOwnProperty.call(value, "profile_markdown")) {
+    if (value.profile_markdown === null) result2.profile_markdown = null;
+    else if (typeof value.profile_markdown === "string") result2.profile_markdown = value.profile_markdown;
+    else skipped.count += 1;
+  }
+  result2.skipped = skipped.count;
+  return result2;
+}
+function normalizeCandidateSearchText(text2, limit2) {
+  return text2.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, " ").replace(/<tool(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool(?:_[A-Za-z0-9_]+)?>/giu, " ").replace(/<tool_result(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool_result(?:_[A-Za-z0-9_]+)?>/giu, " ").replace(/<memory\b[^>]*>[\s\S]*?<\/memory>/giu, " ").replace(/https?:\/\/\S+/gu, " ").replace(/[\s`*_#>]+/gu, " ").trim().slice(0, limit2);
+}
+function buildCandidateSearchQuery(messages) {
+  const recentFirst = [...messages].reverse();
+  const user = recentFirst.find(
+    /** Selects the last actual user question in chronological history. */
+    (message) => message.sender === "user"
+  );
+  const assistant2 = recentFirst.find(
+    /** Selects the last actual assistant answer in chronological history. */
+    (message) => message.sender === "ai" || message.sender === "assistant"
+  );
+  const question = user === void 0 ? "" : normalizeCandidateSearchText(user.content, 500);
+  const solution = assistant2 === void 0 ? "" : normalizeCandidateSearchText(assistant2.content, 180);
+  const context = normalizeCandidateSearchText(messages.slice(-12).map(
+    /** Includes only message text in the shared recent-context budget. */
+    (message) => message.content
+  ).join("\n"), 1200);
+  return [question, solution, context].filter(
+    /** Omits absent conversation components from the retrieval query. */
+    (value) => value !== ""
+  ).join("\n");
+}
+function cleanMessage(message) {
+  let content = message.content.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, "").replace(/<tool_result(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool_result(?:_[A-Za-z0-9_]+)?>/giu, "[\u5DE5\u5177\u7ED3\u679C\u5DF2\u7701\u7565]");
+  if (message.sender === "user") content = content.replace(/<memory\b[^>]*>[\s\S]*?<\/memory>/giu, "");
+  return { ...message, content: content.trim() };
+}
+function memoryByTitle(memories, title) {
+  const matches = memories.filter(
+    /** Matches the complete authored title without substring inference. */
+    (memory) => memory.title === title
+  );
+  if (matches.length !== 1) throw new Error("Memory title does not identify exactly one record: " + title);
+  return matches[0];
+}
+function extractionPrompt(candidates, memories, folders, settings2, profile) {
+  const existing = candidates.length === 0 ? "\u6CA1\u6709\u5DF2\u6709\u8BB0\u5FC6\u3002" : "\u5DF2\u6709\u8BB0\u5FC6\uFF08\u4EC5\u662F\u68C0\u7D22\u7EBF\u7D22\uFF0C\u4E0D\u662F\u4E8B\u5B9E\u8BC1\u636E\uFF09\uFF1A\n" + candidates.map(
+    /** Preserves the title and a bounded real-record content sample. */
+    (memory) => "- " + JSON.stringify(memory.title) + ": " + [...memory.content.replace(/\n/g, " ")].slice(0, 150).join("")
+  ).join("\n");
+  const titleCounts = /* @__PURE__ */ new Map();
+  for (const memory of memories) {
+    const count = titleCounts.get(memory.title);
+    titleCounts.set(memory.title, count === void 0 ? 1 : count + 1);
+  }
+  const duplicateTitles = /* @__PURE__ */ new Set();
+  for (const candidate of candidates) {
+    const count = titleCounts.get(candidate.title);
+    if (count !== void 0 && count > 1) duplicateTitles.add(candidate.title);
+  }
+  const duplicates = [...duplicateTitles].map(
+    /** Describes exact duplicate clusters that the model can explicitly merge. */
+    (title) => "\u53D1\u73B0 " + titleCounts.get(title) + " \u4E2A\u6807\u9898\u5B8C\u5168\u76F8\u540C\u7684\u8BB0\u5FC6: " + JSON.stringify(title) + "\u3002\u672C\u6B21\u5206\u6790\u5E94\u5F3A\u70C8\u4F18\u5148\u4F7F\u7528 `merge`\uFF0C\u4E0D\u8981\u518D\u4E3A\u540C\u4E00\u4E8B\u5B9E\u521B\u5EFA\u5E73\u884C `new` \u8BB0\u5FC6\u3002"
+  ).join("\n");
+  const enabled = settings2.profileAutoUpdateEnabled && !settings2.profileAutoUpdateLocked;
+  const profileInstruction = enabled ? "\u3010\u5F53\u524D\u8BB0\u5FC6\u7A7A\u95F4\u8D44\u6599\u3011\n<user_profile_document>\n" + profile + "\n</user_profile_document>\n\u7A33\u5B9A\u7528\u6237\u504F\u597D\u3001\u7EA6\u675F\u3001\u8EAB\u4EFD\u4E8B\u5B9E\u6216\u4EA4\u6D41\u65B9\u5F0F\u88AB\u786E\u8BA4\u65F6\uFF0C\u4FDD\u7559\u5DF2\u6709\u6709\u6548 Markdown\uFF0C\u8FD4\u56DE\u5B8C\u6574\u66FF\u6362 profile_markdown\uFF1B\u6CA1\u6709\u5145\u5206\u4F9D\u636E\u8FD4\u56DE null\uFF0C\u4E0D\u8BB0\u5F55\u4E34\u65F6\u8BF7\u6C42\u6216\u5E38\u8BC6\u3002" : "";
+  const custom = "\u3010\u7528\u6237\u6307\u5B9A\u7684\u8BB0\u5FC6\u63D0\u53D6\u9644\u52A0\u89C4\u5219\u3011\n<memory_extraction_custom_rules>\n" + settings2.memoryExtractionCustomRules + "\n</memory_extraction_custom_rules>\n\u7B5B\u9009\u3001\u8BC1\u636E\u8981\u6C42\u548C\u4E25\u683C JSON \u8F93\u51FA\u534F\u8BAE\u4ECD\u7136\u5FC5\u987B\u9075\u5B88\u3002";
+  const fields4 = [
+    ["$duplicatesPromptPart", duplicates],
+    ["$existingMemoriesPrompt", existing],
+    ["$existingFoldersPrompt", "\u5DF2\u6709\u6587\u4EF6\u5939\uFF1A" + folders.join(", ")],
+    ["$profileOptionalKey", enabled ? "\u3001profile_markdown" : ""],
+    ["$profileMarkdownSchemaLine", enabled ? "- profile_markdown\uFF1A\u5B8C\u6574\u66FF\u6362 Markdown\uFF0C\u672A\u66F4\u65B0\u65F6\u4E3A null\u3002" : ""],
+    ["$profileUpdateInstruction", profileInstruction],
+    ["$memoryExtractionCustomRulesInstruction", custom]
+  ];
+  let prompt = extractionTemplate;
+  for (const [token, content] of fields4) prompt = prompt.split(token).join(content);
+  return prompt;
+}
+function unresolvedReference(error) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message;
+  return message.startsWith("Memory title does not identify exactly one record: ") || message.startsWith("Memory merge source does not exist: ") || message === "Memory merge requires at least two unique source records" || message.startsWith("Name already exists: ") || message === "Self relationships are not allowed";
+}
+function applyAnalysis(ownerKey, result2, settings2, repository2) {
+  return __async(this, null, function* () {
+    const report = { ownerKey, created: 0, updated: 0, merged: 0, links: 0, profileUpdated: false, skipped: 0 };
+    if (result2 === null) return report;
+    report.skipped = result2.skipped;
+    if (result2.profile_markdown !== void 0 && result2.profile_markdown !== null && (!settings2.profileAutoUpdateEnabled || settings2.profileAutoUpdateLocked))
+      throw new Error("Model returned a profile update forbidden by the owner settings");
+    const index = /* @__PURE__ */ new Map();
+    for (const memory of yield repository2.listMemories(ownerKey)) {
+      const matches = index.get(memory.title);
+      if (matches === void 0) index.set(memory.title, [memory]);
+      else matches.push(memory);
+    }
+    function resolve(title) {
+      const matches = index.get(title);
+      if (matches === void 0 || matches.length !== 1) throw new Error("Memory title does not identify exactly one record: " + title);
+      return matches[0];
+    }
+    for (const item of result2.merge) try {
+      const memory = yield repository2.mergeMemories(ownerKey, item.source_titles, {
+        title: item.title,
+        content: item.content,
+        contentType: "text/plain",
+        source: "merged_from_memory",
+        credibility: 0.5,
+        importance: 0.5,
+        folderPath: item.folder_path,
+        tags: item.tags
+      });
+      for (const title of item.source_titles) index.delete(title);
+      index.set(memory.title, [memory]);
+      report.merged += 1;
+    } catch (error) {
+      if (!unresolvedReference(error)) throw error;
+      report.skipped += 1;
+    }
+    for (const item of result2.update) try {
+      const memory = { ...resolve(item.title), content: item.content };
+      if (item.credibility !== void 0 && item.credibility !== null) memory.credibility = item.credibility;
+      if (item.importance !== void 0 && item.importance !== null) memory.importance = item.importance;
+      const saved = yield repository2.saveMemory(ownerKey, memory);
+      index.set(saved.title, [saved]);
+      report.updated += 1;
+    } catch (error) {
+      if (!unresolvedReference(error)) throw error;
+      report.skipped += 1;
+    }
+    if (result2.main !== null) {
+      const item = result2.main;
+      try {
+        let saved;
+        if (index.has(item.title)) {
+          saved = yield repository2.saveMemory(ownerKey, { ...resolve(item.title), content: item.content });
+          report.updated += 1;
+        } else {
+          saved = yield repository2.createMemory(ownerKey, {
+            title: item.title,
+            content: item.content,
+            contentType: "text/plain",
+            source: "memory_analysis",
+            credibility: 1,
+            importance: 0.8,
+            folderPath: item.folder_path,
+            tags: item.tags
+          });
+          report.created += 1;
+        }
+        index.set(saved.title, [saved]);
+      } catch (error) {
+        if (!unresolvedReference(error)) throw error;
+        report.skipped += 1;
+      }
+    }
+    for (const item of result2.new) try {
+      if (item.alias_for !== void 0 && item.alias_for !== null) index.set(item.title, [resolve(item.alias_for)]);
+      else {
+        const saved = yield repository2.createMemory(ownerKey, {
+          title: item.title,
+          content: item.content,
+          contentType: "text/plain",
+          source: "memory_analysis",
+          credibility: 0.5,
+          importance: 0.5,
+          folderPath: item.folder_path,
+          tags: item.tags
+        });
+        index.set(saved.title, [saved]);
+        report.created += 1;
+      }
+    } catch (error) {
+      if (!unresolvedReference(error)) throw error;
+      report.skipped += 1;
+    }
+    for (const item of result2.links) try {
+      yield repository2.createLink(ownerKey, {
+        sourceMemoryId: resolve(item.source).id,
+        targetMemoryId: resolve(item.target).id,
+        type_: item.type,
+        description: item.description,
+        weight: item.weight
+      });
+      report.links += 1;
+    } catch (error) {
+      if (!unresolvedReference(error)) throw error;
+      report.skipped += 1;
+    }
+    if (result2.profile_markdown !== void 0 && result2.profile_markdown !== null) {
+      yield repository2.writeUser(ownerKey, result2.profile_markdown);
+      report.profileUpdated = true;
+    }
+    return report;
+  });
+}
+function extractMessages(ownerKey, messages, repository2) {
+  return __async(this, null, function* () {
+    const history = messages.map(cleanMessage).filter(
+      /** Selects actual conversation content, excluding unsupported senders and blank records. */
+      (message) => (message.sender === "user" || message.sender === "ai" || message.sender === "assistant") && message.content !== ""
+    );
+    const user = [...history].reverse().find(
+      /** Requires genuine user context rather than analyzing an orphan assistant reply. */
+      (message) => message.sender === "user"
+    );
+    if (user === void 0) throw new Error("Memory extraction requires user context");
+    const space = yield repository2.readMemorySpace(ownerKey);
+    const profile = space.settings.profileAutoUpdateEnabled && !space.settings.profileAutoUpdateLocked ? (yield repository2.readUser(ownerKey)).content : "";
+    const query = buildCandidateSearchQuery(history);
+    const candidates = yield repository2.searchMemories({ ownerKey, query, folderPath: null, relevanceThreshold: MEMORY_SEARCH_THRESHOLD, createdAtStartMs: null, createdAtEndMs: null });
+    const folders = yield repository2.listMemoryFolders(ownerKey), prompt = extractionPrompt(candidates.slice(0, 15), space.memories, folders, space.settings, profile);
+    const response = yield Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: prompt }, { kind: "USER", content: "\u5BF9\u8BDD\u8BB0\u5F55\uFF1A\n" + history.map(
+      /** Retains the real user and assistant sequence in the selected extraction window. */
+      (message) => message.sender + ": " + message.content
+    ).join("\n\n") }], recordTokenUsage: true, enableThinking: false });
+    return applyAnalysis(ownerKey, analysis(parseModelJson(response.text)), space.settings, repository2);
+  });
+}
+function updateChatMemory(ownerKey, chatId, repository2) {
+  return __async(this, null, function* () {
+    const messages = yield readMessages(chatId), assistant2 = [...messages].reverse().find(
+      /** Selects the last real finalized assistant reply for the manual update. */
+      (message) => (message.sender === "ai" || message.sender === "assistant") && message.content.trim() !== ""
+    );
+    if (assistant2 === void 0) throw new Error("Manual memory update requires an assistant reply");
+    yield requireMessageOwner(chatId, assistant2, ownerKey, repository2);
+    return extractMessages(ownerKey, messages.filter(
+      /** Bounds the manual analysis to real messages at or before that reply. */
+      (message) => message.timestamp <= assistant2.timestamp
+    ).slice(-10), repository2);
+  });
+}
+function autoCategorizeMemory(ownerKey, repository2) {
+  return __async(this, null, function* () {
+    const memories = (yield repository2.listMemories(ownerKey)).filter(
+      /** Selects only records genuinely stored in the root folder. */
+      (memory) => memory.folderPath === null || memory.folderPath === ""
+    ), folders = yield repository2.listMemoryFolders(ownerKey);
+    let changed = 0;
+    for (let index = 0; index < memories.length; index += 10) {
+      const batch = memories.slice(index, index + 10), digest = batch.map(
+        /** Supplies real titles and a bounded full-record content preview. */
+        (memory) => "- title: " + memory.title + ", content: " + [...memory.content].slice(0, 100).join("")
+      ).join("\n");
+      const response = yield Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: "\u4F60\u662F\u77E5\u8BC6\u5206\u7C7B\u4E13\u5BB6\u3002\u6839\u636E\u8BB0\u5FC6\u5185\u5BB9\uFF0C\u4E3A\u6BCF\u6761\u8BB0\u5FC6\u5206\u914D\u5408\u9002\u7684\u6587\u4EF6\u5939\u8DEF\u5F84\u3002\n\u5DF2\u6709\u6587\u4EF6\u5939\uFF1A" + folders.join(", ") + '\n\u4F18\u5148\u4F7F\u7528\u5DF2\u6709\u6587\u4EF6\u5939\uFF0C\u5FC5\u8981\u65F6\u521B\u5EFA\u65B0\u6587\u4EF6\u5939\u3002\u4EC5\u8FD4\u56DE\u4E25\u683C JSON \u6570\u7EC4 [{"title":"\u8BB0\u5FC6\u6807\u9898","folder":"\u6587\u4EF6\u5939\u8DEF\u5F84"}]\u3002\n\u8BB0\u5FC6\u5217\u8868\uFF1A\n' + digest }, { kind: "USER", content: "\u8BF7\u4E3A\u8FD9\u4E9B\u8BB0\u5FC6\u5206\u7C7B\u3002" }], recordTokenUsage: true, enableThinking: false });
+      const rows = parseModelJson(response.text);
+      if (!Array.isArray(rows) || rows.length !== batch.length) throw new Error("Categorization must return exactly one folder for each supplied memory");
+      const seen = /* @__PURE__ */ new Set();
+      for (const row of rows) {
+        assertObject(row, "category");
+        const title = requireName(row.title, "category title");
+        assertString(row.folder, "category folder");
+        if (seen.has(title)) throw new Error("Duplicate category title: " + title);
+        seen.add(title);
+        const memory = memoryByTitle(batch, title);
+        yield repository2.moveMemories(ownerKey, [memory.id], row.folder);
+        changed += 1;
+      }
+    }
+    return changed;
+  });
+}
+
+// src/memory-jobs/scheduler.ts
+function errorText(error) {
+  if (error !== null && typeof error === "object" && "message" in error && typeof error.message === "string") return error.message;
+  return String(error);
+}
+var MemoryJobStatusError = class extends Error {
+  /** Exposes the original execution error together with the status write that also failed. */
+  constructor(executionError, statusPublicationError) {
+    super("Memory job failed: " + errorText(executionError) + "; status publication also failed: " + errorText(statusPublicationError));
+    this.executionError = executionError;
+    this.statusPublicationError = statusPublicationError;
+    this.name = "MemoryJobStatusError";
+  }
+};
+function publishJobFailure(error, publishStatus) {
+  return __async(this, null, function* () {
+    try {
+      yield publishStatus();
+    } catch (statusError) {
+      throw new MemoryJobStatusError(error, statusError);
+    }
+  });
+}
+function sameMessageRevision(current, planned) {
+  return current.sender === planned.sender && current.content === planned.content && current.timestamp === planned.timestamp && current.variantIndex === planned.variantIndex && current.variantCount === planned.variantCount && current.provider === planned.provider && current.modelName === planned.modelName;
+}
+function enqueueCandidate(input, repository2) {
+  return __async(this, null, function* () {
+    if (input.sourceType === "reply_finalized_auto" && !(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return { owners: [], candidateIds: [] };
+    assertInteger(input.timestamp, "candidate message timestamp", 0);
+    assertInteger(input.variantIndex, "candidate variant index", 0);
+    if (input.variantIndex > 2147483647) throw new Error("Candidate variant exceeds the host range");
+    const messages = yield readMessages(input.chatId), matches = messages.filter(
+      /** Resolves the message by its genuine persisted timestamp. */
+      (message2) => message2.timestamp === input.timestamp && message2.variantIndex === input.variantIndex
+    );
+    if (matches.length !== 1) throw new Error("Candidate does not identify exactly one source message");
+    const message = matches[0];
+    switch (input.sourceType) {
+      case "reply_finalized_auto":
+        if (message.sender !== "ai" && message.sender !== "assistant") throw new Error("Automatic candidate requires an assistant reply");
+        break;
+      case "selected_user_message":
+        if (message.sender !== "user") throw new Error("Selected candidate requires a user message");
+        break;
+      default:
+        throw new Error("Unknown candidate source");
+    }
+    if (message.content.trim() === "") throw new Error("Memory candidate source is blank");
+    const owners = /* @__PURE__ */ new Set();
+    if (input.sourceType === "reply_finalized_auto") {
+      const access = yield currentMessageMemoryAccess(input.chatId, message, repository2);
+      const ownerKey = input.ownerKey === null ? access.primaryOwnerKey : input.ownerKey;
+      if (ownerKey === "") return { owners: [], candidateIds: [] };
+      if (!access.resources.some(
+        /** Authorizes only the exact submitted resource through the already-read current author permissions. */
+        (resource) => resource.key === ownerKey && resource.writable
+      )) throw new Error("Current message author cannot write this memory owner: " + ownerKey);
+      yield repository2.readMemorySpace(ownerKey);
+      owners.add(ownerKey);
+    } else if (input.ownerKey !== null) {
+      yield requireChatOwner(input.chatId, input.ownerKey, repository2);
+      owners.add(input.ownerKey);
+    } else {
+      const participants = yield chatParticipants(input.chatId, repository2);
+      if (participants.length !== 1) throw new Error("A group selected-user candidate requires an explicit owner");
+      owners.add(yield primaryOwner(participants[0], repository2));
+    }
+    const result2 = { owners: [...owners], candidateIds: [] }, now = Date.now();
+    for (const ownerKey of owners) {
+      const space = yield repository2.readMemorySpace(ownerKey), previous = space.candidates.filter(
+        /** Uses the full owner-scoped source identity for genuine hook idempotency. */
+        (candidate) => candidate.chatId === input.chatId && candidate.triggerMessageTimestamp === input.timestamp && candidate.triggerVariantIndex === input.variantIndex && candidate.sourceType === input.sourceType
+      );
+      if (previous.length !== 0) {
+        for (const candidate of previous) result2.candidateIds.push(candidate.id);
+        continue;
+      }
+      const id2 = yield repository2.allocateRecordId();
+      space.candidates.push({ id: id2, chatId: input.chatId, triggerMessageTimestamp: input.timestamp, triggerVariantIndex: input.variantIndex, createdAt: now, updatedAt: now, status: "pending", attemptCount: 0, lastError: "", sourceType: input.sourceType });
+      if (space.settings.autoSaveIntervalMinutes > 0 && space.settings.nextAutoSaveRunAtMs === 0) space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
+      yield repository2.writeMemorySpace(ownerKey, space);
+      result2.candidateIds.push(id2);
+    }
+    return result2;
+  });
+}
+function retryFailedCandidates(ownerKey, repository2) {
+  return __async(this, null, function* () {
+    const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
+    let retried = 0;
+    for (const candidate of space.candidates) if (candidate.status === "failed") {
+      candidate.status = "pending";
+      candidate.lastError = "";
+      candidate.updatedAt = now;
+      retried += 1;
+    }
+    if (retried !== 0) yield repository2.writeMemorySpace(ownerKey, space);
+    return { retried };
+  });
+}
+function clearFailedCandidates(ownerKey, repository2) {
+  return __async(this, null, function* () {
+    const space = yield repository2.readMemorySpace(ownerKey);
+    const remaining = space.candidates.filter(
+      /** Retains pending and processing records for their real owners. */
+      (candidate) => candidate.status !== "failed"
+    ), cleared = space.candidates.length - remaining.length;
+    if (cleared !== 0) {
+      space.candidates = remaining;
+      yield repository2.writeMemorySpace(ownerKey, space);
+    }
+    return { cleared };
+  });
+}
+function startMemoryRebuild(ownerKey, rebuild, repository2) {
+  return __async(this, null, function* () {
+    assertObject(rebuild, "memory rebuild");
+    assertStrings(rebuild.chatIds, "rebuild chat ids");
+    assertInteger(rebuild.windowMessageCount, "rebuild window size", 1);
+    for (const key of ["fromInclusive", "toInclusive"]) if (rebuild[key] !== null) assertInteger(rebuild[key], key, 0);
+    if (rebuild.fromInclusive !== null && rebuild.toInclusive !== null && rebuild.fromInclusive > rebuild.toInclusive) throw new Error("Rebuild start must not follow its end");
+    if (rebuild.chatIds.length === 0) throw new Error("Rebuild requires selected chats");
+    const space = yield repository2.readMemorySpace(ownerKey);
+    if (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") throw new Error("Memory rebuild is already active");
+    const task = { id: yield repository2.allocateRecordId(), windows: [], nextWindow: 0 }, ids = /* @__PURE__ */ new Set();
+    for (const id2 of rebuild.chatIds) {
+      requireId(id2, "rebuild chat id");
+      if (ids.has(id2)) throw new Error("Duplicate selected rebuild chat: " + id2);
+      ids.add(id2);
+      const chat = yield requireChat(id2), messages = yield readMessages(id2);
+      yield requireMessagesOwner(id2, messages, ownerKey, repository2);
+      const windows = planWindows(chat, messages, rebuild);
+      for (const window of windows) yield requireMessagesOwner(id2, window.messages, ownerKey, repository2);
+      task.windows.push(...windows);
+    }
+    if (task.windows.length === 0) throw new Error("Selected histories have no user context in the specified range");
+    let totalSourceMessages = 0;
+    const plannedChats = /* @__PURE__ */ new Set();
+    for (const window of task.windows) {
+      totalSourceMessages += window.sourceMessageCount;
+      plannedChats.add(window.chatId);
+    }
+    space.rebuildTask = task;
+    space.rebuildProgress = {
+      status: "preparing",
+      totalChats: plannedChats.size,
+      completedChats: 0,
+      totalWindows: task.windows.length,
+      completedWindows: 0,
+      totalSourceMessages,
+      processedSourceMessages: 0,
+      failedWindows: 0,
+      currentChatTitle: "",
+      lastError: ""
+    };
+    yield repository2.writeMemorySpace(ownerKey, space);
+    return space.rebuildProgress;
+  });
+}
+function advanceRebuildWindow(task, progress) {
+  const window = task.windows[task.nextWindow];
+  if (window === void 0) throw new Error("Rebuild cursor has no source window");
+  task.nextWindow += 1;
+  progress.completedWindows += 1;
+  progress.processedSourceMessages += window.sourceMessageCount;
+  progress.currentChatTitle = window.chatTitle;
+  const next = task.windows[task.nextWindow];
+  if (next === void 0 || next.chatId !== window.chatId) progress.completedChats += 1;
+  progress.status = next === void 0 ? "completed" : "running";
+}
+function processRebuildWindow(ownerKey, taskId, owner2) {
+  return __async(this, null, function* () {
+    try {
+      yield owner2.run(
+        /** Keeps one model result, graph mutation and progress checkpoint in the same publication. */
+        (repository2) => __async(null, null, function* () {
+          const space = yield repository2.readMemorySpace(ownerKey), task = space.rebuildTask;
+          if (task === null || task.id !== taskId) throw new Error("Rebuild task identity changed");
+          if (space.rebuildProgress.status === "cancelled") return;
+          if (space.rebuildProgress.status !== "preparing" && space.rebuildProgress.status !== "running") throw new Error("Rebuild task is not runnable");
+          const window = task.windows[task.nextWindow];
+          if (window === void 0) throw new Error("Rebuild cursor has no source window");
+          const currentMessages = yield readMessages(window.chatId);
+          for (const source of window.messages) {
+            const present = currentMessages.filter(
+              /** Matches the exact planned revision before trusting its original extraction content. */
+              (message) => message.timestamp === source.timestamp && message.variantIndex === source.variantIndex
+            );
+            if (present.length !== 1 || !sameMessageRevision(present[0], source)) throw new Error("A planned rebuild source message revision changed or was deleted: " + window.chatId + " at " + source.timestamp + "/" + source.variantIndex);
+          }
+          yield requireMessagesOwner(window.chatId, window.messages, ownerKey, repository2);
+          yield extractMessages(ownerKey, window.messages, repository2);
+          const updated = yield repository2.readMemorySpace(ownerKey), savedTask = updated.rebuildTask;
+          if (savedTask === null || savedTask.id !== taskId || savedTask.nextWindow !== task.nextWindow) throw new Error("Rebuild cursor changed within execution");
+          advanceRebuildWindow(savedTask, updated.rebuildProgress);
+          yield repository2.writeMemorySpace(ownerKey, updated);
+        })
+      );
+    } catch (error) {
+      yield publishJobFailure(
+        error,
+        /** Commits the failed window and its cursor before later work is allowed to run. */
+        () => owner2.run(
+          /** Retains the error and skips the failed window without publishing partial memory edits. */
+          (repository2) => __async(null, null, function* () {
+            const space = yield repository2.readMemorySpace(ownerKey);
+            if (space.rebuildTask === null || space.rebuildTask.id !== taskId) throw new Error("Failed rebuild task identity changed");
+            if (space.rebuildProgress.status === "cancelled") return;
+            space.rebuildProgress.failedWindows += 1;
+            space.rebuildProgress.lastError = errorText(error);
+            advanceRebuildWindow(space.rebuildTask, space.rebuildProgress);
+            yield repository2.writeMemorySpace(ownerKey, space);
+          })
+        )
+      );
+    }
+  });
+}
+var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
+function failCandidate(candidate, error) {
+  candidate.status = "failed";
+  candidate.lastError = error;
+  candidate.updatedAt = Date.now();
+}
+function processCandidates(ownerKey, candidates, owner2) {
+  return __async(this, null, function* () {
+    const failures = /* @__PURE__ */ new Map(), chatId = candidates[0].chatId;
+    try {
+      yield owner2.run(
+        /** Validates each source independently before committing valid extraction and failed metadata together. */
+        (repository2) => __async(null, null, function* () {
+          let messages = yield readMessages(chatId);
+          const valid = [], excludedTimestamps = /* @__PURE__ */ new Set();
+          for (const candidate of candidates) {
+            try {
+              const source = messages.filter(
+                /** Resolves only the queued revision rather than substituting another message. */
+                (message) => message.timestamp === candidate.triggerMessageTimestamp && message.variantIndex === candidate.triggerVariantIndex
+              );
+              if (source.length === 0) throw new Error("\u6E90\u6D88\u606F\u5DF2\u5220\u9664\u6216\u6240\u9009\u7248\u672C\u5DF2\u53D8\u5316\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u5019\u9009\uFF1A" + candidate.id);
+              if (source.length !== 1) throw new Error("\u6E90\u6D88\u606F\u65E0\u6CD5\u552F\u4E00\u5B9A\u4F4D\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u5019\u9009\uFF1A" + candidate.id);
+              const sender = source[0].sender;
+              if (candidate.sourceType === "selected_user_message" ? sender !== "user" : sender !== "ai" && sender !== "assistant") throw new Error("\u6E90\u6D88\u606F\u7684\u53D1\u9001\u8005\u5DF2\u53D8\u5316\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u5019\u9009\uFF1A" + candidate.id);
+              if (candidate.sourceType === "reply_finalized_auto") yield requireMessageOwner(chatId, source[0], ownerKey, repository2);
+              else yield requireChatOwner(chatId, ownerKey, repository2);
+              valid.push(candidate);
+            } catch (error) {
+              failures.set(candidate.id, errorText(error));
+              excludedTimestamps.add(candidate.triggerMessageTimestamp);
+            }
+          }
+          const completed3 = /* @__PURE__ */ new Set();
+          for (const candidate of valid) {
+            completed3.add(candidate.id);
+            excludedTimestamps.delete(candidate.triggerMessageTimestamp);
+          }
+          if (valid.length !== 0) {
+            if (valid[0].sourceType === "selected_user_message") {
+              const timestamps = /* @__PURE__ */ new Set();
+              for (const candidate of valid) timestamps.add(candidate.triggerMessageTimestamp);
+              messages = messages.filter(
+                /** Extracts only the selected user messages that passed source validation. */
+                (message) => message.sender === "user" && timestamps.has(message.timestamp)
+              );
+            } else {
+              let lastTimestamp = 0;
+              for (const candidate of valid) lastTimestamp = Math.max(lastTimestamp, candidate.triggerMessageTimestamp);
+              messages = messages.filter(
+                /** Keeps bounded context while excluding rejected sources and their changed revisions. */
+                (message) => message.timestamp <= lastTimestamp && !excludedTimestamps.has(message.timestamp)
+              ).slice(-48);
+            }
+            yield extractMessages(ownerKey, messages, repository2);
+          }
+          const space = yield repository2.readMemorySpace(ownerKey);
+          for (const candidate of space.candidates) {
+            const failure2 = failures.get(candidate.id);
+            if (failure2 !== void 0) failCandidate(candidate, failure2);
+          }
+          space.candidates = space.candidates.filter(
+            /** Deletes only candidates included in the committed extraction. */
+            (candidate) => !completed3.has(candidate.id)
+          );
+          yield repository2.writeMemorySpace(ownerKey, space);
+        })
+      );
+    } catch (error) {
+      for (const candidate of candidates) if (!failures.has(candidate.id)) failures.set(candidate.id, errorText(error));
+      yield publishJobFailure(
+        error,
+        /** Commits this batch's failures before continuing independent batches and owners. */
+        () => owner2.run(
+          /** Preserves individual source errors when a later extraction also fails. */
+          (repository2) => __async(null, null, function* () {
+            const space = yield repository2.readMemorySpace(ownerKey);
+            for (const candidate of space.candidates) {
+              const failure2 = failures.get(candidate.id);
+              if (failure2 !== void 0) failCandidate(candidate, failure2);
+            }
+            yield repository2.writeMemorySpace(ownerKey, space);
+          })
+        )
+      );
+    }
+  });
+}
+var MemoryJobRunner = class {
+  /** Uses the shared transactional repository for all job and failure publications. */
+  constructor(owner2) {
+    this.owner = owner2;
+    this.running = null;
+  }
+  /** Shares the active pass while durable job failures remain visible in their own statuses. */
+  tick() {
+    if (this.running === null) {
+      this.running = this.runTick().finally(() => {
+        this.running = null;
+      });
+    }
+    return this.running;
+  }
+  /** Advances persisted rebuild windows and due candidates once. */
+  runTick() {
+    return __async(this, null, function* () {
+      const keys = yield this.owner.run(
+        /** Enumerates only genuine initialized memory spaces. */
+        (repository2) => repository2.listMemoryOwnerKeys()
+      ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0 };
+      for (const ownerKey of keys) {
+        yield this.owner.run(
+          /** Reclaims only outdated processing claims so interrupted batches can genuinely run again. */
+          (repository2) => __async(this, null, function* () {
+            const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
+            let reclaimed = 0;
+            for (const candidate of space.candidates) if (candidate.status === "processing" && now - candidate.updatedAt >= CANDIDATE_PROCESSING_LEASE_MS) {
+              candidate.status = "pending";
+              candidate.updatedAt = now;
+              reclaimed += 1;
+            }
+            if (reclaimed !== 0) yield repository2.writeMemorySpace(ownerKey, space);
+          })
+        );
+        const taskId = yield this.owner.run(
+          /** Reads a persisted runnable rebuild identity without fabricating a job. */
+          (repository2) => __async(this, null, function* () {
+            const space = yield repository2.readMemorySpace(ownerKey);
+            return space.rebuildTask !== null && (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") ? space.rebuildTask.id : null;
+          })
+        );
+        if (taskId !== null) {
+          yield processRebuildWindow(ownerKey, taskId, this.owner);
+          report.rebuildWindows += 1;
+        }
+        const batches = yield this.owner.run(
+          /** Claims only due pending records; failed attempts are never automatically retried. */
+          (repository2) => __async(this, null, function* () {
+            if (!(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return [];
+            const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
+            if (space.settings.autoSaveIntervalMinutes === 0 || now < space.settings.nextAutoSaveRunAtMs) return [];
+            const pending = space.candidates.filter(
+              /** Selects genuinely pending records, not terminal failures. */
+              (candidate) => candidate.status === "pending"
+            );
+            const batches2 = [];
+            if (pending.length >= 5) {
+              const grouped = /* @__PURE__ */ new Map();
+              for (const candidate of pending) {
+                const list = grouped.get(candidate.chatId);
+                if (list === void 0) grouped.set(candidate.chatId, [candidate]);
+                else list.push(candidate);
+              }
+              for (const records2 of grouped.values()) {
+                const capped = records2.sort(
+                  /** Applies the Kotlin oldest-source order before the per-chat twenty-record cap. */
+                  (left, right) => left.triggerMessageTimestamp - right.triggerMessageTimestamp || left.createdAt - right.createdAt
+                ).slice(0, 20);
+                for (const sourceType of ["selected_user_message", "reply_finalized_auto"]) {
+                  const batch = capped.filter(
+                    /** Preserves the original selected/automatic source partition. */
+                    (candidate) => candidate.sourceType === sourceType
+                  );
+                  if (batch.length !== 0) batches2.push(batch);
+                }
+              }
+            }
+            space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
+            yield repository2.writeMemorySpace(ownerKey, space);
+            return batches2;
+          })
+        );
+        for (const batch of batches) {
+          const claimed = yield this.owner.run(
+            /** Claims each batch immediately before processing so independent failures cannot strand later work. */
+            (repository2) => __async(this, null, function* () {
+              if (!(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return false;
+              const space = yield repository2.readMemorySpace(ownerKey), ids = /* @__PURE__ */ new Set();
+              for (const candidate of batch) ids.add(candidate.id);
+              let count = 0;
+              for (const candidate of space.candidates) if (ids.has(candidate.id)) {
+                if (candidate.status !== "pending") throw new Error("Candidate is no longer pending: " + candidate.id);
+                candidate.status = "processing";
+                candidate.attemptCount += 1;
+                candidate.updatedAt = Date.now();
+                count += 1;
+              }
+              if (count !== batch.length) throw new Error("A selected candidate no longer exists");
+              yield repository2.writeMemorySpace(ownerKey, space);
+              return true;
+            })
+          );
+          if (!claimed) break;
+          yield processCandidates(ownerKey, batch, this.owner);
+          report.candidateBatches += 1;
+        }
+      }
+      return report;
+    });
+  }
+};
+
+// src/serialization.ts
+function decodeTavernData(value) {
+  assertObject(value, "\u9152\u9986\u89D2\u8272\u6570\u636E");
+  const data = {
+    name: "",
+    description: "",
+    personality: "",
+    first_mes: "",
+    avatar: "",
+    mes_example: "",
+    scenario: "",
+    creator_notes: "",
+    system_prompt: "",
+    post_history_instructions: "",
+    alternate_greetings: [],
+    tags: [],
+    creator: "",
+    character_version: "",
+    extensions: null,
+    character_book: null,
+    ...value
+  };
+  for (const field of ["name", "description", "personality", "first_mes", "avatar", "mes_example", "scenario", "creator_notes", "system_prompt", "post_history_instructions", "creator", "character_version"]) assertString(data[field], `data.${field}`);
+  assertStrings(data.alternate_greetings, "\u5907\u7528\u5F00\u573A\u767D");
+  assertStrings(data.tags, "\u9152\u9986\u6807\u7B7E");
+  if (data.extensions !== null) assertObject(data.extensions, "\u9152\u9986\u6269\u5C55");
+  if (data.character_book !== null) assertObject(data.character_book, "\u9152\u9986\u4E16\u754C\u4E66");
+  return data;
+}
+function labeledBlock(label, value) {
+  const content = value.trim();
+  return content === "" ? "" : `${label}
+${content}`;
+}
+function joinBlocks(values) {
+  const parts = [];
+  for (const value of values) if (value.trim() !== "") parts.push(value.trim());
+  return parts.join("\n\n");
+}
+function stageImportedTag(values, tags, changes2) {
+  assertTagValues(values);
+  const prompt = values.promptContent.trim();
+  for (const tag of tags) if (tag.promptContent.trim() === prompt) return tag.id;
+  for (const draft of changes2.created) if (draft.values.promptContent.trim() === prompt) return draft.draftId;
+  const draftId = `import-tag:${changes2.created.length}`;
+  changes2.created.push({ draftId, values: { ...values, name: requireName(values.name, "\u5BFC\u5165\u6807\u7B7E\u540D\u79F0") } });
+  return draftId;
+}
+function canonicalTag(tags, id2) {
+  requireId(id2, "\u89D2\u8272\u6807\u7B7E\u6807\u8BC6");
+  for (const tag of tags) if (tag.id === id2) return tag;
+  throw new Error(`\u5BFC\u5165\u89D2\u8272\u5F15\u7528\u7684\u6807\u7B7E\u4E0D\u5B58\u5728\uFF1A${id2}`);
+}
+function decodeOperitExtension(value, tags, changes2) {
+  assertObject(value, "Operit \u9152\u9986\u6269\u5C55");
+  const extension = { schema: "operit_character_card_v1", ...value };
+  assertString(extension.schema, "Operit \u6269\u5C55 schema");
+  assertObject(extension.character_card, "Operit \u6269\u5C55\u89D2\u8272\u5361");
+  const payload = { ...createCharacterDraft(), attachedTags: [], ...extension.character_card };
+  assertStrings(payload.attachedTagIds, "\u6269\u5C55\u89D2\u8272\u6807\u7B7E\u6807\u8BC6");
+  if (!Array.isArray(payload.attachedTags)) throw new Error("\u6269\u5C55\u89D2\u8272\u6807\u7B7E\u5FC5\u987B\u662F\u6570\u7EC4");
+  const attachedIds = [];
+  if (payload.attachedTags.length !== 0) {
+    for (const value2 of payload.attachedTags) {
+      assertObject(value2, "\u6269\u5C55\u6807\u7B7E");
+      const tag = { id: "", name: "", description: "", promptContent: "", tagType: "CUSTOM", ...value2 };
+      assertTagValues(tag);
+      if (tag.promptContent.trim() === "") continue;
+      attachedIds.push(stageImportedTag(tag, tags, changes2));
+    }
+  } else {
+    for (const id2 of payload.attachedTagIds) attachedIds.push(canonicalTag(tags, id2).id);
+  }
+  const card = { ...payload, id: "", createdAt: 0, updatedAt: 0, attachedTagIds: normalizeNames(attachedIds) };
+  return readCharacter(card);
+}
+function stageWorldBook(data, tags, changes2) {
+  if (data.character_book === null) return null;
+  const book = { entries: [], ...data.character_book };
+  if (!Array.isArray(book.entries)) throw new Error("\u4E16\u754C\u4E66 entries \u5FC5\u987B\u662F\u6570\u7EC4");
+  const parts = [];
+  for (const value of book.entries) {
+    assertObject(value, "\u4E16\u754C\u4E66\u6761\u76EE");
+    const entry = { name: "", content: "", ...value };
+    assertString(entry.name, "\u4E16\u754C\u4E66\u6761\u76EE\u540D\u79F0");
+    assertString(entry.content, "\u4E16\u754C\u4E66\u6761\u76EE\u5185\u5BB9");
+    if (entry.content.trim() !== "") parts.push(`[${entry.name}]
+${entry.content}`);
+  }
+  const content = parts.join("\n\n").trim();
+  if (content === "") return null;
+  return stageImportedTag({ name: `\u4E16\u754C\u4E66: ${data.name}`, description: `\u4E3A\u89D2\u8272'${data.name}'\u81EA\u52A8\u751F\u6210\u7684\u4E16\u754C\u4E66\u3002`, promptContent: content, tagType: "FUNCTION" }, tags, changes2);
+}
+function convertStandardTavern(data, spec, version) {
+  const card = createCharacterDraft();
+  card.name = data.name;
+  if (data.tags.length !== 0) card.description = `\u6807\u7B7E\uFF1A${data.tags.slice(0, 5).join(", ")}${data.tags.length > 5 ? `\u7B49${data.tags.length}` : ""}`;
+  card.characterSetting = joinBlocks([
+    labeledBlock("\u89D2\u8272\u63CF\u8FF0\uFF1A", data.description),
+    labeledBlock("\u6027\u683C\u7279\u5F81\uFF1A", data.personality),
+    labeledBlock("\u573A\u666F\u8BBE\u5B9A\uFF1A", data.scenario)
+  ]);
+  let greetings = "";
+  if (data.alternate_greetings.length !== 0) {
+    greetings = "\u5907\u7528\u95EE\u5019\u8BED\uFF1A\n";
+    for (let index = 0; index < data.alternate_greetings.length; index += 1) greetings += `${index + 1}. ${data.alternate_greetings[index]}
+`;
+  }
+  card.otherContentChat = joinBlocks([
+    labeledBlock("\u5BF9\u8BDD\u793A\u4F8B\uFF1A", data.mes_example),
+    labeledBlock("\u7CFB\u7EDF\u63D0\u793A\u8BCD\uFF1A", data.system_prompt),
+    labeledBlock("\u5386\u53F2\u6307\u4EE4\uFF1A", data.post_history_instructions),
+    greetings
+  ]);
+  if (data.extensions !== null) {
+    const extensions = { depth_prompt: null, ...data.extensions };
+    if (extensions.depth_prompt !== null) {
+      assertObject(extensions.depth_prompt, "\u6DF1\u5EA6\u63D0\u793A\u8BCD");
+      const depth = { prompt: "", ...extensions.depth_prompt };
+      assertString(depth.prompt, "\u6DF1\u5EA6\u63D0\u793A\u8BCD\u5185\u5BB9");
+      card.advancedCustomPrompt = labeledBlock("\u6DF1\u5EA6\u63D0\u793A\u8BCD\uFF1A", depth.prompt);
+    }
+  }
+  card.openingStatement = data.first_mes;
+  if (data.avatar.trim() !== "") card.avatarUri = data.avatar;
+  let marks = "\u6765\u6E90\uFF1A\u9152\u9986\u89D2\u8272\u5361\n";
+  if (data.creator.trim() !== "") marks += `\u4F5C\u8005\uFF1A${data.creator}
+`;
+  if (data.creator_notes.trim() !== "") marks += `\u4F5C\u8005\u5907\u6CE8\uFF1A
+
+${data.creator_notes}
+
+`;
+  if (data.character_version.trim() !== "") marks += `\u7248\u672C\uFF1A${data.character_version}
+`;
+  if (data.tags.length !== 0) marks += `\u539F\u59CB\u6807\u7B7E\uFF1A${data.tags.join(", ")}
+`;
+  if (spec.trim() !== "") marks += `\u683C\u5F0F\uFF1A${spec}${version.trim() !== "" ? ` v${version}` : ""}
+`;
+  card.marks = marks.trim();
+  return card;
+}
+function decodeCharacterImport(content, format2, tags) {
+  assertString(content, "\u89D2\u8272\u5361\u5BFC\u5165\u5185\u5BB9");
+  const document2 = JSON.parse(content);
+  const tagChanges = { created: [], updated: [], deleted: [] };
+  if (format2 === "operit") {
+    const card2 = readCharacter(document2);
+    for (const id2 of card2.attachedTagIds) canonicalTag(tags, id2);
+    return { card: { ...card2, id: "", createdAt: 0, updatedAt: 0 }, tagChanges };
+  }
+  if (format2 !== "tavern") throw new Error("\u89D2\u8272\u5361\u5BFC\u5165\u683C\u5F0F\u65E0\u6548");
+  assertObject(document2, "\u9152\u9986\u89D2\u8272\u5361");
+  const envelope = { spec: "", spec_version: "", ...document2 };
+  assertString(envelope.spec, "\u9152\u9986 spec");
+  assertString(envelope.spec_version, "\u9152\u9986 spec_version");
+  const data = decodeTavernData(envelope.data);
+  requireName(data.name, "\u89D2\u8272\u5361\u540D\u79F0");
+  let card;
+  if (data.extensions !== null && Object.prototype.hasOwnProperty.call(data.extensions, "operit") && data.extensions.operit !== null) card = decodeOperitExtension(data.extensions.operit, tags, tagChanges);
+  else card = convertStandardTavern(data, envelope.spec, envelope.spec_version);
+  const worldBookTag = stageWorldBook(data, tags, tagChanges);
+  if (worldBookTag !== null) card.attachedTagIds = normalizeNames([...card.attachedTagIds, worldBookTag]);
+  return { card, tagChanges };
+}
+function encodeCharacterExport(card, format2, tags) {
+  if (format2 === "operit") return JSON.stringify(card, null, 2);
+  if (format2 !== "tavern") throw new Error("\u89D2\u8272\u5361\u5BFC\u51FA\u683C\u5F0F\u65E0\u6548");
+  const attachedTags = [];
+  const tagNames = [];
+  for (const id2 of card.attachedTagIds) {
+    const tag = canonicalTag(tags, id2);
+    attachedTags.push({ id: tag.id, name: tag.name, description: tag.description, promptContent: tag.promptContent, tagType: tag.tagType });
+    tagNames.push(tag.name);
+  }
+  const avatar = card.avatarUri === null ? "" : card.avatarUri;
+  const document2 = {
+    spec: "chara_card_v2",
+    spec_version: "2.0",
+    data: {
+      name: card.name,
+      description: card.description,
+      personality: "",
+      first_mes: card.openingStatement,
+      avatar,
+      mes_example: card.otherContentChat,
+      scenario: "",
+      creator_notes: card.marks,
+      system_prompt: card.characterSetting,
+      post_history_instructions: card.advancedCustomPrompt,
+      alternate_greetings: [],
+      tags: tagNames,
+      creator: "",
+      character_version: "",
+      character_book: null,
+      extensions: {
+        chub: null,
+        depth_prompt: null,
+        operit: {
+          schema: "operit_character_card_v1",
+          character_card: {
+            name: card.name,
+            description: card.description,
+            characterSetting: card.characterSetting,
+            openingStatement: card.openingStatement,
+            otherContent: card.otherContentChat,
+            otherContentChat: card.otherContentChat,
+            otherContentVoice: card.otherContentVoice,
+            avatarUri: card.avatarUri,
+            attachedTagIds: [...card.attachedTagIds],
+            attachedTags,
+            advancedCustomPrompt: card.advancedCustomPrompt,
+            marks: card.marks,
+            chatModelBindingMode: card.chatModelBindingMode,
+            chatModelId: card.chatModelId,
+            chatProviderId: card.chatProviderId,
+            ttsConfigId: card.ttsConfigId,
+            themeConfigId: card.themeConfigId,
+            memoryBindingMode: card.memoryBindingMode,
+            sharedMemoryId: card.sharedMemoryId,
+            sharedMemoryMounts: card.sharedMemoryMounts,
+            toolAccessConfig: card.toolAccessConfig
+          }
+        }
+      }
+    }
+  };
+  return JSON.stringify(document2, null, 2);
+}
+function decodeGroupImport(content) {
+  assertString(content, "\u7FA4\u7EC4\u5BFC\u5165\u5185\u5BB9");
+  const document2 = JSON.parse(content);
+  assertGroup(document2);
+  return { ...document2, id: "", createdAt: 0, updatedAt: 0 };
+}
+
+// src/selection-application.ts
+function copyReferences(references) {
+  parseChatSelection(references.selection);
+  if (references.themeConfigId !== null) requireId(references.themeConfigId, "\u4E3B\u9898\u914D\u7F6E\u6807\u8BC6");
+  if (references.ttsConfigId !== null) requireId(references.ttsConfigId, "TTS \u914D\u7F6E\u6807\u8BC6");
+  return Object.freeze({ selection: references.selection, themeConfigId: references.themeConfigId, ttsConfigId: references.ttsConfigId });
+}
+function readSelectionReferences(repository2, selection) {
+  return __async(this, null, function* () {
+    const parsed = parseChatSelection(selection);
+    switch (parsed.kind) {
+      case "model":
+        return copyReferences({ selection, themeConfigId: null, ttsConfigId: null });
+      case "card": {
+        const card = yield repository2.getCharacter(parsed.id);
+        if (card.id !== parsed.id) throw new Error("\u89D2\u8272\u5361\u8BFB\u53D6\u7ED3\u679C\u4E0E\u9009\u62E9\u6807\u8BC6\u4E0D\u4E00\u81F4\uFF1A" + selection);
+        return copyReferences({ selection, themeConfigId: card.themeConfigId, ttsConfigId: card.ttsConfigId });
+      }
+      case "group": {
+        const group = yield repository2.getGroup(parsed.id);
+        assertGroup(group);
+        if (group.id !== parsed.id) throw new Error("\u7FA4\u7EC4\u8BFB\u53D6\u7ED3\u679C\u4E0E\u9009\u62E9\u6807\u8BC6\u4E0D\u4E00\u81F4\uFF1A" + selection);
+        return copyReferences({ selection, themeConfigId: group.themeConfigId, ttsConfigId: null });
+      }
+    }
+  });
+}
+function describeConfirmed(steps) {
+  return steps.map(
+    /** Distinguishes the selection owner and each independent configuration owner's actual acknowledgement. */
+    (step) => {
+      switch (step.type) {
+        case "selection":
+          return "\u9009\u62E9\u5DF2\u63D0\u4EA4\uFF08" + step.selection + "\uFF09";
+        case "theme":
+          return "\u4E3B\u9898\u5DF2\u786E\u8BA4\u5E94\u7528\uFF08" + step.id + "\uFF09";
+        case "tts":
+          return "TTS \u5DF2\u786E\u8BA4\u5E94\u7528\uFF08" + step.id + "\uFF09";
+      }
+    }
+  ).join("\uFF1B");
+}
+var SelectionApplicationFailure = class extends Error {
+  /** Exposes confirmed progress and the unverified failed write on the same visible selector error. */
+  constructor(completed3, failedStep, cause) {
+    const label = failedStep.type === "theme" ? "\u4E3B\u9898" : "TTS";
+    super(describeConfirmed(completed3) + "\uFF1B" + label + "\u5E94\u7528\u5931\u8D25\uFF08" + failedStep.id + "\uFF09\uFF0C\u8BE5\u914D\u7F6E\u7684\u5B9E\u9645\u5B58\u50A8\u72B6\u6001\u5F85\u6838\u5BF9\u3002\u672A\u81EA\u52A8\u64A4\u9500\u6216\u91CD\u8BD5\u3002\u539F\u59CB\u9519\u8BEF\uFF1A" + String(cause));
+    this.name = "SelectionApplicationFailure";
+    this.cause = cause;
+    this.completed = Object.freeze(completed3.map(
+      /** Copies acknowledgement metadata so a caught error cannot rewrite the recorded application history. */
+      (step) => Object.freeze({ ...step })
+    ));
+    this.failedStep = Object.freeze({ ...failedStep });
+  }
+};
+function applyConfigurations(references, access) {
+  return __async(this, null, function* () {
+    const completed3 = [{ type: "selection", selection: references.selection }];
+    if (references.themeConfigId !== null) {
+      const id2 = references.themeConfigId;
+      try {
+        yield access.applyTheme(id2);
+      } catch (failure2) {
+        throw new SelectionApplicationFailure(completed3, { type: "theme", id: id2 }, failure2);
+      }
+      completed3.push({ type: "theme", id: id2 });
+    }
+    if (references.ttsConfigId !== null) {
+      const id2 = references.ttsConfigId;
+      try {
+        yield access.applyTts(id2);
+      } catch (failure2) {
+        throw new SelectionApplicationFailure(completed3, { type: "tts", id: id2 }, failure2);
+      }
+      completed3.push({ type: "tts", id: id2 });
+    }
+  });
+}
+function createSelectionApplication(access) {
+  let busy = false;
+  const waiters = [];
+  function acquire() {
+    return __async(this, null, function* () {
+      if (!busy) {
+        busy = true;
+        return;
+      }
+      yield new Promise(
+        /** Retains only the continuation for a genuinely distinct waiting operation. */
+        (resolve) => waiters.push(resolve)
+      );
+    });
+  }
+  function release() {
+    const next = waiters.shift();
+    if (next === void 0) busy = false;
+    else next();
+  }
   return {
-    /** Captures the initialization Promise before invoking the supplied business initializer. */
-    getService() {
-      if (initialization === null) initialization = Promise.resolve().then(initialize);
-      return initialization;
+    /** Performs all explicit-reference validation before committing the selection, then awaits every requested apply. */
+    commit(prepareAndCommit) {
+      return __async(this, null, function* () {
+        yield acquire();
+        const validated = /* @__PURE__ */ new WeakSet();
+        let validations = 0;
+        try {
+          const committed = yield prepareAndCommit(
+            /** Issues one immutable validation receipt inside the selection owner's real record snapshot. */
+            (references) => __async(null, null, function* () {
+              validations += 1;
+              if (validations !== 1) throw new Error("A selection operation must validate exactly one reference plan");
+              const checked = copyReferences(references);
+              if (checked.themeConfigId !== null) yield access.validateTheme(checked.themeConfigId);
+              if (checked.ttsConfigId !== null) yield access.validateTts(checked.ttsConfigId);
+              validated.add(checked);
+              return checked;
+            })
+          );
+          if (!validated.has(committed.references)) throw new Error("Selection commit did not retain its exact validated reference plan");
+          yield applyConfigurations(committed.references, access);
+          return committed.value;
+        } finally {
+          release();
+        }
+      });
     }
   };
 }
-var directorySources = null;
-var opening = false;
-function connectDirectorySources(sources) {
-  if (opening || directorySources !== null) throw new Error("External directory readers must be connected exactly once before service initialization");
-  directorySources = sources;
+function isSelectionOperation(operation) {
+  switch (operation) {
+    case "character.setActive":
+    case "group.setActive":
+    case "activePrompt.setModel":
+    case "activePrompt.setCard":
+    case "activePrompt.setGroup":
+    case "activePrompt.activateForChat":
+    case "chat.configuration.binding.write":
+      return true;
+    default:
+      return false;
+  }
 }
-var runtime = /* @__PURE__ */ createServiceRuntime(
-  /** Opens only this plugin's record database on first use, never during registration. */
-  () => __async(null, null, function* () {
-    opening = true;
-    return createCharacterCardsService(yield DatabaseCharacterRepository.open(directorySources));
-  })
-);
-function initializeService() {
+function isSelectionRequest(request) {
+  return request.action === "activate" || request.action === "writeChatBinding";
+}
+function editorSelection(request) {
+  if (request.action === "writeChatBinding") return request.selection;
+  switch (request.type) {
+    case "card":
+      return "card:" + request.id;
+    case "group":
+      return "group:" + request.id;
+    default:
+      throw new Error("Editor activation requires an explicit card or group type");
+  }
+}
+function domainSelection(operation, input, repository2) {
   return __async(this, null, function* () {
-    yield runtime.getService();
+    switch (operation) {
+      case "activePrompt.setModel":
+        parseDomainPayload("activePrompt.setModel", input);
+        return "model:chat";
+      case "character.setActive":
+      case "activePrompt.setCard":
+        return "card:" + parseDomainPayload("activePrompt.setCard", input).id;
+      case "group.setActive":
+      case "activePrompt.setGroup":
+        return "group:" + parseDomainPayload("activePrompt.setGroup", input).id;
+      case "chat.configuration.binding.write":
+        return parseDomainPayload("chat.configuration.binding.write", input).selection;
+      case "activePrompt.activateForChat": {
+        const parsed = parseDomainPayload("activePrompt.activateForChat", input);
+        if (parsed.characterGroupId !== null && parsed.characterCardName !== null) throw new Error("Chat activation cannot select both a card and a group");
+        if (parsed.characterGroupId !== null) return "group:" + parsed.characterGroupId.trim();
+        if (parsed.characterCardName === null) throw new Error("Chat activation requires an explicit character or group selection");
+        const name = parsed.characterCardName.trim(), matches = (yield repository2.listCharacters()).filter(
+          /** Matches the established exact character-name operation without inventing a replacement selection. */
+          (card) => card.name === name
+        );
+        if (matches.length !== 1) throw new Error("Chat character name must identify exactly one persisted record: " + name);
+        return "card:" + matches[0].id;
+      }
+    }
   });
 }
+function assertThemeChoices(value) {
+  if (!Array.isArray(value)) throw new Error("\u4E3B\u9898\u9009\u62E9\u76EE\u5F55\u5FC5\u987B\u662F\u6570\u7EC4");
+  const ids = /* @__PURE__ */ new Set();
+  for (const choice of value) {
+    assertObject(choice, "\u4E3B\u9898\u9009\u62E9\u9879");
+    const id2 = requireId(choice.id, "\u4E3B\u9898\u914D\u7F6E ID");
+    assertString(choice.label, "\u4E3B\u9898\u914D\u7F6E\u540D\u79F0");
+    if (choice.label.trim() === "") throw new Error("\u4E3B\u9898\u914D\u7F6E\u540D\u79F0\u65E0\u6548");
+    if (ids.has(id2)) throw new Error("\u4E3B\u9898\u914D\u7F6E ID \u91CD\u590D\uFF1A" + id2);
+    ids.add(id2);
+  }
+}
+function readThemeChoices(access) {
+  return __async(this, null, function* () {
+    const choices = yield access.readThemeChoices();
+    assertThemeChoices(choices);
+    return choices.map(
+      /** Keeps only private presentation fields, never an independent configuration's stored theme values. */
+      (choice) => ({ id: choice.id, label: choice.label })
+    );
+  });
+}
+
+// src/selection-settings.ts
+var configured = null;
+function connectIndependentConfigurations(access) {
+  if (configured !== null) throw new Error("Independent configuration access has already been connected");
+  configured = access;
+}
+function requiredAccess() {
+  if (configured === null) throw new Error("Independent Theme/TTS configuration capabilities have not been connected");
+  return configured;
+}
+var independentConfigurations = {
+  /** Requires an actual theme directory reader; a missing source cannot become an empty successful chooser. */
+  readThemeChoices: () => requiredAccess().readThemeChoices(),
+  /** Requires a real theme existence validator before any selection write. */
+  validateTheme: (id2) => requiredAccess().validateTheme(id2),
+  /** Requires a real speech existence validator before any selection write. */
+  validateTts: (id2) => requiredAccess().validateTts(id2),
+  /** Awaits the actual theme owner's acknowledgement without synthesizing a receipt. */
+  applyTheme: (id2) => requiredAccess().applyTheme(id2),
+  /** Awaits the actual speech owner's acknowledgement without applying a different config on rejection. */
+  applyTts: (id2) => requiredAccess().applyTts(id2)
+};
+function configurationRecords(values, label) {
+  if (!Array.isArray(values)) throw new Error(label + "\u76EE\u5F55\u5FC5\u987B\u662F\u6570\u7EC4");
+  const ids = /* @__PURE__ */ new Set();
+  for (const value of values) {
+    assertObject(value, label + "\u8BB0\u5F55");
+    const id2 = requireId(value.id, label + " ID");
+    if (ids.has(id2)) throw new Error(label + " ID \u91CD\u590D\uFF1A" + id2);
+    ids.add(id2);
+  }
+  return values;
+}
+function requireConfiguration(values, id2, label) {
+  requireId(id2, label + "\u5F15\u7528 ID");
+  const records2 = configurationRecords(values, label);
+  const matches = records2.filter(
+    /** Resolves an exact ID, not a role-prefixed target, configured global or inferred participant. */
+    (config) => config.id === id2
+  );
+  if (matches.length !== 1) throw new Error(label + "\u4E0D\u5B58\u5728\uFF1A" + id2);
+  return matches[0];
+}
+function createSettingsConfigurationAccess(readSettings) {
+  return {
+    /** Projects actual named Theme configs into the plugin's one private picker row contract. */
+    readThemeChoices() {
+      return __async(this, null, function* () {
+        const configs = configurationRecords((yield readSettings().Theme.listConfigs()).configs, "\u4E3B\u9898\u914D\u7F6E");
+        return configs.map(
+          /** Preserves the actual independent ID and display name without storing or rewriting its snapshot. */
+          (config) => {
+            assertString(config.name, "\u4E3B\u9898\u914D\u7F6E\u540D\u79F0");
+            if (config.name.trim() === "") throw new Error("\u4E3B\u9898\u914D\u7F6E\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A\uFF1A" + config.id);
+            return { id: config.id, label: config.name };
+          }
+        );
+      });
+    },
+    /** Verifies a genuine independent Theme ID before any active selection or chat namespace write. */
+    validateTheme(id2) {
+      return __async(this, null, function* () {
+        requireConfiguration((yield readSettings().Theme.listConfigs()).configs, id2, "\u4E3B\u9898\u914D\u7F6E");
+      });
+    },
+    /** Verifies a genuine independent TTS ID before any active selection or chat namespace write. */
+    validateTts(id2) {
+      return __async(this, null, function* () {
+        requireConfiguration((yield readSettings().Tts.listConfigs()).configs, id2, "TTS \u914D\u7F6E");
+      });
+    },
+    /** Awaits the canonical Theme transaction and validates its acknowledgement of this exact independent config. */
+    applyTheme(id2) {
+      return __async(this, null, function* () {
+        requireId(id2, "\u4E3B\u9898\u914D\u7F6E\u5F15\u7528 ID");
+        const applied = yield readSettings().Theme.applyConfig(id2);
+        assertObject(applied, "\u5DF2\u5E94\u7528\u4E3B\u9898\u914D\u7F6E");
+        if (applied.id !== id2) throw new Error("\u4E3B\u9898\u914D\u7F6E\u5E94\u7528\u8FD4\u56DE\u7684 ID \u4E0E\u8BF7\u6C42\u4E0D\u4E00\u81F4\uFF1A" + id2);
+      });
+    },
+    /** Awaits the canonical speech write and actual current-ID read; failures remain visible partial application errors. */
+    applyTts(id2) {
+      return __async(this, null, function* () {
+        requireId(id2, "TTS \u914D\u7F6E\u5F15\u7528 ID");
+        const applied = yield readSettings().Tts.setCurrentConfigId(id2);
+        if (applied.configId !== id2) throw new Error("TTS \u914D\u7F6E\u63D0\u4EA4\u8FD4\u56DE\u7684 ID \u4E0E\u8BF7\u6C42\u4E0D\u4E00\u81F4\uFF1A" + id2);
+        const current = yield readSettings().Tts.getCurrentConfigId();
+        if (current.configId !== id2) throw new Error("TTS \u5F53\u524D\u914D\u7F6E\u8BFB\u53D6\u7ED3\u679C\u672A\u786E\u8BA4\u8BF7\u6C42\u7684 ID\uFF1A" + id2);
+      });
+    }
+  };
+}
+function registerSelectionSettingsAccess() {
+  connectIndependentConfigurations(createSettingsConfigurationAccess(
+    /** Resolves the canonical Theme and Tts capabilities only when a real directory read or application is requested. */
+    () => ({ Theme: Tools.Theme, Tts: Tools.Tts })
+  ));
+}
+
+// src/backup.ts
+function decodeCharacterBackup(content) {
+  assertString(content, "character backup");
+  const document2 = JSON.parse(content);
+  assertObject(document2, "character backup");
+  if (document2.version !== 2) throw new Error("Unsupported plugin character backup version");
+  assertConversationGroups(document2.conversationGroups);
+  if (!Array.isArray(document2.characterCards) || !Array.isArray(document2.promptTags)) throw new Error("Character backup requires complete characterCards and promptTags arrays");
+  const characterCards = document2.characterCards.map((card) => readCharacter(card));
+  for (const tag of document2.promptTags) assertTag(tag);
+  return { version: 2, characterCards, promptTags: document2.promptTags, conversationGroups: document2.conversationGroups };
+}
+function decodeGroupBackup(content) {
+  assertString(content, "group backup");
+  const document2 = JSON.parse(content);
+  assertObject(document2, "group backup");
+  if (!Array.isArray(document2.characterGroups)) throw new Error("Group backup requires complete characterGroups records");
+  for (const group of document2.characterGroups) assertGroup(group);
+  return { characterGroups: document2.characterGroups };
+}
+function exportCharacterBackup(repository2) {
+  return __async(this, null, function* () {
+    const characterCards = yield repository2.listCharacters(), promptTags = yield repository2.listTags(), conversationGroups = yield repository2.readConversationGroupsForBackup();
+    assertConversationGroups(conversationGroups);
+    return JSON.stringify({ version: 2, characterCards, promptTags, conversationGroups }, null, 2);
+  });
+}
+function exportGroupBackup(repository2) {
+  return __async(this, null, function* () {
+    return JSON.stringify({ characterGroups: yield repository2.listGroups() }, null, 2);
+  });
+}
+function decodeMemoryBackup(content) {
+  assertString(content, "memory backup");
+  const document2 = JSON.parse(content);
+  assertObject(document2, "memory backup");
+  if (document2.version !== "2.0") throw new Error("Unsupported memory backup version; this plugin uses full-record version 2.0");
+  assertInteger(document2.exportDate, "exportDate", 0);
+  assertMemorySpace(document2.space);
+  assertString(document2.userMarkdown, "USER.md backup content");
+  return { version: "2.0", exportDate: document2.exportDate, space: document2.space, userMarkdown: document2.userMarkdown };
+}
+function exportMemoryBackup(ownerKey, repository2) {
+  return __async(this, null, function* () {
+    const backup = { version: "2.0", exportDate: Date.now(), space: yield repository2.readMemorySpace(ownerKey), userMarkdown: (yield repository2.readUser(ownerKey)).content };
+    return JSON.stringify(backup, null, 2);
+  });
+}
+
+// src/operations.ts
+function snapshot(host) {
+  return __async(this, null, function* () {
+    const [
+      cards,
+      groups,
+      stores,
+      tags,
+      active,
+      models,
+      ttsConfigs,
+      toolCatalog,
+      memoryPreferences
+    ] = yield Promise.all([
+      host.listCharacters(),
+      host.listGroups(),
+      host.listStores(),
+      host.listTags(),
+      host.readActive(),
+      Promise.resolve().then(() => host.listModels()),
+      Promise.resolve().then(() => host.listTtsConfigs()),
+      Promise.resolve().then(() => host.readToolCatalog()),
+      host.readGlobalMemoryPreferences()
+    ]);
+    return {
+      cards,
+      groups,
+      stores,
+      tags,
+      active,
+      models,
+      ttsConfigs,
+      toolCatalog,
+      memoryPreferences
+    };
+  });
+}
+function findRecord(values, id2, label) {
+  let found;
+  for (const value of values) {
+    if (value.id !== id2) continue;
+    if (found !== void 0) throw new Error(`${label} \u6807\u8BC6\u91CD\u590D\uFF1A${id2}`);
+    found = value;
+  }
+  if (found === void 0) throw new Error(`${label} \u4E0D\u5B58\u5728\uFF1A${id2}`);
+  return found;
+}
+function prepareTagChanges(attachedIds, changes2, tags) {
+  assertStrings(attachedIds, "\u89D2\u8272\u6807\u7B7E");
+  assertObject(changes2, "\u6807\u7B7E\u4FEE\u6539");
+  if (!Array.isArray(changes2.created) || !Array.isArray(changes2.updated))
+    throw new Error("\u6807\u7B7E\u4FEE\u6539\u683C\u5F0F\u65E0\u6548");
+  assertStrings(changes2.deleted, "\u5220\u9664\u6807\u7B7E\u6807\u8BC6");
+  const created = [];
+  const updated = [];
+  const deleted = /* @__PURE__ */ new Set();
+  const changedIds = /* @__PURE__ */ new Set();
+  const draftIds = /* @__PURE__ */ new Set();
+  for (const id2 of changes2.deleted) {
+    requireId(id2, "\u5220\u9664\u6807\u7B7E\u6807\u8BC6");
+    findRecord(tags, id2, "\u6807\u7B7E");
+    if (deleted.has(id2)) throw new Error("\u6807\u7B7E\u5220\u9664\u9879\u91CD\u590D");
+    deleted.add(id2);
+  }
+  for (const draft of changes2.created) {
+    assertObject(draft, "\u65B0\u6807\u7B7E");
+    const draftId = requireId(draft.draftId, "\u65B0\u6807\u7B7E\u8349\u7A3F\u6807\u8BC6");
+    if (draftIds.has(draftId)) throw new Error("\u6807\u7B7E\u8349\u7A3F\u6807\u8BC6\u91CD\u590D");
+    for (const tag of tags)
+      if (tag.id === draftId) throw new Error("\u6807\u7B7E\u8349\u7A3F\u6807\u8BC6\u4E0E\u5DF2\u6709\u6807\u7B7E\u51B2\u7A81");
+    assertTagValues(draft.values);
+    const values = normalizedTagValues(draft.values);
+    draftIds.add(draftId);
+    created.push({ draftId, values });
+  }
+  for (const edit of changes2.updated) {
+    assertTagValues(edit);
+    const id2 = requireId(edit.id, "\u4FEE\u6539\u6807\u7B7E\u6807\u8BC6");
+    if (changedIds.has(id2) || deleted.has(id2))
+      throw new Error("\u540C\u4E00\u6807\u7B7E\u5B58\u5728\u51B2\u7A81\u4FEE\u6539");
+    const original = findRecord(tags, id2, "\u6807\u7B7E");
+    changedIds.add(id2);
+    updated.push({ ...original, ...normalizedTagValues(edit) });
+  }
+  const projected = [];
+  for (const tag of tags) {
+    if (deleted.has(tag.id)) continue;
+    let current = tag;
+    for (const update2 of updated) if (update2.id === tag.id) current = update2;
+    projected.push({ id: tag.id, name: current.name.trim() });
+  }
+  for (const draft of created)
+    projected.push({ id: draft.draftId, name: draft.values.name });
+  for (const draft of created)
+    for (const tag of projected)
+      if (tag.id !== draft.draftId && tag.name === draft.values.name)
+        throw new Error(`\u6807\u7B7E\u540D\u79F0\u5DF2\u5B58\u5728\uFF1A${draft.values.name}`);
+  for (const update2 of updated) {
+    const original = findRecord(tags, update2.id, "\u6807\u7B7E");
+    if (original.name.trim() === update2.name) continue;
+    for (const tag of projected)
+      if (tag.id !== update2.id && tag.name === update2.name)
+        throw new Error(`\u6807\u7B7E\u540D\u79F0\u5DF2\u5B58\u5728\uFF1A${update2.name}`);
+  }
+  const attached = [];
+  const attachedSet = /* @__PURE__ */ new Set();
+  for (const id2 of attachedIds) {
+    requireId(id2, "\u89D2\u8272\u6807\u7B7E\u6807\u8BC6");
+    if (deleted.has(id2)) continue;
+    if (!draftIds.has(id2)) findRecord(tags, id2, "\u89D2\u8272\u6807\u7B7E");
+    if (attachedSet.has(id2)) continue;
+    attachedSet.add(id2);
+    attached.push(id2);
+  }
+  return { created, updated, deleted: [...deleted], attachedIds: attached };
+}
+function normalizedTagValues(values) {
+  return {
+    name: requireName(values.name, "\u6807\u7B7E\u540D\u79F0"),
+    description: values.description.trim(),
+    promptContent: values.promptContent,
+    tagType: values.tagType
+  };
+}
+function commitTagChanges(plan, host) {
+  return __async(this, null, function* () {
+    const resolved = /* @__PURE__ */ new Map();
+    for (const draft of plan.created) {
+      const created = yield host.createTag(draft.values);
+      assertTag(created);
+      resolved.set(draft.draftId, created.id);
+    }
+    for (const tag of plan.updated) {
+      const saved = yield host.updateTag(tag);
+    }
+    for (const id2 of plan.deleted) yield host.deleteTag(id2);
+    const ids = [];
+    for (const id2 of plan.attachedIds) {
+      if (resolved.has(id2)) {
+        const canonicalId = resolved.get(id2);
+        if (canonicalId === void 0)
+          throw new Error("\u65B0\u6807\u7B7E\u6CA1\u6709\u8FD4\u56DE canonical \u6807\u8BC6");
+        ids.push(canonicalId);
+      } else ids.push(id2);
+    }
+    return normalizeNames(ids);
+  });
+}
+function assertCharacterModelBinding(card) {
+  const mode = characterModelBindingMode(card.chatModelBindingMode);
+  if (mode !== "FOLLOW_GLOBAL" && mode !== "FIXED_MODEL")
+    throw new Error("\u804A\u5929\u6A21\u578B\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548\uFF0C\u8BF7\u91CD\u65B0\u7ED1\u5B9A\u6A21\u578B");
+  if (mode === "FIXED_MODEL") {
+    requireId(card.chatProviderId, "\u56FA\u5B9A\u804A\u5929\u6A21\u578B\u63D0\u4F9B\u5546");
+    requireId(card.chatModelId, "\u56FA\u5B9A\u804A\u5929\u6A21\u578B");
+  }
+}
+function normalizedCharacter(card) {
+  if (card.memoryBindingMode !== "CHARACTER" && card.memoryBindingMode !== "SHARED")
+    throw new Error("\u8BB0\u5FC6\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548");
+  if (card.ttsConfigId !== null) requireId(card.ttsConfigId, "TTS \u914D\u7F6E");
+  if (card.themeConfigId !== null) requireId(card.themeConfigId, "\u4E3B\u9898\u914D\u7F6E");
+  const policy = card.toolAccessConfig;
+  if (policy.enabled && (policy.allowedPackages.length !== 0 || policy.allowedSkills.length !== 0 || policy.allowedMcpServers.length !== 0) && !new Set(normalizeNames(policy.allowedBuiltinTools)).has("use_package"))
+    throw new Error("\u9009\u62E9\u5916\u90E8\u5DE5\u5177\u6765\u6E90\u65F6\u5FC5\u987B\u5141\u8BB8 use_package");
+  const mounts = [];
+  const mountIds = /* @__PURE__ */ new Set();
+  for (const mount2 of card.sharedMemoryMounts) {
+    if (mountIds.has(mount2.sharedMemoryId)) throw new Error("\u5171\u4EAB\u8BB0\u5FC6\u6302\u8F7D\u91CD\u590D");
+    mountIds.add(mount2.sharedMemoryId);
+    mounts.push({
+      sharedMemoryId: mount2.sharedMemoryId,
+      readable: mount2.readable,
+      writable: mount2.writable
+    });
+  }
+  return {
+    ...card,
+    name: requireName(card.name, "\u89D2\u8272\u5361\u540D\u79F0"),
+    description: card.description.trim(),
+    attachedTagIds: [...card.attachedTagIds],
+    sharedMemoryMounts: mounts,
+    toolAccessConfig: {
+      enabled: card.toolAccessConfig.enabled,
+      allowedBuiltinTools: normalizeNames(
+        card.toolAccessConfig.allowedBuiltinTools
+      ),
+      allowedPackages: normalizeNames(card.toolAccessConfig.allowedPackages),
+      allowedSkills: normalizeNames(card.toolAccessConfig.allowedSkills),
+      allowedMcpServers: normalizeNames(
+        card.toolAccessConfig.allowedMcpServers
+      )
+    }
+  };
+}
+function saveCharacter(card, create, tagChanges, host) {
+  return __async(this, null, function* () {
+    assertBoolean(create, "\u89D2\u8272\u65B0\u5EFA\u6807\u8BC6");
+    let value = normalizedCharacter(readCharacter(card));
+    let validateMemoryBinding = create;
+    if (create) {
+      assertCharacterModelBinding(value);
+      value = { ...value, id: "", createdAt: 0, updatedAt: 0 };
+    } else {
+      const id2 = requireId(value.id, "\u89D2\u8272\u5361\u6807\u8BC6");
+      const original = yield host.getCharacter(id2);
+      if (!sameCharacterModelBinding(original, value)) assertCharacterModelBinding(value);
+      validateMemoryBinding = original.memoryBindingMode !== value.memoryBindingMode || original.sharedMemoryId !== value.sharedMemoryId;
+      value = {
+        ...value,
+        id: original.id,
+        createdAt: original.createdAt
+      };
+    }
+    const [tags, stores, cards] = yield Promise.all([
+      host.listTags(),
+      host.listStores(),
+      host.listCharacters()
+    ]);
+    let retainedName = false;
+    if (!create) {
+      for (const existing of cards)
+        if (existing.id === value.id && existing.name.trim() === value.name)
+          retainedName = true;
+    }
+    if (!retainedName) {
+      for (const existing of cards)
+        if (existing.id !== value.id && existing.name.trim() === value.name)
+          throw new Error(`\u89D2\u8272\u5361\u540D\u79F0\u5DF2\u5B58\u5728\uFF1A${value.name}`);
+    }
+    if (value.ttsConfigId !== null) {
+      const configs = yield host.listTtsConfigs();
+      findRecord(configs, value.ttsConfigId, "TTS \u914D\u7F6E");
+    }
+    const plan = prepareTagChanges(value.attachedTagIds, tagChanges, tags);
+    if (validateMemoryBinding && value.memoryBindingMode === "SHARED")
+      findRecord(
+        stores,
+        requireId(value.sharedMemoryId, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u6807\u8BC6"),
+        "\u5171\u4EAB\u8BB0\u5FC6\u5E93"
+      );
+    for (const mount2 of value.sharedMemoryMounts)
+      findRecord(stores, mount2.sharedMemoryId, "\u5171\u4EAB\u8BB0\u5FC6\u5E93");
+    value = { ...value, attachedTagIds: yield commitTagChanges(plan, host) };
+    const saved = create ? yield host.createCharacter(value) : yield host.updateCharacter(value);
+    requireId(saved.id, "\u4FDD\u5B58\u7684\u89D2\u8272\u5361\u6807\u8BC6");
+    return saved;
+  });
+}
+function saveGroup(group, create, host) {
+  return __async(this, null, function* () {
+    assertGroupValues(group);
+    assertBoolean(create, "\u7FA4\u7EC4\u65B0\u5EFA\u6807\u8BC6");
+    const name = requireName(group.name, "\u89D2\u8272\u7EC4\u540D\u79F0");
+    const cards = yield host.listCharacters();
+    const members2 = [];
+    for (const member2 of group.members) {
+      findRecord(cards, member2.characterCardId, "\u7FA4\u7EC4\u89D2\u8272");
+      members2.push({
+        characterCardId: member2.characterCardId,
+        orderIndex: member2.orderIndex
+      });
+    }
+    let value;
+    if (create)
+      value = {
+        id: "",
+        name,
+        description: group.description.trim(),
+        members: members2,
+        themeConfigId: group.themeConfigId,
+        createdAt: 0,
+        updatedAt: 0
+      };
+    else {
+      const original = yield host.getGroup(requireId(group.id, "\u7FA4\u7EC4\u6807\u8BC6"));
+      assertGroup(original);
+      value = {
+        ...original,
+        name,
+        description: group.description.trim(),
+        members: members2,
+        themeConfigId: group.themeConfigId
+      };
+    }
+    const saved = create ? yield host.createGroup(value) : yield host.updateGroup(value);
+    return saved;
+  });
+}
+function saveTag(tag, create, host) {
+  return __async(this, null, function* () {
+    assertTagValues(tag);
+    assertBoolean(create, "\u6807\u7B7E\u65B0\u5EFA\u6807\u8BC6");
+    const values = normalizedTagValues(tag);
+    let saved;
+    if (create) saved = yield host.createTag(values);
+    else {
+      const tags = yield host.listTags();
+      const original = findRecord(tags, requireId(tag.id, "\u6807\u7B7E\u6807\u8BC6"), "\u6807\u7B7E");
+      saved = yield host.updateTag({ ...original, ...values });
+    }
+    assertTag(saved);
+    return saved;
+  });
+}
+function saveStore(store, create, host) {
+  return __async(this, null, function* () {
+    assertObject(store, "\u5171\u4EAB\u8BB0\u5FC6\u5E93");
+    assertBoolean(create, "\u8BB0\u5FC6\u5E93\u65B0\u5EFA\u6807\u8BC6");
+    const name = requireName(store.name, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u540D\u79F0");
+    let saved;
+    if (create) saved = yield host.createStore(name);
+    else {
+      const id2 = requireId(store.id, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u6807\u8BC6");
+      findRecord(
+        yield host.listStores(),
+        id2,
+        "\u5171\u4EAB\u8BB0\u5FC6\u5E93"
+      );
+      saved = yield host.renameStore(id2, name);
+    }
+    return saved;
+  });
+}
+function activate(type, id2, host) {
+  return __async(this, null, function* () {
+    requireId(id2, "\u5F53\u524D\u63D0\u793A\u8BCD\u6807\u8BC6");
+    if (type === "card") {
+      yield host.getCharacter(id2);
+      yield host.writeActive({ CharacterCard: { id: id2 } });
+    } else if (type === "group") {
+      assertGroup(yield host.getGroup(id2));
+      yield host.writeActive({ CharacterGroup: { id: id2 } });
+    } else throw new Error("\u5F53\u524D\u63D0\u793A\u8BCD\u7C7B\u578B\u65E0\u6548");
+  });
+}
+function parseOwner(ownerKey) {
+  assertString(ownerKey, "\u8BB0\u5FC6\u5E93\u6807\u8BC6");
+  const parts = ownerKey.split(":");
+  if (parts.length !== 2 || !/^[^:\s]+$/.test(parts[1]))
+    throw new Error("\u8BB0\u5FC6\u5E93\u6807\u8BC6\u683C\u5F0F\u65E0\u6548");
+  if (parts[0] === "character") return { kind: "CHARACTER", id: parts[1] };
+  if (parts[0] === "shared") return { kind: "SHARED", id: parts[1] };
+  throw new Error("\u8BB0\u5FC6\u5E93\u547D\u540D\u7A7A\u95F4\u65E0\u6548");
+}
+function menuMemoryOwner(chatId, host) {
+  return __async(this, null, function* () {
+    requireId(chatId, "memory menu chat id");
+    const binding = yield host.chatBindings.findChatBinding(chatId);
+    const selection = binding === null ? null : parseChatSelection(binding.selection);
+    if (selection?.kind === "model") throw new Error("Model-only conversations have no role memory owner");
+    if (selection?.kind === "card") return resolveMemoryOwner(selection.id, host);
+    throw new Error("Select a character memory owner for this conversation");
+  });
+}
+function requireOwner(ownerKey, host) {
+  return __async(this, null, function* () {
+    const owner2 = parseOwner(ownerKey);
+    if (owner2.kind === "CHARACTER") yield host.getCharacter(owner2.id);
+    else
+      findRecord(
+        yield host.listStores(),
+        owner2.id,
+        "\u5171\u4EAB\u8BB0\u5FC6\u5E93"
+      );
+    return owner2;
+  });
+}
+function resolveMemoryOwner(characterId, host) {
+  return __async(this, null, function* () {
+    const card = yield host.getCharacter(requireId(characterId, "\u89D2\u8272\u5361\u6807\u8BC6"));
+    let ownerKey;
+    if (card.memoryBindingMode === "CHARACTER") ownerKey = `character:${card.id}`;
+    else if (card.memoryBindingMode === "SHARED")
+      ownerKey = `shared:${requireId(card.sharedMemoryId, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u7ED1\u5B9A")}`;
+    else throw new Error("\u8BB0\u5FC6\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548");
+    yield requireOwner(ownerKey, host);
+    return ownerKey;
+  });
+}
+function listMemories(ownerKey, host) {
+  return __async(this, null, function* () {
+    yield requireOwner(ownerKey, host);
+    return yield host.listMemories(ownerKey);
+  });
+}
+function graph(ownerKey, host) {
+  return __async(this, null, function* () {
+    yield requireOwner(ownerKey, host);
+    const [value, items] = yield Promise.all([
+      host.readMemoryGraph(ownerKey),
+      host.listMemories(ownerKey)
+    ]);
+    return { graph: value, items };
+  });
+}
+function normalizeFolderPath(value) {
+  if (value === null) return null;
+  const parts = [];
+  for (const part of value.replace(/\\/g, "/").split("/")) {
+    const name = part.trim();
+    if (name !== "") parts.push(name);
+  }
+  return parts.length === 0 ? null : parts.join("/");
+}
+function searchMemories(options, host) {
+  return __async(this, null, function* () {
+    assertSearchOptions(options);
+    yield requireOwner(options.ownerKey, host);
+    return yield host.searchMemories({
+      ...options,
+      folderPath: normalizeFolderPath(options.folderPath)
+    });
+  });
+}
+function combinePrompts(characterId, additionalTagIds, promptFunctionType, host) {
+  return __async(this, null, function* () {
+    const card = yield host.getCharacter(requireId(characterId, "\u89D2\u8272\u5361\u6807\u8BC6"));
+    return combineCharacterPrompt(card, additionalTagIds, promptFunctionType, host);
+  });
+}
+function writeMemorySettings(ownerKey, settings2, host) {
+  return __async(this, null, function* () {
+    assertMemorySettings(settings2);
+    yield requireOwner(ownerKey, host);
+    yield host.writeMemorySettings(ownerKey, { ...settings2 });
+    return host.readMemorySettings(ownerKey);
+  });
+}
+function writeMemorySearchConfig(ownerKey, config, host) {
+  return __async(this, null, function* () {
+    assertSearchConfig(config);
+    yield requireOwner(ownerKey, host);
+    yield host.writeMemorySearchConfig(ownerKey, { ...config });
+    return host.readMemorySearchConfig(ownerKey);
+  });
+}
+function dispatch(request, host) {
+  return __async(this, null, function* () {
+    assertObject(request, "\u89D2\u8272\u5361\u8BF7\u6C42");
+    switch (request.action) {
+      case "snapshot":
+        return snapshot(host);
+      case "readGlobalMemoryPreferences":
+        return host.readGlobalMemoryPreferences();
+      case "readChatMemoryAutoSaveStatus":
+        return host.readMemoryAutoSaveStatus(
+          yield menuMemoryOwner(request.chatId, host)
+        );
+      case "updateCurrentChatMemory":
+        return executeDomain(
+          "memory.chat.update",
+          {
+            ownerKey: yield menuMemoryOwner(request.chatId, host),
+            chatId: request.chatId
+          },
+          host
+        );
+      case "retryFailedCandidates":
+        return executeDomain(
+          "memory.candidates.retryFailed",
+          { ownerKey: "ownerKey" in request ? request.ownerKey : yield menuMemoryOwner(request.chatId, host) },
+          host
+        );
+      case "clearFailedCandidates":
+        return executeDomain(
+          "memory.candidates.clearFailed",
+          { ownerKey: "ownerKey" in request ? request.ownerKey : yield menuMemoryOwner(request.chatId, host) },
+          host
+        );
+      case "writeGlobalMemoryPreference":
+        return host.writeGlobalMemoryPreference(request.key, request.value);
+      case "readMemoryRecallSettings":
+        return host.readMemoryRecallSettings();
+      case "writeMemoryRecallSettings":
+        return host.writeMemoryRecallSettings(request.settings);
+      case "searchMemoryDebug": {
+        yield requireOwner(request.ownerKey, host);
+        assertSearchConfig(request.config);
+        return host.searchMemoryDebug(
+          {
+            ownerKey: request.ownerKey,
+            query: request.query,
+            folderPath: null,
+            relevanceThreshold: request.relevanceThreshold,
+            createdAtStartMs: null,
+            createdAtEndMs: null
+          },
+          request.config
+        );
+      }
+      case "readMemoryLink":
+        yield requireOwner(request.ownerKey, host);
+        return host.readMemoryLink(request.ownerKey, request.linkId);
+      case "listThemeChoices":
+        return readThemeChoices(independentConfigurations);
+      case "listCharacters":
+        return host.listCharacters();
+      case "getCharacter":
+        return host.getCharacter(requireId(request.id, "\u89D2\u8272\u5361\u6807\u8BC6"));
+      case "saveCharacter":
+        yield saveCharacter(
+          request.card,
+          request.create,
+          request.tagChanges,
+          host
+        );
+        return snapshot(host);
+      case "deleteCharacter":
+        yield deleteCharacter(request.id, host);
+        return snapshot(host);
+      case "activate":
+        yield activate(request.type, request.id, host);
+        return snapshot(host);
+      case "readActive":
+        return host.readActive();
+      case "listBindableChats":
+        return listBindableChats(host.chatBindings);
+      case "readChatBinding":
+        return executeDomain(
+          "chat.configuration.binding.read",
+          { chatId: request.chatId },
+          host
+        );
+      case "writeChatBinding":
+        return executeDomain(
+          "chat.configuration.binding.write",
+          { chatId: request.chatId, selection: request.selection },
+          host
+        );
+      case "deleteChatBinding":
+        return executeDomain(
+          "chat.configuration.binding.delete",
+          { chatId: request.chatId },
+          host
+        );
+      case "listGroups":
+        return host.listGroups();
+      case "getGroup": {
+        const group = yield host.getGroup(requireId(request.id, "\u7FA4\u7EC4\u6807\u8BC6"));
+        assertGroup(group);
+        return group;
+      }
+      case "saveGroup":
+        yield saveGroup(request.group, request.create, host);
+        return snapshot(host);
+      case "deleteGroup":
+        yield host.deleteGroup(requireId(request.id, "\u7FA4\u7EC4\u6807\u8BC6"));
+        return snapshot(host);
+      case "listTags":
+        return host.listTags();
+      case "saveTag":
+        return saveTag(request.tag, request.create, host);
+      case "deleteTag":
+        yield host.deleteTag(requireId(request.id, "\u6807\u7B7E\u6807\u8BC6"));
+        return snapshot(host);
+      case "listStores":
+        return host.listStores();
+      case "saveStore":
+        yield saveStore(request.store, request.create, host);
+        return snapshot(host);
+      case "deleteStore":
+        yield host.deleteStore(requireId(request.id, "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u6807\u8BC6"));
+        return snapshot(host);
+      case "listModels":
+        return host.listModels();
+      case "listTtsConfigs":
+        return host.listTtsConfigs();
+      case "readToolCatalog":
+        return host.readToolCatalog();
+      case "resolveMemoryOwner":
+        return resolveMemoryOwner(request.characterId, host);
+      case "readUser":
+        return executeDomain("memory.user.read", { ownerKey: request.ownerKey }, host);
+      case "writeUser":
+        yield executeDomain("memory.user.write", { ownerKey: request.ownerKey, content: request.content }, host);
+        return { saved: true };
+      case "graph":
+        return graph(request.ownerKey, host);
+      case "listMemories":
+        return listMemories(request.ownerKey, host);
+      case "searchMemory":
+        return searchMemories(
+          {
+            ownerKey: request.ownerKey,
+            query: request.query,
+            folderPath: null,
+            relevanceThreshold: 0,
+            createdAtStartMs: null,
+            createdAtEndMs: null
+          },
+          host
+        );
+      case "searchMemories":
+        return searchMemories(request.options, host);
+      case "saveMemory": {
+        const values = {
+          title: request.title,
+          content: request.content,
+          contentType: request.contentType.trim(),
+          source: request.source.trim(),
+          credibility: request.credibility,
+          importance: request.importance,
+          folderPath: request.folderPath,
+          tags: normalizeNames(request.tags.split(","))
+        };
+        if (request.originalTitle === null) yield executeDomain("memory.create", { ownerKey: request.ownerKey, values }, host);
+        else yield executeDomain("memory.update", { ownerKey: request.ownerKey, originalTitle: request.originalTitle, changes: values }, host);
+        return graph(request.ownerKey, host);
+      }
+      case "deleteMemory": {
+        const { item } = yield executeDomain("memory.get", { ownerKey: request.ownerKey, title: request.title }, host);
+        yield executeDomain("memory.delete", { ownerKey: request.ownerKey, id: item.id }, host);
+        return graph(request.ownerKey, host);
+      }
+      case "createLink":
+        yield executeDomain("memory.link.create", { ownerKey: request.ownerKey, sourceTitle: request.sourceTitle, targetTitle: request.targetTitle, linkType: request.linkType, weight: request.weight, description: request.description }, host);
+        return graph(request.ownerKey, host);
+      case "deleteLink":
+        yield executeDomain("memory.link.delete", { ownerKey: request.ownerKey, linkId: request.linkId }, host);
+        return graph(request.ownerKey, host);
+      case "updateLink":
+        yield executeDomain("memory.link.update", { ownerKey: request.ownerKey, linkId: request.linkId, changes: { linkType: request.linkType, weight: request.weight, description: request.description } }, host);
+        return graph(request.ownerKey, host);
+      case "readMemorySettings": {
+        yield requireOwner(request.ownerKey, host);
+        const settings2 = yield host.readMemorySettings(request.ownerKey);
+        assertMemorySettings(settings2);
+        return settings2;
+      }
+      case "writeMemorySettings":
+        return writeMemorySettings(request.ownerKey, request.settings, host);
+      case "readMemorySearchConfig": {
+        yield requireOwner(request.ownerKey, host);
+        const config = yield host.readMemorySearchConfig(request.ownerKey);
+        assertSearchConfig(config);
+        return config;
+      }
+      case "writeMemorySearchConfig":
+        return writeMemorySearchConfig(request.ownerKey, request.config, host);
+      case "writeMemoryOwnerSettings": {
+        assertMemorySettings(request.settings);
+        assertSearchConfig(request.config);
+        yield requireOwner(request.ownerKey, host);
+        const current = yield host.readMemorySettings(request.ownerKey);
+        yield host.writeMemorySettings(request.ownerKey, {
+          ...request.settings,
+          nextAutoSaveRunAtMs: current.nextAutoSaveRunAtMs
+        });
+        yield host.writeMemorySearchConfig(request.ownerKey, request.config);
+        return {
+          settings: yield host.readMemorySettings(request.ownerKey),
+          config: yield host.readMemorySearchConfig(request.ownerKey)
+        };
+      }
+      case "combinePrompts":
+        return combinePrompts(
+          request.characterId,
+          request.additionalTagIds,
+          request.promptFunctionType,
+          host
+        );
+      case "importCharacter": {
+        const tags = yield host.listTags();
+        const plan = decodeCharacterImport(request.content, request.format, tags);
+        yield saveCharacter(plan.card, true, plan.tagChanges, host);
+        return snapshot(host);
+      }
+      case "exportCharacter": {
+        const card = yield host.getCharacter(requireId(request.id, "\u89D2\u8272\u5361\u6807\u8BC6"));
+        const tags = yield host.listTags();
+        return encodeCharacterExport(card, request.format, tags);
+      }
+      case "importGroup":
+        yield saveGroup(decodeGroupImport(request.content), true, host);
+        return snapshot(host);
+      case "exportGroup": {
+        const group = yield host.getGroup(requireId(request.id, "\u7FA4\u7EC4\u6807\u8BC6"));
+        assertGroup(group);
+        return JSON.stringify(group, null, 2);
+      }
+      case "listMemoryFolders":
+        yield requireOwner(request.ownerKey, host);
+        return host.listMemoryFolders(request.ownerKey);
+      case "readMemoryAutoSaveStatus":
+        yield requireOwner(request.ownerKey, host);
+        return host.readMemoryAutoSaveStatus(request.ownerKey);
+      case "listMemoryChats":
+        return executeDomain(
+          "memory.chat.list",
+          { ownerKey: request.ownerKey },
+          host
+        );
+      case "pruneMissingChatBindings":
+        return executeDomain(
+          "memory.chat.pruneMissing",
+          { ownerKey: request.ownerKey },
+          host
+        );
+      case "updateChatMemory":
+        return executeDomain(
+          "memory.chat.update",
+          { ownerKey: request.ownerKey, chatId: request.chatId },
+          host
+        );
+      case "autoCategorizeMemory":
+        return executeDomain(
+          "memory.categorize",
+          { ownerKey: request.ownerKey },
+          host
+        );
+      case "startMemoryRebuild":
+        return executeDomain(
+          "memory.rebuild.start",
+          { ownerKey: request.ownerKey, rebuild: request.rebuild },
+          host
+        );
+      case "readMemoryRebuildProgress":
+        return executeDomain(
+          "memory.rebuild.progress",
+          { ownerKey: request.ownerKey },
+          host
+        );
+      case "cancelMemoryRebuild":
+        return executeDomain(
+          "memory.rebuild.cancel",
+          { ownerKey: request.ownerKey },
+          host
+        );
+      case "rebuildMemoryEmbeddings":
+        return executeDomain(
+          "memory.embeddings.rebuild",
+          { ownerKey: request.ownerKey },
+          host
+        );
+      case "exportMemory":
+        return executeDomain("memory.export", { ownerKey: request.ownerKey }, host);
+      case "importMemory":
+        return executeDomain("memory.import", { ownerKey: request.ownerKey, content: request.content, strategy: request.strategy }, host);
+      default: {
+        const action = request;
+        throw new Error(`\u672A\u77E5\u89D2\u8272\u5361\u8BF7\u6C42\uFF1A${JSON.stringify(action)}`);
+      }
+    }
+  });
+}
+function findMemory(items, title) {
+  const name = requireName(title, "\u8BB0\u5FC6\u6807\u9898");
+  let found;
+  for (const memory of items) {
+    if (memory.title !== name) continue;
+    if (found !== void 0) throw new Error(`\u8BB0\u5FC6\u6807\u9898\u4E0D\u552F\u4E00\uFF1A${name}`);
+    found = memory;
+  }
+  if (found === void 0) throw new Error(`\u8BB0\u5FC6\u4E0D\u5B58\u5728\uFF1A${name}`);
+  return found;
+}
+function deleteCharacter(id2, host) {
+  return __async(this, null, function* () {
+    yield host.deleteCharacter(requireId(id2, "\u89D2\u8272\u5361\u6807\u8BC6"));
+    return { id: id2, deleted: true };
+  });
+}
+function updateLink(input, host) {
+  return __async(this, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    const original = yield host.readMemoryLink(input.ownerKey, input.linkId);
+    const changes2 = {};
+    if (Object.prototype.hasOwnProperty.call(input.changes, "linkType")) changes2.type_ = requireName(input.changes.linkType, "\u5173\u7CFB\u7C7B\u578B");
+    if (Object.prototype.hasOwnProperty.call(input.changes, "weight")) {
+      assertNumber(input.changes.weight, "\u5173\u7CFB\u5F3A\u5EA6", 0, 1);
+      changes2.weight = input.changes.weight;
+    }
+    if (Object.prototype.hasOwnProperty.call(input.changes, "description")) changes2.description = input.changes.description;
+    const value = { ...original, ...changes2 };
+    const link2 = yield host.updateLink(input.ownerKey, original.id, { type_: value.type_, weight: value.weight, description: value.description });
+    return { ownerKey: input.ownerKey, link: link2 };
+  });
+}
+function activateForChat(input, host) {
+  return __async(this, null, function* () {
+    if (input.characterGroupId !== null && input.characterCardName !== null) throw new Error("Chat activation cannot select both a card and a group");
+    if (input.characterGroupId !== null && input.characterGroupId.trim() !== "") yield activate("group", input.characterGroupId.trim(), host);
+    else if (input.characterCardName !== null && input.characterCardName.trim() !== "") {
+      const name = input.characterCardName.trim(), cards = yield host.listCharacters();
+      let target;
+      for (const card of cards) if (card.name === name) {
+        if (target !== void 0) throw new Error("\u804A\u5929\u89D2\u8272\u540D\u79F0\u4E0D\u552F\u4E00");
+        target = card;
+      }
+      if (target === void 0) throw new Error(`\u804A\u5929\u89D2\u8272\u4E0D\u5B58\u5728\uFF1A${name}`);
+      yield activate("card", target.id, host);
+    } else throw new Error("Chat activation requires an explicit character or group selection");
+    return { characterCardName: input.characterCardName, characterGroupId: input.characterGroupId, updated: true };
+  });
+}
+function resolveConfiguration(input, service2) {
+  return __async(this, null, function* () {
+    const result2 = yield resolveChatConfiguration(input, service2);
+    if (!("profile" in result2) || (yield service2.readGlobalMemoryPreferences()).userDescriptionEnabled) return result2;
+    return {
+      ...result2,
+      profile: { ...result2.profile, userPreferencesText: "" },
+      participants: result2.participants.map((profile) => ({ ...profile, userPreferencesText: "" }))
+    };
+  });
+}
+var handlers = {
+  /** Ranks original chunks and commits provider vectors in the same repository operation. */
+  "memory.chunks": (input, repository2) => __async(null, null, function* () {
+    const space = yield repository2.readMemorySpace(input.ownerKey), cached = space.embeddings.length;
+    const result2 = yield searchMemoryChunks(space, input.memoryId, input.query, input.count);
+    if (space.embeddings.length !== cached) yield repository2.writeMemorySpace(input.ownerKey, space);
+    return result2;
+  }),
+  /** Keeps full-filter searches and provider embedding persistence on the same serialized service. */
+  "memory.searchWithOptions": (input, repository2) => __async(null, null, function* () {
+    return { ownerKey: input.ownerKey, items: yield searchMemories(input, repository2) };
+  }),
+  /** Lists actual owner-bound generic chat summaries. */
+  "memory.chat.list": (input, repository2) => listMemoryChats(input.ownerKey, repository2),
+  "memory.chat.pruneMissing": (input, repository2) => pruneMissingMemoryChats(input.ownerKey, repository2),
+  /** Extracts real chat messages through the configured functional MEMORY model. */
+  "memory.chat.update": (input, repository2) => updateChatMemory(input.ownerKey, input.chatId, repository2),
+  /** Performs genuine ten-record functional categorization in the same operation. */
+  "memory.categorize": (input, repository2) => autoCategorizeMemory(input.ownerKey, repository2),
+  /** Stores a complete requested rebuild plan for real interval execution. */
+  "memory.rebuild.start": (input, repository2) => startMemoryRebuild(input.ownerKey, input.rebuild, repository2),
+  /** Reads the real durable job counters. */
+  "memory.rebuild.progress": (input, repository2) => repository2.readMemoryRebuildProgress(input.ownerKey),
+  /** Records an explicit cancellation before another source window may be processed. */
+  "memory.rebuild.cancel": (input, repository2) => __async(null, null, function* () {
+    yield repository2.cancelMemoryRebuild(input.ownerKey);
+    return repository2.readMemoryRebuildProgress(input.ownerKey);
+  }),
+  /** Rebuilds actual configured provider embeddings using generic HTTP. */
+  "memory.embeddings.rebuild": (input, repository2) => rebuildMemoryEmbeddings(input.ownerKey, repository2),
+  /** Enqueues only actual persisted message sources and genuine bound owners. */
+  "memory.candidate.enqueue": (input, repository2) => enqueueCandidate(input, repository2),
+  /** Returns genuine terminal failures to the pending queue for one later interval retry. */
+  "memory.candidates.retryFailed": (input, repository2) => retryFailedCandidates(input.ownerKey, repository2),
+  /** Removes genuine terminal failures from the owner queue. */
+  "memory.candidates.clearFailed": (input, repository2) => clearFailedCandidates(input.ownerKey, repository2),
+  /** Resolves chat configuration using this operation's existing repository snapshot. */
+  "chat.configuration.resolve": (input, repository2) => resolveConfiguration(input, {
+    /** Reads only the requested character. */
+    getCharacter: (id2) => repository2.getCharacter(id2),
+    /** Reads only the requested group. */
+    getGroup: (id2) => repository2.getGroup(id2),
+    /** Reads only a referenced tag. */
+    getTag: (id2) => repository2.getTag(id2),
+    /** Reads only a referenced shared library. */
+    getStore: (id2) => repository2.getStore(id2),
+    /** Reads only the model directory. */
+    listModels: () => repository2.listModels(),
+    /** Reads only the speech directory. */
+    listTtsConfigs: () => repository2.listTtsConfigs(),
+    readGlobalMemoryPreferences: () => repository2.readGlobalMemoryPreferences(),
+    dispatchDomain: (operation, payload) => executeDomain(operation, payload, repository2)
+  }),
+  /** Requires the chat's persisted selection rather than global active state. */
+  "chat.configuration.binding.find": (input, repository2) => repository2.chatBindings.findChatBinding(input.chatId),
+  "chat.configuration.binding.read": (input, repository2) => repository2.chatBindings.readChatBinding(input.chatId),
+  /** Stages a genuine selector submission in the shared publication. */
+  "chat.configuration.binding.write": (input, repository2) => __async(null, null, function* () {
+    yield requireChat(input.chatId);
+    return repository2.chatBindings.writeChatBinding(input);
+  }),
+  /** Deletes the requested existing binding through the same file operation. */
+  "chat.configuration.binding.delete": (input, repository2) => repository2.chatBindings.deleteChatBinding(input.chatId),
+  /** Reads the complete real editor directories. */
+  snapshot: (_input, host) => snapshot(host),
+  /** Reads complete canonical character cards. */
+  "character.list": (_input, host) => host.listCharacters(),
+  /** Requires the selected canonical character. */
+  "character.get": (input, host) => host.getCharacter(input.id),
+  /** Initializes an explicit new form and persists all provided character fields. */
+  "character.create": (input, host) => saveCharacter({ ...createCharacterDraft(), ...input.values }, true, { created: [], updated: [], deleted: [] }, host),
+  /** Merges an explicit edit into the complete canonical record before one manager write. */
+  "character.update": (input, host) => __async(null, null, function* () {
+    const original = yield host.getCharacter(input.id);
+    return saveCharacter({ ...original, ...input.changes, id: original.id }, false, { created: [], updated: [], deleted: [] }, host);
+  }),
+  /** Deletes any existing character using the canonical lifecycle. */
+  "character.delete": (input, host) => deleteCharacter(input.id, host),
+  /** Activates the selected canonical character. */
+  "character.setActive": (input, host) => __async(null, null, function* () {
+    yield activate("card", input.id, host);
+    return { type: "character_card", id: input.id, active: true };
+  }),
+  /** Composes the actual canonical prompt using the explicitly selected function and tags. */
+  "character.combine": (input, host) => __async(null, null, function* () {
+    const options = { promptFunctionType: "CHAT", additionalTagIds: [], ...input };
+    const prompt = yield combinePrompts(input.id, options.additionalTagIds, options.promptFunctionType, host);
+    return { id: input.id, promptFunctionType: options.promptFunctionType, additionalTagIds: options.additionalTagIds, prompt };
+  }),
+  /** Serializes the plugin-owned character interchange representation. */
+  "character.export": (input, host) => __async(null, null, function* () {
+    const card = yield host.getCharacter(input.id), tags = yield host.listTags();
+    return { id: input.id, format: input.format, content: encodeCharacterExport(card, input.format, tags) };
+  }),
+  /** Parses and stages interchange imports in the plugin before full canonical persistence. */
+  "character.import": (input, host) => __async(null, null, function* () {
+    const plan = decodeCharacterImport(input.content, input.format, yield host.listTags());
+    return saveCharacter(plan.card, true, plan.tagChanges, host);
+  }),
+  /** Exports the actual canonical records using the original manager backup format. */
+  "character.exportBackup": (_input, host) => __async(null, null, function* () {
+    return { content: yield exportCharacterBackup(host) };
+  }),
+  /** Validates the backup in the plugin before invoking canonical identity-preserving restore. */
+  "character.importBackup": (input, host) => __async(null, null, function* () {
+    const document2 = decodeCharacterBackup(input.content);
+    const result2 = yield host.restoreCharacters(document2.characterCards, document2.promptTags);
+    yield host.restoreConversationGroups(document2.conversationGroups);
+    return result2;
+  }),
+  /** Reads complete canonical groups. */
+  "group.list": (_input, host) => __async(null, null, function* () {
+    const groups = yield host.listGroups();
+    for (const group of groups) assertGroup(group);
+    return groups;
+  }),
+  /** Requires the selected canonical group. */
+  "group.get": (input, host) => __async(null, null, function* () {
+    const group = yield host.getGroup(input.id);
+    assertGroup(group);
+    return group;
+  }),
+  /** Persists every field of an explicit new group. */
+  "group.create": (input, host) => saveGroup({ ...createGroupDraft(), ...input.values }, true, host),
+  /** Merges an explicit edit into the full canonical group before saving. */
+  "group.update": (input, host) => __async(null, null, function* () {
+    const original = yield host.getGroup(input.id);
+    return saveGroup({ ...original, ...input.changes, id: original.id }, false, host);
+  }),
+  /** Deletes the group through the plugin repository lifecycle. */
+  "group.delete": (input, host) => __async(null, null, function* () {
+    yield host.getGroup(input.id);
+    yield host.deleteGroup(input.id);
+    return { id: input.id, deleted: true };
+  }),
+  /** Activates the selected real group. */
+  "group.setActive": (input, host) => __async(null, null, function* () {
+    yield activate("group", input.id, host);
+    return { type: "character_group", id: input.id, active: true };
+  }),
+  /** Copies the full canonical group's editable state into an intentional new group. */
+  "group.duplicate": (input, host) => __async(null, null, function* () {
+    const group = yield host.getGroup(input.id);
+    const options = { newName: group.name, ...input };
+    return saveGroup({ ...group, id: "", name: requireName(options.newName, "\u65B0\u7FA4\u7EC4\u540D\u79F0") }, true, host);
+  }),
+  /** Exports the complete canonical group serde record. */
+  "group.export": (input, host) => __async(null, null, function* () {
+    const group = yield host.getGroup(input.id);
+    assertGroup(group);
+    return { id: input.id, content: JSON.stringify(group, null, 2) };
+  }),
+  /** Parses and validates a full imported group before canonical creation. */
+  "group.import": (input, host) => saveGroup(decodeGroupImport(input.content), true, host),
+  /** Exports the actual canonical group backup shape. */
+  "group.exportBackup": (_input, host) => __async(null, null, function* () {
+    return { content: yield exportGroupBackup(host) };
+  }),
+  /** Validates the group backup before canonical identity-preserving restoration. */
+  "group.importBackup": (input, host) => host.restoreGroups(decodeGroupBackup(input.content).characterGroups),
+  /** Reads the canonical externally tagged active prompt. */
+  "activePrompt.get": (_input, host) => host.readActive(),
+  /** Selects model execution explicitly without applying any role-owned configuration. */
+  "activePrompt.setModel": (_input, host) => __async(null, null, function* () {
+    yield host.writeActive({ Model: { id: "chat" } });
+    return { type: "model", id: "chat", active: true };
+  }),
+  /** Activates the selected canonical character. */
+  "activePrompt.setCard": (input, host) => __async(null, null, function* () {
+    yield activate("card", input.id, host);
+    return { type: "character_card", id: input.id, active: true };
+  }),
+  /** Activates the selected canonical group. */
+  "activePrompt.setGroup": (input, host) => __async(null, null, function* () {
+    yield activate("group", input.id, host);
+    return { type: "character_group", id: input.id, active: true };
+  }),
+  /** Applies the plugin's explicit chat-binding selection logic. */
+  "activePrompt.activateForChat": (input, host) => activateForChat(input, host),
+  /** Resolves the real next-send actor under the canonical active card or group selection. */
+  "activePrompt.resolvedCard": (_input, host) => __async(null, null, function* () {
+    const active = yield host.readActive();
+    if (!("CharacterCard" in active)) throw new Error("An active group requires an explicit execution participant");
+    const card = yield host.getCharacter(active.CharacterCard.id);
+    return { id: card.id };
+  }),
+  /** Reads complete canonical tags. */
+  "tag.list": (_input, host) => __async(null, null, function* () {
+    const tags = yield host.listTags();
+    for (const tag of tags) assertTag(tag);
+    return tags;
+  }),
+  /** Requires an existing complete canonical tag. */
+  "tag.get": (input, host) => __async(null, null, function* () {
+    const tag = yield host.getTag(input.id);
+    assertTag(tag);
+    return tag;
+  }),
+  /** Initializes a new tag form and writes every provided editable field. */
+  "tag.create": (input, host) => saveTag({ id: "", ...createTagDraft(), ...input.values }, true, host),
+  /** Writes every editable field by merging the patch into the complete canonical tag. */
+  "tag.update": (input, host) => __async(null, null, function* () {
+    const original = yield host.getTag(input.id);
+    return saveTag({ ...original, ...input.changes, id: original.id }, false, host);
+  }),
+  /** Deletes an existing canonical prompt tag. */
+  "tag.delete": (input, host) => __async(null, null, function* () {
+    yield host.getTag(input.id);
+    yield host.deleteTag(input.id);
+    return { id: input.id, deleted: true };
+  }),
+  /** Reads complete canonical shared stores. */
+  "memory.shared.list": (_input, host) => host.listStores(),
+  /** Creates the canonical shared store. */
+  "memory.shared.create": (input, host) => saveStore({ id: "", name: input.name }, true, host),
+  /** Renames the selected canonical shared store. */
+  "memory.shared.rename": (input, host) => saveStore({ id: input.id, name: input.name }, false, host),
+  /** Removes the shared store and counts the actual canonical character bindings affected. */
+  "memory.shared.delete": (input, host) => __async(null, null, function* () {
+    const cards = yield host.listCharacters();
+    let cleanedCharacters = 0;
+    for (const card of cards) {
+      let affected = card.sharedMemoryId === input.id;
+      for (const mount2 of card.sharedMemoryMounts) if (mount2.sharedMemoryId === input.id) affected = true;
+      if (affected) cleanedCharacters += 1;
+    }
+    yield host.deleteStore(input.id);
+    return { sharedId: input.id, deleted: true, cleanedCharacters };
+  }),
+  /** Saves an explicit shared-store mount through the full canonical character writer. */
+  "memory.mount": (input, host) => __async(null, null, function* () {
+    yield host.getStore(input.sharedId);
+    const original = yield host.getCharacter(input.characterId);
+    const mount2 = { sharedMemoryId: input.sharedId, readable: input.readable, writable: input.writable };
+    const mounts = [];
+    for (const value of original.sharedMemoryMounts) if (value.sharedMemoryId !== input.sharedId) mounts.push(value);
+    mounts.push(mount2);
+    yield saveCharacter({ ...original, sharedMemoryMounts: mounts }, false, { created: [], updated: [], deleted: [] }, host);
+    return { characterId: input.characterId, sharedId: input.sharedId, mount: mount2, mounted: true };
+  }),
+  /** Removes only the explicitly selected mount through a full canonical character write. */
+  "memory.unmount": (input, host) => __async(null, null, function* () {
+    const original = yield host.getCharacter(input.characterId), mounts = [];
+    for (const mount2 of original.sharedMemoryMounts) if (mount2.sharedMemoryId !== input.sharedId) mounts.push(mount2);
+    yield saveCharacter({ ...original, sharedMemoryMounts: mounts }, false, { created: [], updated: [], deleted: [] }, host);
+    return { characterId: input.characterId, sharedId: input.sharedId, unmounted: true };
+  }),
+  /** Reads the selected real USER.md contents. */
+  "memory.user.read": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    return host.readUser(input.ownerKey);
+  }),
+  /** Writes owner-scoped USER.md without touching preference files. */
+  "memory.user.write": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    yield host.writeUser(input.ownerKey, input.content);
+    return { ownerKey: input.ownerKey, contentLength: input.content.length, updated: true };
+  }),
+  /** Reads the real plugin-owned USER.md path accepted by Files. */
+  "memory.user.path": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    return { ownerKey: input.ownerKey, path: yield host.readUserPath(input.ownerKey) };
+  }),
+  /** Resolves the primary canonical memory binding to its real owner enum. */
+  "memory.resolveOwner": (input, host) => __async(null, null, function* () {
+    return parseOwner(yield resolveMemoryOwner(input.characterId, host));
+  }),
+  /** Reads complete canonical owner settings. */
+  "memory.settings.read": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    return host.readMemorySettings(input.ownerKey);
+  }),
+  /** Writes complete canonical owner settings. */
+  "memory.settings.write": (input, host) => writeMemorySettings(input.ownerKey, input.settings, host),
+  /** Reads the complete persisted search configuration. */
+  "memory.searchConfig.read": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    return host.readMemorySearchConfig(input.ownerKey);
+  }),
+  /** Writes every persisted search configuration field. */
+  "memory.searchConfig.write": (input, host) => writeMemorySearchConfig(input.ownerKey, input.config, host),
+  /** Reads the actual repository graph with canonical UUID nodes. */
+  "memory.graph": (input, host) => __async(null, null, function* () {
+    return { ownerKey: input.ownerKey, graph: (yield graph(input.ownerKey, host)).graph };
+  }),
+  /** Reads complete repository memories in the selected owner scope. */
+  "memory.list": (input, host) => __async(null, null, function* () {
+    return { ownerKey: input.ownerKey, items: yield listMemories(input.ownerKey, host) };
+  }),
+  /** Searches complete repository records with the original explicit editor search filters. */
+  "memory.search": (input, host) => __async(null, null, function* () {
+    return { ownerKey: input.ownerKey, query: input.query, items: yield searchMemories({ ...input, folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null }, host) };
+  }),
+  /** Resolves an exact title to one complete canonical memory. */
+  "memory.get": (input, host) => __async(null, null, function* () {
+    return { ownerKey: input.ownerKey, item: findMemory(yield listMemories(input.ownerKey, host), input.title) };
+  }),
+  /** Initializes an intentional full new record and writes all memory metadata in the plugin snapshot. */
+  "memory.create": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    const values = {
+      id: "",
+      uuid: "",
+      contentType: "text",
+      source: "",
+      credibility: 0.5,
+      importance: 0.5,
+      documentPath: null,
+      isDocumentNode: false,
+      chunkIndexFilePath: null,
+      folderPath: null,
+      createdAt: 0,
+      updatedAt: 0,
+      lastAccessedAt: 0,
+      tags: [],
+      properties: [],
+      ...input.values
+    };
+    assertStrings(values.tags, "\u8BB0\u5FC6\u6807\u7B7E");
+    const tags = [];
+    for (const name of normalizeNames(values.tags)) tags.push({ id: uuid(), name });
+    const memory = { ...values, id: "", uuid: "", title: requireName(values.title, "\u8BB0\u5FC6\u6807\u9898"), tags };
+    const item = yield host.saveMemory(input.ownerKey, memory);
+    assertMemory(item);
+    return { ownerKey: input.ownerKey, item, created: true };
+  }),
+  /** Merges every supplied memory field into its full canonical record while preserving untouched metadata. */
+  "memory.update": (input, host) => __async(null, null, function* () {
+    const original = findMemory(yield listMemories(input.ownerKey, host), input.originalTitle);
+    if (input.expectedId !== void 0 && input.expectedId !== original.id) throw new Error("Memory identity changed since editing began");
+    const changes2 = { ...input.changes };
+    const tags = [];
+    if (Object.prototype.hasOwnProperty.call(changes2, "tags")) {
+      assertStrings(changes2.tags, "\u8BB0\u5FC6\u6807\u7B7E");
+      for (const name of normalizeNames(changes2.tags)) tags.push({ id: uuid(), name });
+    } else for (const tag of original.tags) tags.push(tag);
+    const memory = { ...original, ...changes2, id: original.id, tags };
+    assertMemory(memory);
+    const item = yield host.saveMemory(input.ownerKey, memory);
+    assertMemory(item);
+    return { ownerKey: input.ownerKey, item, updated: true };
+  }),
+  /** Deletes the exact owner-scoped canonical memory id. */
+  "memory.delete": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    yield host.deleteMemory(input.ownerKey, input.id);
+    return { ownerKey: input.ownerKey, id: input.id, deleted: true };
+  }),
+  /** Moves the explicitly selected ids using the canonical repository's bulk operation. */
+  "memory.move": (input, host) => __async(null, null, function* () {
+    const items = yield listMemories(input.ownerKey, host), existing = /* @__PURE__ */ new Set();
+    for (const item of items) existing.add(item.id);
+    const selected = /* @__PURE__ */ new Set();
+    for (const id2 of input.ids) {
+      if (!existing.has(id2)) throw new Error(`\u8BB0\u5FC6\u4E0D\u5B58\u5728\uFF1A${id2}`);
+      selected.add(id2);
+    }
+    yield host.moveMemories(input.ownerKey, [...selected], input.folderPath);
+    return { ownerKey: input.ownerKey, ids: [...selected], folder: input.folderPath, moved: selected.size };
+  }),
+  /** Resolves exact source and target records before creating a canonical relationship. */
+  "memory.link.create": (input, host) => __async(null, null, function* () {
+    const items = yield listMemories(input.ownerKey, host), source = findMemory(items, input.sourceTitle), target = findMemory(items, input.targetTitle);
+    if (source.id === target.id) throw new Error("\u4E0D\u80FD\u521B\u5EFA\u8BB0\u5FC6\u81EA\u8EAB\u5173\u7CFB");
+    const link2 = yield host.createLink(input.ownerKey, { sourceMemoryId: source.id, targetMemoryId: target.id, type_: requireName(input.linkType, "\u5173\u7CFB\u7C7B\u578B"), weight: input.weight, description: input.description });
+    return { ownerKey: input.ownerKey, link: link2 };
+  }),
+  /** Applies a full canonical relationship edit to the selected id. */
+  "memory.link.update": (input, host) => updateLink(input, host),
+  /** Deletes the exact owner-scoped canonical relationship id. */
+  "memory.link.delete": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    yield host.deleteLink(input.ownerKey, input.linkId);
+    return { ownerKey: input.ownerKey, linkId: input.linkId, deleted: true };
+  }),
+  /** Serializes the repository's portable backup format in the plugin. */
+  "memory.export": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    return { ownerKey: input.ownerKey, content: yield exportMemoryBackup(input.ownerKey, host) };
+  }),
+  /** Validates the complete portable backup before notification-preserving canonical restoration. */
+  "memory.import": (input, host) => __async(null, null, function* () {
+    yield requireOwner(input.ownerKey, host);
+    const document2 = decodeMemoryBackup(input.content);
+    const result2 = yield host.importMemorySpace(input.ownerKey, document2.space, input.strategy);
+    yield host.writeUser(input.ownerKey, document2.userMarkdown);
+    return { ownerKey: input.ownerKey, result: result2 };
+  })
+};
+function executeDomain(operation, input, host) {
+  return handlers[operation](parseDomainPayload(operation, input), host);
+}
+
+// src/service-runtime.ts
+function createCharacterCardsService(owner2, configurations = independentConfigurations) {
+  const jobs = new MemoryJobRunner(owner2), application = createSelectionApplication(configurations);
+  function dispatchRequest(request) {
+    if (request.action === "listThemeChoices")
+      return readThemeChoices(configurations);
+    switch (request.action) {
+      case "snapshot":
+        return owner2.readConfigurationSnapshot();
+      case "listBindableChats":
+        return listBindableChats(owner2.chatBindings);
+      case "listMemoryChats":
+        return listMemoryChats(request.ownerKey, owner2);
+      case "pruneMissingChatBindings":
+        return owner2.run((repository2) => pruneMissingMemoryChats(request.ownerKey, repository2));
+      case "readGlobalMemoryPreferences":
+        return owner2.readGlobalMemoryPreferences();
+      case "readMemoryRecallSettings":
+        return owner2.readMemoryRecallSettings();
+      case "readMemorySettings":
+        return owner2.readMemorySettings(request.ownerKey);
+      case "readMemorySearchConfig":
+        return owner2.readMemorySearchConfig(request.ownerKey);
+      case "readUser":
+        return owner2.readUser(request.ownerKey);
+    }
+    if (!isSelectionRequest(request))
+      return owner2.run(
+        /** Executes ordinary editor operations against this same serialized snapshot. */
+        (repository2) => dispatch(request, repository2)
+      );
+    return application.commit(
+      /** Publishes the actual selection once; independent preference writes are not included in this file publication. */
+      (validate) => owner2.run(
+        /** Prevalidates the chosen complete record inside the same immutable snapshot used by its actual mutation. */
+        (repository2) => __async(null, null, function* () {
+          const references = yield validate(
+            yield readSelectionReferences(
+              repository2,
+              editorSelection(request)
+            )
+          );
+          return { references, value: yield dispatch(request, repository2) };
+        })
+      )
+    );
+  }
+  const service2 = {
+    /** Applies the exact persisted actor through the same validated operations used by explicit selection. */
+    activateChatSelection(chatId) {
+      return __async(this, null, function* () {
+        requireId(chatId, "chat id");
+        const binding = yield owner2.chatBindings.findChatBinding(chatId);
+        if (binding === null) return;
+        const selection = parseChatSelection(binding.selection);
+        switch (selection.kind) {
+          case "card":
+            yield service2.dispatchDomain("activePrompt.setCard", { id: selection.id });
+            break;
+          case "group":
+            yield service2.dispatchDomain("activePrompt.setGroup", { id: selection.id });
+            break;
+          case "model":
+            yield service2.dispatchDomain("activePrompt.setModel", {});
+            break;
+        }
+      });
+    },
+    /** Runs the private job scheduler without constructing another store or business service. */
+    runMemoryJobs: () => jobs.tick(),
+    /** Reads only the metadata flags needed by prompt composition. */
+    readGlobalMemoryPreferences: () => owner2.readGlobalMemoryPreferences(),
+    /** Reads only the selected character and its owned relations. */
+    getCharacter: (id2) => owner2.getCharacter(id2),
+    /** Reads only the selected group and its saved membership. */
+    getGroup: (id2) => owner2.getGroup(id2),
+    /** Reads only one referenced prompt tag. */
+    getTag: (id2) => owner2.getTag(id2),
+    /** Reads only one referenced shared memory library. */
+    getStore: (id2) => owner2.getStore(id2),
+    /** Reads the model directory independently of role and tool catalogs. */
+    listModels: () => owner2.listModels(),
+    /** Reads the speech directory independently of role and tool catalogs. */
+    listTtsConfigs: () => owner2.listTtsConfigs(),
+    /** Preserves action-specific results through the shared service dispatcher. */
+    dispatch: dispatchRequest,
+    /** Reads configuration records without loading memory data. */
+    snapshot: () => owner2.readConfigurationSnapshot(),
+    /** Reads role presentation without entering the editing queue. */
+    sidebarDirectory: () => owner2.readSidebarDirectory(),
+    /** Routes reads directly and keeps mutations in the editing transaction. */
+    dispatchDomain(operation, input) {
+      switch (operation) {
+        case "snapshot":
+          return owner2.readConfigurationSnapshot();
+        case "chat.configuration.binding.find": {
+          const { chatId } = parseDomainPayload("chat.configuration.binding.find", input);
+          return owner2.chatBindings.findChatBinding(chatId);
+        }
+        case "chat.configuration.resolve":
+          return resolveConfiguration(parseDomainPayload("chat.configuration.resolve", input), service2);
+        case "character.combine": {
+          const { id: id2, promptFunctionType = "CHAT", additionalTagIds = [] } = parseDomainPayload("character.combine", input);
+          return combinePrompts(id2, additionalTagIds, promptFunctionType, owner2).then((prompt) => ({ id: id2, promptFunctionType, additionalTagIds, prompt }));
+        }
+        case "memory.resolveOwner": {
+          const { characterId } = parseDomainPayload("memory.resolveOwner", input);
+          return resolveMemoryOwner(characterId, owner2).then(parseOwner);
+        }
+        case "tag.list":
+          return owner2.listTags();
+        case "memory.shared.list":
+          return owner2.listStores();
+        case "activePrompt.get":
+          return owner2.readActive();
+        case "character.list":
+          return owner2.listCharacters();
+        case "group.list":
+          return owner2.listGroups();
+        case "character.get": {
+          const { id: id2 } = parseDomainPayload("character.get", input);
+          return owner2.getCharacter(id2);
+        }
+        case "group.get": {
+          const { id: id2 } = parseDomainPayload("group.get", input);
+          return owner2.getGroup(id2);
+        }
+        case "memory.chat.list":
+          return listMemoryChats(
+            parseDomainPayload("memory.chat.list", input).ownerKey,
+            owner2
+          );
+        case "memory.chat.pruneMissing":
+          return owner2.run((repository2) => pruneMissingMemoryChats(
+            parseDomainPayload("memory.chat.pruneMissing", input).ownerKey,
+            repository2
+          ));
+        case "memory.settings.read":
+          return owner2.readMemorySettings(
+            parseDomainPayload("memory.settings.read", input).ownerKey
+          );
+        case "memory.searchConfig.read":
+          return owner2.readMemorySearchConfig(
+            parseDomainPayload("memory.searchConfig.read", input).ownerKey
+          );
+        case "memory.user.read":
+          return owner2.readUser(
+            parseDomainPayload("memory.user.read", input).ownerKey
+          );
+        case "memory.user.path": {
+          const { ownerKey } = parseDomainPayload("memory.user.path", input);
+          return owner2.readUserPath(ownerKey).then((path) => ({ ownerKey, path }));
+        }
+      }
+      if (!isSelectionOperation(operation))
+        return owner2.run(
+          /** Runs non-selection APIs without touching independent current configurations. */
+          (repository2) => executeDomain(operation, input, repository2)
+        );
+      return application.commit(
+        /** Returns a confirmed owner write before applying any independent preferences. */
+        (validate) => owner2.run(
+          /** Validates the actual domain request and all record references before writing the selected actor. */
+          (repository2) => __async(null, null, function* () {
+            const selection = yield domainSelection(
+              operation,
+              input,
+              repository2
+            );
+            const references = yield validate(
+              yield readSelectionReferences(repository2, selection)
+            );
+            return {
+              references,
+              value: yield executeDomain(operation, input, repository2)
+            };
+          })
+        )
+      );
+    }
+  };
+  return service2;
+}
+var service;
 function getService() {
-  return runtime.getService();
+  return service ?? (service = getRepository().then((owner2) => createCharacterCardsService(owner2)));
+}
+function initializeService() {
+  return __async(this, null, function* () {
+    yield getService();
+  });
 }
 function dispatch2(request) {
   return __async(this, null, function* () {
     return (yield getService()).dispatch(request);
   });
 }
-function dispatchDomain2(operation, input) {
+function dispatchDomain(operation, input) {
   return __async(this, null, function* () {
     return (yield getService()).dispatchDomain(operation, input);
   });
@@ -7707,10 +7535,10 @@ function listSections(routeId, directory, bindings, chatIds) {
 function chatContextActionsApi(event) {
   return __async(this, null, function* () {
     requireUiCaller(event.callerPackage);
-    const input = parseChatRequest(event.payload), service = yield getService();
-    const directory = yield service.snapshot();
+    const input = parseChatRequest(event.payload), service2 = yield getService();
+    const directory = yield service2.snapshot();
     if (input.chatId === null) {
-      const active = yield service.dispatchDomain("activePrompt.get", {});
+      const active = yield service2.dispatchDomain("activePrompt.get", {});
       return contextActions(chatUiRoutes, { chatId: null, selection: encodeSelection(active) }, directory);
     }
     const binding = yield findChatBinding(input.chatId);
@@ -7721,7 +7549,7 @@ function chatContextActionsApi(event) {
 function chatListSectionsApi(event) {
   return __async(this, null, function* () {
     requireUiCaller(event.callerPackage);
-    const input = parseSectionsRequest(event.payload), service = yield getService(), directory = yield service.snapshot();
+    const input = parseSectionsRequest(event.payload), service2 = yield getService(), directory = yield service2.snapshot();
     const bindings = [];
     for (const [chatId, selection] of yield bindingsForChats(input.chats.map((chat) => chat.id))) bindings.push({ chatId, selection });
     return listSections(chatUiRoutes.editor, directory, bindings, input.chats.map(
@@ -7772,7 +7600,7 @@ function receiveUiRequest(value) {
 function receiveDomainRequest(value) {
   return __async(this, null, function* () {
     const message = parseDomainMessage(value);
-    return dispatchDomain2(message.operation, message.input);
+    return dispatchDomain(message.operation, message.input);
   });
 }
 function registerUiRequestChannel() {
@@ -7938,7 +7766,7 @@ function invocation(operation, payload, render) {
     /** Executes the shared business service once after all arguments have been validated. */
     execute() {
       return __async(this, null, function* () {
-        return render(yield dispatchDomain2(operation, checked));
+        return render(yield dispatchDomain(operation, checked));
       });
     }
   };
@@ -9049,7 +8877,7 @@ var MemoryTools = class {
         (title) => title !== ""
       ));
       if (names !== null && names.size === 0) throw new Error("titles must select at least one memory");
-      const records3 = yield this.domain("memory.list", { ownerKey }), selected = records3.items.filter(
+      const records2 = yield this.domain("memory.list", { ownerKey }), selected = records2.items.filter(
         /** Intersects both explicit selectors without silently changing selection strategy. */
         (memory) => (names === null || names.has(memory.title)) && (source === void 0 || (memory.folderPath === null ? "" : memory.folderPath) === source)
       );
@@ -9092,7 +8920,7 @@ function onMemoryMessagePersisted(event) {
     if (payload.content.trim() === "") return;
     assertInteger(payload.selectedVariantIndex, "persisted message selected variant index", 0);
     if (payload.selectedVariantIndex > 2147483647) throw new Error("Persisted message variant exceeds the host range");
-    yield dispatchDomain2("memory.candidate.enqueue", { chatId, timestamp: payload.timestamp, variantIndex: payload.selectedVariantIndex, sourceType: "reply_finalized_auto", ownerKey: null });
+    yield dispatchDomain("memory.candidate.enqueue", { chatId, timestamp: payload.timestamp, variantIndex: payload.selectedVariantIndex, sourceType: "reply_finalized_auto", ownerKey: null });
   });
 }
 function onMemoryInterval(_event) {
@@ -9106,7 +8934,7 @@ function registerMemoryJobHooks() {
 }
 
 // src/public-api.ts
-var memoryQueries = new MemoryTools(dispatchDomain2);
+var memoryQueries = new MemoryTools(dispatchDomain);
 function chatConfigurationResolveApi(event) {
   return __async(this, null, function* () {
     if (event.callerPackage !== "host") throw new Error("chat.configuration.resolve requires an authenticated host caller");
@@ -9115,7 +8943,7 @@ function chatConfigurationResolveApi(event) {
       const binding = yield findChatBinding(request.chatId);
       request.chatExtension = { version: 1, selection: binding === null ? "model:chat" : binding.selection };
     }
-    return dispatchDomain2("chat.configuration.resolve", request);
+    return dispatchDomain("chat.configuration.resolve", request);
   });
 }
 function chatConfigurationDraftResolveApi(event) {
@@ -9125,7 +8953,7 @@ function chatConfigurationDraftResolveApi(event) {
     if (request.chatId === null || request.purpose !== "display") throw new Error("Draft configuration requires a display identity");
     const binding = yield readDraftBinding(request.chatId);
     request.chatExtension = { version: 1, selection: binding.selection };
-    return dispatchDomain2("chat.configuration.resolve", request);
+    return dispatchDomain("chat.configuration.resolve", request);
   });
 }
 function chatConfigurationDraftCommitApi(event) {
@@ -9147,29 +8975,35 @@ function chatConfigurationDeleteApi(event) {
     if (event.callerPackage !== "host") throw new Error("Configuration deletion requires the host caller");
     const input = parseDomainPayload("chat.configuration.binding.delete", event.payload);
     if ((yield findChatBinding(input.chatId)) === null) return { deleted: true };
-    const result2 = yield dispatchDomain2("chat.configuration.binding.delete", input);
+    const result2 = yield dispatchDomain("chat.configuration.binding.delete", input);
     if (result2.chatId !== input.chatId || !result2.deleted) throw new Error("Character binding deletion was not acknowledged");
     return { deleted: true };
   });
 }
+function chatConfigurationBindingFindApi(event) {
+  return __async(this, null, function* () {
+    return dispatchDomain("chat.configuration.binding.find", event.payload);
+  });
+}
 function chatConfigurationBindingReadApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("chat.configuration.binding.read", parseDomainPayload("chat.configuration.binding.read", event.payload));
+    return dispatchDomain("chat.configuration.binding.read", parseDomainPayload("chat.configuration.binding.read", event.payload));
   });
 }
 function chatConfigurationBindingWriteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("chat.configuration.binding.write", parseDomainPayload("chat.configuration.binding.write", event.payload));
+    return dispatchDomain("chat.configuration.binding.write", parseDomainPayload("chat.configuration.binding.write", event.payload));
   });
 }
 function chatConfigurationBindingDeleteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("chat.configuration.binding.delete", parseDomainPayload("chat.configuration.binding.delete", event.payload));
+    return dispatchDomain("chat.configuration.binding.delete", parseDomainPayload("chat.configuration.binding.delete", event.payload));
   });
 }
 function registerChatConfigurationApis() {
   ToolPkg.registerApi({ name: "chat.configuration.resolve", function: chatConfigurationResolveApi });
   ToolPkg.registerApi({ name: "chat.configuration.delete", function: chatConfigurationDeleteApi });
+  ToolPkg.registerApi({ name: "chat.configuration.binding.find", function: chatConfigurationBindingFindApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.read", function: chatConfigurationBindingReadApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.write", function: chatConfigurationBindingWriteApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.delete", function: chatConfigurationBindingDeleteApi });
@@ -9195,372 +9029,372 @@ function memoryRecallQuery(participantId, query, limit2, snapshotId) {
 }
 function memoryChatListApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.chat.list", parseDomainPayload("memory.chat.list", event.payload));
+    return dispatchDomain("memory.chat.list", parseDomainPayload("memory.chat.list", event.payload));
   });
 }
 function memoryChatUpdateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.chat.update", parseDomainPayload("memory.chat.update", event.payload));
+    return dispatchDomain("memory.chat.update", parseDomainPayload("memory.chat.update", event.payload));
   });
 }
 function memoryChatPruneMissingApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.chat.pruneMissing", parseDomainPayload("memory.chat.pruneMissing", event.payload));
+    return dispatchDomain("memory.chat.pruneMissing", parseDomainPayload("memory.chat.pruneMissing", event.payload));
   });
 }
 function memoryCategorizeApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.categorize", parseDomainPayload("memory.categorize", event.payload));
+    return dispatchDomain("memory.categorize", parseDomainPayload("memory.categorize", event.payload));
   });
 }
 function memoryRebuildStartApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.rebuild.start", parseDomainPayload("memory.rebuild.start", event.payload));
+    return dispatchDomain("memory.rebuild.start", parseDomainPayload("memory.rebuild.start", event.payload));
   });
 }
 function memoryRebuildProgressApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.rebuild.progress", parseDomainPayload("memory.rebuild.progress", event.payload));
+    return dispatchDomain("memory.rebuild.progress", parseDomainPayload("memory.rebuild.progress", event.payload));
   });
 }
 function memoryCandidatesRetryFailedApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.candidates.retryFailed", parseDomainPayload("memory.candidates.retryFailed", event.payload));
+    return dispatchDomain("memory.candidates.retryFailed", parseDomainPayload("memory.candidates.retryFailed", event.payload));
   });
 }
 function memoryCandidatesClearFailedApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.candidates.clearFailed", parseDomainPayload("memory.candidates.clearFailed", event.payload));
+    return dispatchDomain("memory.candidates.clearFailed", parseDomainPayload("memory.candidates.clearFailed", event.payload));
   });
 }
 function memoryRebuildCancelApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.rebuild.cancel", parseDomainPayload("memory.rebuild.cancel", event.payload));
+    return dispatchDomain("memory.rebuild.cancel", parseDomainPayload("memory.rebuild.cancel", event.payload));
   });
 }
 function memoryEmbeddingsRebuildApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.embeddings.rebuild", parseDomainPayload("memory.embeddings.rebuild", event.payload));
+    return dispatchDomain("memory.embeddings.rebuild", parseDomainPayload("memory.embeddings.rebuild", event.payload));
   });
 }
 function memoryCandidateEnqueueApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.candidate.enqueue", parseDomainPayload("memory.candidate.enqueue", event.payload));
+    return dispatchDomain("memory.candidate.enqueue", parseDomainPayload("memory.candidate.enqueue", event.payload));
   });
 }
 function memoryChunksApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.chunks", parseDomainPayload("memory.chunks", event.payload));
+    return dispatchDomain("memory.chunks", parseDomainPayload("memory.chunks", event.payload));
   });
 }
 function memorySearchWithOptionsApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.searchWithOptions", parseDomainPayload("memory.searchWithOptions", event.payload));
+    return dispatchDomain("memory.searchWithOptions", parseDomainPayload("memory.searchWithOptions", event.payload));
   });
 }
 function snapshotApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("snapshot", parseDomainPayload("snapshot", event.payload));
+    return dispatchDomain("snapshot", parseDomainPayload("snapshot", event.payload));
   });
 }
 function characterListApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.list", parseDomainPayload("character.list", event.payload));
+    return dispatchDomain("character.list", parseDomainPayload("character.list", event.payload));
   });
 }
 function characterGetApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.get", parseDomainPayload("character.get", event.payload));
+    return dispatchDomain("character.get", parseDomainPayload("character.get", event.payload));
   });
 }
 function characterCreateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.create", parseDomainPayload("character.create", event.payload));
+    return dispatchDomain("character.create", parseDomainPayload("character.create", event.payload));
   });
 }
 function characterUpdateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.update", parseDomainPayload("character.update", event.payload));
+    return dispatchDomain("character.update", parseDomainPayload("character.update", event.payload));
   });
 }
 function characterDeleteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.delete", parseDomainPayload("character.delete", event.payload));
+    return dispatchDomain("character.delete", parseDomainPayload("character.delete", event.payload));
   });
 }
 function characterSetActiveApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.setActive", parseDomainPayload("character.setActive", event.payload));
+    return dispatchDomain("character.setActive", parseDomainPayload("character.setActive", event.payload));
   });
 }
 function characterCombineApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.combine", parseDomainPayload("character.combine", event.payload));
+    return dispatchDomain("character.combine", parseDomainPayload("character.combine", event.payload));
   });
 }
 function characterExportApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.export", parseDomainPayload("character.export", event.payload));
+    return dispatchDomain("character.export", parseDomainPayload("character.export", event.payload));
   });
 }
 function characterImportApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.import", parseDomainPayload("character.import", event.payload));
+    return dispatchDomain("character.import", parseDomainPayload("character.import", event.payload));
   });
 }
 function characterExportBackupApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.exportBackup", parseDomainPayload("character.exportBackup", event.payload));
+    return dispatchDomain("character.exportBackup", parseDomainPayload("character.exportBackup", event.payload));
   });
 }
 function characterImportBackupApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("character.importBackup", parseDomainPayload("character.importBackup", event.payload));
+    return dispatchDomain("character.importBackup", parseDomainPayload("character.importBackup", event.payload));
   });
 }
 function groupListApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.list", parseDomainPayload("group.list", event.payload));
+    return dispatchDomain("group.list", parseDomainPayload("group.list", event.payload));
   });
 }
 function groupGetApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.get", parseDomainPayload("group.get", event.payload));
+    return dispatchDomain("group.get", parseDomainPayload("group.get", event.payload));
   });
 }
 function groupCreateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.create", parseDomainPayload("group.create", event.payload));
+    return dispatchDomain("group.create", parseDomainPayload("group.create", event.payload));
   });
 }
 function groupUpdateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.update", parseDomainPayload("group.update", event.payload));
+    return dispatchDomain("group.update", parseDomainPayload("group.update", event.payload));
   });
 }
 function groupDeleteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.delete", parseDomainPayload("group.delete", event.payload));
+    return dispatchDomain("group.delete", parseDomainPayload("group.delete", event.payload));
   });
 }
 function groupSetActiveApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.setActive", parseDomainPayload("group.setActive", event.payload));
+    return dispatchDomain("group.setActive", parseDomainPayload("group.setActive", event.payload));
   });
 }
 function groupDuplicateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.duplicate", parseDomainPayload("group.duplicate", event.payload));
+    return dispatchDomain("group.duplicate", parseDomainPayload("group.duplicate", event.payload));
   });
 }
 function groupExportApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.export", parseDomainPayload("group.export", event.payload));
+    return dispatchDomain("group.export", parseDomainPayload("group.export", event.payload));
   });
 }
 function groupImportApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.import", parseDomainPayload("group.import", event.payload));
+    return dispatchDomain("group.import", parseDomainPayload("group.import", event.payload));
   });
 }
 function groupExportBackupApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.exportBackup", parseDomainPayload("group.exportBackup", event.payload));
+    return dispatchDomain("group.exportBackup", parseDomainPayload("group.exportBackup", event.payload));
   });
 }
 function groupImportBackupApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("group.importBackup", parseDomainPayload("group.importBackup", event.payload));
+    return dispatchDomain("group.importBackup", parseDomainPayload("group.importBackup", event.payload));
   });
 }
 function activePromptGetApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("activePrompt.get", parseDomainPayload("activePrompt.get", event.payload));
+    return dispatchDomain("activePrompt.get", parseDomainPayload("activePrompt.get", event.payload));
   });
 }
 function activePromptSetModelApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("activePrompt.setModel", parseDomainPayload("activePrompt.setModel", event.payload));
+    return dispatchDomain("activePrompt.setModel", parseDomainPayload("activePrompt.setModel", event.payload));
   });
 }
 function activePromptSetCardApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("activePrompt.setCard", parseDomainPayload("activePrompt.setCard", event.payload));
+    return dispatchDomain("activePrompt.setCard", parseDomainPayload("activePrompt.setCard", event.payload));
   });
 }
 function activePromptSetGroupApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("activePrompt.setGroup", parseDomainPayload("activePrompt.setGroup", event.payload));
+    return dispatchDomain("activePrompt.setGroup", parseDomainPayload("activePrompt.setGroup", event.payload));
   });
 }
 function activePromptActivateForChatApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("activePrompt.activateForChat", parseDomainPayload("activePrompt.activateForChat", event.payload));
+    return dispatchDomain("activePrompt.activateForChat", parseDomainPayload("activePrompt.activateForChat", event.payload));
   });
 }
 function activePromptResolvedCardApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("activePrompt.resolvedCard", parseDomainPayload("activePrompt.resolvedCard", event.payload));
+    return dispatchDomain("activePrompt.resolvedCard", parseDomainPayload("activePrompt.resolvedCard", event.payload));
   });
 }
 function tagListApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("tag.list", parseDomainPayload("tag.list", event.payload));
+    return dispatchDomain("tag.list", parseDomainPayload("tag.list", event.payload));
   });
 }
 function tagGetApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("tag.get", parseDomainPayload("tag.get", event.payload));
+    return dispatchDomain("tag.get", parseDomainPayload("tag.get", event.payload));
   });
 }
 function tagCreateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("tag.create", parseDomainPayload("tag.create", event.payload));
+    return dispatchDomain("tag.create", parseDomainPayload("tag.create", event.payload));
   });
 }
 function tagUpdateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("tag.update", parseDomainPayload("tag.update", event.payload));
+    return dispatchDomain("tag.update", parseDomainPayload("tag.update", event.payload));
   });
 }
 function tagDeleteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("tag.delete", parseDomainPayload("tag.delete", event.payload));
+    return dispatchDomain("tag.delete", parseDomainPayload("tag.delete", event.payload));
   });
 }
 function memorySharedListApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.shared.list", parseDomainPayload("memory.shared.list", event.payload));
+    return dispatchDomain("memory.shared.list", parseDomainPayload("memory.shared.list", event.payload));
   });
 }
 function memorySharedCreateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.shared.create", parseDomainPayload("memory.shared.create", event.payload));
+    return dispatchDomain("memory.shared.create", parseDomainPayload("memory.shared.create", event.payload));
   });
 }
 function memorySharedRenameApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.shared.rename", parseDomainPayload("memory.shared.rename", event.payload));
+    return dispatchDomain("memory.shared.rename", parseDomainPayload("memory.shared.rename", event.payload));
   });
 }
 function memorySharedDeleteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.shared.delete", parseDomainPayload("memory.shared.delete", event.payload));
+    return dispatchDomain("memory.shared.delete", parseDomainPayload("memory.shared.delete", event.payload));
   });
 }
 function memoryMountApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.mount", parseDomainPayload("memory.mount", event.payload));
+    return dispatchDomain("memory.mount", parseDomainPayload("memory.mount", event.payload));
   });
 }
 function memoryUnmountApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.unmount", parseDomainPayload("memory.unmount", event.payload));
+    return dispatchDomain("memory.unmount", parseDomainPayload("memory.unmount", event.payload));
   });
 }
 function memoryUserReadApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.user.read", parseDomainPayload("memory.user.read", event.payload));
+    return dispatchDomain("memory.user.read", parseDomainPayload("memory.user.read", event.payload));
   });
 }
 function memoryUserWriteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.user.write", parseDomainPayload("memory.user.write", event.payload));
+    return dispatchDomain("memory.user.write", parseDomainPayload("memory.user.write", event.payload));
   });
 }
 function memoryUserPathApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.user.path", parseDomainPayload("memory.user.path", event.payload));
+    return dispatchDomain("memory.user.path", parseDomainPayload("memory.user.path", event.payload));
   });
 }
 function memoryResolveOwnerApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.resolveOwner", parseDomainPayload("memory.resolveOwner", event.payload));
+    return dispatchDomain("memory.resolveOwner", parseDomainPayload("memory.resolveOwner", event.payload));
   });
 }
 function memorySettingsReadApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.settings.read", parseDomainPayload("memory.settings.read", event.payload));
+    return dispatchDomain("memory.settings.read", parseDomainPayload("memory.settings.read", event.payload));
   });
 }
 function memorySettingsWriteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.settings.write", parseDomainPayload("memory.settings.write", event.payload));
+    return dispatchDomain("memory.settings.write", parseDomainPayload("memory.settings.write", event.payload));
   });
 }
 function memorySearchConfigReadApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.searchConfig.read", parseDomainPayload("memory.searchConfig.read", event.payload));
+    return dispatchDomain("memory.searchConfig.read", parseDomainPayload("memory.searchConfig.read", event.payload));
   });
 }
 function memorySearchConfigWriteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.searchConfig.write", parseDomainPayload("memory.searchConfig.write", event.payload));
+    return dispatchDomain("memory.searchConfig.write", parseDomainPayload("memory.searchConfig.write", event.payload));
   });
 }
 function memoryGraphApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.graph", parseDomainPayload("memory.graph", event.payload));
+    return dispatchDomain("memory.graph", parseDomainPayload("memory.graph", event.payload));
   });
 }
 function memoryListApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.list", parseDomainPayload("memory.list", event.payload));
+    return dispatchDomain("memory.list", parseDomainPayload("memory.list", event.payload));
   });
 }
 function memorySearchApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.search", parseDomainPayload("memory.search", event.payload));
+    return dispatchDomain("memory.search", parseDomainPayload("memory.search", event.payload));
   });
 }
 function memoryGetApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.get", parseDomainPayload("memory.get", event.payload));
+    return dispatchDomain("memory.get", parseDomainPayload("memory.get", event.payload));
   });
 }
 function memoryCreateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.create", parseDomainPayload("memory.create", event.payload));
+    return dispatchDomain("memory.create", parseDomainPayload("memory.create", event.payload));
   });
 }
 function memoryUpdateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.update", parseDomainPayload("memory.update", event.payload));
+    return dispatchDomain("memory.update", parseDomainPayload("memory.update", event.payload));
   });
 }
 function memoryDeleteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.delete", parseDomainPayload("memory.delete", event.payload));
+    return dispatchDomain("memory.delete", parseDomainPayload("memory.delete", event.payload));
   });
 }
 function memoryMoveApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.move", parseDomainPayload("memory.move", event.payload));
+    return dispatchDomain("memory.move", parseDomainPayload("memory.move", event.payload));
   });
 }
 function memoryLinkCreateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.link.create", parseDomainPayload("memory.link.create", event.payload));
+    return dispatchDomain("memory.link.create", parseDomainPayload("memory.link.create", event.payload));
   });
 }
 function memoryLinkUpdateApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.link.update", parseDomainPayload("memory.link.update", event.payload));
+    return dispatchDomain("memory.link.update", parseDomainPayload("memory.link.update", event.payload));
   });
 }
 function memoryLinkDeleteApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.link.delete", parseDomainPayload("memory.link.delete", event.payload));
+    return dispatchDomain("memory.link.delete", parseDomainPayload("memory.link.delete", event.payload));
   });
 }
 function memoryExportApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.export", parseDomainPayload("memory.export", event.payload));
+    return dispatchDomain("memory.export", parseDomainPayload("memory.export", event.payload));
   });
 }
 function memoryImportApi(event) {
   return __async(this, null, function* () {
-    return dispatchDomain2("memory.import", parseDomainPayload("memory.import", event.payload));
+    return dispatchDomain("memory.import", parseDomainPayload("memory.import", event.payload));
   });
 }
 function registerDomainApis() {
@@ -9779,18 +9613,18 @@ function initializeChatExtension(value, reader) {
 }
 function readActiveSelection() {
   return __async(this, null, function* () {
-    return selectionForActive(yield dispatchDomain2("activePrompt.get", {}));
+    return selectionForActive(yield dispatchDomain("activePrompt.get", {}));
   });
 }
 function requireSelection(selection) {
   return __async(this, null, function* () {
     const selected = parseChatSelection(selection);
     if (selected.kind === "card") {
-      yield dispatchDomain2("character.get", { id: selected.id });
+      yield dispatchDomain("character.get", { id: selected.id });
     } else if (selected.kind === "group") {
-      const group = yield dispatchDomain2("group.get", { id: selected.id });
+      const group = yield dispatchDomain("group.get", { id: selected.id });
       if (group.members.length === 0) throw new Error("A bound chat group must have actual participants: " + group.id);
-      yield Promise.all(group.members.map((member2) => dispatchDomain2("character.get", { id: member2.characterCardId })));
+      yield Promise.all(group.members.map((member2) => dispatchDomain("character.get", { id: member2.characterCardId })));
     }
   });
 }
@@ -10346,12 +10180,12 @@ var GroupExecutionController = class {
 };
 
 // src/group-execution/domain-adapter.ts
-function createGroupExecutionController(service, transport) {
+function createGroupExecutionController(service2, transport) {
   return new GroupExecutionController({
     /** Reads only the actual conversation's owner-isolated namespace, never global selection or a file mirror. */
     readSelection(chatId) {
       return __async(this, null, function* () {
-        return (yield service.dispatchDomain("chat.configuration.binding.read", { chatId })).selection;
+        return (yield service2.dispatchDomain("chat.configuration.binding.read", { chatId })).selection;
       });
     },
     /** Requires real saved group members in their explicit domain order before planning or executing. */
@@ -10359,7 +10193,7 @@ function createGroupExecutionController(service, transport) {
       return __async(this, null, function* () {
         const parsed = parseChatSelection(selection);
         if (parsed.kind !== "group") throw new Error("Group planner requires a group selection");
-        return orderedGroupParticipants(yield service.getGroup(parsed.id), service);
+        return orderedGroupParticipants(yield service2.getGroup(parsed.id), service2);
       });
     },
     plan: planGroupResponse,
@@ -10461,9 +10295,9 @@ var NativeGroupTurnTransport = class {
     });
   }
   /** Requires the exact retained local submission rather than selecting another conversation's state. */
-  requireSequence(chatId, submissionId, runtime2) {
+  requireSequence(chatId, submissionId, runtime) {
     const sequence = this.sequences.get(sequenceKey(chatId, submissionId));
-    if (sequence === void 0 || sequence.chatId !== chatId || sequence.runtime !== runtime2) throw new Error("Group submission has no matching send sequence");
+    if (sequence === void 0 || sequence.chatId !== chatId || sequence.runtime !== runtime) throw new Error("Group submission has no matching send sequence");
     return sequence;
   }
   /** Awaits one real finalized send, validates its originating receipt and checks the native-authored identity. */
@@ -10500,8 +10334,8 @@ var controller = null;
 var submissionSequence = 0;
 var executions = /* @__PURE__ */ new Map();
 function submission(payload, chatId, selection) {
-  const { runtime: runtime2, text: text2, attachments } = payload;
-  if (runtime2 === null) throw new Error("Group input requires an actual send-capable runtime slot");
+  const { runtime, text: text2, attachments } = payload;
+  if (runtime === null) throw new Error("Group input requires an actual send-capable runtime slot");
   if (text2 === void 0) throw new Error("Group input requires the submitted text field");
   if (attachments === null) throw new Error("Group input requires complete native attachments");
   if (payload.attachmentCount !== attachments.length || payload.hasAttachments !== (attachments.length !== 0)) {
@@ -10511,7 +10345,7 @@ function submission(payload, chatId, selection) {
     submissionId: "group-input-" + ++submissionSequence,
     chatId,
     selection,
-    runtime: runtime2,
+    runtime,
     notifyReply: payload.notifyReply,
     text: text2,
     attachments,
@@ -10542,13 +10376,13 @@ function onGroupInputSubmit(event) {
     const binding = yield findChatBinding(chatId);
     if (binding === null) return null;
     if (parseChatSelection(binding.selection).kind !== "group") return null;
-    const service = yield getService();
+    const service2 = yield getService();
     const input = submission(payload, chatId, binding.selection);
     const current = executions.get(chatId);
     if (current !== void 0 && (current.status === "running" || current.outcome !== null && current.outcome.status === "cancelled")) {
       return { action: "Block", clearInput: false, message: "An existing group submission must settle or resume before another input", metadata: { submissionId: current.input.submissionId } };
     }
-    if (controller === null) controller = createGroupExecutionController(service, new NativeGroupTurnTransport());
+    if (controller === null) controller = createGroupExecutionController(service2, new NativeGroupTurnTransport());
     const work = controller.submit(input);
     const execution = { input, status: "running", outcome: null, failure: null };
     executions.set(chatId, execution);
@@ -10791,8 +10625,8 @@ function conversationSidebarScope(section) {
 }
 function readSidebarCatalog(value) {
   return __async(this, null, function* () {
-    const current = parseCurrentSidebar(value), service = yield getService();
-    const [directory, selections] = yield Promise.all([service.sidebarDirectory(), readSidebarSelections(current.chatSidebar.chats)]);
+    const current = parseCurrentSidebar(value), service2 = yield getService();
+    const [directory, selections] = yield Promise.all([service2.sidebarDirectory(), readSidebarSelections(current.chatSidebar.chats)]);
     for (const selection of selections) {
       if (selection.selection !== null) requireChatSelection(selection.selection, directory.cards, directory.groups);
     }

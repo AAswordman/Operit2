@@ -1,19 +1,880 @@
+import { readCharacter, createCharacterDraft, createGroupDraft, createTagDraft } from "./drafts";
+import { characterModelBindingMode, sameCharacterModelBinding } from "./model-binding";
+import type { DomainInput, DomainOperation, DomainOutput } from "./api";
+import type { ChatConfigurationService } from "./domain";
+import { parseDomainPayload, resolveChatConfiguration } from "./domain";
+import { combineCharacterPrompt } from "./character-prompt";
+import { listBindableChats } from "./chat-binding-catalog";
+import { parseChatSelection } from "./chat-bindings";
+import { clearFailedCandidates, enqueueCandidate, retryFailedCandidates, startMemoryRebuild } from "./memory-jobs/scheduler";
+import { listMemoryChats, pruneMissingMemoryChats, requireChat } from "./memory-jobs/chat";
+import type { CharacterRepository } from "./canonical";
+import type { Card, Group, GroupValues, Memory, MemoryGraphResult, MemoryOwner, MemorySearchOptions, MemorySettings, MemorySearchConfig, Request, RequestOutput, Snapshot, Store, StoreValues, Tag, TagChanges, TagEdit, TagValues, MemoryLink } from "./model";
+import { assertBoolean, assertGroup, assertGroupValues, assertMemory, assertMemorySettings, assertObject, assertSearchConfig, assertSearchOptions, assertString, assertStrings, assertTag, assertTagValues, normalizeNames, requireId, requireName, assertNumber } from "./validation";
+import { decodeCharacterImport, decodeGroupImport, encodeCharacterExport } from "./serialization";
+import { readThemeChoices } from "./selection-application";
+import { independentConfigurations } from "./selection-settings";
 import { uuid } from "./identity";
 import { searchMemoryChunks } from "./memory-search";
-import type { DomainInput, DomainOperation, DomainOutput } from "./api";
-import type { CharacterRepository } from "./canonical";
-import type { Card, Memory, MemoryLink } from "./model";
-import { createCharacterDraft, createGroupDraft, createTagDraft } from "./drafts";
-import { parseDomainPayload, resolveChatConfiguration } from "./domain";
-import type { ChatConfigurationService } from "./domain";
 import { autoCategorizeMemory, updateChatMemory } from "./memory-jobs/analysis";
-import { listMemoryChats, pruneMissingMemoryChats, requireChat } from "./memory-jobs/chat";
 import { rebuildMemoryEmbeddings } from "./memory-jobs/embeddings";
-import { clearFailedCandidates, enqueueCandidate, retryFailedCandidates, startMemoryRebuild } from "./memory-jobs/scheduler";
 import { decodeCharacterBackup, decodeGroupBackup, decodeMemoryBackup, exportCharacterBackup, exportGroupBackup, exportMemoryBackup } from "./backup";
-import { decodeCharacterImport, decodeGroupImport, encodeCharacterExport } from "./serialization";
-import { assertCard, assertGroup, assertMemory, assertNumber, assertStrings, assertTag, normalizeNames, requireId, requireName } from "./validation";
-import { activate, combinePrompts, graph, listMemories, parseOwner, requireOwner, resolveMemoryOwner, saveCharacter, saveGroup, saveStore, saveTag, searchMemories, snapshot, writeMemorySearchConfig, writeMemorySettings } from "./service";
+
+interface TagPlan {
+  created: { draftId: string; values: TagValues }[];
+  updated: Tag[];
+  deleted: string[];
+  attachedIds: string[];
+}
+/** Builds the editor aggregate exclusively from independent real canonical reads. */
+export async function snapshot(host: CharacterRepository): Promise<Snapshot> {
+  const [
+    cards,
+    groups,
+    stores,
+    tags,
+    active,
+    models,
+    ttsConfigs,
+    toolCatalog,
+    memoryPreferences,
+  ] = await Promise.all([
+    host.listCharacters(),
+    host.listGroups(),
+    host.listStores(),
+    host.listTags(),
+    host.readActive(),
+    Promise.resolve().then(() => host.listModels()),
+    Promise.resolve().then(() => host.listTtsConfigs()),
+    Promise.resolve().then(() => host.readToolCatalog()),
+    host.readGlobalMemoryPreferences(),
+  ]);
+  return {
+    cards,
+    groups,
+    stores,
+    tags,
+    active,
+    models,
+    ttsConfigs,
+    toolCatalog,
+    memoryPreferences,
+  };
+}
+
+/** Requires exactly one canonical record instead of silently choosing an ambiguous identity. */
+function findRecord<T extends { id: string }>(
+  values: T[],
+  id: string,
+  label: string,
+): T {
+  let found: T | undefined;
+  for (const value of values) {
+    if (value.id !== id) continue;
+    if (found !== undefined) throw new Error(`${label} 标识重复：${id}`);
+    found = value;
+  }
+  if (found === undefined) throw new Error(`${label} 不存在：${id}`);
+  return found;
+}
+
+/** Prepares every staged tag mutation and attached-id mapping before any write is issued. */
+function prepareTagChanges(
+  attachedIds: string[],
+  changes: TagChanges,
+  tags: Tag[],
+): TagPlan {
+  assertStrings(attachedIds, "角色标签");
+  assertObject(changes, "标签修改");
+  if (!Array.isArray(changes.created) || !Array.isArray(changes.updated))
+    throw new Error("标签修改格式无效");
+  assertStrings(changes.deleted, "删除标签标识");
+  const created: TagPlan["created"] = [];
+  const updated: Tag[] = [];
+  const deleted = new Set<string>();
+  const changedIds = new Set<string>();
+  const draftIds = new Set<string>();
+  for (const id of changes.deleted) {
+    requireId(id, "删除标签标识");
+    findRecord(tags, id, "标签");
+    if (deleted.has(id)) throw new Error("标签删除项重复");
+    deleted.add(id);
+  }
+  for (const draft of changes.created) {
+    assertObject(draft, "新标签");
+    const draftId = requireId(draft.draftId, "新标签草稿标识");
+    if (draftIds.has(draftId)) throw new Error("标签草稿标识重复");
+    for (const tag of tags)
+      if (tag.id === draftId) throw new Error("标签草稿标识与已有标签冲突");
+    assertTagValues(draft.values);
+    const values = normalizedTagValues(draft.values);
+    draftIds.add(draftId);
+    created.push({ draftId, values });
+  }
+  for (const edit of changes.updated) {
+    assertTagValues(edit);
+    const id = requireId(edit.id, "修改标签标识");
+    if (changedIds.has(id) || deleted.has(id))
+      throw new Error("同一标签存在冲突修改");
+    const original = findRecord(tags, id, "标签");
+    changedIds.add(id);
+    updated.push({ ...original, ...normalizedTagValues(edit) });
+  }
+  const projected: { id: string; name: string }[] = [];
+  for (const tag of tags) {
+    if (deleted.has(tag.id)) continue;
+    let current = tag;
+    for (const update of updated) if (update.id === tag.id) current = update;
+    projected.push({ id: tag.id, name: current.name.trim() });
+  }
+  for (const draft of created)
+    projected.push({ id: draft.draftId, name: draft.values.name });
+  for (const draft of created)
+    for (const tag of projected)
+      if (tag.id !== draft.draftId && tag.name === draft.values.name)
+        throw new Error(`标签名称已存在：${draft.values.name}`);
+  for (const update of updated) {
+    const original = findRecord(tags, update.id, "标签");
+    if (original.name.trim() === update.name) continue;
+    for (const tag of projected)
+      if (tag.id !== update.id && tag.name === update.name)
+        throw new Error(`标签名称已存在：${update.name}`);
+  }
+  const attached: string[] = [];
+  const attachedSet = new Set<string>();
+  for (const id of attachedIds) {
+    requireId(id, "角色标签标识");
+    if (deleted.has(id)) continue;
+    if (!draftIds.has(id)) findRecord(tags, id, "角色标签");
+    if (attachedSet.has(id)) continue;
+    attachedSet.add(id);
+    attached.push(id);
+  }
+  return { created, updated, deleted: [...deleted], attachedIds: attached };
+}
+
+/** Normalizes the editable tag fields without discarding prompt content or tag type. */
+function normalizedTagValues(values: TagValues): TagValues {
+  return {
+    name: requireName(values.name, "标签名称"),
+    description: values.description.trim(),
+    promptContent: values.promptContent,
+    tagType: values.tagType,
+  };
+}
+
+/** Commits a validated staged plan only as part of the enclosing explicit save. */
+async function commitTagChanges(
+  plan: TagPlan,
+  host: CharacterRepository,
+): Promise<string[]> {
+  const resolved = new Map<string, string>();
+  for (const draft of plan.created) {
+    const created = await host.createTag(draft.values);
+    assertTag(created);
+    resolved.set(draft.draftId, created.id);
+  }
+  for (const tag of plan.updated) {
+    const saved = await host.updateTag(tag);
+    }
+  for (const id of plan.deleted) await host.deleteTag(id);
+  const ids: string[] = [];
+  for (const id of plan.attachedIds) {
+    if (resolved.has(id)) {
+      const canonicalId = resolved.get(id);
+      if (canonicalId === undefined)
+        throw new Error("新标签没有返回 canonical 标识");
+      ids.push(canonicalId);
+    } else ids.push(id);
+  }
+  return normalizeNames(ids);
+}
+
+/** Validates an explicitly created or changed model binding before publishing it. */
+function assertCharacterModelBinding(card: Card): void {
+  const mode = characterModelBindingMode(card.chatModelBindingMode);
+  if (mode !== "FOLLOW_GLOBAL" && mode !== "FIXED_MODEL")
+    throw new Error("聊天模型绑定模式无效，请重新绑定模型");
+  if (mode === "FIXED_MODEL") {
+    requireId(card.chatProviderId, "固定聊天模型提供商");
+    requireId(card.chatModelId, "固定聊天模型");
+  }
+}
+
+/** Normalizes editable content while preserving stored model and memory selections for unrelated edits. */
+function normalizedCharacter(card: Card): Card {
+  if (
+    card.memoryBindingMode !== "CHARACTER" &&
+    card.memoryBindingMode !== "SHARED"
+  )
+    throw new Error("记忆绑定模式无效");
+  if (card.ttsConfigId !== null) requireId(card.ttsConfigId, "TTS 配置");
+  if (card.themeConfigId !== null) requireId(card.themeConfigId, "主题配置");
+  const policy = card.toolAccessConfig;
+  if (
+    policy.enabled &&
+    (policy.allowedPackages.length !== 0 ||
+      policy.allowedSkills.length !== 0 ||
+      policy.allowedMcpServers.length !== 0) &&
+    !new Set(normalizeNames(policy.allowedBuiltinTools)).has("use_package")
+  )
+    throw new Error("选择外部工具来源时必须允许 use_package");
+  const mounts = [];
+  const mountIds = new Set<string>();
+  for (const mount of card.sharedMemoryMounts) {
+    if (mountIds.has(mount.sharedMemoryId)) throw new Error("共享记忆挂载重复");
+    mountIds.add(mount.sharedMemoryId);
+    mounts.push({
+      sharedMemoryId: mount.sharedMemoryId,
+      readable: mount.readable,
+      writable: mount.writable,
+    });
+  }
+  return {
+    ...card,
+    name: requireName(card.name, "角色卡名称"),
+    description: card.description.trim(),
+    attachedTagIds: [...card.attachedTagIds],
+    sharedMemoryMounts: mounts,
+    toolAccessConfig: {
+      enabled: card.toolAccessConfig.enabled,
+      allowedBuiltinTools: normalizeNames(
+        card.toolAccessConfig.allowedBuiltinTools,
+      ),
+      allowedPackages: normalizeNames(card.toolAccessConfig.allowedPackages),
+      allowedSkills: normalizeNames(card.toolAccessConfig.allowedSkills),
+      allowedMcpServers: normalizeNames(
+        card.toolAccessConfig.allowedMcpServers,
+      ),
+    },
+  };
+}
+
+/** Saves one complete character and its staged tag edits in the enclosing plugin snapshot operation. */
+export async function saveCharacter(
+  card: Card,
+  create: boolean,
+  tagChanges: TagChanges,
+  host: CharacterRepository,
+): Promise<Card> {
+
+  assertBoolean(create, "角色新建标识");
+  let value = normalizedCharacter(readCharacter(card));
+  let validateMemoryBinding = create;
+  if (create) {
+    assertCharacterModelBinding(value);
+    value = { ...value, id: "", createdAt: 0, updatedAt: 0 };
+  } else {
+    const id = requireId(value.id, "角色卡标识");
+    const original = await host.getCharacter(id);
+
+    if (!sameCharacterModelBinding(original, value)) assertCharacterModelBinding(value);
+    validateMemoryBinding = original.memoryBindingMode !== value.memoryBindingMode || original.sharedMemoryId !== value.sharedMemoryId;
+    value = {
+      ...value,
+      id: original.id,
+      createdAt: original.createdAt,
+    };
+  }
+  const [tags, stores, cards] = await Promise.all([
+    host.listTags(),
+    host.listStores(),
+    host.listCharacters(),
+  ]);
+  let retainedName = false;
+  if (!create)
+    for (const existing of cards)
+      if (existing.id === value.id && existing.name.trim() === value.name)
+        retainedName = true;
+  if (!retainedName)
+    for (const existing of cards)
+      if (existing.id !== value.id && existing.name.trim() === value.name)
+        throw new Error(`角色卡名称已存在：${value.name}`);
+  if (value.ttsConfigId !== null) {
+    const configs = await host.listTtsConfigs();
+    findRecord(configs, value.ttsConfigId, "TTS 配置");
+  }
+  const plan = prepareTagChanges(value.attachedTagIds, tagChanges, tags);
+  if (validateMemoryBinding && value.memoryBindingMode === "SHARED")
+    findRecord(
+      stores,
+      requireId(value.sharedMemoryId, "共享记忆库标识"),
+      "共享记忆库",
+    );
+  for (const mount of value.sharedMemoryMounts)
+    findRecord(stores, mount.sharedMemoryId, "共享记忆库");
+  value = { ...value, attachedTagIds: await commitTagChanges(plan, host) };
+  const saved = create
+    ? await host.createCharacter(value)
+    : await host.updateCharacter(value);
+
+  requireId(saved.id, "保存的角色卡标识");
+  return saved;
+}
+
+/** Validates and saves every editable group field while retaining canonical creation metadata. */
+export async function saveGroup(
+  group: GroupValues,
+  create: boolean,
+  host: CharacterRepository,
+): Promise<Group> {
+  assertGroupValues(group);
+  assertBoolean(create, "群组新建标识");
+  const name = requireName(group.name, "角色组名称");
+  const cards = await host.listCharacters();
+  const members = [];
+  for (const member of group.members) {
+    findRecord(cards, member.characterCardId, "群组角色");
+    members.push({
+      characterCardId: member.characterCardId,
+      orderIndex: member.orderIndex,
+    });
+  }
+  let value: Group;
+  if (create)
+    value = {
+      id: "",
+      name,
+      description: group.description.trim(),
+      members,
+      themeConfigId: group.themeConfigId,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  else {
+    const original = await host.getGroup(requireId(group.id, "群组标识"));
+    assertGroup(original);
+    value = {
+      ...original,
+      name,
+      description: group.description.trim(),
+      members,
+      themeConfigId: group.themeConfigId,
+    };
+  }
+  const saved = create
+    ? await host.createGroup(value)
+    : await host.updateGroup(value);
+  return saved;
+}
+
+/** Writes every editable tag field in one typed host operation. */
+export async function saveTag(
+  tag: TagEdit,
+  create: boolean,
+  host: CharacterRepository,
+): Promise<Tag> {
+  assertTagValues(tag);
+  assertBoolean(create, "标签新建标识");
+  const values = normalizedTagValues(tag);
+  let saved: Tag;
+  if (create) saved = await host.createTag(values);
+  else {
+    const tags = await host.listTags();
+    const original = findRecord(tags, requireId(tag.id, "标签标识"), "标签");
+    saved = await host.updateTag({ ...original, ...values });
+  }
+  assertTag(saved);
+  return saved;
+}
+
+/** Creates or renames an authoritative shared store without copying its metadata into plugin config. */
+export async function saveStore(
+  store: StoreValues,
+  create: boolean,
+  host: CharacterRepository,
+): Promise<Store> {
+  assertObject(store, "共享记忆库");
+  assertBoolean(create, "记忆库新建标识");
+  const name = requireName(store.name, "共享记忆库名称");
+  let saved: Store;
+  if (create) saved = await host.createStore(name);
+  else {
+    const id = requireId(store.id, "共享记忆库标识");
+    findRecord(
+      await host.listStores(),
+      id,
+      "共享记忆库",
+    );
+    saved = await host.renameStore(id, name);
+  }
+  return saved;
+}
+
+/** Requires a real card or group before changing the canonical active prompt. */
+export async function activate(
+  type: "card" | "group",
+  id: string,
+  host: CharacterRepository,
+): Promise<void> {
+  requireId(id, "当前提示词标识");
+  if (type === "card") {
+    await host.getCharacter(id);
+    await host.writeActive({ CharacterCard: { id } });
+  } else if (type === "group") {
+    assertGroup(await host.getGroup(id));
+    await host.writeActive({ CharacterGroup: { id } });
+  } else throw new Error("当前提示词类型无效");
+}
+
+/** Parses the exact Rust character/shared memory namespace without guessing strings. */
+export function parseOwner(ownerKey: string): MemoryOwner {
+  assertString(ownerKey, "记忆库标识");
+  const parts = ownerKey.split(":");
+  if (parts.length !== 2 || !/^[^:\s]+$/.test(parts[1]))
+    throw new Error("记忆库标识格式无效");
+  if (parts[0] === "character") return { kind: "CHARACTER", id: parts[1] };
+  if (parts[0] === "shared") return { kind: "SHARED", id: parts[1] };
+  throw new Error("记忆库命名空间无效");
+}
+
+/** Resolves memory only from an explicitly bound character without assuming an installation card. */
+async function menuMemoryOwner(
+  chatId: string,
+  host: CharacterRepository,
+): Promise<string> {
+  requireId(chatId, "memory menu chat id");
+  const binding = await host.chatBindings.findChatBinding(chatId);
+  const selection =
+    binding === null ? null : parseChatSelection(binding.selection);
+  if (selection?.kind === "model") throw new Error("Model-only conversations have no role memory owner");
+  if (selection?.kind === "card") return resolveMemoryOwner(selection.id, host);
+  throw new Error("Select a character memory owner for this conversation");
+}
+
+/** Requires the selected owner to exist in the canonical character or shared store registry. */
+export async function requireOwner(
+  ownerKey: string,
+  host: Pick<CharacterRepository, "getCharacter" | "listStores">,
+): Promise<MemoryOwner> {
+  const owner = parseOwner(ownerKey);
+  if (owner.kind === "CHARACTER") await host.getCharacter(owner.id);
+  else
+    findRecord(
+      await host.listStores(),
+      owner.id,
+      "共享记忆库",
+    );
+  return owner;
+}
+
+/** Resolves the primary memory namespace from the character's complete persisted binding. */
+export async function resolveMemoryOwner(
+  characterId: string,
+  host: Pick<CharacterRepository, "getCharacter" | "listStores">,
+): Promise<string> {
+  const card = await host.getCharacter(requireId(characterId, "角色卡标识"));
+
+  let ownerKey: string;
+  if (card.memoryBindingMode === "CHARACTER") ownerKey = `character:${card.id}`;
+  else if (card.memoryBindingMode === "SHARED")
+    ownerKey = `shared:${requireId(card.sharedMemoryId, "共享记忆库绑定")}`;
+  else throw new Error("记忆绑定模式无效");
+  await requireOwner(ownerKey, host);
+  return ownerKey;
+}
+
+/** Reads full canonical memories for one validated owner. */
+export async function listMemories(
+  ownerKey: string,
+  host: CharacterRepository,
+): Promise<Memory[]> {
+  await requireOwner(ownerKey, host);
+  return await host.listMemories(ownerKey);
+}
+
+/** Reads the actual UUID graph and complete records without projecting lossy tool query results. */
+export async function graph(
+  ownerKey: string,
+  host: CharacterRepository,
+): Promise<MemoryGraphResult> {
+  await requireOwner(ownerKey, host);
+  const [value, items] = await Promise.all([
+    host.readMemoryGraph(ownerKey),
+    host.listMemories(ownerKey),
+  ]);
+  return { graph: value, items };
+}
+
+/** Normalizes a user-selected folder using the canonical slash-delimited repository contract. */
+function normalizeFolderPath(value: string | null): string | null {
+  if (value === null) return null;
+  const parts: string[] = [];
+  for (const part of value.replace(/\\/g, "/").split("/")) {
+    const name = part.trim();
+    if (name !== "") parts.push(name);
+  }
+  return parts.length === 0 ? null : parts.join("/");
+}
+
+/** Performs full-record canonical search with explicit owner scope and explicit filters. */
+export async function searchMemories(
+  options: MemorySearchOptions,
+  host: CharacterRepository,
+): Promise<Memory[]> {
+  assertSearchOptions(options);
+  await requireOwner(options.ownerKey, host);
+  return await host.searchMemories({
+      ...options,
+      folderPath: normalizeFolderPath(options.folderPath),
+    });
+}
+
+/** Combines setting, mode-specific content, staged canonical tags, and advanced prompt in source order. */
+export async function combinePrompts(
+  characterId: string,
+  additionalTagIds: string[],
+  promptFunctionType: "CHAT" | "VOICE",
+  host: Pick<CharacterRepository, "getCharacter" | "getTag">,
+): Promise<string> {
+  const card = await host.getCharacter(requireId(characterId, "角色卡标识"));
+  return combineCharacterPrompt(card, additionalTagIds, promptFunctionType, host);
+}
+
+/** Saves full settings through the owner service rather than writing preference files. */
+export async function writeMemorySettings(
+  ownerKey: string,
+  settings: MemorySettings,
+  host: CharacterRepository,
+): Promise<MemorySettings> {
+  assertMemorySettings(settings);
+  await requireOwner(ownerKey, host);
+  await host.writeMemorySettings(ownerKey, { ...settings });
+  return host.readMemorySettings(ownerKey);
+}
+
+/** Saves all search configuration fields through the canonical owner service. */
+export async function writeMemorySearchConfig(
+  ownerKey: string,
+  config: MemorySearchConfig,
+  host: CharacterRepository,
+): Promise<MemorySearchConfig> {
+  assertSearchConfig(config);
+  await requireOwner(ownerKey, host);
+  await host.writeMemorySearchConfig(ownerKey, { ...config });
+  return host.readMemorySearchConfig(ownerKey);
+}
+
+/** Dispatches plugin-owned domain operations against the explicitly supplied plugin-local repository. */
+export function dispatch<R extends Request>(
+  request: R,
+  host: CharacterRepository,
+): Promise<RequestOutput<R>>;
+
+/** Executes the complete discriminated editor protocol against one canonical repository. */
+export async function dispatch(
+  request: Request,
+  host: CharacterRepository,
+): Promise<RequestOutput> {
+  assertObject(request, "角色卡请求");
+  switch (request.action) {
+    case "snapshot":
+      return snapshot(host);
+    case "readGlobalMemoryPreferences":
+      return host.readGlobalMemoryPreferences();
+    case "readChatMemoryAutoSaveStatus":
+      return host.readMemoryAutoSaveStatus(
+        await menuMemoryOwner(request.chatId, host),
+      );
+    case "updateCurrentChatMemory":
+      return executeDomain(
+        "memory.chat.update",
+        {
+          ownerKey: await menuMemoryOwner(request.chatId, host),
+          chatId: request.chatId,
+        },
+        host,
+      );
+    case "retryFailedCandidates":
+      return executeDomain(
+        "memory.candidates.retryFailed",
+        { ownerKey: "ownerKey" in request ? request.ownerKey : await menuMemoryOwner(request.chatId, host) },
+        host,
+      );
+    case "clearFailedCandidates":
+      return executeDomain(
+        "memory.candidates.clearFailed",
+        { ownerKey: "ownerKey" in request ? request.ownerKey : await menuMemoryOwner(request.chatId, host) },
+        host,
+      );
+    case "writeGlobalMemoryPreference":
+      return host.writeGlobalMemoryPreference(request.key, request.value);
+    case "readMemoryRecallSettings":
+      return host.readMemoryRecallSettings();
+    case "writeMemoryRecallSettings":
+      return host.writeMemoryRecallSettings(request.settings);
+    case "searchMemoryDebug": {
+      await requireOwner(request.ownerKey, host);
+      assertSearchConfig(request.config);
+      return host.searchMemoryDebug(
+        {
+          ownerKey: request.ownerKey,
+          query: request.query,
+          folderPath: null,
+          relevanceThreshold: request.relevanceThreshold,
+          createdAtStartMs: null,
+          createdAtEndMs: null,
+        },
+        request.config,
+      );
+    }
+    case "readMemoryLink":
+      await requireOwner(request.ownerKey, host);
+      return host.readMemoryLink(request.ownerKey, request.linkId);
+    case "listThemeChoices":
+      return readThemeChoices(independentConfigurations);
+    case "listCharacters":
+      return host.listCharacters();
+    case "getCharacter":
+      return host.getCharacter(requireId(request.id, "角色卡标识"));
+    case "saveCharacter":
+      await saveCharacter(
+        request.card,
+        request.create,
+        request.tagChanges,
+        host,
+      );
+      return snapshot(host);
+    case "deleteCharacter":
+      await deleteCharacter(request.id, host);
+      return snapshot(host);
+    case "activate":
+      await activate(request.type, request.id, host);
+      return snapshot(host);
+    case "readActive":
+      return host.readActive();
+    case "listBindableChats":
+      return listBindableChats(host.chatBindings);
+    case "readChatBinding":
+      return executeDomain(
+        "chat.configuration.binding.read",
+        { chatId: request.chatId },
+        host,
+      );
+    case "writeChatBinding":
+      return executeDomain(
+        "chat.configuration.binding.write",
+        { chatId: request.chatId, selection: request.selection },
+        host,
+      );
+    case "deleteChatBinding":
+      return executeDomain(
+        "chat.configuration.binding.delete",
+        { chatId: request.chatId },
+        host,
+      );
+    case "listGroups":
+      return host.listGroups();
+    case "getGroup": {
+      const group = await host.getGroup(requireId(request.id, "群组标识"));
+      assertGroup(group);
+      return group;
+    }
+    case "saveGroup":
+      await saveGroup(request.group, request.create, host);
+      return snapshot(host);
+    case "deleteGroup":
+      await host.deleteGroup(requireId(request.id, "群组标识"));
+      return snapshot(host);
+    case "listTags":
+      return host.listTags();
+    case "saveTag":
+      return saveTag(request.tag, request.create, host);
+    case "deleteTag":
+      await host.deleteTag(requireId(request.id, "标签标识"));
+      return snapshot(host);
+    case "listStores":
+      return host.listStores();
+    case "saveStore":
+      await saveStore(request.store, request.create, host);
+      return snapshot(host);
+    case "deleteStore":
+      await host.deleteStore(requireId(request.id, "共享记忆库标识"));
+      return snapshot(host);
+    case "listModels":
+      return host.listModels();
+    case "listTtsConfigs":
+      return host.listTtsConfigs();
+    case "readToolCatalog":
+      return host.readToolCatalog();
+    case "resolveMemoryOwner":
+      return resolveMemoryOwner(request.characterId, host);
+    case "readUser":
+      return executeDomain("memory.user.read", { ownerKey: request.ownerKey }, host);
+    case "writeUser":
+      await executeDomain("memory.user.write", { ownerKey: request.ownerKey, content: request.content }, host);
+      return { saved: true };
+    case "graph":
+      return graph(request.ownerKey, host);
+    case "listMemories":
+      return listMemories(request.ownerKey, host);
+    case "searchMemory":
+      return searchMemories(
+        {
+          ownerKey: request.ownerKey,
+          query: request.query,
+          folderPath: null,
+          relevanceThreshold: 0,
+          createdAtStartMs: null,
+          createdAtEndMs: null,
+        },
+        host,
+      );
+    case "searchMemories":
+      return searchMemories(request.options, host);
+    case "saveMemory": {
+      const values = {
+        title: request.title,
+        content: request.content,
+        contentType: request.contentType.trim(),
+        source: request.source.trim(),
+        credibility: request.credibility,
+        importance: request.importance,
+        folderPath: request.folderPath,
+        tags: normalizeNames(request.tags.split(",")),
+      };
+      if (request.originalTitle === null) await executeDomain("memory.create", { ownerKey: request.ownerKey, values }, host);
+      else await executeDomain("memory.update", { ownerKey: request.ownerKey, originalTitle: request.originalTitle, changes: values }, host);
+      return graph(request.ownerKey, host);
+    }
+    case "deleteMemory": {
+      const { item } = await executeDomain("memory.get", { ownerKey: request.ownerKey, title: request.title }, host);
+      await executeDomain("memory.delete", { ownerKey: request.ownerKey, id: item.id }, host);
+      return graph(request.ownerKey, host);
+    }
+    case "createLink":
+      await executeDomain("memory.link.create", { ownerKey: request.ownerKey, sourceTitle: request.sourceTitle, targetTitle: request.targetTitle, linkType: request.linkType, weight: request.weight, description: request.description }, host);
+      return graph(request.ownerKey, host);
+    case "deleteLink":
+      await executeDomain("memory.link.delete", { ownerKey: request.ownerKey, linkId: request.linkId }, host);
+      return graph(request.ownerKey, host);
+    case "updateLink":
+      await executeDomain("memory.link.update", { ownerKey: request.ownerKey, linkId: request.linkId, changes: { linkType: request.linkType, weight: request.weight, description: request.description } }, host);
+      return graph(request.ownerKey, host);
+    case "readMemorySettings": {
+      await requireOwner(request.ownerKey, host);
+      const settings = await host.readMemorySettings(request.ownerKey);
+      assertMemorySettings(settings);
+      return settings;
+    }
+    case "writeMemorySettings":
+      return writeMemorySettings(request.ownerKey, request.settings, host);
+    case "readMemorySearchConfig": {
+      await requireOwner(request.ownerKey, host);
+      const config = await host.readMemorySearchConfig(request.ownerKey);
+      assertSearchConfig(config);
+      return config;
+    }
+    case "writeMemorySearchConfig":
+      return writeMemorySearchConfig(request.ownerKey, request.config, host);
+    case "writeMemoryOwnerSettings": {
+      // Validate both drafts before mutation; the repository owner publishes this entire request atomically.
+      assertMemorySettings(request.settings);
+      assertSearchConfig(request.config);
+      await requireOwner(request.ownerKey, host);
+      const current = await host.readMemorySettings(request.ownerKey);
+      await host.writeMemorySettings(request.ownerKey, {
+        ...request.settings,
+        nextAutoSaveRunAtMs: current.nextAutoSaveRunAtMs,
+      });
+      await host.writeMemorySearchConfig(request.ownerKey, request.config);
+      return {
+        settings: await host.readMemorySettings(request.ownerKey),
+        config: await host.readMemorySearchConfig(request.ownerKey),
+      };
+    }
+    case "combinePrompts":
+      return combinePrompts(
+        request.characterId,
+        request.additionalTagIds,
+        request.promptFunctionType,
+        host,
+      );
+    case "importCharacter": {
+      const tags = await host.listTags();
+      const plan = decodeCharacterImport(request.content, request.format, tags);
+      await saveCharacter(plan.card, true, plan.tagChanges, host);
+      return snapshot(host);
+    }
+    case "exportCharacter": {
+      const card = await host.getCharacter(requireId(request.id, "角色卡标识"));
+      const tags = await host.listTags();
+      return encodeCharacterExport(card, request.format, tags);
+    }
+    case "importGroup":
+      await saveGroup(decodeGroupImport(request.content), true, host);
+      return snapshot(host);
+    case "exportGroup": {
+      const group = await host.getGroup(requireId(request.id, "群组标识"));
+      assertGroup(group);
+      return JSON.stringify(group, null, 2);
+    }
+    case "listMemoryFolders":
+      await requireOwner(request.ownerKey, host);
+      return host.listMemoryFolders(request.ownerKey);
+    case "readMemoryAutoSaveStatus":
+      await requireOwner(request.ownerKey, host);
+      return host.readMemoryAutoSaveStatus(request.ownerKey);
+    case "listMemoryChats":
+      return executeDomain(
+        "memory.chat.list",
+        { ownerKey: request.ownerKey },
+        host,
+      );
+    case "pruneMissingChatBindings":
+      return executeDomain(
+        "memory.chat.pruneMissing",
+        { ownerKey: request.ownerKey },
+        host,
+      );
+    case "updateChatMemory":
+      return executeDomain(
+        "memory.chat.update",
+        { ownerKey: request.ownerKey, chatId: request.chatId },
+        host,
+      );
+    case "autoCategorizeMemory":
+      return executeDomain(
+        "memory.categorize",
+        { ownerKey: request.ownerKey },
+        host,
+      );
+    case "startMemoryRebuild":
+      return executeDomain(
+        "memory.rebuild.start",
+        { ownerKey: request.ownerKey, rebuild: request.rebuild },
+        host,
+      );
+    case "readMemoryRebuildProgress":
+      return executeDomain(
+        "memory.rebuild.progress",
+        { ownerKey: request.ownerKey },
+        host,
+      );
+    case "cancelMemoryRebuild":
+      return executeDomain(
+        "memory.rebuild.cancel",
+        { ownerKey: request.ownerKey },
+        host,
+      );
+    case "rebuildMemoryEmbeddings":
+      return executeDomain(
+        "memory.embeddings.rebuild",
+        { ownerKey: request.ownerKey },
+        host,
+      );
+    case "exportMemory":
+      return executeDomain("memory.export", { ownerKey: request.ownerKey }, host);
+    case "importMemory":
+      return executeDomain("memory.import", { ownerKey: request.ownerKey, content: request.content, strategy: request.strategy }, host);
+    default: {
+      const action: never = request;
+      throw new Error(`未知角色卡请求：${JSON.stringify(action)}`);
+    }
+  }
+}
+
+
 
 type DomainHandlers = { [K in DomainOperation]: (input: DomainInput<K>, host: CharacterRepository) => Promise<DomainOutput<K>> };
 
@@ -32,8 +893,7 @@ function findMemory(items: Memory[], title: string): Memory {
 
 /** Converts canonical deletion lifecycle completion to the public activation-independent result. */
 async function deleteCharacter(id: string, host: CharacterRepository): Promise<{ id: string; deleted: boolean }> {
-  requireId(id, "角色卡标识"); const card = await host.getCharacter(id); assertCard(card);
-  await host.deleteCharacter(id); return { id, deleted: true };
+  await host.deleteCharacter(requireId(id, "角色卡标识")); return { id, deleted: true };
 }
 
 /** Applies a complete relationship edit to its existing canonical scope and identity. */
@@ -127,17 +987,18 @@ const handlers: DomainHandlers = {
     dispatchDomain: <K extends DomainOperation>(operation: K, payload: DomainInput<K>) => executeDomain(operation, payload, repository),
   }),
   /** Requires the chat's persisted selection rather than global active state. */
-  "chat.configuration.binding.read": (input, repository) => repository.readChatBinding(input.chatId),
+  "chat.configuration.binding.find": (input, repository) => repository.chatBindings.findChatBinding(input.chatId),
+  "chat.configuration.binding.read": (input, repository) => repository.chatBindings.readChatBinding(input.chatId),
   /** Stages a genuine selector submission in the shared publication. */
-  "chat.configuration.binding.write": async (input, repository) => { await requireChat(input.chatId); return repository.writeChatBinding(input); },
+  "chat.configuration.binding.write": async (input, repository) => { await requireChat(input.chatId); return repository.chatBindings.writeChatBinding(input); },
   /** Deletes the requested existing binding through the same file operation. */
-  "chat.configuration.binding.delete": (input, repository) => repository.deleteChatBinding(input.chatId),
+  "chat.configuration.binding.delete": (input, repository) => repository.chatBindings.deleteChatBinding(input.chatId),
   /** Reads the complete real editor directories. */
   snapshot: (_input, host) => snapshot(host),
   /** Reads complete canonical character cards. */
-  "character.list": async (_input, host) => { const cards = await host.listCharacters(); for (const card of cards) assertCard(card); return cards; },
+  "character.list": (_input, host) => host.listCharacters(),
   /** Requires the selected canonical character. */
-  "character.get": async (input, host) => { const card = await host.getCharacter(input.id); assertCard(card); return card; },
+  "character.get": (input, host) => host.getCharacter(input.id),
   /** Initializes an explicit new form and persists all provided character fields. */
   "character.create": (input, host) => saveCharacter({ ...createCharacterDraft(), ...input.values }, true, { created: [], updated: [], deleted: [] }, host),
   /** Merges an explicit edit into the complete canonical record before one manager write. */

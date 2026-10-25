@@ -1,6 +1,6 @@
 import type { CharacterRepository } from "./canonical";
 import type { Card } from "./model";
-import { assertCard, assertStrings, assertTag, normalizeNames } from "./validation";
+import { assertStrings, assertTag, normalizeNames } from "./validation";
 
 /** Composes a loaded character's prompt using only its explicitly attached and additional tags. */
 export async function combineCharacterPrompt(
@@ -9,7 +9,7 @@ export async function combineCharacterPrompt(
   promptFunctionType: "CHAT" | "VOICE",
   host: Pick<CharacterRepository, "getTag">,
 ): Promise<string> {
-  assertCard(card);
+
   assertStrings(additionalTagIds, "附加标签");
   if (promptFunctionType !== "CHAT" && promptFunctionType !== "VOICE") throw new Error("提示词功能类型无效");
   const parts: string[] = [];

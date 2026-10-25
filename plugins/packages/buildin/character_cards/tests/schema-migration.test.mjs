@@ -526,3 +526,32 @@ test("released-data migration recreates a missing USER document without changing
     const before = disk.stateBytes(); await open(disk, chat); assert.deepEqual(disk.stateBytes(), before);
   }
 });
+
+/** Reproduces partial released cards before the UUID migration without losing their surviving content. */
+test("released-data migration completes missing character fields before reading references", async t => {
+  const { disk, state, chat } = await seed(t);
+  const original = structuredClone(state.cards[0]);
+  disk.storage.inspectPreferences("cards", values => {
+    const card = values.record_operit;
+    for (const field of ["createdAt", "updatedAt", "avatarUri", "themeConfigId", "memoryBindingMode", "attachedTagIds", "sharedMemoryMounts"]) delete card[field];
+    card.toolAccessConfig = { enabled: true, allowedPackages: ["retained-package"] };
+  });
+  await open(disk, chat);
+  const migrated = plain(disk.readState());
+  const card = migrated.cards.find(card => card.name === original.name);
+  assert.equal(migrated.cards.length, state.cards.length);
+  assert.equal(card.characterSetting, original.characterSetting);
+  assert.equal(card.openingStatement, original.openingStatement);
+  assert.equal(card.chatModelId, original.chatModelId);
+  assert.equal(card.createdAt, 0); assert.equal(card.updatedAt, 0);
+  assert.equal(card.avatarUri, null); assert.equal(card.themeConfigId, null);
+  assert.equal(card.memoryBindingMode, "CHARACTER");
+  assert.deepEqual(card.attachedTagIds, []); assert.deepEqual(card.sharedMemoryMounts, []);
+  assert.deepEqual(card.toolAccessConfig.allowedPackages, ["retained-package"]);
+  assert.deepEqual(card.toolAccessConfig.allowedSkills, []);
+  assert.deepEqual(migrated.owners.flatMap(owner => owner.memories.map(memory => memory.content)).sort(),
+    state.owners.flatMap(owner => owner.memories.map(memory => memory.content)).sort());
+  assert.equal(metadata(disk).legacyImportPending, undefined);
+  const before = disk.stateBytes(); await open(disk, chat);
+  assert.deepEqual(disk.stateBytes(), before);
+});

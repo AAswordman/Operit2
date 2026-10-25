@@ -33,3 +33,18 @@ export function selectionForActive(active: ActivePrompt): string {
   if ("CharacterCard" in active) return "card:" + active.CharacterCard.id;
   return "group:" + active.CharacterGroup.id;
 }
+
+/** Owns the plugin's bindings and creation drafts after repository initialization. */
+export interface CharacterChatBindings {
+  findChatBinding(chatId: string): Promise<import("./model").ChatBinding | null>;
+  readChatBinding(chatId: string): Promise<import("./model").ChatBinding>;
+  listChatBindings(): Promise<import("./model").ChatBinding[]>;
+  bindingsForChats(chatIds: readonly string[]): Promise<Map<string, string>>;
+  chatsForMemoryOwner(ownerKey: string): Promise<string[]>;
+  writeChatBinding(binding: import("./model").ChatBinding): Promise<import("./model").ChatBinding>;
+  prepareChatBinding(binding: import("./model").ChatBinding): Promise<void>;
+  readDraftBinding(chatId: string): Promise<import("./model").ChatBinding>;
+  commitDraftBinding(chatId: string): Promise<void>;
+  abortDraftBinding(chatId: string): Promise<void>;
+  deleteChatBinding(chatId: string): Promise<{ chatId: string; deleted: boolean }>;
+}

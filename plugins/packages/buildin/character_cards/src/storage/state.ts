@@ -3,7 +3,7 @@ import { uuid } from "../identity";
 import { operitDefaultContent } from "../default-character";
 import { createCharacterDraft } from "../drafts";
 import { assertEmbedding } from "../memory-jobs/embeddings";
-import { assertBoolean, assertCard, assertConversationGroups, assertGroup, assertInteger, assertMemory, assertMemoryChatMessage, assertMemorySettings, assertNumber, assertObject, assertSearchConfig, assertString, assertTag, requireId } from "../validation";
+import { assertBoolean, assertInteger, assertMemory, assertMemoryChatMessage, assertMemorySettings, assertNumber, assertObject, assertSearchConfig, assertString, requireId } from "../validation";
 
 /** Creates an ordinary installation card with its own UUID and editable template content. */
 export function createInstalledCharacter(now: number): Card {
@@ -57,64 +57,6 @@ function identities(records: unknown[], label: string): Set<string> {
     ids.add(id);
   }
   return ids;
-}
-/** Validates every record and cross-record reference before reads or record publication. */
-export function assertCharacterState(value: unknown): asserts value is CharacterState {
-  assertObject(value, "character state");
-  if (value.version !== 1) throw new Error("Unsupported character database version");
-  const fields = new Set(["memoryPreferences", "memoryRecall", "version", "cards", "groups", "tags", "stores", "active", "owners", "conversationGroups"]);
-  for (const key of Object.keys(value)) if (!fields.has(key)) throw new Error("Unsupported character state field: " + key);
-  assertObject(value.memoryPreferences, "global memory preferences");
-  assertBoolean(value.memoryPreferences.userDescriptionEnabled, "user description enabled");
-  assertBoolean(value.memoryPreferences.autoUpdateEnabled, "auto update enabled");
-  normalizeMemoryRecallSettings(value.memoryRecall);
-  assertConversationGroups(value.conversationGroups);
-  const cards = value.cards, groups = value.groups, tags = value.tags, stores = value.stores, owners = value.owners;
-  array(cards, "cards"); array(groups, "groups"); array(tags, "tags"); array(stores, "stores"); array(owners, "owners");
-  const cardIds = identities(cards, "cards"), groupIds = identities(groups, "groups"), tagIds = identities(tags, "tags"), storeIds = identities(stores, "stores");
-  for (const card of cards) {
-    assertCard(card);
-    requireId(card.id, "card id");
-    for (const id of card.attachedTagIds) if (!tagIds.has(id)) throw new Error("Missing attached tag: " + id);
-    // Model binding validity belongs to explicit binding writes and chat execution, so damaged bindings remain editable.
-    // Primary memory selections remain editable when their old library is absent; writes and execution validate the target.
-    for (const mount of card.sharedMemoryMounts) if (!storeIds.has(mount.sharedMemoryId)) throw new Error("Missing shared memory mount: " + mount.sharedMemoryId);
-  }
-  for (const group of groups) {
-    assertGroup(group);
-    const members = new Set<string>();
-    for (const member of group.members) {
-      if (!cardIds.has(member.characterCardId)) throw new Error("Missing group member: " + member.characterCardId);
-      if (members.has(member.characterCardId)) throw new Error("Duplicate group member: " + member.characterCardId);
-      members.add(member.characterCardId);
-    }
-  }
-  for (const tag of tags) assertTag(tag);
-  for (const store of stores) {
-    assertObject(store, "store"); assertString(store.name, "store name");
-    assertInteger(store.createdAt, "store createdAt", 0); assertInteger(store.updatedAt, "store updatedAt", 0);
-  }
-  assertObject(value.active, "active");
-  const activeKeys = Object.keys(value.active);
-  if (activeKeys.length !== 1) throw new Error("Active prompt must select exactly one entity");
-  const activeKey = activeKeys[0];
-  if (activeKey !== "CharacterCard" && activeKey !== "CharacterGroup" && activeKey !== "Model") throw new Error("Invalid active prompt kind");
-  const selected = value.active[activeKey]; assertObject(selected, "active selection");
-  const activeId = requireId(selected.id, "active id");
-  // Stored active identities remain available for explicit reselection after their role is deleted.
-  if (activeKey === "Model" && activeId !== "chat") throw new Error("Invalid active model selection: " + activeId);
-  const expectedOwners = new Set<string>();
-  for (const id of cardIds) expectedOwners.add("character:" + id);
-  for (const id of storeIds) expectedOwners.add("shared:" + id);
-  const actualOwners = new Set<string>();
-  for (const owner of owners) {
-    assertObject(owner, "memory space");
-    const ownerKey = requireId(owner.ownerKey, "owner key");
-    if (!expectedOwners.has(ownerKey) || actualOwners.has(ownerKey)) throw new Error("Invalid or duplicate memory owner: " + ownerKey);
-    actualOwners.add(ownerKey);
-    assertMemorySpace(owner);
-  }
-  if (actualOwners.size !== expectedOwners.size) throw new Error("Character state is missing an owner memory space");
 }
 /** Validates a complete memory space, including document chunks and relationship endpoints. */
 export function assertMemorySpace(value: unknown): asserts value is MemorySpace {

@@ -283,3 +283,33 @@ test("installed cards with unknown or incomplete model bindings reopen and remai
     assert.equal((await reopened.run(session => session.getCharacter("default"))).chatModelBindingMode, "FOLLOW_GLOBAL");
   }
 });
+
+/** Existing Build 26 records must recover on upgrade even when no legacy migration remains pending. */
+test("already migrated partial characters read with defaults without startup repair writes", async t => {
+  const disk = await createDiskHarness(t), owner = await open(disk);
+  const original = plain((await owner.listCharacters())[0]);
+  const ownerKey = "character:" + original.id;
+  const savedMemory = plain(await owner.run(session => session.createMemory(ownerKey, memory("必须保留的记忆"))));
+  disk.storage.inspectPreferences("cards", values => {
+    const card = values["record_" + original.id];
+    delete card.createdAt; card.updatedAt = -1; delete card.themeConfigId;
+    delete card.description; delete card.attachedTagIds;
+    card.toolAccessConfig = { allowedPackages: ["retained-package"] };
+  });
+  const reopened = await open(disk), card = plain(await reopened.getCharacter(original.id));
+  assert.equal(card.id, original.id); assert.equal(card.name, original.name);
+  assert.equal(card.characterSetting, original.characterSetting);
+  assert.equal(card.createdAt, 0); assert.equal(card.updatedAt, 0);
+  assert.equal(card.themeConfigId, null); assert.equal(card.description, "");
+  assert.deepEqual(card.attachedTagIds, []);
+  assert.equal(card.toolAccessConfig.enabled, false);
+  assert.deepEqual(card.toolAccessConfig.allowedPackages, ["retained-package"]);
+  assert.deepEqual(plain((await reopened.readSidebarDirectory()).cards), [card]);
+  assert.deepEqual(plain(await reopened.run(session => session.listMemories(ownerKey))), [savedMemory]);
+  assert.equal(disk.storage.inspectPreferences("cards", values => values["record_" + original.id].createdAt), undefined);
+  await reopened.run(session => session.updateCharacter({ ...card, description: "保存修改" }));
+  assert.equal(disk.storage.inspectPreferences("cards", values => values["record_" + original.id].createdAt), 0);
+  const before = disk.stateBytes(); disk.clearCalls(); await open(disk);
+  assert.deepEqual(disk.stateBytes(), before);
+  assert.equal(disk.calls.filter(call => call.method === "storage.preferences.edit").length, 0);
+});

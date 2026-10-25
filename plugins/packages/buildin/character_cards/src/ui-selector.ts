@@ -1,7 +1,6 @@
 import type { ActivePrompt } from "./model";
 import type { PresentationCancel, PresentationComplete, SelectScreen } from "./presentation";
 import { createUiScreenSession, chatIdentity, type UiPresentation, type UiScreenSession, callMainDomain, encodeSelection } from "./ui-contributions";
-import { findChatBinding } from "./chat-storage";
 import { requireChatSelection } from "./chat-bindings";
 import type { ToolPkg as ToolPkgTypes } from "../../../../types/toolpkg";
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
@@ -45,7 +44,7 @@ export async function readSelectorData(input: SelectorInput): Promise<SelectorDa
   let selected: string | null;
   if (input.chatId === null) selected = encodeSelection(await callMainDomain("activePrompt.get", {}));
   else {
-    const binding = await findChatBinding(input.chatId);
+    const binding = await callMainDomain("chat.configuration.binding.find", { chatId: input.chatId });
     selected = binding === null ? "model:chat" : binding.selection;
   }
   if (selected !== null) requireChatSelection(selected, cards, groups);

@@ -1,9 +1,9 @@
+import { callMainDomain } from "./ui-contributions";
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
 import type { GlobalMemoryPreferences, MemoryAutoSaveStatus, MemoryRecallSettings, Request, RequestOutput } from "./model";
 import { MEMORY_RECALL_LIMIT_RANGE } from "./storage/state";
 import { chatIdentity } from "./ui-contributions";
 import { definition } from "./definition";
-import { findChatBinding } from "./chat-storage";
 import { parseChatSelection } from "./chat-bindings";
 
 /** Calls the same serialized main-runtime service used by the memory editor and scheduler. */
@@ -59,7 +59,7 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
   async function load(): Promise<void> {
     assertOwner(); if (started.current) return; started.current = true;
     if (chatId !== null) {
-      const binding = await findChatBinding(chatId); assertOwner();
+      const binding = await callMainDomain("chat.configuration.binding.find", { chatId }); assertOwner();
       const hasCharacter = binding !== null && parseChatSelection(binding.selection).kind === "card";
       setAvailable(hasCharacter);
       if (!hasCharacter) return;
@@ -194,7 +194,7 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       limitInputRow("记忆注入条数"),
       switchRow("memoryRecallRepeat", "Repeat", "允许重复命中", recall !== null && recall.allowRepeated, toggleRecallRepeat),
       ctx.UI.Row({ key: "memory-manual", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
-        modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: !busy && chatId !== null ? manual : undefined }, [
+        modifier: ctx.Modifier.heightIn({ minHeight: 32 }), ...(!busy && chatId !== null ? { onClick: manual } : {}) }, [
         icon("SaveOutlined"), ctx.UI.Spacer({ width: 12 }),
         ctx.UI.Text({ text: busy ? "正在更新记忆…" : "手动更新记忆", style: "bodySmall", maxLines: 2, overflow: "ellipsis", weight: 1,
           color: !busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 }) }),
@@ -205,13 +205,13 @@ export function renderMemoryMenu(ctx: ComposeDslContext): ComposeNode {
       const enabled = !busy && chatId !== null;
       sectionChildren.push(
         ctx.UI.Row({ key: "memory-retry-failed", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
-          modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: enabled ? retryFailed : undefined }, [
+          modifier: ctx.Modifier.heightIn({ minHeight: 32 }), ...(enabled ? { onClick: retryFailed } : {}) }, [
           icon("Refresh"), ctx.UI.Spacer({ width: 12 }),
           ctx.UI.Text({ text: "重试失败候选（" + queue.failedCandidates + "）", style: "bodySmall", maxLines: 1, overflow: "ellipsis", weight: 1,
             color: enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 }) }),
         ]),
         ctx.UI.Row({ key: "memory-clear-failed", fillMaxWidth: true, paddingHorizontal: 12, verticalAlignment: "center",
-          modifier: ctx.Modifier.heightIn({ minHeight: 32 }), onClick: enabled ? clearFailed : undefined }, [
+          modifier: ctx.Modifier.heightIn({ minHeight: 32 }), ...(enabled ? { onClick: clearFailed } : {}) }, [
           icon("DeleteOutline"), ctx.UI.Spacer({ width: 12 }),
           ctx.UI.Text({ text: "清除失败记录（" + queue.failedCandidates + "）", style: "bodySmall", maxLines: 1, overflow: "ellipsis", weight: 1,
             color: enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 }) }),

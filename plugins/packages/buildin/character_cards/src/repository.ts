@@ -1,12 +1,12 @@
 import { uuid } from "./identity";
 import type { CharacterRepository } from "./canonical";
 import type { ActivePrompt, BackupImportResult, Card, ChatBinding, CharacterDirectories, CharacterState, ConversationGroupRecord, Group, Memory, MemoryAutoSaveStatus, MemoryGraph, MemoryImportResult, MemoryLink, MemoryLinkUpdate, MemoryLinkValues, MemoryRebuildProgress, MemorySearchConfig, MemorySearchOptions, MemorySettings, MemorySpace, MemoryValues, ModelSummary, Store, Tag, TagValues, ToolCatalog, TtsConfig, UserDocument, UserDocumentWrite } from "./model";
-import { assertBoolean, assertCard, assertConversationGroups, assertGroup, assertMemory, assertMemorySettings, assertMemoryValues, assertNumber, assertSearchConfig, assertSearchOptions, assertString, assertTag, assertTagValues, normalizeNames, requireId, requireName } from "./validation";
+import { assertBoolean, assertConversationGroups, assertGroup, assertMemory, assertMemorySettings, assertMemoryValues, assertNumber, assertSearchConfig, assertSearchOptions, assertString, assertTag, assertTagValues, normalizeNames, requireId, requireName } from "./validation";
 import { clone } from "./storage/records";
 import { createMemorySpace, assertMemorySpace, normalizeMemoryRecallSettings } from "./storage/state";
 import { searchMemorySpace, searchMemorySpaceDebug } from "./memory-search";
 import { requireChatSelection } from "./chat-bindings";
-import { deleteChatBinding, listChatBindings, readChatBinding, writeChatBinding } from "./chat-storage";
+import type { CharacterChatBindings } from "./chat-bindings";
 
 /** Copies structured domain records so consumers cannot mutate the in-flight snapshot outside this repository. */
 function copy<T>(value: T): T { return clone(value); }
@@ -42,7 +42,7 @@ export class RepositorySession implements CharacterRepository {
   private readonly documents = new Map<string, UserDocumentWrite>();
 
   /** Receives the operation snapshot and explicitly connected external directory readers. */
-  constructor(private readonly state: CharacterState, private readonly directory: string, private readonly directories: CharacterDirectories | null = null) {}
+  constructor(private readonly state: CharacterState, private readonly directory: string, readonly chatBindings: CharacterChatBindings, private readonly directories: CharacterDirectories | null = null) {}
   async readGlobalMemoryPreferences(): Promise<import("./model").GlobalMemoryPreferences> { return copy(this.state.memoryPreferences); }
   async writeGlobalMemoryPreference(key: keyof import("./model").GlobalMemoryPreferences, value: boolean): Promise<import("./model").GlobalMemoryPreferences> {
     if (key !== "userDescriptionEnabled" && key !== "autoUpdateEnabled") throw new Error("Unknown global memory preference");
@@ -90,13 +90,13 @@ export class RepositorySession implements CharacterRepository {
   async getCharacter(id: string): Promise<Card> { return copy(get(this.state.cards, id, "character")); }
   /** Creates all character fields and its genuine initialized memory space. */
   async createCharacter(card: Card): Promise<Card> {
-    assertCard(card); const name = requireName(card.name, "character name"); uniqueName(this.state.cards, name, "");
+    const name = requireName(card.name, "character name"); uniqueName(this.state.cards, name, "");
     const now = Date.now(), saved = { ...copy(card), id: uuid(), name, createdAt: now, updatedAt: now };
     this.state.cards.push(saved); this.addSpace("character:" + saved.id); return copy(saved);
   }
   /** Writes the full editable character while preserving its stable creation identity. */
   async updateCharacter(card: Card): Promise<Card> {
-    assertCard(card); const original = get(this.state.cards, card.id, "character"), name = requireName(card.name, "character name");
+    const original = get(this.state.cards, card.id, "character"), name = requireName(card.name, "character name");
     uniqueName(this.state.cards, name, card.id);
     const saved = { ...copy(card), name, createdAt: original.createdAt, updatedAt: Date.now() };
     Object.assign(original, saved); return copy(original);
@@ -225,22 +225,8 @@ export class RepositorySession implements CharacterRepository {
   }
   /** Rejects deletion using only selections on existing authoritative host records. */
   private async requireUnboundSelection(selection: string): Promise<void> {
-    for (const binding of await this.listChatBindings()) if (binding.selection === selection) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
+    for (const binding of await this.chatBindings.listChatBindings()) if (binding.selection === selection) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
   }
-  /** Enumerates only real host records and their authenticated plugin extension markers. */
-  async listChatBindings(): Promise<ChatBinding[]> { return listChatBindings(); }
-  /** Reads the sole record-extension source and validates its actual stored domain reference. */
-  async readChatBinding(chatId: string): Promise<ChatBinding> {
-    const binding = await readChatBinding(chatId);
-    requireChatSelection(binding.selection, this.state.cards, this.state.groups); return binding;
-  }
-  /** Writes an explicit selector submission solely to the authenticated host record namespace. */
-  async writeChatBinding(binding: ChatBinding): Promise<ChatBinding> {
-    requireChatSelection(binding.selection, this.state.cards, this.state.groups);
-    return writeChatBinding(binding);
-  }
-  /** Deletes only the authenticated record namespace without touching manual membership or file state. */
-  async deleteChatBinding(chatId: string): Promise<{ chatId: string; deleted: boolean }> { return deleteChatBinding(chatId); }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */
   async readUser(ownerKey: string): Promise<UserDocument> {
     const path = await this.readUserPath(ownerKey), document = this.documents.get(ownerKey);
@@ -449,7 +435,7 @@ export class RepositorySession implements CharacterRepository {
       if (matches.length === 0) this.state.tags.push(copy(tag)); else Object.assign(matches[0], copy(tag));
     }
     for (const card of cards) {
-      assertCard(card); requireId(card.id, "backup character id"); const matches = this.state.cards.filter(
+      requireId(card.id, "backup character id"); const matches = this.state.cards.filter(
         /** Resolves the imported character by exact identity. */
         existing => existing.id === card.id,
       );

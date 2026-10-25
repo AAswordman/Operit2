@@ -38,6 +38,10 @@ pub mod RuntimeStorePaths;
 #[cfg(feature = "full")]
 #[path = "SqliteStore.rs"]
 pub mod SqliteStore;
+#[path = "SyncReceiveJournal.rs"]
+mod SyncReceiveJournal;
+#[path = "SyncOperationJournal.rs"]
+mod SyncOperationJournal;
 #[path = "SyncOperationStore.rs"]
 pub mod SyncOperationStore;
 

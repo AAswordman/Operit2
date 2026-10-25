@@ -1,7 +1,6 @@
 import type {
   ActivePrompt,
   Card,
-  ChatBinding,
   ConversationGroupRecord,
   Group,
   Memory,
@@ -27,6 +26,7 @@ import type {
 
 /** Defines the plugin's local business repository, not an SDK host or global service. */
 export interface CharacterRepository {
+  readonly chatBindings: import("./chat-bindings").CharacterChatBindings;
   readGlobalMemoryPreferences(): Promise<
     import("./model").GlobalMemoryPreferences
   >;
@@ -95,16 +95,6 @@ export interface CharacterRepository {
   readActive(): Promise<ActivePrompt>;
   /** Selects an existing character or group. */
   writeActive(active: ActivePrompt): Promise<void>;
-  /** Reads the authenticated host record namespace, never file or current global selection. */
-  readChatBinding(chatId: string): Promise<ChatBinding>;
-  /** Enumerates real host conversations and their record-extension selections for background tasks. */
-  listChatBindings(): Promise<ChatBinding[]>;
-  /** Writes an explicit selection only to the authenticated host record namespace. */
-  writeChatBinding(binding: ChatBinding): Promise<ChatBinding>;
-  /** Removes the authenticated namespace without deleting chats or file-owned membership. */
-  deleteChatBinding(
-    chatId: string,
-  ): Promise<{ chatId: string; deleted: boolean }>;
   /** Reads the owner's persisted USER.md content. */
   readUser(ownerKey: string): Promise<UserDocument>;
   /** Stages the owner's complete USER.md content in the same authoritative file. */
@@ -199,6 +189,7 @@ export interface CharacterRepository {
 /** Separates indexed reads from full-state editing transactions. */
 export interface CharacterRepositoryOwner extends Pick<
   CharacterRepository,
+  | "chatBindings"
   | "readGlobalMemoryPreferences"
   | "readMemoryRecallSettings"
   | "readActive"

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { selectorEnvironment } from "./selector-environment.mjs";
 import { mountRegisteredComposeRoute, composeNodes, keyedNode } from "./selector-render.mjs";
 import { plain } from "./runtime.mjs";
@@ -534,4 +535,51 @@ test("native memory binding can explicitly switch to character memory with no sh
   await click(ui, "entity-memory-switch", "onCheckedChange", false); await click(ui, "entity-primary");
   const repaired = await plugin.api("character.get", { id: "default" });
   assert.equal(repaired.memoryBindingMode, "CHARACTER"); assert.equal(repaired.sharedMemoryId, null);
+});
+
+
+test("native avatar selection copies picker bytes into getConfigDir and saves only the plugin file", async t => {
+  const image = await readFile(new URL("../resources/operit-avatar.png", import.meta.url));
+  const picked = { path: "/private/var/mobile/tmp/selector/avatar.png", uri: "file:///private/var/mobile/tmp/selector/avatar.png", name: "avatar.png", size: image.length, contentBase64: image.toString("base64") };
+  const requests = [];
+  const plugin = await environment(t, [], {
+    async __operitNativeComposeFilePickerCommand(payload) {
+      requests.push(plain(payload));
+      return { cancelled: false, files: [picked] };
+    },
+    async __operitInvokeHostAsync(command, args) { return command(...args); },
+  });
+  // Neither the native source path nor its mount exists in the plugin's IO host.
+  const card = await plugin.api("character.create", { values: { name: "独立保存的头像" } });
+  const ui = mount(plugin, "edit", "card", card.id); await ui.load();
+  await click(ui, "entity-choose-avatar");
+  assert.deepEqual(requests[0].options, { picker: "image", allowMultiple: false, mimeTypes: ["image/*"], maxContentBytes: 8 * 1024 * 1024 });
+  const uri = keyedNode(ui.render().tree, "entity-edit-avatar").props.uri;
+  assert.ok(uri.startsWith(plugin.disk.directory + "/avatars/"));
+  assert.notEqual(uri, picked.path);
+  assert.deepEqual(await readFile(uri), image);
+  assert.equal(plugin.disk.calls.filter(call => call.method === "readBinary").length, 0);
+  await click(ui, "entity-primary");
+  const saved = (await plugin.api("character.list", {})).find(value => value.id === card.id);
+  assert.equal(saved.avatarUri, uri);
+  // The selected source was never needed; a fresh preview reads the plugin-owned asset.
+  const preview = mount(plugin, "preview", "card", card.id, "avatar-preview"); await preview.load();
+  assert.equal(keyedNode(preview.render().tree, "entity-avatar").props.uri, uri);
+  assert.deepEqual(await readFile(saved.avatarUri), image);
+});
+
+test("cancelled or invalid avatar selections preserve the saved avatar and do not write files", async t => {
+  let selection = { cancelled: true, files: [] };
+  const plugin = await environment(t, [], {
+    async __operitNativeComposeFilePickerCommand() { return selection; },
+    async __operitInvokeHostAsync(command, args) { return command(...args); },
+  });
+  const card = await plugin.api("character.create", { values: { name: "保留现有头像", avatarUri: "/app/data/existing.image" } });
+  const ui = mount(plugin, "edit", "card", card.id); await ui.load();
+  for (const value of [selection, { cancelled: false, files: [{ path: "/not-mounted.png", size: 4 }] }, { cancelled: false, files: [{ path: "/large.png", size: 8 * 1024 * 1024 + 1 }] }]) {
+    selection = value;
+    await click(ui, "entity-choose-avatar");
+    assert.equal(keyedNode(ui.render().tree, "entity-edit-avatar").props.uri, card.avatarUri);
+  }
+  assert.equal(plugin.disk.calls.filter(call => call.method === "writeBinary").length, 0);
 });

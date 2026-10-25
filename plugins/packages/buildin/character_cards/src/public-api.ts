@@ -48,6 +48,11 @@ export async function chatConfigurationDeleteApi(event: ToolPkg.PublicApiEvent<{
   return { deleted: true };
 }
 
+/** Looks up a persisted binding, allowing chats without an association. */
+export async function chatConfigurationBindingFindApi(event: ToolPkg.PublicApiEvent<DomainInput<"chat.configuration.binding.find">>): Promise<DomainOutput<"chat.configuration.binding.find">> {
+  return dispatchDomain("chat.configuration.binding.find", event.payload);
+}
+
 /** Reads the actual binding without changing the current global selection. */
 export async function chatConfigurationBindingReadApi(event: ToolPkg.PublicApiEvent<DomainInput<"chat.configuration.binding.read">>): Promise<DomainOutput<"chat.configuration.binding.read">> {
   return dispatchDomain("chat.configuration.binding.read", parseDomainPayload("chat.configuration.binding.read", event.payload));
@@ -67,6 +72,7 @@ export async function chatConfigurationBindingDeleteApi(event: ToolPkg.PublicApi
 export function registerChatConfigurationApis(): void {
   ToolPkg.registerApi({ name: "chat.configuration.resolve", function: chatConfigurationResolveApi });
   ToolPkg.registerApi({ name: "chat.configuration.delete", function: chatConfigurationDeleteApi });
+  ToolPkg.registerApi({ name: "chat.configuration.binding.find", function: chatConfigurationBindingFindApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.read", function: chatConfigurationBindingReadApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.write", function: chatConfigurationBindingWriteApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.delete", function: chatConfigurationBindingDeleteApi });

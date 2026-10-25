@@ -27,7 +27,7 @@ regex = { workspace = true, optional = true }
 jieba-rs = { version = "=0.8.1", optional = true }
 serde.workspace = true
 serde_bytes = "0.11"
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sqlparser = { version = "0.63", default-features = false, features = ["std", "visitor"] }
 sha2.workspace = true
 thiserror.workspace = true
