@@ -384,7 +384,7 @@ def find_libclang():
     else:
         candidates = [Path("/usr/lib/llvm21/lib")]
         candidates += sorted(Path("/usr/lib").glob("llvm*/lib"), reverse=True)
-        candidates += [Path("/usr/lib/x86_64-linux-gnu"), Path("/usr/lib")]
+        candidates += [Path("/usr/lib/x86_64-linux-gnu"), Path("/usr/lib64"), Path("/usr/lib")]
     libraries = []
     for directory in candidates:
         libraries += sorted(directory.glob(pattern))
@@ -462,7 +462,7 @@ def ensure_gn_ninja(cache, source):
     tag = cipd_tool_tag()
     paths = {}
     for tool in ("gn", "ninja"):
-        binary = "gn.exe" if tool == "gn" and IS_WINDOWS else tool
+        binary = f"{tool}.exe" if IS_WINDOWS else tool
         destination = cache / "tools" / tool / binary
         paths[tool] = destination
         if destination.is_file():
@@ -510,11 +510,11 @@ def build(cache, config, ndk):
         env.pop(name, None)
     # GN_ARGS carries only what rusty_v8's build script does not set itself.
     args = {**GN_OPTIONS, "android_ndk_api_level": api_level(),
-            "android_ndk_version": ndk_version(ndk)}
+            "android_ndk_version": ndk_version(ndk), "android_ndk_root": str(ndk)}
     if lld:
         args["lld_path"] = str(lld)
     env.update(V8_FROM_SOURCE="1", PYTHON=sys.executable,
-               CARGO_TARGET_DIR=str(cache / "build"),
+               CARGO_TARGET_DIR=str((cache / "build").resolve()),
                GN=str(gn_ninja["gn"]), NINJA=str(gn_ninja["ninja"]),
                GN_ARGS=" ".join(f"{name}={json.dumps(value)}" for name, value in args.items()))
     # Bindgen derives the triple from Cargo's TARGET but gets no sysroot, so it
@@ -530,7 +530,7 @@ def build(cache, config, ndk):
     env["LIBCLANG_PATH"] = str(libclang)
     run(["cargo", "build", "--locked", "--manifest-path", probe / "Cargo.toml", "--release",
          "--target", config["target"], "--jobs", os.environ.get("OPERIT_ANDROID_V8_JOBS", "6")], env=env)
-    return cache / "build" / config["target"] / "release/gn_out"
+    return (cache / "build").resolve() / config["target"] / "release/gn_out"
 
 
 def prepare(target, env_file, cache_root=CACHE_ROOT):
