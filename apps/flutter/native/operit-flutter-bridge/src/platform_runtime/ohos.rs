@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use operit_host_api::HostManager::HostManager;
-use operit_host_api::SystemOperationHost;
 use operit_host_ohos_native::{
     createRuntimeHostManager, OhosBluetoothHost, OhosManagedRuntimeHost, OhosRuntimeStorageHost,
     OhosTerminalHost,
@@ -19,13 +18,13 @@ use crate::FlutterOwnerCapabilities::{
 
 /// Creates OpenHarmony hosts with every owner callback fixed during assembly.
 pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager, String> {
-    let StartupMetadata::OpenHarmonyLanguage { code } = &startup.metadata else {
-        return Err("OpenHarmony startup requires its owner system language".to_string());
+    let StartupMetadata::OpenHarmonyDevice { systemLanguageCode, .. } = &startup.metadata else {
+        return Err("OpenHarmony startup requires its owner device metadata".to_string());
     };
-    if code.trim().is_empty() {
+    if systemLanguageCode.trim().is_empty() {
         return Err("OpenHarmony owner system language is empty".to_string());
     }
-    let language = code.clone();
+    let language = systemLanguageCode.clone();
     let terminal = Arc::new(
         OhosTerminalHost::new(startup.runtimeRoot.clone(), startup.workspaceRoot.clone())
             .map_err(|error| error.message)?,
@@ -63,21 +62,20 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
     Ok(install_owner_media(context, false))
 }
 
-/// Reads OpenHarmony identity through its owner-backed system host.
+/// Reads owner-supplied identity before the runtime interaction channel exists.
 pub(crate) fn startup_device_info(
     context: &HostManager,
-    _metadata: &StartupMetadata,
+    metadata: &StartupMetadata,
 ) -> Result<LinkDeviceInfo, String> {
-    let system = context
-        .systemOperationHost
-        .as_ref()
-        .ok_or_else(|| "Runtime identity requires its OpenHarmony system host".to_string())?;
+    let StartupMetadata::OpenHarmonyDevice { model, .. } = metadata else {
+        return Err("OpenHarmony startup requires its owner device metadata".to_string());
+    };
+    if model.trim().is_empty() {
+        return Err("OpenHarmony owner device model is empty".to_string());
+    }
     Ok(LinkDeviceInfo {
         platform: context.hostEnvironment.id.clone(),
-        model: system
-            .getDeviceInfo()
-            .map_err(|error| error.to_string())?
-            .model,
+        model: model.clone(),
         pairingIncarnation: None,
     })
 }
@@ -91,16 +89,17 @@ pub(crate) fn default_native_storage_roots() -> Result<(PathBuf, PathBuf), Strin
 pub(crate) fn release_host() {}
 
 impl crate::OperitFlutterBridge {
-    /// Starts OpenHarmony using storage roots and language supplied by its owner.
+    /// Starts OpenHarmony using storage roots and device metadata supplied by its owner.
     pub(crate) fn new_with_storage_roots(
         runtimeRoot: PathBuf,
         workspaceRoot: PathBuf,
-        code: String,
+        systemLanguageCode: String,
+        model: String,
     ) -> Result<Self, String> {
         crate::PlatformRuntimeFactory::startBridge(BridgeStartup {
             runtimeRoot,
             workspaceRoot,
-            metadata: StartupMetadata::OpenHarmonyLanguage { code },
+            metadata: StartupMetadata::OpenHarmonyDevice { model, systemLanguageCode },
         })
     }
 }

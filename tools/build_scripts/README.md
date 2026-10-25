@@ -49,7 +49,8 @@ link uses the selected LLD with the SDK sysroot and compiler builtins, and rejec
 undefined symbols.
 
 Provide a V8 archive and its matching generated Rust bindings for
-`aarch64-unknown-linux-ohos` through `RUSTY_V8_ARCHIVE` and
+the selected target (`aarch64-unknown-linux-ohos` or
+`x86_64-unknown-linux-ohos`) through `RUSTY_V8_ARCHIVE` and
 `RUSTY_V8_SRC_BINDING_PATH`. Set `RUSTY_V8_ARCHIVE_SHA256` to the archive's SHA-256.
 Both artifacts must come from the locked V8 version, built against the OHOS
 sysroot; Android and GNU/Linux artifacts have a different ABI.
@@ -61,6 +62,38 @@ C++ headers, aligns their namespace with the SDK's `__n1` ABI, and uses
 `sched_setaffinity` for inference thread affinity. Its static C++ runtime stays
 private behind the three exported inference C functions. Packaging includes both `liboperit_flutter_bridge.so` and
 `liboperit_local_llm.so`.
+
+The entry module enables `compressNativeLibs` so the HAP stores shared libraries
+with compression. Before signing, terminal packaging keeps `qemu-harmonix-aarch64`,
+its transitive `DT_NEEDED` libraries and the HNP metadata in both declared packages.
+The dependency check excludes the OS-provided `libc.so` and rejects missing or
+bundled libraries whose ELF architecture differs from the selected target. Full-system emulators, x86 guest programs and libraries
+unreferenced by QEMU-vroot are excluded from the HAP. The offline Alpine tool
+repository remains bundled for terminal, OCR and PDF capabilities.
+
+Select the build architecture from the repository root:
+
+```powershell
+# ARM64 devices
+.venv\Scripts\python.exe tools/build_scripts/build_flutter_ohos.py --target-platform ohos-arm64 --enforce-lockfile
+
+# x86_64 emulator
+.venv\Scripts\python.exe tools/build_scripts/build_flutter_ohos.py --target-platform ohos-x64 --enforce-lockfile
+```
+
+ARM64 remains the default target. Each target selects its Rust triple, Flutter
+engine HAR, CMake ABI, packaged native libraries, HNP directory and output filename.
+The Hvigor plugin reads Flutter's `TARGET_PLATFORM` parameter and sets native ABI
+filters in memory. Both engine dependencies stay declared in the manifests;
+switching targets does not rewrite architecture settings or remove cached libraries.
+Before signing, the build checks that all required native libraries are present and
+that every packaged ELF matches the selected ABI. The same selection works with
+`fvm flutter build hap --target-platform ohos-x64` from `apps/flutter/app` after
+staging the required Rust libraries, HARs and terminal packages.
+
+The x86_64 host HNPs still
+run the shared ARM64 Alpine guest through `qemu-harmonix-aarch64`. Supply both
+HNP files under `apps/flutter/app/ohos/entry/hnp/x86_64/` for emulator builds.
 
 ## Apple release helpers
 

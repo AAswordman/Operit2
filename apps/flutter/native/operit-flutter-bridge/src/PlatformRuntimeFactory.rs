@@ -26,7 +26,7 @@ pub(crate) use execution::PlatformBridgeState;
 pub(crate) enum StartupMetadata {
     HostProvided,
     AndroidDevice { model: String },
-    OpenHarmonyLanguage { code: String },
+    OpenHarmonyDevice { model: String, systemLanguageCode: String },
 }
 
 /// Carries immutable storage roots and owner-provided startup information.

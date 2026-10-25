@@ -89,13 +89,14 @@ pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots(
     }
 }
 
-/// Creates an OpenHarmony bridge with an owner-supplied system language code.
+/// Creates an OpenHarmony bridge with immutable owner-supplied startup metadata.
 #[no_mangle]
 #[cfg(target_env = "ohos")]
-pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots_and_system_language(
+pub unsafe extern "C" fn operit_flutter_bridge_create_ohos(
     runtime_root: *const c_char,
     workspace_root: *const c_char,
     system_language_code: *const c_char,
+    device_model: *const c_char,
 ) -> *mut OperitFlutterBridge {
     if runtime_root.is_null() {
         set_last_create_error("runtime storage root pointer is null".to_string());
@@ -136,10 +137,26 @@ pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots_and_sys
             return std::ptr::null_mut();
         }
     };
+    if device_model.is_null() {
+        set_last_create_error("device model pointer is null".to_string());
+        return std::ptr::null_mut();
+    }
+    let device_model = match CStr::from_ptr(device_model).to_str() {
+        Ok(value) if !value.trim().is_empty() => value.to_string(),
+        Ok(_) => {
+            set_last_create_error("device model is empty".to_string());
+            return std::ptr::null_mut();
+        }
+        Err(error) => {
+            set_last_create_error(format!("device model is not valid UTF-8: {error}"));
+            return std::ptr::null_mut();
+        }
+    };
     match OperitFlutterBridge::new_with_storage_roots(
         runtime_root,
         workspace_root,
         system_language_code,
+        device_model,
     ) {
         Ok(bridge) => Arc::into_raw(Arc::new(bridge)) as *mut OperitFlutterBridge,
         Err(error) => {

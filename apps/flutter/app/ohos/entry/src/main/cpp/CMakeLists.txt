@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(operit_runtime_ohos)
 
-set(OPERIT_OHOS_VROOT_HNP_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../../../hnp/arm64-v8a")
+set(OPERIT_OHOS_VROOT_HNP_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../../../hnp/${OHOS_ARCH}")
 set(OPERIT_OHOS_VROOT_ASSET_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../resources/rawfile/ohos-vroot")
 set(OPERIT_OHOS_VROOT_REQUIRED_ARTIFACTS
   "${OPERIT_OHOS_VROOT_HNP_DIRECTORY}/harmonix-public.hnp"
@@ -31,5 +31,5 @@ target_link_libraries(
   PUBLIC
     libace_napi.z.so
     dl
-    "${OHOS_SDK_NATIVE}/llvm/lib/aarch64-linux-ohos/libc++_shared.so"
+    "${OHOS_SDK_NATIVE}/llvm/lib/${CMAKE_CXX_COMPILER_TARGET}/libc++_shared.so"
 )

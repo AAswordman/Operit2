@@ -10,6 +10,7 @@
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
+    "compressNativeLibs": true,
     "pages": "$profile:main_pages",
     "abilities": [
       {
@@ -52,14 +53,6 @@
       {"name": "ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"},
       {"name": "ohos.permission.kernel.DISABLE_CODE_MEMORY_PROTECTION"},
       {
-        "name": "ohos.permission.USE_BLUETOOTH",
-        "reason": "$string:permission_bluetooth_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
-      },
-      {
         "name": "ohos.permission.ACCESS_BLUETOOTH",
         "reason": "$string:permission_bluetooth_reason",
         "usedScene": {
@@ -67,16 +60,7 @@
           "when": "inuse"
         }
       },
-      {
-        "name": "ohos.permission.DISCOVER_BLUETOOTH",
-        "reason": "$string:permission_bluetooth_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
-      },
       {"name": "ohos.permission.CAMERA", "reason": "$string:permission_camera_reason", "usedScene": {"abilities": ["EntryAbility"], "when": "inuse"}},
-      {"name" :  "ohos.permission.MANAGE_BLUETOOTH"},
       {
         "name": "ohos.permission.LOCATION",
         "reason": "$string:permission_location_reason",

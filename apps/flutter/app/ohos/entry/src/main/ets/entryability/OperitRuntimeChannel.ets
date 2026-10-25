@@ -257,7 +257,8 @@ interface RuntimeNativeModule {
   dataRescue(defaultRuntimeRoot: string, request: string): Promise<string>;
   /** Rasterizes PDF pages on a native worker with a retained runtime handle. */
   renderPdf(handle: bigint, request: string): Promise<string>;
-  create(runtimeRoot: string, workspaceRoot: string, systemLanguageCode: string): bigint;
+  /** Creates Core on a worker using owner-supplied startup identity. */
+  create(runtimeRoot: string, workspaceRoot: string, systemLanguageCode: string, deviceModel: string): Promise<bigint>;
   /** Reads the client bootstrap record before the native Runtime is created. */
   runtimeBootstrapRead(defaultRuntimeRoot: string): string;
   /** Writes the client bootstrap record before the native Runtime is created. */
@@ -282,6 +283,8 @@ export class OperitRuntimeChannel {
   private channel: MethodChannel;
   private context: common.UIAbilityContext;
   private runtimeHandle: bigint = BigInt(0);
+  private runtimeCreation: Promise<bigint> | null = null;
+  private destroyed: boolean = false;
   private runtimeRoot: string = '';
   private workspaceRoot: string = '';
   private windowStage: window.WindowStage | null = null;
@@ -424,8 +427,9 @@ export class OperitRuntimeChannel {
           result.success(null);
           return;
         case 'startLocalCoreService':
-          this.ensureRuntimeHandle();
-          result.success(null);
+          this.ensureRuntimeHandle()
+            .then((): void => { result.success(null); })
+            .catch((error: Object): void => { result.error('RUNTIME_BRIDGE_ERROR', `${error}`, null); });
           return;
         case 'restartApplication':
           this.restartApplication()
@@ -437,7 +441,9 @@ export class OperitRuntimeChannel {
             });
           return;
         case 'connectCoreFfi':
-          result.success(nativeBridge.connectCoreFfi(this.ensureRuntimeHandle()));
+          this.ensureRuntimeHandle()
+            .then((handle: bigint): void => { result.success(nativeBridge.connectCoreFfi(handle)); })
+            .catch((error: Object): void => { result.error('RUNTIME_BRIDGE_ERROR', `${error}`, null); });
           return;
         case 'ownerSystemLanguageCode':
           result.success(this.ownerSystemLanguageCode());
@@ -540,6 +546,7 @@ export class OperitRuntimeChannel {
           return;
       }
     } catch (error) {
+      console.error(`[OperitRuntime] method=${call.method} failed: ${error}`);
       result.error('RUNTIME_BRIDGE_ERROR', `${error}`, null);
     }
   }
@@ -566,6 +573,7 @@ export class OperitRuntimeChannel {
 
   /// Releases the native runtime bridge handle.
   destroy(): void {
+    this.destroyed = true;
     this.releaseHostEventMonitoring();
     if (this.runtimeHandle !== BigInt(0)) {
       nativeBridge.destroy(this.runtimeHandle);
@@ -598,7 +606,7 @@ export class OperitRuntimeChannel {
   /// Stores OpenHarmony runtime storage roots.
   private setStorageRoots(call: MethodCall): void {
     const roots = this.storagePaths(call);
-    if (this.runtimeHandle !== BigInt(0) &&
+    if (this.runtimeCreation !== null &&
       (this.runtimeRoot !== roots.runtimeRoot || this.workspaceRoot !== roots.workspaceRoot)) {
       throw new Error('Runtime and workspace roots cannot change after runtime creation');
     }
@@ -607,62 +615,77 @@ export class OperitRuntimeChannel {
   }
 
   /// Dispatches document work through the current runtime without blocking ArkUI.
-  renderPdf(request: string): Promise<string> {
-    return nativeBridge.renderPdf(this.ensureRuntimeHandle(), request);
+  async renderPdf(request: string): Promise<string> {
+    return nativeBridge.renderPdf(await this.ensureRuntimeHandle(), request);
   }
 
-  /// Returns the active native runtime handle.
-  private ensureRuntimeHandle(): bigint {
-    if (this.runtimeHandle !== BigInt(0)) {
-      return this.runtimeHandle;
+  /// Shares one asynchronous creation task across runtime consumers.
+  private ensureRuntimeHandle(): Promise<bigint> {
+    if (this.destroyed) {
+      return Promise.reject(new Error('Runtime channel has been destroyed'));
     }
+    if (this.runtimeCreation === null) {
+      this.runtimeCreation = this.createRuntimeHandle();
+    }
+    return this.runtimeCreation;
+  }
+
+  /// Creates Core from explicit owner roots without blocking ArkUI.
+  private async createRuntimeHandle(): Promise<bigint> {
     if (this.runtimeRoot.length === 0 || this.workspaceRoot.length === 0) {
-      const roots = this.defaultStoragePaths();
-      this.runtimeRoot = roots.runtimeRoot;
-      this.workspaceRoot = roots.workspaceRoot;
+      throw new Error('Runtime and workspace roots must be set before runtime creation');
     }
-    this.stageOhosVrootAssets();
-    this.runtimeHandle = nativeBridge.create(
+    await this.stageOhosVrootAssets();
+    if (this.destroyed) throw new Error('Runtime channel was destroyed during asset staging');
+    const handle = await nativeBridge.create(
       this.runtimeRoot,
       this.workspaceRoot,
-      i18n.System.getSystemLocale()
+      i18n.System.getSystemLocale(),
+      deviceInfo.productModel
     );
+    if (this.destroyed) {
+      nativeBridge.destroy(handle);
+      throw new Error('Runtime channel was destroyed during creation');
+    }
+    this.runtimeHandle = handle;
     this.installHostEventMonitoring();
-    return this.runtimeHandle;
+    return handle;
   }
 
   /// Stages runtime assets only when the packaged checksum changes.
-  private stageOhosVrootAssets(): void {
+  private async stageOhosVrootAssets(): Promise<void> {
     const directory = `${this.runtimeRoot}/${OHOS_VROOT_RAWFILE_DIRECTORY}`;
-    fs.mkdirSync(directory, true);
+    if (!await fs.access(directory)) {
+      await fs.mkdir(directory, true);
+    }
     const checksumPath = `${directory}/${OHOS_VROOT_ROOTFS_SHA256}`;
     const rawChecksum = `${OHOS_VROOT_RAWFILE_DIRECTORY}/${OHOS_VROOT_ROOTFS_SHA256}`;
     const checksum = new util.TextDecoder('utf-8').decode(
       this.context.resourceManager.getRawFileContentSync(rawChecksum)
     );
     const archivePath = `${directory}/${OHOS_VROOT_ROOTFS_ARCHIVE}`;
-    if (fs.accessSync(checksumPath) && fs.accessSync(archivePath) &&
-        fs.readTextSync(checksumPath) === checksum) {
+    if (await fs.access(checksumPath) && await fs.access(archivePath) &&
+        await fs.readText(checksumPath) === checksum) {
       return;
     }
-    this.copyOhosVrootRawFile(
+    await this.copyOhosVrootRawFile(
       `${OHOS_VROOT_RAWFILE_DIRECTORY}/${OHOS_VROOT_ROOTFS_ARCHIVE}`, archivePath
     );
-    this.copyOhosVrootRawFile(rawChecksum, checksumPath);
+    await this.copyOhosVrootRawFile(rawChecksum, checksumPath);
   }
 
   /// Copies a raw asset with bounded memory and publishes it atomically after fsync.
-  private copyOhosVrootRawFile(rawFilePath: string, destinationPath: string): void {
+  private async copyOhosVrootRawFile(rawFilePath: string, destinationPath: string): Promise<void> {
     const resources = this.context.resourceManager;
-    const source = resources.getRawFdSync(rawFilePath);
+    const source = await resources.getRawFd(rawFilePath);
     const temporary = `${destinationPath}.copying`;
     try {
-      const file = fs.openSync(temporary, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      const file = await fs.open(temporary, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
       try {
         const buffer = new ArrayBuffer(65536);
         let offset = 0;
         while (offset < source.length) {
-          const count = fs.readSync(source.fd, buffer, {
+          const count = await fs.read(source.fd, buffer, {
             offset: source.offset + offset,
             length: Math.min(buffer.byteLength, source.length - offset)
           });
@@ -670,20 +693,20 @@ export class OperitRuntimeChannel {
           let written = 0;
           while (written < count) {
             const bytes = buffer.slice(written, count);
-            const size = fs.writeSync(file.fd, bytes);
+            const size = await fs.write(file.fd, bytes);
             if (size <= 0) throw new Error(`Incomplete runtime asset: ${rawFilePath}`);
             written += size;
           }
           offset += count;
         }
-        fs.fsyncSync(file.fd);
+        await fs.fsync(file.fd);
       } finally {
-        fs.closeSync(file);
+        await fs.close(file);
       }
-      fs.renameSync(temporary, destinationPath);
+      await fs.rename(temporary, destinationPath);
     } finally {
-      resources.closeRawFdSync(rawFilePath);
-      if (fs.accessSync(temporary)) fs.unlinkSync(temporary);
+      await resources.closeRawFd(rawFilePath);
+      if (await fs.access(temporary)) await fs.unlink(temporary);
     }
   }
 
@@ -1816,13 +1839,9 @@ export class OperitRuntimeChannel {
     ];
   }
 
-  /// Returns OpenHarmony permissions required for Bluetooth operations.
+  /// Returns the user-granted permission required by API 18 Bluetooth operations.
   private bluetoothPermissions(): Array<Permissions> {
-    return [
-      'ohos.permission.USE_BLUETOOTH',
-      'ohos.permission.DISCOVER_BLUETOOTH',
-      'ohos.permission.MANAGE_BLUETOOTH'
-    ];
+    return ['ohos.permission.ACCESS_BLUETOOTH'];
   }
 
   /// Handles one OpenHarmony Bluetooth command.

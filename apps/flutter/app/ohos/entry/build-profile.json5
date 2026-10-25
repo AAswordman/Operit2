@@ -2,6 +2,7 @@
 {
   "apiType": 'stageMode',
   "buildOption": {
+    "nativeLib": { "filter": { "excludes": [] } },
     "externalNativeOptions": {
       "path": "./src/main/cpp/CMakeLists.txt",
       "arguments": "",

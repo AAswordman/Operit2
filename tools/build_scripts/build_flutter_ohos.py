@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -42,13 +43,10 @@ OHOS_STAGED_PLUGINS_DIR = OHOS_PROJECT_DIR / ".flutter_ohos_plugins"
 FLUTTER_PLUGINS_DEPENDENCIES = FLUTTER_APP_DIR / ".flutter-plugins-dependencies"
 OHOS_HAP_PATH = OHOS_PROJECT_DIR / "entry" / "build" / "default" / "outputs" / "default" / "entry-default-signed.hap"
 OHOS_UNSIGNED_HAP_PATH = OHOS_PROJECT_DIR / "entry" / "build" / "default" / "outputs" / "default" / "entry-default-unsigned.hap"
-OHOS_ENTRY_LIB_DIR = OHOS_PROJECT_DIR / "entry" / "libs" / "arm64-v8a"
 OHOS_BRIDGE_CRATE_DIR = FLUTTER_APP_DIR.parent / "native" / "operit-flutter-bridge"
 OHOS_OHPM_ADAPTER = REPO_ROOT / "tools" / "build_scripts" / "ohpm_hvigor_adapter.cmd"
 OHOS_SIGNING_DIR = OHOS_PROJECT_DIR / "signing" / "openharmony"
 OHOS_RELEASE_SIGNING_PROPERTIES = REPO_ROOT / "tools" / "release" / "secrets" / "ohos-signing" / "ohos-signing.properties"
-OHOS_RUST_TARGET = "aarch64-unknown-linux-ohos"
-OHOS_CLANG_TARGET = "aarch64-linux-ohos"
 OHOS_BRIDGE_LIBRARY_NAME = "liboperit_flutter_bridge.so"
 OHOS_ENGINE_LIBRARY_NAME = "liboperit_local_llm.so"
 LIBCLANG_PACKAGE_VERSION = "21.1.8"
@@ -78,16 +76,54 @@ class ValueEnum(str, Enum):
 
 class OhosTargetPlatform(ValueEnum):
     ARM64 = "ohos-arm64"
+    X64 = "ohos-x64"
+
+    # Returns the native ABI used by Hvigor and HNP archives.
+    @property
+    def abi(self) -> str:
+        return {self.ARM64: "arm64-v8a", self.X64: "x86_64"}[self]
+
+    # Returns the architecture name used by Clang and Rust.
+    @property
+    def cpu(self) -> str:
+        return {self.ARM64: "aarch64", self.X64: "x86_64"}[self]
+
+    # Returns the Rust target triple for this native ABI.
+    @property
+    def rust_target(self) -> str:
+        return f"{self.cpu}-unknown-linux-ohos"
+
+    # Returns the Clang target triple for this native ABI.
+    @property
+    def clang_target(self) -> str:
+        return f"{self.cpu}-linux-ohos"
+
+    # Returns the ELF machine identifier required by this ABI.
+    @property
+    def elf_machine(self) -> int:
+        return {self.ARM64: 183, self.X64: 62}[self]
+
+    # Returns the Flutter native engine package name.
+    @property
+    def native_package(self) -> str:
+        return f"flutter_native_{self.abi.replace('-', '_')}"
+
+    # Returns the native Flutter engine archive filename.
+    @property
+    def native_har(self) -> str:
+        return f"{self.abi.replace('-', '_')}_release.har"
+
+    # Returns the architecture label used in release filenames.
+    @property
+    def artifact_arch(self) -> str:
+        return {self.ARM64: "arm64", self.X64: "x64"}[self]
 
 
 # Parses command-line options for the OpenHarmony Flutter build.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the Operit2 OpenHarmony Flutter app.")
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=DIST_DIR / release_asset_name("app", "ohos", "arm64", "hap"),
-    )
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--target-platform", type=OhosTargetPlatform, choices=list(OhosTargetPlatform), default=OhosTargetPlatform.ARM64)
     parser.add_argument("--build-name")
     parser.add_argument("--build-number")
     parser.add_argument("--enforce-lockfile", action="store_true")
@@ -102,14 +138,18 @@ def main() -> int:
             "OpenHarmony Flutter project not found at "
             f"{OHOS_PROJECT_DIR}. Generate it with the OpenHarmony Flutter SDK."
         )
-    verify_ohos_sdk_preflight()
+    target = args.target_platform
+    if args.output is None:
+        args.output = DIST_DIR / release_asset_name("app", "ohos", target.artifact_arch, "hap")
+    verify_ohos_sdk_preflight(target)
     prepare_plugin_assets()
-    build_ohos_rust_bridge()
+    build_ohos_rust_bridge(target)
     env = ohos_hvigor_env()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
-    prepare_ohos_package_dependencies()
+    prepare_ohos_package_dependencies(target)
     build_unsigned_ohos_hap(args, env)
-    package_ohos_terminal_hnp()
+    verify_ohos_hap_native_libraries(target)
+    package_ohos_terminal_hnp(target)
     sign_ohos_hap()
     copy_required_file(OHOS_HAP_PATH, args.output)
     print(f"OpenHarmony HAP: {args.output}", flush=True)
@@ -128,7 +168,7 @@ def build_unsigned_ohos_hap(args: argparse.Namespace, env: dict[str, str]) -> No
             "--no-pub",
             "--no-codesign",
             "--target-platform",
-            OhosTargetPlatform.ARM64.value,
+            args.target_platform.value,
         ]
         + (["--build-name", args.build_name] if args.build_name else [])
         + (["--build-number", args.build_number] if args.build_number else [])
@@ -138,29 +178,104 @@ def build_unsigned_ohos_hap(args: argparse.Namespace, env: dict[str, str]) -> No
         raise RuntimeError(f"OpenHarmony unsigned HAP was not produced: {OHOS_UNSIGNED_HAP_PATH}")
 
 
-# Packages mandatory terminal HNPs that the installed Hvigor plugin does not collect.
-def package_ohos_terminal_hnp() -> None:
-    """Adds the declared ARM64 terminal runtime before signing and verifies its payload."""
-    directory = OHOS_PROJECT_DIR / "entry" / "hnp" / "arm64-v8a"
+# Rejects mixed or incomplete native payloads before the HAP can be signed.
+def verify_ohos_hap_native_libraries(target: OhosTargetPlatform) -> None:
+    required = {
+        "libapp.so", "libflutter.so", "libc++_shared.so",
+        "liboperit_runtime_ohos.so", OHOS_BRIDGE_LIBRARY_NAME, OHOS_ENGINE_LIBRARY_NAME,
+    }
+    with zipfile.ZipFile(OHOS_UNSIGNED_HAP_PATH) as hap:
+        libraries = [name for name in hap.namelist() if name.startswith("libs/") and name.endswith(".so")]
+        for name in libraries:
+            parts = name.split("/")
+            if len(parts) != 3 or parts[1] != target.abi:
+                raise RuntimeError(f"Unexpected native ABI in {target.value} HAP: {name}")
+            ohos_elf_needed_libraries(hap.read(name), f"{OHOS_UNSIGNED_HAP_PATH}:{name}", target)
+        missing = required - {Path(name).name for name in libraries}
+        if missing:
+            raise RuntimeError(f"Required {target.abi} HAP libraries are missing: {', '.join(sorted(missing))}")
+    print(f"Verified {len(libraries)} {target.abi} native HAP libraries", flush=True)
+
+
+# Reads DT_NEEDED entries after validating the packaged ELF against the target ABI.
+def ohos_elf_needed_libraries(payload: bytes, source: str, target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> list[str]:
+    if len(payload) < 64 or payload[:7] != b"\x7fELF\x02\x01\x01":
+        raise RuntimeError(f"OHOS native payload is not a 64-bit little-endian ELF: {source}")
+    header = struct.unpack_from("<16sHHIQQQIHHHHHH", payload)
+    if header[2] != target.elf_machine or header[11] != 64:
+        raise RuntimeError(f"OHOS native payload is not a target-compatible {target.abi} ELF: {source}")
+    sections = [
+        struct.unpack_from("<IIQQQQIIQQ", payload, header[6] + index * header[11])
+        for index in range(header[12])
+    ]
+    dynamic_sections = [section for section in sections if section[1] == 6]
+    if len(dynamic_sections) != 1:
+        raise RuntimeError(f"OHOS native payload must have one ELF dynamic section: {source}")
+    dynamic = dynamic_sections[0]
+    strings = sections[dynamic[6]]
+    string_table = payload[strings[4] : strings[4] + strings[5]]
+    needed: list[str] = []
+    for tag, offset in struct.iter_unpack("<qQ", payload[dynamic[4] : dynamic[4] + dynamic[5]]):
+        if tag == 1:
+            needed.append(string_table[offset : string_table.index(b"\0", offset)].decode("utf-8"))
+    return needed
+
+
+# Keeps only the QEMU-vroot executable and its complete packaged library dependency graph.
+def ohos_terminal_hnp_payload(path: Path, target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> bytes:
+    executable = "sysroot/bin/qemu-harmonix-aarch64"
+    required = {"sysroot/", "sysroot/bin/", "sysroot/lib/", "sysroot/hnp.json", executable}
+    pending = [executable]
+    with zipfile.ZipFile(path) as package:
+        members = set(package.namelist())
+        while pending:
+            name = pending.pop()
+            for dependency in ohos_elf_needed_libraries(package.read(name), f"{path}:{name}", target):
+                # OpenHarmony provides the musl C runtime; other dependencies ship in the HNP.
+                if dependency == "libc.so":
+                    continue
+                if Path(dependency).name != dependency:
+                    raise RuntimeError(f"Invalid OHOS terminal library name: {dependency}")
+                library = f"sysroot/lib/{dependency}"
+                if library not in members:
+                    raise RuntimeError(f"Required OHOS terminal shared library is missing: {path}:{library}")
+                if library not in required:
+                    required.add(library)
+                    pending.append(library)
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as compact:
+            for name in sorted(required):
+                compact.writestr(
+                    package.getinfo(name),
+                    package.read(name),
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
+    return output.getvalue()
+
+
+# Packages mandatory terminal HNPs with only the executable and libraries used by the host.
+def package_ohos_terminal_hnp(target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> None:
+    """Validates both terminal packages against the selected ABI before signing."""
+    directory = OHOS_PROJECT_DIR / "entry" / "hnp" / target.abi
     names = ("harmonix-public.hnp", "harmonix-private.hnp")
+    payloads: dict[str, bytes] = {}
     for name in names:
         path = directory / name
         if not path.is_file():
             raise RuntimeError(f"Required OHOS terminal HNP is missing: {path}")
-        with zipfile.ZipFile(path) as package:
-            executable = package.read("sysroot/bin/qemu-harmonix-aarch64")
-            if executable[:4] != b"\x7fELF" or int.from_bytes(executable[18:20], "little") != 183:
-                raise RuntimeError(f"OHOS terminal executable is not an ARM64 ELF: {path}")
+        payloads[name] = ohos_terminal_hnp_payload(path, target)
+        print(f"OpenHarmony terminal HNP {name}: {path.stat().st_size} -> {len(payloads[name])} bytes", flush=True)
     with zipfile.ZipFile(OHOS_UNSIGNED_HAP_PATH, "a") as hap:
-        for name in names:
-            destination = f"hnp/arm64-v8a/{name}"
+        for name, payload in payloads.items():
+            destination = f"hnp/{target.abi}/{name}"
             if destination in hap.namelist():
                 raise RuntimeError(f"OHOS HNP is already packaged by another build step: {destination}")
-            hap.write(directory / name, destination, compress_type=zipfile.ZIP_STORED)
+            hap.writestr(destination, payload, compress_type=zipfile.ZIP_STORED)
     with zipfile.ZipFile(OHOS_UNSIGNED_HAP_PATH) as hap:
         declared = json.loads(hap.read("module.json"))["module"]["hnpPackages"]
         for entry in declared:
-            destination = f"hnp/arm64-v8a/{entry['package']}"
+            destination = f"hnp/{target.abi}/{entry['package']}"
             if destination not in hap.namelist():
                 raise RuntimeError(f"Declared OHOS terminal runtime was not packaged: {destination}")
 
@@ -329,27 +444,31 @@ def ohos_bundle_name() -> str:
 
 
 # Prepares Flutter HAR files and OHOS package links consumed by Hvigor.
-def prepare_ohos_package_dependencies() -> None:
-    copy_ohos_flutter_hars()
+def prepare_ohos_package_dependencies(target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> None:
+    copy_ohos_flutter_hars(target)
     clear_ohos_flutter_embedding_package_cache()
     plugin_names = stage_ohos_flutter_plugins()
     write_ohos_package_dependencies(plugin_names)
 
 
-# Copies the Flutter engine HAR files required by a release arm64 HAP.
-def copy_ohos_flutter_hars() -> None:
+# Stages both engine ABIs while selecting one shared embedding for this release build.
+def copy_ohos_flutter_hars(target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> None:
     engine_dir = (
         Path(flutter_command()).parent.parent
         / "bin"
         / "cache"
         / "artifacts"
         / "engine"
-        / "ohos-arm64-release"
+        / f"{target.value}-release"
     )
-    required_hars = ("flutter_embedding_release.har", "arm64_v8a_release.har")
     OHOS_HAR_DIR.mkdir(parents=True, exist_ok=True)
-    for filename in required_hars:
-        copy_required_file(engine_dir / filename, OHOS_HAR_DIR / filename)
+    copy_required_file(engine_dir / "flutter_embedding_release.har", OHOS_HAR_DIR / "flutter_embedding_release.har")
+    engine_root = engine_dir.parent
+    for platform in OhosTargetPlatform:
+        copy_required_file(
+            engine_root / f"{platform.value}-release" / platform.native_har,
+            OHOS_HAR_DIR / platform.native_har,
+        )
     patch_ohos_flutter_embedding_har(OHOS_HAR_DIR / "flutter_embedding_release.har")
 
 
@@ -399,9 +518,16 @@ def patch_ohos_flutter_embedding_har(har_path: Path) -> None:
     rebuilt_har.replace(har_path)
 
 
-# Returns source patches for Flutter OHOS embedding files that reference newer SDK APIs.
+# Returns SDK compatibility and MethodChannel response fixes for the Flutter OHOS embedding.
 def ohos_flutter_embedding_replacements() -> dict[str, list[tuple[str, str]]]:
     return {
+        "package/src/main/ets/embedding/engine/systemchannels/PlatformChannel.ets": [
+            (
+                "            this.platform.platformMessageHandler.showSystemUiMode(mode);\n",
+                "            this.platform.platformMessageHandler.showSystemUiMode(mode);\n"
+                "            result.success(null);\n",
+            ),
+        ],
         "package/src/main/ets/embedding/ohos/KeyEventHandler.ets": [
             (
                 "      // Use event.isCapsLockOn to check CapsLock state\n"
@@ -515,7 +641,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
     root_dependencies.update(
         {
             "@ohos/flutter_ohos": "file:./har/flutter_embedding_release.har",
-            "flutter_native_arm64_v8a": "file:./har/arm64_v8a_release.har",
+            **{platform.native_package: f"file:./har/{platform.native_har}" for platform in OhosTargetPlatform},
         }
     )
     for name in plugin_names:
@@ -526,7 +652,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
     root_overrides.update(
         {
             "@ohos/flutter_ohos": "file:./har/flutter_embedding_release.har",
-            "flutter_native_arm64_v8a": "file:./har/arm64_v8a_release.har",
+            **{platform.native_package: f"file:./har/{platform.native_har}" for platform in OhosTargetPlatform},
         }
     )
     for name in plugin_names:
@@ -539,7 +665,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
     entry_dependencies.update(
         {
             "@ohos/flutter_ohos": "file:../har/flutter_embedding_release.har",
-            "flutter_native_arm64_v8a": "file:../har/arm64_v8a_release.har",
+            **{platform.native_package: f"file:../har/{platform.native_har}" for platform in OhosTargetPlatform},
         }
     )
     for name in plugin_names:
@@ -552,7 +678,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
 def clean_generated_ohos_dependencies(dependencies: dict, relative_prefix: str) -> dict:
     generated_values = {
         f"file:{relative_prefix}har/flutter_embedding_release.har",
-        f"file:{relative_prefix}har/arm64_v8a_release.har",
+        *(f"file:{relative_prefix}har/{target.native_har}" for target in OhosTargetPlatform),
     }
     generated_plugin_prefix = f"file:{relative_prefix}.flutter_ohos_plugins/"
     return {
@@ -604,9 +730,9 @@ def ohos_hvigor_env() -> dict[str, str]:
 
 
 # Builds and stages the Rust OpenHarmony runtime bridge.
-def build_ohos_rust_bridge() -> None:
+def build_ohos_rust_bridge(target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> None:
     sdk_dir = ohos_sdk_dir()
-    sdk_version = select_ohos_sdk_version(sdk_dir)
+    sdk_version = select_ohos_sdk_version(sdk_dir, target)
     native_dir = sdk_dir / sdk_version / "native"
     llvm_bin = native_dir / "llvm" / "bin"
     sysroot = native_dir / "sysroot"
@@ -615,39 +741,40 @@ def build_ohos_rust_bridge() -> None:
     linker = Path(require_command("ld.lld"))
     libclang_dir = ensure_bindgen_libclang()
     clang_resource_dir = ohos_clang_resource_dir(native_dir)
-    compiler_runtime = clang_resource_dir / "lib" / OHOS_CLANG_TARGET / "libclang_rt.builtins.a"
+    compiler_runtime = clang_resource_dir / "lib" / target.clang_target / "libclang_rt.builtins.a"
     required_paths = [native_dir, sysroot, clang, llvm_ar, libclang_dir, clang_resource_dir, compiler_runtime]
     missing = [path for path in required_paths if not path.exists()]
     if missing:
         raise RuntimeError("OpenHarmony native SDK is incomplete: " + ", ".join(str(path) for path in missing))
-    verify_ohos_rust_link_libraries(sysroot)
+    verify_ohos_rust_link_libraries(sysroot, target)
 
     env = os.environ.copy()
     sysroot_arg = sysroot.as_posix()
     clang_resource_arg = clang_resource_dir.as_posix()
     bindgen_args = (
-        f"--target={OHOS_CLANG_TARGET} "
+        f"--target={target.clang_target} "
         f"--sysroot={sysroot_arg} "
         f"-resource-dir={clang_resource_arg}"
     )
-    cflags = f"--target={OHOS_CLANG_TARGET} --sysroot={sysroot_arg}"
+    cflags = f"--target={target.clang_target} --sysroot={sysroot_arg}"
+    cargo_target = target.rust_target.replace("-", "_")
     env.update(
         {
             "RUSTFLAGS": (
                 "-Awarnings "
-                f"-C link-arg=--target={OHOS_CLANG_TARGET} "
+                f"-C link-arg=--target={target.clang_target} "
                 f"-C link-arg=--sysroot={sysroot_arg}"
             ),
             "OHOS_NATIVE_HOME": str(native_dir),
-            "CC_aarch64_unknown_linux_ohos": str(clang),
-            "CXX_aarch64_unknown_linux_ohos": str(executable_path(llvm_bin / "clang++")),
-            "AR_aarch64_unknown_linux_ohos": str(llvm_ar),
-            "CFLAGS_aarch64_unknown_linux_ohos": cflags,
-            "CXXFLAGS_aarch64_unknown_linux_ohos": cflags,
-            "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_LINKER": str(clang),
-            "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_AR": str(llvm_ar),
+            f"CC_{cargo_target}": str(clang),
+            f"CXX_{cargo_target}": str(executable_path(llvm_bin / "clang++")),
+            f"AR_{cargo_target}": str(llvm_ar),
+            f"CFLAGS_{cargo_target}": cflags,
+            f"CXXFLAGS_{cargo_target}": cflags,
+            f"CARGO_TARGET_{cargo_target.upper()}_LINKER": str(clang),
+            f"CARGO_TARGET_{cargo_target.upper()}_AR": str(llvm_ar),
             "BINDGEN_EXTRA_CLANG_ARGS": bindgen_args,
-            "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_ohos": bindgen_args,
+            f"BINDGEN_EXTRA_CLANG_ARGS_{cargo_target}": bindgen_args,
             "LIBCLANG_PATH": str(libclang_dir),
         }
     )
@@ -660,7 +787,7 @@ def build_ohos_rust_bridge() -> None:
             "--manifest-path",
             OHOS_BRIDGE_CRATE_DIR / "Cargo.toml",
             "--target",
-            OHOS_RUST_TARGET,
+            target.rust_target,
             "--",
             "-C",
             f"link-arg={compiler_runtime}",
@@ -672,9 +799,9 @@ def build_ohos_rust_bridge() -> None:
         cwd=OHOS_BRIDGE_CRATE_DIR,
         env=env,
     )
-    runtime_dir = OHOS_BRIDGE_CRATE_DIR / "target" / OHOS_RUST_TARGET / "release"
+    runtime_dir = OHOS_BRIDGE_CRATE_DIR / "target" / target.rust_target / "release"
     for library_name in (OHOS_BRIDGE_LIBRARY_NAME, OHOS_ENGINE_LIBRARY_NAME):
-        copy_required_file(runtime_dir / library_name, OHOS_ENTRY_LIB_DIR / library_name)
+        copy_required_file(runtime_dir / library_name, OHOS_PROJECT_DIR / "entry" / "libs" / target.abi / library_name)
 
 
 # Returns the Clang resource directory shipped by the configured native SDK.
@@ -699,7 +826,7 @@ def ohos_sdk_dir() -> Path:
 
 
 # Selects the OpenHarmony SDK version that can link the Rust native bridge.
-def select_ohos_sdk_version(sdk_dir: Path) -> str:
+def select_ohos_sdk_version(sdk_dir: Path, target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> str:
     installed_versions = sorted(
         path.name for path in sdk_dir.iterdir() if path.is_dir() and path.name.isdigit()
     )
@@ -713,7 +840,7 @@ def select_ohos_sdk_version(sdk_dir: Path) -> str:
             checked.append(f"{version}: missing native SDK directory")
             continue
         sysroot = native_dir / "sysroot"
-        missing = missing_ohos_rust_link_libraries(sysroot)
+        missing = missing_ohos_rust_link_libraries(sysroot, target)
         if missing:
             missing_link_libraries.extend(str(path) for path in missing)
             checked.append(f"{version}: missing {', '.join(path.name for path in missing)}")
@@ -721,15 +848,15 @@ def select_ohos_sdk_version(sdk_dir: Path) -> str:
         return version
     details = "; ".join(checked) if checked else "no numeric SDK versions are installed"
     raise RuntimeError(
-        ohos_sdk_link_error_message(sdk_dir, requested_versions, installed_versions, details)
+        ohos_sdk_link_error_message(sdk_dir, requested_versions, installed_versions, details, target)
     )
 
 
 # Verifies that the configured OpenHarmony SDK matches the project API and native linker requirements.
-def verify_ohos_sdk_preflight() -> None:
+def verify_ohos_sdk_preflight(target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> None:
     sdk_dir = ohos_sdk_dir()
     verify_ohos_hvigor_sdk_components(sdk_dir)
-    select_ohos_sdk_version(sdk_dir)
+    select_ohos_sdk_version(sdk_dir, target)
 
 
 # Verifies SDK components required by the HarmonyOS Hvigor project configuration.
@@ -762,12 +889,13 @@ def ohos_sdk_link_error_message(
     requested_versions: list[str],
     installed_versions: list[str],
     details: str,
+    target: OhosTargetPlatform = OhosTargetPlatform.ARM64,
 ) -> str:
     requested = ", ".join(requested_versions) if requested_versions else "none"
     installed = ", ".join(installed_versions) if installed_versions else "none"
     required_libraries = ", ".join(OHOS_REQUIRED_LINK_LIBRARY_NAMES)
     return (
-        f"OpenHarmony SDK cannot link Rust target {OHOS_RUST_TARGET}: {details}. "
+        f"OpenHarmony SDK cannot link Rust target {target.rust_target}: {details}. "
         f"Project requested API versions: {requested}. Installed numeric SDK versions under "
         f"{sdk_dir}: {installed}. Install an OpenHarmony native SDK containing {required_libraries}."
     )
@@ -827,12 +955,12 @@ def ohpm_real_bin() -> Path:
 
 
 # Verifies libraries required by Rust's OpenHarmony target are present in the SDK.
-def verify_ohos_rust_link_libraries(sysroot: Path) -> None:
-    missing = missing_ohos_rust_link_libraries(sysroot)
+def verify_ohos_rust_link_libraries(sysroot: Path, target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> None:
+    missing = missing_ohos_rust_link_libraries(sysroot, target)
     if missing:
         raise RuntimeError(
             "OpenHarmony SDK cannot link Rust target "
-            f"{OHOS_RUST_TARGET}; missing: {', '.join(str(path) for path in missing)}"
+            f"{target.rust_target}; missing: {', '.join(str(path) for path in missing)}"
         )
 
 
@@ -840,8 +968,8 @@ OHOS_REQUIRED_LINK_LIBRARY_NAMES = ("libtime_service_ndk.so",)
 
 
 # Returns missing Rust link libraries for one OpenHarmony sysroot.
-def missing_ohos_rust_link_libraries(sysroot: Path) -> list[Path]:
-    lib_dir = sysroot / "usr" / "lib" / OHOS_CLANG_TARGET
+def missing_ohos_rust_link_libraries(sysroot: Path, target: OhosTargetPlatform = OhosTargetPlatform.ARM64) -> list[Path]:
+    lib_dir = sysroot / "usr" / "lib" / target.clang_target
     required_libraries = [lib_dir / name for name in OHOS_REQUIRED_LINK_LIBRARY_NAMES]
     return [path for path in required_libraries if not path.exists()]
 

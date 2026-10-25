@@ -9,6 +9,7 @@
   "dependencies": {
     "@ohos/flutter_ohos": "file:./har/flutter_embedding_release.har",
     "flutter_native_arm64_v8a": "file:./har/arm64_v8a_release.har",
+    "flutter_native_x86_64": "file:./har/x86_64_release.har",
     "file_selector_ohos": "file:./.flutter_ohos_plugins/file_selector_ohos",
     "image_picker_ohos": "file:./.flutter_ohos_plugins/image_picker_ohos",
     "integration_test": "file:./.flutter_ohos_plugins/integration_test",
@@ -25,6 +26,7 @@
   "overrides": {
     "@ohos/flutter_ohos": "file:./har/flutter_embedding_release.har",
     "flutter_native_arm64_v8a": "file:./har/arm64_v8a_release.har",
+    "flutter_native_x86_64": "file:./har/x86_64_release.har",
     "file_selector_ohos": "file:./.flutter_ohos_plugins/file_selector_ohos",
     "image_picker_ohos": "file:./.flutter_ohos_plugins/image_picker_ohos",
     "integration_test": "file:./.flutter_ohos_plugins/integration_test",

@@ -12,8 +12,8 @@
 namespace {
 
 using BridgeHandle = void*;
-using BridgeCreateWithStorageRootsAndSystemLanguage =
-    BridgeHandle (*)(const char*, const char*, const char*);
+using BridgeCreateOhos =
+    BridgeHandle (*)(const char*, const char*, const char*, const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 
@@ -44,8 +44,8 @@ class OperitBridgeLibrary {
       return false;
     }
     create_with_storage_roots_ =
-        Load<BridgeCreateWithStorageRootsAndSystemLanguage>(
-            "operit_flutter_bridge_create_with_storage_roots_and_system_language");
+        Load<BridgeCreateOhos>(
+            "operit_flutter_bridge_create_ohos");
     if (Load<char* (*)(BridgeHandle)>("operit_flutter_bridge_ffi_connect") == nullptr) {
       AssignError(error, "operit flutter FFI connect export is missing");
       return false;
@@ -73,9 +73,9 @@ class OperitBridgeLibrary {
 
   /// Creates one Rust runtime bridge handle.
   BridgeHandle Create(const std::string& runtime_root, const std::string& workspace_root,
-                      const std::string& system_language_code) {
+                      const std::string& system_language_code, const std::string& device_model) {
     return create_with_storage_roots_(runtime_root.c_str(), workspace_root.c_str(),
-                                      system_language_code.c_str());
+                                      system_language_code.c_str(), device_model.c_str());
   }
 
   /// Returns the last Rust runtime bridge creation error.
@@ -151,7 +151,7 @@ class OperitBridgeLibrary {
 
   std::mutex mutex_;
   void* library_ = nullptr;
-  BridgeCreateWithStorageRootsAndSystemLanguage create_with_storage_roots_ = nullptr;
+  BridgeCreateOhos create_with_storage_roots_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeEmitRuntimeEvent emit_runtime_event_ = nullptr;
@@ -217,28 +217,6 @@ BridgeHandle ReadHandle(napi_env env, napi_value value) {
 napi_value StringValue(napi_env env, const std::string& value) {
   napi_value result = nullptr;
   napi_create_string_utf8(env, value.c_str(), value.size(), &result);
-  return result;
-}
-
-/// Creates one Rust runtime bridge handle.
-napi_value Create(napi_env env, napi_callback_info info) {
-  if (!EnsureBridgeReady(env)) {
-    return nullptr;
-  }
-  auto args = CallbackArgs(env, info, 3);
-  if (args.size() != 3) {
-    return ThrowError(env, "create expects runtime root, workspace root, and system language code");
-  }
-  auto runtime_root = ReadString(env, args[0]);
-  auto workspace_root = ReadString(env, args[1]);
-  auto system_language_code = ReadString(env, args[2]);
-  BridgeHandle handle =
-      g_bridge_library.Create(runtime_root, workspace_root, system_language_code);
-  if (handle == nullptr) {
-    return ThrowError(env, g_bridge_library.CreateError());
-  }
-  napi_value result = nullptr;
-  napi_create_bigint_uint64(env, reinterpret_cast<uint64_t>(handle), &result);
   return result;
 }
 
@@ -314,7 +292,7 @@ napi_value ConnectCoreFfi(napi_env env, napi_callback_info info) {
   return StringValue(env, g_bridge_library.ConnectCoreFfi(handle));
 }
 
-enum class OwnerOperation { DataRescue, RenderPdf };
+enum class OwnerOperation { CreateRuntime, DataRescue, RenderPdf };
 
 /// Owns blocking platform work and a retained runtime reference until completion.
 struct OwnerWork {
@@ -323,19 +301,27 @@ struct OwnerWork {
   OwnerOperation operation;
   BridgeHandle handle = nullptr;
   std::string root;
+  std::string workspace_root;
+  std::string system_language_code;
+  std::string device_model;
   std::string request;
   std::string response;
   std::string error;
 
-  /// Releases only the worker's bridge reference after the platform operation ends.
+  /// Releases an owned runtime reference unless creation transferred it to the caller.
   ~OwnerWork() { if (handle != nullptr) g_bridge_library.Destroy(handle); }
 };
 
-/// Executes blocking Rust storage or document work outside the ArkUI event loop.
+/// Executes runtime creation, storage, and document work outside the ArkUI event loop.
 void ExecuteOwnerWork(napi_env, void* data) {
   auto* work = static_cast<OwnerWork*>(data);
   try {
     switch (work->operation) {
+      case OwnerOperation::CreateRuntime:
+        work->handle = g_bridge_library.Create(work->root, work->workspace_root,
+                                               work->system_language_code, work->device_model);
+        if (work->handle == nullptr) work->error = g_bridge_library.CreateError();
+        break;
       case OwnerOperation::DataRescue:
         work->response = g_bridge_library.DataRescue(work->root, work->request);
         break;
@@ -351,7 +337,13 @@ void ExecuteOwnerWork(napi_env, void* data) {
 void CompleteOwnerWork(napi_env env, napi_status status, void* data) {
   std::unique_ptr<OwnerWork> work(static_cast<OwnerWork*>(data));
   if (status == napi_ok && work->error.empty()) {
-    napi_resolve_deferred(env, work->deferred, StringValue(env, work->response));
+    if (work->operation == OwnerOperation::CreateRuntime) {
+      napi_value handle = nullptr;
+      napi_create_bigint_uint64(env, reinterpret_cast<uint64_t>(work->handle), &handle);
+      if (napi_resolve_deferred(env, work->deferred, handle) == napi_ok) work->handle = nullptr;
+    } else {
+      napi_resolve_deferred(env, work->deferred, StringValue(env, work->response));
+    }
   } else {
     napi_value error = nullptr;
     napi_create_error(env, nullptr, StringValue(env, status == napi_ok ? work->error : "Native owner work was cancelled"), &error);
@@ -371,6 +363,20 @@ napi_value QueueOwnerWork(napi_env env, std::unique_ptr<OwnerWork> work) {
   }
   work.release();
   return promise;
+}
+
+/// Creates the runtime on a native worker with immutable owner metadata.
+napi_value Create(napi_env env, napi_callback_info info) {
+  if (!EnsureBridgeReady(env)) return nullptr;
+  auto args = CallbackArgs(env, info, 4);
+  if (args.size() != 4) return ThrowError(env, "create expects runtime root, workspace root, system language, and device model");
+  auto work = std::make_unique<OwnerWork>();
+  work->operation = OwnerOperation::CreateRuntime;
+  work->root = ReadString(env, args[0]);
+  work->workspace_root = ReadString(env, args[1]);
+  work->system_language_code = ReadString(env, args[2]);
+  work->device_model = ReadString(env, args[3]);
+  return QueueOwnerWork(env, std::move(work));
 }
 
 /// Dispatches blocking maintenance without starting Core.
