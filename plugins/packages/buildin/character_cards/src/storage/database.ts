@@ -30,6 +30,7 @@ import {
   records,
   decodeStateFromRecords,
   storedValue,
+  structuredNodes,
 } from "./records";
 import type { StoredRecord } from "./records";
 import { CharacterStorage, configurationNames, document, documents, recordPrefix } from "./preferences";
@@ -55,6 +56,40 @@ function completed(result: { successful: boolean; details: string }): void {
 
 /** Matches the host's per-transaction object-commit ceiling for plugin records. */
 const HOST_OBJECT_COMMIT_LIMIT = 1000;
+
+/**
+ * Keeps one commit far below the host structured bridge's 1,000,000-node conversion
+ * budget, which a full 1000-mutation batch of 1024-dimension embedding vectors exceeds.
+ */
+const HOST_COMMIT_NODE_LIMIT = 400_000;
+
+/** Counts the envelope nodes one mutation converts beyond its value: wrapper, op, collection, key and expectedVersion. */
+const HOST_MUTATION_ENVELOPE_NODES = 5;
+
+/** Splits mutations by host mutation count and estimated bridge nodes; a single oversized record still commits alone. */
+function boundedCommitBatches(mutations: ObjectMutation[]): ObjectMutation[][] {
+  const batches: ObjectMutation[][] = [];
+  let batch: ObjectMutation[] = [];
+  let nodes = 0;
+  for (const mutation of mutations) {
+    const cost =
+      (mutation.op === "put" ? structuredNodes(mutation.value) : 0) +
+      HOST_MUTATION_ENVELOPE_NODES;
+    if (
+      batch.length > 0 &&
+      (batch.length + 1 > HOST_OBJECT_COMMIT_LIMIT ||
+        nodes + cost > HOST_COMMIT_NODE_LIMIT)
+    ) {
+      batches.push(batch);
+      batch = [];
+      nodes = 0;
+    }
+    batch.push(mutation);
+    nodes += cost;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
 
 /** Owns record transactions in the persistent synchronized plugin data namespace. */
 export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
@@ -469,11 +504,11 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
       });
     const memoryMutations = mutations.filter(row => !configurationNames.some(name => name === row.collection));
     // One host object commit accepts at most 1000 mutations, and a large import exceeds that
-    // on its own. Sequential batches keep it possible; a failure after an earlier batch leaves
-    // those records committed, which a repeated SKIP/UPDATE import resumes.
-    const memoryBatches: ObjectMutation[][] = [];
-    for (let start = 0; start < memoryMutations.length; start += HOST_OBJECT_COMMIT_LIMIT)
-      memoryBatches.push(memoryMutations.slice(start, start + HOST_OBJECT_COMMIT_LIMIT));
+    // on its own. The structured bridge additionally counts every converted node against a
+    // 1,000,000-node budget that a full batch of embedding vectors alone exceeds. Sequential
+    // size-bounded batches keep both limits; a failure after an earlier batch leaves those
+    // records committed, which a repeated SKIP/UPDATE import resumes.
+    const memoryBatches = boundedCommitBatches(memoryMutations);
     const stagedDocuments: { path: string; stagedPath: string }[] = [];
     for (const document of documents) {
       if (document.newDocument) {
