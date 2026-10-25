@@ -161,7 +161,7 @@ snapshots. Source assertions and Rust syntax parsing are not Rust type checking,
 a live AI request or cross-platform runtime acceptance. Native mailbox Rust tests
 are present; running the runtime test target requires its native storage host
 dependencies. The wasm production check does not execute those native tests.
-The character-card main bundle is generated from the changed source; complete
+The character-card main bundle is generated from its source; complete
 installed-package acceptance still requires packaging and running the application.
 
 ## Conversation context and background ownership

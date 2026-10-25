@@ -241,7 +241,7 @@ docs/                    架构、权限、Link、迁移和版本文档
 - [Web Access 前端与部署要求](apps/flutter/app/web/README.md)
 - [插件作者文档](plugins/docs/README.md)
 - [版本、tag、渠道与发布资产](docs/release-versioning.md)
-- [当前 crate 拆分与迁移计划](docs/core-module-crate-layout.md)
+- [完整文档目录](docs/README.md)
 
 架构文档中标注为“目标”“计划”或“演进方向”的内容，不代表所有平台已经实现。判断当前实际行为时，请以源码、命令帮助输出、构建结果和目标平台运行结果为准。
 

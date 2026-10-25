@@ -1,6 +1,6 @@
 # Link / Peer / Transport / Space Architecture
 
-本文按 2026-10-13 的源码描述当前链路。Link 的三个基础操作是 **Call、Watch、Push**。
+Link 的三个基础操作是 **Call、Watch、Push**。
 传输统一和路由行为合规是两个独立结论：当前五种 transport 已统一承载标准 Link
 消息，共享客户端具备完整三个操作族；路由行为和 Host 边界仍有待清理项，见第 9 节。
 

@@ -241,7 +241,7 @@ docs/                    Architecture, permission, Link, migration, and version 
 - [Web Access frontend and deployment requirements](apps/flutter/app/web/README.md)
 - [Plugin author documentation](plugins/docs/README.md)
 - [Versions, tags, channels, and release assets](docs/release-versioning.md)
-- [Current crate split and migration plan](docs/core-module-crate-layout.md)
+- [Documentation index](docs/README.md)
 
 Architecture documents that are marked as a "target", "plan", or "direction of evolution" do not mean that all platforms have implemented them. To determine current actual behavior, use the source code, command help output, build results, and runtime results on the target platform as the source of truth.
 
