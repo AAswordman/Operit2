@@ -18,10 +18,9 @@ import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
 import '../components/AppContent.dart';
 import '../components/DrawerConversationState.dart';
 import '../layout/NavigationLayoutMetrics.dart';
-import '../layout/PhoneLayout.dart';
+import '../layout/AdaptiveMainLayout.dart';
 import '../MainLayoutController.dart';
 import '../TopBarController.dart';
-import '../layout/TabletLayout.dart';
 import '../layout/SidebarDockController.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../navigation/AppRouteCatalog.dart';
@@ -779,41 +778,24 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                 child: ValueListenableBuilder<bool>(
                   valueListenable: _drawerOpenState,
                   child: Scaffold(
-                    body: useTabletLayout
-                        ? TabletLayout(
-                            content: content,
-                            navigationEntries:
-                                _navigationModel.navigationEntries,
-                            pluginSidebarEntries: pluginSidebarEntries,
-                            selectedRouteId: currentRouteEntry.routeId,
-                            drawerConversationState: _drawerConversationState,
-                            isTabletSidebarExpanded: _isTabletSidebarExpanded,
-                            tabletSidebarWidth: 280,
-                            collapsedTabletSidebarWidth: 56,
-                            onNavigationEntrySelected:
-                                _navigateToNavigationEntry,
-                            onConversationActivated: _activateConversationRoute,
-                          )
-                        : PhoneLayout(
-                            content: content,
-                            navigationEntries:
-                                _navigationModel.navigationEntries,
-                            pluginSidebarEntries: pluginSidebarEntries,
-                            selectedRouteId: currentRouteEntry.routeId,
-                            drawerConversationState: _drawerConversationState,
-                            drawerWidth: screenSize.width * 0.75,
-                            drawerOpenState: _drawerOpenState,
-                            enableNavigationAnimation: true,
-                            onOpenDrawer: () {
-                              _drawerOpenState.value = true;
-                            },
-                            onCloseDrawer: () {
-                              _drawerOpenState.value = false;
-                            },
-                            onNavigationEntrySelected:
-                                _navigateToNavigationEntry,
-                            onConversationActivated: _activateConversationRoute,
-                          ),
+                    body: AdaptiveMainLayout(
+                      content: content,
+                      navigationEntries: _navigationModel.navigationEntries,
+                      pluginSidebarEntries: pluginSidebarEntries,
+                      selectedRouteId: currentRouteEntry.routeId,
+                      drawerConversationState: _drawerConversationState,
+                      isTabletSidebarExpanded: _isTabletSidebarExpanded,
+                      drawerOpenState: _drawerOpenState,
+                      enableNavigationAnimation: true,
+                      onOpenDrawer: () {
+                        _drawerOpenState.value = true;
+                      },
+                      onCloseDrawer: () {
+                        _drawerOpenState.value = false;
+                      },
+                      onNavigationEntrySelected: _navigateToNavigationEntry,
+                      onConversationActivated: _activateConversationRoute,
+                    ),
                   ),
                   builder: (context, drawerOpen, child) {
                     final phoneDrawerOpen = !useTabletLayout && drawerOpen;

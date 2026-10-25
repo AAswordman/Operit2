@@ -262,6 +262,11 @@ impl RuntimeRemoteLinkService {
         Err("Device space changed while reading its overview".to_string())
     }
 
+    /// Observes local synchronization execution separately from topology changes.
+    pub fn spaceSyncProgressFlow(&self) -> StateFlow<Vec<crate::SpaceSyncProgress::SpaceSyncProgress>> {
+        self.persistenceSyncService().progressFlow()
+    }
+
     /// Observes persistent Space changes and live Peer Links through the shared Host scheduler.
     pub fn deviceSpaceSnapshotFlow(&self) -> Result<StateFlow<RuntimeDeviceSpaceSnapshot>, String> {
         let (changes, mut changed) = tokio::sync::mpsc::channel(1);
@@ -1286,7 +1291,7 @@ impl crate::NodeSpaceService::NodeSpaceContext for RuntimeRemoteLinkService {
     async fn callNode(&self, node: String, request: CoreCallRequest) -> operit_link::CoreCallResponse {
         self.nodeRouter.callNode(node, request).await
     }
-    async fn afterJoined(&self, peer: String) -> Result<(), String> {
-        self.persistenceSyncService().synchronizeReachablePeer(peer, 512).await.map(|_| ())
+    async fn afterJoined(&self, _peer: String) -> Result<(), String> {
+        self.persistenceSyncService().scheduleSynchronization()
     }
 }

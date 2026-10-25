@@ -10,10 +10,12 @@ use operit_store::RuntimeFileSyncStore::{RuntimeFileSyncReference, RuntimeFileSy
 use operit_store::SyncOperationStore::{subscribeSyncMutations, syncMutationRevision, SyncMutationSubscription, SyncOperation};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use operit_store::PreferencesDataStore::StateFlow;
+use crate::SpaceSyncProgress::{SpaceSyncProgress, SyncProgressTracker};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter};
 
@@ -25,7 +27,6 @@ const SYNC_DOMAINS: [&str; 6] = [
     "network_control",
     "plugin_storage",
 ];
-const SPACE_SYNC_PREPARATION_DELAY_MS: u64 = 0;
 const SYNC_BLOB_CHUNK_BYTES: i64 = 64 * 1024;
 /// Wire reservation for the Link request envelope, AEAD tag and frame prefix.
 /// One operation above this reservation cannot travel in any single message.
@@ -56,6 +57,8 @@ const PEER_FULL_SYNC_BACKOFF_MAX_MS: i64 = 60_000;
 /// without creating business operations.
 #[derive(Clone, Default)]
 struct PeerSyncGate {
+    /// Every caller uses the same peer pass, including route changes.
+    execution: Arc<tokio::sync::Mutex<()>>,
     /// Summarized remote clock observed at the last completed full pass.
     lastRemoteClockSummary: Option<String>,
     /// Local synchronized-state summary captured right after the last
@@ -89,7 +92,7 @@ fn peerFullSyncBackoffMs(consecutiveFailures: u32) -> i64 {
     )
 }
 
-static SPACE_SYNC_SERVICES: OnceLock<Mutex<BTreeMap<String, Arc<SpacePersistenceSyncState>>>> =
+static SPACE_SYNC_SERVICES: OnceLock<Mutex<BTreeMap<String, Weak<SpacePersistenceSyncState>>>> =
     OnceLock::new();
 
 /// Stores the runtime state owned by one CoreNode persistence worker.
@@ -104,6 +107,7 @@ struct SpacePersistenceSyncState {
     synchronizationRequested: AtomicBool,
     workspaceScanStop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     peerGates: Mutex<BTreeMap<String, PeerSyncGate>>,
+    progress: SyncProgressTracker,
 }
 
 /// 通过 Router 与可达的 Space 成员同步持久化数据，不拥有配对、发现或传输。
@@ -127,20 +131,30 @@ impl SpacePersistenceSyncService {
         nodeRouter: CoreNodeRouter,
             spaceStore: CoreSpaceStore,
     ) -> Self {
-        Self {
-            state: Arc::new(SpacePersistenceSyncState {
-                localRuntime,
-                nodeRouter,
-                spaceStore,
-                synchronizationScheduled: AtomicBool::new(false),
-                active: AtomicBool::new(false),
-                mutationSubscription: Mutex::new(None),
-                peerChangesStop: Mutex::new(None),
-                synchronizationRequested: AtomicBool::new(false),
-                workspaceScanStop: Mutex::new(None),
-                peerGates: Mutex::new(BTreeMap::new()),
-            }),
+        let mut services = persistenceServices().lock().expect("Space sync registry lock poisoned");
+        let nodeId = nodeRouter.localNodeId();
+        if let Some(state) = services.get(&nodeId).and_then(Weak::upgrade) {
+            return Self { state };
         }
+        services.retain(|_, state| state.strong_count() > 0);
+        let state = Arc::new(SpacePersistenceSyncState {
+            localRuntime, nodeRouter, spaceStore,
+            synchronizationScheduled: AtomicBool::new(false),
+            active: AtomicBool::new(false),
+            mutationSubscription: Mutex::new(None),
+            peerChangesStop: Mutex::new(None),
+            synchronizationRequested: AtomicBool::new(false),
+            workspaceScanStop: Mutex::new(None),
+            peerGates: Mutex::new(BTreeMap::new()),
+            progress: SyncProgressTracker::default(),
+        });
+        services.insert(nodeId, Arc::downgrade(&state));
+        Self { state }
+    }
+
+    /// Returns the shared local progress without rebuilding topology projections.
+    pub(crate) fn progressFlow(&self) -> StateFlow<Vec<SpaceSyncProgress>> {
+        self.state.progress.flow()
     }
 
     /// Starts the unique change-triggered persistence synchronizer for this CoreNode.
@@ -148,7 +162,6 @@ impl SpacePersistenceSyncService {
         let startedAt = currentTimeMillis();
         self.state.nodeRouter.nodeServices()?;
         self.state.spaceStore.initialize()?;
-        let localNodeId = self.state.nodeRouter.localNodeId();
         operit_util::AppLogger::AppLogger::v(
             "SpacePersistenceSyncService",
             &format!(
@@ -156,15 +169,8 @@ impl SpacePersistenceSyncService {
                 currentTimeMillis() - startedAt
             ),
         );
-        {
-            let mut services = persistenceServices()
-                .lock()
-                .map_err(|error| format!("Space sync registry lock poisoned: {error}"))?;
-            if services.contains_key(&localNodeId) {
-                return Ok(());
-            }
-            self.state.active.store(true, Ordering::Release);
-            services.insert(localNodeId.clone(), self.state.clone());
+        if self.state.active.swap(true, Ordering::AcqRel) {
+            return Ok(());
         }
         let registrationStartedAt = currentTimeMillis();
 
@@ -230,16 +236,7 @@ impl SpacePersistenceSyncService {
             .lock()
             .map_err(|error| format!("Space sync subscription lock poisoned: {error}"))?
             .take();
-        let localNodeId = self.state.nodeRouter.localNodeId();
-        let mut services = persistenceServices()
-            .lock()
-            .map_err(|error| format!("Space sync registry lock poisoned: {error}"))?;
-        if services
-            .get(&localNodeId)
-            .is_some_and(|state| Arc::ptr_eq(state, &self.state))
-        {
-            services.remove(&localNodeId);
-        }
+        self.state.progress.clear();
         Ok(())
     }
 
@@ -312,7 +309,8 @@ impl SpacePersistenceSyncService {
 
     /// Exchanges Space projections through direct pairings, then synchronizes every reachable member.
     pub async fn synchronizeOnce(&self) -> Result<(), String> {
-        self.state.spaceStore.initialize()?;
+        let space = self.state.spaceStore.initialize()?;
+        self.state.progress.retain(&space.spaceId, &space.members);
         // A shared removal takes effect before any exchange: when the replayed
         // policy no longer admits this device it retires itself here, and a
         // duplicate delivery of the same command is a no-op.
@@ -385,6 +383,7 @@ impl SpacePersistenceSyncService {
             }
         }
         let space = self.state.spaceStore.space()?;
+        self.state.progress.retain(&space.spaceId, &space.members);
         for targetNodeId in space.members {
             if targetNodeId == localNodeId {
                 continue;
@@ -403,14 +402,12 @@ impl SpacePersistenceSyncService {
                 .synchronizeReachablePeer(targetNodeId.clone(), 512)
                 .await
             {
-                self.recordPeerPassFailed(&targetNodeId);
                 errors.push(format!(
                     "CoreNode {} reachable persistence sync: {error}",
                     targetNodeId
                 ));
                 continue;
             }
-            self.recordPeerPassCompleted(&targetNodeId).await;
         }
         if !errors.is_empty() {
             return Err(errors.join(" | "));
@@ -418,19 +415,47 @@ impl SpacePersistenceSyncService {
         Ok(())
     }
 
-    /// Exchanges persisted operations with one reachable Space member selected by node id.
-    #[allow(non_snake_case)]
+    /// All entry points share serialization, progress, completion and retry state.
     pub(crate) async fn synchronizeReachablePeer(
         &self,
         targetNodeId: String,
         limit: usize,
     ) -> Result<(), String> {
-        if limit == 0 {
-            return Err("sync limit must be greater than 0".to_string());
+        if limit == 0 { return Err("sync limit must be greater than 0".into()); }
+        if targetNodeId == self.state.nodeRouter.localNodeId() { return Ok(()); }
+        let execution = self.state.peerGates.lock().map_err(|error| error.to_string())?
+            .entry(targetNodeId.clone()).or_default().execution.clone();
+        let _pass = execution.lock().await;
+        let space = self.state.spaceStore.space()?;
+        self.state.progress.retain(&space.spaceId, &space.members);
+        self.state.progress.begin(&targetNodeId, &space.spaceId);
+        let result = self.synchronizePeer(&targetNodeId, limit).await;
+        match &result {
+            Ok(allowed) => {
+                self.recordPeerPassCompleted(&targetNodeId).await;
+                if *allowed {
+                    let pending = self.state.peerGates.lock().map_err(|error| error.to_string())?
+                        .get(&targetNodeId).is_some_and(|gate| gate.pendingWork);
+                    self.state.progress.finish(&targetNodeId, pending, None, None);
+                } else {
+                    self.state.progress.remove(&targetNodeId);
+                }
+            }
+            Err(error) => {
+                self.recordPeerPassFailed(&targetNodeId);
+                let retryAt = self.state.peerGates.lock().map_err(|error| error.to_string())?
+                    .get(&targetNodeId).map(|gate| gate.nextFullSyncAllowedAt);
+                self.state.progress.finish(&targetNodeId, false, retryAt, Some(error.clone()));
+            }
         }
-        if targetNodeId == self.state.nodeRouter.localNodeId() {
-            return Ok(());
-        }
+        // A pass can revoke membership or storage authority while it is running.
+        let space = self.state.spaceStore.space()?;
+        self.state.progress.retain(&space.spaceId, &space.members);
+        result.map(|_| ())
+    }
+
+    /// Executes authority, preferences and authorized business replication in order.
+    async fn synchronizePeer(&self, targetNodeId: &str, limit: usize) -> Result<bool, String> {
         if !self.state.nodeRouter.nodeIsReachable(&targetNodeId)? {
             return Err(format!(
                 "synchronization target is not reachable in the current device space: {targetNodeId}"
@@ -442,7 +467,7 @@ impl SpacePersistenceSyncService {
         let request = serviceCallRequest(&self.state.nodeRouter,
             crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET, "exchange",
             serde_json::to_value(control.currentSpaceOperations()?).map_err(|error| error.to_string())?)?;
-        let response = self.state.nodeRouter.callNode(targetNodeId.clone(), request).await;
+        let response = self.state.nodeRouter.callNode(targetNodeId.to_string(), request).await;
         let remote = crate::NodeSpaceService::decodeControlExchange(response.result)?;
         control.projectPeerControlOperations(&targetNodeId, &remote)?;
         self.applyRemovedMemberEffects(&remote)?;
@@ -453,7 +478,7 @@ impl SpacePersistenceSyncService {
         // Every member receives its own configuration. Storage providers also
         // exchange the local device's configuration as a backup; lightweight
         // endpoints must not accumulate other devices' preference files.
-        let mut preferenceNodes = vec![targetNodeId.clone()];
+        let mut preferenceNodes = vec![targetNodeId.to_string()];
         if self.storageReplicationAllowed(&targetNodeId)? {
             preferenceNodes.push(self.state.nodeRouter.localNodeId());
         }
@@ -462,21 +487,20 @@ impl SpacePersistenceSyncService {
             let request = serviceCallRequest(&self.state.nodeRouter,
                 crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET, "exchangePreferences",
                 serde_json::to_value(preferences).map_err(|e| e.to_string())?)?;
-            let response = self.state.nodeRouter.callNode(targetNodeId.clone(), request).await;
+            let response = self.state.nodeRouter.callNode(targetNodeId.to_string(), request).await;
             let preferences: operit_store::DevicePreferencesStore::DevicePreferences = decodeCoreResponse(response.result.map_err(|e| e.to_string())?)?;
             if preferences.spaceId != preferenceScope || preferences.nodeId != preferenceNodeId
                 || self.state.spaceStore.space()?.spaceId != preferenceScope
-                || !control.currentState()?.memberNodeIds.contains(&targetNodeId)
+                || !control.currentState()?.memberNodeIds.contains(&targetNodeId.to_string())
                 || control.nodeIsDisconnected(&targetNodeId)? {
                 return Err("Device preference response scope changed".into());
             }
             preferenceStore.merge(&preferences)?;
         }
         // Admission is not a storage grant. Business replication requires both endpoints to provide storage.
-        if !self.storageReplicationAllowed(&targetNodeId)? { return Ok(()); }
+        if !self.storageReplicationAllowed(&targetNodeId)? { return Ok(false); }
         self.validateReachableDeviceSpace(&targetNodeId).await?;
-        self.synchronizeNodeOperations(&targetNodeId, limit).await?;
-        Ok(())
+        self.synchronizeNodeOperations(targetNodeId, limit).await
     }
 
     /// Applies the local effects of removals that just reached this device
@@ -683,9 +707,6 @@ impl SpacePersistenceSyncService {
             ));
         }
 
-        if let Ok(mut gates) = self.state.peerGates.lock() {
-            gates.entry(targetNodeId.to_owned()).or_default().pendingWork = false;
-        }
         self.synchronizeDomains(targetNodeId, limit, &SYNC_DOMAINS).await
     }
 
@@ -740,6 +761,9 @@ impl SpacePersistenceSyncService {
             validateDomainClock(&localClock, domains, "local")?;
             let remoteClock = remoteClock?;
             validateDomainClock(&remoteClock, domains, "remote")?;
+            if let Ok(mut gates) = self.state.peerGates.lock() {
+                gates.entry(targetNodeId.to_owned()).or_default().pendingWork = false;
+            }
             self.recordPendingWork(targetNodeId, "local receipt", &localClock);
             self.recordPendingWork(targetNodeId, "remote receipt", &remoteClock);
             let mut pendingBlobs: Vec<RuntimeFileSyncReference> =
@@ -817,6 +841,7 @@ impl SpacePersistenceSyncService {
             // the same page forever. Stop after the first page that adds no new
             // operation instead of burning the whole pass cap.
             if !pageAddsNewOperations(&mut seenOperationIds, &operations) {
+                self.recordPendingWork(targetNodeId, "remaining pages", &json!({"pending": 1}));
                 operit_util::AppLogger::AppLogger::trace(
                     "CoreSyncTrace",
                     &format!(
@@ -829,6 +854,7 @@ impl SpacePersistenceSyncService {
                 break;
             }
             if pages >= MAX_SYNC_PAGES_PER_PASS {
+                self.recordPendingWork(targetNodeId, "remaining pages", &json!({"pending": 1}));
                 operit_util::AppLogger::AppLogger::trace(
                     "CoreSyncTrace",
                     &format!(
@@ -888,6 +914,7 @@ impl SpacePersistenceSyncService {
         if !self.storageReplicationAllowed(targetNodeId)? {
             return Ok(false);
         }
+        self.state.progress.records(targetNodeId, 0);
         // Empty pages retry durable pending operations on both peers.
         let chunks = if operations.is_empty() {
             vec![operations]
@@ -926,6 +953,7 @@ impl SpacePersistenceSyncService {
             if !errors.is_empty() {
                 return Err(errors.join("; "));
             }
+            self.state.progress.records(targetNodeId, chunk.len());
         }
         Ok(true)
     }
@@ -1084,6 +1112,7 @@ impl SpacePersistenceSyncService {
         targetNodeId: &str,
         reference: &RuntimeFileSyncReference,
     ) -> Result<(), String> {
+        self.state.progress.beginFile(targetNodeId, reference.size);
         let mut push = self
             .state
             .nodeRouter
@@ -1116,6 +1145,7 @@ impl SpacePersistenceSyncService {
                 .await
                 .map_err(|error| error.to_string())?;
             offset = nextOffset.0;
+            self.state.progress.fileOffset(targetNodeId, offset);
         }
         self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
             .map_err(|error| error.to_string())?;
@@ -1135,6 +1165,7 @@ impl SpacePersistenceSyncService {
         targetNodeId: &str,
         reference: &RuntimeFileSyncReference,
     ) -> Result<(), String> {
+        self.state.progress.beginFile(targetNodeId, reference.size);
         let mut push = self
             .state
             .localRuntime
@@ -1158,6 +1189,7 @@ impl SpacePersistenceSyncService {
             self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
                 .map_err(|error| error.to_string())?;
             offset = sendBlobChunk(&mut push, reference, offset, chunk).await?;
+            self.state.progress.fileOffset(targetNodeId, offset);
         }
         self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
             .map_err(|error| error.to_string())?;
@@ -1172,7 +1204,7 @@ impl SpacePersistenceSyncService {
     }
 
     /// Schedules one fixed coalescing window without restarting an existing timer.
-    fn scheduleSynchronization(&self) -> Result<(), String> {
+    pub(crate) fn scheduleSynchronization(&self) -> Result<(), String> {
         self.state.synchronizationRequested.store(true, Ordering::Release);
         if self
             .state
@@ -1187,16 +1219,6 @@ impl SpacePersistenceSyncService {
             "core-node-space-persistence-sync",
             Box::new(move || {
                 Box::pin(async move {
-                    if !service.state.active.load(Ordering::Acquire) {
-                        service
-                            .state
-                            .synchronizationScheduled
-                            .store(false, Ordering::Release);
-                        return;
-                    }
-                    let _ = defaultHostRuntimeTaskSchedulerHost()
-                        .waitForHostRuntimeDelay(SPACE_SYNC_PREPARATION_DELAY_MS)
-                        .await;
                     if !service.state.active.load(Ordering::Acquire) {
                         service
                             .state
@@ -1386,8 +1408,8 @@ fn sendBlobChunkValue(
     ))
 }
 
-/// Returns the process registry of active per-CoreNode persistence workers.
-fn persistenceServices() -> &'static Mutex<BTreeMap<String, Arc<SpacePersistenceSyncState>>> {
+/// Weak registration shares one worker across facades without extending its lifetime.
+fn persistenceServices() -> &'static Mutex<BTreeMap<String, Weak<SpacePersistenceSyncState>>> {
     SPACE_SYNC_SERVICES.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 

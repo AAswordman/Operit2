@@ -22,7 +22,8 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 /// fixture: activation uses production UI/preferences, and sends use the
 /// production character runtime, hooks, DeepSeek provider and storage.
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
   testWidgets(
     'DeepSeek UI activation persists and selected models can send',
     (tester) async {
@@ -31,6 +32,8 @@ void main() {
         '${support.path}/deepseek-activation-integration',
       ).create(recursive: true);
       final directory = await parent.createTemp('run-');
+      // ignore: avoid_print
+      print('DEEPSEEK_RUNTIME ${directory.path}');
       await platformCoreProxy.setRuntimeStorageRoots(
         '${directory.path}/runtime',
         '${directory.path}/workspace',
@@ -84,6 +87,28 @@ void main() {
           request.response.write(
             jsonEncode({
               'error': {'message': 'activation fixture rejected request'},
+            }),
+          );
+          await request.response.close();
+          return;
+        }
+        if (payload['stream'] != true) {
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(
+            jsonEncode({
+              'id': 'activation-background-fixture',
+              'object': 'chat.completion',
+              'model': payload['model'],
+              'choices': [
+                {
+                  'index': 0,
+                  'message': {
+                    'role': 'assistant',
+                    'content': 'Activation regression',
+                  },
+                  'finish_reason': 'stop',
+                },
+              ],
             }),
           );
           await request.response.close();
@@ -174,6 +199,8 @@ void main() {
       String? failedChatId;
       for (var sample = 0; sample < 6; sample++) {
         final model = models[sample % models.length];
+        // ignore: avoid_print
+        print('DEEPSEEK_CASE_START $sample');
         final watch = Stopwatch()..start();
         final row = find
             .ancestor(of: find.text(model).last, matching: find.byType(Row))
@@ -263,10 +290,13 @@ void main() {
         );
         if (rejectRequest) {
           failedChatId = chatId;
-          await _pumpUntil(
-            tester,
-            () => states.contains('Error'),
-            timeout: const Duration(seconds: 60),
+          final failedState = await clients.chatRuntimeHolderMain
+              .inputProcessingStateByChatIdFlow()
+              .firstWhere((snapshot) => snapshot[chatId]?.tag == 'Error')
+              .timeout(const Duration(seconds: 60));
+          expect(
+            failedState[chatId]!.message,
+            contains('activation fixture rejected request'),
           );
         } else {
           await clients.chatRuntimeHolderMain
@@ -295,7 +325,10 @@ void main() {
             .timeout(const Duration(seconds: 30));
         await stateSubscription.cancel();
         final request = received.firstWhere(
-          (payload) => jsonEncode(payload['messages']).contains(message),
+          (payload) =>
+              payload['stream'] == true &&
+              payload['model'] != 'background-probe' &&
+              jsonEncode(payload['messages']).contains(message),
         );
         expect(request['model'], model);
         if (sample < 5) {
@@ -308,7 +341,10 @@ void main() {
         }
         expect(states, contains('Connecting'));
         if (!rejectRequest) {
-          expect(states, isNot(contains('Error')));
+          expect(
+            states.skipWhile((tag) => tag != 'Connecting'),
+            isNot(contains('Error')),
+          );
         }
         results.add({
           'model': model,
@@ -320,6 +356,8 @@ void main() {
           'states': states,
         });
         expect(tester.takeException(), isNull);
+        // ignore: avoid_print
+        print('DEEPSEEK_CASE_DONE ${jsonEncode(results.last)}');
       }
       // ignore: avoid_print
       print(

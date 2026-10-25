@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:ui' show DisplayFeature;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_all/webview_all.dart' show WebViewScaleScope;
@@ -164,6 +166,19 @@ class _ApplicationZoomHostState extends State<ApplicationZoomHost> {
           viewPadding: mediaQuery.viewPadding / zoom,
           viewInsets: mediaQuery.viewInsets / zoom,
           systemGestureInsets: mediaQuery.systemGestureInsets / zoom,
+          displayFeatures: <DisplayFeature>[
+            for (final feature in mediaQuery.displayFeatures)
+              DisplayFeature(
+                bounds: Rect.fromLTRB(
+                  feature.bounds.left / zoom,
+                  feature.bounds.top / zoom,
+                  feature.bounds.right / zoom,
+                  feature.bounds.bottom / zoom,
+                ),
+                type: feature.type,
+                state: feature.state,
+              ),
+          ],
         ),
         child: FittedBox(
           fit: BoxFit.fill,
