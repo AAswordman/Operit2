@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { selectorEnvironment } from "./selector-environment.mjs";
 import { mountRegisteredComposeRoute, composeNodes, keyedNode } from "./selector-render.mjs";
@@ -555,7 +556,7 @@ test("native avatar selection copies picker bytes into getConfigDir and saves on
   await click(ui, "entity-choose-avatar");
   assert.deepEqual(requests[0].options, { picker: "image", allowMultiple: false, mimeTypes: ["image/*"], maxContentBytes: 8 * 1024 * 1024 });
   const uri = keyedNode(ui.render().tree, "entity-edit-avatar").props.uri;
-  assert.ok(uri.startsWith(plugin.disk.directory + "/avatars/"));
+  assert.equal(path.dirname(path.resolve(uri)), path.join(plugin.disk.directory, "avatars"));
   assert.notEqual(uri, picked.path);
   assert.deepEqual(await readFile(uri), image);
   assert.equal(plugin.disk.calls.filter(call => call.method === "readBinary").length, 0);

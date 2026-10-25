@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:mime/mime.dart';
 import 'package:operit_folder_access/operit_folder_access.dart';
 
 import 'SelectedFileInput.dart';
@@ -41,13 +42,9 @@ class ComposeDslFilePickerService {
   /// Builds the platform-neutral file-selector filter for one validated picker mode.
   static List<XTypeGroup> _typeGroupsFor(_ComposeDslFilePickerRequest request) {
     if (request.mimeTypes.isNotEmpty) {
-      return <XTypeGroup>[
-        XTypeGroup(
-          label: 'Files',
-          mimeTypes: request.mimeTypes,
-          webWildCards: request.mimeTypes,
-        ),
-      ];
+      return request.mimeTypes
+          .map(_typeGroupForMimeType)
+          .toList(growable: false);
     }
     return switch (request.picker) {
       _ComposeDslFilePickerMode.document => const <XTypeGroup>[],
@@ -58,6 +55,45 @@ class ComposeDslFilePickerService {
         'Directories do not use file filters',
       ),
     };
+  }
+
+  /// Supplies equivalent MIME, extension and Apple type filters to every adapter.
+  static XTypeGroup _typeGroupForMimeType(String mimeType) {
+    switch (mimeType) {
+      case 'image/*':
+        return _photoTypeGroup;
+      case 'video/*':
+        return _videoTypeGroup;
+      case 'audio/*':
+        return const XTypeGroup(
+          label: 'Audio',
+          extensions: [
+            'mp3',
+            'wav',
+            'ogg',
+            'opus',
+            'flac',
+            'aac',
+            'm4a',
+            'aiff',
+          ],
+          mimeTypes: ['audio/*'],
+          uniformTypeIdentifiers: ['public.audio'],
+          webWildCards: ['audio/*'],
+        );
+      case '*/*':
+        return const XTypeGroup(label: 'Files');
+    }
+    final extension = extensionFromMime(mimeType);
+    if (extension == null) {
+      throw UnsupportedError('Unsupported file-picker MIME type: $mimeType');
+    }
+    return XTypeGroup(
+      label: mimeType,
+      extensions: [extension],
+      mimeTypes: [mimeType],
+      webWildCards: [mimeType],
+    );
   }
 
   /// Opens one directory and represents cancellation as an empty selection.
@@ -226,8 +262,7 @@ class _PickedFile {
 
   /// Builds a directory result without attempting to read it as a file.
   factory _PickedFile.fromDirectory(String path) {
-    final parsed = Uri.parse(path);
-    final uri = parsed.scheme == 'content' ? parsed : Uri.directory(path);
+    final uri = _uriForPath(path, directory: true);
     final segments = uri.pathSegments
         .where((segment) => segment.isNotEmpty)
         .toList();
@@ -270,17 +305,23 @@ class _PickedFile {
       }
     }
     final path = file.path;
-    final parsedPath = Uri.tryParse(path);
     return _PickedFile(
-      uri: parsedPath?.scheme == 'blob'
-          ? parsedPath.toString()
-          : Uri.file(path).toString(),
+      uri: _uriForPath(path).toString(),
       path: path,
       name: file.name,
       mimeType: file.mimeType,
       size: size,
       contentBase64: contentBase64,
     );
+  }
+
+  /// Keeps selector-owned URIs intact and converts filesystem paths with Dart's URI API.
+  static Uri _uriForPath(String path, {bool directory = false}) {
+    final uri = Uri.parse(path);
+    return switch (uri.scheme) {
+      'file' || 'content' || 'blob' => uri,
+      _ => directory ? Uri.directory(path) : Uri.file(path),
+    };
   }
 
   /// Converts one selected item to the public Compose DSL JSON shape.

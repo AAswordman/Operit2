@@ -6,11 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/host/ComposeDslFilePickerService.dart';
 import 'package:operit2/core/host/SelectedFileInput.dart';
 
+/// Verifies bounded content reads independently of the test runner platform.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final original = FileSelectorPlatform.instance;
   tearDown(() => FileSelectorPlatform.instance = original);
 
+  /// Requests the same content contract used by character avatars.
   Future<Map<String, dynamic>> pick({int? limit}) async =>
       jsonDecode(
             await ComposeDslFilePickerService.open(
@@ -106,6 +108,11 @@ class _SelectedImage extends XFile {
   final bool failRead;
   final ranges = <(int, int)>[];
 
+  /// Supplies iOS display metadata independently of the test runner's path separators.
+  @override
+  String get name => 'avatar.png';
+
+  /// Reports the native selection size without reading it.
   @override
   Future<int> length() async => size;
 

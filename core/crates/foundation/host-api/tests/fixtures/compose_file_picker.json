@@ -1,0 +1,243 @@
+{
+  "valid": [
+    {
+      "name": "document defaults",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {}
+      },
+      "ownerRequest": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "picker": "document",
+        "allowMultiple": false,
+        "mimeTypes": [],
+        "maxContentBytes": null
+      }
+    },
+    {
+      "name": "bounded character avatar",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "picker": "image",
+          "allowMultiple": false,
+          "mimeTypes": [
+            "image/*"
+          ],
+          "maxContentBytes": 8388608
+        }
+      },
+      "ownerRequest": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "picker": "image",
+        "allowMultiple": false,
+        "mimeTypes": [
+          "image/*"
+        ],
+        "maxContentBytes": 8388608
+      }
+    },
+    {
+      "name": "photo",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "picker": "photo"
+        }
+      },
+      "ownerRequest": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "picker": "photo",
+        "allowMultiple": false,
+        "mimeTypes": [],
+        "maxContentBytes": null
+      }
+    },
+    {
+      "name": "multiple videos",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "picker": "video",
+          "allowMultiple": true,
+          "mimeTypes": [
+            "video/*"
+          ]
+        }
+      },
+      "ownerRequest": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "picker": "video",
+        "allowMultiple": true,
+        "mimeTypes": [
+          "video/*"
+        ],
+        "maxContentBytes": null
+      }
+    },
+    {
+      "name": "multiple mixed media",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "picker": "media",
+          "allowMultiple": true,
+          "mimeTypes": [
+            "image/*",
+            "video/*"
+          ]
+        }
+      },
+      "ownerRequest": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "picker": "media",
+        "allowMultiple": true,
+        "mimeTypes": [
+          "image/*",
+          "video/*"
+        ],
+        "maxContentBytes": null
+      }
+    },
+    {
+      "name": "JSON documents",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "picker": "document",
+          "mimeTypes": [
+            "application/json"
+          ],
+          "maxContentBytes": 1024
+        }
+      },
+      "ownerRequest": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "picker": "document",
+        "allowMultiple": false,
+        "mimeTypes": [
+          "application/json"
+        ],
+        "maxContentBytes": 1024
+      }
+    },
+    {
+      "name": "PNG images",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "picker": "image",
+          "mimeTypes": [
+            "image/png"
+          ],
+          "maxContentBytes": 1024
+        }
+      },
+      "ownerRequest": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "picker": "image",
+        "allowMultiple": false,
+        "mimeTypes": [
+          "image/png"
+        ],
+        "maxContentBytes": 1024
+      }
+    },
+    {
+      "name": "directories",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "picker": "directory",
+          "allowMultiple": true
+        }
+      },
+      "ownerRequest": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "picker": "directory",
+        "allowMultiple": true,
+        "mimeTypes": [],
+        "maxContentBytes": null
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "zero content limit",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "maxContentBytes": 0
+        }
+      }
+    },
+    {
+      "name": "negative content limit",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "maxContentBytes": -1
+        }
+      }
+    },
+    {
+      "name": "fractional content limit",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "maxContentBytes": 1.5
+        }
+      }
+    },
+    {
+      "name": "string content limit",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "maxContentBytes": "8388608"
+        }
+      }
+    },
+    {
+      "name": "directory content",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "picker": "directory",
+          "maxContentBytes": 1024
+        }
+      }
+    },
+    {
+      "name": "unknown option",
+      "request": {
+        "routeInstanceId": "picker-route",
+        "executionContextKey": "picker-context",
+        "options": {
+          "maxContentByte": 1024
+        }
+      }
+    }
+  ]
+}

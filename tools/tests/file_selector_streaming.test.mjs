@@ -74,8 +74,9 @@ function fixture() {
   const api = new Api({});
   api.setup({}, {});
   const input = channels.get('dev.flutter.packages.file_selector_ohos/input');
+  /** Delivers the MethodCall.args field exposed by the OHOS Flutter host. */
   const call = (method, args) => new Promise((resolve, reject) => {
-    input.handler.onMethodCall({ method, arguments: new Map(Object.entries(args)) }, {
+    input.handler.onMethodCall({ method, args: new Map(Object.entries(args)) }, {
       success: resolve,
       error: (_code, message) => reject(new Error(message)),
       notImplemented: () => reject(new Error('NOT_IMPLEMENTED')),
@@ -84,7 +85,7 @@ function fixture() {
   return { Api, api, call, calls, handles, channels,
     /** Calls the real save-channel handler with a URI destination. */
     save() { return new Promise((resolve, reject) => channels.get('dev.flutter.packages.file_selector_ohos/save').handler.onMethodCall(
-      { method: 'copyFileFromPathWithProgress', arguments: new Map([['sourcePath', '/host/archive'], ['destinationUri', 'file://selected/archive']]) },
+      { method: 'copyFileFromPathWithProgress', args: new Map([['sourcePath', '/host/archive'], ['destinationUri', 'file://selected/archive']]) },
       { success: resolve, error: (_code, message) => reject(new Error(message)), notImplemented: () => reject(new Error('NOT_IMPLEMENTED')) },
     )); },
     shortWrites() { shortWrite = true; },

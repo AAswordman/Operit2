@@ -1192,6 +1192,8 @@ pub struct ComposeDslFilePickerOptions {
     pub allowMultiple: Option<bool>,
     /// Restricts selectable documents by MIME type.
     pub mimeTypes: Option<Vec<String>>,
+    /// Returns selected file contents within this positive byte limit.
+    pub maxContentBytes: Option<u64>,
 }
 
 /// A fully validated file-picker request issued by a Compose DSL screen.
@@ -1204,6 +1206,8 @@ pub struct ComposeDslFilePickerRequest {
     pub allowMultiple: bool,
     /// MIME filters passed unchanged to the platform selector.
     pub mimeTypes: Vec<String>,
+    /// Preserves the content limit across the serialized Flutter owner request.
+    pub maxContentBytes: Option<u64>,
 }
 
 impl ComposeDslFilePickerRequest {
@@ -1243,12 +1247,23 @@ impl ComposeDslFilePickerRequest {
 
         let options = raw.options;
         let picker = options.picker.unwrap_or(ComposeDslFilePickerMode::Document);
+        if let Some(limit) = options.maxContentBytes {
+            if limit == 0 {
+                return Err(HostError::new("maxContentBytes must be a positive integer"));
+            }
+            if picker == ComposeDslFilePickerMode::Directory {
+                return Err(HostError::new(
+                    "Directory selections do not have file contents",
+                ));
+            }
+        }
 
         Ok(Self {
             routeInstanceId: raw.routeInstanceId.trim().to_string(),
             executionContextKey: executionContextKey.to_string(),
             allowMultiple: options.allowMultiple.unwrap_or(false),
             mimeTypes: options.mimeTypes.unwrap_or_default(),
+            maxContentBytes: options.maxContentBytes,
             picker,
         })
     }
@@ -3124,6 +3139,31 @@ mod tests {
             missing.is_empty(),
             "OpenHarmony onboarding requirements are missing ids: {missing:?}"
         );
+    }
+
+    /// Verifies the actual SDK payload survives validation and owner serialization.
+    #[test]
+    fn composeDslFilePickerMatchesSharedProtocol() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/compose_file_picker.json"
+        ))
+        .expect("file-picker contract must be valid JSON");
+        for case in cases["valid"].as_array().expect("valid cases") {
+            let request = ComposeDslFilePickerRequest::fromValue(case["request"].clone())
+                .expect("shared SDK file-picker request must be accepted");
+            let owner = serde_json::to_value(&request).expect("owner request must serialize");
+            assert_eq!(owner, case["ownerRequest"], "{}", case["name"]);
+            let decoded: ComposeDslFilePickerRequest = serde_json::from_value(owner)
+                .expect("serialized owner request must retain all fields");
+            assert_eq!(decoded, request);
+        }
+        for case in cases["invalid"].as_array().expect("invalid cases") {
+            assert!(
+                ComposeDslFilePickerRequest::fromValue(case["request"].clone()).is_err(),
+                "{}",
+                case["name"]
+            );
+        }
     }
 
     /// Verifies that omitted options produce the documented document selection request.
