@@ -2145,6 +2145,19 @@ function clone(value) {
     );
   return value;
 }
+function structuredNodes(value) {
+  if (Array.isArray(value)) {
+    let nodes = 1;
+    for (const item of value) nodes += structuredNodes(item);
+    return nodes;
+  }
+  if (value !== null && typeof value === "object") {
+    let nodes = 1;
+    for (const item of Object.values(value)) nodes += structuredNodes(item);
+    return nodes;
+  }
+  return 1;
+}
 function equal(left, right) {
   if (left === right) return true;
   if (left === null || right === null || typeof left !== "object" || typeof right !== "object")
@@ -2834,6 +2847,8 @@ var memory_merge_default = {
 
 // src/storage/memory.ts
 var characterMerge = memory_merge_default;
+var HOST_READ_PAGE_LIMIT = 200;
+var HOST_READ_PAGE_FLOOR = 32;
 var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
   /** Retains one authenticated object handle without declaring business SQL tables. */
   constructor(database) {
@@ -2853,16 +2868,27 @@ var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
   close() {
     return this.database.close();
   }
-  /** Reads complete JSON values in primary-key order using bounded host pages. */
+  /**
+   * Reads complete JSON values in primary-key order using bounded host pages. Vector
+   * records push one page past the host structured bridge budget, so a rejected page
+   * shrinks toward the floor instead of failing the whole collection read.
+   */
   read(collection) {
     return __async(this, null, function* () {
       const result2 = [];
       const source = this.database.collection(collection);
-      let after = null;
+      let after = null, pageSize = HOST_READ_PAGE_LIMIT;
       for (; ; ) {
-        const page = yield source.list(after, 1e3);
+        let page;
+        try {
+          page = yield source.list(after, pageSize);
+        } catch (error) {
+          if (pageSize <= HOST_READ_PAGE_FLOOR) throw error;
+          pageSize = Math.max(HOST_READ_PAGE_FLOOR, Math.floor(pageSize / 2));
+          continue;
+        }
         result2.push(...page);
-        if (page.length < 1e3) return result2;
+        if (page.length < pageSize) return result2;
         after = page[page.length - 1].key;
       }
     });
@@ -3931,6 +3957,25 @@ function completed2(result2) {
   if (!result2.successful) throw new Error(result2.details);
 }
 var HOST_OBJECT_COMMIT_LIMIT = 1e3;
+var HOST_COMMIT_NODE_LIMIT = 4e5;
+var HOST_MUTATION_ENVELOPE_NODES = 5;
+function boundedCommitBatches(mutations) {
+  const batches = [];
+  let batch = [];
+  let nodes = 0;
+  for (const mutation of mutations) {
+    const cost = (mutation.op === "put" ? structuredNodes(mutation.value) : 0) + HOST_MUTATION_ENVELOPE_NODES;
+    if (batch.length > 0 && (batch.length + 1 > HOST_OBJECT_COMMIT_LIMIT || nodes + cost > HOST_COMMIT_NODE_LIMIT)) {
+      batches.push(batch);
+      batch = [];
+      nodes = 0;
+    }
+    batch.push(mutation);
+    nodes += cost;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
 var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   /** Retains the host database handle and the explicit external directory readers. */
   constructor(storage, directory, directories2) {
@@ -4318,9 +4363,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
           expectedVersion: row.version
         });
       const memoryMutations = mutations.filter((row) => !configurationNames.some((name) => name === row.collection));
-      const memoryBatches = [];
-      for (let start = 0; start < memoryMutations.length; start += HOST_OBJECT_COMMIT_LIMIT)
-        memoryBatches.push(memoryMutations.slice(start, start + HOST_OBJECT_COMMIT_LIMIT));
+      const memoryBatches = boundedCommitBatches(memoryMutations);
       const stagedDocuments = [];
       for (const document2 of documents2) {
         if (document2.newDocument) {

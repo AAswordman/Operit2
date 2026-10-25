@@ -42,6 +42,24 @@ export function clone<T>(value: T): T {
   return value;
 }
 
+/**
+ * Counts the nodes one value occupies on the host structured bridge, where every
+ * object, array and leaf converts as one node and arrays dominate vector records.
+ */
+export function structuredNodes(value: unknown): number {
+  if (Array.isArray(value)) {
+    let nodes = 1;
+    for (const item of value) nodes += structuredNodes(item);
+    return nodes;
+  }
+  if (value !== null && typeof value === "object") {
+    let nodes = 1;
+    for (const item of Object.values(value)) nodes += structuredNodes(item);
+    return nodes;
+  }
+  return 1;
+}
+
 /** Compares structured records without serializing the full character and memory state. */
 export function equal(left: unknown, right: unknown): boolean {
   if (left === right) return true;

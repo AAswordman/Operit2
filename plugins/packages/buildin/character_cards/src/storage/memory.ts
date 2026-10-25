@@ -7,6 +7,12 @@ export const characterMerge = merge as StorageMergeDescriptor;
 
 export type ObjectMutation = Storage.ObjectMutation;
 
+/** Bounds one host list page under the structured bridge budget; 1024-dimension vectors make a 1000-record page exceed it. */
+const HOST_READ_PAGE_LIMIT = 200;
+
+/** Keeps shrinking a rejected page down to this floor before rethrowing the read failure. */
+const HOST_READ_PAGE_FLOOR = 32;
+
 /** Stores memory owners and memory objects independently of JSON configuration preferences. */
 export class CharacterMemoryDatabase {
   /** Retains one authenticated object handle without declaring business SQL tables. */
@@ -24,15 +30,26 @@ export class CharacterMemoryDatabase {
   /** Closes the retained memory engine handle. */
   close(): Promise<void> { return this.database.close(); }
 
-  /** Reads complete JSON values in primary-key order using bounded host pages. */
+  /**
+   * Reads complete JSON values in primary-key order using bounded host pages. Vector
+   * records push one page past the host structured bridge budget, so a rejected page
+   * shrinks toward the floor instead of failing the whole collection read.
+   */
   async read<T = Storage.Value>(collection: string): Promise<Storage.ListedEntry<T>[]> {
     const result: Storage.ListedEntry<T>[] = [];
     const source = this.database.collection<T>(collection);
-    let after: string | null = null;
+    let after: string | null = null, pageSize = HOST_READ_PAGE_LIMIT;
     for (;;) {
-      const page = await source.list(after, 1000);
+      let page: Storage.ListedEntry<T>[];
+      try {
+        page = await source.list(after, pageSize);
+      } catch (error) {
+        if (pageSize <= HOST_READ_PAGE_FLOOR) throw error;
+        pageSize = Math.max(HOST_READ_PAGE_FLOOR, Math.floor(pageSize / 2));
+        continue;
+      }
       result.push(...page);
-      if (page.length < 1000) return result;
+      if (page.length < pageSize) return result;
       after = page[page.length - 1].key;
     }
   }
