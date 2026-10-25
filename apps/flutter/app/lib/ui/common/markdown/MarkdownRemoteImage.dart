@@ -10,7 +10,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 
 import '../interactions/MessagePressShield.dart';
 import '../../features/packages/screens/ComposeDslImageSource.dart';
-import 'MarkdownLink.dart';
+import 'MarkdownImagePreview.dart';
 
 class MarkdownRemoteImage extends StatelessWidget {
   /// Creates a Markdown image backed by the runtime file or HTTP service.
@@ -19,7 +19,8 @@ class MarkdownRemoteImage extends StatelessWidget {
     required this.url,
     this.alt = '',
     this.fit = BoxFit.contain,
-    this.onOpenLink,
+    this.enablePreview = true,
+    this.decodeAtFullResolution = false,
     this.clients = _imageClients,
   });
 
@@ -27,7 +28,8 @@ class MarkdownRemoteImage extends StatelessWidget {
   final String url;
   final String alt;
   final BoxFit fit;
-  final void Function(String url)? onOpenLink;
+  final bool enablePreview;
+  final bool decodeAtFullResolution;
 
   /// Reads virtual image bytes through this renderer's owning Core connection.
   Future<Uint8List> _readVfsBytes(String path) =>
@@ -43,11 +45,10 @@ class MarkdownRemoteImage extends StatelessWidget {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cacheWidth = _markdownImageCacheExtent(
-          context,
-          constraints.maxWidth,
-        );
-        final cacheHeight = cacheWidth == null
+        final cacheWidth = decodeAtFullResolution
+            ? null
+            : _markdownImageCacheExtent(context, constraints.maxWidth);
+        final cacheHeight = !decodeAtFullResolution && cacheWidth == null
             ? _markdownImageCacheExtent(context, constraints.maxHeight)
             : null;
         final trimmed = url.trim();
@@ -92,13 +93,26 @@ class MarkdownRemoteImage extends StatelessWidget {
             error: error,
           );
         }
-        if (isDataImage) {
+        if (!enablePreview) {
           return image;
         }
         return MessagePressShieldRegion(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => activateMarkdownLink(url, onOpenLink),
+            onTap: () => showDialog<void>(
+              context: context,
+              useSafeArea: false,
+              builder: (_) => MarkdownImagePreview(
+                alt: alt,
+                image: MarkdownRemoteImage(
+                  url: url,
+                  alt: alt,
+                  clients: clients,
+                  enablePreview: false,
+                  decodeAtFullResolution: true,
+                ),
+              ),
+            ),
             child: image,
           ),
         );

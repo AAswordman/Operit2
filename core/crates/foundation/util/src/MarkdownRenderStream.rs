@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::streamnative::MarkdownInlineStream::{InlineKind, InlineToken, MarkdownInlineStream};
 use crate::streamnative::NativeMarkdownSplitter::{
     MarkdownProcessorType, MarkdownSession, NativeMarkdownSplitter, Segment,
 };
@@ -52,7 +53,9 @@ pub struct MarkdownRenderEventStream {
 
 struct ActiveBlock {
     id: u64,
-    inline: Option<MarkdownGroupSession>,
+    inline: Option<MarkdownInlineStream>,
+    prefix: Option<BlockPrefix>,
+    styleIds: Vec<(u64, InlineKind)>,
     xml: Option<XmlBlockMetadata>,
     xmlMarkdown: Option<Box<MarkdownRenderEventStream>>,
     nextInlineId: u64,
@@ -172,6 +175,11 @@ struct MarkdownGroupSession {
 }
 
 impl MarkdownStreamEvent {
+    /// Nested surfaces complete independently; only this event closes transport.
+    pub fn isRootCompletion(&self) -> bool {
+        self.eventType == "completed" && self.parentBlockId.is_none()
+    }
+
     /// Creates the boundary event that starts one self-contained Markdown snapshot.
     pub fn reset(chatId: String, parentBlockId: Option<u64>) -> Self {
         Self {
@@ -246,7 +254,7 @@ impl MarkdownRenderEventStream {
     pub fn fromContent(content: String) -> Vec<MarkdownStreamEvent> {
         let mut stream = Self::new(String::new());
         let mut events = stream.pushChunk(&content);
-        events.push(stream.completed());
+        events.extend(stream.finish());
         events
     }
 
@@ -292,8 +300,15 @@ impl MarkdownRenderEventStream {
         }];
 
         let segments = self.block.push(chunk);
+        events.extend(self.applySegments(segments));
+        events
+    }
+
+    fn applySegments(&mut self, segments: Vec<Segment>) -> Vec<MarkdownStreamEvent> {
+        let mut events = Vec::new();
         for segment in segments {
             if segment.r#type < 0 {
+                events.extend(self.finishInline());
                 if let Some(activeBlock) = self.activeBlock.as_mut() {
                     if let Some(xml) = activeBlock.xml.as_mut() {
                         xml.close();
@@ -310,8 +325,9 @@ impl MarkdownRenderEventStream {
                             xml: Some(xml.event()),
                         });
                     }
-                    if let Some(child) = activeBlock.xmlMarkdown.as_ref() {
-                        events.push(child.completed());
+                    if let Some(child) = activeBlock.xmlMarkdown.as_mut() {
+                        events.extend(child.finish());
+                        self.nextBlockId = child.nextBlockId;
                     }
                 }
                 self.block.activeType = None;
@@ -325,15 +341,18 @@ impl MarkdownRenderEventStream {
             }
 
             if self.block.activeType != Some(nodeType) {
+                events.extend(self.finishInline());
                 self.nextBlockId += 1;
                 self.block.activeType = Some(nodeType);
                 self.activeBlock = Some(ActiveBlock {
                     id: self.nextBlockId,
                     inline: if isInlineContainer(nodeType) {
-                        Some(MarkdownGroupSession::inline())
+                        Some(MarkdownInlineStream::default())
                     } else {
                         None
                     },
+                    prefix: BlockPrefix::new(nodeType),
+                    styleIds: Vec::new(),
                     xml: if nodeType == Some(MarkdownProcessorType::XmlBlock) {
                         Some(XmlBlockMetadata::new())
                     } else {
@@ -361,7 +380,28 @@ impl MarkdownRenderEventStream {
                 });
             }
 
-            if isInlineContainer(nodeType) {
+            if nodeType == Some(MarkdownProcessorType::BlockQuote) {
+                let block = self.activeBlock.as_mut().expect("active quote block");
+                if block.xmlMarkdown.is_none() {
+                    block.xmlMarkdown = Some(Box::new(Self::child(
+                        self.chatId.clone(),
+                        block.id,
+                        self.nextBlockId,
+                    )));
+                }
+                events.push(inlineEvent(
+                    &self.chatId,
+                    self.parentBlockId,
+                    block.id,
+                    None,
+                    "markdownBlockChunk",
+                    nodeType,
+                    Some(nodeContent.clone()),
+                ));
+                let child = block.xmlMarkdown.as_mut().unwrap();
+                events.extend(child.pushChunk(&nodeContent));
+                self.nextBlockId = child.nextBlockId;
+            } else if isInlineContainer(nodeType) {
                 events.extend(self.inlineChunk(nodeContent));
             } else if let Some(blockId) = self.activeBlock.as_ref().map(|block| block.id) {
                 let xml = if nodeType == Some(MarkdownProcessorType::XmlBlock) {
@@ -411,7 +451,7 @@ impl MarkdownRenderEventStream {
         events
     }
 
-    pub fn completed(&self) -> MarkdownStreamEvent {
+    fn completed(&self) -> MarkdownStreamEvent {
         MarkdownStreamEvent {
             chatId: self.chatId.clone(),
             eventType: "completed".to_string(),
@@ -426,66 +466,254 @@ impl MarkdownRenderEventStream {
         }
     }
 
+    /// Finishes pending syntax before publishing the terminal event.
+    pub fn finish(&mut self) -> Vec<MarkdownStreamEvent> {
+        let segments = self.block.session.finish();
+        let mut events = self.applySegments(segments);
+        events.extend(self.finishInline());
+        if let Some(child) = self
+            .activeBlock
+            .as_mut()
+            .and_then(|block| block.xmlMarkdown.as_mut())
+        {
+            events.extend(child.finish());
+            self.nextBlockId = child.nextBlockId;
+        }
+        events.push(self.completed());
+        events
+    }
+
     fn inlineChunk(&mut self, content: String) -> Vec<MarkdownStreamEvent> {
         let Some(block) = self.activeBlock.as_mut() else {
             return Vec::new();
         };
-        let Some(inline) = block.inline.as_mut() else {
+        let mut events = Vec::new();
+        let content = if let Some(prefix) = block.prefix.as_mut() {
+            let (sourcePrefix, body) = prefix.push(&content);
+            if let Some(sourcePrefix) = sourcePrefix {
+                events.push(inlineEvent(
+                    &self.chatId,
+                    self.parentBlockId,
+                    block.id,
+                    None,
+                    "markdownBlockPrefix",
+                    None,
+                    Some(sourcePrefix),
+                ));
+            }
+            body
+        } else {
+            content
+        };
+        let tokens = block
+            .inline
+            .as_mut()
+            .map(|inline| inline.push(&content))
+            .unwrap_or_default();
+        appendInlineTokens(&self.chatId, self.parentBlockId, block, tokens, &mut events);
+        events
+    }
+
+    fn finishInline(&mut self) -> Vec<MarkdownStreamEvent> {
+        let Some(block) = self.activeBlock.as_mut() else {
             return Vec::new();
         };
-
         let mut events = Vec::new();
-        let blockId = block.id;
-        let segments = inline.push(&content);
-        for segment in segments {
-            if segment.r#type < 0 {
-                inline.activeType = None;
+        let tokens = block
+            .inline
+            .as_mut()
+            .map(MarkdownInlineStream::finish)
+            .unwrap_or_default();
+        appendInlineTokens(&self.chatId, self.parentBlockId, block, tokens, &mut events);
+        events
+    }
+}
+
+fn inlineEvent(
+    chatId: &str,
+    parentBlockId: Option<u64>,
+    blockId: u64,
+    inlineId: Option<u64>,
+    eventType: &str,
+    nodeType: Option<MarkdownProcessorType>,
+    value: Option<String>,
+) -> MarkdownStreamEvent {
+    MarkdownStreamEvent {
+        chatId: chatId.to_string(),
+        parentBlockId,
+        blockId: Some(blockId),
+        inlineId,
+        eventType: eventType.to_string(),
+        nodeType: markdownTypeLabel(nodeType).map(str::to_string),
+        value,
+        id: None,
+        headerLevel: None,
+        xml: None,
+    }
+}
+
+fn inlineType(kind: InlineKind) -> Option<MarkdownProcessorType> {
+    if kind == InlineKind::Text {
+        None
+    } else {
+        Some(kind.processor_type())
+    }
+}
+
+fn appendInlineTokens(
+    chatId: &str,
+    parent: Option<u64>,
+    block: &mut ActiveBlock,
+    tokens: Vec<InlineToken>,
+    events: &mut Vec<MarkdownStreamEvent>,
+) {
+    for token in tokens {
+        match token {
+            InlineToken::Open(kind, parameter) => {
                 block.activeInline = None;
-                continue;
-            }
-            let nodeType = markdownTypeFromSegment(&segment);
-            let nodeContent = markdownSegmentContent(inline, &segment, nodeType);
-            if nodeContent.is_empty() {
-                continue;
-            }
-
-            if inline.activeType != Some(nodeType) {
                 block.nextInlineId += 1;
-                inline.activeType = Some(nodeType);
-                block.activeInline = Some(ActiveInline {
-                    id: block.nextInlineId,
-                    nodeType,
-                });
-                events.push(MarkdownStreamEvent {
-                    chatId: self.chatId.clone(),
-                    eventType: "markdownInlineStart".to_string(),
-                    value: None,
-                    id: None,
-                    blockId: Some(blockId),
-                    inlineId: Some(block.nextInlineId),
-                    parentBlockId: self.parentBlockId,
-                    nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
-                    headerLevel: None,
-                    xml: None,
-                });
+                block.styleIds.push((block.nextInlineId, kind));
+                events.push(inlineEvent(
+                    chatId,
+                    parent,
+                    block.id,
+                    Some(block.nextInlineId),
+                    "markdownInlineStyleStart",
+                    inlineType(kind),
+                    parameter,
+                ));
             }
-
-            if let Some(activeInline) = block.activeInline.as_ref() {
-                events.push(MarkdownStreamEvent {
-                    chatId: self.chatId.clone(),
-                    eventType: "markdownInlineChunk".to_string(),
-                    value: Some(nodeContent),
-                    id: None,
-                    blockId: Some(blockId),
-                    inlineId: Some(activeInline.id),
-                    parentBlockId: self.parentBlockId,
-                    nodeType: markdownTypeLabel(activeInline.nodeType).map(ToString::to_string),
-                    headerLevel: None,
-                    xml: None,
-                });
+            InlineToken::Close => {
+                block.activeInline = None;
+                if let Some((id, kind)) = block.styleIds.pop() {
+                    events.push(inlineEvent(
+                        chatId,
+                        parent,
+                        block.id,
+                        Some(id),
+                        "markdownInlineStyleEnd",
+                        inlineType(kind),
+                        None,
+                    ));
+                }
+            }
+            InlineToken::Text(kind, text) => {
+                let nodeType = inlineType(kind);
+                if block
+                    .activeInline
+                    .as_ref()
+                    .is_none_or(|inline| inline.nodeType != nodeType)
+                {
+                    block.nextInlineId += 1;
+                    block.activeInline = Some(ActiveInline {
+                        id: block.nextInlineId,
+                        nodeType,
+                    });
+                    events.push(inlineEvent(
+                        chatId,
+                        parent,
+                        block.id,
+                        Some(block.nextInlineId),
+                        "markdownInlineStart",
+                        nodeType,
+                        None,
+                    ));
+                }
+                let id = block.activeInline.as_ref().unwrap().id;
+                events.push(inlineEvent(
+                    chatId,
+                    parent,
+                    block.id,
+                    Some(id),
+                    "markdownInlineChunk",
+                    nodeType,
+                    Some(text),
+                ));
             }
         }
-        events
+    }
+}
+
+/// One prefix scanner per heading/list block. Prefixes can straddle transport
+/// chunks; the body is sent to the inline machine only after the prefix ends.
+enum PrefixPhase {
+    Indent,
+    Marker,
+    Padding,
+}
+
+struct BlockPrefix {
+    kind: MarkdownProcessorType,
+    raw: String,
+    done: bool,
+    phase: PrefixPhase,
+}
+impl BlockPrefix {
+    fn new(kind: Option<MarkdownProcessorType>) -> Option<Self> {
+        kind.filter(|kind| {
+            matches!(
+                kind,
+                MarkdownProcessorType::Header
+                    | MarkdownProcessorType::OrderedList
+                    | MarkdownProcessorType::UnorderedList
+            )
+        })
+        .map(|kind| Self {
+            kind,
+            raw: String::new(),
+            done: false,
+            phase: PrefixPhase::Indent,
+        })
+    }
+    fn push(&mut self, content: &str) -> (Option<String>, String) {
+        if self.done {
+            return (None, content.to_string());
+        }
+        let mut end = 0;
+        for (index, ch) in content.char_indices() {
+            let whitespace = ch == ' ' || ch == '\t';
+            let prefix = match self.phase {
+                PrefixPhase::Indent if whitespace => true,
+                PrefixPhase::Indent => {
+                    self.phase = if self.kind == MarkdownProcessorType::UnorderedList {
+                        PrefixPhase::Padding
+                    } else {
+                        PrefixPhase::Marker
+                    };
+                    match self.kind {
+                        MarkdownProcessorType::Header => ch == '#',
+                        MarkdownProcessorType::OrderedList => ch.is_ascii_digit(),
+                        MarkdownProcessorType::UnorderedList => matches!(ch, '-' | '+' | '*'),
+                        _ => false,
+                    }
+                }
+                PrefixPhase::Marker if whitespace => {
+                    self.phase = PrefixPhase::Padding;
+                    true
+                }
+                PrefixPhase::Marker if self.kind == MarkdownProcessorType::Header => ch == '#',
+                PrefixPhase::Marker if ch == '.' || ch == ')' => {
+                    self.phase = PrefixPhase::Padding;
+                    true
+                }
+                PrefixPhase::Marker => ch.is_ascii_digit(),
+                PrefixPhase::Padding if whitespace => {
+                    self.phase = PrefixPhase::Padding;
+                    true
+                }
+                _ => false,
+            };
+            if !prefix {
+                self.done = true;
+                return (
+                    Some(std::mem::take(&mut self.raw)),
+                    content[index..].to_string(),
+                );
+            }
+            self.raw.push(ch);
+            end = index + ch.len_utf8();
+        }
+        (None, content[end..].to_string())
     }
 }
 
@@ -494,16 +722,6 @@ impl MarkdownGroupSession {
     fn block() -> Self {
         Self {
             session: NativeMarkdownSplitter::create_block_session(),
-            content: String::new(),
-            charByteOffsets: vec![0],
-            activeType: None,
-        }
-    }
-
-    /// Creates an inline parser with a byte boundary for the empty input.
-    fn inline() -> Self {
-        Self {
-            session: NativeMarkdownSplitter::create_inline_session(),
             content: String::new(),
             charByteOffsets: vec![0],
             activeType: None,
@@ -604,6 +822,7 @@ fn isInlineContainer(nodeType: Option<MarkdownProcessorType>) -> bool {
     !matches!(
         nodeType,
         Some(MarkdownProcessorType::CodeBlock)
+            | Some(MarkdownProcessorType::BlockQuote)
             | Some(MarkdownProcessorType::BlockLatex)
             | Some(MarkdownProcessorType::Table)
             | Some(MarkdownProcessorType::XmlBlock)
@@ -614,13 +833,188 @@ fn isInlineContainer(nodeType: Option<MarkdownProcessorType>) -> bool {
 mod tests {
     use super::*;
 
+    /// Both Markdown strong-emphasis delimiters must produce the same semantic
+    /// nodes regardless of where the transport splits their delimiters.
+    #[test]
+    fn strong_emphasis_uses_bold_nodes_at_every_stream_split() {
+        for content in ["**粗体** tail", "__粗体__ tail"] {
+            for boundary in content
+                .char_indices()
+                .map(|(index, _)| index)
+                .chain(std::iter::once(content.len()))
+            {
+                let mut stream = MarkdownRenderEventStream::new("test".to_string());
+                let mut events = stream.pushChunk(&content[..boundary]);
+                events.extend(stream.pushChunk(&content[boundary..]));
+                let bold = styled_chars(&events)
+                    .into_iter()
+                    .filter(|(_, styles)| styles.iter().any(|kind| kind == "Bold"))
+                    .map(|(ch, _)| ch)
+                    .collect::<String>();
+                assert_eq!(bold, "粗体", "content={content}, boundary={boundary}");
+                assert!(!events
+                    .iter()
+                    .any(|event| event.nodeType.as_deref() == Some("Underline")));
+            }
+        }
+    }
+
+    /// Unordered markers are consumed by Core; the UI must use the node type
+    /// and preserve any additional marker-like characters in the body.
+    #[test]
+    fn unordered_list_events_contain_bodies_without_markers() {
+        for marker in ["-", "*", "+"] {
+            let content = format!("{marker} **粗体**\n{marker} - literal\n");
+            for boundary in content
+                .char_indices()
+                .map(|(index, _)| index)
+                .chain(std::iter::once(content.len()))
+            {
+                let mut stream = MarkdownRenderEventStream::new("test".to_string());
+                let mut events = stream.pushChunk(&content[..boundary]);
+                events.extend(stream.pushChunk(&content[boundary..]));
+                let blocks: Vec<_> = events
+                    .iter()
+                    .filter(|event| {
+                        event.eventType == "markdownBlockStart"
+                            && event.nodeType.as_deref() == Some("UnorderedList")
+                    })
+                    .collect();
+                assert_eq!(blocks.len(), 2, "{content}, boundary={boundary}");
+                for (block, expected) in blocks.iter().zip(["粗体\n", "- literal\n"]) {
+                    let body = events
+                        .iter()
+                        .filter(|event| {
+                            event.eventType == "markdownInlineChunk"
+                                && event.blockId == block.blockId
+                        })
+                        .filter_map(|event| event.value.as_deref())
+                        .collect::<String>();
+                    assert_eq!(body, expected, "{content}, boundary={boundary}");
+                }
+            }
+        }
+    }
+
+    fn styled_chars(events: &[MarkdownStreamEvent]) -> Vec<(char, Vec<String>)> {
+        let mut styles: Vec<String> = Vec::new();
+        let mut out = Vec::new();
+        let mut leaf_type = None;
+        for event in events.iter().filter(|event| event.parentBlockId.is_none()) {
+            match event.eventType.as_str() {
+                "markdownInlineStyleStart" => styles.push(event.nodeType.clone().unwrap()),
+                "markdownInlineStyleEnd" => {
+                    styles.pop().expect("balanced scope");
+                }
+                "markdownInlineStart" => leaf_type = event.nodeType.clone(),
+                "markdownInlineChunk" => {
+                    let mut active = styles.clone();
+                    if let Some(kind) = leaf_type.as_ref() {
+                        active.push(kind.clone());
+                    }
+                    out.extend(
+                        event
+                            .value
+                            .as_ref()
+                            .unwrap()
+                            .chars()
+                            .map(|ch| (ch, active.clone())),
+                    );
+                }
+                _ => {}
+            }
+        }
+        assert!(styles.is_empty(), "all style scopes must be closed at EOF");
+        out
+    }
+
+    #[test]
+    fn semantic_inline_events_are_independent_of_chunk_boundaries() {
+        for content in [
+            "**粗体 *斜体* `代码` [链接](https://example.com/a_(b))** tail",
+            "***粗斜体*** and __下划线形式粗体__ and ~~删除线~~",
+            r"escaped \*literal\* and file_name and ``a ` b`` and [missing](url",
+            "visit https://example.com/a_(b). then $x+y$ and \\(x^2\\)",
+            "# **标题**\n- **第一项**\n  + __第二项__\n  3) 第三项\n---\n***正文***",
+            "*a**b**c* and _foo_bar_",
+            "> **quote**\n> - list\n> > nested\n\nnext",
+            "plain text ending with **",
+            "plain [unfinished",
+            "- - literal",
+            "## ",
+        ] {
+            let expected = MarkdownRenderEventStream::fromContent(content.to_string());
+            let expected_chars = styled_chars(&expected);
+            for boundary in content
+                .char_indices()
+                .map(|(index, _)| index)
+                .chain(std::iter::once(content.len()))
+            {
+                let mut stream = MarkdownRenderEventStream::new("test".to_string());
+                let mut actual = stream.pushChunk(&content[..boundary]);
+                actual.extend(stream.pushChunk(&content[boundary..]));
+                actual.extend(stream.finish());
+                assert_eq!(
+                    styled_chars(&actual),
+                    expected_chars,
+                    "content={content}, boundary={boundary}"
+                );
+            }
+            let mut stream = MarkdownRenderEventStream::new("test".to_string());
+            let mut actual = Vec::new();
+            for ch in content.chars() {
+                actual.extend(stream.pushChunk(&ch.to_string()));
+            }
+            actual.extend(stream.finish());
+            assert_eq!(
+                styled_chars(&actual),
+                expected_chars,
+                "one-char chunks: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_prefixes_are_semantic_and_indentation_is_preserved() {
+        let events = MarkdownRenderEventStream::fromContent(
+            "- first\n  + **second**\n  3) third\n".to_string(),
+        );
+        let prefixes: Vec<_> = events
+            .iter()
+            .filter(|event| event.eventType == "markdownBlockPrefix")
+            .filter_map(|event| event.value.as_deref())
+            .collect();
+        assert_eq!(prefixes, ["- ", "  + ", "  3) "]);
+        let text: String = events
+            .iter()
+            .filter(|event| event.eventType == "markdownInlineChunk")
+            .filter_map(|event| event.value.as_deref())
+            .collect();
+        assert_eq!(text, "first\nsecond\nthird\n");
+    }
+
+    #[test]
+    fn triple_emphasis_is_not_a_thematic_break() {
+        let events = MarkdownRenderEventStream::fromContent("***粗斜***\n---\nend".to_string());
+        let rules = events
+            .iter()
+            .filter(|event| {
+                event.eventType == "markdownBlockStart"
+                    && event.nodeType.as_deref() == Some("HorizontalRule")
+            })
+            .count();
+        assert_eq!(rules, 1);
+        let text = styled_chars(&events);
+        for ch in "粗斜".chars() {
+            let styles = &text.iter().find(|(found, _)| *found == ch).unwrap().1;
+            assert_eq!(styles, &["Bold", "Italic"]);
+        }
+    }
+
     /// Keeps character-indexed segments correct across UTF-8 chunks and parser types.
     #[test]
     fn slices_multibyte_segments_across_chunk_boundaries() {
-        for mut group in [
-            MarkdownGroupSession::block(),
-            MarkdownGroupSession::inline(),
-        ] {
+        for mut group in [MarkdownGroupSession::block()] {
             for chunk in ["a🌙", "汉", "e\u{301}", "**粗**"] {
                 let _ = group.push(chunk);
             }
@@ -774,13 +1168,17 @@ mod tests {
             .find(|event| {
                 event.parentBlockId.is_some()
                     && event.eventType == "markdownBlockEnd"
-                    && event.xml.as_ref().is_some_and(|xml| {
-                        xml.tagName.as_deref() == Some("tool")
-                    })
+                    && event
+                        .xml
+                        .as_ref()
+                        .is_some_and(|xml| xml.tagName.as_deref() == Some("tool"))
             })
             .unwrap();
         assert_eq!(tool.xml.as_ref().unwrap().isClosed, Some(true));
-        assert_eq!(tool.xml.as_ref().unwrap().bodyChunk.as_deref(), Some("图片"));
+        assert_eq!(
+            tool.xml.as_ref().unwrap().bodyChunk.as_deref(),
+            Some("图片")
+        );
     }
 
     /// Thinking body extraction must not lose partial nested or closing tags.
@@ -853,9 +1251,10 @@ mod tests {
             .find(|event| {
                 event.parentBlockId.is_some()
                     && event.eventType == "markdownBlockEnd"
-                    && event.xml.as_ref().is_some_and(|xml| {
-                        xml.tagName.as_deref() == Some("tool")
-                    })
+                    && event
+                        .xml
+                        .as_ref()
+                        .is_some_and(|xml| xml.tagName.as_deref() == Some("tool"))
             })
             .unwrap();
         assert_eq!(tool.xml.as_ref().unwrap().isClosed, Some(false));
@@ -863,7 +1262,8 @@ mod tests {
 
     #[test]
     fn closed_tool_keeps_following_unicode_text_outside_its_block() {
-        let events = MarkdownRenderEventStream::fromContent("<tool>文本</tool> 中文 😀".to_string());
+        let events =
+            MarkdownRenderEventStream::fromContent("<tool>文本</tool> 中文 😀".to_string());
         let end = events
             .iter()
             .find(|event| event.eventType == "markdownBlockEnd")
@@ -872,7 +1272,10 @@ mod tests {
         assert_eq!(end.xml.as_ref().unwrap().isClosed, Some(true));
         assert!(events.iter().any(|event| {
             event.eventType == "markdownInlineChunk"
-                && event.value.as_deref().is_some_and(|value| value.contains("中文 😀"))
+                && event
+                    .value
+                    .as_deref()
+                    .is_some_and(|value| value.contains("中文 😀"))
         }));
     }
 

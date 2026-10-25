@@ -49,6 +49,11 @@ impl ToolPkgChatMessageHookBridge {
     /// Dispatches a notification after a chat message has been persisted.
     #[allow(non_snake_case)]
     pub fn dispatchMessagePersisted(chatId: &str, message: &ChatMessage) {
+        // Checkpoints save an unfinished response for recovery. Filter them before
+        // queueing plugin work; the terminal commit dispatches the completed message.
+        if message.sender == "ai" && message.completedAt <= 0 {
+            return;
+        }
         let chatId = chatId.to_owned();
         let message = message.to_owned();
         super::ToolPkgHookBridgeSupport::scheduleToolPkgNotification(

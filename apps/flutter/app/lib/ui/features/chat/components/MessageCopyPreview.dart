@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/markdown/MarkdownImageRenderer.dart';
-import '../../../common/markdown/MarkdownInlineSpannable.dart';
 import '../../../common/markdown/MarkdownLatexBlock.dart';
 import '../../../common/markdown/MarkdownNodeGrouper.dart';
 import '../../../common/markdown/StreamMarkdownRendererState.dart';
@@ -202,139 +201,24 @@ Future<String> markdownToPlainTextForCopy(
   final state = StreamMarkdownRendererState();
   var completed = false;
   for (final event in events) {
-    completed = _applyCopyMarkdownEvent(state, event) || completed;
+    completed = state.applyEvent(event) == 'completed' || completed;
   }
   if (!completed) {
     state.eventBuilder.complete();
   }
   return _normalizeCopyWhitespace(
-    _renderCopyBlocks(state.eventBuilder.toStableNodes(isStreaming: false)),
+    await _renderCopyBlocks(
+      state.eventBuilder.toStableNodes(isStreaming: false),
+      splitMarkdownContent,
+    ),
   );
 }
 
-/// Applies one runtime Markdown event to the shared AST builder.
-bool _applyCopyMarkdownEvent(
-  StreamMarkdownRendererState state,
-  core_proxy.MarkdownStreamEvent event,
-) {
-  final parentBlockId = event.parentBlockId;
-  if (parentBlockId != null) {
-    state.eventBuilder.appendXmlMarkdownEvent(
-      parentBlockId: parentBlockId,
-      event: event,
-    );
-    return false;
-  }
-  switch (event.eventType) {
-    case 'chunk':
-      return false;
-    case 'markdownBlockStart':
-      final blockId = event.blockId;
-      if (blockId == null) {
-        throw StateError('markdownBlockStart missing blockId');
-      }
-      state.eventBuilder.startBlock(
-        blockId: blockId,
-        type: _copyMarkdownNodeType(event.nodeType),
-        headerLevel: event.headerLevel,
-      );
-      return false;
-    case 'markdownBlockChunk':
-      final blockId = event.blockId;
-      final value = event.value;
-      if (blockId == null || value == null) {
-        throw StateError('markdownBlockChunk missing blockId or value');
-      }
-      state.eventBuilder.appendBlock(
-        blockId: blockId,
-        content: value,
-        xml: event.xml,
-      );
-      return false;
-    case 'markdownBlockEnd':
-      final blockId = event.blockId;
-      if (blockId == null) {
-        throw StateError('markdownBlockEnd missing blockId');
-      }
-      state.eventBuilder.completeBlock(blockId: blockId, xml: event.xml);
-      return false;
-    case 'markdownInlineStart':
-      final blockId = event.blockId;
-      final inlineId = event.inlineId;
-      if (blockId == null || inlineId == null) {
-        throw StateError('markdownInlineStart missing blockId or inlineId');
-      }
-      state.eventBuilder.startInline(
-        blockId: blockId,
-        inlineId: inlineId,
-        type: _copyMarkdownNodeType(event.nodeType),
-      );
-      return false;
-    case 'markdownInlineChunk':
-      final blockId = event.blockId;
-      final inlineId = event.inlineId;
-      final value = event.value;
-      if (blockId == null || inlineId == null || value == null) {
-        throw StateError(
-          'markdownInlineChunk missing blockId, inlineId, or value',
-        );
-      }
-      state.eventBuilder.appendInline(
-        blockId: blockId,
-        inlineId: inlineId,
-        content: value,
-      );
-      return false;
-    case 'savepoint':
-      final id = event.id;
-      if (id == null) {
-        throw StateError('savepoint missing id');
-      }
-      state.eventBuilder.savepoint(id);
-      return false;
-    case 'rollback':
-      final id = event.id;
-      if (id == null) {
-        throw StateError('rollback missing id');
-      }
-      state.eventBuilder.rollback(id);
-      return false;
-    case 'completed':
-      state.eventBuilder.complete();
-      return true;
-    default:
-      throw StateError('Unknown Markdown copy event ${event.eventType}');
-  }
-}
-
-/// Maps the runtime node label to the renderer's Markdown AST type.
-MarkdownNodeType _copyMarkdownNodeType(String? label) {
-  return switch (label) {
-    null => MarkdownNodeType.plainText,
-    'Header' => MarkdownNodeType.header,
-    'BlockQuote' => MarkdownNodeType.blockQuote,
-    'CodeBlock' => MarkdownNodeType.codeBlock,
-    'OrderedList' => MarkdownNodeType.orderedList,
-    'UnorderedList' => MarkdownNodeType.unorderedList,
-    'HorizontalRule' => MarkdownNodeType.horizontalRule,
-    'BlockLatex' => MarkdownNodeType.blockLatex,
-    'Table' => MarkdownNodeType.table,
-    'XmlBlock' => MarkdownNodeType.xmlBlock,
-    'Image' => MarkdownNodeType.image,
-    'Bold' => MarkdownNodeType.bold,
-    'Italic' => MarkdownNodeType.italic,
-    'InlineCode' => MarkdownNodeType.inlineCode,
-    'Link' => MarkdownNodeType.link,
-    'Strikethrough' => MarkdownNodeType.strikethrough,
-    'Underline' => MarkdownNodeType.underline,
-    'InlineLatex' => MarkdownNodeType.inlineLatex,
-    'HtmlBreak' => MarkdownNodeType.htmlBreak,
-    _ => throw StateError('Unknown Markdown node label $label'),
-  };
-}
-
 /// Joins top-level AST nodes using readable block spacing.
-String _renderCopyBlocks(List<MarkdownNodeStable> nodes) {
+Future<String> _renderCopyBlocks(
+  List<MarkdownNodeStable> nodes,
+  MarkdownCopySplitter split,
+) async {
   final contentNodes = nodes
       .where((node) => node.type != MarkdownNodeType.htmlBreak)
       .toList(growable: false);
@@ -347,13 +231,16 @@ String _renderCopyBlocks(List<MarkdownNodeStable> nodes) {
           _isCopyListType(previousType) && _isCopyListType(currentType);
       buffer.write(adjacentLists ? '\n' : '\n\n');
     }
-    buffer.write(_renderCopyBlock(contentNodes[index]));
+    buffer.write(await _renderCopyBlock(contentNodes[index], split));
   }
   return buffer.toString();
 }
 
 /// Renders one block AST node into direct-paste text.
-String _renderCopyBlock(MarkdownNodeStable node) {
+Future<String> _renderCopyBlock(
+  MarkdownNodeStable node,
+  MarkdownCopySplitter split,
+) async {
   switch (node.type) {
     case MarkdownNodeType.htmlBreak:
     case MarkdownNodeType.horizontalRule:
@@ -361,17 +248,22 @@ String _renderCopyBlock(MarkdownNodeStable node) {
     case MarkdownNodeType.codeBlock:
       return _renderCopyCodeBlock(node.content);
     case MarkdownNodeType.table:
-      return _renderCopyTable(node.content);
+      return _renderCopyTable(node.content, split);
     case MarkdownNodeType.blockLatex:
       return extractLatexContent(node.content.trim()).trim();
     case MarkdownNodeType.image:
       return extractMarkdownImageAlt(node.content.trim());
     case MarkdownNodeType.header:
-      return _renderCopyInline(node).replaceFirst(RegExp(r'^#+\s*'), '');
+      return _renderCopyInline(node);
     case MarkdownNodeType.unorderedList:
       return '• ${_renderCopyInline(node)}';
     case MarkdownNodeType.orderedList:
+      return '${node.sourcePrefix.trim()} ${_renderCopyInline(node)}';
     case MarkdownNodeType.blockQuote:
+      return markdownToPlainTextForCopy(
+        node.content,
+        splitMarkdownContent: split,
+      );
     case MarkdownNodeType.xmlBlock:
     case MarkdownNodeType.plainText:
     case MarkdownNodeType.bold:
@@ -404,12 +296,10 @@ String _renderCopyInline(MarkdownNodeStable node) {
 
 /// Renders a Markdown link as visible text followed by its destination URL.
 String _renderCopyLink(MarkdownNodeStable node) {
-  final text = node.children.isNotEmpty
-      ? node.children.map(_renderCopyInline).join()
-      : parseInlineSegments(
-          extractLinkText(node.content),
-        ).map(_renderCopyInlineSegment).join();
-  final url = extractLinkUrl(node.content);
+  final text = node.children.isEmpty
+      ? node.content
+      : node.children.map(_renderCopyInline).join();
+  final url = node.linkUrl ?? '';
   return url.isEmpty ? text : '$text ($url)';
 }
 
@@ -431,46 +321,35 @@ String _renderCopyCodeBlock(String content) {
 }
 
 /// Renders a Markdown table as tab-separated rows.
-String _renderCopyTable(String content) {
+Future<String> _renderCopyTable(
+  String content,
+  MarkdownCopySplitter split,
+) async {
   final rows = <List<String>>[];
   for (final line in content.split('\n')) {
     final trimmed = line.trim();
-    if (!RegExp(r'\|').hasMatch(trimmed)) {
+    if (!trimmed.contains('|')) {
       continue;
     }
-    final withoutEdges = trimmed
-        .replaceFirst(RegExp(r'^\|'), '')
-        .replaceFirst(RegExp(r'\|$'), '');
-    final cells = withoutEdges
+    final start = trimmed.startsWith('|') ? 1 : 0;
+    final end = trimmed.endsWith('|') ? trimmed.length - 1 : trimmed.length;
+    final withoutEdges = trimmed.substring(start, end < start ? start : end);
+    final rawCells = withoutEdges
         .split('|')
-        .map((cell) {
-          final segments = parseInlineSegments(cell.trim());
-          return segments.map(_renderCopyInlineSegment).join();
-        })
-        .toList(growable: false);
+        .map((cell) => cell.trim())
+        .toList();
+    if (_isCopyTableSeparator(rawCells)) continue;
+    final cells = await Future.wait(
+      rawCells.map((cell) async {
+        final nodes = markdownNodesFromEvents(await split(cell));
+        return nodes.map(_renderCopyInline).join();
+      }),
+    );
     if (!_isCopyTableSeparator(cells)) {
       rows.add(cells);
     }
   }
   return rows.map((row) => row.join('\t')).join('\n');
-}
-
-/// Converts one inline Markdown segment into plain text.
-String _renderCopyInlineSegment(MarkdownInlineSegment segment) {
-  if (segment.nodeType == 'InlineLatex') {
-    return extractLatexContent(segment.text.trim()).trim();
-  }
-  if (segment.nodeType == 'Link') {
-    final text = segment.children.isEmpty
-        ? extractLinkText(segment.text)
-        : segment.children.map(_renderCopyInlineSegment).join();
-    final url = extractLinkUrl(segment.text);
-    return url.isEmpty ? text : '$text ($url)';
-  }
-  if (segment.children.isNotEmpty) {
-    return segment.children.map(_renderCopyInlineSegment).join();
-  }
-  return resolveNestedInlineText(segment);
 }
 
 /// Detects a Markdown table separator row using the parsed cell values.

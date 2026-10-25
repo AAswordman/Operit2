@@ -173,8 +173,6 @@ async fn collectCoreResponseStream(
         _ = sender.closed() => return,
         _ = orderedStream.collect_ordered(&mut itemCollector) => {},
     }
-    let completionValue = operit_link::toCoreValue(markdownStream.completed())
-        .expect("MarkdownStreamEvent must serialize");
     AppLogger::trace(
         "CoreStreamTrace",
         &format!(
@@ -182,14 +180,21 @@ async fn collectCoreResponseStream(
             request.requestId.0, streamKey
         ),
     );
-    sendCoreTextEvent(
-        &sender,
-        &request.requestId,
-        request.target.clone(),
-        &request.propertyName,
-        CoreEventKind::Completed,
-        completionValue,
-    );
+    for event in markdownStream.finish() {
+        let kind = if event.isRootCompletion() {
+            CoreEventKind::Completed
+        } else {
+            CoreEventKind::Changed
+        };
+        sendCoreTextEvent(
+            &sender,
+            &request.requestId,
+            request.target.clone(),
+            &request.propertyName,
+            kind,
+            operit_link::toCoreValue(event).expect("MarkdownStreamEvent must serialize"),
+        );
+    }
 }
 
 /// Sends one typed Markdown event through a Core stream channel.
@@ -2905,6 +2910,57 @@ mod tests {
         }
         assert_eq!(text, "before after live");
         assert!(completed);
+    }
+
+    #[tokio::test]
+    async fn response_completion_flushes_pending_nested_inline_syntax_before_closing_transport() {
+        use operit_link::{
+            CoreEventKind, CoreEventStream, CoreRequestId, CoreValue, CoreWatchRequest,
+        };
+        use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+        use operit_util::stream::HotStream::mutable_shared_stream;
+
+        let producer = SharedAiResponseStream::new_ordered(
+            mutable_shared_stream(usize::MAX),
+            mutable_shared_stream(usize::MAX),
+        );
+        producer.emit_chunk("<think>**unfinished [label".to_string());
+        producer.close();
+        let request = CoreWatchRequest {
+            requestId: CoreRequestId("completion".to_string()),
+            target: "$core.stream.open".to_string(),
+            propertyName: "openCoreStream".to_string(),
+            args: CoreValue::emptyMap(),
+        };
+        let (sender, mut receiver) = CoreEventStream::channel();
+        super::collectCoreResponseStream(producer, "response".to_string(), request, sender).await;
+        let mut terminal = 0;
+        let mut nested_completed = 0;
+        let mut text = String::new();
+        let mut last_kind = None;
+        while let Some(event) = receiver.recv().await {
+            assert_eq!(terminal, 0, "no event may follow transport completion");
+            if event.kind == CoreEventKind::Completed {
+                terminal += 1;
+            }
+            if let CoreValue::Map(fields) = &event.value {
+                if fields.get("type") == Some(&CoreValue::String("completed".to_string()))
+                    && event.kind == CoreEventKind::Changed
+                {
+                    nested_completed += 1;
+                }
+                if fields.get("type") == Some(&CoreValue::String("markdownInlineChunk".to_string())) {
+                    if let Some(CoreValue::String(value)) = fields.get("value") {
+                        text.push_str(value);
+                    }
+                }
+            }
+            last_kind = Some(event.kind);
+        }
+        assert_eq!(text, "unfinished [label");
+        assert_eq!(terminal, 1);
+        assert_eq!(nested_completed, 1);
+        assert_eq!(last_kind, Some(CoreEventKind::Completed));
     }
 
     /// Removes long provider metadata before applying the notification length limit.

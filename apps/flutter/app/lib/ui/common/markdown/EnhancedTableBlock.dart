@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../../theme/OperitTheme.dart';
 import 'MarkdownInlineSpannable.dart';
+import 'MarkdownNodeGrouper.dart';
+import 'StreamMarkdownRenderer.dart';
+import 'StreamMarkdownRendererState.dart';
 
 const double tableMinColumnWidth = 80;
 const double tableMaxColumnWidth = 320;
@@ -20,10 +23,12 @@ class EnhancedTableBlock extends StatelessWidget {
     super.key,
     required this.tableText,
     required this.textColor,
+    required this.splitMarkdownContent,
   });
 
   final String tableText;
   final Color textColor;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -116,6 +121,7 @@ class EnhancedTableBlock extends StatelessWidget {
                                   vertical: tableCellVerticalPadding,
                                 ),
                                 child: _MarkdownTableCellText(
+                                  splitMarkdownContent: splitMarkdownContent,
                                   text: columnIndex < rows[rowIndex].length
                                       ? rows[rowIndex][columnIndex]
                                       : '',
@@ -152,9 +158,9 @@ class EnhancedTableBlock extends StatelessWidget {
     if (!trimmed.contains('|')) {
       continue;
     }
-    final withoutEdges = trimmed
-        .replaceFirst(RegExp(r'^\|'), '')
-        .replaceFirst(RegExp(r'\|$'), '');
+    final start = trimmed.startsWith('|') ? 1 : 0;
+    final end = trimmed.endsWith('|') ? trimmed.length - 1 : trimmed.length;
+    final withoutEdges = trimmed.substring(start, end < start ? start : end);
     final cells = withoutEdges.split('|').map((cell) => cell.trim()).toList();
     if (_isSeparatorRow(cells)) {
       if (alignments.isEmpty) {
@@ -169,7 +175,15 @@ class EnhancedTableBlock extends StatelessWidget {
 
 bool _isSeparatorRow(List<String> cells) {
   return cells.isNotEmpty &&
-      cells.every((cell) => RegExp(r'^:?-+:?$').hasMatch(cell));
+      cells.every((cell) {
+        var start = cell.startsWith(':') ? 1 : 0;
+        final end = cell.endsWith(':') ? cell.length - 1 : cell.length;
+        if (start >= end) return false;
+        for (; start < end; start++) {
+          if (cell.codeUnitAt(start) != 45) return false;
+        }
+        return true;
+      });
 }
 
 class _MarkdownTableCellText extends StatefulWidget {
@@ -178,12 +192,14 @@ class _MarkdownTableCellText extends StatefulWidget {
     required this.textColor,
     required this.style,
     required this.textAlign,
+    required this.splitMarkdownContent,
   });
 
   final String text;
   final Color textColor;
   final TextStyle? style;
   final TextAlign textAlign;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   State<_MarkdownTableCellText> createState() => _MarkdownTableCellTextState();
@@ -191,6 +207,27 @@ class _MarkdownTableCellText extends StatefulWidget {
 
 class _MarkdownTableCellTextState extends State<_MarkdownTableCellText> {
   final MarkdownLinkGestureOwner _gestures = MarkdownLinkGestureOwner();
+  late Future<List<MarkdownNodeStable>> _nodes;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MarkdownTableCellText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) _load();
+  }
+
+  void _load() {
+    _nodes = widget.text.isEmpty
+        ? Future.value(const [])
+        : widget
+              .splitMarkdownContent(widget.text)
+              .then(markdownNodesFromEvents);
+  }
 
   @override
   void dispose() {
@@ -199,22 +236,30 @@ class _MarkdownTableCellTextState extends State<_MarkdownTableCellText> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    _gestures.beginFrame();
-    late final TextSpan span;
-    try {
-      span = buildMarkdownInlineSpannableFromText(
-        context: context,
-        text: widget.text,
-        textColor: widget.textColor,
-        baseStyle: widget.style,
-        gestures: _gestures,
-      );
-    } finally {
-      _gestures.endFrame();
-    }
-    return Text.rich(span, textAlign: widget.textAlign, style: widget.style);
-  }
+  Widget build(BuildContext context) => FutureBuilder<List<MarkdownNodeStable>>(
+    future: _nodes,
+    builder: (context, snapshot) {
+      _gestures.beginFrame();
+      try {
+        final nodes = snapshot.data;
+        return Text.rich(
+          nodes == null
+              ? TextSpan(text: widget.text)
+              : buildMarkdownInlineSpannableFromMarkdownNodes(
+                  context: context,
+                  children: nodes,
+                  textColor: widget.textColor,
+                  baseStyle: widget.style,
+                  gestures: _gestures,
+                ),
+          textAlign: widget.textAlign,
+          style: widget.style,
+        );
+      } finally {
+        _gestures.endFrame();
+      }
+    },
+  );
 }
 
 TextAlign _parseCellAlignment(String separatorCell) {

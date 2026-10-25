@@ -114,7 +114,7 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
             : '${widget.language} Code block',
         child: Container(
           width: double.infinity,
-          margin: const EdgeInsets.symmetric(vertical: 4),
+          margin: const EdgeInsets.symmetric(vertical: 2),
           decoration: BoxDecoration(
             color: codeBlockBackground,
             borderRadius: BorderRadius.circular(4),

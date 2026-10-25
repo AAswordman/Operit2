@@ -2543,16 +2543,23 @@ impl ChatServiceCore {
                             .expect("route probe stream receiver must be open");
                     }
                 }
-                sender
-                    .send(CoreEvent {
-                        requestId: Some(request.requestId.clone()),
-                        target: request.target.clone(),
-                        propertyName: request.propertyName,
-                        kind: CoreEventKind::Completed,
-                        value: operit_link::toCoreValue(markdownStream.completed())
-                            .expect("MarkdownStreamEvent must serialize"),
-                    })
-                    .expect("route probe stream receiver must be open");
+                for event in markdownStream.finish() {
+                    let kind = if event.isRootCompletion() {
+                        CoreEventKind::Completed
+                    } else {
+                        CoreEventKind::Changed
+                    };
+                    sender
+                        .send(CoreEvent {
+                            requestId: Some(request.requestId.clone()),
+                            target: request.target.clone(),
+                            propertyName: request.propertyName.clone(),
+                            kind,
+                            value: operit_link::toCoreValue(event)
+                                .expect("MarkdownStreamEvent must serialize"),
+                        })
+                        .expect("route probe stream receiver must be open");
+                }
                 Ok(receiver)
             }
         }));

@@ -4,6 +4,7 @@ import 'dart:async';
 
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import 'MarkdownNodeGrouper.dart';
+import 'Utf16Text.dart';
 
 class StreamMarkdownRendererState {
   final List<MutableMarkdownNode> nodes = <MutableMarkdownNode>[];
@@ -17,11 +18,100 @@ class StreamMarkdownRendererState {
     xmlMarkdownEventStreams: xmlMarkdownEventStreams,
   );
   final Map<String, bool> nodeAnimationStates = <String, bool>{};
-  final Map<int, (int, MarkdownNodeStable)> conversionCache =
-      <int, (int, MarkdownNodeStable)>{};
   final StringBuffer collectedContent = StringBuffer();
   bool streamParsingCompletedSuccessfully = false;
   String rendererId = '';
+
+  /// The sole event-to-node path, shared by live rendering, static rendering,
+  /// table cells and plain-text copy. Syntax is owned by Core's state machines.
+  String applyEvent(Object raw) {
+    final event = MarkdownRenderEvent.from(raw);
+    final parent = event.parentBlockId;
+    if (parent != null) {
+      final owner = eventBuilder.xmlMarkdownStreamOwner(parent);
+      eventBuilder.appendXmlMarkdownEvent(
+        parentBlockId: parent,
+        event: event.withParent(parentBlockId: owner == parent ? null : parent),
+        xmlBlockId:
+            event.type == 'markdownBlockStart' &&
+                (event.nodeType == 'XmlBlock' || event.nodeType == 'BlockQuote')
+            ? event.blockId
+            : null,
+      );
+      return '';
+    }
+    switch (event.type) {
+      case 'reset':
+        reset();
+        break;
+      case 'chunk':
+        collectedContent.write(event.value ?? '');
+        break;
+      case 'markdownBlockStart':
+        eventBuilder.startBlock(
+          blockId: event.blockId!,
+          type: markdownNodeTypeFromLabel(event.nodeType),
+          headerLevel: event.headerLevel,
+        );
+        break;
+      case 'markdownBlockChunk':
+        eventBuilder.appendBlock(
+          blockId: event.blockId!,
+          content: event.value!,
+          xml: event.xml,
+        );
+        break;
+      case 'markdownBlockEnd':
+        eventBuilder.completeBlock(blockId: event.blockId!, xml: event.xml);
+        break;
+      case 'markdownBlockPrefix':
+        eventBuilder.setBlockPrefix(
+          blockId: event.blockId!,
+          prefix: event.value!,
+        );
+        break;
+      case 'markdownInlineStyleStart':
+        eventBuilder.startInlineStyle(
+          blockId: event.blockId!,
+          inlineId: event.inlineId!,
+          type: markdownNodeTypeFromLabel(event.nodeType),
+          linkUrl: event.value,
+        );
+        break;
+      case 'markdownInlineStyleEnd':
+        eventBuilder.endInlineStyle(
+          blockId: event.blockId!,
+          inlineId: event.inlineId!,
+        );
+        break;
+      case 'markdownInlineStart':
+        eventBuilder.startInline(
+          blockId: event.blockId!,
+          inlineId: event.inlineId!,
+          type: markdownNodeTypeFromLabel(event.nodeType),
+        );
+        break;
+      case 'markdownInlineChunk':
+        eventBuilder.appendInline(
+          blockId: event.blockId!,
+          inlineId: event.inlineId!,
+          content: event.value!,
+        );
+        break;
+      case 'savepoint':
+        eventBuilder.savepoint(event.id!);
+        break;
+      case 'rollback':
+        eventBuilder.rollback(event.id!);
+        break;
+      case 'completed':
+        eventBuilder.complete();
+        break;
+      default:
+        throw StateError('Unknown markdown event type ${event.type}');
+    }
+    return event.type;
+  }
 
   void updateRendererId(String id) {
     rendererId = id;
@@ -31,7 +121,6 @@ class StreamMarkdownRendererState {
     eventBuilder.reset();
     renderNodes.clear();
     nodeAnimationStates.clear();
-    conversionCache.clear();
     xmlNodeStreams.clear();
     xmlMarkdownEventStreams.clear();
     collectedContent.clear();
@@ -44,6 +133,8 @@ class MutableMarkdownNode {
     required this.type,
     required this.stableKey,
     this.headerLevel,
+    this.sourcePrefix = '',
+    this.linkUrl,
     this.xmlTagName,
     this.xmlAttributes,
     this.xmlBody,
@@ -54,6 +145,16 @@ class MutableMarkdownNode {
   MarkdownNodeType type;
   final String stableKey;
   final int? headerLevel;
+  String sourcePrefix;
+  String? linkUrl;
+  MutableMarkdownNode? parent;
+  MarkdownNodeStable? _stable;
+
+  void invalidate() {
+    _stable = null;
+    parent?.invalidate();
+  }
+
   String? xmlTagName;
   Map<String, String>? xmlAttributes;
   String? xmlBody;
@@ -68,6 +169,8 @@ class MutableMarkdownNode {
       type: type,
       stableKey: stableKey,
       headerLevel: headerLevel,
+      sourcePrefix: sourcePrefix,
+      linkUrl: linkUrl,
       xmlTagName: xmlTagName,
       xmlAttributes: xmlAttributes == null
           ? null
@@ -78,19 +181,23 @@ class MutableMarkdownNode {
     );
     node.content.write(content.toString());
     node.children.addAll(<MutableMarkdownNode>[
-      for (final child in children) child.copy(),
+      for (final child in children) child.copy()..parent = node,
     ]);
     node.isStreaming = isStreaming;
     return node;
   }
 
   MarkdownNodeStable toStable() {
-    return MarkdownNodeStable(
+    final cached = _stable;
+    if (cached != null && cached.isStreaming == isStreaming) return cached;
+    return _stable = MarkdownNodeStable(
       type: type,
       content: content.toString(),
       isStreaming: isStreaming,
       stableKey: stableKey,
       headerLevel: headerLevel,
+      sourcePrefix: sourcePrefix,
+      linkUrl: linkUrl,
       xmlTagName: xmlTagName,
       xmlAttributes: xmlAttributes,
       xmlBody: xmlBody,
@@ -118,6 +225,7 @@ class MarkdownEventNodeBuilder {
       <String, MutableMarkdownNode>{};
   final Map<String, _PendingInlineStart> _pendingInlines =
       <String, _PendingInlineStart>{};
+  final Map<int, List<MutableMarkdownNode>> _inlineStyles = {};
   final Set<int> _htmlBreakBlocks = <int>{};
   final Set<int> _mergedBlocks = <int>{};
   final Set<int> _latexBlocks = <int>{};
@@ -143,6 +251,7 @@ class MarkdownEventNodeBuilder {
     }
     nodes.clear();
     _blocks.clear();
+    _inlineStyles.clear();
     _inlines.clear();
     _pendingInlines.clear();
     _htmlBreakBlocks.clear();
@@ -234,7 +343,8 @@ class MarkdownEventNodeBuilder {
     if (type == MarkdownNodeType.blockLatex) {
       _latexBlocks.add(blockId);
     }
-    if (type == MarkdownNodeType.xmlBlock) {
+    if (type == MarkdownNodeType.xmlBlock ||
+        type == MarkdownNodeType.blockQuote) {
       final controller = _ReplayStringStream();
       final markdownController = _ReplayObjectStream();
       _xmlControllers[blockId] = controller;
@@ -260,6 +370,7 @@ class MarkdownEventNodeBuilder {
       throw StateError('Missing markdown block $blockId');
     }
     node.content.write(content);
+    node.invalidate();
     _xmlControllers[blockId]?.add(content);
     _applyXmlMetadata(node, xml);
   }
@@ -284,6 +395,7 @@ class MarkdownEventNodeBuilder {
     if (xml == null) {
       return;
     }
+    node.invalidate();
     node.xmlTagName = xml.tagName;
     node.xmlAttributes = xml.attributes == null
         ? null
@@ -326,6 +438,56 @@ class MarkdownEventNodeBuilder {
     _xmlMarkdownControllers[owner]!.add(event);
   }
 
+  /// Stores the prefix already recognized and removed by Core.
+  void setBlockPrefix({required int blockId, required String prefix}) {
+    final block = _blocks[blockId];
+    if (block == null) throw StateError('Missing markdown block $blockId');
+    block.sourcePrefix = prefix;
+    block.invalidate();
+  }
+
+  /// Style scopes are explicit stream events; no Markdown is parsed in Flutter.
+  void startInlineStyle({
+    required int blockId,
+    required int inlineId,
+    required MarkdownNodeType type,
+    String? linkUrl,
+  }) {
+    _finalizeInlineForBlock(blockId);
+    final block = _blocks[blockId];
+    if (block == null) throw StateError('Missing markdown block $blockId');
+    final stack = _inlineStyles.putIfAbsent(blockId, () => []);
+    final parent = stack.isEmpty ? block : stack.last;
+    final node = MutableMarkdownNode(
+      type: type,
+      stableKey: 'block-$blockId-style-$inlineId',
+      linkUrl: linkUrl,
+    )..parent = parent;
+    parent.children.add(node);
+    parent.invalidate();
+    stack.add(node);
+  }
+
+  void endInlineStyle({required int blockId, required int inlineId}) {
+    _finalizeInlineForBlock(blockId);
+    final stack = _inlineStyles[blockId];
+    if (stack == null ||
+        stack.isEmpty ||
+        stack.last.stableKey != 'block-$blockId-style-$inlineId') {
+      throw StateError('Unbalanced markdown style $blockId/$inlineId');
+    }
+    stack.removeLast();
+  }
+
+  void _writeInline(MutableMarkdownNode node, String text) {
+    MutableMarkdownNode? current = node;
+    while (current != null) {
+      current.content.write(text);
+      current._stable = null;
+      current = current.parent;
+    }
+  }
+
   void startInline({
     required int blockId,
     required int inlineId,
@@ -346,7 +508,6 @@ class MarkdownEventNodeBuilder {
     _pendingInlines[key] = _PendingInlineStart(
       blockId: blockId,
       inlineId: inlineId,
-      originalType: type,
       type: nodeType,
     );
     if (type == MarkdownNodeType.inlineLatex) {
@@ -375,19 +536,28 @@ class MarkdownEventNodeBuilder {
         _pendingInlineBreaks[blockId] ??
         _PendingLineBreakState(count: _pendingBlockBreaks.remove(blockId) ?? 0);
     MutableMarkdownNode? node = _inlines[key];
-    for (final codePoint in content.runes) {
-      final char = String.fromCharCode(codePoint);
-      if (char == '\n' || char == '\r') {
-        state = _accumulatePendingLineBreak(state, char);
+    // Core already parsed the syntax. Append whole text runs and only track
+    // paragraph breaks here; UTF-16 pairs are never split by these boundaries.
+    var offset = 0;
+    while (offset < content.length) {
+      final unit = content.codeUnitAt(offset);
+      if (unit == 0x0A || unit == 0x0D) {
+        state = _accumulatePendingLineBreak(state, unit);
+        offset++;
         continue;
+      }
+      final start = offset++;
+      while (offset < content.length) {
+        final next = content.codeUnitAt(offset);
+        if (next == 0x0A || next == 0x0D) break;
+        offset++;
       }
       node ??= _createInlineNode(block, pending, key);
       if (state.count > 0) {
         _appendPendingLineBreaks(block, node, state.count);
         state = const _PendingLineBreakState();
       }
-      block.content.write(char);
-      node.content.write(char);
+      _writeInline(node, content.substring(start, offset));
     }
     if (state.count > 0) {
       _pendingInlineBreaks[blockId] = state;
@@ -435,8 +605,11 @@ class MarkdownEventNodeBuilder {
     _PendingInlineStart pending,
     String key,
   ) {
+    final stack = _inlineStyles[pending.blockId];
+    final parent = stack == null || stack.isEmpty ? block : stack.last;
     final existing =
-        _mergedBlocks.contains(pending.blockId) &&
+        identical(parent, block) &&
+            _mergedBlocks.contains(pending.blockId) &&
             pending.type == MarkdownNodeType.plainText &&
             block.children.isNotEmpty &&
             block.children.last.type == MarkdownNodeType.plainText
@@ -449,7 +622,9 @@ class MarkdownEventNodeBuilder {
           stableKey: 'block-${pending.blockId}-inline-${pending.inlineId}',
         );
     if (existing == null) {
-      block.children.add(node);
+      node.parent = parent;
+      parent.children.add(node);
+      parent.invalidate();
     }
     _inlines[key] = node;
     return node;
@@ -477,12 +652,7 @@ class MarkdownEventNodeBuilder {
       }
       if (_latexInlines.remove(key)) {
         node.type = MarkdownNodeType.inlineLatex;
-      }
-      if (pending.originalType == MarkdownNodeType.plainText &&
-          _trimAll(node.content.toString()).isEmpty) {
-        final block = _blocks[blockId];
-        block?.children.remove(node);
-        _inlines.remove(key);
+        node.invalidate();
       }
     }
   }
@@ -494,6 +664,7 @@ class MarkdownEventNodeBuilder {
     ];
     for (final id in ids) {
       _blocks[id]?.type = MarkdownNodeType.blockLatex;
+      _blocks[id]?.invalidate();
       _latexBlocks.remove(id);
     }
   }
@@ -529,20 +700,19 @@ class MarkdownEventNodeBuilder {
     }
     final normalized = count.clamp(0, _maxConsecutiveRenderedNewlines);
     for (var index = 0; index < normalized; index++) {
-      block.content.write('\n');
-      inline.content.write('\n');
+      _writeInline(inline, '\n');
     }
   }
 
   _PendingLineBreakState _accumulatePendingLineBreak(
     _PendingLineBreakState state,
-    String char,
+    int unit,
   ) {
     final normalizedCount = state.count.clamp(
       0,
       _maxConsecutiveRenderedNewlines,
     );
-    if (char == '\n' && state.lastWasCarriageReturn && normalizedCount > 0) {
+    if (unit == 0x0A && state.lastWasCarriageReturn && normalizedCount > 0) {
       return _PendingLineBreakState(
         count: normalizedCount,
         lastWasCarriageReturn: false,
@@ -550,7 +720,7 @@ class MarkdownEventNodeBuilder {
     }
     return _PendingLineBreakState(
       count: (normalizedCount + 1).clamp(0, _maxConsecutiveRenderedNewlines),
-      lastWasCarriageReturn: char == '\r',
+      lastWasCarriageReturn: unit == 0x0D,
     );
   }
 
@@ -580,7 +750,7 @@ class MarkdownEventNodeBuilder {
 
 /// Reports whether a node should own the live streaming indicator.
 bool _isRenderableStreamingNode(MutableMarkdownNode node) {
-  return node.content.toString().trim().isNotEmpty || node.children.isNotEmpty;
+  return node.children.isNotEmpty || node.content.toString().trim().isNotEmpty;
 }
 
 const int _maxConsecutiveRenderedNewlines = 2;
@@ -691,13 +861,11 @@ class _PendingInlineStart {
   const _PendingInlineStart({
     required this.blockId,
     required this.inlineId,
-    required this.originalType,
     required this.type,
   });
 
   final int blockId;
   final int inlineId;
-  final MarkdownNodeType originalType;
   final MarkdownNodeType type;
 }
 
@@ -707,6 +875,7 @@ class _MarkdownEventNodeBuilderSnapshot {
     required this.blockKeys,
     required this.inlineKeys,
     required this.pendingInlines,
+    required this.inlineStyles,
     required this.htmlBreakBlocks,
     required this.mergedBlocks,
     required this.latexBlocks,
@@ -735,6 +904,10 @@ class _MarkdownEventNodeBuilderSnapshot {
       inlineKeys: <String, String>{
         for (final entry in builder._inlines.entries)
           entry.key: entry.value.stableKey,
+      },
+      inlineStyles: {
+        for (final entry in builder._inlineStyles.entries)
+          entry.key: [for (final node in entry.value) node.stableKey],
       },
       pendingInlines: <String, _PendingInlineStart>{...builder._pendingInlines},
       htmlBreakBlocks: <int>{...builder._htmlBreakBlocks},
@@ -774,6 +947,7 @@ class _MarkdownEventNodeBuilderSnapshot {
   final Map<int, String> blockKeys;
   final Map<String, String> inlineKeys;
   final Map<String, _PendingInlineStart> pendingInlines;
+  final Map<int, List<String>> inlineStyles;
   final Set<int> htmlBreakBlocks;
   final Set<int> mergedBlocks;
   final Set<int> latexBlocks;
@@ -811,6 +985,12 @@ class _MarkdownEventNodeBuilderSnapshot {
               builder._nodeByKey(entry.value)!,
             ),
       ]);
+    builder._inlineStyles
+      ..clear()
+      ..addAll({
+        for (final entry in inlineStyles.entries)
+          entry.key: [for (final key in entry.value) builder._nodeByKey(key)!],
+      });
     builder._pendingInlines
       ..clear()
       ..addAll(pendingInlines);
@@ -865,6 +1045,94 @@ class _MarkdownEventNodeBuilderSnapshot {
   }
 }
 
-String _trimAll(String value) {
-  return value.trim().replaceAll(RegExp(r'\n{3,}'), '\n\n');
+class MarkdownRenderEvent {
+  const MarkdownRenderEvent({
+    required this.type,
+    required this.id,
+    required this.value,
+    required this.blockId,
+    required this.inlineId,
+    required this.parentBlockId,
+    required this.nodeType,
+    required this.headerLevel,
+    required this.xml,
+  });
+
+  factory MarkdownRenderEvent.from(Object event) {
+    if (event is core_proxy.MarkdownStreamEvent) {
+      return MarkdownRenderEvent(
+        type: event.eventType,
+        id: event.id,
+        value: event.value == null ? null : sanitizeUtf16(event.value!),
+        blockId: event.blockId,
+        inlineId: event.inlineId,
+        parentBlockId: event.parentBlockId,
+        nodeType: event.nodeType,
+        headerLevel: event.headerLevel,
+        xml: event.xml,
+      );
+    }
+    if (event is MarkdownRenderEvent) return event;
+    throw StateError('Unsupported markdown event ${event.runtimeType}');
+  }
+
+  /// Preserves metadata and the remaining nesting while forwarding an XML event.
+  MarkdownRenderEvent withParent({required int? parentBlockId}) {
+    return MarkdownRenderEvent(
+      type: type,
+      id: id,
+      value: value,
+      blockId: blockId,
+      inlineId: inlineId,
+      parentBlockId: parentBlockId,
+      nodeType: nodeType,
+      headerLevel: headerLevel,
+      xml: xml,
+    );
+  }
+
+  final String type;
+  final String? id;
+  final String? value;
+  final int? blockId;
+  final int? inlineId;
+  final int? parentBlockId;
+  final String? nodeType;
+  final int? headerLevel;
+  final core_proxy.MarkdownXmlStreamEvent? xml;
+}
+
+MarkdownNodeType markdownNodeTypeFromLabel(String? label) {
+  return switch (label) {
+    null => MarkdownNodeType.plainText,
+    'Header' => MarkdownNodeType.header,
+    'BlockQuote' => MarkdownNodeType.blockQuote,
+    'CodeBlock' => MarkdownNodeType.codeBlock,
+    'OrderedList' => MarkdownNodeType.orderedList,
+    'UnorderedList' => MarkdownNodeType.unorderedList,
+    'HorizontalRule' => MarkdownNodeType.horizontalRule,
+    'BlockLatex' => MarkdownNodeType.blockLatex,
+    'Table' => MarkdownNodeType.table,
+    'XmlBlock' => MarkdownNodeType.xmlBlock,
+    'Image' => MarkdownNodeType.image,
+    'Bold' => MarkdownNodeType.bold,
+    'Italic' => MarkdownNodeType.italic,
+    'InlineCode' => MarkdownNodeType.inlineCode,
+    'Link' => MarkdownNodeType.link,
+    'Strikethrough' => MarkdownNodeType.strikethrough,
+    'Underline' => MarkdownNodeType.underline,
+    'InlineLatex' => MarkdownNodeType.inlineLatex,
+    'HtmlBreak' => MarkdownNodeType.htmlBreak,
+    _ => throw StateError('Unknown markdown node type $label'),
+  };
+}
+
+/// Materializes a finite semantic event stream through the same live builder.
+List<MarkdownNodeStable> markdownNodesFromEvents(Iterable<Object> events) {
+  final state = StreamMarkdownRendererState();
+  for (final event in events) {
+    state.applyEvent(event);
+  }
+  state.eventBuilder.complete();
+  return state.eventBuilder.toStableNodes(isStreaming: false);
 }

@@ -1,14 +1,14 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
+    show MessagePartKind;
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../common/ChatAvatarImage.dart';
 import '../../../../../common/markdown/MarkdownImageRenderer.dart';
-import '../../../../../common/markdown/MarkdownRemoteImage.dart';
 import '../../../../../common/markdown/MarkdownNodeGrouper.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
@@ -159,7 +159,7 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
       widget.bubbleContentPaddingRight,
       12,
     );
-    final imageUrl = _singleMarkdownImageUrl(widget.message);
+    final imageMarkdown = _singleMarkdownImage(widget.message);
     final renderIdentity = _messageRenderIdentity(widget.message);
 
     final messageBody = Theme(
@@ -204,7 +204,8 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
             metadataText: metadataText,
             tooltipText: tooltipText,
             isInteracting: isInteracting,
-            imageUrl: imageUrl,
+            imageMarkdown: imageMarkdown,
+            enableImagePreview: widget.enableDialogs,
             bubbleShape: bubbleShape,
             backgroundColor: backgroundColor,
             textColor: textColor,
@@ -228,7 +229,8 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
             ),
             tooltipText: tooltipText,
             isInteracting: isInteracting,
-            imageUrl: imageUrl,
+            imageMarkdown: imageMarkdown,
+            enableImagePreview: widget.enableDialogs,
             bubbleShape: bubbleShape,
             backgroundColor: backgroundColor,
             textColor: textColor,
@@ -328,7 +330,8 @@ class _WideAiBubbleLayout extends StatelessWidget {
     required this.metadataText,
     required this.tooltipText,
     required this.isInteracting,
-    required this.imageUrl,
+    required this.imageMarkdown,
+    required this.enableImagePreview,
     required this.bubbleShape,
     required this.backgroundColor,
     required this.textColor,
@@ -349,7 +352,8 @@ class _WideAiBubbleLayout extends StatelessWidget {
   final String metadataText;
   final String tooltipText;
   final bool isInteracting;
-  final String? imageUrl;
+  final String? imageMarkdown;
+  final bool enableImagePreview;
   final BorderRadius bubbleShape;
   final Color backgroundColor;
   final Color textColor;
@@ -409,9 +413,11 @@ class _WideAiBubbleLayout extends StatelessWidget {
           ],
           LayoutBuilder(
             builder: (context, constraints) {
-              if (imageUrl != null) {
+              if (imageMarkdown != null) {
                 return _AiImageOnlyBubble(
-                  imageUrl: imageUrl!,
+                  imageMarkdown: imageMarkdown!,
+                  textColor: textColor,
+                  enablePreview: enableImagePreview,
                   maxWidth: constraints.maxWidth,
                 );
               }
@@ -458,7 +464,8 @@ class _NormalAiBubbleLayout extends StatelessWidget {
     required this.displayText,
     required this.tooltipText,
     required this.isInteracting,
-    required this.imageUrl,
+    required this.imageMarkdown,
+    required this.enableImagePreview,
     required this.bubbleShape,
     required this.backgroundColor,
     required this.textColor,
@@ -478,7 +485,8 @@ class _NormalAiBubbleLayout extends StatelessWidget {
   final String displayText;
   final String tooltipText;
   final bool isInteracting;
-  final String? imageUrl;
+  final String? imageMarkdown;
+  final bool enableImagePreview;
   final BorderRadius bubbleShape;
   final Color backgroundColor;
   final Color textColor;
@@ -515,9 +523,11 @@ class _NormalAiBubbleLayout extends StatelessWidget {
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final maxBubbleWidth = constraints.maxWidth * 0.85;
-                      if (imageUrl != null) {
+                      if (imageMarkdown != null) {
                         return _AiImageOnlyBubble(
-                          imageUrl: imageUrl!,
+                          imageMarkdown: imageMarkdown!,
+                          textColor: textColor,
+                          enablePreview: enableImagePreview,
                           maxWidth: maxBubbleWidth,
                         );
                       }
@@ -603,37 +613,29 @@ class _AiBubbleBody extends StatelessWidget {
   }
 }
 
+/// Pure-image messages bypass BubbleSurface, but keep the normal image caption.
 class _AiImageOnlyBubble extends StatelessWidget {
-  const _AiImageOnlyBubble({required this.imageUrl, required this.maxWidth});
+  const _AiImageOnlyBubble({
+    required this.imageMarkdown,
+    required this.maxWidth,
+    required this.textColor,
+    required this.enablePreview,
+  });
 
-  final String imageUrl;
+  final String imageMarkdown;
   final double maxWidth;
+  final Color textColor;
+  final bool enablePreview;
 
   @override
   Widget build(BuildContext context) {
-    final uri = Uri.tryParse(imageUrl);
-    final Widget image;
-    if (uri == null) {
-      image = const Icon(Icons.broken_image_outlined);
-    } else {
-      image = switch (uri.scheme) {
-        'http' ||
-        'https' ||
-        'data' => MarkdownRemoteImage(url: imageUrl, fit: BoxFit.contain),
-        'file' => Image.file(
-          File(uri.toFilePath()),
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) =>
-              const Icon(Icons.broken_image_outlined),
-        ),
-        _ => const Icon(Icons.broken_image_outlined),
-      };
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: 320),
-        child: image,
+    return SizedBox(
+      width: maxWidth,
+      child: MarkdownImageRenderer(
+        imageMarkdown: imageMarkdown,
+        textColor: textColor,
+        maxImageHeight: 320,
+        enablePreview: enablePreview,
       ),
     );
   }
@@ -743,16 +745,14 @@ String _normalDisplayText(
   return parts.join(' · ');
 }
 
-String? _singleMarkdownImageUrl(ChatUiMessage message) {
+String? _singleMarkdownImage(ChatUiMessage message) {
+  // Never drop structured thinking/tool/status parts via the image shortcut.
+  if (message.contentStream != null ||
+      message.parts.any((part) => part.kind != MessagePartKind.markdown)) {
+    return null;
+  }
   final text = message.displayText.trim();
-  if (!isCompleteImageMarkdown(text)) {
-    return null;
-  }
-  final url = extractMarkdownImageUrl(text);
-  if (url.isEmpty) {
-    return null;
-  }
-  return url;
+  return isStandaloneMarkdownImage(text) ? text : null;
 }
 
 bool _shouldUseExpandedBubbleLayout(StreamMarkdownRendererState state) {
