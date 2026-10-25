@@ -49,11 +49,29 @@ test("binding CRUD persists solely in SQL and role deletion respects explicit bi
   assert.deepEqual(plain(await h.service.dispatchDomain("chat.configuration.binding.write", binding)), binding);
   assert.deepEqual(plain(await h.storage.readChatBinding("chat-0")), binding);
   await assert.rejects(h.service.dispatchDomain("character.delete", { id: role.id }), /Rebind or delete/);
-  assert.equal(h.calls.filter(call => call.method !== "findChat").length, 0);
+  assert.deepEqual(h.calls.filter(call => call.method !== "findChat").map(call => call.method), ["listChats"]);
+  assert.deepEqual(h.calls.find(call => call.method === "listChats").options.chat_ids, ["chat-0"]);
   assert.deepEqual(plain(await h.storage.deleteChatBinding("chat-0")), { chatId: "chat-0", deleted: true });
   assert.equal(await h.storage.findChatBinding("chat-0"), null);
   assert.deepEqual(plain(await h.service.dispatchDomain("character.delete", { id: role.id })), { id: role.id, deleted: true });
   h.disk.storage.inspectPreferences("chats", values => assert.equal(Object.keys(values).filter(key => key.startsWith("binding_")).length, 0));
+});
+
+test("deleting a member role sweeps a group binding whose Core conversation disappeared instead of blocking", async t => {
+  const h = await environment(t);
+  const role = await h.service.dispatchDomain("character.create", { values: { name: "Member role" } });
+  const group = await h.service.dispatchDomain("group.create", { values: { name: "Bound group", members: [{ characterCardId: role.id, orderIndex: 0 }] } });
+  await h.storage.writeChatBinding({ chatId: "chat-gone", selection: "group:" + group.id });
+  assert.deepEqual(plain(await h.service.dispatchDomain("character.delete", { id: role.id })), { id: role.id, deleted: true });
+  h.disk.storage.inspectPreferences("chats", values => assert.equal(Object.keys(values).filter(key => key.startsWith("binding_")).length, 0));
+});
+
+test("a live group binding still blocks deleting its member role", async t => {
+  const h = await environment(t);
+  const role = await h.service.dispatchDomain("character.create", { values: { name: "Member role" } });
+  const group = await h.service.dispatchDomain("group.create", { values: { name: "Bound group", members: [{ characterCardId: role.id, orderIndex: 0 }] } });
+  await h.storage.writeChatBinding({ chatId: "chat-0", selection: "group:" + group.id });
+  await assert.rejects(h.service.dispatchDomain("character.delete", { id: role.id }), /Rebind or delete.*chat-0/);
 });
 
 test("425 bound chats use three bounded metadata calls without listAll or extension reads", async t => {
