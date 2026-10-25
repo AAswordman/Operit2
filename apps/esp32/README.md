@@ -288,9 +288,15 @@ Physical validation on 2026-10-25 passed bounded authority export and protocol
 rejection checks, including recovery of the original Space after reboot. A full
 sync completed once, but the immediate repeat still failed allocating a 7290-byte
 local authority record and closed the connection. This is not stable hardware
-acceptance. The tested image uses 3,993,968 of 3,997,696 application bytes. See the
+acceptance. The tested v72 image uses 3,993,968 of 3,997,696 application bytes. See the
 [entry protocol validation record](../../docs/edge-core-entry-protocol.md) for the
 results and remaining lifecycle checks.
+
+After merging upstream `90ec13ba`, Rust compilation and the Xtensa ABI checks
+pass, but image generation fails: 4,036,048 application bytes exceed the existing
+3,997,696-byte partition by 38,352 bytes. This merged source has not been flashed
+or accepted on hardware. Keep this build result separate from the v72 hardware
+results above; see the [post-merge verification](../../docs/edge-core-entry-protocol.md#合并上游后的验证2026-10-25).
 
 ## Recovering from an unavailable Space administrator
 
