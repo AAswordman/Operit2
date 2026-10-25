@@ -116,6 +116,11 @@ impl SnapshotFileImportPlan {
         let Some(workspace) = workspace else {
             return Ok(None);
         };
+        // 根路径或空路径无法绑定到具体工作区，直接返回 None，避免后续推导文件夹名失败。
+        let trimmed = workspace.trim();
+        if trimmed.is_empty() || trimmed == "/" || trimmed == "file:///" {
+            return Ok(None);
+        }
         self.rewritePath(&workspace).map(Some)
     }
 
