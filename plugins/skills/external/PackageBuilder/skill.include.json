@@ -22,7 +22,10 @@
       "excludeNames": [
         ".sync_state.json",
         ".sync_hot_reload_state.json",
-        "node_modules"
+        "node_modules",
+        "dist",
+        "build",
+        "tests-dist"
       ]
     },
     {
@@ -31,7 +34,10 @@
       "excludeNames": [
         ".sync_state.json",
         ".sync_hot_reload_state.json",
-        "node_modules"
+        "node_modules",
+        "dist",
+        "build",
+        "tests-dist"
       ]
     }
   ]

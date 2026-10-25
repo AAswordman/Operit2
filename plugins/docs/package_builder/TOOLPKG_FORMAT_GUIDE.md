@@ -986,6 +986,8 @@ items[0];     // 对
 
 Compose DSL 是一种基于 JavaScript 的声明式 UI 框架，灵感来自 Jetpack Compose。
 
+UI 模块分发普通、可读的 CommonJS JavaScript，保留 `ctx.UI.*` 声明、业务函数与事件回调。TypeScript 只需转换为这种 JS，Compose 编译与缓存由运行时负责。不要将 Compose 内部预编译产物作为插件示例或用户编辑入口；用户修改 JS 后按插件更新流程重新打包和导入。
+
 **特点**：
 - 声明式语法
 - 组件化设计
@@ -1372,7 +1374,7 @@ PackageBuilder 的示例路径为 `examples/packages/`，不是旧版根目录 `
 - `examples/packages/buildin/workflow/`：工具、UI、依赖公共接口及其构建契约。
 - `examples/packages/buildin/goal_mode/`：界面与插件注册示例。
 
-按所选示例的真实 `package.json` 和说明构建；并非每个示例都采用相同打包命令。阅读 Skill 的示例不会自动将该包安装到当前 runtime。
+随软件携带的示例提供源码与构建配置，排除 `dist/`、`build/`、`tests-dist/` 生成目录。按所选示例的真实 `package.json` 和说明构建，输出可读的普通 JS；并非每个示例都采用相同打包命令。阅读 Skill 的示例不会自动将该包安装到当前 runtime。
 
 ## 12. 参考资料
 

@@ -188,6 +188,11 @@ See `docs/migration-acceptance.md` and `docs/operit1-restore-boundary.md` for ev
 
 ## Browser source and packaging
 
+Compose screens under `dist/ui/` ship as readable CommonJS JavaScript with UTF-8
+text and their authored UI declarations and callbacks. Users can edit these entry
+files and repackage the plugin. The runtime owns Compose compilation and caching;
+plugin packaging does not emit versioned Compose artifacts.
+
 Hand-written browser source is strict TypeScript under `web/`. esbuild produces a
 browser IIFE inside the offline HTML; generated JavaScript is a packaging artifact,
 not a second source implementation. `tsconfig.web.json` checks browser DOM code

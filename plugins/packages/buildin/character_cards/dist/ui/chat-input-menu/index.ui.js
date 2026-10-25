@@ -1,7 +1,4 @@
-// @operit-compose-artifact 4
 "use strict";
-var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:22762","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Person"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:22937","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:23093","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:23243","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Person"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:23408","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:23527","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"SmartToy"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:23724","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,32],[0,32],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Groups"],[0,24],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:25640","root":0,"nodes":[{"type":"Text","props":[2,["text","color","paddingHorizontal","paddingVertical"],[[1,0],[1,1],[0,12],[0,6]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:25774","root":0,"nodes":[{"type":"Box","props":[2,["key","onLoad","modifier","fillMaxWidth","contentAlignment"],[[0,"current-character-loading"],[1,0],[1,1],[0,true],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"CircularProgressIndicator","props":[2,["width","height"],[[0,18],[0,18]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:dxpt4i:26053","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","paddingVertical","verticalAlignment","modifier","onClick"],[[0,"current-character"],[0,true],[0,12],[0,6],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2],[4,5]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,10]]],"children":[0,null],"explicitChildren":false},{"type":"Column","props":[2,["weight"],[[0,1]]],"children":[3,[[4,3],[4,4]]],"explicitChildren":true},{"type":"Text","props":[2,["text","style","color"],[[0,"当前角色卡"],[0,"labelSmall"],[1,3]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight","maxLines","overflow"],[[1,4],[0,"bodySmall"],[1,5],[0,"600"],[0,1],[0,"ellipsis"]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[0,"ChevronRight"],[0,20],[1,6]]],"children":[0,null],"explicitChildren":false}]}];
-
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -49,14 +46,14 @@ module.exports = __toCommonJS(index_ui_exports);
 
 // src/validation.ts
 function assertObject(value, label) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是对象`);
 }
 function assertString(value, label) {
-  if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
 }
 function requireId(value, label) {
   assertString(value, label);
-  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} \u65E0\u6548`);
+  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} 无效`);
   return value;
 }
 
@@ -373,7 +370,7 @@ function parseChatConfigurationRequest(value) {
 var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
 
 // src/definition.ts
-var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
+var definition = { id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 };
 var chatUiRoutes = {
   editor: `toolpkg:${definition.id}:ui:main`,
   selection: `toolpkg:${definition.id}:ui:selection`,
@@ -405,7 +402,7 @@ function readSelectorData(input) {
     }
     if (selected !== null) requireChatSelection(selected, cards, groups);
     const options = [];
-    if (input.kind === "card" || input.kind === "all") options.push({ key: "model:chat", token: "model:chat", kind: "model", id: "chat", title: "\u4EC5\u4F7F\u7528\u6A21\u578B", description: "\u4E0D\u4F7F\u7528\u89D2\u8272\u5361\u63D0\u793A\u8BCD\u548C\u89D2\u8272\u8BB0\u5FC6", selection: { Model: { id: "chat" } }, avatar: { type: "model" } });
+    if (input.kind === "card" || input.kind === "all") options.push({ key: "model:chat", token: "model:chat", kind: "model", id: "chat", title: "仅使用模型", description: "不使用角色卡提示词和角色记忆", selection: { Model: { id: "chat" } }, avatar: { type: "model" } });
     if (input.kind === "card" || input.kind === "all") {
       for (const card of cards) {
         let avatar;
@@ -463,18 +460,18 @@ function selectedOption(data) {
 function menuAvatar(ctx, option, unboundAvatar) {
   const props = { width: 32, height: 32, contentScale: "crop", modifier: ctx.Modifier.clip({ type: "circle" }) };
   if (option === null) {
-    if (unboundAvatar === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:22762",__operitUiPrograms_[0],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
-    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:22937",__operitUiPrograms_[1],[{ ...props, path: unboundAvatar, contentDescription: "\u672A\u7ED1\u5B9A" }]);
+    if (unboundAvatar === null) return ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center" }, ctx.UI.Icon({ name: "Person", size: 24, tint: ctx.MaterialTheme.colorScheme.onSurfaceVariant }));
+    return ctx.UI.Image({ ...props, path: unboundAvatar, contentDescription: "未绑定" });
   }
   switch (option.avatar.type) {
     case "uri":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:23093",__operitUiPrograms_[2],[{ ...props, uri: option.avatar.uri, contentDescription: option.title }]);
+      return ctx.UI.Image({ ...props, uri: option.avatar.uri, contentDescription: option.title });
     case "resource":
-      return option.avatar.path === null ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:23243",__operitUiPrograms_[3],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:23408",__operitUiPrograms_[4],[{ ...props, path: option.avatar.path, contentDescription: option.title }]);
+      return option.avatar.path === null ? ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center" }, ctx.UI.Icon({ name: "Person", size: 24, tint: ctx.MaterialTheme.colorScheme.onSurfaceVariant })) : ctx.UI.Image({ ...props, path: option.avatar.path, contentDescription: option.title });
     case "model":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:23527",__operitUiPrograms_[5],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
+      return ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center" }, ctx.UI.Icon({ name: "SmartToy", size: 24, tint: ctx.MaterialTheme.colorScheme.onSurfaceVariant }));
     case "group":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:23724",__operitUiPrograms_[6],[ctx.MaterialTheme.colorScheme.onSurfaceVariant]);
+      return ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center" }, ctx.UI.Icon({ name: "Groups", size: 24, tint: ctx.MaterialTheme.colorScheme.onSurfaceVariant }));
   }
 }
 function renderChatInputMenu(ctx) {
@@ -511,17 +508,34 @@ function renderChatInputMenu(ctx) {
     });
   }
   const colors = ctx.MaterialTheme.colorScheme;
-  if (state.error !== "") return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:25640",__operitUiPrograms_[7],[state.error,colors.error]);
-  if (state.data === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:25774",__operitUiPrograms_[8],[load,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 48 }]}])})]);
+  if (state.error !== "") return ctx.UI.Text({ text: state.error, color: colors.error, paddingHorizontal: 12, paddingVertical: 6 });
+  if (state.data === null) return ctx.UI.Box({ key: "current-character-loading", onLoad: load, modifier: ctx.Modifier.heightIn({ minHeight: 48 }), fillMaxWidth: true, contentAlignment: "center" }, ctx.UI.CircularProgressIndicator({ width: 18, height: 18 }));
   const option = selectedOption(state.data);
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-menu/index.ui.js:26053",__operitUiPrograms_[9],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 48 }]}])}),() => {
+  return ctx.UI.Row({
+    key: "current-character",
+    fillMaxWidth: true,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    verticalAlignment: "center",
+    modifier: ctx.Modifier.heightIn({ minHeight: 48 }),
+    /** Opens the registered TS selector while the host carries its real chat lifecycle guard. */
+    onClick: () => {
       assertOwner();
       return {
         type: "toolpkg.ui.present",
         routeId: chatUiRoutes.selection,
         input: { mode: "select", chatId, kind: "card", selected: option !== null && option.kind !== "group" ? option.selection : null }
       };
-    },menuAvatar(ctx, option, state.unboundAvatar),colors.onSurfaceVariant,option === null ? "\u672A\u7ED1\u5B9A" : option.title,colors.onSurface,colors.onSurfaceVariant]);
+    }
+  }, [
+    menuAvatar(ctx, option, state.unboundAvatar),
+    ctx.UI.Spacer({ width: 10 }),
+    ctx.UI.Column({ weight: 1 }, [
+      ctx.UI.Text({ text: "当前角色卡", style: "labelSmall", color: colors.onSurfaceVariant }),
+      ctx.UI.Text({ text: option === null ? "未绑定" : option.title, style: "bodySmall", color: colors.onSurface, fontWeight: "600", maxLines: 1, overflow: "ellipsis" })
+    ]),
+    ctx.UI.Icon({ name: "ChevronRight", size: 20, tint: colors.onSurfaceVariant })
+  ]);
 }
 
 // src/ui/chat-input-menu/index.ui.ts

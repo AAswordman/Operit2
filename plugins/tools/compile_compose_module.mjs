@@ -6,15 +6,6 @@ const parserInput = new URL(composeManifest.parserSource, composeRoot);
 const artifactInput = new URL(composeManifest.artifact, composeRoot);
 const compilerInput = new URL(composeManifest.compiler, composeRoot);
 
-/** Build inputs are shared with the runtime, never a second implementation of DSL lowering. */
-export const composeCompilerInputs = [
-  parserInput,
-  artifactInput,
-  compilerInput,
-  new URL(import.meta.url),
-  new URL('sources.json', composeRoot),
-  new URL('../../tools/runtime/compose_scripts.mjs', import.meta.url),
-];
 let compiler;
 /** Compiles portable JavaScript ahead of page creation; does not execute plugin code. */
 export function compileComposeModule(source, identity) {

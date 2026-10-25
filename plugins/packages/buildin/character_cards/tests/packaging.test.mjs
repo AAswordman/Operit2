@@ -92,6 +92,9 @@ test("archive includes all current nested source modules with their exact bytes"
   for (const [file, bytes] of Object.entries(await buildUiScreenScripts())) {
     assert.ok(Object.hasOwn(entries, file), "Package archive omitted executable screen: " + file);
     assert.equal(digest(entries[file]), digest(bytes), "Stale archived screen: " + file);
+    const source = Buffer.from(entries[file]).toString("utf8");
+    assert.doesNotMatch(source, /^\/\/ @operit-compose-artifact /u, "Screens must ship editable source: " + file);
+    assert.match(source, /\.UI\.[A-Za-z_$]/u, "Screens must preserve their UI declarations: " + file);
   }
   assert.equal(digest(entries["dist/main.js"]), digest(main));
   assert.equal(digest(entries["dist/tools.js"]), digest(tools));

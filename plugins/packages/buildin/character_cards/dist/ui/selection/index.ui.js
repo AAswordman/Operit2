@@ -1,7 +1,4 @@
-// @operit-compose-artifact 4
 "use strict";
-var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:37552","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:37668","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,28],[0,28],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint","contentDescription"],[[0,"Person"],[0,22],[0,"onSurfaceVariant"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:37839","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:37924","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,28],[0,28],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint","contentDescription"],[[0,"SmartToy"],[0,22],[0,"onSurfaceVariant"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:38127","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,28],[0,28],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint","contentDescription"],[[0,"Groups"],[0,22],[0,"onSurfaceVariant"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:39184","root":0,"nodes":[{"type":"Text","props":[2,["text","style","maxLines","overflow","color","fontWeight"],[[1,0],[0,"bodySmall"],[0,1],[0,"ellipsis"],[1,1],[1,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:39374","root":0,"nodes":[{"type":"Text","props":[2,["text","style","maxLines","overflow","color"],[[1,0],[0,"labelSmall"],[0,1],[0,"ellipsis"],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:39117","root":0,"nodes":[{"type":"Column","props":[2,["weight","horizontalAlignment"],[[0,1],[0,"start"]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:39588","root":0,"nodes":[{"type":"CircularProgressIndicator","props":[2,["width","height","strokeWidth"],[[0,16],[0,16],[0,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:39666","root":0,"nodes":[{"type":"Icon","props":[2,["name","size","tint","contentDescription"],[[1,0],[1,1],[1,2],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:39510","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,20],[0,20],[0,"center"]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:39937","root":0,"nodes":[{"type":"Row","props":[1,0],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:39975","root":0,"nodes":[{"type":"Row","props":[1,0],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:40707","root":0,"nodes":[{"type":"Text","props":[2,["text","style","fontWeight","weight"],[[1,0],[0,"titleSmall"],[0,"700"],[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:40823","root":0,"nodes":[{"type":"Text","props":[2,["text","style","color"],[[1,0],[0,"labelSmall"],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:40938","root":0,"nodes":[{"type":"Spacer","props":[2,["width"],[[0,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:40972","root":0,"nodes":[{"type":"IconButton","props":[2,["key","enabled","width","height","onClick"],[[0,"selector-close"],[1,0],[0,32],[0,32],[1,1]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","contentDescription"],[[0,"Close"],[0,18],[0,"关闭"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:40571","root":0,"nodes":[{"type":"Row","props":[2,["fillMaxWidth","paddingStart","paddingTop","paddingEnd","paddingBottom","verticalAlignment"],[[0,true],[0,16],[0,8],[0,8],[0,4],[0,"center"]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:41421","root":0,"nodes":[{"type":"Box","props":[2,["weight","fillMaxWidth","contentAlignment"],[[0,1],[0,true],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"CircularProgressIndicator","props":[2,["width","height","strokeWidth"],[[0,20],[0,20],[0,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:41612","root":0,"nodes":[{"type":"Text","props":[2,["key","text","color","paddingHorizontal","paddingVertical","weight"],[[0,"selector-load-error"],[1,0],[1,1],[0,16],[0,18],[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:41803","root":0,"nodes":[{"type":"Text","props":[2,["text","style","color","paddingStart","paddingTop","paddingEnd","paddingBottom","weight"],[[1,0],[0,"bodySmall"],[1,1],[0,16],[0,18],[0,16],[0,20],[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:42526","root":0,"nodes":[{"type":"HorizontalDivider","props":[2,["thickness","color"],[[0,1],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:42333","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth"],[[1,0],[0,true]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:42649","root":0,"nodes":[{"type":"LazyColumn","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:43632","root":0,"nodes":[{"type":"HorizontalDivider","props":[2,["thickness"],[[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:43743","root":0,"nodes":[{"type":"Text","props":[2,["key","text","color","style","paddingHorizontal","paddingVertical"],[[0,"selector-commit-error"],[1,0],[1,1],[0,"bodySmall"],[0,16],[0,8]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/selection/index.ui.js:b827ss:42816","root":0,"nodes":[{"type":"Dialog","props":[2,["key","containerColor","shape","closeOnDismissRequest","properties","onLoad","onDismissRequest"],[[0,"character-selection"],[0,"surfaceContainerHigh"],[2,["cornerRadius"],[[0,28]]],[0,false],[2,["usePlatformDefaultWidth","dismissOnBackPress","dismissOnClickOutside"],[[0,false],[1,0],[1,1]]],[1,2],[1,3]]],"children":[4,1],"explicitChildren":true},{"type":"Column","props":[2,["fillMaxWidth","height","modifier"],[[0,true],[0,420],[1,4]]],"children":[1,5],"explicitChildren":true}]}];
-
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -49,14 +46,14 @@ module.exports = __toCommonJS(index_ui_exports);
 
 // src/validation.ts
 function assertObject(value, label) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是对象`);
 }
 function assertString(value, label) {
-  if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
 }
 function requireId(value, label) {
   assertString(value, label);
-  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} \u65E0\u6548`);
+  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} 无效`);
   return value;
 }
 
@@ -514,7 +511,7 @@ function createScreenSession(presentation) {
 var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
 
 // src/definition.ts
-var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
+var definition = { id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 };
 var chatUiRoutes = {
   editor: `toolpkg:${definition.id}:ui:main`,
   selection: `toolpkg:${definition.id}:ui:selection`,
@@ -577,7 +574,7 @@ function createUiScreenSession(presentation) {
             }
             case "memory-attachment": {
               const complete = session.completeScreen(result);
-              completion = { ...complete, value: { type: "text", name: "\u8BB0\u5FC6\u9644\u4EF6", content: result.content, mediaType: "text/plain" } };
+              completion = { ...complete, value: { type: "text", name: "记忆附件", content: result.content, mediaType: "text/plain" } };
               break;
             }
             case "preview":
@@ -623,7 +620,7 @@ function readSelectorData(input) {
     }
     if (selected !== null) requireChatSelection(selected, cards, groups);
     const options = [];
-    if (input.kind === "card" || input.kind === "all") options.push({ key: "model:chat", token: "model:chat", kind: "model", id: "chat", title: "\u4EC5\u4F7F\u7528\u6A21\u578B", description: "\u4E0D\u4F7F\u7528\u89D2\u8272\u5361\u63D0\u793A\u8BCD\u548C\u89D2\u8272\u8BB0\u5FC6", selection: { Model: { id: "chat" } }, avatar: { type: "model" } });
+    if (input.kind === "card" || input.kind === "all") options.push({ key: "model:chat", token: "model:chat", kind: "model", id: "chat", title: "仅使用模型", description: "不使用角色卡提示词和角色记忆", selection: { Model: { id: "chat" } }, avatar: { type: "model" } });
     if (input.kind === "card" || input.kind === "all") {
       for (const card of cards) {
         let avatar;
@@ -751,13 +748,13 @@ function selectorAvatar(ctx, option) {
   const props = { width: 28, height: 28, contentScale: "crop", contentDescription: option.title, modifier: ctx.Modifier.clip({ type: "circle" }) };
   switch (option.avatar.type) {
     case "uri":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:37552",__operitUiPrograms_[0],[{ ...props, uri: option.avatar.uri }]);
+      return ctx.UI.Image({ ...props, uri: option.avatar.uri });
     case "resource":
-      return option.avatar.path === null ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:37668",__operitUiPrograms_[1],[option.title]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:37839",__operitUiPrograms_[2],[{ ...props, path: option.avatar.path }]);
+      return option.avatar.path === null ? ctx.UI.Box({ width: 28, height: 28, contentAlignment: "center" }, ctx.UI.Icon({ name: "Person", size: 22, tint: "onSurfaceVariant", contentDescription: option.title })) : ctx.UI.Image({ ...props, path: option.avatar.path });
     case "model":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:37924",__operitUiPrograms_[3],[option.title]);
+      return ctx.UI.Box({ width: 28, height: 28, contentAlignment: "center" }, ctx.UI.Icon({ name: "SmartToy", size: 22, tint: "onSurfaceVariant", contentDescription: option.title }));
     case "group":
-      return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:38127",__operitUiPrograms_[4],[option.title]);
+      return ctx.UI.Box({ width: 28, height: 28, contentAlignment: "center" }, ctx.UI.Icon({ name: "Groups", size: 22, tint: "onSurfaceVariant", contentDescription: option.title }));
   }
 }
 function selectorRow(ctx, option, state, controller) {
@@ -769,51 +766,68 @@ function selectorRow(ctx, option, state, controller) {
   const props = { key: option.key, fillMaxWidth: true, paddingStart: 10, paddingTop: 7, paddingEnd: 8, paddingBottom: 7, verticalAlignment: "center", spacing: 8 };
   const contents = [
     selectorAvatar(ctx, option),
-    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:39117",__operitUiPrograms_[7],[[
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:39184",__operitUiPrograms_[5],[option.title,titleColor,active ? "700" : "600"]),
-      ...option.description === "" ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:39374",__operitUiPrograms_[6],[option.description,descriptionColor])]
-    ]]),
-    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:39510",__operitUiPrograms_[10],[switching ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:39588",__operitUiPrograms_[8],[]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:39666",__operitUiPrograms_[9],[active ? "Check" : "CircleOutlined",active ? 18 : 16,active ? colors.primary : colors.onSurfaceVariant.copy({ alpha: 0.45 }),active ? "\u5F53\u524D\u9009\u4E2D" : "\u672A\u9009\u4E2D"])])
+    ctx.UI.Column({ weight: 1, horizontalAlignment: "start" }, [
+      ctx.UI.Text({ text: option.title, style: "bodySmall", maxLines: 1, overflow: "ellipsis", color: titleColor, fontWeight: active ? "700" : "600" }),
+      ...option.description === "" ? [] : [ctx.UI.Text({ text: option.description, style: "labelSmall", maxLines: 1, overflow: "ellipsis", color: descriptionColor })]
+    ]),
+    ctx.UI.Box({ width: 20, height: 20, contentAlignment: "center" }, switching ? ctx.UI.CircularProgressIndicator({ width: 16, height: 16, strokeWidth: 2 }) : ctx.UI.Icon({ name: active ? "Check" : "CircleOutlined", size: active ? 18 : 16, tint: active ? colors.primary : colors.onSurfaceVariant.copy({ alpha: 0.45 }), contentDescription: active ? "当前选中" : "未选中" }))
   ];
-  if (!enabled) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:39937",__operitUiPrograms_[11],[props,contents]);
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:39975",__operitUiPrograms_[12],[{
+  if (!enabled) return ctx.UI.Row(props, contents);
+  return ctx.UI.Row({
     ...props,
     /** Returns the real commit result to the existing generic Compose action channel without a synthetic receiver. */
     onClick: () => __async(null, null, function* () {
       return selectorResultJson(yield controller.select(option.key));
     })
-  },contents]);
+  }, contents);
 }
 function selectorView(ctx, input, state, controller) {
-  const title = input.kind === "card" ? "\u5207\u6362\u89D2\u8272\u5361" : input.kind === "group" ? "\u5207\u6362\u7FA4\u7EC4" : "\u5207\u6362\u89D2\u8272\u5361\u6216\u7FA4\u7EC4";
+  const title = input.kind === "card" ? "切换角色卡" : input.kind === "group" ? "切换群组" : "切换角色卡或群组";
   const colors = ctx.MaterialTheme.colorScheme;
-  const header = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:40571",__operitUiPrograms_[17],[[
-    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:40707",__operitUiPrograms_[13],[title]),
-    ...state.data === null ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:40823",__operitUiPrograms_[14],[state.data.options.length + " \u4E2A",colors.onSurfaceVariant]), OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:40938",__operitUiPrograms_[15],[])],
-    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:40972",__operitUiPrograms_[16],[state.switchingKey === null && !state.finished,() => selectorResultJson(controller.cancel())])
-  ]]);
+  const header = ctx.UI.Row({ fillMaxWidth: true, paddingStart: 16, paddingTop: 8, paddingEnd: 8, paddingBottom: 4, verticalAlignment: "center" }, [
+    ctx.UI.Text({ text: title, style: "titleSmall", fontWeight: "700", weight: 1 }),
+    ...state.data === null ? [] : [ctx.UI.Text({ text: state.data.options.length + " 个", style: "labelSmall", color: colors.onSurfaceVariant }), ctx.UI.Spacer({ width: 2 })],
+    ctx.UI.IconButton({
+      key: "selector-close",
+      enabled: state.switchingKey === null && !state.finished,
+      width: 32,
+      height: 32,
+      /** Emits the explicit cancellation discriminator, not a route pop that bypasses the plugin session. */
+      onClick: () => selectorResultJson(controller.cancel())
+    }, ctx.UI.Icon({ name: "Close", size: 18, contentDescription: "关闭" }))
+  ]);
   let body;
-  if (state.loading) body = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:41421",__operitUiPrograms_[18],[]);
-  else if (state.data === null) body = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:41612",__operitUiPrograms_[19],[state.error,colors.error]);
-  else if (state.data.options.length === 0) body = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:41803",__operitUiPrograms_[20],[input.kind === "group" ? "\u6682\u65E0\u7FA4\u7EC4" : "\u6682\u65E0\u89D2\u8272\u5361",colors.onSurfaceVariant]);
+  if (state.loading) body = ctx.UI.Box({ weight: 1, fillMaxWidth: true, contentAlignment: "center" }, ctx.UI.CircularProgressIndicator({ width: 20, height: 20, strokeWidth: 2 }));
+  else if (state.data === null) body = ctx.UI.Text({ key: "selector-load-error", text: state.error, color: colors.error, paddingHorizontal: 16, paddingVertical: 18, weight: 1 });
+  else if (state.data.options.length === 0) body = ctx.UI.Text({ text: input.kind === "group" ? "暂无群组" : "暂无角色卡", style: "bodySmall", color: colors.onSurfaceVariant, paddingStart: 16, paddingTop: 18, paddingEnd: 16, paddingBottom: 20, weight: 1 });
   else {
     const options = state.data.options;
     const items = ctx.lazyItems(
       { key: "selector-records", itemCount: options.length, itemExtent: 56, initialItemCount: 24 },
       /** Builds one keyed row only when it enters the materialized viewport window. */
-      (index) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:42333",__operitUiPrograms_[22],["selector-item:" + options[index].key,[
+      (index) => ctx.UI.Column({ key: "selector-item:" + options[index].key, fillMaxWidth: true }, [
         selectorRow(ctx, options[index], state, controller),
-        ...index + 1 === options.length ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:42526",__operitUiPrograms_[21],[colors.outlineVariant.copy({ alpha: 0.45 })])]
-      ]])
+        ...index + 1 === options.length ? [] : [ctx.UI.HorizontalDivider({ thickness: 1, color: colors.outlineVariant.copy({ alpha: 0.45 }) })]
+      ])
     );
-    body = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:42649",__operitUiPrograms_[23],[{ key: "selector-records", weight: 1, fillMaxWidth: true, paddingStart: 8, paddingTop: 4, paddingEnd: 8, paddingBottom: 8, ...items }]);
+    body = ctx.UI.LazyColumn({ key: "selector-records", weight: 1, fillMaxWidth: true, paddingStart: 8, paddingTop: 4, paddingEnd: 8, paddingBottom: 8, ...items });
   }
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:42816",__operitUiPrograms_[26],[state.switchingKey === null,state.switchingKey === null,() => controller.load(),() => selectorResultJson(controller.cancel()),({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"widthIn",args:[{ maxWidth: 360 }]}]).concat([{name:"heightIn",args:[{ minHeight: 420, maxHeight: 420 }]}])}),[
+  return ctx.UI.Dialog({
+    key: "character-selection",
+    containerColor: "surfaceContainerHigh",
+    shape: { cornerRadius: 28 },
+    closeOnDismissRequest: false,
+    properties: { usePlatformDefaultWidth: false, dismissOnBackPress: state.switchingKey === null, dismissOnClickOutside: state.switchingKey === null },
+    /** Loads once through the main domain IPC; a rerender cannot initialize another store or retry a failed read. */
+    onLoad: () => controller.load(),
+    /** Returns explicit V1 cancellation for host dismissal rather than changing a global active selection. */
+    onDismissRequest: () => selectorResultJson(controller.cancel())
+  }, ctx.UI.Column({ fillMaxWidth: true, height: 420, modifier: ctx.Modifier.widthIn({ maxWidth: 360 }).heightIn({ minHeight: 420, maxHeight: 420 }) }, [
     header,
-    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:43632",__operitUiPrograms_[24],[]),
+    ctx.UI.HorizontalDivider({ thickness: 1 }),
     body,
-    ...state.error === "" || state.data === null ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/selection/index.ui.js:43743",__operitUiPrograms_[25],[state.error,colors.error])]
-  ]]);
+    ...state.error === "" || state.data === null ? [] : [ctx.UI.Text({ key: "selector-commit-error", text: state.error, color: colors.error, style: "bodySmall", paddingHorizontal: 16, paddingVertical: 8 })]
+  ]));
 }
 function renderSelectionScreen(ctx) {
   const [presentation] = ctx.useState("presentation", null);

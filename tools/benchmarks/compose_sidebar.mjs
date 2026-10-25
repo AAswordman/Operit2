@@ -18,7 +18,7 @@ if (!Number.isInteger(count) || count < 1) throw new RangeError('Row count must 
 const manifest = archive ? JSON.parse(readFileSync(resolve(archive,'sources.json'),'utf8')) : composeManifest;
 /** Reads one selected SDK version without mixing execution engines. */
 function sdk(name) { return archive ? readFileSync(resolve(archive,name),'utf8') : composeSource(name); }
-const scripts = await buildUiScreenScripts({precompile:false});
+const scripts = await buildUiScreenScripts();
 const raw = Buffer.from(scripts['dist/ui/chat-sidebar/index.ui.js']).toString('utf8');
 const compiler = vm.createContext({});
 const parser = sdk(manifest.parser).replace('__OPERIT_COMPOSE_PARSER_SOURCE__', () => 'function(){return '+JSON.stringify(readFileSync(new URL(composeManifest.parserSource,composeRoot),'utf8'))+';}');

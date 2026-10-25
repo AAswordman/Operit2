@@ -1,7 +1,4 @@
-// @operit-compose-artifact 4
 "use strict";
-var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:26586","root":0,"nodes":[{"type":"Icon","props":[2,["name","size","tint"],[[1,0],[0,16],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:26708","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[1,0],[0,true],[0,12],[0,"center"],[1,1],[1,2]]],"children":[3,[[1,3],[4,1],[4,2],[4,3],[4,4],[4,5]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","maxLines","overflow","weight"],[[1,4],[0,"bodySmall"],[1,5],[0,1],[0,"ellipsis"],[0,1]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight"],[[1,6],[0,"bodySmall"],[1,7],[0,"600"]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false},{"type":"Switch","props":[2,["checked","width","height","onCheckedChange"],[[1,8],[0,40],[0,28],[1,9]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:27478","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier"],[[0,"memory-recallLimit"],[0,true],[0,12],[0,"center"],[1,0]]],"children":[3,[[1,1],[4,1],[4,2],[4,3],[4,4]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","maxLines","overflow","weight"],[[1,2],[0,"bodySmall"],[1,3],[0,1],[0,"ellipsis"],[0,1]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false},{"type":"TextField","props":[2,["key","value","singleLine","placeholder","onValueChange","style","decoration","modifier"],[[0,"memory-recall-limit-input"],[1,4],[0,true],[1,5],[1,6],[2,["fontSize"],[[0,13]]],[2,["isDense","contentPadding"],[[0,true],[2,["vertical"],[[0,8]]]]],[1,7]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:28325","root":0,"nodes":[{"type":"Box","props":[2,["key"],[[0,"memory-menu-unavailable"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:28408","root":0,"nodes":[{"type":"Box","props":[2,["key","onLoad"],[[0,"memory-menu-loading"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:28486","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","verticalAlignment","modifier","onClick"],[[0,"memory-section-header"],[0,true],[0,12],[0,"center"],[1,0],[1,1]]],"children":[3,[[1,2],[4,1],[4,2],[4,3],[4,4],[4,5],[4,7],[4,8]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style"],[[0,"记忆"],[0,"bodySmall"]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color","fontWeight","textAlign","maxLines","overflow","weight"],[[1,3],[0,"bodySmall"],[1,4],[0,"600"],[0,"end"],[0,1],[0,"ellipsis"],[0,1]]],"children":[0,null],"explicitChildren":false},{"type":"IconButton","props":[2,["key","tooltip","width","height","contentPadding","onClick","content"],[[0,"memory-info"],[0,"记忆状态说明"],[0,24],[0,28],[2,["horizontal","vertical"],[[0,0],[0,0]]],[1,5],[4,6]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[0,"InfoOutline"],[0,16],[1,6]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["width"],[[0,6]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[1,7],[0,20],[1,8]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:30452","root":0,"nodes":[{"type":"Row","props":[1,0],"children":[3,[[1,1],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,2],[0,"bodySmall"],[0,2],[0,"ellipsis"],[0,1],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:31307","root":0,"nodes":[{"type":"Row","props":[1,0],"children":[3,[[1,1],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,2],[0,"bodySmall"],[0,1],[0,"ellipsis"],[0,1],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:32020","root":0,"nodes":[{"type":"Row","props":[1,0],"children":[3,[[1,1],[4,1],[4,2]]],"explicitChildren":true},{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","maxLines","overflow","weight","color"],[[1,2],[0,"bodySmall"],[0,1],[0,"ellipsis"],[0,1],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:32763","root":0,"nodes":[{"type":"Column","props":[2,["key","modifier"],[[0,"memory-section-children"],[1,0]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:1i7egtb:32890","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth"],[[0,"memory-section"],[0,true]]],"children":[1,0],"explicitChildren":true}]}];
-
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -49,14 +46,14 @@ module.exports = __toCommonJS(index_ui_exports);
 
 // src/validation.ts
 function assertObject(value, label) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是对象`);
 }
 function assertString(value, label) {
-  if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
 }
 function requireId(value, label) {
   assertString(value, label);
-  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} \u65E0\u6548`);
+  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} 无效`);
   return value;
 }
 
@@ -359,7 +356,7 @@ var MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 50 };
 var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
 
 // src/definition.ts
-var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
+var definition = { id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 };
 var chatUiRoutes = {
   editor: `toolpkg:${definition.id}:ui:main`,
   selection: `toolpkg:${definition.id}:ui:selection`,
@@ -381,16 +378,16 @@ function request(input) {
   return ToolPkg.ipc.call("character-memory.request", input, { targetRuntime: "main" });
 }
 function memorySummary(preferences) {
-  if (preferences.userDescriptionEnabled) return preferences.autoUpdateEnabled ? "\u7528\u6237\u8D44\u6599 \xB7 \u8BB0\u5FC6\u5E93\u66F4\u65B0" : "\u7528\u6237\u8D44\u6599";
-  return preferences.autoUpdateEnabled ? "\u8BB0\u5FC6\u5E93\u66F4\u65B0" : "\u5173";
+  if (preferences.userDescriptionEnabled) return preferences.autoUpdateEnabled ? "用户资料 · 记忆库更新" : "用户资料";
+  return preferences.autoUpdateEnabled ? "记忆库更新" : "关";
 }
 function memoryQueueDescription(queue) {
-  if (queue === null) return "\u6682\u65E0\u961F\u5217\u72B6\u6001\u3002\u81EA\u52A8\u63D0\u53D6\u4F1A\u5B9A\u671F\u68C0\u67E5\u5F53\u524D\u8BB0\u5FC6\u5E93\u3002";
-  return `\u5F85\u5904\u7406 ${queue.pendingCandidates} \u6761 \xB7 ${queue.pendingChats} \u4E2A\u804A\u5929
-\u5904\u7406\u4E2D ${queue.processingCandidates} \xB7 \u5931\u8D25 ${queue.failedCandidates}
-\u4E0B\u6B21\u68C0\u67E5\uFF1A\u7EA6 ${queue.minutesUntilNextRun} \u5206\u949F\u540E
+  if (queue === null) return "暂无队列状态。自动提取会定期检查当前记忆库。";
+  return `待处理 ${queue.pendingCandidates} 条 · ${queue.pendingChats} 个聊天
+处理中 ${queue.processingCandidates} · 失败 ${queue.failedCandidates}
+下次检查：约 ${queue.minutesUntilNextRun} 分钟后
 
-\u81EA\u52A8\u68C0\u67E5\u9700\u8981\u81F3\u5C11 5 \u4E2A\u5019\u9009\uFF1B\u4E0D\u8DB3\u65F6\u7EE7\u7EED\u7B49\u5F85\u3002\u624B\u52A8\u66F4\u65B0\u4E0D\u53D7\u6B64\u95E8\u69DB\u9650\u5236\u3002` + (queue.lastError === "" ? "" : "\n\n" + queue.lastError);
+自动检查需要至少 5 个候选；不足时继续等待。手动更新不受此门槛限制。` + (queue.lastError === "" ? "" : "\n\n" + queue.lastError);
 }
 function renderMemoryMenu(ctx) {
   const [chatId] = ctx.useState("chatId", null);
@@ -507,10 +504,10 @@ function renderMemoryMenu(ctx) {
         yield request({ action: "updateCurrentChatMemory", chatId });
         assertOwner();
         yield refreshQueue();
-        return { type: "toolpkg.ui.message", message: "\u8BB0\u5FC6\u63D0\u53D6\u5B8C\u6210" };
+        return { type: "toolpkg.ui.message", message: "记忆提取完成" };
       } catch (error) {
         assertOwner();
-        return { type: "toolpkg.ui.message", message: "\u8BB0\u5FC6\u63D0\u53D6\u5931\u8D25\uFF1A" + String(error) };
+        return { type: "toolpkg.ui.message", message: "记忆提取失败：" + String(error) };
       } finally {
         liveBusy.current = false;
         assertOwner();
@@ -528,10 +525,10 @@ function renderMemoryMenu(ctx) {
         const result = yield request({ action: "retryFailedCandidates", chatId });
         assertOwner();
         yield refreshQueue();
-        return { type: "toolpkg.ui.message", message: "\u5DF2\u91CD\u65B0\u6392\u961F " + result.retried + " \u6761\u5931\u8D25\u5019\u9009" };
+        return { type: "toolpkg.ui.message", message: "已重新排队 " + result.retried + " 条失败候选" };
       } catch (error) {
         assertOwner();
-        return { type: "toolpkg.ui.message", message: "\u91CD\u8BD5\u5931\u8D25\u5019\u9009\u5931\u8D25\uFF1A" + String(error) };
+        return { type: "toolpkg.ui.message", message: "重试失败候选失败：" + String(error) };
       } finally {
         liveBusy.current = false;
         assertOwner();
@@ -549,10 +546,10 @@ function renderMemoryMenu(ctx) {
         const result = yield request({ action: "clearFailedCandidates", chatId });
         assertOwner();
         yield refreshQueue();
-        return { type: "toolpkg.ui.message", message: "\u5DF2\u6E05\u9664 " + result.cleared + " \u6761\u5931\u8D25\u8BB0\u5F55" };
+        return { type: "toolpkg.ui.message", message: "已清除 " + result.cleared + " 条失败记录" };
       } catch (error) {
         assertOwner();
-        return { type: "toolpkg.ui.message", message: "\u6E05\u9664\u5931\u8D25\u8BB0\u5F55\u5931\u8D25\uFF1A" + String(error) };
+        return { type: "toolpkg.ui.message", message: "清除失败记录失败：" + String(error) };
       } finally {
         liveBusy.current = false;
         assertOwner();
@@ -561,60 +558,152 @@ function renderMemoryMenu(ctx) {
     });
   }
   function icon(name, color = colors.onSurfaceVariant) {
-    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:26586",__operitUiPrograms_[0],[name,color]);
+    return ctx.UI.Icon({ name, size: 16, tint: color });
   }
   function switchRow(key, name, title, checked, toggleRow) {
-    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:26708",__operitUiPrograms_[1],["memory-" + key,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),() => toggleRow(),icon(name, checked ? colors.primary : colors.onSurfaceVariant),title,colors.onSurface,checked ? "\u5F00" : "\u5173",colors.primary,checked,() => toggleRow()]);
+    return ctx.UI.Row({
+      key: "memory-" + key,
+      fillMaxWidth: true,
+      paddingHorizontal: 12,
+      verticalAlignment: "center",
+      modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
+      onClick: () => toggleRow()
+    }, [
+      icon(name, checked ? colors.primary : colors.onSurfaceVariant),
+      ctx.UI.Spacer({ width: 12 }),
+      ctx.UI.Text({ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }),
+      ctx.UI.Text({ text: checked ? "开" : "关", style: "bodySmall", color: colors.primary, fontWeight: "600" }),
+      ctx.UI.Spacer({ width: 8 }),
+      ctx.UI.Switch({ checked, width: 40, height: 28, onCheckedChange: () => toggleRow() })
+    ]);
   }
   function limitInputRow(title) {
-    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:27478",__operitUiPrograms_[2],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 32 }]}])}),icon("Tune"),title,colors.onSurface,limitInput,"1-" + MEMORY_RECALL_LIMIT_RANGE.max,changeRecallLimitInput,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"width",args:[72]}])})]);
+    return ctx.UI.Row({
+      key: "memory-recallLimit",
+      fillMaxWidth: true,
+      paddingHorizontal: 12,
+      verticalAlignment: "center",
+      modifier: ctx.Modifier.heightIn({ minHeight: 32 })
+    }, [
+      icon("Tune"),
+      ctx.UI.Spacer({ width: 12 }),
+      ctx.UI.Text({ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }),
+      ctx.UI.Spacer({ width: 8 }),
+      ctx.UI.TextField({
+        key: "memory-recall-limit-input",
+        value: limitInput,
+        singleLine: true,
+        placeholder: "1-" + MEMORY_RECALL_LIMIT_RANGE.max,
+        onValueChange: changeRecallLimitInput,
+        style: { fontSize: 13 },
+        decoration: { isDense: true, contentPadding: { vertical: 8 } },
+        modifier: ctx.Modifier.width(72)
+      })
+    ]);
   }
-  if (available === false) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:28325",__operitUiPrograms_[3],[]);
-  if (preferences === null) return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:28408",__operitUiPrograms_[4],[load]);
-  const children = [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:28486",__operitUiPrograms_[5],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 36 }]}])}),() => {
+  if (available === false) return ctx.UI.Box({ key: "memory-menu-unavailable" });
+  if (preferences === null) return ctx.UI.Box({ key: "memory-menu-loading", onLoad: load });
+  const children = [ctx.UI.Row({
+    key: "memory-section-header",
+    fillMaxWidth: true,
+    paddingHorizontal: 12,
+    verticalAlignment: "center",
+    modifier: ctx.Modifier.heightIn({ minHeight: 36 }),
+    onClick: () => {
       assertOwner();
       setExpanded(!expanded);
-    },icon("DataObjectOutlined", colors.onSurfaceVariant.copy({ alpha: 0.7 })),memorySummary(preferences),colors.primary,showInfo,colors.onSurfaceVariant.copy({ alpha: 0.7 }),expanded ? "KeyboardArrowUp" : "KeyboardArrowDown",colors.onSurfaceVariant])];
+    }
+  }, [
+    icon("DataObjectOutlined", colors.onSurfaceVariant.copy({ alpha: 0.7 })),
+    ctx.UI.Spacer({ width: 12 }),
+    ctx.UI.Text({ text: "记忆", style: "bodySmall" }),
+    ctx.UI.Spacer({ width: 8 }),
+    ctx.UI.Text({ text: memorySummary(preferences), style: "bodySmall", color: colors.primary, fontWeight: "600", textAlign: "end", maxLines: 1, overflow: "ellipsis", weight: 1 }),
+    ctx.UI.IconButton({
+      key: "memory-info",
+      tooltip: "记忆状态说明",
+      width: 24,
+      height: 28,
+      contentPadding: { horizontal: 0, vertical: 0 },
+      onClick: showInfo,
+      content: ctx.UI.Icon({ name: "InfoOutline", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.7 }) })
+    }),
+    ctx.UI.Spacer({ width: 6 }),
+    ctx.UI.Icon({ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 20, tint: colors.onSurfaceVariant })
+  ])];
   if (expanded) {
     const sectionChildren = [
-      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "\u63D0\u4F9B\u7528\u6237\u8D44\u6599", preferences.userDescriptionEnabled, () => toggle("userDescriptionEnabled")),
-      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93", preferences.autoUpdateEnabled, () => toggle("autoUpdateEnabled")),
-      switchRow("memoryRecall", "AutoAwesome", "\u81EA\u52A8\u68C0\u7D22\u6CE8\u5165\u8BB0\u5FC6", recall !== null && recall.enabled, toggleRecall),
-      limitInputRow("\u8BB0\u5FC6\u6CE8\u5165\u6761\u6570"),
-      switchRow("memoryRecallRepeat", "Repeat", "\u5141\u8BB8\u91CD\u590D\u547D\u4E2D", recall !== null && recall.allowRepeated, toggleRecallRepeat),
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:30452",__operitUiPrograms_[6],[{
+      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料", preferences.userDescriptionEnabled, () => toggle("userDescriptionEnabled")),
+      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库", preferences.autoUpdateEnabled, () => toggle("autoUpdateEnabled")),
+      switchRow("memoryRecall", "AutoAwesome", "自动检索注入记忆", recall !== null && recall.enabled, toggleRecall),
+      limitInputRow("记忆注入条数"),
+      switchRow("memoryRecallRepeat", "Repeat", "允许重复命中", recall !== null && recall.allowRepeated, toggleRecallRepeat),
+      ctx.UI.Row({
         key: "memory-manual",
         fillMaxWidth: true,
         paddingHorizontal: 12,
         verticalAlignment: "center",
         modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
         ...!busy && chatId !== null ? { onClick: manual } : {}
-      },icon("SaveOutlined"),busy ? "\u6B63\u5728\u66F4\u65B0\u8BB0\u5FC6\u2026" : "\u624B\u52A8\u66F4\u65B0\u8BB0\u5FC6",!busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })])
+      }, [
+        icon("SaveOutlined"),
+        ctx.UI.Spacer({ width: 12 }),
+        ctx.UI.Text({
+          text: busy ? "正在更新记忆…" : "手动更新记忆",
+          style: "bodySmall",
+          maxLines: 2,
+          overflow: "ellipsis",
+          weight: 1,
+          color: !busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })
+        })
+      ])
     ];
     if (queue !== null && queue.failedCandidates > 0) {
       const enabled = !busy && chatId !== null;
       sectionChildren.push(
-        OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:31307",__operitUiPrograms_[7],[{
+        ctx.UI.Row({
           key: "memory-retry-failed",
           fillMaxWidth: true,
           paddingHorizontal: 12,
           verticalAlignment: "center",
           modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
           ...enabled ? { onClick: retryFailed } : {}
-        },icon("Refresh"),"\u91CD\u8BD5\u5931\u8D25\u5019\u9009\uFF08" + queue.failedCandidates + "\uFF09",enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })]),
-        OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:32020",__operitUiPrograms_[8],[{
+        }, [
+          icon("Refresh"),
+          ctx.UI.Spacer({ width: 12 }),
+          ctx.UI.Text({
+            text: "重试失败候选（" + queue.failedCandidates + "）",
+            style: "bodySmall",
+            maxLines: 1,
+            overflow: "ellipsis",
+            weight: 1,
+            color: enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })
+          })
+        ]),
+        ctx.UI.Row({
           key: "memory-clear-failed",
           fillMaxWidth: true,
           paddingHorizontal: 12,
           verticalAlignment: "center",
           modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
           ...enabled ? { onClick: clearFailed } : {}
-        },icon("DeleteOutline"),"\u6E05\u9664\u5931\u8D25\u8BB0\u5F55\uFF08" + queue.failedCandidates + "\uFF09",enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })])
+        }, [
+          icon("DeleteOutline"),
+          ctx.UI.Spacer({ width: 12 }),
+          ctx.UI.Text({
+            text: "清除失败记录（" + queue.failedCandidates + "）",
+            style: "bodySmall",
+            maxLines: 1,
+            overflow: "ellipsis",
+            weight: 1,
+            color: enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })
+          })
+        ])
       );
     }
-    children.push(OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:32763",__operitUiPrograms_[9],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"padding",args:[12,0,8,4]}])}),sectionChildren]));
+    children.push(ctx.UI.Column({ key: "memory-section-children", modifier: ctx.Modifier.padding(12, 0, 8, 4) }, sectionChildren));
   }
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:32890",__operitUiPrograms_[10],[children]);
+  return ctx.UI.Column({ key: "memory-section", fillMaxWidth: true }, children);
 }
 
 // src/ui/chat-input-memory/index.ui.ts

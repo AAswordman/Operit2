@@ -604,7 +604,7 @@ if (loginButton) {
 
 ## 8. 编译与打包
 
-按第 2 节的项目配置将 TypeScript 输出为 CommonJS JavaScript。单文件包保留元数据与导出函数；ToolPkg 根据 manifest 收集入口、子包、UI、资源和源码。
+按第 2 节的项目配置将 TypeScript 输出为可读的 CommonJS JavaScript。单文件包保留元数据与导出函数；ToolPkg 根据 manifest 收集入口、子包、UI、资源和源码。Compose UI 的交付 JS 保留 `ctx.UI.*` 声明与回调，由运行时完成 Compose 编译和缓存。用户可以直接编辑清单指向的 JS，再按更新流程打包和导入；无需生成 Compose 内部预编译产物。
 
 `Tools.Files.zip(sourceVfsPath, artifactVfsPath, false)` 可以生成不含外层目录的 ToolPkg 归档。成品放在源码目录之外，扩展名为 `.toolpkg`，manifest 位于归档根目录。打包细节见 [ToolPkg 格式指南](./TOOLPKG_FORMAT_GUIDE.md)。
 

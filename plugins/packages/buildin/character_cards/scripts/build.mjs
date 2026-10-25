@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkProject } from "./check.mjs";
-import { compileComposeModule, composeCompilerInputs } from "../../../../tools/compile_compose_module.mjs";
 const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
 const { build } = require("esbuild");
 const { zipSync } = require("fflate");
@@ -45,20 +44,16 @@ export async function buildMainScript() {
   return result.outputFiles[0].contents;
 }
 
-/** Keeps each screen's module identity intact for the path-only native registration bridge. */
-export async function buildUiScreenScripts({ precompile = true } = {}) {
+/** Ships readable CommonJS screens for user editing and runtime-owned Compose compilation. */
+export async function buildUiScreenScripts() {
   const entries = (await sourceFiles("src/ui")).filter(file => file.endsWith(".ui.ts"));
   if (entries.length !== 9) throw new Error("Character cards must build its nine independently registered Compose screens");
   const scripts = {};
   for (const entry of entries) {
-    const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, entry)], bundle: true, format: "cjs", platform: "neutral", target: "es2020", supported: { "async-await": false }, write: false });
+    const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, entry)], bundle: true, format: "cjs", platform: "neutral", target: "es2020", charset: "utf8", supported: { "async-await": false }, write: false });
     if (result.outputFiles.length !== 1) throw new Error("A Compose screen must produce exactly one module: " + entry);
     const output = entry.replace(/^src\//, "dist/").replace(/\.ts$/, ".js");
-    // The source-only option is for side-by-side compiler measurements. Packages
-    // always use the default executable artifact path.
-    scripts[output] = precompile
-      ? new TextEncoder().encode(compileComposeModule(result.outputFiles[0].text, "com.operit.character_cards:" + output))
-      : result.outputFiles[0].contents;
+    scripts[output] = result.outputFiles[0].contents;
   }
   return scripts;
 }
@@ -126,7 +121,6 @@ export async function captureBuildInputs() {
   const files = ["manifest.json", "README.md", "tsconfig.json", "tsconfig.web.json", ...await sourceFiles("scripts"), ...await sourceFiles("src"), ...await sourceFiles("web"), ...await staticResourcePaths()];
   const inputs = new Map();
   for (const file of files.sort()) inputs.set(file, createHash("sha256").update(await readFile(path.join(root, file))).digest("hex"));
-  for (const file of composeCompilerInputs) inputs.set(file.href, createHash("sha256").update(await readFile(file)).digest("hex"));
   return inputs;
 }
 

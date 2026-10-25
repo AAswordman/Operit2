@@ -1,7 +1,4 @@
-// @operit-compose-artifact 4
 "use strict";
-var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:35375","root":0,"nodes":[{"type":"SelectionContainer","props":[2,["key"],[[1,0]]],"children":[4,1],"explicitChildren":true},{"type":"Text","props":[2,["text","fillMaxWidth","style","color"],[[1,1],[0,true],[0,"bodyMedium"],[1,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:35574","root":0,"nodes":[{"type":"Box","props":[2,["key","paddingHorizontal","paddingVertical","backgroundColor","backgroundShape"],[[1,0],[0,10],[0,5],[1,1],[2,["cornerRadius"],[[0,8]]]]],"children":[4,1],"explicitChildren":true},{"type":"Text","props":[2,["text","style","color"],[[1,2],[0,"labelMedium"],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:36187","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment","backgroundColor","backgroundShape"],[[0,72],[0,72],[0,"center"],[1,0],[2,["cornerRadius"],[[0,20]]]]],"children":[4,1],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"GroupsOutlined"],[0,34],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:36431","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:36806","root":0,"nodes":[{"type":"Text","props":[2,["key","text","style","fontSize","fontWeight","fillMaxWidth"],[[0,"entity-preview-name"],[1,0],[0,"headlineSmall"],[0,24],[0,"700"],[0,true]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:36975","root":0,"nodes":[{"type":"Text","props":[2,["text","style","color"],[[1,0],[0,"labelMedium"],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:36086","root":0,"nodes":[{"type":"Row","props":[2,["fillMaxWidth","spacing","verticalAlignment"],[[0,true],[0,16],[0,"center"]]],"children":[3,[[1,0],[4,1]]],"explicitChildren":true},{"type":"Column","props":[2,["weight","spacing"],[[0,1],[0,6]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:37284","root":0,"nodes":[{"type":"FlowRow","props":[2,["key","spacing","runSpacing"],[[0,"entity-preview-tags"],[0,6],[0,6]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:35978","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth","spacing","paddingBottom"],[[0,"entity-preview-identity"],[0,true],[0,14],[0,22]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:37960","root":0,"nodes":[{"type":"Icon","props":[2,["name","size","tint"],[[0,"FormatQuote"],[0,20],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:38046","root":0,"nodes":[{"type":"Text","props":[2,["text","style","fontWeight","color","weight"],[[1,0],[0,"titleSmall"],[0,"600"],[1,1],[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:37536","root":0,"nodes":[{"type":"Box","props":[2,["key","fillMaxWidth","paddingBottom"],[[1,0],[0,true],[0,22]]],"children":[4,1],"explicitChildren":true},{"type":"Column","props":[1,1],"children":[3,[[4,2],[1,3]]],"explicitChildren":true},{"type":"Row","props":[2,["fillMaxWidth","spacing","verticalAlignment"],[[0,true],[0,8],[0,"center"]]],"children":[1,2],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:41694","root":0,"nodes":[{"type":"Text","props":[2,["text","style","fontWeight","color"],[[0,"组内角色"],[0,"titleSmall"],[0,"600"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:41850","root":0,"nodes":[{"type":"Text","props":[2,["text","style","color"],[[0,"暂未添加角色"],[0,"bodyMedium"],[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:42752","root":0,"nodes":[{"type":"Text","props":[2,["text","style","fontWeight","fillMaxWidth"],[[1,0],[0,"titleSmall"],[0,"600"],[0,true]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:42932","root":0,"nodes":[{"type":"Text","props":[2,["text","style","color","fillMaxWidth"],[[1,0],[0,"bodySmall"],[1,1],[0,true]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:42117","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingVertical","spacing","verticalAlignment"],[[1,0],[0,true],[0,10],[0,12],[0,"center"]]],"children":[3,[[4,1],[4,2],[4,3]]],"explicitChildren":true},{"type":"Text","props":[2,["text","style","color"],[[1,1],[0,"labelMedium"],[1,2]]],"children":[0,null],"explicitChildren":false},{"type":"Image","props":[1,3],"children":[0,null],"explicitChildren":false},{"type":"Column","props":[2,["weight","spacing"],[[0,1],[0,4]]],"children":[1,4],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:41585","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth","spacing","paddingBottom"],[[0,"entity-preview-members"],[0,true],[0,10],[0,22]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:43349","root":0,"nodes":[{"type":"Surface","props":[2,["key","fillMaxWidth","color","shape","onClick"],[[0,"entity-preview-config-toggle"],[0,true],[0,"transparent"],[2,["cornerRadius"],[[0,16]]],[1,0]]],"children":[4,1],"explicitChildren":true},{"type":"Row","props":[2,["fillMaxWidth","padding","spacing","verticalAlignment"],[[0,true],[0,16],[0,10],[0,"center"]]],"children":[3,[[4,2],[4,3],[4,6]]],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[0,"Tune"],[0,20],[1,1]]],"children":[0,null],"explicitChildren":false},{"type":"Column","props":[2,["weight","spacing"],[[0,1],[0,3]]],"children":[3,[[4,4],[4,5]]],"explicitChildren":true},{"type":"Text","props":[2,["text","style","fontWeight"],[[0,"配置摘要"],[0,"titleSmall"],[0,"600"]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","style","color"],[[1,2],[0,"bodySmall"],[1,3]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size","tint"],[[1,4],[0,20],[1,5]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:44401","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth","spacing"],[[1,0],[0,true],[0,4]]],"children":[3,[[4,1],[1,3]]],"explicitChildren":true},{"type":"Text","props":[2,["text","style","color"],[[1,1],[0,"labelMedium"],[1,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:44228","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth","paddingStart","paddingEnd","paddingBottom","spacing"],[[0,"entity-preview-config-details"],[0,true],[0,16],[0,16],[0,18],[0,14]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:43191","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth","backgroundColor","backgroundShape"],[[0,"entity-preview-config"],[0,true],[1,0],[2,["cornerRadius"],[[0,16]]]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:58833","root":0,"nodes":[{"type":"Text","props":[2,["text","fillMaxWidth","style"],[[1,0],[0,true],[0,"bodyMedium"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:58933","root":0,"nodes":[{"type":"Text","props":[2,["text","fillMaxWidth","style","color"],[[1,0],[0,true],[0,"bodySmall"],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:59071","root":0,"nodes":[{"type":"Column","props":[2,["key","fillMaxWidth","paddingBottom","spacing"],[[1,0],[0,true],[0,12],[0,6]]],"children":[3,[[4,1],[4,2]]],"explicitChildren":true},{"type":"Text","props":[2,["text","style","color"],[[1,1],[0,"labelLarge"],[1,2]]],"children":[0,null],"explicitChildren":false},{"type":"SelectionContainer","props":[2,[],[]],"children":[1,3],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:59731","root":0,"nodes":[{"type":"Box","props":[2,["width","height","contentAlignment"],[[0,36],[0,36],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"IconButton","props":[2,["key","width","height","contentPadding","enabled","onClick"],[[1,0],[0,28],[0,28],[2,["horizontal","vertical"],[[0,0],[0,0]]],[1,1],[1,2]]],"children":[4,2],"explicitChildren":true},{"type":"Icon","props":[2,["name","size"],[[0,"Fullscreen"],[0,18]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:59368","root":0,"nodes":[{"type":"Box","props":[2,["fillMaxWidth","paddingBottom"],[[0,true],[0,12]]],"children":[4,1],"explicitChildren":true},{"type":"TextField","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:60200","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","verticalAlignment","spacing"],[[1,0],[0,true],[0,"center"],[0,8]]],"children":[3,[[4,1],[4,2]]],"explicitChildren":true},{"type":"Checkbox","props":[2,["checked","enabled","onCheckedChange"],[[1,1],[1,2],[1,3]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","weight"],[[1,4],[0,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:60438","root":0,"nodes":[{"type":"Box","props":[2,["fillMaxWidth","paddingBottom"],[[0,true],[0,12]]],"children":[4,1],"explicitChildren":true},{"type":"Surface","props":[2,["key","fillMaxWidth","color","onClick"],[[1,0],[0,true],[0,"transparent"],[1,1]]],"children":[4,2],"explicitChildren":true},{"type":"InputDecorator","props":[2,["label","enabled"],[[1,2],[1,3]]],"children":[4,3],"explicitChildren":true},{"type":"Row","props":[2,["fillMaxWidth","verticalAlignment","spacing"],[[0,true],[0,"center"],[0,12]]],"children":[3,[[4,4],[4,5]]],"explicitChildren":true},{"type":"Text","props":[2,["text","weight","maxLines","overflow","style"],[[1,4],[0,1],[0,1],[0,"ellipsis"],[0,"bodyMedium"]]],"children":[0,null],"explicitChildren":false},{"type":"Icon","props":[2,["name","size"],[[0,"Tune"],[0,24]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:61675","root":0,"nodes":[{"type":"Row","props":[2,["fillMaxWidth","modifier","verticalAlignment","spacing"],[[0,true],[1,0],[0,"center"],[0,8]]],"children":[3,[[4,1],[4,4]]],"explicitChildren":true},{"type":"Column","props":[2,["weight","spacing"],[[0,1],[0,1]]],"children":[3,[[4,2],[4,3]]],"explicitChildren":true},{"type":"Text","props":[2,["text","fontSize","fontWeight","color"],[[1,1],[0,14],[0,"700"],[1,2]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","fontSize","color"],[[1,3],[0,12],[1,4]]],"children":[0,null],"explicitChildren":false},{"type":"Switch","props":[2,["key","checked","enabled","modifier","onCheckedChange"],[[1,5],[1,6],[1,7],[1,8],[1,9]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:62393","root":0,"nodes":[{"type":"Spacer","props":[2,["height"],[[0,6]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:61383","root":0,"nodes":[{"type":"Box","props":[2,["key","fillMaxWidth","paddingBottom"],[[1,0],[0,true],[0,7]]],"children":[4,1],"explicitChildren":true},{"type":"Box","props":[2,["fillMaxWidth","modifier","paddingHorizontal","paddingVertical"],[[0,true],[1,1],[0,10],[0,6]]],"children":[4,2],"explicitChildren":true},{"type":"Column","props":[2,["fillMaxWidth"],[[0,true]]],"children":[1,2],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:62649","root":0,"nodes":[{"type":"Box","props":[2,["key","fillMaxWidth","paddingStart","paddingEnd","paddingTop","paddingBottom"],[[1,0],[0,true],[1,1],[1,2],[1,3],[1,4]]],"children":[1,5],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:62571","root":0,"nodes":[{"type":"LazyColumn","props":[2,["key","fillMaxWidth"],[[1,0],[0,true]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:63143","root":0,"nodes":[{"type":"Tab","props":[2,["key","selected","enabled","onClick"],[[1,0],[1,1],[1,2],[1,3]]],"children":[4,1],"explicitChildren":true},{"type":"Text","props":[2,["text","style"],[[1,4],[0,"titleSmall"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:63018","root":0,"nodes":[{"type":"PrimaryTabRow","props":[2,["key","fillMaxWidth","selectedTabIndex","tabs"],[[1,0],[0,true],[1,1],[1,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:63412","root":0,"nodes":[{"type":"Button","props":[2,["key","text","enabled","onClick"],[[1,0],[1,1],[1,2],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:63476","root":0,"nodes":[{"type":"TextButton","props":[2,["key","text","enabled","onClick"],[[1,0],[1,1],[1,2],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:63852","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingStart","paddingTop","paddingEnd","paddingBottom","verticalAlignment"],[[0,"entity-header"],[0,true],[0,24],[1,0],[0,16],[1,1],[0,"center"]]],"children":[3,[[4,1],[4,2]]],"explicitChildren":true},{"type":"Text","props":[1,2],"children":[0,null],"explicitChildren":false},{"type":"IconButton","props":[2,["key","icon","enabled","onClick"],[[0,"entity-close"],[0,"Close"],[1,3],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:64400","root":0,"nodes":[{"type":"LinearProgressIndicator","props":[2,["fillMaxWidth"],[[0,true]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:64498","root":0,"nodes":[{"type":"Text","props":[2,["key","text","color","fillMaxWidth","paddingHorizontal","paddingBottom"],[[0,"entity-error"],[1,0],[1,1],[0,true],[0,24],[0,12]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:64645","root":0,"nodes":[{"type":"Box","props":[1,0],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:64821","root":0,"nodes":[{"type":"FlowRow","props":[2,["key","fillMaxWidth","paddingStart","paddingTop","paddingEnd","paddingBottom","horizontalArrangement","spacing","runSpacing"],[[0,"entity-footer"],[0,true],[0,24],[0,0],[0,24],[0,20],[0,"end"],[0,8],[0,8]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:63659","root":0,"nodes":[{"type":"Column","props":[1,0],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:65218","root":0,"nodes":[{"type":"TextField","props":[2,["key","label","value","fillMaxSize","minLines","maxLines","enabled","onValueChange"],[[0,"entity-expanded-input"],[1,0],[1,1],[0,true],[0,16],[0,40],[1,2],[1,3]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:66696","root":0,"nodes":[{"type":"Column","props":[2,["fillMaxWidth"],[[0,true]]],"children":[3,[[4,1],[1,2]]],"explicitChildren":true},{"type":"Text","props":[2,["text","color"],[[1,0],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:66992","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","paddingVertical","verticalAlignment","spacing","onClick"],[[0,"entity-picker-clear"],[0,true],[0,8],[0,9],[0,"center"],[0,10],[1,0]]],"children":[3,[[4,1],[1,3]]],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[1,1],[0,20],[1,2]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:67425","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","paddingHorizontal","paddingVertical","verticalAlignment","spacing","onClick"],[[1,0],[0,true],[0,8],[0,9],[0,"center"],[0,10],[1,1]]],"children":[3,[[4,1],[4,2]]],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[1,2],[0,20],[1,3]]],"children":[0,null],"explicitChildren":false},{"type":"Column","props":[2,["weight"],[[0,1]]],"children":[1,4],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:66902","root":0,"nodes":[{"type":"LazyColumn","props":[2,["key","weight","fillMaxWidth"],[[0,"entity-picker-list"],[0,1],[0,true]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:66337","root":0,"nodes":[{"type":"Column","props":[2,["fillMaxSize"],[[0,true]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:69003","root":0,"nodes":[{"type":"Column","props":[2,["fillMaxSize"],[[0,true]]],"children":[3,[[1,0],[4,1],[4,2]]],"explicitChildren":true},{"type":"Box","props":[2,["fillMaxWidth","paddingHorizontal","paddingTop"],[[0,true],[0,18],[0,10]]],"children":[1,1],"explicitChildren":true},{"type":"Box","props":[2,["weight","fillMaxWidth"],[[0,1],[0,true]]],"children":[1,2],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:70766","root":0,"nodes":[{"type":"Column","props":[2,["fillMaxWidth","spacing"],[[0,true],[0,8]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:72706","root":0,"nodes":[{"type":"Row","props":[2,["key","fillMaxWidth","verticalAlignment"],[[1,0],[0,true],[0,"center"]]],"children":[3,[[4,1],[1,2],[1,3]]],"explicitChildren":true},{"type":"Box","props":[2,["weight"],[[0,1]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:74133","root":0,"nodes":[{"type":"Box","props":[2,["fillMaxSize","contentAlignment"],[[0,true],[0,"center"]]],"children":[4,1],"explicitChildren":true},{"type":"LoadingIndicator","props":[2,["size"],[[0,32]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:75330","root":0,"nodes":[{"type":"Image","props":[1,0],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:75620","root":0,"nodes":[{"type":"Spacer","props":[2,["width"],[[0,12]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:75662","root":0,"nodes":[{"type":"Text","props":[2,["text","style","weight","maxLines","overflow"],[[1,0],[0,"bodyMedium"],[0,1],[0,1],[0,"ellipsis"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:75805","root":0,"nodes":[{"type":"Spacer","props":[2,["width"],[[0,8]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:75128","root":0,"nodes":[{"type":"Box","props":[2,["fillMaxWidth","paddingBottom"],[[0,true],[0,12]]],"children":[4,1],"explicitChildren":true},{"type":"InputDecorator","props":[2,["label","enabled"],[[0,"角色头像"],[1,0]]],"children":[4,2],"explicitChildren":true},{"type":"Row","props":[2,["fillMaxWidth","verticalAlignment"],[[0,true],[0,"center"]]],"children":[1,1],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:77378","root":0,"nodes":[{"type":"FilterChip","props":[2,["key","selected","enabled","label","onClick"],[[1,0],[1,1],[1,2],[4,1],[1,5]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text","maxLines","overflow","modifier"],[[1,3],[0,1],[0,"ellipsis"],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:77308","root":0,"nodes":[{"type":"FlowRow","props":[2,["spacing","runSpacing"],[[0,8],[0,8]]],"children":[1,0],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:76649","root":0,"nodes":[{"type":"Column","props":[2,["fillMaxWidth","paddingBottom"],[[0,true],[0,12]]],"children":[3,[[4,1],[4,7],[1,2]]],"explicitChildren":true},{"type":"Row","props":[2,["fillMaxWidth","verticalAlignment"],[[0,true],[0,"center"]]],"children":[3,[[4,2],[4,3]]],"explicitChildren":true},{"type":"Text","props":[2,["text","weight","fontWeight"],[[0,"标签"],[0,1],[0,"700"]]],"children":[0,null],"explicitChildren":false},{"type":"TextButton","props":[2,["key","enabled","onClick"],[[0,"entity-tags-manage"],[1,0],[1,1]]],"children":[4,4],"explicitChildren":true},{"type":"Row","props":[2,["spacing","verticalAlignment"],[[0,8],[0,"center"]]],"children":[3,[[4,5],[4,6]]],"explicitChildren":true},{"type":"Icon","props":[2,["name","size"],[[0,"Tune"],[0,18]]],"children":[0,null],"explicitChildren":false},{"type":"Text","props":[2,["text"],[[0,"管理标签"]]],"children":[0,null],"explicitChildren":false},{"type":"Spacer","props":[2,["height"],[[0,6]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:78682","root":0,"nodes":[{"type":"Text","props":[2,["key","text","color","style"],[[0,"entity-model-binding-error"],[1,0],[1,1],[0,"bodyMedium"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:83367","root":0,"nodes":[{"type":"Text","props":[2,["text","color"],[[1,0],[1,1]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:84496","root":0,"nodes":[{"type":"Text","props":[2,["text","style","fontWeight","paddingTop","paddingBottom"],[[0,"组内角色"],[0,"titleSmall"],[0,"700"],[0,8],[0,8]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:86203","root":0,"nodes":[{"type":"Text","props":[2,["text","style","fontWeight","maxLines","overflow"],[[1,0],[0,"bodyMedium"],[0,"700"],[0,1],[0,"ellipsis"]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:84791","root":0,"nodes":[{"type":"Box","props":[2,["fillMaxWidth","paddingBottom"],[[0,true],[0,6]]],"children":[4,1],"explicitChildren":true},{"type":"Surface","props":[2,["key","fillMaxWidth","color","shape","modifier","onClick"],[[1,0],[0,true],[1,1],[2,["cornerRadius"],[[0,10]]],[1,2],[1,3]]],"children":[4,2],"explicitChildren":true},{"type":"Row","props":[2,["fillMaxWidth","paddingHorizontal","paddingVertical","spacing","verticalAlignment"],[[0,true],[0,12],[0,8],[0,10],[0,"center"]]],"children":[3,[[4,3],[4,4],[4,5]]],"explicitChildren":true},{"type":"Icon","props":[2,["name","size","tint"],[[1,4],[0,18],[1,5]]],"children":[0,null],"explicitChildren":false},{"type":"Image","props":[1,6],"children":[0,null],"explicitChildren":false},{"type":"Column","props":[2,["weight"],[[0,1]]],"children":[1,7],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:86643","root":0,"nodes":[{"type":"Column","props":[2,["fillMaxSize"],[[0,true]]],"children":[3,[[1,0],[4,1]]],"explicitChildren":true},{"type":"HorizontalPager","props":[2,["key","weight","fillMaxWidth","currentPage","onPageChanged"],[[0,"entity-pager"],[0,1],[0,true],[1,1],[1,2]]],"children":[1,3],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:88258","root":0,"nodes":[{"type":"Dialog","props":[2,["key","onLoad","closeOnDismissRequest","onDismissRequest","containerColor","shape","properties"],[[0,"character-presentation"],[1,0],[0,false],[1,1],[1,2],[2,["cornerRadius"],[[1,3]]],[2,["fullscreen","usePlatformDefaultWidth","dismissOnClickOutside"],[[1,4],[0,false],[0,false]]]]],"children":[1,5],"explicitChildren":true}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:95076","root":0,"nodes":[{"type":"Text","props":[2,["text"],[[1,0]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:95224","root":0,"nodes":[{"type":"WebView","props":[2,["key","controller","fillMaxSize","url","javaScriptEnabled","domStorageEnabled","supportZoom","useWideViewPort","onShouldOverrideUrlLoading","onInterceptRequest","onLifecycleEvent"],[[0,"character-memory-web"],[1,0],[0,true],[1,1],[0,true],[0,true],[0,false],[0,true],[1,2],[1,3],[1,4]]],"children":[0,null],"explicitChildren":false}]},{"id":"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:asnd93:95007","root":0,"nodes":[{"type":"Box","props":[2,["fillMaxSize","onLoad"],[[0,true],[1,0]]],"children":[1,1],"explicitChildren":true}]}];
-
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -59,7 +56,7 @@ function createAvatarResources(origin) {
       if (path === null) {
         if (defaultPath === null) {
           const pending = ToolPkg.readResource("character_default_avatar", "operit-avatar.png").then((path2) => {
-            if (path2.trim() === "") throw new Error("\u9ED8\u8BA4\u5934\u50CF\u8D44\u6E90\u8DEF\u5F84\u4E0D\u80FD\u4E3A\u7A7A");
+            if (path2.trim() === "") throw new Error("默认头像资源路径不能为空");
             return path2;
           });
           defaultPath = pending;
@@ -69,7 +66,7 @@ function createAvatarResources(origin) {
         }
         path = yield defaultPath;
       }
-      if (path.trim() === "") throw new Error("\u5934\u50CF\u8D44\u6E90\u8DEF\u5F84\u4E0D\u80FD\u4E3A\u7A7A");
+      if (path.trim() === "") throw new Error("头像资源路径不能为空");
       if (/^data:image\//i.test(path)) return path;
       const existing = references.get(path);
       if (existing !== void 0) return existing;
@@ -101,30 +98,30 @@ function sameCharacterModelBinding(left, right) {
 function characterModelBindingStatus(card, models) {
   switch (characterModelBindingMode(card.chatModelBindingMode)) {
     case "FOLLOW_GLOBAL":
-      return { needsRebind: false, label: "\u8DDF\u968F\u5168\u5C40\u6A21\u578B" };
+      return { needsRebind: false, label: "跟随全局模型" };
     case "FIXED_MODEL": {
       const matches = models.filter(
         /** Matches the exact provider and model identities selected by the user. */
         (model) => model.providerId === card.chatProviderId && model.modelId === card.chatModelId
       );
-      if (matches.length !== 1) return { needsRebind: true, label: "\u56FA\u5B9A\u6A21\u578B\u7ED1\u5B9A\u65E0\u6548\uFF0C\u8BF7\u91CD\u65B0\u7ED1\u5B9A" };
-      return { needsRebind: false, label: matches[0].providerName + " \xB7 " + matches[0].modelId };
+      if (matches.length !== 1) return { needsRebind: true, label: "固定模型绑定无效，请重新绑定" };
+      return { needsRebind: false, label: matches[0].providerName + " · " + matches[0].modelId };
     }
     default:
-      return { needsRebind: true, label: "\u6A21\u578B\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548\uFF0C\u8BF7\u91CD\u65B0\u7ED1\u5B9A" };
+      return { needsRebind: true, label: "模型绑定模式无效，请重新绑定" };
   }
 }
 
 // src/validation.ts
 function assertObject(value, label) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是对象`);
 }
 function assertString(value, label) {
-  if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
 }
 function requireId(value, label) {
   assertString(value, label);
-  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} \u65E0\u6548`);
+  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} 无效`);
   return value;
 }
 
@@ -601,7 +598,7 @@ function createGroupDraft() {
 var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
 
 // src/definition.ts
-var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
+var definition = { id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 };
 var chatUiRoutes = {
   editor: `toolpkg:${definition.id}:ui:main`,
   selection: `toolpkg:${definition.id}:ui:selection`,
@@ -664,7 +661,7 @@ function createUiScreenSession(presentation) {
             }
             case "memory-attachment": {
               const complete = session.completeScreen(result);
-              completion = { ...complete, value: { type: "text", name: "\u8BB0\u5FC6\u9644\u4EF6", content: result.content, mediaType: "text/plain" } };
+              completion = { ...complete, value: { type: "text", name: "记忆附件", content: result.content, mediaType: "text/plain" } };
               break;
             }
             case "preview":
@@ -693,14 +690,14 @@ function createUiScreenSession(presentation) {
 // src/image-source.ts
 var MAX_AVATAR_BYTES = 8 * 1024 * 1024;
 function readAvatarImport(file) {
-  if (!Number.isSafeInteger(file.size) || file.size < 0) throw new Error("\u5934\u50CF\u56FE\u7247\u5927\u5C0F\u65E0\u6548");
-  if (file.size > MAX_AVATAR_BYTES) throw new Error("\u5934\u50CF\u56FE\u7247\u4E0D\u80FD\u8D85\u8FC7 8 MB");
+  if (!Number.isSafeInteger(file.size) || file.size < 0) throw new Error("头像图片大小无效");
+  if (file.size > MAX_AVATAR_BYTES) throw new Error("头像图片不能超过 8 MB");
   const b = file.contentBase64;
-  if (typeof b !== "string") throw new Error("\u9009\u62E9\u5668\u6CA1\u6709\u8FD4\u56DE\u5934\u50CF\u56FE\u7247\u5185\u5BB9");
+  if (typeof b !== "string") throw new Error("选择器没有返回头像图片内容");
   const padding = b.endsWith("==") ? 2 : b.endsWith("=") ? 1 : 0;
-  if (b.length % 4 !== 0 || b.length / 4 * 3 - padding !== file.size || !/^[A-Za-z0-9+/]*={0,2}$/.test(b)) throw new Error("\u5934\u50CF\u56FE\u7247\u5185\u5BB9\u4E0D\u5B8C\u6574");
+  if (b.length % 4 !== 0 || b.length / 4 * 3 - padding !== file.size || !/^[A-Za-z0-9+/]*={0,2}$/.test(b)) throw new Error("头像图片内容不完整");
   if (!(b.startsWith("iVBOR") || b.startsWith("/9j/") || b.startsWith("R0lGOD") || b.startsWith("UklGR") || b.startsWith("Qk"))) {
-    throw new Error("\u8BF7\u9009\u62E9 PNG\u3001JPEG\u3001GIF\u3001WebP \u6216 BMP \u56FE\u7247");
+    throw new Error("请选择 PNG、JPEG、GIF、WebP 或 BMP 图片");
   }
   return b;
 }
@@ -711,11 +708,18 @@ function renderEntityPreview(ctx, input) {
   const entity = input.card ?? input.group;
   if (entity === null) return [];
   const card = input.card;
-  const selectable = (key, value, subdued = false) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:35375",__operitUiPrograms_[0],[key,value,subdued ? colors.onSurfaceVariant : colors.onSurface]);
-  const pill = (key, label) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:35574",__operitUiPrograms_[1],[key,colors.primaryContainer.copy({ alpha: 0.38 }),label,colors.onPrimaryContainer]);
+  const selectable = (key, value, subdued = false) => ctx.UI.SelectionContainer({ key }, ctx.UI.Text({ text: value, fillMaxWidth: true, style: "bodyMedium", color: subdued ? colors.onSurfaceVariant : colors.onSurface }));
+  const pill = (key, label) => ctx.UI.Box({
+    key,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: colors.primaryContainer.copy({ alpha: 0.38 }),
+    backgroundShape: { cornerRadius: 8 }
+  }, ctx.UI.Text({ text: label, style: "labelMedium", color: colors.onPrimaryContainer }));
   const attachedTags = card === null ? [] : input.tags.filter((tag) => card.attachedTagIds.includes(tag.id));
-  const identity2 = OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:35978",__operitUiPrograms_[8],[[
-    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:36086",__operitUiPrograms_[6],[card === null ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:36187",__operitUiPrograms_[2],[colors.primaryContainer.copy({ alpha: 0.48 }),colors.primary]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:36431",__operitUiPrograms_[3],[{
+  const identity2 = ctx.UI.Column({ key: "entity-preview-identity", fillMaxWidth: true, spacing: 14, paddingBottom: 22 }, [
+    ctx.UI.Row({ fillMaxWidth: true, spacing: 16, verticalAlignment: "center" }, [
+      card === null ? ctx.UI.Box({ width: 72, height: 72, contentAlignment: "center", backgroundColor: colors.primaryContainer.copy({ alpha: 0.48 }), backgroundShape: { cornerRadius: 20 } }, ctx.UI.Icon({ name: "GroupsOutlined", size: 34, tint: colors.primary })) : ctx.UI.Image({
         key: "entity-avatar",
         ...card.avatarUri === null ? { path: input.avatar ?? void 0 } : { uri: card.avatarUri },
         width: 72,
@@ -723,45 +727,53 @@ function renderEntityPreview(ctx, input) {
         contentScale: "crop",
         contentDescription: card.name,
         modifier: ctx.Modifier.clip({ cornerRadius: 20 })
-      }]),[
-        OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:36806",__operitUiPrograms_[4],[entity.name]),
-        ...card === null ? [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:36975",__operitUiPrograms_[5],[input.group.members.length + " \u4F4D\u89D2\u8272",colors.onSurfaceVariant])] : []
-      ]]),
+      }),
+      ctx.UI.Column({ weight: 1, spacing: 6 }, [
+        ctx.UI.Text({ key: "entity-preview-name", text: entity.name, style: "headlineSmall", fontSize: 24, fontWeight: "700", fillMaxWidth: true }),
+        ...card === null ? [ctx.UI.Text({ text: input.group.members.length + " 位角色", style: "labelMedium", color: colors.onSurfaceVariant })] : []
+      ])
+    ]),
     ...entity.description.trim() === "" ? [] : [selectable("entity-preview-description", entity.description, true)],
-    ...attachedTags.length === 0 ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:37284",__operitUiPrograms_[7],[attachedTags.map((tag) => pill("entity-preview-tag-" + tag.id, tag.name))])]
-  ]]);
+    ...attachedTags.length === 0 ? [] : [ctx.UI.FlowRow({ key: "entity-preview-tags", spacing: 6, runSpacing: 6 }, attachedTags.map((tag) => pill("entity-preview-tag-" + tag.id, tag.name)))]
+  ]);
   const contentSection = (key, title, value, quote = false) => value.trim() === "" ? [] : [
-    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:37536",__operitUiPrograms_[11],["entity-preview-" + key,{
+    ctx.UI.Box(
+      { key: "entity-preview-" + key, fillMaxWidth: true, paddingBottom: 22 },
+      ctx.UI.Column({
         fillMaxWidth: true,
         spacing: 10,
         ...quote ? { padding: 18, backgroundColor: colors.primaryContainer.copy({ alpha: 0.22 }), backgroundShape: { cornerRadius: 16 } } : {}
-      },[
-          ...quote ? [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:37960",__operitUiPrograms_[9],[colors.primary])] : [],
-          OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:38046",__operitUiPrograms_[10],[title,quote ? colors.primary : colors.onSurfaceVariant])
-        ],selectable("entity-preview-" + key + "-text", value)])
+      }, [
+        ctx.UI.Row({ fillMaxWidth: true, spacing: 8, verticalAlignment: "center" }, [
+          ...quote ? [ctx.UI.Icon({ name: "FormatQuote", size: 20, tint: colors.primary })] : [],
+          ctx.UI.Text({ text: title, style: "titleSmall", fontWeight: "600", color: quote ? colors.primary : colors.onSurfaceVariant, weight: 1 })
+        ]),
+        selectable("entity-preview-" + key + "-text", value)
+      ])
+    )
   ];
-  const themeLabel = entity.themeConfigId === null ? "\u8DDF\u968F\u5F53\u524D\u4E3B\u9898" : input.themeError !== "" ? "\u4E3B\u9898\u540D\u79F0\u6682\u65F6\u65E0\u6CD5\u8BFB\u53D6" : input.themes === null ? "\u6B63\u5728\u8BFB\u53D6\u4E3B\u9898\u540D\u79F0\u2026" : input.themes.find((theme) => theme.id === entity.themeConfigId)?.label ?? "\u4E3B\u9898\u914D\u7F6E\u5DF2\u4E0D\u53EF\u7528";
+  const themeLabel = entity.themeConfigId === null ? "跟随当前主题" : input.themeError !== "" ? "主题名称暂时无法读取" : input.themes === null ? "正在读取主题名称…" : input.themes.find((theme) => theme.id === entity.themeConfigId)?.label ?? "主题配置已不可用";
   const rows = [];
   const contents = [identity2];
   if (card !== null) {
     contents.push(
-      ...contentSection("opening", "\u5F00\u573A\u767D", card.openingStatement, true),
-      ...contentSection("setting", "\u89D2\u8272\u8BBE\u5B9A", card.characterSetting),
-      ...contentSection("chat", "\u804A\u5929\u9644\u52A0\u5185\u5BB9", card.otherContentChat),
-      ...contentSection("voice", "\u8BED\u97F3\u9644\u52A0\u5185\u5BB9", card.otherContentVoice),
-      ...contentSection("prompt", "\u9AD8\u7EA7\u81EA\u5B9A\u4E49 Prompt", card.advancedCustomPrompt),
-      ...contentSection("notes", "\u5907\u6CE8", card.marks)
+      ...contentSection("opening", "开场白", card.openingStatement, true),
+      ...contentSection("setting", "角色设定", card.characterSetting),
+      ...contentSection("chat", "聊天附加内容", card.otherContentChat),
+      ...contentSection("voice", "语音附加内容", card.otherContentVoice),
+      ...contentSection("prompt", "高级自定义 Prompt", card.advancedCustomPrompt),
+      ...contentSection("notes", "备注", card.marks)
     );
     rows.push(
-      { key: "model", label: "\u804A\u5929\u6A21\u578B", value: characterModelBindingStatus(card, input.snapshot.models).label },
-      { key: "theme", label: "\u4E3B\u9898", value: themeLabel },
-      { key: "tts", label: "\u8BED\u97F3", value: card.ttsConfigId === null ? "\u8DDF\u968F\u5168\u5C40\u8BED\u97F3\u914D\u7F6E" : input.snapshot.ttsConfigs.find((config) => config.id === card.ttsConfigId)?.name ?? "\u8BED\u97F3\u914D\u7F6E\u5DF2\u4E0D\u53EF\u7528" },
-      { key: "memory", label: "\u8BB0\u5FC6\u5E93", value: card.memoryBindingMode === "SHARED" ? input.snapshot.stores.find((store) => store.id === card.sharedMemoryId)?.name ?? "\u5171\u4EAB\u8BB0\u5FC6\u5E93\u5DF2\u4E0D\u53EF\u7528" : "\u89D2\u8272\u72EC\u7ACB\u8BB0\u5FC6\u5E93" }
+      { key: "model", label: "聊天模型", value: characterModelBindingStatus(card, input.snapshot.models).label },
+      { key: "theme", label: "主题", value: themeLabel },
+      { key: "tts", label: "语音", value: card.ttsConfigId === null ? "跟随全局语音配置" : input.snapshot.ttsConfigs.find((config) => config.id === card.ttsConfigId)?.name ?? "语音配置已不可用" },
+      { key: "memory", label: "记忆库", value: card.memoryBindingMode === "SHARED" ? input.snapshot.stores.find((store) => store.id === card.sharedMemoryId)?.name ?? "共享记忆库已不可用" : "角色独立记忆库" }
     );
-    if (card.sharedMemoryMounts.length !== 0) rows.push({ key: "mounts", label: "\u5171\u4EAB\u8BB0\u5FC6\u6302\u8F7D", value: card.sharedMemoryMounts.map((mount2) => {
-      const name = input.snapshot.stores.find((store) => store.id === mount2.sharedMemoryId)?.name ?? "\u8BB0\u5FC6\u5E93\u5DF2\u4E0D\u53EF\u7528";
-      const permissions = [mount2.readable ? "\u53EF\u8BFB" : "", mount2.writable ? "\u53EF\u5199" : ""].filter(Boolean).join("\u3001") || "\u65E0\u8BBF\u95EE\u6743\u9650";
-      return name + "\uFF08" + permissions + "\uFF09";
+    if (card.sharedMemoryMounts.length !== 0) rows.push({ key: "mounts", label: "共享记忆挂载", value: card.sharedMemoryMounts.map((mount2) => {
+      const name = input.snapshot.stores.find((store) => store.id === mount2.sharedMemoryId)?.name ?? "记忆库已不可用";
+      const permissions = [mount2.readable ? "可读" : "", mount2.writable ? "可写" : ""].filter(Boolean).join("、") || "无访问权限";
+      return name + "（" + permissions + "）";
     }).join("\n") });
     const policy = card.toolAccessConfig;
     const toolNames = [
@@ -769,26 +781,46 @@ function renderEntityPreview(ctx, input) {
       { ids: policy.allowedPackages, catalog: input.snapshot.toolCatalog.packages },
       { ids: policy.allowedSkills, catalog: input.snapshot.toolCatalog.skills },
       { ids: policy.allowedMcpServers, catalog: input.snapshot.toolCatalog.mcpServers }
-    ].flatMap((source) => source.ids.map((id2) => source.catalog.find((item) => item.name === id2)?.displayName ?? "\u6765\u6E90\u5DF2\u4E0D\u53EF\u7528"));
-    rows.push({ key: "tools", label: "\u5DE5\u5177\u8BBF\u95EE", value: !policy.enabled ? "\u8DDF\u968F\u5168\u5C40\u5DE5\u5177\u914D\u7F6E" : toolNames.length === 0 ? "\u672A\u5141\u8BB8\u4EFB\u4F55\u5DE5\u5177\u6765\u6E90" : toolNames.join("\u3001") });
+    ].flatMap((source) => source.ids.map((id2) => source.catalog.find((item) => item.name === id2)?.displayName ?? "来源已不可用"));
+    rows.push({ key: "tools", label: "工具访问", value: !policy.enabled ? "跟随全局工具配置" : toolNames.length === 0 ? "未允许任何工具来源" : toolNames.join("、") });
   } else {
     const members = [...input.group.members].sort((a, b) => a.orderIndex - b.orderIndex);
-    contents.push(OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:41585",__operitUiPrograms_[17],[[
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:41694",__operitUiPrograms_[12],[colors.onSurfaceVariant]),
-      ...members.length === 0 ? [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:41850",__operitUiPrograms_[13],[colors.onSurfaceVariant])] : members.map((member2, index) => {
+    contents.push(ctx.UI.Column({ key: "entity-preview-members", fillMaxWidth: true, spacing: 10, paddingBottom: 22 }, [
+      ctx.UI.Text({ text: "组内角色", style: "titleSmall", fontWeight: "600", color: colors.onSurfaceVariant }),
+      ...members.length === 0 ? [ctx.UI.Text({ text: "暂未添加角色", style: "bodyMedium", color: colors.onSurfaceVariant })] : members.map((member2, index) => {
         const record2 = input.snapshot.cards.find((card2) => card2.id === member2.characterCardId);
-        return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:42117",__operitUiPrograms_[16],["entity-preview-member-" + member2.characterCardId,String(index + 1).padStart(2, "0"),colors.onSurfaceVariant,{ width: 40, height: 40, ...record2?.avatarUri == null ? { path: input.avatar ?? void 0 } : { uri: record2.avatarUri }, contentScale: "crop", contentDescription: record2?.name ?? "\u89D2\u8272\u5DF2\u79FB\u9664", modifier: ctx.Modifier.clip({ cornerRadius: 12 }) },[
-            OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:42752",__operitUiPrograms_[14],[record2?.name ?? "\u89D2\u8272\u5DF2\u79FB\u9664"]),
-            ...record2?.description.trim() ? [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:42932",__operitUiPrograms_[15],[record2.description,colors.onSurfaceVariant])] : []
-          ]]);
+        return ctx.UI.Row({ key: "entity-preview-member-" + member2.characterCardId, fillMaxWidth: true, paddingVertical: 10, spacing: 12, verticalAlignment: "center" }, [
+          ctx.UI.Text({ text: String(index + 1).padStart(2, "0"), style: "labelMedium", color: colors.onSurfaceVariant }),
+          ctx.UI.Image({ width: 40, height: 40, ...record2?.avatarUri == null ? { path: input.avatar ?? void 0 } : { uri: record2.avatarUri }, contentScale: "crop", contentDescription: record2?.name ?? "角色已移除", modifier: ctx.Modifier.clip({ cornerRadius: 12 }) }),
+          ctx.UI.Column({ weight: 1, spacing: 4 }, [
+            ctx.UI.Text({ text: record2?.name ?? "角色已移除", style: "titleSmall", fontWeight: "600", fillMaxWidth: true }),
+            ...record2?.description.trim() ? [ctx.UI.Text({ text: record2.description, style: "bodySmall", color: colors.onSurfaceVariant, fillMaxWidth: true })] : []
+          ])
+        ]);
       })
-    ]]));
-    rows.push({ key: "theme", label: "\u4E3B\u9898", value: themeLabel });
+    ]));
+    rows.push({ key: "theme", label: "主题", value: themeLabel });
   }
-  contents.push(OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:43191",__operitUiPrograms_[21],[colors.surfaceContainerLow,[
-    OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:43349",__operitUiPrograms_[18],[input.onToggleConfiguration,colors.onSurfaceVariant,card === null ? "\u4E3B\u9898\u914D\u7F6E" : "\u6A21\u578B\u3001\u8BED\u97F3\u4E0E\u8BB0\u5FC6",colors.onSurfaceVariant,input.configurationExpanded ? "ExpandLess" : "ExpandMore",colors.onSurfaceVariant]),
-    ...input.configurationExpanded ? [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:44228",__operitUiPrograms_[20],[rows.map((row) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:44401",__operitUiPrograms_[19],["entity-preview-config-" + row.key,row.label,colors.onSurfaceVariant,selectable("entity-preview-config-" + row.key + "-value", row.value)]))])] : []
-  ]]));
+  contents.push(ctx.UI.Column({ key: "entity-preview-config", fillMaxWidth: true, backgroundColor: colors.surfaceContainerLow, backgroundShape: { cornerRadius: 16 } }, [
+    ctx.UI.Surface(
+      { key: "entity-preview-config-toggle", fillMaxWidth: true, color: "transparent", shape: { cornerRadius: 16 }, onClick: input.onToggleConfiguration },
+      ctx.UI.Row({ fillMaxWidth: true, padding: 16, spacing: 10, verticalAlignment: "center" }, [
+        ctx.UI.Icon({ name: "Tune", size: 20, tint: colors.onSurfaceVariant }),
+        ctx.UI.Column({ weight: 1, spacing: 3 }, [
+          ctx.UI.Text({ text: "配置摘要", style: "titleSmall", fontWeight: "600" }),
+          ctx.UI.Text({ text: card === null ? "主题配置" : "模型、语音与记忆", style: "bodySmall", color: colors.onSurfaceVariant })
+        ]),
+        ctx.UI.Icon({ name: input.configurationExpanded ? "ExpandLess" : "ExpandMore", size: 20, tint: colors.onSurfaceVariant })
+      ])
+    ),
+    ...input.configurationExpanded ? [ctx.UI.Column(
+      { key: "entity-preview-config-details", fillMaxWidth: true, paddingStart: 16, paddingEnd: 16, paddingBottom: 18, spacing: 14 },
+      rows.map((row) => ctx.UI.Column({ key: "entity-preview-config-" + row.key, fillMaxWidth: true, spacing: 4 }, [
+        ctx.UI.Text({ text: row.label, style: "labelMedium", color: colors.onSurfaceVariant }),
+        selectable("entity-preview-config-" + row.key + "-value", row.value)
+      ]))
+    )] : []
+  ]));
   return contents;
 }
 
@@ -879,11 +911,11 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
     });
   }
   function card() {
-    if (live.current.card === null) throw new Error("\u89D2\u8272\u5361\u5C1A\u672A\u52A0\u8F7D");
+    if (live.current.card === null) throw new Error("角色卡尚未加载");
     return live.current.card;
   }
   function group() {
-    if (live.current.group === null) throw new Error("\u7FA4\u7EC4\u5C1A\u672A\u52A0\u8F7D");
+    if (live.current.group === null) throw new Error("群组尚未加载");
     return live.current.group;
   }
   function changeCard(patch) {
@@ -930,7 +962,7 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
         const snapshot = yield request({ action: "snapshot" });
         assertOwner();
         const record2 = input.mode === "create" ? input.entity === "card" ? createCharacterDraft() : createGroupDraft() : input.entity === "card" ? snapshot.cards.find((value) => value.id === input.id) : snapshot.groups.find((value) => value.id === input.id);
-        if (record2 === void 0) throw new Error("\u9884\u89C8\u5B9E\u4F53\u4E0D\u5B58\u5728\uFF1A" + input.id);
+        if (record2 === void 0) throw new Error("预览实体不存在：" + input.id);
         assertOwner();
         update({ snapshot, tags: copy(snapshot.tags), card: input.entity === "card" ? copy(record2) : null, group: input.entity === "group" ? copy(record2) : null, loading: false });
         if (input.entity === "group" || record2.avatarUri === null) void loadDefaultAvatar();
@@ -973,7 +1005,7 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
       }
       if (input.mode === "preview" && live.current.editing) {
         const snapshot = live.current.snapshot;
-        if (snapshot === null) throw new Error("\u9884\u89C8\u6570\u636E\u5C1A\u672A\u52A0\u8F7D");
+        if (snapshot === null) throw new Error("预览数据尚未加载");
         update({
           editing: false,
           tab: 0,
@@ -1008,22 +1040,22 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
         let snapshot;
         if (input.entity === "card") {
           const draft = card();
-          if (draft.name.trim() === "") throw new Error("\u89D2\u8272\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+          if (draft.name.trim() === "") throw new Error("角色名称不能为空");
           let bindingChanged = input.mode === "create";
           let memoryBindingChanged = input.mode === "create";
           if (input.mode !== "create") {
             const original = live.current.snapshot.cards.find((value) => value.id === input.id);
-            if (original === void 0) throw new Error("\u89D2\u8272\u5361\u5DF2\u4E0D\u5B58\u5728");
+            if (original === void 0) throw new Error("角色卡已不存在");
             bindingChanged = !sameCharacterModelBinding(original, draft);
             memoryBindingChanged = original.memoryBindingMode !== draft.memoryBindingMode || original.sharedMemoryId !== draft.sharedMemoryId;
           }
           const bindingStatus = characterModelBindingStatus(draft, live.current.snapshot.models);
           if (bindingChanged && bindingStatus.needsRebind) throw new Error(bindingStatus.label);
-          if (memoryBindingChanged && draft.memoryBindingMode === "SHARED" && !live.current.snapshot?.stores.some((store) => store.id === draft.sharedMemoryId)) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u7684\u5171\u4EAB\u8BB0\u5FC6\u5E93");
+          if (memoryBindingChanged && draft.memoryBindingMode === "SHARED" && !live.current.snapshot?.stores.some((store) => store.id === draft.sharedMemoryId)) throw new Error("请选择有效的共享记忆库");
           snapshot = yield request({ action: "saveCharacter", card: copy(draft), create: input.mode === "create", tagChanges: copy(live.current.tagChanges) });
         } else {
           const draft = group();
-          if (draft.name.trim() === "") throw new Error("\u7FA4\u7EC4\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+          if (draft.name.trim() === "") throw new Error("群组名称不能为空");
           snapshot = yield request({ action: "saveGroup", group: copy(draft), create: input.mode === "create" });
         }
         const previousSnapshot = live.current.snapshot;
@@ -1040,7 +1072,7 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
         if (input.mode !== "preview") {
           const before = previousSnapshot;
           const saved = input.mode === "create" ? input.entity === "card" ? snapshot.cards.find((value) => !before.cards.some((old) => old.id === value.id)) : snapshot.groups.find((value) => !before.groups.some((old) => old.id === value.id)) : input.entity === "card" ? snapshot.cards.find((value) => value.id === input.id) : snapshot.groups.find((value) => value.id === input.id);
-          if (saved === void 0) throw new Error("\u4FDD\u5B58\u7ED3\u679C\u7F3A\u5C11\u5B9E\u4F53\u6807\u8BC6");
+          if (saved === void 0) throw new Error("保存结果缺少实体标识");
           update({ finished: true });
           return lifecycle.complete("saved", saved.id);
         }
@@ -1052,7 +1084,7 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
     return __async(this, null, function* () {
       return act(() => __async(null, null, function* () {
         const draft = live.current.tagDraft;
-        if (draft === null) throw new Error("\u6CA1\u6709\u6807\u7B7E\u8349\u7A3F");
+        if (draft === null) throw new Error("没有标签草稿");
         const changes = copy(live.current.tagChanges);
         let tags = copy(live.current.tags), attachedTagIds = [...card().attachedTagIds];
         if (live.current.tagDeleting) {
@@ -1064,7 +1096,7 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
             changes.deleted.push(draft.id);
           }
         } else {
-          if (draft.name.trim() === "") throw new Error("\u6807\u7B7E\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+          if (draft.name.trim() === "") throw new Error("标签名称不能为空");
           const id2 = draft.id === "" ? "draft_prompt_tag_" + (live.current.nextTag + 1) : draft.id;
           const tag = { ...draft, id: id2, name: draft.name.trim(), description: draft.description.trim() };
           const { id: _id, ...values } = tag;
@@ -1102,7 +1134,7 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
         const selected = yield ctx.openFilePicker({ picker: "image", allowMultiple: false, mimeTypes: ["image/*"], maxContentBytes: MAX_AVATAR_BYTES });
         assertOwner();
         if (selected.cancelled) return;
-        if (selected.files.length !== 1) throw new Error("\u8BF7\u9009\u62E9\u4E00\u4E2A\u5934\u50CF\u6587\u4EF6");
+        if (selected.files.length !== 1) throw new Error("请选择一个头像文件");
         const contentBase64 = readAvatarImport(selected.files[0]);
         assertOwner();
         const directory = ToolPkg.getConfigDir().replace(/\/$/, "") + "/avatars";
@@ -1117,10 +1149,13 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
     });
   }
   const colors = ctx.MaterialTheme.colorScheme, enabled = !state.busy && !state.finished;
-  const text3 = (value) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:58833",__operitUiPrograms_[22],[value]);
-  const caption = (value) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:58933",__operitUiPrograms_[23],[value,colors.onSurfaceVariant]);
-  const section = (title, value) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:59071",__operitUiPrograms_[24],["preview-" + title,title,colors.onSurfaceVariant,text3(value)]);
-  const field = (key, label, value, apply, maxLines = 1) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:59368",__operitUiPrograms_[26],[{
+  const text3 = (value) => ctx.UI.Text({ text: value, fillMaxWidth: true, style: "bodyMedium" });
+  const caption = (value) => ctx.UI.Text({ text: value, fillMaxWidth: true, style: "bodySmall", color: colors.onSurfaceVariant });
+  const section = (title, value) => ctx.UI.Column({ key: "preview-" + title, fillMaxWidth: true, paddingBottom: 12, spacing: 6 }, [
+    ctx.UI.Text({ text: title, style: "labelLarge", color: colors.onSurfaceVariant }),
+    ctx.UI.SelectionContainer({}, text3(value))
+  ]);
+  const field = (key, label, value, apply, maxLines = 1) => ctx.UI.Box({ fillMaxWidth: true, paddingBottom: 12 }, ctx.UI.TextField({
     key: "entity-field-" + key,
     label,
     value,
@@ -1131,46 +1166,80 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
     maxLines,
     style: {},
     onValueChange: apply,
-    ...maxLines === 1 ? {} : { suffixIconWidth: 36, suffixIconHeight: 36, trailingIcon: OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:59731",__operitUiPrograms_[25],["entity-expand-" + key,enabled,() => {
+    ...maxLines === 1 ? {} : { suffixIconWidth: 36, suffixIconHeight: 36, trailingIcon: ctx.UI.Box({ width: 36, height: 36, contentAlignment: "center" }, ctx.UI.IconButton({
+      key: "entity-expand-" + key,
+      width: 28,
+      height: 28,
+      contentPadding: { horizontal: 0, vertical: 0 },
+      enabled,
+      onClick: () => {
         assertOwner();
         update({ expanded: { key, label, value, apply }, fullscreen: true });
-      }]) }
-  }]);
-  const check = (key, label, checked, apply) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:60200",__operitUiPrograms_[27],[key,checked,enabled,apply,label]);
-  const configure = (key, label, value, apply) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:60438",__operitUiPrograms_[28],[key,enabled ? apply : void 0,label,enabled,value]);
-  const select = (key, label, value, choices, apply, empty2 = "\u4E0D\u7ED1\u5B9A") => configure(key, label, choices.find((option) => option.id === value)?.label ?? (value === null ? empty2 : "\u5DF2\u7ED1\u5B9A\u914D\u7F6E\u4E0D\u5B58\u5728\uFF1A" + value), () => {
+      }
+    }, ctx.UI.Icon({ name: "Fullscreen", size: 18 }))) }
+  }));
+  const check = (key, label, checked, apply) => ctx.UI.Row({ key, fillMaxWidth: true, verticalAlignment: "center", spacing: 8 }, [ctx.UI.Checkbox({ checked, enabled, onCheckedChange: apply }), ctx.UI.Text({ text: label, weight: 1 })]);
+  const configure = (key, label, value, apply) => ctx.UI.Box(
+    { fillMaxWidth: true, paddingBottom: 12 },
+    ctx.UI.Surface(
+      { key, fillMaxWidth: true, color: "transparent", onClick: enabled ? apply : void 0 },
+      ctx.UI.InputDecorator({ label, enabled }, ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 12 }, [ctx.UI.Text({ text: value, weight: 1, maxLines: 1, overflow: "ellipsis", style: "bodyMedium" }), ctx.UI.Icon({ name: "Tune", size: 24 })]))
+    )
+  );
+  const select = (key, label, value, choices, apply, empty2 = "不绑定") => configure(key, label, choices.find((option) => option.id === value)?.label ?? (value === null ? empty2 : "已绑定配置不存在：" + value), () => {
     assertOwner();
-    update({ picker: { title: "\u9009\u62E9" + label, key, value, choices, apply, query: "" } });
+    update({ picker: { title: "选择" + label, key, value, choices, apply, query: "" } });
   });
-  const binding = (key, title, subtitleOff, subtitleOn, checked, apply, children, switchEnabled = true) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:61383",__operitUiPrograms_[31],[key,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"border",args:[1,colors.outlineVariant.copy({ alpha: 0.24 }),{ cornerRadius: 12 }]}])}),[
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:61675",__operitUiPrograms_[29],[({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"heightIn",args:[{ minHeight: 46 }]}])}),title,enabled && switchEnabled ? colors.onSurface : colors.onSurface.copy({ alpha: 0.46 }),checked ? subtitleOn : subtitleOff,enabled && switchEnabled ? colors.onSurfaceVariant : colors.onSurfaceVariant.copy({ alpha: 0.46 }),key + "-switch",checked,enabled && switchEnabled,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"scale",args:[0.82]}])}),apply]),
-      ...checked || !switchEnabled ? [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:62393",__operitUiPrograms_[30],[]), ...children] : []
-    ]]);
-  const body = (key, children, padding = { paddingStart: 18, paddingTop: 10, paddingEnd: 18, paddingBottom: 10 }) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:62571",__operitUiPrograms_[33],[key,children.map((child, index) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:62649",__operitUiPrograms_[32],[key + "-item-" + String(child.props?.key ?? index),padding.paddingStart,padding.paddingEnd,index === 0 ? padding.paddingTop : 0,index === children.length - 1 ? padding.paddingBottom : 0,child]))]);
-  const tabs = (key, labels, selected, apply) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:63018",__operitUiPrograms_[35],[key,selected,labels.map((label, tab) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:63143",__operitUiPrograms_[34],[key + "-" + tab,selected === tab,enabled,() => {
+  const binding = (key, title, subtitleOff, subtitleOn, checked, apply, children, switchEnabled = true) => ctx.UI.Box({ key, fillMaxWidth: true, paddingBottom: 7 }, ctx.UI.Box(
+    { fillMaxWidth: true, modifier: ctx.Modifier.border(1, colors.outlineVariant.copy({ alpha: 0.24 }), { cornerRadius: 12 }), paddingHorizontal: 10, paddingVertical: 6 },
+    ctx.UI.Column({ fillMaxWidth: true }, [
+      ctx.UI.Row({ fillMaxWidth: true, modifier: ctx.Modifier.heightIn({ minHeight: 46 }), verticalAlignment: "center", spacing: 8 }, [
+        ctx.UI.Column({ weight: 1, spacing: 1 }, [ctx.UI.Text({ text: title, fontSize: 14, fontWeight: "700", color: enabled && switchEnabled ? colors.onSurface : colors.onSurface.copy({ alpha: 0.46 }) }), ctx.UI.Text({ text: checked ? subtitleOn : subtitleOff, fontSize: 12, color: enabled && switchEnabled ? colors.onSurfaceVariant : colors.onSurfaceVariant.copy({ alpha: 0.46 }) })]),
+        ctx.UI.Switch({ key: key + "-switch", checked, enabled: enabled && switchEnabled, modifier: ctx.Modifier.scale(0.82), onCheckedChange: apply })
+      ]),
+      ...checked || !switchEnabled ? [ctx.UI.Spacer({ height: 6 }), ...children] : []
+    ])
+  ));
+  const body = (key, children, padding = { paddingStart: 18, paddingTop: 10, paddingEnd: 18, paddingBottom: 10 }) => ctx.UI.LazyColumn({ key, fillMaxWidth: true }, children.map((child, index) => ctx.UI.Box({
+    key: key + "-item-" + String(child.props?.key ?? index),
+    fillMaxWidth: true,
+    paddingStart: padding.paddingStart,
+    paddingEnd: padding.paddingEnd,
+    paddingTop: index === 0 ? padding.paddingTop : 0,
+    paddingBottom: index === children.length - 1 ? padding.paddingBottom : 0
+  }, child)));
+  const tabs = (key, labels, selected, apply) => ctx.UI.PrimaryTabRow({
+    key,
+    fillMaxWidth: true,
+    selectedTabIndex: selected,
+    tabs: labels.map((label, tab) => ctx.UI.Tab({ key: key + "-" + tab, selected: selected === tab, enabled, onClick: () => {
       assertOwner();
       apply(tab);
-    },label]))]);
-  const standardButton = (key, label, action, filled = false) => filled ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:63412",__operitUiPrograms_[36],[key,label,enabled,action]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:63476",__operitUiPrograms_[37],[key,label,enabled,action]);
+    } }, ctx.UI.Text({ text: label, style: "titleSmall" })))
+  });
+  const standardButton = (key, label, action, filled = false) => filled ? ctx.UI.Button({ key, text: label, enabled, onClick: action }) : ctx.UI.TextButton({ key, text: label, enabled, onClick: action });
   function shell(title, child, actions, width = 760, height = 820, plainBody = false, reading = false) {
-    return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:63659",__operitUiPrograms_[43],[{ key: "native-entity-panel", ...state.fullscreen ? { fillMaxSize: true } : { width, height }, modifier: ctx.Modifier.clip({ cornerRadius: state.fullscreen ? 0 : 28 }) },[
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:63852",__operitUiPrograms_[38],[reading ? 18 : 22,reading ? 8 : 12,{ text: title, style: reading ? "labelLarge" : "headlineSmall", fontWeight: reading ? "600" : "700", ...reading ? { color: colors.onSurfaceVariant, fontSize: 14 } : {}, maxLines: 2, overflow: "ellipsis", weight: 1 },enabled,close]),
-      ...state.busy ? [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:64400",__operitUiPrograms_[39],[])] : [],
-      ...state.error === "" ? [] : [OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:64498",__operitUiPrograms_[40],[state.error,colors.error])],
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:64645",__operitUiPrograms_[41],[{ key: "entity-content", weight: 1, fillMaxWidth: true, ...plainBody ? {} : { paddingStart: 24, paddingTop: 16, paddingEnd: 24, paddingBottom: 20 } },child]),
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:64821",__operitUiPrograms_[42],[actions])
-    ]]);
+    return ctx.UI.Column({ key: "native-entity-panel", ...state.fullscreen ? { fillMaxSize: true } : { width, height }, modifier: ctx.Modifier.clip({ cornerRadius: state.fullscreen ? 0 : 28 }) }, [
+      ctx.UI.Row({ key: "entity-header", fillMaxWidth: true, paddingStart: 24, paddingTop: reading ? 18 : 22, paddingEnd: 16, paddingBottom: reading ? 8 : 12, verticalAlignment: "center" }, [
+        ctx.UI.Text({ text: title, style: reading ? "labelLarge" : "headlineSmall", fontWeight: reading ? "600" : "700", ...reading ? { color: colors.onSurfaceVariant, fontSize: 14 } : {}, maxLines: 2, overflow: "ellipsis", weight: 1 }),
+        ctx.UI.IconButton({ key: "entity-close", icon: "Close", enabled, onClick: close })
+      ]),
+      ...state.busy ? [ctx.UI.LinearProgressIndicator({ fillMaxWidth: true })] : [],
+      ...state.error === "" ? [] : [ctx.UI.Text({ key: "entity-error", text: state.error, color: colors.error, fillMaxWidth: true, paddingHorizontal: 24, paddingBottom: 12 })],
+      ctx.UI.Box({ key: "entity-content", weight: 1, fillMaxWidth: true, ...plainBody ? {} : { paddingStart: 24, paddingTop: 16, paddingEnd: 24, paddingBottom: 20 } }, child),
+      ctx.UI.FlowRow({ key: "entity-footer", fillMaxWidth: true, paddingStart: 24, paddingTop: 0, paddingEnd: 24, paddingBottom: 20, horizontalArrangement: "end", spacing: 8, runSpacing: 8 }, actions)
+    ]);
   }
   let panel;
-  const cancel = standardButton("entity-cancel", "\u53D6\u6D88", close);
+  const cancel = standardButton("entity-cancel", "取消", close);
   if (state.expanded !== null) {
     const expanded = state.expanded;
-    panel = shell(expanded.label, OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:65218",__operitUiPrograms_[44],[expanded.label,expanded.value,enabled,(value) => {
+    panel = shell(expanded.label, ctx.UI.TextField({ key: "entity-expanded-input", label: expanded.label, value: expanded.value, fillMaxSize: true, minLines: 16, maxLines: 40, enabled, onValueChange: (value) => {
       assertOwner();
       if (live.current.expanded !== null) update({ expanded: { ...live.current.expanded, value } });
-    }]), [
+    } }), [
       cancel,
-      standardButton("entity-primary", "\u4FDD\u5B58", () => {
+      standardButton("entity-primary", "保存", () => {
         assertOwner();
         const draft = live.current.expanded;
         if (draft !== null) {
@@ -1188,27 +1257,31 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
       update({ picker: null });
     };
     const choices = picker.choices.filter((option) => (option.label + " " + (option.subtitle ?? "")).toLowerCase().includes(picker.query.trim().toLowerCase()));
-    panel = shell(picker.title, OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:66337",__operitUiPrograms_[49],[[
-      field("picker-query", "\u641C\u7D22", picker.query, (query) => {
+    panel = shell(picker.title, ctx.UI.Column({ fillMaxSize: true }, [
+      field("picker-query", "搜索", picker.query, (query) => {
         assertOwner();
         if (live.current.picker !== null) update({ picker: { ...live.current.picker, query } });
       }),
-      ...themePending ? [state.themeError === "" ? caption("\u6B63\u5728\u8BFB\u53D6\u4E3B\u9898\u914D\u7F6E\u2026") : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:66696",__operitUiPrograms_[45],[state.themeError,colors.error,standardButton("entity-picker-retry", "\u91CD\u65B0\u52A0\u8F7D\u4E3B\u9898", loadThemes)])] : [],
-      OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:66902",__operitUiPrograms_[48],[[
-        OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:66992",__operitUiPrograms_[46],[() => choose(null),picker.value === null ? "CheckCircle" : "CircleOutlined",picker.value === null ? colors.primary : colors.onSurfaceVariant,text3("\u8DDF\u968F\u5168\u5C40 / \u4E0D\u7ED1\u5B9A")]),
-        ...choices.map((option) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:67425",__operitUiPrograms_[47],["entity-picker-" + option.id,() => choose(option.id),picker.value === option.id ? "CheckCircle" : "CircleOutlined",picker.value === option.id ? colors.primary : colors.onSurfaceVariant,[text3(option.label), ...option.subtitle === void 0 ? [] : [caption(option.subtitle)]]]))
-      ]])
-    ]]), [cancel], 580, 560);
+      ...themePending ? [state.themeError === "" ? caption("正在读取主题配置…") : ctx.UI.Column({ fillMaxWidth: true }, [ctx.UI.Text({ text: state.themeError, color: colors.error }), standardButton("entity-picker-retry", "重新加载主题", loadThemes)])] : [],
+      ctx.UI.LazyColumn({ key: "entity-picker-list", weight: 1, fillMaxWidth: true }, [
+        ctx.UI.Row({ key: "entity-picker-clear", fillMaxWidth: true, paddingHorizontal: 8, paddingVertical: 9, verticalAlignment: "center", spacing: 10, onClick: () => choose(null) }, [ctx.UI.Icon({ name: picker.value === null ? "CheckCircle" : "CircleOutlined", size: 20, tint: picker.value === null ? colors.primary : colors.onSurfaceVariant }), text3("跟随全局 / 不绑定")]),
+        ...choices.map((option) => ctx.UI.Row({ key: "entity-picker-" + option.id, fillMaxWidth: true, paddingHorizontal: 8, paddingVertical: 9, verticalAlignment: "center", spacing: 10, onClick: () => choose(option.id) }, [ctx.UI.Icon({ name: picker.value === option.id ? "CheckCircle" : "CircleOutlined", size: 20, tint: picker.value === option.id ? colors.primary : colors.onSurfaceVariant }), ctx.UI.Column({ weight: 1 }, [text3(option.label), ...option.subtitle === void 0 ? [] : [caption(option.subtitle)]])]))
+      ])
+    ]), [cancel], 580, 560);
   } else if (state.toolDraft !== null && state.snapshot !== null) {
     const draft = state.toolDraft, catalog = state.snapshot.toolCatalog;
-    const names = ["\u5185\u7F6E\u5DE5\u5177", "\u63D2\u4EF6", "\u6280\u80FD", "MCP"], keys = ["allowedBuiltinTools", "allowedPackages", "allowedSkills", "allowedMcpServers"];
+    const names = ["内置工具", "插件", "技能", "MCP"], keys = ["allowedBuiltinTools", "allowedPackages", "allowedSkills", "allowedMcpServers"];
     const key = keys[state.toolTab], options = [catalog.builtinTools, catalog.packages, catalog.skills, catalog.mcpServers][state.toolTab];
     const children = options.filter((option) => (option.displayName + " " + option.description).toLowerCase().includes(state.toolQuery.toLowerCase())).map((option) => check("entity-tool-" + key + "-" + option.name, option.displayName, draft[key].includes(option.name), (checked) => {
       assertOwner();
       const policy = live.current.toolDraft;
       if (policy !== null) update({ toolDraft: { ...policy, [key]: checked ? [...policy[key], option.name] : policy[key].filter((name) => name !== option.name) } });
     }));
-    panel = shell("\u914D\u7F6E\u5141\u8BB8\u4F7F\u7528\u7684\u5DE5\u5177", OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:69003",__operitUiPrograms_[50],[tabs("entity-tool-tabs", names, state.toolTab, (toolTab) => update({ toolTab })),field("tool-query", "\u641C\u7D22", state.toolQuery, (toolQuery) => update({ toolQuery })),body("entity-tool-list", children)]), [cancel, standardButton("entity-primary", "\u786E\u5B9A", () => {
+    panel = shell("配置允许使用的工具", ctx.UI.Column({ fillMaxSize: true }, [
+      tabs("entity-tool-tabs", names, state.toolTab, (toolTab) => update({ toolTab })),
+      ctx.UI.Box({ fillMaxWidth: true, paddingHorizontal: 18, paddingTop: 10 }, field("tool-query", "搜索", state.toolQuery, (toolQuery) => update({ toolQuery }))),
+      ctx.UI.Box({ weight: 1, fillMaxWidth: true }, body("entity-tool-list", children))
+    ]), [cancel, standardButton("entity-primary", "确定", () => {
       assertOwner();
       if (live.current.toolDraft !== null) changeCard({ toolAccessConfig: copy(live.current.toolDraft) });
       update({ toolDraft: null });
@@ -1230,38 +1303,42 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
         update({ exporting: false, exportContent: "", exportName: "" });
       }));
     });
-    panel = shell("\u5BFC\u51FA", state.exportContent === "" ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:70766",__operitUiPrograms_[51],[[standardButton("entity-export-json", "\u5BFC\u51FA JSON", () => exportFile("operit")), ...input.entity === "card" ? [standardButton("entity-export-tavern", "\u5BFC\u51FA\u9152\u9986 JSON", () => exportFile("tavern"))] : []]]) : body("entity-export-body", [caption("\u70B9\u51FB\u4FDD\u5B58\u6587\u4EF6\u9009\u62E9\u4FDD\u5B58\u4F4D\u7F6E\u3002"), section("JSON", state.exportContent)]), [cancel, ...state.exportContent === "" ? [] : [standardButton("entity-export-save", "\u4FDD\u5B58\u6587\u4EF6", writeExport, true)]], state.exportContent === "" ? 420 : 760, state.exportContent === "" ? 240 : 620);
+    panel = shell("导出", state.exportContent === "" ? ctx.UI.Column({ fillMaxWidth: true, spacing: 8 }, [standardButton("entity-export-json", "导出 JSON", () => exportFile("operit")), ...input.entity === "card" ? [standardButton("entity-export-tavern", "导出酒馆 JSON", () => exportFile("tavern"))] : []]) : body("entity-export-body", [caption("点击保存文件选择保存位置。"), section("JSON", state.exportContent)]), [cancel, ...state.exportContent === "" ? [] : [standardButton("entity-export-save", "保存文件", writeExport, true)]], state.exportContent === "" ? 420 : 760, state.exportContent === "" ? 240 : 620);
   } else if (state.tagDraft !== null) {
     const draft = state.tagDraft;
-    const children = state.tagDeleting ? [text3(`\u786E\u5B9A\u5220\u9664\u6807\u7B7E\u201C${draft.name}\u201D\uFF1F`)] : [["name", "\u6807\u7B7E\u540D\u79F0", 1], ["description", "\u63CF\u8FF0", 1], ["promptContent", "\u63D0\u793A\u8BCD\u5185\u5BB9", 6]].map(([key, label, lines]) => field("tag-" + key, label, draft[key], (value) => {
+    const children = state.tagDeleting ? [text3(`确定删除标签“${draft.name}”？`)] : [["name", "标签名称", 1], ["description", "描述", 1], ["promptContent", "提示词内容", 6]].map(([key, label, lines]) => field("tag-" + key, label, draft[key], (value) => {
       assertOwner();
       if (live.current.tagDraft !== null) update({ tagDraft: { ...live.current.tagDraft, [key]: value } });
     }, lines));
-    panel = shell(state.tagDeleting ? "\u5220\u9664\u6807\u7B7E" : draft.id === "" ? "\u521B\u5EFA\u6807\u7B7E" : "\u7F16\u8F91\u6807\u7B7E", body("entity-tag-body", children, { paddingStart: 0, paddingTop: 0, paddingEnd: 0, paddingBottom: 0 }), [
-      ...draft.id === "" || state.tagDeleting ? [] : [standardButton("entity-tag-delete", "\u5220\u9664", () => {
+    panel = shell(state.tagDeleting ? "删除标签" : draft.id === "" ? "创建标签" : "编辑标签", body("entity-tag-body", children, { paddingStart: 0, paddingTop: 0, paddingEnd: 0, paddingBottom: 0 }), [
+      ...draft.id === "" || state.tagDeleting ? [] : [standardButton("entity-tag-delete", "删除", () => {
         assertOwner();
         update({ tagDeleting: true });
       })],
       cancel,
-      standardButton("entity-primary", state.tagDeleting ? "\u5220\u9664" : "\u4FDD\u5B58", stageTag, true)
+      standardButton("entity-primary", state.tagDeleting ? "删除" : "保存", stageTag, true)
     ], 620, state.tagDeleting ? 240 : 520);
   } else if (state.tagManaging) {
-    panel = shell("\u7BA1\u7406\u6807\u7B7E", body("entity-tag-manager", state.tags.map((tag) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:72706",__operitUiPrograms_[52],["entity-tag-row-" + tag.id,check("entity-tag-" + tag.id, tag.name, state.card?.attachedTagIds.includes(tag.id) ?? false, (checked) => changeCard({ attachedTagIds: checked ? [...card().attachedTagIds, tag.id] : card().attachedTagIds.filter((id2) => id2 !== tag.id) })),standardButton("entity-tag-edit-" + tag.id, "\u7F16\u8F91", () => {
+    panel = shell("管理标签", body("entity-tag-manager", state.tags.map((tag) => ctx.UI.Row({ key: "entity-tag-row-" + tag.id, fillMaxWidth: true, verticalAlignment: "center" }, [
+      ctx.UI.Box({ weight: 1 }, check("entity-tag-" + tag.id, tag.name, state.card?.attachedTagIds.includes(tag.id) ?? false, (checked) => changeCard({ attachedTagIds: checked ? [...card().attachedTagIds, tag.id] : card().attachedTagIds.filter((id2) => id2 !== tag.id) }))),
+      standardButton("entity-tag-edit-" + tag.id, "编辑", () => {
         assertOwner();
         update({ tagDraft: copy(tag) });
-      }),standardButton("entity-tag-remove-" + tag.id, "\u5220\u9664", () => {
+      }),
+      standardButton("entity-tag-remove-" + tag.id, "删除", () => {
         assertOwner();
         update({ tagDraft: copy(tag), tagDeleting: true });
-      })])), { paddingStart: 0, paddingTop: 0, paddingEnd: 0, paddingBottom: 0 }), [standardButton("entity-tag-create", "\u521B\u5EFA\u6807\u7B7E", () => {
+      })
+    ])), { paddingStart: 0, paddingTop: 0, paddingEnd: 0, paddingBottom: 0 }), [standardButton("entity-tag-create", "创建标签", () => {
       assertOwner();
       update({ tagDraft: { id: "", name: "", description: "", promptContent: "", tagType: "CUSTOM" } });
-    }), standardButton("entity-cancel", "\u5B8C\u6210", close)], 620, 560);
+    }), standardButton("entity-cancel", "完成", close)], 620, 560);
   } else if (state.deleting) {
-    panel = shell("\u786E\u8BA4\u5220\u9664", text3(`\u786E\u5B9A\u5220\u9664\u201C${state.card?.name ?? state.group?.name}\u201D\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\u3002`), [cancel, standardButton("entity-primary", "\u5220\u9664", remove, true)], 560, 240);
+    panel = shell("确认删除", text3(`确定删除“${state.card?.name ?? state.group?.name}”？此操作不可撤销。`), [cancel, standardButton("entity-primary", "删除", remove, true)], 560, 240);
   } else {
     const pages = [[], [], []];
-    if (state.loading) pages[0].push(OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:74133",__operitUiPrograms_[53],[]));
-    else if (state.snapshot === null) pages[0].push(standardButton("entity-retry", "\u91CD\u65B0\u52A0\u8F7D", load));
+    if (state.loading) pages[0].push(ctx.UI.Box({ fillMaxSize: true, contentAlignment: "center" }, ctx.UI.LoadingIndicator({ size: 32 })));
+    else if (state.snapshot === null) pages[0].push(standardButton("entity-retry", "重新加载", load));
     else if (state.card !== null) {
       const draft = state.card, snapshot = state.snapshot;
       if (!state.editing) {
@@ -1278,62 +1355,66 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
         }));
       } else {
         pages[0].push(
-          field("name", "\u89D2\u8272\u540D\u79F0", draft.name, (name) => changeCard({ name })),
-          field("description", "\u63CF\u8FF0", draft.description, (description) => changeCard({ description })),
-          OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:75128",__operitUiPrograms_[58],[enabled,[
-            OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:75330",__operitUiPrograms_[54],[{ key: "entity-edit-avatar", ...draft.avatarUri === null ? { path: state.avatar ?? void 0 } : { uri: draft.avatarUri }, width: 44, height: 44, contentScale: "crop", contentDescription: "\u89D2\u8272\u5934\u50CF", modifier: ctx.Modifier.clip({ type: "circle" }) }]),
-            OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:75620",__operitUiPrograms_[55],[]),
-            OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:75662",__operitUiPrograms_[56],[draft.avatarUri ?? "\u672A\u8BBE\u7F6E"]),
-            OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:75805",__operitUiPrograms_[57],[]),
-            standardButton("entity-choose-avatar", "\u9009\u62E9", chooseAvatar),
-            ...draft.avatarUri === null ? [] : [standardButton("entity-clear-avatar", "\u6E05\u9664", () => __async(null, null, function* () {
+          field("name", "角色名称", draft.name, (name) => changeCard({ name })),
+          field("description", "描述", draft.description, (description) => changeCard({ description })),
+          ctx.UI.Box({ fillMaxWidth: true, paddingBottom: 12 }, ctx.UI.InputDecorator({ label: "角色头像", enabled }, ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
+            ctx.UI.Image({ key: "entity-edit-avatar", ...draft.avatarUri === null ? { path: state.avatar ?? void 0 } : { uri: draft.avatarUri }, width: 44, height: 44, contentScale: "crop", contentDescription: "角色头像", modifier: ctx.Modifier.clip({ type: "circle" }) }),
+            ctx.UI.Spacer({ width: 12 }),
+            ctx.UI.Text({ text: draft.avatarUri ?? "未设置", style: "bodyMedium", weight: 1, maxLines: 1, overflow: "ellipsis" }),
+            ctx.UI.Spacer({ width: 8 }),
+            standardButton("entity-choose-avatar", "选择", chooseAvatar),
+            ...draft.avatarUri === null ? [] : [standardButton("entity-clear-avatar", "清除", () => __async(null, null, function* () {
               yield act(() => __async(null, null, function* () {
                 assertOwner();
                 update({ card: { ...card(), avatarUri: null } });
                 if (live.current.avatar === null) void loadDefaultAvatar();
               }));
             }))]
-          ]]),
-          field("characterSetting", "\u89D2\u8272\u8BBE\u5B9A", draft.characterSetting, (characterSetting) => changeCard({ characterSetting }), 6),
-          field("openingStatement", "\u5F00\u573A\u767D", draft.openingStatement, (openingStatement) => changeCard({ openingStatement }), 3),
-          OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:76649",__operitUiPrograms_[61],[enabled,() => {
+          ]))),
+          field("characterSetting", "角色设定", draft.characterSetting, (characterSetting) => changeCard({ characterSetting }), 6),
+          field("openingStatement", "开场白", draft.openingStatement, (openingStatement) => changeCard({ openingStatement }), 3),
+          ctx.UI.Column({ fillMaxWidth: true, paddingBottom: 12 }, [
+            ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [ctx.UI.Text({ text: "标签", weight: 1, fontWeight: "700" }), ctx.UI.TextButton({ key: "entity-tags-manage", enabled, onClick: () => {
               assertOwner();
               update({ tagManaging: true });
-            },state.tags.length === 0 ? caption("\u6682\u65E0\u63D0\u793A\u8BCD\u6807\u7B7E") : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:77308",__operitUiPrograms_[60],[state.tags.map((tag) => OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:77378",__operitUiPrograms_[59],["entity-tag-" + tag.id,draft.attachedTagIds.includes(tag.id),enabled,tag.name,({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"widthIn",args:[{ maxWidth: 160 }]}])}),() => {
+            } }, ctx.UI.Row({ spacing: 8, verticalAlignment: "center" }, [ctx.UI.Icon({ name: "Tune", size: 18 }), ctx.UI.Text({ text: "管理标签" })]))]),
+            ctx.UI.Spacer({ height: 6 }),
+            state.tags.length === 0 ? caption("暂无提示词标签") : ctx.UI.FlowRow({ spacing: 8, runSpacing: 8 }, state.tags.map((tag) => ctx.UI.FilterChip({ key: "entity-tag-" + tag.id, selected: draft.attachedTagIds.includes(tag.id), enabled, label: ctx.UI.Text({ text: tag.name, maxLines: 1, overflow: "ellipsis", modifier: ctx.Modifier.widthIn({ maxWidth: 160 }) }), onClick: () => {
               assertOwner();
               changeCard({ attachedTagIds: card().attachedTagIds.includes(tag.id) ? card().attachedTagIds.filter((id2) => id2 !== tag.id) : [...card().attachedTagIds, tag.id] });
-            }]))])])
+            } })))
+          ])
         );
-        for (const [key, label, lines] of [["otherContentChat", "\u804A\u5929\u9644\u52A0\u5185\u5BB9", 4], ["otherContentVoice", "\u8BED\u97F3\u9644\u52A0\u5185\u5BB9", 4], ["advancedCustomPrompt", "\u9AD8\u7EA7\u81EA\u5B9A\u4E49 Prompt", 4], ["marks", "\u5907\u6CE8", 3]]) pages[1].push(field(key, label, draft[key], (value) => changeCard({ [key]: value }), lines));
+        for (const [key, label, lines] of [["otherContentChat", "聊天附加内容", 4], ["otherContentVoice", "语音附加内容", 4], ["advancedCustomPrompt", "高级自定义 Prompt", 4], ["marks", "备注", 3]]) pages[1].push(field(key, label, draft[key], (value) => changeCard({ [key]: value }), lines));
         const modelStatus = characterModelBindingStatus(draft, snapshot.models);
         const tts = snapshot.ttsConfigs.find((config) => config.id === draft.ttsConfigId);
         const policy = draft.toolAccessConfig, count = policy.allowedBuiltinTools.length + policy.allowedPackages.length + policy.allowedSkills.length + policy.allowedMcpServers.length;
         pages[2].push(
           ...modelStatus.needsRebind ? [
-            OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:78682",__operitUiPrograms_[62],[modelStatus.label,colors.error]),
-            standardButton("entity-model-follow-global", "\u8DDF\u968F\u5168\u5C40\u6A21\u578B", () => changeCard({ chatModelBindingMode: "FOLLOW_GLOBAL", chatProviderId: null, chatModelId: null }))
+            ctx.UI.Text({ key: "entity-model-binding-error", text: modelStatus.label, color: colors.error, style: "bodyMedium" }),
+            standardButton("entity-model-follow-global", "跟随全局模型", () => changeCard({ chatModelBindingMode: "FOLLOW_GLOBAL", chatProviderId: null, chatModelId: null }))
           ] : [],
-          binding("entity-model", "\u804A\u5929\u6A21\u578B", modelStatus.label, "\u4F7F\u7528\u56FA\u5B9A\u6A21\u578B\u914D\u7F6E", characterModelBindingMode(draft.chatModelBindingMode) === "FIXED_MODEL", (checked) => changeCard({ chatModelBindingMode: checked ? "FIXED_MODEL" : "FOLLOW_GLOBAL", chatModelId: checked ? card().chatModelId : null, chatProviderId: checked ? card().chatProviderId : null }), [select("entity-model-picker", "\u804A\u5929\u6A21\u578B\u914D\u7F6E", draft.chatProviderId === null || draft.chatModelId === null ? null : JSON.stringify([draft.chatProviderId, draft.chatModelId]), snapshot.models.map((value) => ({ id: JSON.stringify([value.providerId, value.modelId]), label: value.modelId, subtitle: value.providerName })), (selected) => {
+          binding("entity-model", "聊天模型", modelStatus.label, "使用固定模型配置", characterModelBindingMode(draft.chatModelBindingMode) === "FIXED_MODEL", (checked) => changeCard({ chatModelBindingMode: checked ? "FIXED_MODEL" : "FOLLOW_GLOBAL", chatModelId: checked ? card().chatModelId : null, chatProviderId: checked ? card().chatProviderId : null }), [select("entity-model-picker", "聊天模型配置", draft.chatProviderId === null || draft.chatModelId === null ? null : JSON.stringify([draft.chatProviderId, draft.chatModelId]), snapshot.models.map((value) => ({ id: JSON.stringify([value.providerId, value.modelId]), label: value.modelId, subtitle: value.providerName })), (selected) => {
             const model = snapshot.models.find((value) => JSON.stringify([value.providerId, value.modelId]) === selected);
-            if (model === void 0) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u7684\u63D0\u4F9B\u5546\u4E0E\u6A21\u578B");
+            if (model === void 0) throw new Error("请选择有效的提供商与模型");
             changeCard({ chatModelBindingMode: "FIXED_MODEL", chatProviderId: model.providerId, chatModelId: model.modelId });
-          }, "\u8BF7\u9009\u62E9\u804A\u5929\u6A21\u578B")]),
-          binding("entity-theme", "\u4E3B\u9898\u914D\u7F6E", "\u4E0D\u6539\u53D8\u5F53\u524D\u72EC\u7ACB\u4E3B\u9898", "\u4F7F\u7528\u89D2\u8272\u5361\u4E3B\u9898\u914D\u7F6E", draft.themeConfigId !== null, (checked) => {
+          }, "请选择聊天模型")]),
+          binding("entity-theme", "主题配置", "不改变当前独立主题", "使用角色卡主题配置", draft.themeConfigId !== null, (checked) => {
             if (!checked) changeCard({ themeConfigId: null });
-            else update({ picker: { title: "\u9009\u62E9\u4E3B\u9898\u914D\u7F6E", key: "theme", value: draft.themeConfigId, choices: state.themes ?? [], apply: (themeConfigId) => changeCard({ themeConfigId }), query: "" } });
-          }, [select("entity-theme-picker", "\u4E3B\u9898\u914D\u7F6E", draft.themeConfigId, state.themes ?? [], (themeConfigId) => changeCard({ themeConfigId }))]),
-          binding("entity-tts", "TTS \u914D\u7F6E", "\u8DDF\u968F\u5168\u5C40 TTS \u914D\u7F6E", "\u4F7F\u7528\u89D2\u8272\u5361 TTS \u914D\u7F6E", draft.ttsConfigId !== null, (checked) => {
+            else update({ picker: { title: "选择主题配置", key: "theme", value: draft.themeConfigId, choices: state.themes ?? [], apply: (themeConfigId) => changeCard({ themeConfigId }), query: "" } });
+          }, [select("entity-theme-picker", "主题配置", draft.themeConfigId, state.themes ?? [], (themeConfigId) => changeCard({ themeConfigId }))]),
+          binding("entity-tts", "TTS 配置", "跟随全局 TTS 配置", "使用角色卡 TTS 配置", draft.ttsConfigId !== null, (checked) => {
             if (!checked) changeCard({ ttsConfigId: null });
-            else update({ picker: { title: "\u9009\u62E9 TTS \u914D\u7F6E", key: "tts", value: draft.ttsConfigId, choices: snapshot.ttsConfigs.map((config) => ({ id: config.id, label: config.name, subtitle: config.providerType + " \xB7 " + config.voice })), apply: (ttsConfigId) => changeCard({ ttsConfigId }), query: "" } });
-          }, [select("entity-tts-picker", "TTS \u914D\u7F6E", draft.ttsConfigId, snapshot.ttsConfigs.map((config) => ({ id: config.id, label: config.name, subtitle: config.providerType + " \xB7 " + config.voice })), (ttsConfigId) => changeCard({ ttsConfigId }), tts?.name ?? "\u8BF7\u9009\u62E9 TTS \u914D\u7F6E")]),
-          binding("entity-memory", "\u8BB0\u5FC6\u7ED1\u5B9A", "\u4F7F\u7528\u89D2\u8272\u8BB0\u5FC6", "\u4F7F\u7528\u5171\u4EAB\u8BB0\u5FC6", draft.memoryBindingMode === "SHARED", (checked) => changeCard({ memoryBindingMode: checked ? "SHARED" : "CHARACTER", sharedMemoryId: checked ? card().sharedMemoryId : null }), [snapshot.stores.length === 0 ? caption("\u8FD8\u6CA1\u6709\u5171\u4EAB\u8BB0\u5FC6\u5E93") : select("entity-store-picker", "\u5171\u4EAB\u8BB0\u5FC6\u5E93", draft.sharedMemoryId, snapshot.stores.map((store) => ({ id: store.id, label: store.name })), (sharedMemoryId) => changeCard({ sharedMemoryId }), "\u8BF7\u9009\u62E9\u5171\u4EAB\u8BB0\u5FC6\u5E93")], snapshot.stores.length !== 0 || draft.memoryBindingMode === "SHARED"),
-          binding("entity-tool", "\u5DE5\u5177\u8BBF\u95EE", "\u8DDF\u968F\u5168\u5C40\u5DE5\u5177\u914D\u7F6E", "\u81EA\u5B9A\u4E49\u5141\u8BB8\u4F7F\u7528\u7684\u5DE5\u5177", policy.enabled, (checked) => changeCard({ toolAccessConfig: { ...card().toolAccessConfig, enabled: checked } }), [configure("entity-tool-configure", "\u914D\u7F6E\u5141\u8BB8\u4F7F\u7528\u7684\u5DE5\u5177", "\u5DF2\u914D\u7F6E " + count + " \u4E2A\u5DE5\u5177\u6765\u6E90", () => {
+            else update({ picker: { title: "选择 TTS 配置", key: "tts", value: draft.ttsConfigId, choices: snapshot.ttsConfigs.map((config) => ({ id: config.id, label: config.name, subtitle: config.providerType + " · " + config.voice })), apply: (ttsConfigId) => changeCard({ ttsConfigId }), query: "" } });
+          }, [select("entity-tts-picker", "TTS 配置", draft.ttsConfigId, snapshot.ttsConfigs.map((config) => ({ id: config.id, label: config.name, subtitle: config.providerType + " · " + config.voice })), (ttsConfigId) => changeCard({ ttsConfigId }), tts?.name ?? "请选择 TTS 配置")]),
+          binding("entity-memory", "记忆绑定", "使用角色记忆", "使用共享记忆", draft.memoryBindingMode === "SHARED", (checked) => changeCard({ memoryBindingMode: checked ? "SHARED" : "CHARACTER", sharedMemoryId: checked ? card().sharedMemoryId : null }), [snapshot.stores.length === 0 ? caption("还没有共享记忆库") : select("entity-store-picker", "共享记忆库", draft.sharedMemoryId, snapshot.stores.map((store) => ({ id: store.id, label: store.name })), (sharedMemoryId) => changeCard({ sharedMemoryId }), "请选择共享记忆库")], snapshot.stores.length !== 0 || draft.memoryBindingMode === "SHARED"),
+          binding("entity-tool", "工具访问", "跟随全局工具配置", "自定义允许使用的工具", policy.enabled, (checked) => changeCard({ toolAccessConfig: { ...card().toolAccessConfig, enabled: checked } }), [configure("entity-tool-configure", "配置允许使用的工具", "已配置 " + count + " 个工具来源", () => {
             assertOwner();
             update({ toolDraft: copy(card().toolAccessConfig), toolTab: 0, toolQuery: "" });
           })])
         );
-        if (draft.sharedMemoryMounts.length !== 0) pages[2].push(section("\u5171\u4EAB\u8BB0\u5FC6\u6302\u8F7D", JSON.stringify(draft.sharedMemoryMounts, null, 2)));
-        if (state.themeError !== "") pages[2].push(OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:83367",__operitUiPrograms_[63],[state.themeError,colors.error]), standardButton("entity-theme-retry", "\u91CD\u65B0\u52A0\u8F7D\u4E3B\u9898", () => __async(null, null, function* () {
+        if (draft.sharedMemoryMounts.length !== 0) pages[2].push(section("共享记忆挂载", JSON.stringify(draft.sharedMemoryMounts, null, 2)));
+        if (state.themeError !== "") pages[2].push(ctx.UI.Text({ text: state.themeError, color: colors.error }), standardButton("entity-theme-retry", "重新加载主题", () => __async(null, null, function* () {
           yield act(loadThemes);
         })));
       }
@@ -1351,40 +1432,55 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
         onToggleConfiguration: togglePreviewConfiguration
       }));
       else {
-        pages[0].push(field("name", "\u7FA4\u7EC4\u540D\u79F0", draft.name, (name) => changeGroup({ name })), field("description", "\u63CF\u8FF0", draft.description, (description) => changeGroup({ description })), select("entity-theme-picker", "\u4E3B\u9898\u914D\u7F6E", draft.themeConfigId, state.themes ?? [], (themeConfigId) => changeGroup({ themeConfigId })), OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:84496",__operitUiPrograms_[64],[]));
+        pages[0].push(field("name", "群组名称", draft.name, (name) => changeGroup({ name })), field("description", "描述", draft.description, (description) => changeGroup({ description })), select("entity-theme-picker", "主题配置", draft.themeConfigId, state.themes ?? [], (themeConfigId) => changeGroup({ themeConfigId })), ctx.UI.Text({ text: "组内角色", style: "titleSmall", fontWeight: "700", paddingTop: 8, paddingBottom: 8 }));
         for (const option of snapshot.cards) {
           const selected = draft.members.some((member2) => member2.characterCardId === option.id);
-          pages[0].push(OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:84791",__operitUiPrograms_[66],["entity-member-" + option.id,selected ? colors.primaryContainer.copy({ alpha: 0.16 }) : colors.surfaceContainerHighest.copy({ alpha: 0.28 }),({__modifierOps:OperitComposeNodes.modifierBase(ctx.Modifier).concat([{name:"border",args:[1,selected ? colors.primary.copy({ alpha: 0.45 }) : colors.outlineVariant.copy({ alpha: 0.28 }),{ cornerRadius: 10 }]}])}),() => {
+          pages[0].push(ctx.UI.Box({ fillMaxWidth: true, paddingBottom: 6 }, ctx.UI.Surface({
+            key: "entity-member-" + option.id,
+            fillMaxWidth: true,
+            color: selected ? colors.primaryContainer.copy({ alpha: 0.16 }) : colors.surfaceContainerHighest.copy({ alpha: 0.28 }),
+            shape: { cornerRadius: 10 },
+            modifier: ctx.Modifier.border(1, selected ? colors.primary.copy({ alpha: 0.45 }) : colors.outlineVariant.copy({ alpha: 0.28 }), { cornerRadius: 10 }),
+            onClick: () => {
               assertOwner();
               const members = selected ? group().members.filter((member2) => member2.characterCardId !== option.id) : [...group().members, { characterCardId: option.id, orderIndex: group().members.length }];
               changeGroup({ members: members.map((member2, orderIndex) => ({ ...member2, orderIndex })) });
-            },selected ? "CheckCircle" : "CircleOutlined",selected ? colors.primary : colors.onSurfaceVariant,{ width: 28, height: 28, ...option.avatarUri === null ? { path: state.avatar ?? void 0 } : { uri: option.avatarUri }, modifier: ctx.Modifier.clip({ type: "circle" }), contentScale: "crop", contentDescription: option.name },[OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:86203",__operitUiPrograms_[65],[option.name]), ...option.description.trim() === "" ? [] : [caption(option.description)]]]));
+            }
+          }, ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 8, spacing: 10, verticalAlignment: "center" }, [ctx.UI.Icon({ name: selected ? "CheckCircle" : "CircleOutlined", size: 18, tint: selected ? colors.primary : colors.onSurfaceVariant }), ctx.UI.Image({ width: 28, height: 28, ...option.avatarUri === null ? { path: state.avatar ?? void 0 } : { uri: option.avatarUri }, modifier: ctx.Modifier.clip({ type: "circle" }), contentScale: "crop", contentDescription: option.name }), ctx.UI.Column({ weight: 1 }, [ctx.UI.Text({ text: option.name, style: "bodyMedium", fontWeight: "700", maxLines: 1, overflow: "ellipsis" }), ...option.description.trim() === "" ? [] : [caption(option.description)]])]))));
         }
       }
     }
     const isCard = state.card !== null;
     const reading = !state.editing;
-    const page = reading ? body("entity-preview-body", pages[0], { paddingStart: 24, paddingTop: 8, paddingEnd: 24, paddingBottom: 24 }) : isCard ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:86643",__operitUiPrograms_[67],[tabs("entity-tab", ["\u57FA\u7840", "\u5185\u5BB9", "\u7ED1\u5B9A"], state.tab, (tab) => update({ tab })),state.tab,(tab) => {
+    const page = reading ? body("entity-preview-body", pages[0], { paddingStart: 24, paddingTop: 8, paddingEnd: 24, paddingBottom: 24 }) : isCard ? ctx.UI.Column({ fillMaxSize: true }, [tabs("entity-tab", ["基础", "内容", "绑定"], state.tab, (tab) => update({ tab })), ctx.UI.HorizontalPager({ key: "entity-pager", weight: 1, fillMaxWidth: true, currentPage: state.tab, onPageChanged: (tab) => {
       assertOwner();
       if (tab >= 0 && tab < 3) update({ tab });
-    },pages.map((children, index) => body("entity-body-" + index, children))]) : body("entity-body", pages[0], { paddingStart: 0, paddingTop: 0, paddingEnd: 0, paddingBottom: 0 });
-    const title = state.editing ? input.mode === "create" ? input.entity === "card" ? "\u521B\u5EFA\u89D2\u8272\u5361" : "\u521B\u5EFA\u7FA4\u7EC4" : input.entity === "card" ? "\u7F16\u8F91\u89D2\u8272\u5361" : "\u7F16\u8F91\u7FA4\u7EC4" : input.entity === "card" ? "\u89D2\u8272\u5361" : "\u89D2\u8272\u7FA4\u7EC4";
+    } }, pages.map((children, index) => body("entity-body-" + index, children)))]) : body("entity-body", pages[0], { paddingStart: 0, paddingTop: 0, paddingEnd: 0, paddingBottom: 0 });
+    const title = state.editing ? input.mode === "create" ? input.entity === "card" ? "创建角色卡" : "创建群组" : input.entity === "card" ? "编辑角色卡" : "编辑群组" : input.entity === "card" ? "角色卡" : "角色群组";
     panel = shell(title, page, [
       ...state.editing && input.mode !== "create" ? [
-        standardButton("entity-delete", "\u5220\u9664", () => {
+        standardButton("entity-delete", "删除", () => {
           assertOwner();
           update({ deleting: true });
         }),
-        standardButton("entity-export", "\u5BFC\u51FA", () => {
+        standardButton("entity-export", "导出", () => {
           assertOwner();
           update({ exporting: true });
         })
       ] : [],
-      standardButton("entity-cancel", state.editing ? "\u53D6\u6D88" : "\u5173\u95ED", close),
-      ...state.snapshot === null || state.finished ? [] : [standardButton("entity-primary", state.editing ? "\u4FDD\u5B58" : "\u7F16\u8F91", state.editing ? save : edit, true)]
+      standardButton("entity-cancel", state.editing ? "取消" : "关闭", close),
+      ...state.snapshot === null || state.finished ? [] : [standardButton("entity-primary", state.editing ? "保存" : "编辑", state.editing ? save : edit, true)]
     ], reading ? isCard ? 680 : 620 : isCard ? 760 : 620, reading ? 760 : 820, reading || isCard, reading);
   }
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:88258",__operitUiPrograms_[68],[load,close,colors.surfaceContainerHigh,state.fullscreen ? 0 : 28,state.fullscreen,panel]);
+  return ctx.UI.Dialog({
+    key: "character-presentation",
+    onLoad: load,
+    closeOnDismissRequest: false,
+    onDismissRequest: close,
+    containerColor: colors.surfaceContainerHigh,
+    shape: { cornerRadius: state.fullscreen ? 0 : 28 },
+    properties: { fullscreen: state.fullscreen, usePlatformDefaultWidth: false, dismissOnClickOutside: false }
+  }, panel);
 }
 
 // src/ui-editor.ts
@@ -1453,7 +1549,7 @@ function renderScreen(ctx, definition2, requiredMode = null, managementView = "c
           /** Returns a document resource reference without transporting image bytes through JS. */
           avatarImage: (...args) => __async(null, null, function* () {
             const [uri] = webArguments(args, 1);
-            if (uri !== null && typeof uri !== "string") throw new Error("\u5934\u50CF\u8DEF\u5F84\u5FC5\u987B\u662F\u5B57\u7B26\u4E32\u6216 null");
+            if (uri !== null && typeof uri !== "string") throw new Error("头像路径必须是字符串或 null");
             return avatars.source(uri);
           }),
           /** Opens the same native entity renderer used by chat avatars and the sidebar. */
@@ -1470,8 +1566,8 @@ function renderScreen(ctx, definition2, requiredMode = null, managementView = "c
           /** Saves an export through the same host boundary used for file selection. */
           exportFile: (...args) => __async(null, null, function* () {
             const [name, content] = webArguments(args, 2);
-            if (typeof name !== "string" || name.trim() === "") throw new Error("\u5BFC\u51FA\u6587\u4EF6\u540D\u4E0D\u80FD\u4E3A\u7A7A");
-            if (typeof content !== "string") throw new Error("\u5BFC\u51FA\u5185\u5BB9\u5FC5\u987B\u662F\u5B57\u7B26\u4E32");
+            if (typeof name !== "string" || name.trim() === "") throw new Error("导出文件名不能为空");
+            if (typeof content !== "string") throw new Error("导出内容必须是字符串");
             return ctx.saveFile({ suggestedName: name, content, mimeType: "application/json", extensions: ["json"] });
           })
         });
@@ -1489,9 +1585,24 @@ function renderScreen(ctx, definition2, requiredMode = null, managementView = "c
       unsubscribe.current = null;
     }
   }
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:95007",__operitUiPrograms_[71],[initialize,[path === "" ? OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:95076",__operitUiPrograms_[69],[error === "" ? `\u6B63\u5728\u52A0\u8F7D${managementView === "memory" ? "\u8BB0\u5FC6" : definition2.title}\u2026` : error]) : OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-attachment/index.ui.js:95224",__operitUiPrograms_[70],[controller,origin,(request2) => request2.url === origin ? { action: "allow" } : { action: "cancel" },(request2) => avatars.intercept(request2) ?? (request2.url === origin ? { action: "respond", response: { mimeType: "text/html", encoding: "utf-8", statusCode: 200, reasonPhrase: "OK", filePath: path } } : { action: "block" }),(event) => {
+  return ctx.UI.Box({ fillMaxSize: true, onLoad: initialize }, [path === "" ? ctx.UI.Text({ text: error === "" ? `正在加载${managementView === "memory" ? "记忆" : definition2.title}…` : error }) : ctx.UI.WebView({
+    key: "character-memory-web",
+    controller,
+    fillMaxSize: true,
+    url: origin,
+    javaScriptEnabled: true,
+    domStorageEnabled: true,
+    supportZoom: false,
+    useWideViewPort: true,
+    /** Restricts top-level navigation to the package document. */
+    onShouldOverrideUrlLoading: (request2) => request2.url === origin ? { action: "allow" } : { action: "cancel" },
+    /** Serves the offline document and its registered images through the resource host. */
+    onInterceptRequest: (request2) => avatars.intercept(request2) ?? (request2.url === origin ? { action: "respond", response: { mimeType: "text/html", encoding: "utf-8", statusCode: 200, reasonPhrase: "OK", filePath: path } } : { action: "block" }),
+    /** Handles disposal without retaining the screen in the host theme service. */
+    onLifecycleEvent: (event) => {
       if (event.type === "Disposed") dispose();
-    }]), ...managed === null ? [] : [renderManagedEntityScreen(ctx, managed, finishEntity)]]]);
+    }
+  }), ...managed === null ? [] : [renderManagedEntityScreen(ctx, managed, finishEntity)]]);
 }
 
 // src/ui/memory-attachment/index.ui.ts

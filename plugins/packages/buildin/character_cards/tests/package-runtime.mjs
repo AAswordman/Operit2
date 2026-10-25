@@ -22,7 +22,7 @@ function engineModuleHelpers() {
   }).join("\n");
 }
 
-/** Evaluates exact CJS artifact bytes with only relative package loading and real engine metadata tagging. */
+/** Loads package JS through the SDK source compiler with real engine metadata tagging. */
 export function packageRuntime(modules, globals = {}, registrationOnly = false) {
   const context = vm.createContext({ console, TextEncoder, TextDecoder, setTimeout, clearTimeout, ...globals });
   vm.runInContext(engineModuleHelpers(), context);
@@ -31,6 +31,7 @@ export function packageRuntime(modules, globals = {}, registrationOnly = false) 
   vm.runInContext(sdkScript("ToolPkgComposeDslBridge.rs"), context);
   vm.runInContext("globalThis.__operitNativeCompileModuleFactory = body => new Function('module','exports','require','__operit_call_runtime',body);", context);
   const cache = new Map();
+  /** Prepares UI source modules with the production compiler before evaluating their exports. */
   function load(modulePath) {
     const normalized = path.posix.normalize(modulePath);
     if (registrationOnly && context.__operitIsLocalUiModulePath(normalized)) return context.__operitCreateRegistrationScreenPlaceholder(normalized);
@@ -38,7 +39,11 @@ export function packageRuntime(modules, globals = {}, registrationOnly = false) 
     assert.ok(Object.hasOwn(modules, normalized), "Package omitted registered module: " + normalized);
     const module = { exports: {} };
     cache.set(normalized, module);
-    const factory = vm.runInContext("(function(module, exports, require) {\n" + Buffer.from(modules[normalized]).toString("utf8") + "\n})", context, { filename: normalized });
+    const source = Buffer.from(modules[normalized]).toString("utf8");
+    const prepared = context.__operitIsLocalUiModulePath(normalized)
+      ? context.OperitComposeCompiler.prepare(source, "com.operit.character_cards:" + normalized)
+      : source;
+    const factory = vm.runInContext("(function(module, exports, require) {\n" + prepared + "\n})", context, { filename: normalized });
     factory(module, module.exports, request => {
       assert.ok(request.startsWith("."), "Only declared relative modules may be loaded: " + request);
       return load(path.posix.join(path.posix.dirname(normalized), request));

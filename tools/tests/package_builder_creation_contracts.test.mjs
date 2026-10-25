@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
@@ -57,6 +57,38 @@ test('PackageBuilder bundles the current workflow with types and examples', () =
     assert.equal(existsSync(resolved), true, include.source);
   }
   assert.match(source(skillDirectory + 'SKILL.md'), /references\/PLUGIN_CREATION_WORKFLOW\.md/u);
+});
+
+/** Enumerates the resources selected by a skill include using its exact excluded names. */
+function includedFiles(directory, excluded) {
+  const files = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (excluded.has(entry.name)) continue;
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...includedFiles(file, excluded));
+    else if (entry.isFile()) files.push(file);
+  }
+  return files;
+}
+
+/** Checks the actual selected examples, including ignored leftovers from previous package builds. */
+test('PackageBuilder examples contain authoring sources without generated packages or Compose artifacts', () => {
+  const includes = JSON.parse(source(skillDirectory + 'skill.include.json')).includes;
+  const examples = includes.filter(include => include.target.startsWith('examples/packages/'));
+  assert.equal(examples.length, 2);
+  for (const include of examples) {
+    const base = path.resolve(root, skillDirectory, include.source);
+    const files = includedFiles(base, new Set(include.excludeNames));
+    assert.ok(files.some(file => file.endsWith('.ts')), include.target);
+    for (const file of files) {
+      const relative = path.relative(base, file);
+      assert.doesNotMatch(relative, /(?:^|[\\/])(?:dist|build|tests-dist)(?:[\\/]|$)/u, relative);
+      assert.notEqual(path.extname(file), '.toolpkg', relative);
+      if (path.extname(file) === '.js') {
+        assert.doesNotMatch(readFileSync(file, 'utf8'), /^\/\/ @operit-compose-artifact /u, relative);
+      }
+    }
+  }
 });
 
 /** Prevents the authoring materials from reintroducing removed execution routes. */

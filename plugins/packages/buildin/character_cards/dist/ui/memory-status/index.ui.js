@@ -1,7 +1,4 @@
-// @operit-compose-artifact 4
 "use strict";
-var __operitUiPrograms_=[{"id":"com.operit.character_cards:dist/ui/memory-status/index.ui.js:ezbrz3:16898","root":0,"nodes":[{"type":"AlertDialog","props":[2,["key","title","text","confirmText","onConfirm","onDismissRequest"],[[0,"memory-status"],[0,"记忆状态"],[1,0],[0,"关闭"],[1,1],[1,2]]],"children":[0,null],"explicitChildren":false}]}];
-
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -29,14 +26,14 @@ module.exports = __toCommonJS(index_ui_exports);
 
 // src/validation.ts
 function assertObject(value, label) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是对象`);
 }
 function assertString(value, label) {
-  if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
 }
 function requireId(value, label) {
   assertString(value, label);
-  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} \u65E0\u6548`);
+  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} 无效`);
   return value;
 }
 
@@ -328,5 +325,12 @@ function Screen(ctx) {
   function close() {
     return { type: "toolpkg.presentation.cancel", requestId };
   }
-  return OperitComposeComposition.evaluate(ctx,"com.operit.character_cards:dist/ui/memory-status/index.ui.js:16898",__operitUiPrograms_[0],[input.description,close,close]);
+  return ctx.UI.AlertDialog({
+    key: "memory-status",
+    title: "记忆状态",
+    text: input.description,
+    confirmText: "关闭",
+    onConfirm: close,
+    onDismissRequest: close
+  });
 }

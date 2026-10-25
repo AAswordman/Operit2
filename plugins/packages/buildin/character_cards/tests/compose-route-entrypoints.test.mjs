@@ -145,3 +145,22 @@ test("UI bundles omit the file repository and memory job backend", async () => {
   assert.ok(screens["dist/ui/chat-sidebar/index.ui.js"].length < 110_000,
     "Keep the native sidebar lightweight instead of bundling the management backend");
 });
+
+/** Executes a user's edit to the installed screen JS through runtime compilation without rebuilding the UI. */
+test("editing packaged UI JavaScript changes the rendered text without build-time Compose compilation", async () => {
+  const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+  const { unzipSync } = require("fflate");
+  const modules = unzipSync(await readFile(new URL("../dist/character_cards.toolpkg", import.meta.url)));
+  const route = registeredPackage(modules).routes.find(route => route.id === "main");
+  const source = Buffer.from(modules[route.screen]).toString("utf8");
+  const originalText = "正在加载角色卡…", editedText = "用户直接修改了界面 JS：角色卡…";
+  assert.doesNotMatch(source, /^\/\/ @operit-compose-artifact /u);
+  assert.match(source, /\.UI\.[A-Za-z_$]/u);
+  const original = await renderRoute(modules, route, {});
+  assert.ok(nodes(original.tree).some(node => node.props.text === originalText));
+  const edited = source.replace("正在加载", "用户直接修改了界面 JS：");
+  assert.ok(edited !== source, "The installed UI must expose readable UTF-8 text");
+  const updated = await renderRoute({ ...modules, [route.screen]: Buffer.from(edited) }, route, {});
+  assert.ok(nodes(updated.tree).some(node => node.props.text === editedText));
+  assert.equal(nodes(updated.tree).some(node => node.props.text === originalText), false);
+});
