@@ -284,19 +284,34 @@ The hardware smoke tool requires an already paired/admitted device and does not
 complete first-pairing or full-chat acceptance. See the editor's verification
 commands and distinguish simulator, build and physical-device results.
 
-Physical validation on 2026-10-25 passed bounded authority export and protocol
-rejection checks, including recovery of the original Space after reboot. A full
-sync completed once, but the immediate repeat still failed allocating a 7290-byte
-local authority record and closed the connection. This is not stable hardware
-acceptance. The tested v72 image uses 3,993,968 of 3,997,696 application bytes. See the
-[entry protocol validation record](../../docs/edge-core-entry-protocol.md) for the
-results and remaining lifecycle checks.
+Physical validation on 2026-10-25 used an isolated Core and UART/TCP, preserving
+identity, pairing, Wi-Fi, the existing Space and the layout partition. The v72
+image completed one sync but failed its immediate repeat; the first upstream
+merge then exceeded the application partition by 38,352 bytes. These are
+historical results, not the current build status.
 
-After merging upstream `90ec13ba`, Rust compilation and the Xtensa ABI checks
-pass, but image generation fails: 4,036,048 application bytes exceed the existing
-3,997,696-byte partition by 38,352 bytes. This merged source has not been flashed
-or accepted on hardware. Keep this build result separate from the v72 hardware
-results above; see the [post-merge verification](../../docs/edge-core-entry-protocol.md#合并上游后的验证2026-10-25).
+Building the standard library with `backtrace-trace-only` brought the image
+inside the original partition. With the matching-policy `observeSpaceProjection`
+reply and boxed Core projection future, v74 passed five consecutive full sync
+rounds (28.936–39.186 seconds), with actual paging verified on every round.
+There were no resets, allocation failures or session errors during those rounds;
+minimum free heap was 18,892 bytes and NVS use remained stable. This verifies
+repeated synchronization with identical authority history only.
+
+A subsequent Core leave/rejoin test reached the real Edge approval UI. v74
+exhausted heap while checking the admission history. Bounded receipt lookup and
+local sequence calculation removed that failure in the next hardware attempt,
+but rebuilding membership then exceeded the unchanged 7 KB logical storage
+budget. Compact JSON and compatible default-field omission now allow recovery
+of the member projection, while saving the final approval receipt still fails.
+The final v80 image uses 3,929,616 of 3,997,696 application bytes (68,080 free).
+Its stored logical snapshot uses 6,959 of 7,000 bytes (41 free); approval remains
+`approving`, and the isolated Core has not adopted the Edge Space. The final
+refresh did not reset or report allocation/session errors; minimum free heap was
+19,340 bytes. Approval intent and its admission remain durable, but this is not a
+passed join lifecycle. Core-managed authority and durable handover are still
+pending. See the [validation record](../../docs/edge-core-entry-protocol.md) for
+the firmware stages, recovery results and remaining acceptance limits.
 
 ## Recovering from an unavailable Space administrator
 
@@ -435,6 +450,12 @@ The firmware release uses Fat LTO and size optimization across its Rust packages
 to fit the existing 4 MB board and application partition. ESP32 console timestamps use direct UTC clock fields;
 desktop logs retain their local-time formatter. A single codegen unit keeps the
 Windows linker command within its length limit; package-specific Tokio and UUID optimization settings remain.
+
+The ESP32 standard library uses `backtrace-trace-only`: panic diagnostics and
+raw backtrace addresses remain available, while symbol lookup runs on the host
+with the matching ELF. This avoids linking the device-side DWARF symbol reader;
+it does not disable panic reporting or the ESP-IDF abort backtrace. Keep the ELF
+from each flashed build for `xtensa-esp32-elf-addr2line -f -C -e <elf> <addresses>`.
 
 On Xtensa, the overlays keep the Tokio constructor and ring seal/open as named,
 non-inlined functions so LTO cannot erase the ABI inspection boundaries. These
