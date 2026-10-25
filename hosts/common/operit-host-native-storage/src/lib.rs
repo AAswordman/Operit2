@@ -735,7 +735,8 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
 }
 
 /// Detects the atomic writer's private `.{name}.{uuid}.partial` staging siblings.
-fn isPartialStagingFile(name: &str) -> bool {
+#[allow(non_snake_case)]
+pub fn isPartialStagingFile(name: &str) -> bool {
     name.starts_with('.')
         && name
             .strip_suffix(".partial")

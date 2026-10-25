@@ -218,6 +218,13 @@ impl RuntimeStorageHost for WindowsRuntimeStorageHost {
         }
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
+            // The atomic writer stages a private sibling until commit; a killed
+            // process leaves it behind and no listing may ever publish it.
+            if operit_host_native_common::isPartialStagingFile(
+                &entry.file_name().to_string_lossy(),
+            ) {
+                continue;
+            }
             let metadata = entry.metadata()?;
             entries.push(RuntimeStorageEntry {
                 path: self.storagePathForPhysical(&entry.path())?,

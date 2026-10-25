@@ -28,7 +28,9 @@ pub use operit_host_native_scheduler::NativeHostRuntimeEventSchedulerHost;
 #[cfg(feature = "storage")]
 pub use operit_host_native_storage::NativeArchiveStagingHost;
 #[cfg(feature = "storage")]
-pub use operit_host_native_storage::{NativeFileSecretStore, NativeRuntimeStorageHost};
+pub use operit_host_native_storage::{
+    isPartialStagingFile, NativeFileSecretStore, NativeRuntimeStorageHost,
+};
 #[cfg(feature = "terminal")]
 pub use operit_host_native_terminal::{NativePtyShellCommand, NativePtyTerminalHost};
 #[cfg(feature = "terminal")]
