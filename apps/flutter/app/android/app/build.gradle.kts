@@ -116,6 +116,12 @@ android {
             storePassword = requiredLocalProperty("RELEASE_STORE_PASSWORD")
             keyAlias = requiredLocalProperty("RELEASE_KEY_ALIAS")
             keyPassword = requiredLocalProperty("RELEASE_KEY_PASSWORD")
+            // MIUI/HyperOS 安装器的安全扫描按 v1 (JAR) 方式校验签名，v2/v3-only 包会被判为
+            // 签名异常并报“解析失败 (33) packageInfo is null”。AGP 在 minSdk>=24 时默认关闭
+            // v1，这里显式全开 v1+v2+v3 以兼容小米等 OEM 安装器。
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
