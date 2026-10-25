@@ -1962,10 +1962,57 @@ impl CoreNodeStateStore {
         Ok(read(entries))
     }
 
+    /// Visit one raw entry at a time through bounded Host range reads. The
+    /// schema is checked in a first pass before invoking the read-only callback;
+    /// both passes share the same transaction. Legacy/cache paths keep migration.
+    pub fn visitEncodedEntries(&self, mut visit: impl FnMut(&str, &serde_json::value::RawValue) -> Result<(), String>) -> Result<(), PreferencesDataStoreError> {
+        if !self.inner.storageHost.retainPreferencesCache() {
+            let transaction = self.inner.sharedState.transaction.lock()
+                .expect("PreferencesDataStore transaction mutex must not be poisoned");
+            self.inner.releaseNodeLocalCacheUnlocked();
+            if self.inner.storageHost.exists(&self.inner.storagePath)? {
+                #[derive(Deserialize)]
+                struct Header {
+                    #[serde(default, rename = "__operit_preferences_schema_version")]
+                    version: Option<Value>,
+                    #[serde(default, rename = "__operit_preferences_replication", deserialize_with = "nodeEntryFieldPresent")]
+                    replication: bool,
+                }
+                let header = (|| -> Result<Header, serde_json::Error> {
+                    let mut decoder = serde_json::Deserializer::from_reader(NodePreferenceReader::new(
+                        self.inner.storageHost.as_ref(), &self.inner.storagePath));
+                    let header = Header::deserialize(&mut decoder)?;
+                    decoder.end()?;
+                    Ok(header)
+                })();
+                match header {
+                    Ok(header) => {
+                        let mut probe = emptyPreferences();
+                        if let Some(version) = header.version { probe.set(&PreferencesDataStore::schemaVersionKey(), version); }
+                        if self.inner.schemaIsCurrent(&probe)? && !header.replication {
+                            let mut decoder = serde_json::Deserializer::from_reader(NodePreferenceReader::new(
+                                self.inner.storageHost.as_ref(), &self.inner.storagePath));
+                            serde::de::Deserializer::deserialize_map(&mut decoder, EncodedNodeEntryVisitor(&mut visit))?;
+                            decoder.end()?;
+                            return Ok(());
+                        }
+                    }
+                    Err(error) if error.is_eof() => {} // Empty legacy files use the regular path.
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            drop(transaction);
+        }
+        self.withEncodedEntries(|entries| {
+            for (key, value) in entries { visit(&key, value)?; }
+            Ok::<_, String>(())
+        })?.map_err(PreferencesDataStoreError::Message)
+    }
+
     /// Replace one record without expanding unrelated JSON on constrained hosts.
     /// The shared transaction and atomic host publication remain the commit boundary.
     pub fn setTypedEntry<T: Serialize>(&self, key: &str, value: &T) -> Result<(), PreferencesDataStoreError> {
-        self.editTypedEntry(key, Some(value))
+        self.editTypedEntry(key, Some(value), false)
     }
 
     /// Atomically merge immutable records while retaining unrelated payloads as raw JSON.
@@ -2035,10 +2082,17 @@ impl CoreNodeStateStore {
 
     /// Remove one record through the same transaction without decoding its neighbours.
     pub fn removeEntry(&self, key: &str) -> Result<(), PreferencesDataStoreError> {
-        self.editTypedEntry::<Value>(key, None)
+        self.editTypedEntry::<Value>(key, None, false)
     }
 
-    fn editTypedEntry<T: Serialize>(&self, key: &str, value: Option<&T>) -> Result<(), PreferencesDataStoreError> {
+    /// Compact legacy whitespace in mutable application records in the same
+    /// atomic replacement. Opt-in only: immutable/raw-addressed entries retain
+    /// their original bytes through setTypedEntry and mergeImmutableEntries.
+    pub fn setTypedEntryCompactingJson<T: Serialize>(&self, key: &str, value: &T) -> Result<(), PreferencesDataStoreError> {
+        self.editTypedEntry(key, Some(value), true)
+    }
+
+    fn editTypedEntry<T: Serialize>(&self, key: &str, value: Option<&T>, compactEntries: bool) -> Result<(), PreferencesDataStoreError> {
         if !self.inner.storageHost.retainPreferencesCache()
             && !matches!(key, PREFERENCES_SCHEMA_VERSION_KEY_NAME | PREFERENCES_REPLICATION_KEY) {
             let transaction = self.inner.sharedState.transaction.lock()
@@ -2057,8 +2111,14 @@ impl CoreNodeStateStore {
             if self.inner.schemaIsCurrent(&probe)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
                 let replacement = NodeEntryReplacement { entries: &entries, key, value };
                 let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
-                let encode = |output: &mut PreferencesJsonBuffer| replacement.serialize(&mut serde_json::Serializer::with_formatter(
-                    output, serde_json::ser::CompactFormatter));
+                let encode = |output: &mut PreferencesJsonBuffer| {
+                    if compactEntries {
+                        replacement.serialize(&mut serde_json::Serializer::with_formatter(
+                            CompactJsonWriter { output, inString: false, escaped: false }, serde_json::ser::CompactFormatter))
+                    } else {
+                        replacement.serialize(&mut serde_json::Serializer::with_formatter(output, serde_json::ser::CompactFormatter))
+                    }
+                };
                 encode(&mut content)?;
                 content.bytes.try_reserve_exact(content.measured)
                     .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
@@ -2133,6 +2193,83 @@ impl CoreNodeStateStore {
             inner: PreferencesDataStore::newNodeLocalWithStorage(storageHost, storagePath, false),
         }
     }
+}
+
+fn nodeEntryFieldPresent<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<bool, D::Error> {
+    serde::de::IgnoredAny::deserialize(decoder)?;
+    Ok(true)
+}
+
+/// Keep decompression bounded to the Host's range window and a 512-byte
+/// buffer; a page export never needs the complete expanded policy allocation.
+struct NodePreferenceReader<'a> {
+    storage: &'a dyn RuntimeStorageHost,
+    path: &'a str,
+    buffer: Vec<u8>,
+    next: usize,
+    offset: u64,
+}
+impl<'a> NodePreferenceReader<'a> {
+    fn new(storage: &'a dyn RuntimeStorageHost, path: &'a str) -> Self {
+        Self { storage, path, buffer: Vec::new(), next: 0, offset: 0 }
+    }
+}
+impl std::io::Read for NodePreferenceReader<'_> {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if output.is_empty() { return Ok(0); }
+        if self.next == self.buffer.len() {
+            self.buffer = Vec::new(); // Release the old block before Host decompression.
+            self.buffer = self.storage.readBytesRange(self.path, self.offset, 512)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            self.offset += self.buffer.len() as u64;
+            self.next = 0;
+        }
+        let count = output.len().min(self.buffer.len() - self.next);
+        output[..count].copy_from_slice(&self.buffer[self.next..self.next + count]);
+        self.next += count;
+        Ok(count)
+    }
+}
+struct EncodedNodeEntryVisitor<'a, F>(&'a mut F);
+impl<'de, F: FnMut(&str, &serde_json::value::RawValue) -> Result<(), String>> serde::de::Visitor<'de> for EncodedNodeEntryVisitor<'_, F> {
+    type Value = ();
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result { formatter.write_str("node-local entry map") }
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        while let Some(key) = map.next_key::<String>()? {
+            let value: Box<serde_json::value::RawValue> = map.next_value()?;
+            if !matches!(key.as_str(), PREFERENCES_SCHEMA_VERSION_KEY_NAME | PREFERENCES_REPLICATION_KEY) {
+                (self.0)(&key, &value).map_err(serde::de::Error::custom)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// RawValue bypasses serde's formatter. Filter only JSON whitespace outside
+/// strings, preserving every token, escape, number spelling and key order.
+/// State spans write calls; input has already passed serde's JSON validation.
+struct CompactJsonWriter<W> {
+    output: W,
+    inString: bool,
+    escaped: bool,
+}
+impl<W: std::io::Write> std::io::Write for CompactJsonWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        for &byte in bytes {
+            if self.inString {
+                if self.escaped { self.escaped = false; }
+                else if byte == b'\\' { self.escaped = true; }
+                else if byte == b'"' { self.inString = false; }
+            } else if byte == b'"' {
+                self.inString = true;
+            } else if matches!(byte, b' ' | b'\n' | b'\r' | b'\t') {
+                continue;
+            }
+            self.output.write_all(&[byte])?;
+        }
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> { self.output.flush() }
 }
 
 /// Borrow old JSON payloads and serialize only the replaced typed value.

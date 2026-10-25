@@ -594,6 +594,46 @@ impl NetworkControlStore {
             .iter().any(|entry| !entry.isDirectory) {
             return Err("SPACE_EXPORT_MIGRATION_REQUIRED: Endpoint journal is not retired".into());
         }
+        // Current projections are written in key/opId order. Stream those
+        // records without allocating the complete expanded file or retaining a
+        // second map. Keep the original digest byte-for-byte; legacy aliases or
+        // unordered JSON use the existing immutable-conflict-aware path below.
+        let mut hash = Sha256::new();
+        hash.update(b"operit.endpoint-control-export.v1\0");
+        hash.update((spaceId.len() as u64).to_be_bytes());
+        hash.update(spaceId.as_bytes());
+        let (mut ordered, mut count, mut cursorFound) = (true, 0, after.is_none());
+        let mut previous: Option<String> = None;
+        let mut operation = None;
+        self.controlProjection.visitEncodedEntries(|key, json| {
+            if !ordered { return Ok(()); }
+            let (envelope, record, _) = decodeEncodedControlOperation(json)?;
+            if record.spaceId != spaceId { return Ok(()); }
+            let id = envelope.opId.as_ref();
+            if key != id || previous.as_deref().is_some_and(|old| old >= id) {
+                ordered = false;
+                return Ok(());
+            }
+            for bytes in [id.as_bytes(), json.get().as_bytes()] {
+                hash.update((bytes.len() as u64).to_be_bytes());
+                hash.update(bytes);
+            }
+            count += 1;
+            cursorFound |= after == Some(id);
+            if operation.is_none() && after.is_none_or(|cursor| id > cursor) {
+                operation = Some(serde_json::from_str(json.get()).map_err(|error| error.to_string())?);
+            }
+            previous = Some(id.to_owned());
+            Ok(())
+        }).map_err(|error| error.to_string())?;
+        if ordered {
+            let current = format!("{:x}", hash.finalize());
+            if revision.is_some_and(|expected| expected != current) {
+                return Err("SPACE_EXPORT_CHANGED: Restart the endpoint export".into());
+            }
+            if !cursorFound { return Err("SPACE_EXPORT_CURSOR_INVALID: Unknown operation cursor".into()); }
+            return Ok(NodeLocalControlExport { revision: current, count, operation });
+        }
         self.controlProjection.withEncodedEntries(|entries| {
             let mut records: BTreeMap<String, &serde_json::value::RawValue> = BTreeMap::new();
             for json in entries.values() {

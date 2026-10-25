@@ -18,6 +18,7 @@ struct MemoryStorageHost {
     readCount: Arc<AtomicUsize>,
     rangeBytes: Arc<AtomicUsize>,
     forbidWholeJournalReads: Arc<AtomicBool>,
+    forbidWholePolicyReads: Arc<AtomicBool>,
     failAtomic: Arc<AtomicUsize>,
 }
 
@@ -49,6 +50,9 @@ impl RuntimeStorageHost for MemoryStorageHost {
     fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
         if self.forbidWholeJournalReads.load(Ordering::SeqCst) && path.ends_with(".jsonl") {
             return Err(HostError::new("unbounded journal read"));
+        }
+        if self.forbidWholePolicyReads.load(Ordering::SeqCst) && path.ends_with("space_policy.preferences.json") {
+            return Err(HostError::new("unbounded policy read"));
         }
         self.readCount.fetch_add(1, Ordering::SeqCst);
         let files = self
@@ -2030,4 +2034,60 @@ fn bounded_review_receipts_validate_complete_history_and_local_sequences() {
         .unwrap_err().contains("Conflicting immutable"));
     assert!(store.admitSpaceForReview("source".into(), identities, "bounded").is_err());
     assert_eq!(storage.writeCount(), writes);
+}
+
+/// Paged authority must never allocate a whole expanded policy on current
+/// endpoint files. Its digest and all unknown payload bytes stay compatible.
+#[test]
+fn endpoint_control_export_streams_ranges_with_identical_digest_and_legacy_fallback() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    use sha2::{Digest, Sha256};
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let store = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
+    let state = store.bootstrapCurrentSpace().unwrap();
+    for index in 0..12 { store.admitMember(format!("peer-{index}-range-boundary")).unwrap(); }
+    let projection = NetworkControlStore::projectionStore(storage.clone());
+    let mut expected = store.currentSpaceOperations().unwrap();
+    expected[0].payload["futureField"] = json!({"text":"设备  \n \"".repeat(100),"unknown":[null,9]});
+    projection.setTypedEntry(&expected[0].opId, &expected[0]).unwrap();
+    expected.sort_by(|a,b| a.opId.cmp(&b.opId));
+    // The range parser must hash legacy structural whitespace verbatim too.
+    let path = "runtime/link_access/space_policy.preferences.json";
+    let pretty: Value = serde_json::from_slice(&storage.readBytes(path).unwrap()).unwrap();
+    storage.writeBytes(path, &serde_json::to_vec_pretty(&pretty).unwrap()).unwrap();
+    let revision = projection.withEncodedEntries(|entries| {
+        let mut hash = Sha256::new();
+        hash.update(b"operit.endpoint-control-export.v1\0");
+        hash.update((state.spaceId.len() as u64).to_be_bytes()); hash.update(state.spaceId.as_bytes());
+        for (key, raw) in entries {
+            for bytes in [key.as_bytes(), raw.get().as_bytes()] {
+                hash.update((bytes.len() as u64).to_be_bytes()); hash.update(bytes);
+            }
+        }
+        format!("{:x}", hash.finalize())
+    }).unwrap();
+    let original = storage.readBytes(path).unwrap();
+    let writes = storage.writeCount();
+    storage.forbidWholePolicyReads.store(true, Ordering::SeqCst);
+    let mut after = None;
+    let mut actual = Vec::new();
+    loop {
+        let page = store.nodeLocalControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap();
+        assert_eq!(page.revision, revision);
+        assert_eq!(page.count, expected.len());
+        let Some(operation) = page.operation else { break; };
+        after = Some(operation.opId.clone()); actual.push(operation);
+    }
+    assert_eq!(actual, expected);
+    assert_eq!(storage.writeCount(), writes);
+    storage.forbidWholePolicyReads.store(false, Ordering::SeqCst);
+    assert_eq!(storage.readBytes(path).unwrap(), original);
+    // Unordered legacy maps retain the old sorted export and exact digest.
+    let entries: BTreeMap<String, Box<serde_json::value::RawValue>> = serde_json::from_slice(&original).unwrap();
+    let reversed = format!("{{{}}}", entries.iter().rev().map(|(key, raw)|
+        format!("{}:{}", serde_json::to_string(key).unwrap(), raw.get())).collect::<Vec<_>>().join(","));
+    storage.writeBytes(path, reversed.as_bytes()).unwrap();
+    let legacy = store.nodeLocalControlExport(&state.spaceId, Some(&revision), None).unwrap();
+    assert_eq!(legacy.operation, expected.first().cloned());
+    assert_eq!(storage.readBytes(path).unwrap(), reversed.as_bytes());
 }

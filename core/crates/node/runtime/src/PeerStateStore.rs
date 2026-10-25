@@ -407,6 +407,11 @@ impl PeerStateStore {
             .setTypedEntry(id, value)
             .map_err(|e| e.to_string())
     }
+    /// Mutable join receipts may normalize old whitespace together, so a
+    /// partially upgraded file does not compress worse than either version.
+    pub(crate) fn putCompactRecord<T: Serialize>(&self, path: &str, id: &str, value: &T) -> Result<(), String> {
+        self.store(path).setTypedEntryCompactingJson(id, value).map_err(|e| e.to_string())
+    }
     pub(crate) fn deleteRecord(&self, path: &str, id: &str) -> Result<(), String> {
         self.store(path).removeEntry(id).map_err(|e| e.to_string())
     }

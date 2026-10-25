@@ -1951,6 +1951,103 @@ mod core_edge {
         result.unwrap();
     }
 
+    /// A compact receipt survives restart, but cannot stand in for its exact
+    /// admission or an explicit approval. The applicant still verifies policy.
+    #[tokio::test]
+    async fn approved_reference_survives_restart_and_rejects_mismatched_admission() {
+        use operit_store::PreferencesDataStore::CoreNodeStateStore;
+        let _guard = TEST_LOCK.lock().await;
+        let mut core = core_node();
+        let mut edge = fresh_edge();
+        start(&core, &edge).await;
+        let result = tokio::time::timeout(Duration::from_secs(40), async {
+            let edge_id = edge.service.localNodeId();
+            pair(&core.peers, &edge.peers, &edge.storage, edge_id.clone()).await;
+            let request = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            let path = "runtime/link_access/space_merge_inbound.preferences.json";
+            let pending = storedRecords(&edge.storage, path)[&request.requestId].clone();
+            edge.service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
+            let receipt = storedRecords(&edge.storage, path)[&request.requestId].clone();
+            assert_eq!(receipt["acceptedReference"], true);
+            assert!(receipt.get("accepted").is_none());
+            assert_eq!(receipt["source"], pending["source"], "receipt dropped original applicant facts");
+            assert_eq!(receipt["profile"], pending["profile"]);
+            let now = operit_host_api::TimeUtils::currentTimeMillis();
+            let topology: operit_store::CoreSpaceStore::CoreSpaceTopologyRecord = serde_json::from_value(serde_json::json!({
+                "nodeId": core.router.localNodeId(), "peers": [edge_id.clone()], "updatedAt": now + 1000,
+                "links": [{"targetNodeId":edge_id.clone(), "channelEpoch":"topology-roundtrip", "sequence":7,
+                    "measuredAt":now, "expiresAt":now + 60_000, "smoothedRttMs":123, "lossPermille":17, "congestionPermille":29}]
+            })).unwrap();
+            edge.service.spaceStore().importTopologyRecords(vec![topology.clone()]).unwrap();
+            let topology_path = format!("runtime/space/topology/{}.preferences.json", core.router.localNodeId());
+            let compact: serde_json::Value = serde_json::from_slice(&edge.storage.readBytes(&topology_path).unwrap()).unwrap();
+            assert!(compact["topologyV1"].is_array());
+            assert!(compact.get("record").is_none());
+            // Compact corruption and conflicting legacy data cannot silently
+            // fall back to a different adjacency or link-quality projection.
+            for invalid_tuple in [serde_json::json!([]), serde_json::json!([[], [], "bad-timestamp"])] {
+                let mut invalid = compact.clone();
+                invalid["topologyV1"] = invalid_tuple;
+                edge.storage.writeBytes(&topology_path, &serde_json::to_vec(&invalid).unwrap()).unwrap();
+                assert!(edge.service.spaceStore().topologyRecords().is_err());
+            }
+            let mut ambiguous = compact.clone();
+            ambiguous["record"] = serde_json::to_value(&topology).unwrap();
+            edge.storage.writeBytes(&topology_path, &serde_json::to_vec(&ambiguous).unwrap()).unwrap();
+            assert!(edge.service.spaceStore().topologyRecords().is_err());
+            edge.storage.writeBytes(&topology_path, &serde_json::to_vec(&compact).unwrap()).unwrap();
+            let history = edge.service.networkControlStore().currentSpaceOperations().unwrap();
+            core.peers.stop().await.unwrap();
+            edge.peers.stop().await.unwrap();
+            core = core_node_with_storage(reopened(&core.storage));
+            edge = edge_node(reopened(&edge.storage));
+            start(&core, &edge).await;
+            wait_for_peer_availability(&core.peers, &edge_id, true).await;
+            assert_eq!(edge.service.spaceStore().topologyRecords().unwrap()[&core.router.localNodeId()], topology,
+                "compact topology changed link quality or adjacency on restart");
+            assert!(serde_json::to_value(&topology).unwrap().is_object(), "local encoding escaped onto the wire");
+            let wire = edge.service.acceptPeerSpaceCall(&core.router.localNodeId(), CoreCallRequest::new(
+                "bounded-receipt", NODE_SPACE_TARGET, "joinStatus",
+                operit_link::toCoreValue(request.requestId.clone()).unwrap())).unwrap();
+            let wire: serde_json::Value = operit_link::fromCoreValue(wire).unwrap();
+            assert!(wire["accepted"]["controlOperations"].as_array().unwrap().is_empty(),
+                "approval response duplicated authority instead of using the paged target export");
+            assert!(wire.get("acceptedReference").is_none(), "local reference escaped onto the wire");
+            // Corrupt the admission reference, while keeping projected members
+            // and the public Approved status. Neither is sufficient authority.
+            let prefs = CoreNodeStateStore::newWithStorage(edge.storage.clone(), path);
+            for field in ["sourceSpaceId", "approvedDecision", "decisionRevision"] {
+                let mut invalid = receipt.clone();
+                invalid[field] = match field {
+                    "sourceSpaceId" => serde_json::json!("space-wrong-admission"),
+                    "approvedDecision" => serde_json::json!(false),
+                    _ => serde_json::Value::Null,
+                };
+                prefs.setTypedEntry(&request.requestId, &invalid).unwrap();
+                assert!(core.service.refreshDeviceSpaceJoin(request.requestId.clone()).await.is_err(),
+                    "invalid {field} manufactured membership");
+                assert_ne!(core.service.deviceSpace().unwrap().spaceId, edge.service.spaceStore().space().unwrap().spaceId);
+            }
+            prefs.setTypedEntry(&request.requestId, &receipt).unwrap();
+            assert_eq!(core.service.refreshDeviceSpaceJoin(request.requestId.clone()).await.unwrap().status, SpaceJoinStatus::Joined);
+            assert_eq!(core.service.deviceSpace().unwrap(), edge.service.spaceStore().space().unwrap());
+            assert_eq!(edge.service.networkControlStore().currentSpaceOperations().unwrap(), history,
+                "receipt recovery changed authority history");
+            // Even an exact committed admission cannot resurrect a member
+            // removed by later policy. Exercise the gateway response directly.
+            let core_id = core.router.localNodeId();
+            edge.service.networkControlStore().removeMember(core_id.clone()).unwrap();
+            let revoked = edge.service.acceptPeerSpaceCall(&core_id, CoreCallRequest::new(
+                "revoked-receipt", NODE_SPACE_TARGET, "joinStatus",
+                operit_link::toCoreValue(request.requestId.clone()).unwrap()));
+            assert!(revoked.is_err(), "obsolete approval resurrected a removed member");
+            assert_no_replica(&core, &edge);
+        }).await;
+        core.peers.stop().await.unwrap();
+        edge.peers.stop().await.unwrap();
+        result.unwrap();
+    }
+
     /// Reproduce the physical device scenario: the SAME Core keeps the former
     /// group (including Edge) while Edge leaves and creates a new singleton.
     #[tokio::test]

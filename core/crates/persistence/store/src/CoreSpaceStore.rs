@@ -120,6 +120,31 @@ pub struct CoreSpaceTopologyRecord {
     updatedAt: i64,
 }
 
+// Versioned endpoint-local encoding. Every topology/quality field is retained;
+// only repeated JSON field names are removed. Wire and Core replicas stay objects.
+const COMPACT_TOPOLOGY_V1: &str = "topologyV1";
+#[derive(Serialize, Deserialize)]
+struct CompactTopologyV1(Vec<String>, Vec<CompactLinkV1>, i64);
+#[derive(Serialize, Deserialize)]
+struct CompactLinkV1(String, String, u64, i64, i64, u64, u16, u16);
+impl From<&CoreSpaceTopologyRecord> for CompactTopologyV1 {
+    fn from(record: &CoreSpaceTopologyRecord) -> Self {
+        Self(record.peers.clone(), record.links.iter().map(|link|
+            CompactLinkV1(link.targetNodeId.clone(), link.channelEpoch.clone(), link.sequence,
+                link.measuredAt, link.expiresAt, link.smoothedRttMs, link.lossPermille, link.congestionPermille)
+        ).collect(), record.updatedAt)
+    }
+}
+impl CompactTopologyV1 {
+    fn intoRecord(self, nodeId: String) -> CoreSpaceTopologyRecord {
+        // The immutable virtual filename already encodes the announcing node.
+        CoreSpaceTopologyRecord { nodeId, peers: self.0, links: self.1.into_iter().map(|link|
+            CoreSpaceLinkAdvertisement { targetNodeId: link.0, channelEpoch: link.1, sequence: link.2,
+                measuredAt: link.3, expiresAt: link.4, smoothedRttMs: link.5, lossPermille: link.6, congestionPermille: link.7 }
+        ).collect(), updatedAt: self.2 }
+    }
+}
+
 /// Persists Space membership as one synchronized preferences entity per CoreNode.
 #[derive(Clone)]
 pub struct CoreSpaceStore {
@@ -1219,13 +1244,26 @@ impl CoreSpaceStore {
                 self.recordStore(entry.path.clone())
                     .data()
                     .map_err(|error| error.to_string())?;
-            let encoded = preferences
-                .get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
-                .ok_or_else(|| {
-                    format!("Device space connection record is empty: {}", entry.path)
-                })?;
-            let record: CoreSpaceTopologyRecord =
-                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
+            let record: CoreSpaceTopologyRecord = if !self.recordSyncOperations {
+                if let Some(encoded) = preferences.get(&stringPreferencesKey(COMPACT_TOPOLOGY_V1)) {
+                    if preferences.get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY)).is_some() {
+                        return Err("Ambiguous device space topology encoding".into());
+                    }
+                    let nodeId = entry.path.rsplit('/').next().and_then(|name| name.strip_suffix(".preferences.json"))
+                        .ok_or("Invalid compact device space topology path")?;
+                    validateNodeId(nodeId)?;
+                    serde_json::from_value::<CompactTopologyV1>(encoded.clone()).map_err(|error| error.to_string())?
+                        .intoRecord(nodeId.to_owned())
+                } else {
+                    let encoded = preferences.get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
+                        .ok_or_else(|| format!("Device space connection record is empty: {}", entry.path))?;
+                    serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?
+                }
+            } else {
+                let encoded = preferences.get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
+                    .ok_or_else(|| format!("Device space connection record is empty: {}", entry.path))?;
+                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?
+            };
             validateTopologyRecord(&record)?;
             records.insert(record.nodeId.clone(), record);
         }
@@ -1236,10 +1274,13 @@ impl CoreSpaceStore {
     fn writeTopologyRecord(&self, record: &CoreSpaceTopologyRecord) -> Result<(), String> {
         validateTopologyRecord(record)?;
         let mut preferences = emptyPreferences();
-        preferences.set(
-            &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
-            serde_json::to_value(record).map_err(|error| error.to_string())?,
-        );
+        if !self.recordSyncOperations && self.storage.nodeLocalApplicationHistoryLimit().is_some() {
+            preferences.set(&stringPreferencesKey(COMPACT_TOPOLOGY_V1),
+                serde_json::to_value(CompactTopologyV1::from(record)).map_err(|error| error.to_string())?);
+        } else {
+            preferences.set(&stringPreferencesKey(CORE_SPACE_RECORD_KEY),
+                serde_json::to_value(record).map_err(|error| error.to_string())?);
+        }
         self.recordStore(
             format!(
                 "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/{}.preferences.json",

@@ -29,6 +29,10 @@ pub(crate) struct Record {
     // Keep the uncommon receipt out of every pending record / BTreeMap node.
     // Box is serialization-transparent and avoids oversized Xtensa node moves.
     pub(crate) accepted: Option<Box<PeerSpaceJoin>>,
+    // Endpoint-only durable reference to this request's committed admission.
+    // It is never a substitute for authority or an applicant-facing snapshot.
+    #[serde(default, skip_serializing)]
+    pub(crate) acceptedReference: bool,
     #[serde(default)]
     pub(crate) unavailableSince: Option<i64>,
     #[serde(default)]
@@ -133,6 +137,8 @@ fn saveRecordWithSource(service: &dyn NodeSpaceContext, path: &str, id: &str, re
         source: Snapshot<'a>,
         #[serde(skip_serializing_if = "Option::is_none")]
         accepted: Option<Snapshot<'a>>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        acceptedReference: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         unavailableSince: Option<i64>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -142,6 +148,9 @@ fn saveRecordWithSource(service: &dyn NodeSpaceContext, path: &str, id: &str, re
         #[serde(skip_serializing_if = "Option::is_none")]
         cancelRequested: Option<bool>,
     }
+    let referenceAccepted = compactSource && record.request.status == SpaceJoinStatus::Approved
+        && record.approvedDecision == Some(true) && record.decisionRevision.is_some()
+        && (record.accepted.is_some() || record.acceptedReference);
     let durable = Durable {
         request: &record.request, sourceSpaceId: &record.sourceSpaceId,
         sourceRevision: record.sourceRevision, targetSpaceId: &record.targetSpaceId,
@@ -155,16 +164,18 @@ fn saveRecordWithSource(service: &dyn NodeSpaceContext, path: &str, id: &str, re
         },
         // A terminal endpoint receipt cannot resume membership handoff. Keep
         // its request identity/status, without an obsolete accepted snapshot.
-        accepted: record.accepted.as_ref().filter(|_| live || !constrained).map(|accepted| Snapshot {
+        accepted: record.accepted.as_ref().filter(|_| !referenceAccepted && (live || !constrained)).map(|accepted| Snapshot {
             space: &accepted.space, deviceProfiles: &[], topology: &[], controlOperations: &[], departures: &[],
         }),
+        acceptedReference: referenceAccepted,
         unavailableSince: record.unavailableSince, approvedDecision: record.approvedDecision,
         decisionRevision: record.decisionRevision,
         // Full Core retains its explicit cancellation flag. Endpoint receipts
         // may omit false; Record's default restores the same durable intent.
         cancelRequested: if constrained && !record.cancelRequested { None } else { Some(record.cancelRequested) },
     };
-    store(service).putRecord(path, id, &durable)
+    if compactSource { store(service).putCompactRecord(path, id, &durable) }
+    else { store(service).putRecord(path, id, &durable) }
 }
 fn canReview(service: &dyn NodeSpaceContext, node: &str) -> Result<bool, String> {
     Ok(!service.networkControlStore().nodeIsDisconnected(node)?
@@ -273,6 +284,16 @@ pub(crate) fn assign(service: &dyn NodeSpaceContext, record: &mut Record, now: i
     record.unavailableSince = None;
     Ok(())
 }
+fn membershipReceipt(service: &dyn NodeSpaceContext, space: CoreSpace) -> Result<PeerSpaceJoin, String> {
+    if service.storage().nodeLocalApplicationHistoryLimit().is_none() {
+        return peerSpaceSnapshotFor(service, space);
+    }
+    // The applicant fetches and verifies the current full target snapshot
+    // before adopting membership. The approval response only needs membership.
+    Ok(PeerSpaceJoin { space, deviceProfiles: Vec::new(), topology: Vec::new(),
+        controlOperations: Vec::new(), departures: Vec::new() })
+}
+
 /// Completes a claimed approval locally when its admission is already durable
 /// policy but the reviewer crashed between applying the operation and writing
 /// the result record. Membership already exists in the replayed policy; this
@@ -303,7 +324,7 @@ fn recoverCommittedApproval(service: &dyn NodeSpaceContext, record: &mut Record,
     if let Some(revision) = record.decisionRevision {
         joined.spaceRevision = joined.spaceRevision.max(revision);
     }
-    record.accepted = Some(Box::new(peerSpaceSnapshotFor(service, service.spaceStore().adoptAt(joined, record.request.createdAt)?)?));
+    record.accepted = Some(Box::new(membershipReceipt(service, service.spaceStore().adoptAt(joined, record.request.createdAt)?)?));
     record.request.status = SpaceJoinStatus::Approved;
     Ok(())
 }
@@ -578,7 +599,7 @@ pub(crate) async fn request(service: &dyn NodeSpaceContext, deviceId: String) ->
     if let Some(old) = outgoing(service)?.into_iter().find(|r| r.targetDeviceId == deviceId && active(&r.status)) {
         return refresh(service, old.requestId).await;
     }
-    let snapshot: PeerSpaceSnapshot = callPeerSpace(service, &deviceId, "snapshot", CoreValue::Null).await?;
+    let snapshot: PeerSpaceSnapshot = Box::pin(joinSnapshot(service, &deviceId)).await?;
     if !snapshot.space.members.contains(&deviceId) { return Err("Target is not in its advertised Space".into()); }
     space_departure::observe(service, &deviceId, &snapshot.departures, &snapshot.controlOperations)?;
     let source = peerSpaceSnapshot(service)?;
@@ -593,7 +614,7 @@ pub(crate) async fn request(service: &dyn NodeSpaceContext, deviceId: String) ->
             return Err("This device is already a member of the target Space".into());
         }
         let reconciled = space_reconcile::reconcile(service, &deviceId).await?;
-        let converged: PeerSpaceSnapshot = callPeerSpace(service, &deviceId, "snapshot", CoreValue::Null).await?;
+        let converged: PeerSpaceSnapshot = Box::pin(joinSnapshot(service, &deviceId)).await?;
         if converged.space.members.contains(&localId) {
             return Err("This device is already a member of the target Space".into());
         }
@@ -630,7 +651,7 @@ pub(crate) async fn request(service: &dyn NodeSpaceContext, deviceId: String) ->
             status: SpaceJoinStatus::Pending, createdAt: now, expiresAt: now + LIFETIME_MS, canApprove: false,
             reviewerDeviceId: None, reviewerName: None, reviewerHops: None, assignmentVersion: 0, decisionApprove: None },
         sourceSpaceId: local.spaceId, sourceRevision: local.spaceRevision,
-        targetSpaceId: snapshot.space.spaceId, profile, source, accepted: None, unavailableSince: None, approvedDecision: None, decisionRevision: None, cancelRequested: false,
+        targetSpaceId: snapshot.space.spaceId, profile, source, accepted: None, acceptedReference: false, unavailableSince: None, approvedDecision: None, decisionRevision: None, cancelRequested: false,
     };
     saveRecord(service, OUTBOUND, &record.request.requestId, &record)?;
     // refresh also handles a result already approved after a lost initial reply.
@@ -782,7 +803,7 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
                     createdAt: now, expiresAt: now + LIFETIME_MS, canApprove: false,
                     reviewerDeviceId: None, reviewerName: None, reviewerHops: None, assignmentVersion: 0, decisionApprove: None },
                 sourceSpaceId: input.sourceSpaceId, sourceRevision: input.sourceRevision,
-                targetSpaceId: input.targetSpaceId, profile: input.profile, source: input.source, accepted: None,
+                targetSpaceId: input.targetSpaceId, profile: input.profile, source: input.source, accepted: None, acceptedReference: false,
                 unavailableSince: None, approvedDecision: None, decisionRevision: None, cancelRequested: false,
             }
         }
@@ -800,9 +821,30 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
         reconcile(service, &mut record)?;
     }
     saveRecord(service, INBOUND, &record.request.requestId, &record)?;
+    if record.acceptedReference && record.accepted.is_none() {
+        // A reference can only resume the exact, explicitly approved admission.
+        // Current policy still has to admit every applicant; an obsolete or
+        // revoked receipt must never manufacture successful membership.
+        if record.request.status != SpaceJoinStatus::Approved || record.approvedDecision != Some(true)
+            || record.decisionRevision.is_none() || record.targetSpaceId != current.spaceId
+            || !admissionCommitted(service, &record)? {
+            return Err("Approved join reference has no committed admission".into());
+        }
+        let state = service.networkControlStore().currentState()?;
+        if !record.source.space.members.iter().all(|node| state.memberNodeIds.contains(node)) {
+            return Err("Approved target membership changed".into());
+        }
+        drop(state);
+        record.accepted = Some(Box::new(membershipReceipt(service, current.clone())?));
+    }
     if let Some(accepted) = &mut record.accepted {
         if accepted.space.spaceId != current.spaceId { return Err("Approved Space is no longer hosted here".into()); }
-        accepted.controlOperations = service.networkControlStore().currentSpaceOperations()?;
+        // Core fetches the current authority separately (paged on endpoints)
+        // and validates the full admission before adoption. Expanding it here
+        // duplicates that work and can exhaust the endpoint reply heap.
+        if service.storage().nodeLocalApplicationHistoryLimit().is_none() {
+            accepted.controlOperations = service.networkControlStore().currentSpaceOperations()?;
+        }
     }
     record.intoCoreValue()
 }
@@ -1070,7 +1112,7 @@ fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Outco
                 joined.members.sort();
                 joined.members.dedup();
                 joined.spaceRevision = joined.spaceRevision.max(outcome.revision).max(record.decisionRevision.ok_or("Approval has no claimed revision")?);
-                record.accepted = Some(Box::new(peerSpaceSnapshotFor(service, service.spaceStore().adoptAt(joined, record.request.createdAt)?)?));
+                record.accepted = Some(Box::new(membershipReceipt(service, service.spaceStore().adoptAt(joined, record.request.createdAt)?)?));
                 record.request.status = SpaceJoinStatus::Approved;
             } else {
                 if outcome.admission.is_some() { return Err("Rejection must not contain an admission".into()); }
@@ -1203,7 +1245,7 @@ pub(crate) async fn refresh(service: &dyn NodeSpaceContext, id: String) -> Resul
             return Err("Local Space changed while waiting; join will not be applied".into());
         }
         // Read the current target revision, not an obsolete approval snapshot.
-        let snapshot: PeerSpaceSnapshot = callPeerSpace(service, &local.request.targetDeviceId, "snapshot", CoreValue::Null).await?;
+        let snapshot: PeerSpaceSnapshot = Box::pin(joinSnapshot(service, &local.request.targetDeviceId)).await?;
         if snapshot.space.spaceId != local.targetSpaceId || !snapshot.space.members.contains(&local.request.applicantDeviceId) {
             return Err("Approved target membership changed".into());
         }
@@ -1286,6 +1328,33 @@ pub(crate) async fn cancel(service: &dyn NodeSpaceContext, id: String) -> Result
 #[cfg(test)]
 mod device_space_state_tests {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/device_space/join_state_machine.rs"));
+}
+
+/// Core verifies the complete immutable history, fetched in bounded pages
+/// when the endpoint advertises that capability. Legacy peers keep the old
+/// snapshot path; negotiation failures never silently downgrade validation.
+async fn joinSnapshot(service: &dyn NodeSpaceContext, node: &str) -> Result<PeerSpaceSnapshot, String> {
+    #[cfg(any(test, feature = "full"))]
+    {
+        use super::space_projection::{self, SnapshotHeader, SnapshotCollector};
+        let response = service.callNode(node.to_owned(), CoreCallRequest::new(
+            format!("node-space-projectionProtocol-{}", currentTimeMillis()), NODE_SPACE_TARGET,
+            "projectionProtocol", toCoreValue(serde_json::json!({"version": space_projection::VERSION})).map_err(|e| e.to_string())?,
+        )).await;
+        let protocol = space_projection::decodeProtocolResponse(node, response.result)?;
+        if protocol.is_some_and(|protocol| protocol.snapshotPaging) {
+            let header: SnapshotHeader = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
+            let mut collector = SnapshotCollector::new(header)?;
+            loop {
+                let page = callPeerSpace(service, node, "snapshotControlPage",
+                    toCoreValue(collector.request()).map_err(|e| e.to_string())?).await?;
+                if collector.push(page)? { break; }
+            }
+            let current = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
+            return collector.finish(current);
+        }
+    }
+    callPeerSpace(service, node, "snapshot", CoreValue::Null).await
 }
 
 async fn callPeerSpace<T: serde::de::DeserializeOwned>(service: &dyn NodeSpaceContext, node: &str, method: &str, args: CoreValue) -> Result<T, String> {

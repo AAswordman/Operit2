@@ -44,6 +44,7 @@ fn record(status: SpaceJoinStatus) -> Record {
             departures: Vec::new(),
         },
         accepted: None,
+        acceptedReference: false,
         unavailableSince: None,
         approvedDecision: None,
         decisionRevision: None,

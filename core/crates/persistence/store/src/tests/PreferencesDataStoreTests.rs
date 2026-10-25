@@ -2962,3 +2962,55 @@ fn constrained_compact_json_preserves_legacy_records_and_unknown_fields() {
     store.setTypedEntry("change", &next).unwrap();
     assert_eq!(host.writeCount(), writes);
 }
+
+/// Mutable receipt normalization must preserve raw JSON tokens and rollback,
+/// including escaped quotes/backslashes split across serializer writes.
+#[test]
+fn constrained_opt_in_compaction_preserves_tokens_and_atomic_retry() {
+    let host = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let path = "runtime/mutable-receipts.json";
+    let legacy = br#"{
+        "keep" : { "number" : 1.00e+02, "text" : "a  \"quote\" \\ end\n", "unicode" : "\u4e2d" },
+        "change" : { "status" : "pending" }
+    }"#;
+    host.writeBytes(path, legacy).unwrap();
+    let store = super::CoreNodeStateStore::newWithStorage(host.clone(), path);
+    let next = json!({"status":"approved"});
+    host.failedWrites.lock().unwrap().insert(path.into());
+    assert!(store.setTypedEntryCompactingJson("change", &next).is_err());
+    assert_eq!(host.readBytes(path).unwrap(), legacy);
+    host.failedWrites.lock().unwrap().clear();
+    store.setTypedEntryCompactingJson("change", &next).unwrap();
+    let bytes = host.readBytes(path).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(text.contains(r#""number":1.00e+02"#));
+    assert!(text.contains(r#""unicode":"\u4e2d""#));
+    let actual: Value = serde_json::from_slice(&bytes).unwrap();
+    let old: Value = serde_json::from_slice(legacy).unwrap();
+    assert_eq!(actual["keep"], old["keep"]);
+    assert_eq!(actual["change"], next);
+    assert!(bytes.len() < legacy.len());
+    let writes = host.writeCount();
+    store.setTypedEntryCompactingJson("change", &next).unwrap();
+    assert_eq!(host.writeCount(), writes);
+    // Existing typed writes keep immutable neighbours byte-for-byte.
+    host.writeBytes(path, legacy).unwrap();
+    store.setTypedEntry("change", &next).unwrap();
+    let normal = host.readBytes(path).unwrap();
+    assert!(std::str::from_utf8(&normal).unwrap().contains(r#""number" : 1.00e+02"#));
+}
+
+#[test]
+fn encoded_entry_stream_checks_schema_and_whole_json_before_callbacks() {
+    let host = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let path = "runtime/streamed-entries.json";
+    let store = super::CoreNodeStateStore::newWithStorage(host.clone(), path).withSchema(2, |_, _| Ok(()));
+    for invalid in [br#"{"entry":true,"__operit_preferences_schema_version":3}"#.as_slice(),
+        br#"{"__operit_preferences_schema_version":2,"entry":true} trailing"#] {
+        host.writeBytes(path, invalid).unwrap();
+        let mut calls = 0;
+        assert!(store.visitEncodedEntries(|_, _| { calls += 1; Ok(()) }).is_err());
+        assert_eq!(calls, 0);
+        assert_eq!(host.readBytes(path).unwrap(), invalid);
+    }
+}
