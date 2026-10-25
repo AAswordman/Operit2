@@ -298,20 +298,33 @@ There were no resets, allocation failures or session errors during those rounds;
 minimum free heap was 18,892 bytes and NVS use remained stable. This verifies
 repeated synchronization with identical authority history only.
 
-A subsequent Core leave/rejoin test reached the real Edge approval UI. v74
-exhausted heap while checking the admission history. Bounded receipt lookup and
-local sequence calculation removed that failure in the next hardware attempt,
-but rebuilding membership then exceeded the unchanged 7 KB logical storage
-budget. Compact JSON and compatible default-field omission now allow recovery
-of the member projection, while saving the final approval receipt still fails.
-The final v80 image uses 3,929,616 of 3,997,696 application bytes (68,080 free).
-Its stored logical snapshot uses 6,959 of 7,000 bytes (41 free); approval remains
-`approving`, and the isolated Core has not adopted the Edge Space. The final
-refresh did not reset or report allocation/session errors; minimum free heap was
-19,340 bytes. Approval intent and its admission remain durable, but this is not a
-passed join lifecycle. Core-managed authority and durable handover are still
-pending. See the [validation record](../../docs/edge-core-entry-protocol.md) for
-the firmware stages, recovery results and remaining acceptance limits.
+Subsequent Core leave/rejoin attempts exposed approval OOM, receipt/topology
+storage failures, and a full-policy allocation hidden inside paged export.
+Compact approval references, lossless local topology encoding, and range-based
+permission-page scans address those failures. The original explicit approval
+completed using the same request, and Core adopted the original Edge Space at
+revision 13 with both members. The approval reply carries membership; Core
+fetches and verifies the complete current authority separately before adoption.
+
+Final v87 hardware validation on 2026-10-26 passed five consecutive real paged
+syncs (54.472–57.788 seconds), then two more after restarting both peers. Each
+round verified actual page/header calls, with no resets, allocation failures or
+session errors. Minimum free heap was 18,284 bytes. The original request stayed
+`joined`, the original two-member Space survived restart, and the chat page
+returned to connected/ready. This verifies the existing interrupted approval's
+recovery and repeated synchronization at the tested history size.
+
+The image uses **3,972,592 / 3,997,696 bytes** (**25,104 free**). The final logical
+snapshot uses **6,940 / 7,000 bytes** (**60 free**). Identity, pairing and encryption
+key contents were preserved; layout and authority-history bytes match their
+backups. Old requests and source/approval facts remain. Neither the original
+partition nor the logical budget was enlarged. The isolated Core was stopped
+and the serial port released after validation; the device retains its Space.
+
+Core-managed authority, durable handover, arbitrary history growth and broader
+concurrency/lifecycle acceptance remain pending. See the
+[validation record](../../docs/edge-core-entry-protocol.md) for the retained
+failure stages, exact page counts and final results.
 
 ## Recovering from an unavailable Space administrator
 
