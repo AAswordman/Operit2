@@ -7669,6 +7669,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Search by name or inference engine'**
   String get localModelsSearchCatalog;
+
+  /// No description provided for @deviceSpaceSyncPeer.
+  ///
+  /// In en, this message translates to:
+  /// **'a space device'**
+  String get deviceSpaceSyncPeer;
+
+  /// No description provided for @deviceSpaceSyncActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing with {device}'**
+  String deviceSpaceSyncActive(String device);
+
+  /// No description provided for @deviceSpaceSyncCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced with {device}'**
+  String deviceSpaceSyncCompleted(String device);
+
+  /// No description provided for @deviceSpaceSyncChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking for changes'**
+  String get deviceSpaceSyncChecking;
+
+  /// No description provided for @deviceSpaceSyncRecords.
+  ///
+  /// In en, this message translates to:
+  /// **'Exchanging records'**
+  String get deviceSpaceSyncRecords;
+
+  /// No description provided for @deviceSpaceSyncFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Transferring and verifying files'**
+  String get deviceSpaceSyncFiles;
+
+  /// No description provided for @deviceSpaceSyncRetrying.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync interrupted. Retrying automatically.'**
+  String get deviceSpaceSyncRetrying;
+
+  /// No description provided for @deviceSpaceSyncPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Some data is still pending. Retrying automatically.'**
+  String get deviceSpaceSyncPending;
+
+  /// No description provided for @deviceSpaceSyncCurrentFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Current file: {done} / {total}'**
+  String deviceSpaceSyncCurrentFile(String done, String total);
+
+  /// No description provided for @deviceSpaceSyncTransferred.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} records exchanged · {bytes} transferred'**
+  String deviceSpaceSyncTransferred(int count, String bytes);
+
+  /// No description provided for @deviceSpaceSyncBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'You can keep using the app while syncing continues.'**
+  String get deviceSpaceSyncBackground;
 }
 
 class _AppLocalizationsDelegate

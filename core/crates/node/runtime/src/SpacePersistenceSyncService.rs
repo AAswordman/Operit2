@@ -133,7 +133,8 @@ impl SpacePersistenceSyncService {
     ) -> Self {
         let mut services = persistenceServices().lock().expect("Space sync registry lock poisoned");
         let nodeId = nodeRouter.localNodeId();
-        if let Some(state) = services.get(&nodeId).and_then(Weak::upgrade) {
+        if let Some(state) = services.get(&nodeId).and_then(Weak::upgrade)
+            .filter(|state| state.localRuntime.sharesApplicationWith(&localRuntime)) {
             return Self { state };
         }
         services.retain(|_, state| state.strong_count() > 0);
@@ -429,7 +430,18 @@ impl SpacePersistenceSyncService {
         let space = self.state.spaceStore.space()?;
         self.state.progress.retain(&space.spaceId, &space.members);
         self.state.progress.begin(&targetNodeId, &space.spaceId);
-        let result = self.synchronizePeer(&targetNodeId, limit).await;
+        let pass = self.synchronizePeer(&targetNodeId, limit);
+        tokio::pin!(pass);
+        let result = if let Some(delayMs) = self.state.progress.revealDelayMs(&targetNodeId) {
+            tokio::select! {
+                biased;
+                result = &mut pass => result,
+                delay = defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(delayMs) => {
+                    if delay.is_ok() { self.state.progress.reveal(&targetNodeId); }
+                    pass.await
+                }
+            }
+        } else { pass.await };
         match &result {
             Ok(allowed) => {
                 self.recordPeerPassCompleted(&targetNodeId).await;
@@ -456,7 +468,7 @@ impl SpacePersistenceSyncService {
 
     /// Executes authority, preferences and authorized business replication in order.
     async fn synchronizePeer(&self, targetNodeId: &str, limit: usize) -> Result<bool, String> {
-        if !self.state.nodeRouter.nodeIsReachable(&targetNodeId)? {
+        if !self.state.nodeRouter.nodeIsReachable(targetNodeId)? {
             return Err(format!(
                 "synchronization target is not reachable in the current device space: {targetNodeId}"
             ));
@@ -469,7 +481,7 @@ impl SpacePersistenceSyncService {
             serde_json::to_value(control.currentSpaceOperations()?).map_err(|error| error.to_string())?)?;
         let response = self.state.nodeRouter.callNode(targetNodeId.to_string(), request).await;
         let remote = crate::NodeSpaceService::decodeControlExchange(response.result)?;
-        control.projectPeerControlOperations(&targetNodeId, &remote)?;
+        control.projectPeerControlOperations(targetNodeId, &remote)?;
         self.applyRemovedMemberEffects(&remote)?;
         // Small device-owned preferences are available to every admitted member;
         // their clocks and payloads are separate from business replica clocks.
@@ -479,7 +491,7 @@ impl SpacePersistenceSyncService {
         // exchange the local device's configuration as a backup; lightweight
         // endpoints must not accumulate other devices' preference files.
         let mut preferenceNodes = vec![targetNodeId.to_string()];
-        if self.storageReplicationAllowed(&targetNodeId)? {
+        if self.storageReplicationAllowed(targetNodeId)? {
             preferenceNodes.push(self.state.nodeRouter.localNodeId());
         }
         for preferenceNodeId in preferenceNodes {
@@ -491,15 +503,15 @@ impl SpacePersistenceSyncService {
             let preferences: operit_store::DevicePreferencesStore::DevicePreferences = decodeCoreResponse(response.result.map_err(|e| e.to_string())?)?;
             if preferences.spaceId != preferenceScope || preferences.nodeId != preferenceNodeId
                 || self.state.spaceStore.space()?.spaceId != preferenceScope
-                || !control.currentState()?.memberNodeIds.contains(&targetNodeId.to_string())
-                || control.nodeIsDisconnected(&targetNodeId)? {
+                || !control.currentState()?.memberNodeIds.iter().any(|node| node == targetNodeId)
+                || control.nodeIsDisconnected(targetNodeId)? {
                 return Err("Device preference response scope changed".into());
             }
             preferenceStore.merge(&preferences)?;
         }
         // Admission is not a storage grant. Business replication requires both endpoints to provide storage.
-        if !self.storageReplicationAllowed(&targetNodeId)? { return Ok(false); }
-        self.validateReachableDeviceSpace(&targetNodeId).await?;
+        if !self.storageReplicationAllowed(targetNodeId)? { return Ok(false); }
+        self.validateReachableDeviceSpace(targetNodeId).await?;
         self.synchronizeNodeOperations(targetNodeId, limit).await
     }
 
@@ -1074,8 +1086,8 @@ impl SpacePersistenceSyncService {
                 let remote = remoteHasBlob(&self.state.nodeRouter, targetNodeId, &reference).await?;
                 match (local, remote) {
                     (true, true) => Ok(()),
-                    (true, false) => self.pushLocalBlobToRemote(targetNodeId, &reference).await,
-                    (false, true) => self.pushRemoteBlobToLocal(targetNodeId, &reference).await,
+                    (true, false) => self.transferBlob(targetNodeId, &reference, true).await,
+                    (false, true) => self.transferBlob(targetNodeId, &reference, false).await,
                     (false, false) => Err(format!(
                         "blob {} is missing from both direct peers",
                         reference.contentHash
@@ -1106,104 +1118,55 @@ impl SpacePersistenceSyncService {
         .await
     }
 
-    /// Pushes one locally available blob into the target CoreNode.
-    async fn pushLocalBlobToRemote(
+    /// Both directions share authorization, chunk validation, progress and final verification.
+    async fn transferBlob(
         &self,
         targetNodeId: &str,
         reference: &RuntimeFileSyncReference,
+        localSource: bool,
     ) -> Result<(), String> {
         self.state.progress.beginFile(targetNodeId, reference.size);
-        let mut push = self
-            .state
-            .nodeRouter
-            .openPushNode(
-                targetNodeId.to_string(),
-                {
-                    let mut request = blobPushRequest(&self.state.nodeRouter, reference)?;
-                    request.target = NODE_SYNC_TARGET.into();
-                    request
-                },
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut offset = 0i64;
-        while offset < reference.size {
+        let mut request = blobPushRequest(&self.state.nodeRouter, reference)?;
+        let mut push = if localSource {
+            request.target = NODE_SYNC_TARGET.into();
+            self.state.nodeRouter.openPushNode(targetNodeId.to_string(), request).await
+                .map_err(|error| error.to_string())?
+        } else {
+            self.state.localRuntime.openPush(request).map_err(|error| error.to_string())?
+        };
+        let mut offset = 0;
+        let result = async {
+            while offset < reference.size {
+                self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
+                    .map_err(|error| error.to_string())?;
+                let args = json!({ "contentHash": reference.contentHash, "offset": offset, "length": SYNC_BLOB_CHUNK_BYTES });
+                let chunk = if localSource {
+                    self.callLocal::<Vec<u8>>("syncReadBlobChunk", args).await?
+                } else {
+                    callRemote::<Vec<u8>>(&self.state.nodeRouter, targetNodeId, PeerSyncMethod::SyncReadBlobChunk, args).await?
+                };
+                self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
+                    .map_err(|error| error.to_string())?;
+                offset = sendBlobChunk(&mut push, reference, offset, chunk).await?;
+                self.state.progress.fileOffset(targetNodeId, offset, false);
+            }
             self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
                 .map_err(|error| error.to_string())?;
-            let chunk: Vec<u8> = self
-                .callLocal(
-                    "syncReadBlobChunk",
-                    json!({
-                        "contentHash": reference.contentHash,
-                        "offset": offset,
-                        "length": SYNC_BLOB_CHUNK_BYTES,
-                    }),
-                )
-                .await?;
-            let nextOffset = sendBlobChunkValue(reference, offset, chunk)?;
-            push.send(nextOffset.1)
-                .await
-                .map_err(|error| error.to_string())?;
-            offset = nextOffset.0;
-            self.state.progress.fileOffset(targetNodeId, offset);
-        }
-        self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
-            .map_err(|error| error.to_string())?;
-        push.close().await.map_err(|error| error.to_string())?;
-        if !remoteHasBlob(&self.state.nodeRouter, targetNodeId, reference).await? {
-            return Err(format!(
-                "remote CoreNode did not persist synchronization blob {}",
-                reference.contentHash
-            ));
-        }
-        Ok(())
+            push.close().await.map_err(|error| error.to_string())?;
+            let persisted = if localSource {
+                remoteHasBlob(&self.state.nodeRouter, targetNodeId, reference).await?
+            } else { self.localHasBlob(reference).await? };
+            if !persisted {
+                return Err(format!("CoreNode did not persist synchronization blob {}", reference.contentHash));
+            }
+            Ok(())
+        }.await;
+        // Preserve the exact sent offset even if a later chunk or verification fails.
+        self.state.progress.fileOffset(targetNodeId, offset, true);
+        result
     }
 
-    /// Pushes one remotely available blob into the local CoreNode.
-    async fn pushRemoteBlobToLocal(
-        &self,
-        targetNodeId: &str,
-        reference: &RuntimeFileSyncReference,
-    ) -> Result<(), String> {
-        self.state.progress.beginFile(targetNodeId, reference.size);
-        let mut push = self
-            .state
-            .localRuntime
-            .openPush(blobPushRequest(&self.state.nodeRouter, reference)?)
-            .map_err(|error| error.to_string())?;
-        let mut offset = 0i64;
-        while offset < reference.size {
-            self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
-                .map_err(|error| error.to_string())?;
-            let chunk: Vec<u8> = callRemote(
-                &self.state.nodeRouter,
-                targetNodeId,
-                PeerSyncMethod::SyncReadBlobChunk,
-                json!({
-                    "contentHash": reference.contentHash,
-                    "offset": offset,
-                    "length": SYNC_BLOB_CHUNK_BYTES,
-                }),
-            )
-            .await?;
-            self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
-                .map_err(|error| error.to_string())?;
-            offset = sendBlobChunk(&mut push, reference, offset, chunk).await?;
-            self.state.progress.fileOffset(targetNodeId, offset);
-        }
-        self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
-            .map_err(|error| error.to_string())?;
-        push.close().await.map_err(|error| error.to_string())?;
-        if !self.localHasBlob(reference).await? {
-            return Err(format!(
-                "local CoreNode did not persist synchronization blob {}",
-                reference.contentHash
-            ));
-        }
-        Ok(())
-    }
-
-    /// Schedules one fixed coalescing window without restarting an existing timer.
+    /// Coalesces join, storage and connectivity changes into the existing worker.
     pub(crate) fn scheduleSynchronization(&self) -> Result<(), String> {
         self.state.synchronizationRequested.store(true, Ordering::Release);
         if self
@@ -1377,35 +1340,6 @@ async fn sendBlobChunk(
         .await
         .map_err(|error| error.to_string())?;
     Ok(nextOffset)
-}
-
-/// Validates one synchronization chunk and converts it to one Link value.
-fn sendBlobChunkValue(
-    reference: &RuntimeFileSyncReference,
-    offset: i64,
-    chunk: Vec<u8>,
-) -> Result<(i64, CoreValue), String> {
-    if chunk.is_empty() {
-        return Err(format!(
-            "synchronization blob {} ended before its declared size",
-            reference.contentHash
-        ));
-    }
-    let chunkLength = i64::try_from(chunk.len())
-        .map_err(|_| "synchronization blob chunk length does not fit i64".to_string())?;
-    let nextOffset = offset
-        .checked_add(chunkLength)
-        .ok_or_else(|| "synchronization blob offset overflow".to_string())?;
-    if nextOffset > reference.size {
-        return Err(format!(
-            "synchronization blob {} exceeded its declared size",
-            reference.contentHash
-        ));
-    }
-    Ok((
-        nextOffset,
-        toCoreValue(chunk).map_err(|error| error.to_string())?,
-    ))
 }
 
 /// Weak registration shares one worker across facades without extending its lifetime.

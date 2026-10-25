@@ -35,72 +35,138 @@ pub struct SpaceSyncProgress {
     pub error: Option<String>,
 }
 
+const LARGE_SYNC_DELAY_MS: i64 = 3_000;
+
+#[derive(Clone, PartialEq)]
+struct SyncProgressSession {
+    progress: SpaceSyncProgress,
+    visible: bool,
+}
+
 pub(crate) struct SyncProgressTracker {
-    flow: StateFlow<Vec<SpaceSyncProgress>>,
+    sessions: StateFlow<Vec<SyncProgressSession>>,
 }
 
 impl Default for SyncProgressTracker {
     fn default() -> Self {
-        Self { flow: StateFlow::new(Vec::new()) }
+        Self {
+            sessions: StateFlow::new(Vec::new()),
+        }
     }
 }
 
 impl SyncProgressTracker {
+    /// Hidden sessions never cross the proxy or rebuild the UI.
     pub(crate) fn flow(&self) -> StateFlow<Vec<SpaceSyncProgress>> {
-        self.flow.clone()
+        self.sessions.map(|sessions| {
+            sessions
+                .into_iter()
+                .filter(|session| session.visible)
+                .map(|session| session.progress)
+                .collect()
+        })
     }
 
-    fn update(&self, change: impl Fn(&mut Vec<SpaceSyncProgress>)) {
+    fn update(&self, change: impl Fn(&mut Vec<SyncProgressSession>)) {
         loop {
-            let previous = self.flow.value();
+            let previous = self.sessions.value();
             let mut next = previous.clone();
             change(&mut next);
-            if next == previous || self.flow.compare_and_set(previous, next) {
+            if next == previous || self.sessions.compare_and_set(previous, next) {
                 break;
             }
         }
     }
 
     pub(crate) fn retain(&self, spaceId: &str, peers: &[String]) {
-        self.update(|progress| progress.retain(|item| item.spaceId == spaceId && peers.contains(&item.peerNodeId)));
+        self.update(|sessions| {
+            sessions.retain(|session| {
+                session.progress.spaceId == spaceId && peers.contains(&session.progress.peerNodeId)
+            })
+        });
     }
 
     pub(crate) fn remove(&self, peer: &str) {
-        self.update(|progress| progress.retain(|item| item.peerNodeId != peer));
+        self.update(|sessions| sessions.retain(|session| session.progress.peerNodeId != peer));
     }
 
     pub(crate) fn clear(&self) {
-        self.flow.set_value(Vec::new());
+        self.sessions.set_value(Vec::new());
     }
 
     pub(crate) fn begin(&self, peer: &str, spaceId: &str) {
         let now = currentTimeMillis();
-        self.update(|progress| {
-            progress.retain(|item| item.spaceId == spaceId);
-            if let Some(item) = progress.iter_mut().find(|item| item.peerNodeId == peer) {
-                if item.status != SpaceSyncStatus::Completed {
-                    item.status = SpaceSyncStatus::Syncing;
-                    item.stage = SpaceSyncStage::Checking;
-                    item.updatedAt = now;
-                    item.retryAt = None;
-                    item.error = None;
-                    return;
-                }
-                progress.retain(|item| item.peerNodeId != peer);
+        self.update(|sessions| {
+            sessions.retain(|session| {
+                session.progress.spaceId == spaceId
+                    && (session.progress.status != SpaceSyncStatus::Completed
+                        || now - session.progress.updatedAt < LARGE_SYNC_DELAY_MS)
+            });
+            if let Some(session) = sessions.iter_mut().find(|session| {
+                session.progress.peerNodeId == peer
+                    && session.progress.status != SpaceSyncStatus::Completed
+            }) {
+                let item = &mut session.progress;
+                item.status = SpaceSyncStatus::Syncing;
+                item.stage = SpaceSyncStage::Checking;
+                item.updatedAt = now;
+                item.retryAt = None;
+                item.error = None;
+                return;
             }
-            progress.push(SpaceSyncProgress {
-                spaceId: spaceId.into(), peerNodeId: peer.into(), startedAt: now, updatedAt: now,
-                status: SpaceSyncStatus::Syncing, stage: SpaceSyncStage::Checking,
-                exchangedRecords: 0, transferredBytes: 0, fileBytes: 0, fileSize: 0,
-                retryAt: None, error: None,
+            sessions.push(SyncProgressSession {
+                visible: false,
+                progress: SpaceSyncProgress {
+                    spaceId: spaceId.into(),
+                    peerNodeId: peer.into(),
+                    startedAt: now,
+                    updatedAt: now,
+                    status: SpaceSyncStatus::Syncing,
+                    stage: SpaceSyncStage::Checking,
+                    exchangedRecords: 0,
+                    transferredBytes: 0,
+                    fileBytes: 0,
+                    fileSize: 0,
+                    retryAt: None,
+                    error: None,
+                },
             });
         });
     }
 
+    pub(crate) fn revealDelayMs(&self, peer: &str) -> Option<u64> {
+        self.sessions
+            .value()
+            .iter()
+            .find(|session| {
+                session.progress.peerNodeId == peer
+                    && session.progress.status == SpaceSyncStatus::Syncing
+                    && !session.visible
+            })
+            .map(|session| {
+                (LARGE_SYNC_DELAY_MS - (currentTimeMillis() - session.progress.startedAt))
+                    .clamp(0, LARGE_SYNC_DELAY_MS) as u64
+            })
+    }
+
+    pub(crate) fn reveal(&self, peer: &str) {
+        self.update(|sessions| {
+            for session in sessions.iter_mut().filter(|session| {
+                session.progress.peerNodeId == peer
+                    && session.progress.status != SpaceSyncStatus::Completed
+            }) {
+                session.visible = true;
+            }
+        });
+    }
+
     fn changePeer(&self, peer: &str, change: impl Fn(&mut SpaceSyncProgress)) {
-        self.update(|progress| {
-            if let Some(item) = progress.iter_mut().find(|item| item.peerNodeId == peer) {
-                change(item);
+        self.update(|sessions| {
+            if let Some(session) = sessions.iter_mut().find(|session| {
+                session.progress.peerNodeId == peer
+                    && session.progress.status != SpaceSyncStatus::Completed
+            }) {
+                change(&mut session.progress);
             }
         });
     }
@@ -126,23 +192,43 @@ impl SyncProgressTracker {
 
     /// Chunk traffic can be fast; publish at most five updates per second,
     /// always publishing the final offset. Accumulate bytes since the last emit.
-    pub(crate) fn fileOffset(&self, peer: &str, offset: i64) {
+    pub(crate) fn fileOffset(&self, peer: &str, offset: i64, flush: bool) {
         let now = currentTimeMillis();
         self.changePeer(peer, |item| {
-            if now - item.updatedAt < 200 && offset != item.fileSize { return; }
+            if !flush && now - item.updatedAt < 200 && offset != item.fileSize {
+                return;
+            }
             let offset = offset.clamp(item.fileBytes, item.fileSize);
-            item.transferredBytes = item.transferredBytes.saturating_add(offset - item.fileBytes);
+            item.transferredBytes = item
+                .transferredBytes
+                .saturating_add(offset - item.fileBytes);
             item.fileBytes = offset;
             item.updatedAt = now;
         });
     }
 
-    pub(crate) fn finish(&self, peer: &str, pending: bool, retryAt: Option<i64>, error: Option<String>) {
+    pub(crate) fn finish(
+        &self,
+        peer: &str,
+        pending: bool,
+        retryAt: Option<i64>,
+        error: Option<String>,
+    ) {
         self.changePeer(peer, |item| {
-            item.status = if pending || error.is_some() { SpaceSyncStatus::Waiting } else { SpaceSyncStatus::Completed };
+            item.status = if pending || error.is_some() {
+                SpaceSyncStatus::Waiting
+            } else {
+                SpaceSyncStatus::Completed
+            };
             item.retryAt = retryAt;
             item.error = error.clone();
             item.updatedAt = currentTimeMillis();
+        });
+        // Fast successful exchanges have no observable lifecycle at all.
+        self.update(|sessions| {
+            sessions.retain(|session| {
+                session.visible || session.progress.status != SpaceSyncStatus::Completed
+            })
         });
     }
 }
@@ -152,9 +238,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn small_exchanges_emit_no_progress_events() {
+        let progress = SyncProgressTracker::default();
+        let flow = progress.flow();
+        let events = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = events.clone();
+        flow.subscribe(move |_| {
+            observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+        for _ in 0..20 {
+            progress.begin("peer", "space");
+            progress.records("peer", 1);
+            progress.finish("peer", false, None, None);
+        }
+        assert!(flow.value().is_empty());
+        assert_eq!(events.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn pending_passes_and_retries_keep_one_session_and_confirmed_counts() {
         let progress = SyncProgressTracker::default();
         progress.begin("peer", "space");
+        progress.reveal("peer");
         progress.records("peer", 512);
         let started = progress.flow().value()[0].startedAt;
         progress.finish("peer", true, None, None);
@@ -168,19 +273,33 @@ mod tests {
         assert_eq!(item.exchangedRecords, 522);
         assert_eq!(item.error, None);
         progress.finish("peer", false, None, None);
-        assert_eq!(progress.flow().value()[0].status, SpaceSyncStatus::Completed);
+        assert_eq!(
+            progress.flow().value()[0].status,
+            SpaceSyncStatus::Completed
+        );
         progress.begin("peer", "space");
-        assert_eq!(progress.flow().value()[0].exchangedRecords, 0);
+        assert_eq!(
+            progress
+                .sessions
+                .value()
+                .last()
+                .unwrap()
+                .progress
+                .exchangedRecords,
+            0
+        );
+        assert!(!progress.sessions.value().last().unwrap().visible);
     }
 
     #[test]
     fn file_totals_are_per_file_and_retransmission_counts_as_traffic() {
         let progress = SyncProgressTracker::default();
         progress.begin("peer", "space");
+        progress.reveal("peer");
         progress.beginFile("peer", 1024);
-        progress.fileOffset("peer", 1024);
+        progress.fileOffset("peer", 1024, false);
         progress.beginFile("peer", 1024);
-        progress.fileOffset("peer", 1024);
+        progress.fileOffset("peer", 1024, false);
         let item = progress.flow().value().remove(0);
         assert_eq!(item.fileSize, 1024);
         assert_eq!(item.fileBytes, 1024);
@@ -194,6 +313,7 @@ mod tests {
         let progress = SyncProgressTracker::default();
         progress.begin("old-peer", "old-space");
         progress.begin("peer", "space");
+        progress.reveal("peer");
         assert_eq!(progress.flow().value().len(), 1);
         progress.retain("space", &[]);
         assert!(progress.flow().value().is_empty());

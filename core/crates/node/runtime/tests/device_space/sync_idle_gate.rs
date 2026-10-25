@@ -281,6 +281,13 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
         "idle cycles keep probing the remote clock"
     );
 
+    // Reconstructing a facade must not construct a second worker or discard
+    // the settled gate. Frequent small syncs stay silent at the proxy boundary.
+    let reopened = idleObserver(&routers[1]);
+    reopened.synchronizeOnce().await.unwrap();
+    assert_eq!(fullPassMarkers(&peers[1]), markersAfterFirstPass);
+    assert!(access[1].spaceSyncProgressFlow().value().is_empty());
+
     // A remote authority change moves the remote clock: the next cycle runs a
     // full pass and the operation is applied locally.
     let operationsBefore = routers[1]
@@ -310,6 +317,25 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
     let markersAfterChangePass = fullPassMarkers(&peers[1]);
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), markersAfterChangePass);
+
+    // A slow incremental exchange uses the same path as the fast exchanges
+    // above. No event is published until the real pass exceeds three seconds.
+    let reopenedFacade = RuntimeRemoteLinkService::newWithRouter(
+        (*routers[1].localCore).clone(), routers[1].clone());
+    let progress = reopenedFacade.spaceSyncProgressFlow();
+    access[0].updateDeviceSpacePolicy("sync.large.incremental".into(), "v1".into()).unwrap();
+    let (arrived, resume) = peers[1].pauseResponse("syncApplyOperations");
+    let (result, ()) = tokio::join!(observer.synchronizeOnce(), async {
+        arrived.await.unwrap();
+        assert!(progress.value().is_empty(), "a new incremental exchange starts silently");
+        tokio::time::sleep(Duration::from_millis(3_100)).await;
+        let current = progress.value();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].status, crate::SpaceSyncProgress::SpaceSyncStatus::Syncing);
+        resume.send(()).unwrap();
+    });
+    result.unwrap();
+    assert_eq!(progress.value()[0].status, crate::SpaceSyncProgress::SpaceSyncStatus::Completed);
 }
 
 /// Verifies a failed pass arms the exponential backoff: the immediate retry is

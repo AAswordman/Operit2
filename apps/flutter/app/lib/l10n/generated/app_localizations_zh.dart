@@ -4140,4 +4140,45 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get localModelsSearchCatalog => '搜索名称或推理引擎';
+
+  @override
+  String get deviceSpaceSyncPeer => '空间设备';
+
+  @override
+  String deviceSpaceSyncActive(String device) {
+    return '正在与 $device 同步';
+  }
+
+  @override
+  String deviceSpaceSyncCompleted(String device) {
+    return '与 $device 同步完成';
+  }
+
+  @override
+  String get deviceSpaceSyncChecking => '正在检查数据差异';
+
+  @override
+  String get deviceSpaceSyncRecords => '正在交换数据记录';
+
+  @override
+  String get deviceSpaceSyncFiles => '正在传输并校验文件';
+
+  @override
+  String get deviceSpaceSyncRetrying => '同步暂时中断，稍后自动重试';
+
+  @override
+  String get deviceSpaceSyncPending => '部分数据尚未处理完成，稍后自动重试';
+
+  @override
+  String deviceSpaceSyncCurrentFile(String done, String total) {
+    return '当前文件：$done / $total';
+  }
+
+  @override
+  String deviceSpaceSyncTransferred(int count, String bytes) {
+    return '已交换 $count 条记录 · 已传输 $bytes';
+  }
+
+  @override
+  String get deviceSpaceSyncBackground => '可以继续使用，同步会在后台完成';
 }

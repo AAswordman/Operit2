@@ -1060,7 +1060,7 @@ pub(crate) async fn refresh(service: &dyn NodeSpaceContext, id: String) -> Resul
     let published = publishOutgoingResponse(service, &id, &remote, false)?;
     if published.status == SpaceJoinStatus::Joined {
         if let Err(e) = service.afterJoined(local.request.targetDeviceId).await {
-            operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("Join approved; post-join synchronization scheduling failed: {e}"));
+            operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("Join approved; post-join synchronization failed: {e}"));
         }
     }
     Ok(published)

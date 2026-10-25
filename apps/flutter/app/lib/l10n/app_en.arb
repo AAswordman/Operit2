@@ -2243,5 +2243,50 @@
   "localModelsInvalidSettings": "Check the thread count, context size and batch size.",
   "localModelsFilterAll": "All models",
   "localModelsFilterInstalled": "Installed only",
-  "localModelsSearchCatalog": "Search by name or inference engine"
+  "localModelsSearchCatalog": "Search by name or inference engine",
+  "deviceSpaceSyncPeer": "a space device",
+  "deviceSpaceSyncActive": "Syncing with {device}",
+  "@deviceSpaceSyncActive": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncCompleted": "Synced with {device}",
+  "@deviceSpaceSyncCompleted": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncChecking": "Checking for changes",
+  "deviceSpaceSyncRecords": "Exchanging records",
+  "deviceSpaceSyncFiles": "Transferring and verifying files",
+  "deviceSpaceSyncRetrying": "Sync interrupted. Retrying automatically.",
+  "deviceSpaceSyncPending": "Some data is still pending. Retrying automatically.",
+  "deviceSpaceSyncCurrentFile": "Current file: {done} / {total}",
+  "@deviceSpaceSyncCurrentFile": {
+    "placeholders": {
+      "done": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncTransferred": "{count} records exchanged · {bytes} transferred",
+  "@deviceSpaceSyncTransferred": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "bytes": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncBackground": "You can keep using the app while syncing continues."
 }

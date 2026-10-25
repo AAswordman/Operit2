@@ -131,6 +131,11 @@ impl CoreNodeLocalRuntime {
         self.runtimeStorageHost.clone()
     }
 
+    /// Facades share execution state only within the same application instance.
+    pub(crate) fn sharesApplicationWith(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.applicationClient, &other.applicationClient)
+    }
+
     /// Resolves one generated Core schema to the local numeric object ID.
     #[allow(non_snake_case)]
     pub fn targetForSchema(&self, schema: &str) -> Option<&'static str> {
