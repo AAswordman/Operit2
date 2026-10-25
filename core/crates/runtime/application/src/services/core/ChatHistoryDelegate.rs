@@ -1646,32 +1646,40 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    /// Deletes a chat after the active selection has moved to a valid chat.
-    pub fn deleteChatHistory(&mut self, chatId: String) -> bool {
+    /// Releases owner state before deleting an unlocked conversation and its in-memory projection.
+    pub async fn deleteChatHistory(
+        &mut self,
+        service: &EnhancedAIService,
+        chatId: String,
+    ) -> Result<bool, String> {
+        self.requireChatExists(&chatId)?;
         let canDelete = self
             .chatHistoryManager
             .canDeleteChatHistory(chatId.clone())
-            .expect("ChatHistoryManager.canDeleteChatHistory must succeed");
+            .map_err(|error| error.to_string())?;
         if !canDelete {
-            return false;
+            return Err(format!("Chat is locked: {chatId}"));
         }
+        let api = ChatConfigurationApi::ready(&service.tool_handler).await?;
         self.prepareChatForDestructiveMutation(chatId.clone());
+        api.deleteConfiguration(&chatId).await?;
         let deleted = self
             .chatHistoryManager
             .deleteChatHistory(chatId.clone())
-            .expect("ChatHistoryManager.deleteChatHistory must succeed");
-        if deleted && self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
+            .map_err(|error| error.to_string())?;
+        if !deleted {
+            return Err(format!("Core conversation deletion failed: {chatId}"));
+        }
+        if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.currentChatIdFlow.set_value(None);
             self.clearCurrentChatHistoryInMemory();
         }
-        if deleted {
-            self.chatConfigurationsFlow.update(|configurations| {
-                configurations.remove(&chatId);
-            });
-            self.clearChatFlow(&chatId);
-            self.finishDestructiveHistoryMutation(chatId);
-        }
-        deleted
+        self.chatConfigurationsFlow.update(|configurations| {
+            configurations.remove(&chatId);
+        });
+        self.clearChatFlow(&chatId);
+        self.finishDestructiveHistoryMutation(chatId);
+        Ok(true)
     }
 
     #[allow(non_snake_case)]

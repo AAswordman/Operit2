@@ -1484,7 +1484,6 @@ dependencies = [
  "portable-pty",
  "regex",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "tokio",

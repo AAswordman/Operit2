@@ -616,9 +616,6 @@ impl CoreSpaceStore {
             if entry.isDirectory {
                 continue;
             }
-            if isStagingSiblingEntry(&entry.path) {
-                continue;
-            }
             let preferences =
                 self.recordStore(entry.path.clone())
                     .data()
@@ -723,9 +720,6 @@ impl CoreSpaceStore {
         let mut presences = BTreeMap::new();
         for entry in entries {
             if entry.isDirectory {
-                continue;
-            }
-            if isStagingSiblingEntry(&entry.path) {
                 continue;
             }
             let preferences =
@@ -1104,9 +1098,6 @@ impl CoreSpaceStore {
             if entry.isDirectory {
                 continue;
             }
-            if isStagingSiblingEntry(&entry.path) {
-                continue;
-            }
             let preferences =
                 self.recordStore(entry.path.clone())
                     .data()
@@ -1203,9 +1194,6 @@ impl CoreSpaceStore {
         let mut records = BTreeMap::new();
         for entry in entries {
             if entry.isDirectory {
-                continue;
-            }
-            if isStagingSiblingEntry(&entry.path) {
                 continue;
             }
             let preferences =
@@ -1529,14 +1517,6 @@ fn validateSpaceName(spaceName: &str) -> Result<(), String> {
         return Err("Device space name must not contain control characters".to_string());
     }
     Ok(())
-}
-
-/// Validates one synchronized CoreNode topology announcement.
-/// Detects the atomic writer's private dot-prefixed staging sibling; a killed
-/// process leaves it behind and it is never a synchronized Space record.
-#[allow(non_snake_case)]
-fn isStagingSiblingEntry(path: &str) -> bool {
-    path.rsplit('/').next().is_some_and(|name| name.starts_with('.'))
 }
 
 /// Validates one synchronized CoreNode topology announcement.
@@ -1884,115 +1864,34 @@ mod tests {
             .expect("test device profile must initialize");
     }
 
-    /// A killed process leaves an atomic-write staging sibling in the members
-    /// directory; Space initialization must skip it instead of panicking.
+    /// Rejects corrupt committed records, including ordinary dot-prefixed files exposed by the host.
     #[test]
-    fn initialize_ignores_leftover_partial_staging_files_in_members_directory() {
-        let host = Arc::new(MemoryStorageHost::default());
-        let store = CoreSpaceStore::new(host.clone());
-        initializeTestDeviceProfile(&store);
-        store
-            .initializeNamed("local-space".to_string())
-            .expect("test space must initialize");
-        host.writeBytes(
-            &format!(
-                "{RUNTIME_SPACE_MEMBERS_DIR_PATH}/.core-staging.preferences.json.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial"
-            ),
-            b"uncommitted",
-        )
-        .expect("test staging file must write");
-
-        let space = store
-            .initialize()
-            .expect("leftover staging files must not break Space initialization");
-        assert!(
-            space
-                .members
-                .iter()
-                .all(|member| !member.contains("staging")),
-            "the staging sibling must not surface as a member"
-        );
-    }
-
-    /// A killed process leaves an atomic-write staging sibling in the topology
-    /// directory; announcement reads must skip it instead of failing every cycle.
-    #[test]
-    fn topology_records_ignore_leftover_partial_staging_files() {
-        let host = Arc::new(MemoryStorageHost::default());
-        let store = CoreSpaceStore::new(host.clone());
-        initializeTestDeviceProfile(&store);
-        store
-            .initializeNamed("local-space".to_string())
-            .expect("test space must initialize");
-        host.writeBytes(
-            &format!(
-                "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/.core-staging.preferences.json.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial"
-            ),
-            b"uncommitted",
-        )
-        .expect("test staging file must write");
-
-        let records = store
-            .topologyRecords()
-            .expect("leftover staging files must not break topology reads");
-        assert!(
-            records.keys().all(|nodeId| !nodeId.contains("staging")),
-            "the staging sibling must not surface as a topology record"
-        );
-    }
-
-    /// A killed process leaves an atomic-write staging sibling in the device
-    /// profiles directory; presentation reads must skip it.
-    #[test]
-    fn device_profiles_ignore_leftover_partial_staging_files() {
-        let host = Arc::new(MemoryStorageHost::default());
-        let store = CoreSpaceStore::new(host.clone());
-        initializeTestDeviceProfile(&store);
-        store
-            .initializeNamed("local-space".to_string())
-            .expect("test space must initialize");
-        host.writeBytes(
-            &format!(
-                "{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/.core-staging.preferences.json.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial"
-            ),
-            b"uncommitted",
-        )
-        .expect("test staging file must write");
-
-        let profiles = store
-            .deviceProfiles()
-            .expect("leftover staging files must not break device profile reads");
-        assert!(
-            profiles.keys().all(|nodeId| !nodeId.contains("staging")),
-            "the staging sibling must not surface as a device profile"
-        );
-    }
-
-    /// A killed process leaves an atomic-write staging sibling in the device
-    /// presence directory; availability reads must skip it.
-    #[test]
-    fn device_presences_ignore_leftover_partial_staging_files() {
-        let host = Arc::new(MemoryStorageHost::default());
-        let store = CoreSpaceStore::new(host.clone());
-        initializeTestDeviceProfile(&store);
-        store
-            .initializeNamed("local-space".to_string())
-            .expect("test space must initialize");
-        host.writeBytes(
-            &format!(
-                "{RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH}/.core-staging.preferences.json.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial"
-            ),
-            b"uncommitted",
-        )
-        .expect("test staging file must write");
-
-        let presences = store
-            .devicePresences()
-            .expect("leftover staging files must not break device presence reads");
-        assert!(
-            presences.keys().all(|nodeId| !nodeId.contains("staging")),
-            "the staging sibling must not surface as a device presence"
-        );
+    fn record_readers_reject_corrupt_committed_files() {
+        for directory in [
+            RUNTIME_SPACE_MEMBERS_DIR_PATH,
+            RUNTIME_SPACE_TOPOLOGY_DIR_PATH,
+            RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
+            RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH,
+        ] {
+            let host = Arc::new(MemoryStorageHost::default());
+            let store = CoreSpaceStore::new(host.clone());
+            host.writeBytes(
+                &format!("{directory}/.corrupt.preferences.json"),
+                b"invalid",
+            )
+            .expect("test record must write");
+            let result = match directory {
+                RUNTIME_SPACE_MEMBERS_DIR_PATH => store.memberRecords().map(|_| ()),
+                RUNTIME_SPACE_TOPOLOGY_DIR_PATH => store.topologyRecords().map(|_| ()),
+                RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH => store.deviceProfiles().map(|_| ()),
+                RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH => store.devicePresences().map(|_| ()),
+                _ => unreachable!(),
+            };
+            assert!(
+                result.is_err(),
+                "Corrupt committed record must fail: {directory}"
+            );
+        }
     }
 
     /// Verifies remote member ejection rewrites the member as a standalone

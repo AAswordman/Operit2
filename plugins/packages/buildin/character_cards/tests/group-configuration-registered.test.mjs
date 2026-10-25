@@ -116,6 +116,19 @@ test("registered configuration: generic deletion checks its owner, acknowledges 
   assert.deepEqual(plain(await plugin.api("chat.configuration.delete", { chatId: "unpersisted-creation-draft" })), { deleted: true });
 });
 
+/** The registered owner propagates storage errors and leaves its binding intact on failure. */
+test("registered configuration: deletion fails explicitly when the binding store rejects the write", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directories), plugin = openPlugin(settings.harness);
+  const card = await plugin.api("character.create", { values: { name: "Deletion failure speaker" } });
+  const selection = "card:" + card.id;
+  await committedConfiguration(plugin, selection);
+  disk.failNext("storage.preferences.edit", new Error("Configuration deletion storage rejected"));
+  await assert.rejects(() => plugin.api("chat.configuration.delete", { chatId: "unpersisted-creation-draft" }), /Configuration deletion storage rejected/);
+  assert.equal((await plugin.api("chat.configuration.binding.read", { chatId: "unpersisted-creation-draft" })).selection, selection);
+  assert.deepEqual(plain(await plugin.api("chat.configuration.delete", { chatId: "unpersisted-creation-draft" })), { deleted: true });
+  await assert.rejects(() => plugin.api("chat.configuration.binding.read", { chatId: "unpersisted-creation-draft" }));
+});
+
 /** Existing chats without role associations use a real model profile and read their current model configuration. */
 test("registered configuration: no role association executes the configured model and provider identity", async t => {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directories), plugin = openPlugin(settings.harness);

@@ -1363,7 +1363,6 @@ dependencies = [
  "operit-host-native-common",
  "operit-host-native-plugin-sdk-ipc",
  "reqwest",
- "rusqlite",
  "security-framework",
  "serde",
  "serde_json",
