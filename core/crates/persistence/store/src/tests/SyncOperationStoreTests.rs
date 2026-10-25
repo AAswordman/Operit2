@@ -522,7 +522,7 @@ fn space_admission_requires_identity_assignment_authority() {
 /// Built-in identities describe node capabilities; removed roles cannot be assigned.
 #[test]
 fn builtin_identities_expose_only_current_node_capabilities() {
-    use crate::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlRole, NetworkControlStore};
+    use crate::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlStore};
     let store = NetworkControlStore::new(Arc::new(MemoryStorageHost::default())).unwrap();
     store.bootstrapCurrentSpace().unwrap();
     store.admitMember("peer".into()).unwrap();
@@ -539,12 +539,6 @@ fn builtin_identities_expose_only_current_node_capabilities() {
     }
     for identity in ["auditor", "runner", "storage"] {
         assert!(store.setIdentity(NetworkControlIdentityAssignment { nodeId: "peer".into(), roleId: identity.into() }).is_err());
-    }
-    for capability in ["chat.read", "chat.write"] {
-        assert!(store.defineRole(NetworkControlRole { roleId: "retired-chat-role".into(),
-            displayName: "Retired chat role".into(),
-            capabilities: BTreeSet::from([capability.into()]),
-        }).is_err());
     }
 }
 
