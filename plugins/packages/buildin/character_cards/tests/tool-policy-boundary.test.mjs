@@ -9,6 +9,7 @@ const paths = {
   handler: "core/crates/tool/services/src/tools/AIToolHandler.rs",
   terminal: "core/crates/tool/services/src/tools/ToolJsRuntime.rs",
   lifecycle: "core/crates/runtime/application/src/plugins/toolpkg/ToolPkgToolLifecycleBridge.rs",
+  timeout: "core/crates/runtime/application/src/plugins/toolpkg/ToolPkgPreHookTimeout.rs",
   prompt: "core/crates/runtime/application/src/plugins/toolpkg/ToolPkgPromptHookBridge.rs",
   registry: "core/crates/provider/services/src/chat/hooks/PromptHookRegistry.rs",
   enhanced: "core/crates/provider/services/src/chat/EnhancedAIService.rs",
@@ -50,12 +51,15 @@ function violations(input) {
     || !/Value::Null/.test(projection)) failures.push("owner-only message object or explicit null");
   const intercept = region(input.lifecycle, "fn onToolCallInterceptAsync<'a>(", "fn onToolPermissionChecked");
   const prompt = region(input.prompt, "impl ToolPromptComposeHook for ToolPromptComposeBridge", "/// Strictly decodes an invoked tool policy");
+  const timeout = region(input.timeout, "pub async fn runHook(", "/// Returns the timeout milliseconds");
+  if (!/remainingForHook\([\s\S]*?\?;/.test(timeout)
+    || !/runToolPkgMainHookWithTimeoutMillis\([\s\S]*?\)\s*\.await\?/.test(timeout)
+    || !/hasExpired\(\)[\s\S]*?return Err\(/.test(timeout)) failures.push("shared pre-hook deadline and failure propagation");
   for (const [name, text] of [["intercept", intercept], ["prompt", prompt]]) {
-    if (!/currentToolRuntimeContext\(\)/.test(text) || !/readySnapshot\([\s\S]*?\)\.await\?/.test(text)
+    if (!/currentToolRuntimeContext\(\)/.test(text) || !/readySnapshot\([\s\S]*?\)\s*\.await\?/.test(text)
       || !/validateExecutionContext\([\s\S]*?\)\?/.test(text)
       || !/executionContextForOwner\([\s\S]*?\)\?/.test(text)
-      || !/runToolPkgMainHookWithTimeoutMillis\([\s\S]*?\)\.await\?/.test(text)
-      || !/remainingTimeoutMillis\(\)\.ok_or_else\(/.test(text) || !/hasExpired\(\)[\s\S]*?return Err\(/.test(text)) failures.push(name + " awaited isolated handler failure/timeout");
+      || !/ToolPkgPreHookTimeout::runHook\(\s*(?:Some\(&budget\)|budget\.as_ref\(\)),[\s\S]*?\)\s*\.await\?/.test(text)) failures.push(name + " awaited isolated handler failure/timeout");
   }
   if (!/Future<Output\s*=\s*Result<AIToolHookDecision,\s*String>>/.test(input.hook)
     || !/executeToolInvocation\([\s\S]*?ToolExecutionPolicy::Ai[\s\S]*?\)\s*\.await\?/.test(input.manager)
@@ -89,6 +93,20 @@ test("static negative: removing batch failure propagation is a red item", () => 
   input.manager = input.manager.replace(".await?;\n            AppLogger::v_with_level(", ".await.unwrap_or_default();\n            AppLogger::v_with_level(");
   assert.notEqual(input.manager, before, "The negative case must change the real awaited tool invocation");
   assert.ok(violations(input).indexOf("batch aborts original policy error") !== -1);
+});
+
+/** Rejects removal of either shared deadline enforcement or propagation of the invoked handler failure. */
+test("static negative: shared pre-hook execution must enforce its deadline and propagate errors", () => {
+  for (const [before, after] of [
+    ["budget.remainingForHook(manager, packageName, hookId, stage)?", "unboundedTimeout()"],
+    [".await?;", ".await;"],
+    ["if budget.hasExpired()", "if false"],
+  ]) {
+    const input = sources(), original = input.timeout;
+    input.timeout = input.timeout.replace(before, after);
+    assert.notEqual(input.timeout, original, "Expected to change the real shared timeout handler");
+    assert.ok(violations(input).indexOf("shared pre-hook deadline and failure propagation") !== -1);
+  }
 });
 
 /** Proves a policy registry cannot return unfiltered context by concealing the invoked Result. */

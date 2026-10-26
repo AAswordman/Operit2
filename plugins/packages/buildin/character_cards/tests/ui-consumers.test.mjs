@@ -4,6 +4,7 @@ import { uiProductionViolations, sidebarProductionViolations, sidebarViolationsF
 
 const base = "apps/flutter/app/lib/ui/main/";
 const paths = {
+  adaptive: base + "layout/AdaptiveMainLayout.dart",
   main: base + "screens/OperitMainScreen.dart", phone: base + "layout/PhoneLayout.dart", tablet: base + "layout/TabletLayout.dart",
   drawer: base + "components/DrawerContent.dart", state: base + "components/DrawerConversationState.dart",
   host: "apps/flutter/app/lib/ui/common/contributions/ChatSidebarTabHost.dart",
@@ -12,8 +13,10 @@ const paths = {
 /** Supplies source-text-only checker inputs, not running Flutter widgets, native hosts or a substitute registration catalog. */
 function sourceFixture() {
   return new Map([
-    [paths.main, `import '../layout/PhoneLayout.dart'; import '../layout/TabletLayout.dart';
-      class _OperitMainScreenState { Widget build(context) { return children(PhoneLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute), TabletLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute)); } }`],
+    [paths.main, `import '../layout/AdaptiveMainLayout.dart';
+      class _OperitMainScreenState { Widget build(context) { return AdaptiveMainLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute); } }`],
+    [paths.adaptive, `import 'PhoneLayout.dart'; import 'TabletLayout.dart';
+      class _AdaptiveMainLayoutState { Widget build(context) { return children(PhoneLayout(drawerConversationState: widget.drawerConversationState, onConversationActivated: widget.onConversationActivated), TabletLayout(drawerConversationState: widget.drawerConversationState, onConversationActivated: widget.onConversationActivated)); } }`],
     [paths.phone, `import '../components/DrawerContent.dart'; class _PhoneLayoutState {
       Widget build(context) { return DrawerContent(histories: drawerState.histories, currentChatId: drawerState.currentChatId, activeStreamingChatIds: drawerState.activeStreamingChatIds, onConversationActivated: _handleConversationActivated); }
       void _handleConversationActivated() { widget.onConversationActivated(); } }`],
@@ -112,8 +115,9 @@ test("sidebar static checker distinguishes live role fields and group dialogs fr
 /** Requires real live constructor calls, so removing an import or placing the widget in an unrelated helper is not success. */
 test("sidebar static checker rejects disconnected main layout drawer and tab host constructors", () => {
   for (const [file, before, after] of [
-    [paths.main, "PhoneLayout(drawerConversationState:", "OtherLayout(drawerConversationState:"],
-    [paths.main, "TabletLayout(drawerConversationState:", "OtherLayout(drawerConversationState:"],
+    [paths.main, "AdaptiveMainLayout(drawerConversationState:", "OtherLayout(drawerConversationState:"],
+    [paths.adaptive, "PhoneLayout(drawerConversationState:", "OtherLayout(drawerConversationState:"],
+    [paths.adaptive, "TabletLayout(drawerConversationState:", "OtherLayout(drawerConversationState:"],
     [paths.phone, "DrawerContent(histories:", "OtherDrawer(histories:"],
     [paths.tablet, "DrawerContent(histories:", "OtherDrawer(histories:"],
     [paths.drawer, "ChatSidebarTabHost(clients:", "OtherHost(clients:"],
@@ -125,6 +129,8 @@ test("sidebar static checker rejects disconnected main layout drawer and tab hos
 test("sidebar static checker rejects missing clients empty summaries and disconnected activation", () => {
   for (const [file, before, after] of [
     [paths.main, "onConversationActivated: _activateConversationRoute", "onConversationActivated: unrelatedCallback"],
+    [paths.adaptive, "onConversationActivated: widget.onConversationActivated", "onConversationActivated: unrelatedCallback"],
+    [paths.adaptive, "drawerConversationState: widget.drawerConversationState", "drawerConversationState: unrelatedState"],
     [paths.phone, "histories: drawerState.histories", "histories: const []"],
     [paths.drawer, "GeneratedCoreProxyClients(widget.bridge)", "GeneratedCoreProxyClients(detachedBridge)"],
     [paths.drawer, "chats: widget.histories", "chats: const []"],
@@ -172,8 +178,8 @@ test("sidebar static checker rejects fake embedding launcher chrome discarded pa
 
 /** Makes a dead helper and commented constructor insufficient to prove a real Main build mount. */
 test("sidebar static checker does not accept disconnected same-name widget calls as production mounts", () => {
-  const sources = replaced(sourceFixture(), paths.main, "PhoneLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute)", "OtherLayout()");
-  sources.set(paths.main, sources.get(paths.main) + " void unmountedExample() { PhoneLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute); }\n // PhoneLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute)");
+  const sources = replaced(sourceFixture(), paths.main, "AdaptiveMainLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute)", "OtherLayout()");
+  sources.set(paths.main, sources.get(paths.main) + " void unmountedExample() { AdaptiveMainLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute); }\n // AdaptiveMainLayout(drawerConversationState: _state, onConversationActivated: _activateConversationRoute)");
   assert.notDeepEqual(inspect(sources), []);
 });
 

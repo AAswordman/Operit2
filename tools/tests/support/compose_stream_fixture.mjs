@@ -151,6 +151,11 @@ export function composeStreamFixture(context, { projectTree = true, inspectStora
       reportError(error) { errors.push(error); },
     };
   }
+  /** Resolves a test mount address to the current action emitted by the production runtime. */
+  function actionTarget(actionId) {
+    assert.ok(actionTargets.has(actionId), 'Compose action not found: removed test mount');
+    return actionTargets.get(actionId);
+  }
   /** Makes existing assertion callers consume the final stream response rather than a JS return snapshot. */
   function adapt() {
     for (const name of ['__operit_render_compose_dsl', '__operit_dispatch_compose_dsl_action']) {
@@ -167,8 +172,7 @@ export function composeStreamFixture(context, { projectTree = true, inspectStora
           },
         };
         if (name === '__operit_dispatch_compose_dsl_action' && args[0].actionId.startsWith('@fixture:')) {
-          assert.ok(actionTargets.has(args[0].actionId), 'Compose action not found: removed test mount');
-          args[0] = { ...args[0], actionId: actionTargets.get(args[0].actionId) };
+          args[0] = { ...args[0], actionId: actionTarget(args[0].actionId) };
         }
         const result = operation(...args);
         /** Rejects a second response route at the actual production completion boundary. */
@@ -180,5 +184,5 @@ export function composeStreamFixture(context, { projectTree = true, inspectStora
     }
   }
   context.__operit_call_runtime_ref = sink();
-  return { accept, adapt, get nodes() { return projectNodes(); }, programs, instances, events, errors, get latest() { return latest; }, get root() { return nodes.get(rootId); } };
+  return { accept, adapt, actionTarget, get nodes() { return projectNodes(); }, programs, instances, events, errors, get latest() { return latest; }, get root() { return nodes.get(rootId); } };
 }

@@ -435,5 +435,5 @@ export async function resolveChatExecution(request: ChatConfigurationRequest, se
   const card = chatRecord(cards, profile.id, "selected participant");
   const primaryOwnerKey = (card.memoryBindingMode === "CHARACTER" ? "character:" + card.id : "shared:" + card.sharedMemoryId);
   const executionData = encodeExecutionData({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey, profile, participants });
-  return { contextKey: marker.selection, historyPolicy: { isolateParticipants: true, labelUserMessages: selection.kind === "group" }, profile, participants, executionData };
+  return { contextKey: marker.selection, historyPolicy: { isolateParticipants: selection.kind === "group", labelUserMessages: selection.kind === "group" }, profile, participants, executionData };
 }
