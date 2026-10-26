@@ -41,6 +41,14 @@ const MAX_SYNC_PAGES_PER_PASS: usize = 64;
 const PEER_FULL_SYNC_BACKOFF_BASE_MS: i64 = 2_000;
 /// Ceiling for the exponential retry delay of one peer's full synchronization pass.
 const PEER_FULL_SYNC_BACKOFF_MAX_MS: i64 = 60_000;
+/// Fast workspace-scan polling while scans keep finding changes. App writes and
+/// incoming batches scan inline, so this only bounds discovery latency for
+/// writes made by terminals and external editors while activity continues.
+const WORKSPACE_SCAN_ACTIVE_INTERVAL_MS: u64 = 2_000;
+/// Idle ceiling for the adaptive workspace-scan backoff. Steady-state scans are
+/// metadata-only (unchanged sizes reuse inventory references), so one listing
+/// comparison per minute is the worst idle cost.
+const WORKSPACE_SCAN_IDLE_INTERVAL_MS: u64 = 60_000;
 
 /// Per-peer scheduling state behind the change-gated synchronization floor.
 ///
@@ -249,20 +257,29 @@ impl SpacePersistenceSyncService {
         defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
             "core-node-workspace-file-scan",
             Box::new(move || Box::pin(async move {
+                let mut intervalMs = WORKSPACE_SCAN_ACTIVE_INTERVAL_MS;
                 loop {
                     tokio::select! {
                         _ = &mut stopped => break,
-                        result = defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(2000) => {
+                        result = defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(intervalMs) => {
                             if result.is_err() { break; }
                         }
                     }
                     let Some(state) = weakState.upgrade() else { break; };
                     if !state.active.load(Ordering::Acquire) { break; }
                     let service = SpacePersistenceSyncService { state };
-                    if let Err(error) = service.workspaceFiles().scan() {
+                    let mut changes = 0;
+                    if let Err(error) = service.workspaceFiles().scan().map(|scanned| changes = scanned) {
                         operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService",
                             &format!("Workspace scan failed; no missing-file deletions published: {error}"));
                     }
+                    // A productive round pulls the scanner back to fast polling;
+                    // quiet rounds double the interval up to the idle ceiling.
+                    intervalMs = if changes > 0 {
+                        WORKSPACE_SCAN_ACTIVE_INTERVAL_MS
+                    } else {
+                        (intervalMs * 2).min(WORKSPACE_SCAN_IDLE_INTERVAL_MS)
+                    };
                     // Also retry interrupted transfers even when no new edits occur.
                     let _ = service.scheduleSynchronization();
                 }
