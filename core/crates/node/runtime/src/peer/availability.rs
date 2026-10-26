@@ -6,6 +6,9 @@ use tokio::sync::oneshot;
 
 const DISCOVERY_INTERVAL_MS: u64 = 3_000;
 const MAX_CONNECTING_PEERS: usize = 4;
+/// Policy rejections (`PEER_CONNECTION_REVOKED`) are deterministic until an admin
+/// admits the peer again, so probing them at the discovery interval is pure waste.
+const POLICY_REVOKED_BACKOFF_MS: u64 = 60_000;
 
 pub(super) struct AvailabilityWorker {
     stop: oneshot::Sender<()>,
@@ -36,6 +39,7 @@ impl HostRuntimePeerService {
         scheduler.scheduleHostRuntimeAsyncTask("peer-availability", Box::new(move || Box::pin(async move {
             let mut pending = FuturesUnordered::<LocalBoxFuture<'static, (String, Result<(), CoreLinkError>)>>::new();
             let mut connecting = BTreeSet::new();
+            let mut policyRevokedUntil = BTreeMap::<String, std::time::Instant>::new();
             let mut tick = tasks.waitForHostRuntimeDelay(0);
             let mut lastPeer = None;
             loop {
@@ -46,6 +50,9 @@ impl HostRuntimePeerService {
                         if let Some((node, result)) = result {
                             connecting.remove(&node);
                             if let Err(error) = result {
+                                if error.code == "PEER_CONNECTION_REVOKED" {
+                                    policyRevokedUntil.insert(node.clone(), std::time::Instant::now() + std::time::Duration::from_millis(POLICY_REVOKED_BACKOFF_MS));
+                                }
                                 if let Some(state) = state.upgrade() {
                                     HostRuntimePeerService { state }.refreshPeerAvailability(&node);
                                 }
@@ -64,12 +71,15 @@ impl HostRuntimePeerService {
                                 continue;
                             }
                         };
+                        let now = std::time::Instant::now();
+                        policyRevokedUntil.retain(|_, until| *until > now);
                         // Round-robin admission prevents unreachable peers from monopolizing dial slots.
                         let mut peers = peers;
                         peers.sort_by(|left, right| left.nodeId.cmp(&right.nodeId));
                         let split = peers.partition_point(|peer| lastPeer.as_ref().is_some_and(|last| &peer.nodeId <= last));
                         peers.rotate_left(split);
                         for peer in peers {
+                            if policyRevokedUntil.contains_key(&peer.nodeId) { continue; }
                             if service.requirePeerConnectionAllowed(&peer.nodeId).is_err() {
                                 service.refreshPeerAvailability(&peer.nodeId);
                                 continue;
