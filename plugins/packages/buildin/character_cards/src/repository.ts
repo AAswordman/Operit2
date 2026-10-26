@@ -88,6 +88,24 @@ export class RepositorySession implements CharacterRepository {
   async listCharacters(): Promise<Card[]> { return copy(this.state.cards); }
   /** Reads one complete stored character. */
   async getCharacter(id: string): Promise<Card> { return copy(get(this.state.cards, id, "character")); }
+  /** Removes memory owners whose backing entity no longer exists and returns their pruned owner keys.
+    * Orphan owners appear when a character or shared store is lost outside the removal path
+    * (for example a deleted-synced card); every scheduler transaction on such an owner throws,
+    * so the interval prunes them up front instead of failing forever. */
+  async pruneOrphanMemoryOwners(): Promise<string[]> {
+    const alive = (ownerKey: string): boolean => {
+      const parts = ownerKey.split(":");
+      if (parts.length !== 2) return false;
+      if (parts[0] === "character") return this.state.cards.some(card => card.id === parts[1]);
+      if (parts[0] === "shared") return this.state.stores.some(store => store.id === parts[1]);
+      return false;
+    };
+    const orphans = this.state.owners.filter(space => !alive(space.ownerKey)).map(space => space.ownerKey);
+    if (orphans.length === 0) return [];
+    this.state.owners = this.state.owners.filter(space => alive(space.ownerKey));
+    for (const ownerKey of orphans) this.documents.delete(ownerKey);
+    return orphans;
+  }
   /** Creates all character fields and its genuine initialized memory space. */
   async createCharacter(card: Card): Promise<Card> {
     const name = requireName(card.name, "character name"); uniqueName(this.state.cards, name, "");

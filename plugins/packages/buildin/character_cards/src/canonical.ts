@@ -103,6 +103,8 @@ export interface CharacterRepository {
   readUserPath(ownerKey: string): Promise<string>;
   /** Lists genuinely initialized owner namespaces for the private job scheduler. */
   listMemoryOwnerKeys(): Promise<string[]>;
+  /** Removes memory owners whose backing entity no longer exists and returns their pruned keys. */
+  pruneOrphanMemoryOwners(): Promise<string[]>;
   /** Allocates one lossless private candidate or job identity in this snapshot. */
   allocateRecordId(): Promise<string>;
   /** Writes a complete validated owner space without replacing the separate USER.md file. */

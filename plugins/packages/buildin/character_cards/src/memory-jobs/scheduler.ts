@@ -299,6 +299,10 @@ export class MemoryJobRunner {
 
   /** Advances persisted rebuild windows and due candidates once. */
   private async runTick(): Promise<MemoryJobReport> {
+    const prunedOwners = await this.owner.run(
+      /** Drops memory owners whose backing entity vanished; without this their first transaction throws every interval. */
+      repository => repository.pruneOrphanMemoryOwners(),
+    );
     const keys = await this.owner.run(
       /** Enumerates only genuine initialized memory spaces. */
       repository => repository.listMemoryOwnerKeys(),

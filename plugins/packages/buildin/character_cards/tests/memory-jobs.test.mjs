@@ -473,3 +473,29 @@ test("controlled Chat/AI: alphabetically reordered plan snapshot keys still exec
   assert.match(failed.rebuildProgress.lastError, /planned rebuild source message revision changed or was deleted: memory-jobs-controlled-chat at \d+\/0/u);
   assert.equal(harness.modelCalls.length, 1);
 });
+
+/** Prunes memory owners whose backing entity vanished instead of failing every interval transaction on them. */
+test("controlled Chat/AI: interval prunes orphan memory owners and still serves the genuine owner", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime();
+  await runtime.initialize(); await runtime.bind();
+  const sources = await runtime.enqueueReplies(); await runtime.persistMessage(sources[0]);
+  /** Injects the exact production wound: an owner whose character record was lost outside the removal path. */
+  const state = await harness.readState(), orphan = plain(loadModule("src/storage/state.ts").createMemorySpace("character:90a3122d-b374-4422-9589-44a9d7fc18a9"));
+  orphan.settings.nextAutoSaveRunAtMs = 0; orphan.candidates.push({ id: "orphan-candidate", chatId: CONTROLLED_CHAT_ID, triggerMessageTimestamp: harness.message(1).timestamp, triggerVariantIndex: 0, createdAt: 1, updatedAt: 1, status: "pending", attemptCount: 0, lastError: "", sourceType: "reply_finalized_auto" });
+  state.owners.push(orphan); harness.disk.replaceState(state);
+  const before = await harness.readState();
+  assert.equal(before.owners.some(space => space.ownerKey === "character:90a3122d-b374-4422-9589-44a9d7fc18a9"), true);
+
+  harness.queueAnalysis({ main: { title: "Surviving owner", content: "A fact from the genuine owner", tags: ["Survivor"], folder_path: "Projects" }, new: [], update: [], merge: [], links: [], profile_markdown: "# User\nSurviving profile\n" });
+  await runtime.makeDue();
+  await runtime.interval();
+  harness.assertOutputsConsumed();
+
+  const after = await harness.readState();
+  assert.equal(after.owners.some(space => space.ownerKey === "character:90a3122d-b374-4422-9589-44a9d7fc18a9"), false);
+  const surviving = after.owners.filter(space => space.ownerKey === CONTROLLED_OWNER);
+  assert.equal(surviving.length, 1); assert.ok(surviving[0].memories.some(memory => memory.title === "Surviving owner"));
+  /** A second interval runs cleanly without the orphan and keeps making progress for the genuine owner. */
+  await runtime.interval();
+  assert.equal((await harness.readState()).owners.some(space => space.ownerKey === "character:90a3122d-b374-4422-9589-44a9d7fc18a9"), false);
+});
