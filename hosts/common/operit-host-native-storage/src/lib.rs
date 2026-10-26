@@ -142,10 +142,11 @@ impl Drop for NativeArchiveFiles {
 }
 
 /// Locks staging mutations across Host instances without locking archive payload bytes.
+/// Uses fs2 because Rust 1.95 standard file locking does not support Android.
 fn lockArchiveDirectory(root: &Path) -> HostResult<fs::File> {
     let file = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true)
         .open(root.join(".staging.lock"))?;
-    file.lock()?;
+    fs2::FileExt::lock_exclusive(&file)?;
     Ok(file)
 }
 
@@ -249,13 +250,13 @@ impl NativeArchiveStagingHost {
             let leasePath = self.stagingRoot.join(format!("{id}.lease"));
             if !includeLegacy && !leasePath.try_exists()? { continue; }
             let lease = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&leasePath)?;
-            match lease.try_lock() {
+            match fs2::FileExt::try_lock_exclusive(&lease) {
                 Ok(()) => {
                     let mut lease = Some(lease);
                     removeLeasedArchiveFiles(&self.stagingRoot, &id, &mut lease)?;
                 }
-                Err(fs::TryLockError::WouldBlock) => {},
-                Err(fs::TryLockError::Error(error)) => return Err(error.into()),
+                Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {},
+                Err(error) => return Err(error.into()),
             }
         }
         Ok(())
@@ -284,7 +285,7 @@ impl NativeArchiveStagingHost {
         }
         let lease = fs::OpenOptions::new().create_new(true).read(true).write(true)
             .open(self.stagingRoot.join(format!("{archiveId}.lease")))?;
-        lease.lock()?;
+        fs2::FileExt::lock_exclusive(&lease)?;
         if let Err(error) = fs::OpenOptions::new().create_new(true).write(true).open(path) {
             drop(lease);
             removeArchiveFile(&self.stagingRoot.join(format!("{archiveId}.lease")))

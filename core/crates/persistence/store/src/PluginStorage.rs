@@ -529,6 +529,9 @@ fn openDatabase(
                 ],
             )?;
         }
+        if manifest.kind == StorageKind::Objects {
+            tx.execute("CREATE VIEW IF NOT EXISTS plugin_objects AS SELECT collection,key,value,version FROM _operit_values", Vec::new())?;
+        }
         // Upgrade existing databases once; fresh databases already have UPSERT triggers.
         let legacy = tx.queryRows(
             "SELECT DISTINCT t.definition FROM _operit_tables t JOIN sqlite_master s ON s.tbl_name=t.name WHERE s.type='trigger' AND s.name GLOB '_operit_track_*' AND instr(s.sql,'INSERT OR REPLACE INTO _operit_dirty')>0",
@@ -952,9 +955,6 @@ impl PluginStorageSession {
         }
         let request = match request {
             StorageRequest::Query { statement, .. } => {
-                if database.kind != StorageKind::Sqlite {
-                    return Err(failure("SQL access requires a SQLite handle"));
-                }
                 validateStatement(&statement, true, database.sync)?;
                 let rows = database.store.queryRows(
                     &statement.sql,
@@ -1020,7 +1020,15 @@ impl PluginStorageSession {
                     version: row.get::<_, String>(2)?,
                 })).collect::<Result<Vec<_>, SqliteStoreError>>().map(StorageResponse::List)
             }
-            StorageRequest::Commit {mutations,..} => commitValues(&database,tx,mutations).map(StorageResponse::Commit),
+            StorageRequest::Commit {mutations,guards,..} => {
+                if guards.len() > 1000 { return Err(failure("Object commit exceeds 1000 record guards")); }
+                for guard in guards {
+                    validateCollection(&database, &guard.collection)?;
+                    let actual = readValue(tx, &guard.collection, &guard.key)?.map(|entry| entry.version);
+                    if actual != guard.expected_version { return Err(failure("Storage record guard failed")); }
+                }
+                commitValues(&database,tx,mutations).map(StorageResponse::Commit)
+            },
             StorageRequest::PreferencesData { .. }
             | StorageRequest::PreferencesBeginEdit { .. }
             | StorageRequest::PreferencesFinishEdit { .. }

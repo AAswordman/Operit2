@@ -58,6 +58,7 @@ export function uiProductionViolations() {
 
 const sidebarPaths = {
   main: ui + "/main/screens/OperitMainScreen.dart",
+  adaptive: ui + "/main/layout/AdaptiveMainLayout.dart",
   phone: ui + "/main/layout/PhoneLayout.dart",
   tablet: ui + "/main/layout/TabletLayout.dart",
   drawer: ui + "/main/components/DrawerContent.dart",
@@ -160,9 +161,10 @@ export function sidebarViolationsFromSources(readSource) {
       if (line !== null) violations.push(entry.file + ": mounted main sidebar still consumes " + name + " at line " + line);
     }
   }
-  const main = files.get("main"), drawer = files.get("drawer"), host = files.get("host");
-  let mainBuild, drawerBuild, catalog, content, activation;
+  const main = files.get("main"), adaptive = files.get("adaptive"), drawer = files.get("drawer"), host = files.get("host");
+  let mainBuild, adaptiveBuild, drawerBuild, catalog, content, activation;
   try {
+    adaptiveBuild = methodBody(classBody(adaptive.raw, "_AdaptiveMainLayoutState"), "build");
     mainBuild = methodBody(classBody(main.raw, "_OperitMainScreenState"), "build"); drawerBuild = methodBody(classBody(drawer.raw, "_DrawerContentState"), "build");
     catalog = methodBody(host.raw, "_readCatalog"); content = methodBody(host.raw, "_content"); if (/\b_embedded\s*\(/.test(content)) content += methodBody(host.raw, "_embedded"); activation = methodBody(host.raw, "_handleResult");
   } catch (error) {
@@ -170,10 +172,13 @@ export function sidebarViolationsFromSources(readSource) {
     return violations;
   }
   const liveReference = "[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*";
+  if (!imports(main.raw, "AdaptiveMainLayout") || !wiredCall(mainBuild, "AdaptiveMainLayout", [
+    ["drawerConversationState", liveReference], ["onConversationActivated", "_activateConversationRoute"],
+  ])) violations.push(main.file + ": actual build must mount AdaptiveMainLayout with conversation state and activation callback");
   for (const [role, widget] of [["phone", "PhoneLayout"], ["tablet", "TabletLayout"]]) {
     const layout = files.get(role);
-    if (!imports(main.raw, widget) || !wiredCall(mainBuild, widget, [["drawerConversationState", liveReference], ["onConversationActivated", "_activateConversationRoute"]])) {
-      violations.push(main.file + ": actual build must mount " + widget + " with conversation state and activation callback");
+    if (!imports(adaptive.raw, widget) || !wiredCall(adaptiveBuild, widget, [["drawerConversationState", "widget\\.drawerConversationState"], ["onConversationActivated", "widget\\.onConversationActivated"]])) {
+      violations.push(adaptive.file + ": actual build must mount " + widget + " with conversation state and activation callback");
     }
     let layoutBuild;
     try { layoutBuild = methodBody(classBody(layout.raw, role === "phone" ? "_PhoneLayoutState" : "_TabletLayoutState"), "build"); }

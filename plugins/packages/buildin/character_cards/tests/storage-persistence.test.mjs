@@ -75,7 +75,7 @@ test("transaction failures preserve original errors and authoritative database r
   disk.failNext("storage.preferences.edit", failure);
   await assert.rejects(owner.run(session => session.updateCharacter({ ...card("Rejected name"), id: "default" })), error => error === failure);
   assert.deepEqual(disk.stateBytes(), before);
-  await assert.rejects(owner.run(session => session.listCharacters()), error => error === failure);
+  assert.equal((await owner.run(session => session.listCharacters()))[0].name, "Operit");
   const reopened = await open(disk); assert.equal((await reopened.run(session => session.getCharacter("default"))).name, "Operit");
 });
 
@@ -101,7 +101,7 @@ test("owner pages preserve exact int64 identities and more than 1000 independent
 test("rejected profile commit retains the actual published USER.md and original error", async t => {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk);
   await owner.run(session => session.writeUser("character:default", "Original profile"));
-  const failure = new Error("Profile record commit rejected"); disk.failNext("storage.preferences.edit", failure);
+  const failure = new Error("Profile record commit rejected"); disk.failNext("write", failure);
   await assert.rejects(owner.run(session => session.writeUser("character:default", "Rejected profile")), error => error === failure);
   const reopened = await open(disk);
   assert.equal((await reopened.run(session => session.readUser("character:default"))).content, "Original profile");
@@ -112,88 +112,35 @@ test("profile publication failure remains explicit after its record commit", asy
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk);
   const failure = new Error("USER.md rename rejected"); disk.failNext("move", failure);
   await assert.rejects(owner.run(session => session.writeUser("character:default", "Pending profile")), error => error === failure);
-  await assert.rejects(owner.run(session => session.listCharacters()), error => error === failure);
+  assert.equal((await owner.run(session => session.listCharacters()))[0].name, "Operit");
   const reopened = await open(disk);
   assert.equal((await reopened.run(session => session.readUser("character:default"))).content, "");
 });
 
 /** Keeps long provider text in the stored value rather than exceeding the production Host key limit. */
-test("embedding cache stores long multiline text with bounded independent keys", async t => {
+test("long source text is stored with its vector under a stable source identity", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk), text = "Actual source paragraph\n".repeat(200);
+  disk.globals.Tools.Net = { async http(request) { const input = JSON.parse(request.body).input; return { statusCode: 200, content: JSON.stringify({ data: input.map((text, index) => ({ index, embedding: [1, 2] })) }) }; } };
+  await owner.run(async session => session.writeMemorySettings("character:default", { ...await session.readMemorySettings("character:default"), cloudEmbeddingEnabled: true, cloudEmbeddingEndpoint: "https://provider.test", cloudEmbeddingModel: "model" }));
+  const saved = await owner.run(session => session.createMemory("character:default", { ...memory("Long source"), content: text }));
+  disk.storage.inspect(sql => { const row = sql.prepare("SELECT key,value FROM records WHERE collection='memories'").get(); const value = JSON.parse(row.value); assert.equal(row.key, "character:default/" + saved.id); assert.equal(value.embedding.text, text); assert.equal(value.embedding.vector.length, 2); assert.equal(sql.prepare("SELECT count(*) AS count FROM records WHERE collection='embeddings'").get().count, 0); });
+});
+
+/** Verifies configuration reads never scan searchable source collections. */
+test("configuration operations read owner metadata independently of the memory corpus", async t => {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk);
-  const text = "Actual source paragraph\n".repeat(200);
-  await owner.run(async session => {
-    const space = await session.readMemorySpace("character:default");
-    space.embeddings.push({ id: "18390c36-e931-4ab2-a1c8-16eac4f1c44e", endpoint: "https://embedding.invalid", model: "source-model", text, vector: [1, 2], updatedAt: 123 });
-    await session.writeMemorySpace("character:default", space);
-  });
-  const reopened = await open(disk), retained = await reopened.run(session => session.readMemorySpace("character:default"));
-  assert.equal(retained.embeddings[0].text, text);
-  disk.storage.inspect(sql => { const row = sql.prepare("SELECT key,value FROM records WHERE collection='embeddings'").get(); const value = JSON.parse(row.value); assert.equal(row.key, "character:default/18390c36-e931-4ab2-a1c8-16eac4f1c44e"); assert.equal(value.record.text, text); assert.equal(value.record.vector.length, 2); });
+  await owner.run(session => session.createMemory("character:default", memory("Existing source"))); disk.clearCalls();
+  assert.equal((await owner.run(session => session.listCharacters()))[0].id, "default");
+  assert.deepEqual(disk.calls.filter(call => call.method === "storage.list").map(call => call.args[0]), ["owners"]);
 });
 
-/** Gates production collection reads without replacing the repository or stored records. */
-async function gatedCollections(t) {
-  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), originalOpen = disk.storage.objects.open;
-  let armed = false, release, entered;
-  const state = { memoriesFailure: null };
-  const gate = new Promise(resolve => { release = resolve; });
-  const allEntered = new Promise(resolve => { entered = resolve; });
-  const started = new Set();
-  disk.storage.objects.open = async options => {
-    const database = await originalOpen(options), collection = database.collection;
-    database.collection = name => {
-      const source = collection(name), list = source.list;
-      source.list = async (...args) => {
-        if (name !== "meta") {
-          started.add(name);
-          if (started.size === 6) entered();
-          if (name === "memories" && state.memoriesFailure !== null) throw state.memoriesFailure;
-          if (armed) await gate;
-        }
-        return list(...args);
-      };
-      return source;
-    };
-    return database;
-  };
-  const owner = await open(disk);
-  return {
-    owner, started, allEntered, release,
-    arm() { armed = true; }, disarm() { armed = false; },
-    failMemories(error) { state.memoriesFailure = error; }, restoreMemories() { state.memoriesFailure = null; },
-  };
-}
-
-test("repository starts all collection reads before waiting on any collection", { timeout: 5000 }, async t => {
-  const gate = await gatedCollections(t);
-  gate.arm();
-  const pending = gate.owner.run(session => session.listCharacters());
-  try {
-    await gate.allEntered;
-    assert.equal(gate.started.size, 6);
-  } finally { gate.release(); }
-  assert.equal((await pending)[0].id, "default");
-});
-
-test("failed concurrent read settles all collections before another repository operation starts", { timeout: 5000 }, async t => {
-  const failure = new Error("Diagnostic collection failure"), gate = await gatedCollections(t);
-  gate.arm();
-  gate.failMemories(failure);
-  const failed = gate.owner.run(session => session.listCharacters()).then(
-    () => { throw new Error("Expected the original read failure"); },
-    error => error,
-  );
-  await gate.allEntered;
-  gate.disarm();
-  let executed = false;
-  const next = gate.owner.run(async session => { executed = true; return session.listCharacters(); });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(executed, false, "The repository must retain ownership until every read settles");
-  gate.restoreMemories();
-  gate.release();
-  assert.equal(await failed, failure);
-  assert.equal((await next)[0].id, "default");
-  assert.equal(executed, true);
+/** Verifies an original read failure is neither retried nor retained on unrelated operations. */
+test("failed metadata reads propagate once and do not poison the repository", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk), failure = new Error("Exact metadata read failure");
+  disk.clearCalls(); disk.failNext("storage.list", failure);
+  await assert.rejects(owner.run(session => session.listCharacters()), error => error === failure);
+  assert.equal(disk.calls.filter(call => call.method === "storage.list").length, 1);
+  assert.equal((await owner.run(session => session.listCharacters()))[0].id, "default");
 });
 
 /** Builds one complete synthetic memory so bulk tests never depend on a real exported backup. */
@@ -267,63 +214,28 @@ test("a failed bulk import resumes with SKIP after earlier batches committed", a
   assert.equal(new Set(completed.map(value => value.uuid)).size, 1005);
 });
 
-/** Builds one stored embedding record whose vector occupies over one thousand bridge nodes. */
-function bulkEmbedding(index) {
-  return {
-    id: "vector-" + index,
-    endpoint: "https://embedding.invalid",
-    model: "bulk-model",
-    text: "Bulk embedding source text " + index,
-    vector: Array.from({ length: 1024 }, (_, component) => (component % 7) * 0.25 + 0.5),
-    updatedAt: 1,
-  };
-}
-
-/** Verifies a vector-heavy publication splits by estimated bridge nodes instead of only mutation count. */
-test("bulk embedding commits stay under the host structured node budget", async t => {
-  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk);
+/** Verifies vector-heavy source imports use bounded batches and preserve source ownership. */
+test("bulk source vectors stay within host payload bounds", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk), space = await syntheticSpace(owner, 1005);
   const { structuredNodes } = loadModule("src/storage/records.ts", disk.globals);
-  disk.clearCalls();
-  await owner.run(async session => {
-    const space = await session.readMemorySpace("character:default");
-    space.embeddings = Array.from({ length: 1005 }, (_, index) => bulkEmbedding(index));
-    await session.writeMemorySpace("character:default", space);
+  disk.globals.Tools.Net = { async http(request) { const input = JSON.parse(request.body).input; return { statusCode: 200, content: JSON.stringify({ data: input.map((text, index) => ({ index, embedding: Array(1024).fill(1) })) }) }; } };
+  Object.assign(space.settings, { cloudEmbeddingEnabled: true, cloudEmbeddingEndpoint: "https://provider.test", cloudEmbeddingModel: "model" });
+  disk.clearCalls(); await owner.run(session => session.importMemorySpace("character:default", space, "SKIP"));
+  const transactions = commits(disk); assert.ok(transactions.length >= 16);
+  for (const call of transactions) { assert.ok(call.args[0].length <= 1000); assert.ok(structuredNodes(call.args[0]) < 1_000_000); }
+  disk.storage.inspect(sql => {
+    const rows = sql.prepare("SELECT value FROM records WHERE collection='memories'").all(); assert.equal(rows.length, 1005);
+    for (const row of rows) { const value = JSON.parse(row.value); assert.equal(value.embedding.vector.length, 1024); assert.equal(value.embedding.text, value.record.content); }
+    assert.equal(sql.prepare("SELECT count(*) AS count FROM records WHERE collection='embeddings'").get().count, 0);
   });
-  const transactions = commits(disk);
-  assert.ok(transactions.length >= 3, "vector-heavy state must split by payload size, not just the 1000-mutation count");
-  for (const call of transactions) {
-    assert.ok(call.args[0].length <= 1000, "each transaction must stay within the host mutation limit");
-    assert.ok(structuredNodes(call.args[0]) < 1_000_000, "each transaction must stay under the host structured bridge node budget");
-  }
-  const reopened = await open(disk), retained = await reopened.run(session => session.readMemorySpace("character:default"));
-  assert.equal(retained.embeddings.length, 1005);
-  assert.ok(retained.embeddings.every(row => row.vector.length === 1024));
 });
 
-/** Verifies collection reads shrink rejected pages instead of failing when vector records exceed one host page budget. */
-test("collection reads degrade page size and retain every record under a strict host page budget", async t => {
-  const disk = await createDiskHarness(t, { legacyIdentity: "default" });
-  const seed = await open(disk), space = await syntheticSpace(seed, 1005);
-  await seed.run(session => session.importMemorySpace("character:default", space, "SKIP"));
-  const originalOpen = disk.storage.objects.open, pages = [];
-  disk.storage.objects.open = async options => {
-    const database = await originalOpen(options), collection = database.collection;
-    database.collection = name => {
-      const source = collection(name), list = source.list;
-      source.list = async (after, limit) => {
-        if (limit > 64) throw new Error("Tool request exceeds structured depth/node limit");
-        pages.push(limit);
-        return list(after, limit);
-      };
-      return source;
-    };
-    return database;
-  };
-  const owner = await open(disk), retained = await owner.run(session => session.listMemories("character:default"));
-  assert.equal(retained.length, 1005);
-  assert.equal(new Set(retained.map(row => row.uuid)).size, 1005);
-  assert.ok(pages.length >= Math.ceil(1005 / 64), "the memories read must paginate below the rejected page size");
-  assert.ok(pages.every(limit => limit <= 64), "every issued page must respect the strict host budget");
+/** Verifies host list failures retain their exact identity and page size. */
+test("collection read errors are propagated without changing page size", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk), failure = new Error("Host page rejection");
+  disk.clearCalls(); disk.failNext("storage.list", failure);
+  await assert.rejects(owner.run(session => session.listCharacters()), error => error === failure);
+  assert.deepEqual(disk.calls.filter(call => call.method === "storage.list").map(call => call.args[2]), [100]);
 });
 
 /** Opens installed v1 data with repairable model selections without changing the persisted records. */

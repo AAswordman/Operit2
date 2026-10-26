@@ -65,6 +65,7 @@ export class CharacterStorage {
       });
       await metadata.data();
       await migrateCharacterStorage(storage, directory);
+      await memory.retireLegacyEmbeddings();
       return storage;
     } catch (error) {
       const closed = await Promise.allSettled([...handles.map(handle => handle.close()), ...(memory === undefined ? [] : [memory.close()])]);

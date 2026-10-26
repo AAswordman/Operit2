@@ -3,6 +3,7 @@ import test from "node:test";
 import { createDiskHarness } from "./disk-files.mjs";
 import { openPlugin } from "./plugin-entry-harness.mjs";
 import { createHostDirectoriesFixture } from "./host-directories-fixture.mjs";
+import { selectorEnvironment } from "./selector-environment.mjs";
 import { loadModule, plain } from "./runtime.mjs";
 
 const directories = plain(loadModule("tests/host-directories-input.ts").hostDirectoriesTestInput), markers = loadModule("src/chat-markers.ts");
@@ -87,18 +88,47 @@ test("registered configuration: group prompts preserve each speaker and saved me
   assert.notDeepEqual(current.profile, saved.profile);
 });
 
-/** Card execution carries only its authored prompt, while a one-member group retains explicit group semantics. */
+/** Single cards share assistant history, while even a one-member group isolates its speakers. */
 test("registered configuration: single cards and single-member groups retain their own prompt scope", async t => {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directories), plugin = openPlugin(settings.harness);
   const card = await plugin.api("character.create", { values: { name: "Solo prompt speaker", characterSetting: "Exact solo setting" } });
   const single = await committedConfiguration(plugin, "card:" + card.id);
-  assert.deepEqual(single.historyPolicy, { isolateParticipants: true, labelUserMessages: false });
+  assert.deepEqual(single.historyPolicy, { isolateParticipants: false, labelUserMessages: false });
   assert.doesNotMatch(single.profile.introPrompt, /Role response plan hint|Group participants/);
   const group = await plugin.api("group.create", { values: { name: "One member", members: [{ characterCardId: card.id, orderIndex: 0 }] } });
   const grouped = await committedConfiguration(plugin, "group:" + group.id, card.id, "single-member-group-chat");
   assert.deepEqual(grouped.historyPolicy, { isolateParticipants: true, labelUserMessages: true });
   assert.ok(grouped.profile.introPrompt.includes("Stay in role as " + card.name));
   assert.ok(grouped.profile.introPrompt.includes("Group participants: " + card.name));
+});
+
+/** Recomputes history policy from the persisted chat selection across role changes and runtime reopen. */
+test("registered configuration: history policy follows model, card and group switches in the same chat", async t => {
+  const plugin = await selectorEnvironment(t);
+  const first = await plugin.api("character.create", { values: { name: "First role", characterSetting: "First role setting" } });
+  const second = await plugin.api("character.create", { values: { name: "Second role", characterSetting: "Second role setting" } });
+  const group = await plugin.api("group.create", { values: { name: "Switching group", members: [{ characterCardId: first.id, orderIndex: 0 }] } });
+  const { models } = await plugin.tools.Models.listSummaries(), { configs } = await plugin.tools.Tts.listConfigs();
+  const input = { ...request("execution", "model:chat"), chatId: "selector-chat",
+    defaultModelBinding: { providerId: models[0].providerId, modelId: models[0].modelId }, defaultTtsConfigId: configs[0].id };
+  const cases = [
+    { selection: "model:chat", participantId: "model:chat", prompt: "", isolated: false },
+    { selection: "card:" + first.id, participantId: first.id, prompt: "First role setting", isolated: false },
+    { selection: "group:" + group.id, participantId: first.id, prompt: "First role setting", isolated: true },
+    { selection: "card:" + second.id, participantId: second.id, prompt: "Second role setting", isolated: false },
+    { selection: "model:chat", participantId: "model:chat", prompt: "", isolated: false },
+  ];
+  for (const current of cases) {
+    await plugin.api("chat.configuration.binding.write", { chatId: input.chatId, selection: current.selection });
+    const reopened = openPlugin({ ...plugin.disk, globals: { ...plugin.disk.globals, Tools: plugin.tools } });
+    for (const runtime of [plugin, reopened]) {
+      const result = plain(await runtime.api("chat.configuration.resolve", input));
+      assert.equal(result.contextKey, current.selection);
+      assert.equal(result.profile.id, current.participantId);
+      assert.ok(result.profile.introPrompt.includes(current.prompt));
+      assert.deepEqual(result.historyPolicy, { isolateParticipants: current.isolated, labelUserMessages: current.isolated });
+    }
+  }
 });
 
 /** Authenticated generic deletion removes the real binding and removes the current binding. */

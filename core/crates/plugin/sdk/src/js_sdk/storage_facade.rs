@@ -191,10 +191,16 @@ pub struct StorageObjectDatabase {
     pub handle: StorageHandle,
 }
 pub trait StorageObjectDatabaseMethods: Send + Sync {
+    /// Queries the read-only plugin_objects view through the shared SQLite host.
+    fn query(
+        &self,
+        sql: String,
+        params: Option<Vec<StorageFacadeSqlValue>>,
+    ) -> JsFuture<Vec<BTreeMap<String, StorageFacadeSqlValue>>>;
     /// Selects a collection on this retained database handle.
     fn collection<T>(&self, name: String) -> StorageCollection<T>;
     /// Commits bounded mutations across collections atomically.
-    fn commit(&self, mutations: Vec<StorageObjectMutation>) -> JsFuture<StorageFacadeReceipt>;
+    fn commit(&self, mutations: Vec<StorageObjectMutation>, guards: Option<Vec<super::storage::StorageRecordGuard>>) -> JsFuture<StorageFacadeReceipt>;
 }
 /// Selects one native JSON preference file.
 pub struct StorageDataStoreOpenOptions {

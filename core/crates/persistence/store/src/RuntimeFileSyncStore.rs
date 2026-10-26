@@ -64,8 +64,10 @@ impl RuntimeFileSyncStore {
             return Err("Registered database files require record-level storage operations".into());
         }
         if storagePath.starts_with("workspaces/") {
+            // trackPaths re-hashes the overwritten file even when the new content
+            // has the same size as the old, so structured rewrites publish immediately.
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
-                .track(|| self.storageHost.writeBytes(storagePath, content).map_err(|e| e.to_string()));
+                .trackPaths(&[storagePath], || self.storageHost.writeBytes(storagePath, content).map_err(|e| e.to_string()));
         }
         self.storageHost
             .writeBytes(storagePath, content)

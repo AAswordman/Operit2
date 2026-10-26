@@ -14,6 +14,7 @@ use crate::ToolExecutionManager::{
 #[derive(Clone, Copy)]
 pub(crate) enum TtsToolOperation {
     Synthesize,
+    Speak,
     ListConfigs,
     GetCurrentConfigId,
     SetCurrentConfigId,
@@ -25,6 +26,7 @@ pub(crate) struct TtsToolExecutor {
 }
 
 impl SharedToolExecutor for TtsToolExecutor {
+    /// Validates speech requests before entering the standard tool lifecycle.
     fn prepare<'a>(
         &'a self,
         request: &'a ToolCall,
@@ -38,6 +40,21 @@ impl SharedToolExecutor for TtsToolExecutor {
                 Ok(prepareInvocation(request, checkAccess, ToolEffect::READ, async move {
                     Ok(ToolResultData::TtsSynthesizeResultData(context.host().runtimeSupport().synthesizeSpeech(args.request)?))
                 }))
+            }
+            TtsToolOperation::Speak => {
+                let args: RequestArguments<operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest> = decodeArguments(request)?;
+                if args.request.text.trim().is_empty() {
+                    return Err("TTS text is empty".into());
+                }
+                Ok(prepareInvocation(
+                    request,
+                    checkAccess,
+                    ToolEffect::WRITE,
+                    async move {
+                        let result = context.host().runtimeSupport().speakSpeech(args.request)?;
+                        Ok(ToolResultData::TtsSpeakResultData(result))
+                    },
+                ))
             }
             TtsToolOperation::ListConfigs => {
                 let _: EmptyArguments = decodeArguments(request)?;

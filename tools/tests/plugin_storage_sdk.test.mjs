@@ -180,3 +180,25 @@ test("object getMany preserves ordered null records and rejects invalid batches"
   const closing = f.run("db.close()"); f.reply(null); await closing;
   await assert.rejects(f.run("db.collection('memories').getMany([])"), /closed/);
 });
+
+/** Exercises read-only object SQL through the exact shared SQLite facade. */
+test("object SQL queries preserve typed parameters and rows", async () => {
+  const f = fixture();
+  const opening = f.run("Tools.Storage.objects.open({path:'runtime/owned/objects.db'}).then(value=>{globalThis.db=value;})");
+  f.reply({handle:"objects",path:"runtime/owned/objects.db"}); await opening;
+  const reading = f.run("db.query('SELECT key FROM plugin_objects WHERE collection=? LIMIT ?', ['memories',3])");
+  const request = f.request(); assert.equal(request.op,"query"); assert.equal(request.handle,"objects");
+  assert.deepEqual(request.statement.params,[{kind:"text",value:"memories"},{kind:"integer",value:"3"}]);
+  f.reply([{columns:["key"],values:[{kind:"text",value:"character:one/memory"}]}]);
+  assert.equal((await reading)[0].key,"character:one/memory");
+});
+
+/** Exercises related-record preconditions without rewriting the guarded owner. */
+test("object commits forward related-record version guards", async () => {
+  const f = fixture();
+  const opening = f.run("Tools.Storage.objects.open({path:'runtime/owned/objects.db'}).then(value=>{globalThis.db=value;})");
+  f.reply({handle:"objects",path:"runtime/owned/objects.db"}); await opening;
+  const writing = f.run("db.commit([{op:'put',collection:'memories',key:'owner/memory',value:{record:'source'},expectedVersion:null}],[{collection:'owners',key:'owner',expectedVersion:'v1'}])");
+  assert.deepEqual(f.request().guards,[{collection:"owners",key:"owner",expectedVersion:"v1"}]);
+  f.reply({version:"v2"}); assert.equal((await writing).version,"v2");
+});

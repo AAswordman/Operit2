@@ -147,24 +147,25 @@ async function __operitStorageOpen(kind, options) {
     }
     var base = {
         path:openResult.path,
+        /** Returns exact typed columns from caller-selected SQL. */
+        async query(sql, params=[]) {
+            var rows = await request("query",{statement:__operitStorageStatement(sql,params)});
+            return rows.map(/** Decodes one typed SQL row. */ function(row) {
+                var object = Object.create(null);
+                row.columns.forEach(/** Assigns one uniquely named result column. */ function(column,index) {
+                    if (Object.prototype.hasOwnProperty.call(object,column)) throw new Error("SQL result contains duplicate column names; use aliases");
+                    object[column]=__operitStorageSqlResult(row.values[index]);
+                });
+                return object;
+            });
+        },
+
         /** Disposes this engine-owned handle without deleting persisted data. */
         async close() { if (closed) return; await request("close",{}); closed=true; },
 
     };
     if (kind === "sqlite") {
         return Object.assign(base, {
-            /** Returns exact typed columns from caller-selected SQL. */
-            async query(sql, params=[]) {
-                var rows = await request("query",{statement:__operitStorageStatement(sql,params)});
-                return rows.map(/** Decodes one typed SQL row. */ function(row) {
-                    var object = Object.create(null);
-                    row.columns.forEach(/** Assigns one uniquely named result column. */ function(column,index) {
-                        if (Object.prototype.hasOwnProperty.call(object,column)) throw new Error("SQL result contains duplicate column names; use aliases");
-                        object[column]=__operitStorageSqlResult(row.values[index]);
-                    });
-                    return object;
-                });
-            },
             /** Executes one write and its change journal inside one Rust transaction. */
             async execute(sql, params=[]) { return (await request("execute",{statement:__operitStorageStatement(sql,params)}))[0]; },
             /** Commits a complete statement batch without holding a transaction across JS awaits. */
@@ -269,9 +270,9 @@ async function __operitStorageOpen(kind, options) {
         return Object.assign(base, {
             collection:collection,
             /** Publishes changes across collections in one atomic versioned transaction. */
-            commit(changes) {
+            commit(changes, guards = []) {
                 if(!Array.isArray(changes)) throw new Error("Object commit requires mutations");
-                return request("commit",{mutations:changes.map(/** Validates one explicit collection mutation. */ function(change) {
+                return request("commit",{guards:guards,mutations:changes.map(/** Validates one explicit collection mutation. */ function(change) {
                     if(change.op !== "put" && change.op !== "delete") throw new Error("Unknown object mutation");
                     return mutation(change.collection,change.key,change.op === "delete" ? null : change.value,change.op === "delete",change);
                 })});

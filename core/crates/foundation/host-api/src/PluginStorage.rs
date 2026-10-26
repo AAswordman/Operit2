@@ -94,6 +94,16 @@ pub struct StorageMutation {
     pub expected_version: Option<String>,
 }
 
+/// Guards a related record without rewriting it or publishing an extra change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StorageRecordGuard {
+    pub collection: String,
+    pub key: String,
+    #[serde(rename = "expectedVersion")]
+    pub expected_version: Option<String>,
+}
+
 /// Identifies the last observed record state without exposing journal positions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -176,6 +186,8 @@ pub enum StorageRequest {
     Commit {
         handle: String,
         mutations: Vec<StorageMutation>,
+        #[serde(default)]
+        guards: Vec<StorageRecordGuard>,
     },
 }
 

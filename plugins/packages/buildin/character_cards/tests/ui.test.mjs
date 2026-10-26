@@ -12,7 +12,7 @@ import { fixture, installBrowserFixture } from "./fixtures.mjs";
 import { buildMainScript, buildUiScreenScripts, createHtmlDocument } from "../scripts/build.mjs";
 import { createDiskHarness } from "./disk-files.mjs";
 import { importedCallCount } from "./runtime.mjs";
-import { keyedNode, mountRegisteredSelector } from "./selector-render.mjs";
+import { keyedNode, mountRegisteredSelector, mountRegisteredComposeRoute } from "./selector-render.mjs";
 import { createNativeChatHost } from "./native-chat-host.mjs";
 import { createSelectionSettingsFixture } from "./selection-settings-fixture.mjs";
 const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
@@ -691,7 +691,7 @@ function plain(value) { return JSON.parse(JSON.stringify(value)); }
 /** Runs the current main bundle with native file IO and explicit readonly directory fixtures, never fixture storage. */
 async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = null) {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), readonly = fixture(), native = createNativeChatHost(new Map([["chat-dom", { extension: null }]])), hostCalls = native.calls, records = native.records;
-  const apis = new Map(), channels = new Map(), commands = new Map(), routes = [], navigation = [], appHooks = [], messageHooks = [], hostHooks = [], chatLifecycleHooks = [], chatViewHooks = [], toolLifecycleHooks = [], toolPromptHooks = [];
+  const apis = new Map(), channels = new Map(), commands = new Map(), routes = [], navigation = [], appHooks = [], messageHooks = [], hostHooks = [], chatLifecycleHooks = [], chatViewHooks = [], toolLifecycleHooks = [], toolPromptHooks = [], promptFinalizeHooks = [];
   const tools = { Files: disk.files, Storage: disk.storage, Models: {
     /** Supplies only the explicitly labelled readonly model directory required by the actual service. */
     async listSummaries() { return { models: plain(readonly.snapshot.models) }; }
@@ -741,6 +741,8 @@ async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = nul
     registerToolLifecycleHook(value) { toolLifecycleHooks.push(value); },
     /** Captures the real model-visible-tool policy without synthesizing descriptors or responses. */
     registerToolPromptComposeHook(value) { toolPromptHooks.push(value); },
+    /** Captures the actual memory recall hook without running a model request during registration. */
+    registerPromptFinalizeHook(value) { promptFinalizeHooks.push(value); },
     /** Resolves only a real manifest-declared resource, including the native selector's packaged default avatar. */
     async readResource(key, name) {
       const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
@@ -781,6 +783,8 @@ async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = nul
   assert.equal(toolLifecycleHooks[0].function, module.exports.toolCallPolicy);
   assert.equal(toolPromptHooks.length, 1); assert.equal(toolPromptHooks[0].id, "participant-tool-visibility");
   assert.equal(toolPromptHooks[0].function, module.exports.toolPromptPolicy);
+  assert.equal(promptFinalizeHooks.length, 1); assert.equal(promptFinalizeHooks[0].id, "character-memory-recall");
+  assert.equal(promptFinalizeHooks[0].function, module.exports.onMemoryRecallPromptFinalize);
   return { disk, readonly, routes, navigation, main: module.exports,
     /** Gives each page its own runtime, retaining only the explicit main IPC transport. */
     openComposeRoute(id) {
@@ -850,25 +854,19 @@ async function registeredPage(t, plugin, routeId, presentation, documentUrl) {
   );
   const completed = [], calls = [], errors = [];
   let bridge = null;
-  const pageRuntime = plugin.openComposeRoute(routeId);
-  const bundle = pageRuntime.context.OperitComposeDslRuntime.createContext({
-    state: { presentation, chatId: "chat-dom" }, theme: plain(plugin.readonly.theme),
-  });
-  const ctx = bundle.ctx;
-  // Only the external WebView boundary is substituted; state, generation and
-  // node construction run in the production SDK and the screen's own realm.
-  ctx.createWebViewController = () => ({
-    addJavascriptInterface(name, value) { assert.equal(name, "CharacterMemoryHost"); bridge = value; },
-    evaluateJavascript() { throw new Error("Unexpected theme event during this isolated UI test"); },
-  });
-  const route = plugin.routes.find(
-    /** Requires the exact registered route identifier requested by the test. */
-    value => value.id === routeId,
+  const ui = mountRegisteredComposeRoute(plugin, presentation, routeId, { chatId: "chat-dom" },
+    /** Captures the real WebView method addresses delivered through the native controller ABI. */
+    request => {
+      assert.equal(request.command, "addJavascriptInterface");
+      assert.equal(request.payload.name, "CharacterMemoryHost");
+      bridge = Object.fromEntries(Object.entries(request.payload.object).map(
+        /** Sends browser arguments through the actual Compose action dispatcher. */
+        ([method, action]) => [method, async args => (await ui.dispatch(action, args)).actionResult],
+      ));
+    },
   );
-  assert.notEqual(route, undefined);
-  const tree = pageRuntime.context.OperitComposeReactive.render(ctx, () => pageRuntime.screen(ctx));
-  bundle.composition.commit(tree);
-  await bundle.invokeAction(tree.props.onLoad.__actionId);
+  await ui.dispatch({ __actionId: "__operit_theme_changed" }, plain(plugin.readonly.theme));
+  await ui.load();
   assert.notEqual(bridge, null);
   await context.exposeFunction("invokeActualCharacterBridge",
     /** Routes each browser call through the actual nested-argument ABI and records only terminal V1 actions. */
@@ -961,7 +959,10 @@ test("current plugin routes connect selector and memory attachment to the actual
     assert.equal(Object.hasOwn(stored, "chatBindings"), false);
     assert.deepEqual(binding, { chatId: "chat-dom", selection: "card:" + card.id });
     assert.equal(plugin.records.get("chat-dom").extension, null);
-    await assert.rejects(ui.dispatch(row.props.onClick), /already finished/);
+    assert.throws(
+      /** Rejects the completed row's retired callback before another binding write can start. */
+      () => ui.dispatch(row.props.onClick), /compose action not found/,
+    );
     assert.equal(plugin.hostCalls.length, count, "Repeated native action must not issue another extension read or write");
     assert.deepEqual(await plugin.api("chat.configuration.binding.read", { chatId: "chat-dom" }), binding); assert.deepEqual(await plugin.disk.stateBytes(), before);
     assert.deepEqual(await plugin.api("activePrompt.get", {}), active);
@@ -1069,8 +1070,8 @@ test("installed plugin artifacts launch management and the independent V1 text a
     assert.equal(await ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true }).count(), 0, "Management must not recreate the removed browser editor");
     assert.deepEqual(ui.calls.find(call => call.method === "openEntity").args, ["edit", "card", card.id]);
     await assert.rejects(async () => ui.bridge.completeScreen([{ mode: "preview", entity: "card", id: card.id }]), /Management has no presentation completion channel/);
-    assert.throws(
-      /** Verifies actual management has no cancellation receiver rather than mocking a successful closure. */
+    await assert.rejects(
+      /** Verifies the actual action dispatcher propagates management cancellation failure. */
       () => ui.bridge.cancelScreen([]), /management route has no presentation result channel/,
     );
     assert.deepEqual(ui.errors, []);

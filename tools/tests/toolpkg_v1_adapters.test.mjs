@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import test from 'node:test';
 import { installScopedHostRuntime } from './fixtures/scoped_host_runtime.mjs';
+import { composeContextScript } from '../runtime/compose_scripts.mjs';
 import { createDiskHarness } from '../../plugins/packages/buildin/character_cards/tests/disk-files.mjs';
 import { loadModule } from '../../plugins/packages/buildin/character_cards/tests/runtime.mjs';
 
@@ -299,6 +300,103 @@ test('legacy role compatibility leaves SoftwareSettings unchanged', () => {
   assert.deepEqual(Object.keys(tools.SoftwareSettings), ['readEnvironmentVariable', 'writeEnvironmentVariable']);
   assert.doesNotMatch(source('plugins/types/index.d.ts'), /function getCallerCardId\(/);
   assert.match(source('plugins/types/index.d.ts'), /function getCallerParticipantId\(\): string \| undefined/);
+});
+
+/** Verifies both historical API versions preserve one-shot speech controls and host receipts. */
+test('v1 TTS playback reaches the shared host tool with exact utterance overrides', async () => {
+  for (const version of ['1.0.0', '1.0.1']) {
+    const { context, tools, calls } = engine(version);
+    /** Models the native speech receipt without replacing the production transport. */
+    context.invokeTool = async (name, params) => {
+      assert.equal(name, 'tts_speak');
+      return { providerType: 'SYSTEM_TTS', started: false, interrupt: false, speed: 1.1, pitch: 1.2 };
+    };
+    const options = Object.freeze({ interrupt: false, speech_rate: 1.1, pitch: 1.2 });
+    const result = await tools.SoftwareSettings.testTtsPlayback('你好 👋', options);
+    assert.deepEqual(plain(calls), [{ name: 'tts_speak', args: [{ request: { text: '你好 👋', interrupt: false, speed: 1.1, pitch: 1.2 } }] }]);
+    assert.deepEqual(plain(result), {
+      ttsServiceType: 'SIMPLE_TTS', providerClass: 'TtsPlaybackHost', initialized: true,
+      playbackTriggered: false, interrupt: false, textLength: '你好 👋'.length, speechRate: 1.1, pitch: 1.2,
+    });
+    assert.deepEqual(JSON.parse(result.toString()), plain(result));
+    calls.length = 0;
+    await tools.SoftwareSettings.testTtsPlayback('Use configured speed');
+    assert.deepEqual(plain(calls), [{ name: 'tts_speak', args: [{ request: { text: 'Use configured speed' } }] }]);
+    const retained = tools.SoftwareSettings.testTtsPlayback;
+    context.version = '2.0.0';
+    assert.equal(tools.SoftwareSettings.testTtsPlayback, undefined);
+    assert.throws(() => retained('Wrong version'), /has no implementation for ToolPkg API 2\.0\.0/);
+    assert.equal(calls.length, 1);
+  }
+});
+
+/** Rejects invalid legacy requests before native speech or settings writes can occur. */
+test('v1 TTS playback rejects malformed options without invoking the host', async () => {
+  const { tools, calls } = engine();
+  const invalid = [
+    ['', undefined], ['   ', undefined], [null, undefined],
+    ['text', null], ['text', []], ['text', 'options'],
+    ['text', { interrupt: 'true' }], ['text', { speech_rate: 0 }],
+    ['text', { speech_rate: NaN }], ['text', { speech_rate: Infinity }],
+    ['text', { pitch: -1 }], ['text', { pitch: NaN }],
+    ['text', { speed: 1.1 }],
+  ];
+  for (const [text, options] of invalid) {
+    await assert.rejects(tools.SoftwareSettings.testTtsPlayback(text, options));
+  }
+  assert.equal(calls.length, 0);
+});
+
+/** Preserves native failure messages and never reports an unsuccessful host request as playback. */
+test('v1 TTS playback propagates host failures once', async () => {
+  const { context, tools, calls } = engine();
+  /** Rejects the real structured transport completion from the modeled host. */
+  context.invokeTool = async () => { throw new Error('TtsPlaybackHost is unavailable'); };
+  await assert.rejects(tools.SoftwareSettings.testTtsPlayback('Speak'), /TtsPlaybackHost is unavailable/);
+  assert.equal(calls.length, 1);
+  const original = new Error('Original speech error');
+  /** Rejects the direct typed adapter dependency with its original error object. */
+  const playback = context.__operitCreateV1TtsPlayback(async () => { throw original; });
+  await assert.rejects(playback('Speak'), error => error === original);
+});
+
+/** Exercises the marketplace bubble's unawaited click through the production compiler and owner lifecycle. */
+test('VoiceBar v1 clicks retain the host speech request after the synchronous UI action ends', async () => {
+  const { context, tools, calls } = engine();
+  const completion = Promise.withResolvers();
+  /** Keeps the native host operation pending beyond the synchronous click callback. */
+  context.invokeTool = () => completion.promise;
+  vm.runInContext(composeContextScript(), context);
+  context.exports = {};
+  const source = `
+    /** Reproduces the released bubble's synchronous click and unawaited legacy speech call. */
+    exports.default = function Screen(ctx) {
+      var state = ctx.useState('_playing', 'false');
+      return ctx.UI.Row({
+        /** Starts speech before updating the bubble's local playback indicator. */
+        onClick: function() {
+          if (Tools.SoftwareSettings.testTtsPlayback) {
+            Tools.SoftwareSettings.testTtsPlayback('VoiceBar test', { interrupt: true });
+          }
+          state[1]('true');
+        }
+      }, []);
+    };
+  `;
+  vm.runInContext(context.OperitComposeCompiler.prepare(source, 'voicebar-v1'), context);
+  const runtime = context.OperitComposeDslRuntime.createContext({});
+  const tree = context.exports.default(runtime.ctx);
+  runtime.composition.finish(tree);
+  assert.equal(typeof tools.SoftwareSettings.testTtsPlayback, 'function');
+  assert.equal(runtime.invokeAction(tree.props.onClick.__actionId), undefined);
+  assert.equal(runtime.stateStore._playing, 'true');
+  await new Promise(setImmediate);
+  assert.deepEqual(plain(calls), [{ name: 'tts_speak', args: [{ request: { text: 'VoiceBar test', interrupt: true } }] }]);
+  assert.equal(context.refs, 1);
+  completion.resolve({ providerType: 'SYSTEM_TTS', started: true, interrupt: true, speed: 1, pitch: 1 });
+  await new Promise(setImmediate);
+  assert.equal(context.refs, 0);
+  assert.equal(calls.length, 1);
 });
 
 /** Exercises genuine public API handlers and memory tool IPC against the existing disk-backed plugin. */

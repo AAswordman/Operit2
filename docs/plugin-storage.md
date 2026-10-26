@@ -51,3 +51,26 @@ runtime/plugin_data/space/com.operit.character_cards/
 The first plugin schema is **v1**. Released Core data is adopted into these JSON owners; TypeScript converts plugin-owned identities and references to UUIDs before completing v1. There is no unpublished plugin v2 format or v1-to-v2 migration. Existing released backup formats have their own independent version numbers.
 
 `Tools.Storage.objects` currently uses SQLite. It must not be described as an ObjectBox implementation. Character configuration no longer uses that engine. Each preference file and the memory database has its own transaction boundary; a multi-owner business operation is not a single atomic transaction across those files and the memory engine.
+
+Object handles also expose read-only SQL through `query(sql, params)`. The
+`plugin_objects` view has `collection`, `key`, `value` (JSON text), and
+`version` columns. Queries use the same typed SQL parameters/results and read-only
+statement validation as SQLite handles; internal tables remain protected. Object
+writes still use version-checked mutations and the normal synchronization journal.
+
+`objects.commit(mutations, guards?)` accepts up to 1000 related-record guards.
+Each guard contains `collection`, `key`, and `expectedVersion`; a null version
+requires absence. Rust checks guards in the mutation transaction and rejects a
+mismatch without publishing changes. Guards do not rewrite their referenced records.
+
+Character memory uses an envelope containing `ownerKey`, `record`, and
+`embedding: { space, text, vector } | null`. Source and normalized vector are one
+versioned row, so their local writes, deletion and synchronization share the same
+record boundary. The vector space identifies the endpoint, model and normalization
+contract. Writes perform HTTP work before opening their commit transaction, then
+check both the source version and owner configuration version. Queries create an
+ephemeral whole-query vector, rank persisted sources in SQLite, and return bounded
+hits without loading the corpus into TypeScript. Missing, stale or dimensionally
+incompatible vectors require an explicit rebuild. This is exact scoped vector search,
+not an ANN index. Explicit rebuilds/imports use independently atomic batches, so
+an error can leave earlier batches committed.

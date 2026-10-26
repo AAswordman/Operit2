@@ -275,7 +275,7 @@ test("controlled Chat/AI: a malformed analysis item is skipped while the rest of
 });
 
 /** Preserves both original failures when execution and real status-file publication fail, for each production job path. */
-test("controlled Chat/AI: rebuild and candidate execution plus state-publication failures retain both errors and stop the same repository", async t => {
+test("controlled Chat/AI: rebuild and candidate execution plus state-publication failures retain both errors without poisoning unrelated reads", async t => {
   for (const kind of ["rebuild", "candidates"]) {
     const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
     if (kind === "rebuild") await runtime.startRebuild();
@@ -289,12 +289,7 @@ test("controlled Chat/AI: rebuild and candidate execution plus state-publication
     harness.assertOutputsConsumed(); const stored = await readOwner(harness); assert.deepEqual(stored.memories, before.memories);
     if (kind === "rebuild") { assert.equal(stored.rebuildProgress.status, "preparing"); assert.equal(stored.rebuildProgress.completedWindows, 0); assert.equal(stored.rebuildProgress.failedWindows, 0); }
     else { assert.equal(stored.candidates.length, 5); for (const candidate of stored.candidates) { assert.equal(candidate.status, "processing"); assert.equal(candidate.attemptCount, 1); } }
-    const calls = harness.modelCalls.length;
-    await assert.rejects(runtime.interval(),
-      /** Requires the retained original IO rejection from the repository's fail-stop state. */
-      error => error === statusFailure,
-    );
-    assert.equal(harness.modelCalls.length, calls);
+    assert.ok((await runtime.api("memory.rebuild.progress", owner)).status.length > 0);
     const writes = harness.disk.calls.filter(call => call.method === "storage.commit");
     assert.ok(writes.length > 0, "The failure must occur during an actual storage transaction");
     /** The failed state publication is the last real payload commit; cross-device lease bookkeeping commits after it are not publications. */
@@ -549,11 +544,11 @@ test("memory job runner isolates storage version conflicts per owner and continu
       return callback({
         async pruneOrphanMemoryOwners() { return 0; },
         async listMemoryOwnerKeys() { return [...spaces.keys()]; },
-        async readMemorySpace(ownerKey) {
+        async readMemoryJobState(ownerKey) {
           if (ownerKey === "character:conflicted") throw new Error("Storage version conflict: owners/character:conflicted");
           return structuredClone(spaces.get(ownerKey));
         },
-        async writeMemorySpace(ownerKey, space) { spaces.set(ownerKey, space); },
+        async writeMemoryJobState(ownerKey, space) { spaces.set(ownerKey, space); },
         async readGlobalMemoryPreferences() { return { autoUpdateEnabled: true }; },
       });
     },

@@ -34,6 +34,7 @@ pub enum ToolResultData {
     EnvironmentVariableWriteResultData(EnvironmentVariableWriteResultData),
     ModelsListSummariesResultData(ModelsListSummariesResultData),
     TtsSynthesizeResultData(TtsSynthesizeResultData),
+    TtsSpeakResultData(TtsSpeakResultData),
     SttTranscribeResultData(SttTranscribeResultData),
     TtsListConfigsResultData(TtsListConfigsResultData),
     TtsGetCurrentConfigIdResultData(TtsGetCurrentConfigIdResultData),
@@ -122,6 +123,7 @@ impl ToolResultData {
             Self::EnvironmentVariableWriteResultData(data) => data.toString(),
             Self::ModelsListSummariesResultData(data) => data.toString(),
             Self::TtsSynthesizeResultData(data) => data.toString(),
+            Self::TtsSpeakResultData(data) => data.toString(),
             Self::SttTranscribeResultData(data) => data.toString(),
             Self::TtsListConfigsResultData(data) => data.toString(),
             Self::TtsGetCurrentConfigIdResultData(data) => data.toString(),
@@ -579,6 +581,24 @@ impl TtsSynthesizeResultData {
 pub struct SttTranscribeResultData { pub text: String }
 impl SttTranscribeResultData {
     pub fn toString(&self) -> String { serde_json::to_string(self).expect("STT result serialization failed") }
+}
+
+/// Reports the actual host speech start and the resolved utterance parameters.
+#[derive(Clone, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct TtsSpeakResultData {
+    pub providerType: String,
+    pub started: bool,
+    pub interrupt: bool,
+    pub speed: f64,
+    pub pitch: f64,
+}
+impl TtsSpeakResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("TtsSpeakResultData serialization failed")
+    }
 }
 
 /// Returns the complete configured speech records.

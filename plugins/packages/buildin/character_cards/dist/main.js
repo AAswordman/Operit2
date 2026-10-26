@@ -11,9 +11,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    for (let key2 of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key2) && key2 !== except)
+        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
   }
   return to;
 };
@@ -389,13 +389,18 @@ function assertMemory(value) {
 function assertMemoryChatMessage(value) {
   assertObject(value, "chat message");
   assertInteger(value.timestamp, "message timestamp", 0);
-  for (const key of ["sender", "content", "provider", "modelName"]) assertString(value[key], key);
+  for (const key2 of ["sender", "content", "provider", "modelName"]) assertString(value[key2], key2);
   assertInteger(value.variantIndex, "message variant index", 0);
   assertInteger(value.variantCount, "message variant count", 1);
   if (value.variantIndex > 2147483647 || value.variantCount > 2147483647 || value.variantIndex >= value.variantCount) throw new Error("Invalid persisted message variant identity");
 }
 function assertSearchOptions(value) {
   assertObject(value, "\u8BB0\u5FC6\u641C\u7D22\u53C2\u6570");
+  if (value.limit !== void 0) {
+    assertInteger(value.limit, "search limit", 1);
+    if (value.limit > 1e3) throw new Error("Memory search limit exceeds 1000");
+  }
+  if (value.excludeIds !== void 0) assertStrings(value.excludeIds, "excluded memory ids");
   assertString(value.ownerKey, "\u8BB0\u5FC6\u5E93\u6807\u8BC6");
   assertString(value.query, "\u641C\u7D22\u6587\u672C");
   assertNullableString(value.folderPath, "\u641C\u7D22\u6587\u4EF6\u5939");
@@ -544,7 +549,7 @@ function markerValue(value, path) {
 function markerObject(value, path) {
   assertObject(value, path);
   const result2 = {};
-  for (const [key, item] of Object.entries(value)) Object.defineProperty(result2, key, { value: markerValue(item, path + "." + key), enumerable: true, configurable: true, writable: true });
+  for (const [key2, item] of Object.entries(value)) Object.defineProperty(result2, key2, { value: markerValue(item, path + "." + key2), enumerable: true, configurable: true, writable: true });
   return result2;
 }
 function markerVersion(value, path) {
@@ -598,12 +603,12 @@ function markerProfile(value) {
   const resources = [], keys = /* @__PURE__ */ new Set();
   for (const resource of value.resources) {
     assertObject(resource, "message resource");
-    const key = requireId(resource.key, "message resource key");
-    if (keys.has(key)) throw new Error("Duplicate message resource: " + key);
-    keys.add(key);
+    const key2 = requireId(resource.key, "message resource key");
+    if (keys.has(key2)) throw new Error("Duplicate message resource: " + key2);
+    keys.add(key2);
     assertBoolean(resource.readable, "message resource readable");
     assertBoolean(resource.writable, "message resource writable");
-    resources.push({ key, readable: resource.readable, writable: resource.writable });
+    resources.push({ key: key2, readable: resource.readable, writable: resource.writable });
   }
   return {
     id: id2,
@@ -810,12 +815,12 @@ function shape(fields4, nonempty = false) {
     const object3 = record(value, path);
     const keys = Object.keys(object3);
     if (nonempty && keys.length === 0) throw new Error(`${path} must contain at least one field`);
-    for (const key of keys) {
-      if (!Object.prototype.hasOwnProperty.call(fields4, key)) throw new Error(`${path}.${key} is not a supported field`);
-      fields4[key].validate(object3[key], `${path}.${key}`);
+    for (const key2 of keys) {
+      if (!Object.prototype.hasOwnProperty.call(fields4, key2)) throw new Error(`${path}.${key2} is not a supported field`);
+      fields4[key2].validate(object3[key2], `${path}.${key2}`);
     }
-    for (const key of Object.keys(fields4)) {
-      if (fields4[key].required && !Object.prototype.hasOwnProperty.call(object3, key)) throw new Error(`${path}.${key} is required`);
+    for (const key2 of Object.keys(fields4)) {
+      if (fields4[key2].required && !Object.prototype.hasOwnProperty.call(object3, key2)) throw new Error(`${path}.${key2} is required`);
     }
   };
 }
@@ -895,7 +900,7 @@ function parseMemoryQueryRequest(payload) {
 }
 var validators = {
   "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.searchWithOptions": shape({ limit: optional(integer), excludeIds: optional(strings), ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
   "memory.chat.pruneMissing": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
@@ -1011,7 +1016,7 @@ function jsonValue(value, path = "result") {
   }
   const object3 = record(value, path);
   const result2 = {};
-  for (const key of Object.keys(object3)) result2[key] = jsonValue(object3[key], `${path}.${key}`);
+  for (const key2 of Object.keys(object3)) result2[key2] = jsonValue(object3[key2], `${path}.${key2}`);
   return result2;
 }
 function parseChatConfigurationRequest(value) {
@@ -1094,9 +1099,9 @@ function chatParticipant(card, request, service2) {
     routes.set(primary, { key: primary, readable: true, writable: true });
     for (const mount2 of card.sharedMemoryMounts) {
       yield service2.getStore(mount2.sharedMemoryId);
-      const key = "shared:" + mount2.sharedMemoryId;
-      const existing = routes.get(key);
-      routes.set(key, { key, readable: mount2.readable || existing?.readable === true, writable: mount2.writable || existing?.writable === true });
+      const key2 = "shared:" + mount2.sharedMemoryId;
+      const existing = routes.get(key2);
+      routes.set(key2, { key: key2, readable: mount2.readable || existing?.readable === true, writable: mount2.writable || existing?.writable === true });
     }
     const prompt = yield combineCharacterPrompt(card, [], request.promptFunctionType, service2);
     const userPreferencesText = (yield service2.readGlobalMemoryPreferences()).userDescriptionEnabled ? (yield service2.dispatchDomain("memory.user.read", { ownerKey: primary })).content : "";
@@ -1173,7 +1178,7 @@ function resolveChatExecution(request, service2) {
     const card = chatRecord(cards, profile.id, "selected participant");
     const primaryOwnerKey = card.memoryBindingMode === "CHARACTER" ? "character:" + card.id : "shared:" + card.sharedMemoryId;
     const executionData = encodeExecutionData({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey, profile, participants });
-    return { contextKey: marker.selection, historyPolicy: { isolateParticipants: true, labelUserMessages: selection.kind === "group" }, profile, participants, executionData };
+    return { contextKey: marker.selection, historyPolicy: { isolateParticipants: selection.kind === "group", labelUserMessages: selection.kind === "group" }, profile, participants, executionData };
   });
 }
 
@@ -1210,19 +1215,6 @@ function timestamp(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-// src/identity.ts
-function uuid() {
-  const bytes = [];
-  for (let index = 0; index < 16; index += 1) bytes.push(Math.floor(Math.random() * 256));
-  bytes[6] = bytes[6] & 15 | 64;
-  bytes[8] = bytes[8] & 63 | 128;
-  const text2 = bytes.map(
-    /** Encodes every byte as two hexadecimal digits. */
-    (byte) => byte.toString(16).padStart(2, "0")
-  ).join("");
-  return text2.slice(0, 8) + "-" + text2.slice(8, 12) + "-" + text2.slice(12, 16) + "-" + text2.slice(16, 20) + "-" + text2.slice(20);
-}
-
 // src/memory-jobs/embeddings.ts
 function assertEmbedding(value) {
   assertObject(value, "embedding");
@@ -1239,338 +1231,255 @@ function assertEmbedding(value) {
   }
   if (!Number.isFinite(norm) || norm === 0) throw new Error("Embedding vector has an invalid norm");
 }
-function embeddingSource(settings2) {
+function embeddingSpace(settings2) {
   if (!settings2.cloudEmbeddingEnabled) throw new Error("Cloud embedding is disabled");
-  const endpoint = requireName(settings2.cloudEmbeddingEndpoint, "embedding endpoint").replace(/\/+$/, ""), model = requireName(settings2.cloudEmbeddingModel, "embedding model");
+  const endpoint = requireName(settings2.cloudEmbeddingEndpoint, "embedding endpoint").replace(/\/+$/, "");
   if (!/^https?:\/\//u.test(endpoint)) throw new Error("Embedding endpoint must be an absolute HTTP URL");
-  return { endpoint, model };
+  return JSON.stringify([endpoint, requireName(settings2.cloudEmbeddingModel, "embedding model"), "unit-v1"]);
 }
-function embeddingConfigured(settings2) {
-  if (!settings2?.cloudEmbeddingEnabled) return false;
-  const endpoint = settings2.cloudEmbeddingEndpoint.trim().replace(/\/+$/, "");
-  return endpoint !== "" && settings2.cloudEmbeddingModel.trim() !== "" && /^https?:\/\//u.test(endpoint);
-}
-function requestEmbedding(text2, settings2) {
-  return __async(this, null, function* () {
-    const source = embeddingSource(settings2), headers = { "Content-Type": "application/json" };
-    if (settings2.cloudEmbeddingApiKey !== "") headers.Authorization = "Bearer " + settings2.cloudEmbeddingApiKey;
-    const response = yield Tools.Net.http({
-      url: source.endpoint.endsWith("/embeddings") ? source.endpoint : source.endpoint + "/embeddings",
-      method: "POST",
-      headers,
-      body: JSON.stringify({ input: text2, model: source.model, encoding_format: "float" }),
-      connect_timeout: 30,
-      read_timeout: 60,
-      follow_redirects: true,
-      ignore_ssl: false,
-      responseType: "text",
-      validateStatus: false
-    });
-    if (response.statusCode < 200 || response.statusCode >= 300) throw new Error("Embedding request failed: HTTP " + response.statusCode + " " + response.content);
-    assertString(response.content, "embedding response");
-    const payload = JSON.parse(response.content);
-    assertObject(payload, "embedding response");
-    if (!Array.isArray(payload.data) || payload.data.length !== 1) throw new Error("Embedding response must contain exactly one input vector");
-    const record2 = payload.data[0];
-    assertObject(record2, "embedding response item");
-    const embedding = { id: uuid(), ...source, text: text2, vector: record2.embedding, updatedAt: Date.now() };
-    assertEmbedding(embedding);
-    return embedding;
-  });
-}
-function embeddingFor(space, text2) {
-  return __async(this, null, function* () {
-    assertString(text2, "embedding input");
-    const source = embeddingSource(space.settings);
-    const matches = space.embeddings.filter(
-      /** Matches the complete provider source and input without hashing away record provenance. */
-      (item) => item.endpoint === source.endpoint && item.model === source.model && item.text === text2
-    );
-    if (matches.length > 1) throw new Error("Duplicate stored embedding input");
-    if (matches.length === 1) {
-      assertEmbedding(matches[0]);
-      return matches[0].vector;
-    }
-    const computed = yield requestEmbedding(text2, space.settings);
-    space.embeddings.push(computed);
-    return computed.vector;
-  });
-}
-function cosineSimilarity(left, right) {
-  if (left.length === 0 || left.length !== right.length) throw new Error("Embedding dimensions do not match");
-  let dot = 0, leftNorm = 0, rightNorm = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    dot += left[index] * right[index];
-    leftNorm += left[index] ** 2;
-    rightNorm += right[index] ** 2;
+function normalize(value) {
+  if (!Array.isArray(value) || value.length === 0) throw new Error("Embedding must contain a nonempty vector");
+  let norm = 0;
+  for (const component of value) {
+    assertNumber(component, "embedding component", -Number.MAX_VALUE, Number.MAX_VALUE);
+    norm += component * component;
   }
-  if (leftNorm === 0 || rightNorm === 0) throw new Error("Embedding norm must be positive");
-  return Math.max(-1, Math.min(1, dot / Math.sqrt(leftNorm * rightNorm)));
+  if (!Number.isFinite(norm) || norm === 0) throw new Error("Embedding vector has an invalid norm");
+  const length = Math.sqrt(norm);
+  return value.map(
+    /** Normalizes provider components for database dot-product search. */
+    (component) => component / length
+  );
+}
+function embedTexts(texts, settings2) {
+  return __async(this, null, function* () {
+    const space = embeddingSpace(settings2), [endpoint, model] = JSON.parse(space);
+    const result2 = new Array(texts.length);
+    const headers = { "Content-Type": "application/json" };
+    if (settings2.cloudEmbeddingApiKey !== "") headers.Authorization = "Bearer " + settings2.cloudEmbeddingApiKey;
+    let next = 0;
+    function worker() {
+      return __async(this, null, function* () {
+        while (next < texts.length) {
+          const start = next;
+          next += 64;
+          const batch = texts.slice(start, start + 64);
+          const response = yield Tools.Net.http({
+            url: endpoint.endsWith("/embeddings") ? endpoint : endpoint + "/embeddings",
+            method: "POST",
+            headers,
+            body: JSON.stringify({ input: batch, model, encoding_format: "float" }),
+            connect_timeout: 30,
+            read_timeout: 60,
+            follow_redirects: true,
+            ignore_ssl: false,
+            responseType: "text",
+            validateStatus: false
+          });
+          if (response.statusCode < 200 || response.statusCode >= 300) throw new Error("Embedding request failed: HTTP " + response.statusCode + " " + response.content);
+          assertString(response.content, "embedding response");
+          const payload = JSON.parse(response.content);
+          assertObject(payload, "embedding response");
+          if (!Array.isArray(payload.data) || payload.data.length !== batch.length) throw new Error("Embedding response count does not match the request");
+          const seen = /* @__PURE__ */ new Set();
+          for (const item of payload.data) {
+            assertObject(item, "embedding response item");
+            assertInteger(item.index, "embedding response index", 0);
+            if (item.index >= batch.length || seen.has(item.index)) throw new Error("Embedding response has duplicate or invalid input indices");
+            seen.add(item.index);
+            result2[start + item.index] = { space, text: batch[item.index], vector: normalize(item.embedding) };
+          }
+        }
+      });
+    }
+    const workers = yield Promise.allSettled(Array.from({ length: Math.min(4, Math.ceil(texts.length / 64)) }, worker));
+    for (const worker2 of workers) if (worker2.status === "rejected") throw worker2.reason;
+    const dimensions = result2[0]?.vector.length;
+    for (const embedding of result2) if (embedding.vector.length !== dimensions) throw new Error("Embedding batch dimensions do not match");
+    return result2;
+  });
 }
 function rebuildMemoryEmbeddings(ownerKey, repository2) {
-  return __async(this, null, function* () {
-    const space = yield repository2.readMemorySpace(ownerKey);
-    embeddingSource(space.settings);
-    const texts = /* @__PURE__ */ new Set();
-    for (const memory of space.memories) texts.add(memory.isDocumentNode ? memory.title : memory.content);
-    for (const chunk of space.chunks) texts.add(chunk.content);
-    const computed = [];
-    for (const text2 of texts) computed.push(yield requestEmbedding(text2, space.settings));
-    space.embeddings = computed;
-    yield repository2.writeMemorySpace(ownerKey, space);
-    return space.memories.length;
-  });
+  return repository2.rebuildMemoryEmbeddings(ownerKey);
 }
 
 // src/memory-search.ts
 var MEMORY_SEARCH_THRESHOLD = 0.025;
-function escapeLiteral(text2) {
-  return text2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function pattern(text2) {
-  return new RegExp(text2.split("*").map(escapeLiteral).join(".*"), "isu");
-}
-function literalPattern(text2) {
-  return new RegExp(escapeLiteral(text2), "isu");
-}
-function keywords(query) {
-  return query.split(query.indexOf("|") === -1 ? /\s+/u : /\|/u).map(
-    /** Normalizes authored term boundaries without rewriting their contents. */
-    (term) => term.trim()
-  ).filter(
-    /** Excludes empty separators from scoring and provider calls. */
-    (term) => term !== ""
-  );
-}
-function lexicalPatterns(query) {
+function lexicalTerms(query) {
   const terms = /* @__PURE__ */ new Set();
   for (const match of query.toLowerCase().matchAll(/[\p{L}\p{N}_*]+/gu)) {
-    const term = match[0];
-    if (term !== "*") terms.add(term);
-    if (/^\p{Script=Han}+$/u.test(term)) {
-      const characters = [...term];
-      for (let index = 0; index < characters.length; index += 1) {
-        terms.add(characters[index]);
-        if (index + 1 < characters.length) terms.add(characters[index] + characters[index + 1]);
-      }
+    const word = match[0];
+    terms.add(word);
+    for (const han of word.matchAll(/\p{Script=Han}+/gu)) {
+      const chars = [...han[0]];
+      for (let index = 0; index < chars.length - 1; index += 1) terms.add(chars[index] + chars[index + 1]);
+      for (const char of chars) terms.add(char);
     }
   }
-  return [...terms].sort(
-    /** Gives longer lexical expressions the same bounded query budget as Kotlin. */
-    (left, right) => right.length - left.length
-  ).slice(0, 32).map(pattern);
+  return [...terms].slice(0, 32);
 }
-function weights(config) {
-  let keyword, vector, edge;
-  switch (config.scoreMode) {
-    case "BALANCED":
-      keyword = 1;
-      vector = 1;
-      edge = 1;
-      break;
-    case "KEYWORD_FIRST":
-      keyword = 1.3;
-      vector = 0.8;
-      edge = 0.9;
-      break;
-    case "SEMANTIC_FIRST":
-      keyword = 0.8;
-      vector = 1.3;
-      edge = 1.1;
-      break;
-    default:
-      throw new Error("Invalid memory scoring mode");
-  }
-  return { scoreMode: config.scoreMode, keywordWeight: config.keywordWeight * keyword, tagWeight: config.tagWeight * keyword, vectorWeight: config.vectorWeight * vector, edgeWeight: config.edgeWeight * edge };
+function parameters(options) {
+  return [
+    options.ownerKey + "/",
+    options.ownerKey + "0",
+    options.folderPath,
+    options.createdAtStartMs,
+    options.createdAtEndMs,
+    options.query,
+    JSON.stringify(lexicalTerms(options.query))
+  ];
 }
-function lexicalScores(documents2, patterns, weight) {
-  if (weight === 0 || patterns.length === 0) return [];
-  return documents2.map(
-    /** Counts each query expression once regardless of repeated occurrences. */
-    (document2) => ({ document: document2, hits: patterns.filter(
-      /** Matches an explicit expression against the selected title, tags, or chunk. */
-      (expression) => document2.texts.some((text2) => expression.test(text2))
-    ).length })
-  ).filter(
-    /** Requires actual lexical evidence before contributing a rank score. */
-    (entry) => entry.hits > 0
-  ).sort(
-    /** Matches Kotlin's coverage, importance, and update-time tie ordering. */
-    (left, right) => right.hits - left.hits || right.document.importance - left.document.importance || right.document.updatedAt - left.document.updatedAt
-  ).map(
-    /** Uses the original reciprocal-rank constant and coverage bonus. */
-    (entry, rank) => ({ id: entry.document.id, score: weight * entry.document.importance * (1 + 0.6 * entry.hits / patterns.length) / (61 + rank) })
-  );
-}
-function semanticScores(space, documents2, terms, weight) {
+var rankedQuery = `
+WITH query_vector AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?9)), scoped AS (
+  SELECT key,value,json_extract(value,'$.record.id') AS id,
+    json_extract(value,'$.record.importance') AS importance,
+    json_extract(value,'$.record.updatedAt') AS updatedAt
+  FROM plugin_objects
+  WHERE collection='memories' AND key>=?1 AND key<?2
+    AND json_extract(value,'$.record.title')<>'.folder_placeholder'
+    AND (?3 IS NULL OR json_extract(value,'$.record.folderPath')=?3 OR
+      substr(json_extract(value,'$.record.folderPath'),1,length(?3)+1)=?3||'/')
+    AND (?4 IS NULL OR json_extract(value,'$.record.createdAt')>=?4)
+    AND (?5 IS NULL OR json_extract(value,'$.record.createdAt')<=?5)
+), units AS (
+  SELECT id,value FROM scoped
+  UNION ALL
+  SELECT m.id,c.value FROM plugin_objects c JOIN scoped m
+    ON json_extract(c.value,'$.record.memoryUuid')=json_extract(m.value,'$.record.uuid')
+  WHERE c.collection='chunks' AND c.key>=?1 AND c.key<?2
+), lexical AS (
+  SELECT m.*,
+    (SELECT count(*) FROM json_each(?7) t WHERE
+      lower(json_extract(m.value,'$.record.title')) GLOB '*'||t.value||'*'
+      OR EXISTS (SELECT 1 FROM units u WHERE u.id=m.id AND
+        lower(json_extract(u.value,'$.record.content')) GLOB '*'||t.value||'*')) AS keywords,
+    (SELECT count(*) FROM json_each(?7) t WHERE EXISTS (
+      SELECT 1 FROM json_each(m.value,'$.record.tags') tag
+      WHERE lower(json_extract(tag.value,'$.name')) GLOB '*'||t.value||'*')) AS tags
+  FROM scoped m
+), keyword_ranks AS (
+  SELECT id,?10*importance*(1+0.6*keywords/max(1,json_array_length(?7)))/(60.0+row_number() OVER (ORDER BY keywords DESC,importance DESC,updatedAt DESC,id)) AS score
+  FROM lexical WHERE keywords>0
+), tag_ranks AS (
+  SELECT id,?11*importance*(1+0.6*tags/max(1,json_array_length(?7)))/(60.0+row_number() OVER (ORDER BY tags DESC,importance DESC,updatedAt DESC,id)) AS score
+  FROM lexical WHERE tags>0
+), similarities AS (
+  SELECT u.id,max((SELECT sum(q.value*v.value) FROM json_each(u.value,'$.embedding.vector') v
+    JOIN query_vector q ON q.dimension=v.key)) AS similarity
+  FROM units u WHERE ?12>0 AND json_extract(u.value,'$.embedding.space')=?8
+    AND json_array_length(u.value,'$.embedding.vector')=json_array_length(?9)
+  GROUP BY u.id
+), semantic AS (
+  SELECT id,?12*max(-1.0,min(1.0,similarity)) AS score FROM similarities
+), base AS (
+  SELECT m.*,coalesce(k.score,0)+CASE WHEN instr(lower(?6),lower(json_extract(m.value,'$.record.title')))>0 THEN ?10*m.importance/61.0 ELSE 0 END AS keywordScore,coalesce(t.score,0) AS tagScore,
+    coalesce(s.score,0) AS vectorScore,
+    coalesce(k.score,0)+coalesce(t.score,0)+coalesce(s.score,0)+CASE WHEN instr(lower(?6),lower(json_extract(m.value,'$.record.title')))>0 THEN ?10*m.importance/61.0 ELSE 0 END AS baseScore
+  FROM scoped m LEFT JOIN keyword_ranks k USING(id) LEFT JOIN tag_ranks t USING(id) LEFT JOIN semantic s USING(id)
+), seeds AS (
+  SELECT id,baseScore FROM base WHERE baseScore>0 ORDER BY baseScore DESC,id LIMIT 10
+), edges AS (
+  SELECT target.id,sum((seed.baseScore*json_extract(l.value,'$.record.weight')+0.03)*?13) AS score
+  FROM plugin_objects l JOIN seeds seed ON
+    json_extract(l.value,'$.record.sourceMemoryId')=seed.id OR json_extract(l.value,'$.record.targetMemoryId')=seed.id
+  JOIN scoped target ON target.id=CASE WHEN json_extract(l.value,'$.record.sourceMemoryId')=seed.id
+    THEN json_extract(l.value,'$.record.targetMemoryId') ELSE json_extract(l.value,'$.record.sourceMemoryId') END
+  WHERE l.collection='links' AND l.key>=?1 AND l.key<?2 AND ?13>0 GROUP BY target.id
+), scored AS (
+  SELECT b.*,coalesce(e.score,0) AS edgeScore,baseScore+coalesce(e.score,0) AS score FROM base b LEFT JOIN edges e USING(id)
+), page AS (
+  SELECT * FROM scored WHERE (?17=1 OR (score>0 AND score>=?14)) AND id NOT IN (SELECT value FROM json_each(?16)) ORDER BY score DESC,id LIMIT ?15
+), stats AS (
+  SELECT (SELECT count(*) FROM scoped) AS total,
+    (SELECT count(*) FROM scored WHERE score>0 AND score>=?14 AND id IN (SELECT value FROM json_each(?16))) AS excluded,
+    (SELECT count(*) FROM units WHERE ?12>0 AND (
+      json_extract(value,'$.embedding.text') IS NOT CASE WHEN json_extract(value,'$.record.isDocumentNode')=1 THEN json_extract(value,'$.record.title') ELSE json_extract(value,'$.record.content') END OR
+      json_extract(value,'$.embedding.space') IS NOT ?8 OR
+      json_array_length(value,'$.embedding.vector') IS NOT json_array_length(?9))) AS invalid
+)
+SELECT json_extract(page.value,'$.record') AS record,page.keywordScore,page.tagScore,page.vectorScore,page.edgeScore,page.score,stats.total,stats.invalid,stats.excluded
+FROM stats LEFT JOIN page ON 1 ORDER BY page.score DESC,page.id`;
+function prepareMemoryQuery(settings2, query, config) {
   return __async(this, null, function* () {
-    const scores = [];
-    if (weight === 0 || documents2.length === 0) return scores;
-    const vectors = [];
-    for (const document2 of documents2) {
-      const inputs = [];
-      for (const text2 of document2.texts) inputs.push(yield embeddingFor(space, text2));
-      vectors.push(inputs);
-    }
-    for (const term of terms) {
-      const query = yield embeddingFor(space, term);
-      const ranked = documents2.map(
-        /** Keeps each similarity attached to its exact stored record. */
-        (document2, index) => {
-          const similarities = vectors[index];
-          if (similarities.length === 0) throw new Error("Memory search record has no embedding inputs");
-          let similarity = -Infinity;
-          for (const vector of similarities) similarity = Math.max(similarity, cosineSimilarity(query, vector));
-          return { document: document2, similarity };
-        }
-      ).sort(
-        /** Preserves source order when actual provider similarities tie. */
-        (left, right) => right.similarity - left.similarity
+    return query.trim() !== "*" && settings2.cloudEmbeddingEnabled && config.vectorWeight > 0 ? (yield embedTexts([query], settings2))[0] : null;
+  });
+}
+function searchMemoryDatabase(database, settings2, options, config, debug = false) {
+  return __async(this, null, function* () {
+    const limit2 = options.limit ?? 100;
+    if (!Number.isInteger(limit2) || limit2 < 1 || limit2 > 1e3) throw new Error("Memory search limit must be between 1 and 1000");
+    const params = parameters(options);
+    if (options.query.trim() === "*") {
+      const rows2 = yield database.query(
+        `WITH scoped AS (
+      SELECT value,json_extract(value,'$.record.id') AS id FROM plugin_objects WHERE collection='memories' AND key>=?1 AND key<?2
+      AND (?3 IS NULL OR json_extract(value,'$.record.folderPath')=?3 OR substr(json_extract(value,'$.record.folderPath'),1,length(?3)+1)=?3||'/')
+      AND (?4 IS NULL OR json_extract(value,'$.record.createdAt')>=?4) AND (?5 IS NULL OR json_extract(value,'$.record.createdAt')<=?5)
+      AND json_extract(value,'$.record.title')<>'.folder_placeholder'
+    ), page AS (SELECT * FROM scoped WHERE id NOT IN (SELECT value FROM json_each(?6)) ORDER BY id LIMIT ?7), stats AS (
+      SELECT count(*) AS total,sum(CASE WHEN id IN (SELECT value FROM json_each(?6)) THEN 1 ELSE 0 END) AS excluded FROM scoped
+    ) SELECT json_extract(page.value,'$.record') AS record,stats.total,stats.excluded FROM stats LEFT JOIN page ON 1 ORDER BY page.id`,
+        [...params.slice(0, 5), JSON.stringify(options.excludeIds ?? []), limit2]
       );
-      for (let rank = 0; rank < ranked.length; rank += 1) {
-        const entry = ranked[rank];
-        scores.push({ id: entry.document.id, score: (Math.sqrt(entry.document.importance) / (61 + rank) + entry.similarity * weight) / Math.sqrt(terms.length) });
-      }
+      return { queryEmbedding: null, result: {
+        excludedBySnapshotCount: Number(rows2[0].excluded),
+        query: options.query,
+        config,
+        relevanceThreshold: options.relevanceThreshold,
+        memoriesInScopeCount: Number(rows2[0].total),
+        candidates: rows2.filter(
+          /** Omits an empty listing page. */
+          (row) => row.record !== null
+        ).map(
+          /** Returns complete explicitly listed records. */
+          (row) => ({ memory: JSON.parse(String(row.record)), score: 1, keywordScore: 0, tagScore: 0, vectorScore: 0, edgeScore: 0, passedThreshold: true })
+        )
+      } };
     }
-    return scores;
-  });
-}
-function matchesFilters(memory, options) {
-  if (options.folderPath !== null && memory.folderPath !== options.folderPath && !(memory.folderPath !== null && memory.folderPath.startsWith(options.folderPath + "/"))) return false;
-  if (options.createdAtStartMs !== null && memory.createdAt < options.createdAtStartMs) return false;
-  if (options.createdAtEndMs !== null && memory.createdAt > options.createdAtEndMs) return false;
-  return memory.title !== ".folder_placeholder";
-}
-function searchMemorySpace(space, options) {
-  return __async(this, null, function* () {
-    if (options.query.trim() === "*") return space.memories.filter(
-      /** Lists only the explicitly selected scope without calling a provider. */
-      (memory) => matchesFilters(memory, options)
+    if (options.query.trim() === "") throw new Error("Memory search query must not be blank");
+    const vectorWeight = settings2.cloudEmbeddingEnabled ? config.vectorWeight : 0;
+    if (lexicalTerms(options.query).length === 0 && vectorWeight === 0) throw new Error("Memory search query has no searchable tokens");
+    if (config.keywordWeight + config.tagWeight + vectorWeight + config.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
+    const queryEmbedding = yield prepareMemoryQuery(settings2, options.query, config);
+    const space = queryEmbedding === null ? "" : queryEmbedding.space, vector = queryEmbedding === null ? [] : queryEmbedding.vector;
+    const keywordBoost = config.scoreMode === "KEYWORD_FIRST" ? 1.3 : config.scoreMode === "SEMANTIC_FIRST" ? 0.8 : 1;
+    const vectorBoost = config.scoreMode === "SEMANTIC_FIRST" ? 1.3 : config.scoreMode === "KEYWORD_FIRST" ? 0.8 : 1;
+    params.push(
+      space,
+      JSON.stringify(vector),
+      config.keywordWeight * keywordBoost,
+      config.tagWeight * keywordBoost,
+      vectorWeight * vectorBoost,
+      config.edgeWeight * (config.scoreMode === "KEYWORD_FIRST" ? 0.9 : config.scoreMode === "SEMANTIC_FIRST" ? 1.1 : 1),
+      options.relevanceThreshold,
+      limit2,
+      JSON.stringify(options.excludeIds ?? []),
+      debug ? 1 : 0
     );
-    return (yield searchMemorySpaceDebug(space, options, space.searchConfig)).candidates.filter(
-      /** Selects exactly the debugger's accepted full records. */
-      (hit) => hit.passedThreshold
-    ).map(
-      /** Retains every stored memory field in the public search result. */
-      (hit) => hit.memory
-    );
-  });
-}
-function searchMemorySpaceDebug(space, options, config) {
-  return __async(this, null, function* () {
-    if (options.query.trim() === "*") throw new Error("\u68C0\u7D22\u8C03\u8BD5\u8BF7\u8F93\u5165\u5177\u4F53\u67E5\u8BE2\u6587\u672C");
-    const expressions = lexicalPatterns(options.query), terms = keywords(options.query), resolved = weights(config);
-    const vectorWeight = embeddingConfigured(space.settings) ? resolved.vectorWeight : 0;
-    if (expressions.length === 0) throw new Error("Memory search query has no searchable tokens");
-    if (resolved.keywordWeight + resolved.tagWeight + vectorWeight + resolved.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
-    const candidates = space.memories.filter(
-      /** Restricts all channels and graph expansion to the requested scope. */
-      (memory) => matchesFilters(memory, options)
-    ).map(
-      /** Initializes explicit channel accumulators for each stored record. */
-      (memory) => ({ memory, score: 0, keywordScore: 0, tagScore: 0, vectorScore: 0, edgeScore: 0, passedThreshold: false })
-    );
-    const byId = new Map(candidates.map(
-      /** Indexes scoped records for constant-time channel accumulation. */
-      (hit) => [hit.memory.id, hit]
-    ));
-    function addChannel(id2, channel, score3) {
-      const hit = byId.get(id2);
-      if (hit === void 0) throw new Error("Memory score refers to an out-of-scope record: " + id2);
-      hit[channel] += score3;
-    }
-    const chunkTexts = /* @__PURE__ */ new Map();
-    for (const hit of candidates) if (hit.memory.isDocumentNode) chunkTexts.set(hit.memory.uuid, []);
-    for (const chunk of space.chunks) {
-      const texts = chunkTexts.get(chunk.memoryUuid);
-      if (texts !== void 0) texts.push(chunk.content);
-    }
-    const documents2 = candidates.map(
-      /** Searches node titles and retains full-text recall for explicitly imported documents. */
-      (hit) => {
-        const texts = [hit.memory.title], chunks = chunkTexts.get(hit.memory.uuid);
-        if (chunks !== void 0) texts.push(...chunks);
-        return { id: hit.memory.id, texts, importance: hit.memory.importance, updatedAt: hit.memory.updatedAt };
-      }
-    );
-    for (const contribution of lexicalScores(documents2, expressions, resolved.keywordWeight)) addChannel(contribution.id, "keywordScore", contribution.score);
-    const tagDocuments = documents2.map(
-      /** Uses the same lexical ranking contract for exact stored tag names. */
-      (document2, index) => ({ ...document2, texts: candidates[index].memory.tags.map((tag) => tag.name) })
-    );
-    for (const contribution of lexicalScores(tagDocuments, expressions, resolved.tagWeight)) addChannel(contribution.id, "tagScore", contribution.score);
-    let reverseRank = 0;
-    for (const hit of candidates) if (literalPattern(hit.memory.title).test(options.query)) {
-      hit.keywordScore += resolved.keywordWeight * hit.memory.importance / (61 + reverseRank);
-      reverseRank += 1;
-    }
-    const semanticDocuments = documents2.map(
-      /** Uses document titles and complete non-document content as provider inputs. */
-      (document2, index) => ({ ...document2, texts: candidates[index].memory.isDocumentNode ? document2.texts : [candidates[index].memory.content] })
-    );
-    for (const contribution of yield semanticScores(space, semanticDocuments, terms, vectorWeight)) addChannel(contribution.id, "vectorScore", contribution.score);
-    for (const hit of candidates) hit.score = hit.keywordScore + hit.tagScore + hit.vectorScore;
-    const seeds = candidates.filter(
-      /** Expands only real matched seeds, never unrelated zero-score nodes. */
-      (hit) => hit.score > 0
-    ).sort(
-      /** Selects the Kotlin ten-seed graph expansion budget. */
-      (left, right) => right.score - left.score
-    ).slice(0, 10);
-    if (resolved.edgeWeight > 0) for (const seed of seeds) for (const link2 of space.links) {
-      const other = link2.sourceMemoryId === seed.memory.id ? link2.targetMemoryId : link2.targetMemoryId === seed.memory.id ? link2.sourceMemoryId : null;
-      if (other === null) continue;
-      const target = byId.get(other);
-      if (target !== void 0) target.edgeScore += (seed.score * link2.weight + 0.03) * resolved.edgeWeight;
-    }
-    for (const hit of candidates) {
-      hit.score += hit.edgeScore;
-      hit.passedThreshold = hit.score > 0 && hit.score >= options.relevanceThreshold;
-    }
-    candidates.sort(
-      /** Keeps stable persisted identity ties after all four channels are accumulated. */
-      (left, right) => right.score - left.score || left.memory.id.localeCompare(right.memory.id)
-    );
-    return { query: options.query, config: { ...config }, relevanceThreshold: options.relevanceThreshold, memoriesInScopeCount: candidates.length, candidates };
-  });
-}
-function searchMemoryChunks(space, memoryId, query, count) {
-  return __async(this, null, function* () {
-    const memory = space.memories.find(
-      /** Resolves the exact stored document rather than a display title. */
-      (item) => item.id === memoryId
-    );
-    if (memory === void 0 || !memory.isDocumentNode) throw new Error("Document search requires a stored document memory");
-    const chunks = space.chunks.filter(
-      /** Selects this document's original persisted chunks. */
-      (chunk) => chunk.memoryUuid === memory.uuid
-    ).sort(
-      /** Preserves one-based selector presentation over stored zero-based indices. */
-      (left, right) => left.chunkIndex - right.chunkIndex
-    );
-    if (query.trim() === "*") return { total: chunks.length, chunks: chunks.slice(0, count) };
-    if (query.trim() === "") throw new Error("Document search query must not be blank");
-    const documents2 = chunks.map(
-      /** Gives chunks unit importance and stable document-position ties. */
-      (chunk) => ({ id: chunk.id, texts: [chunk.content], importance: 1, updatedAt: 0 })
-    ), resolved = weights(space.searchConfig), scores = /* @__PURE__ */ new Map();
-    const contributions = [...lexicalScores(documents2, lexicalPatterns(query), resolved.keywordWeight), ...yield semanticScores(space, documents2, keywords(query), embeddingConfigured(space.settings) ? resolved.vectorWeight : 0)];
-    for (const contribution of contributions) {
-      const previous = scores.get(contribution.id);
-      scores.set(contribution.id, previous === void 0 ? contribution.score : previous + contribution.score);
-    }
-    const selected = chunks.filter(
-      /** Retains only chunks that contributed to at least one enabled channel. */
-      (chunk) => scores.has(chunk.id)
-    ).sort(
-      /** Resolves score ties by actual document position. */
-      (left, right) => {
-        const leftScore = scores.get(left.id), rightScore = scores.get(right.id);
-        if (leftScore === void 0 || rightScore === void 0) throw new Error("Ranked chunk score is missing");
-        return rightScore - leftScore || left.chunkIndex - right.chunkIndex;
-      }
-    ).slice(0, count);
-    return { total: chunks.length, chunks: selected };
+    const rows = yield database.query(rankedQuery, params);
+    if (Number(rows[0].invalid) !== 0) throw new Error("Memory vector index is incomplete or its provider dimensions changed; rebuild memory embeddings");
+    return { queryEmbedding, result: {
+      excludedBySnapshotCount: Number(rows[0].excluded),
+      query: options.query,
+      config,
+      relevanceThreshold: options.relevanceThreshold,
+      memoriesInScopeCount: Number(rows[0].total),
+      candidates: rows.filter(
+        /** Omits the aggregate-only row for an empty result page. */
+        (row) => row.record !== null
+      ).map(
+        /** Decodes bounded hits after all database filtering and ranking. */
+        (row) => ({
+          memory: JSON.parse(String(row.record)),
+          score: Number(row.score),
+          keywordScore: Number(row.keywordScore),
+          tagScore: Number(row.tagScore),
+          vectorScore: Number(row.vectorScore),
+          edgeScore: Number(row.edgeScore),
+          passedThreshold: Number(row.score) > 0 && Number(row.score) >= options.relevanceThreshold
+        })
+      )
+    } };
   });
 }
 
@@ -1957,6 +1866,19 @@ var merge_default = {
   }
 };
 
+// src/identity.ts
+function uuid() {
+  const bytes = [];
+  for (let index = 0; index < 16; index += 1) bytes.push(Math.floor(Math.random() * 256));
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const text2 = bytes.map(
+    /** Encodes every byte as two hexadecimal digits. */
+    (byte) => byte.toString(16).padStart(2, "0")
+  ).join("");
+  return text2.slice(0, 8) + "-" + text2.slice(8, 12) + "-" + text2.slice(12, 16) + "-" + text2.slice(16, 20) + "-" + text2.slice(20);
+}
+
 // src/default-character.ts
 var operitDefaultContent = {
   "name": "Operit",
@@ -2123,9 +2045,9 @@ function assertMemorySpace(value) {
   const embeddingKeys = /* @__PURE__ */ new Set();
   for (const item of value.embeddings) {
     assertEmbedding(item);
-    const key = JSON.stringify([item.endpoint, item.model, item.text]);
-    if (embeddingKeys.has(key)) throw new Error("Duplicate stored embedding input");
-    embeddingKeys.add(key);
+    const key2 = JSON.stringify([item.endpoint, item.model, item.text]);
+    if (embeddingKeys.has(key2)) throw new Error("Duplicate stored embedding input");
+    embeddingKeys.add(key2);
   }
 }
 
@@ -2141,7 +2063,7 @@ function clone(value) {
   if (Array.isArray(value)) return value.map(clone);
   if (value !== null && typeof value === "object")
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, clone(item)])
+      Object.entries(value).map(([key2, item]) => [key2, clone(item)])
     );
   return value;
 }
@@ -2164,9 +2086,9 @@ function equal(left, right) {
     return false;
   const keys = Object.keys(left), other = Object.keys(right);
   return Array.isArray(left) === Array.isArray(right) && keys.length === other.length && keys.every(
-    (key) => Object.prototype.hasOwnProperty.call(right, key) && equal(
-      left[key],
-      right[key]
+    (key2) => Object.prototype.hasOwnProperty.call(right, key2) && equal(
+      left[key2],
+      right[key2]
     )
   );
 }
@@ -2366,14 +2288,14 @@ function prepareVersionOne(storage, metadata, directory) {
     const before = records(state), identities2 = {};
     function identity3(scope, value) {
       requireId(value, scope + " identity");
-      const key = JSON.stringify([scope, value]);
-      if (!Object.prototype.hasOwnProperty.call(identities2, key)) identities2[key] = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value) ? value : uuid();
-      return identities2[key];
+      const key2 = JSON.stringify([scope, value]);
+      if (!Object.prototype.hasOwnProperty.call(identities2, key2)) identities2[key2] = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value) ? value : uuid();
+      return identities2[key2];
     }
     function reference(scope, value) {
-      const key = JSON.stringify([scope, value]);
-      if (!Object.prototype.hasOwnProperty.call(identities2, key)) throw new Error("Missing migration reference: " + key);
-      return identities2[key];
+      const key2 = JSON.stringify([scope, value]);
+      if (!Object.prototype.hasOwnProperty.call(identities2, key2)) throw new Error("Missing migration reference: " + key2);
+      return identities2[key2];
     }
     const sourceStoreIds = new Set(state.stores.map((store) => store.id));
     const sourceCardIds = new Set(state.cards.map((card) => card.id));
@@ -2443,15 +2365,15 @@ function prepareVersionOne(storage, metadata, directory) {
     const original = new Map(rows.map((row) => [JSON.stringify([row.collection, row.key]), row]));
     const targets = /* @__PURE__ */ new Set();
     for (let index = 0; index < after.length; index += 1) {
-      const from = before[index], to = after[index], key = JSON.stringify([to.collection, to.key]);
-      if (targets.has(key)) throw new Error("Duplicate migration destination: " + key);
-      targets.add(key);
+      const from = before[index], to = after[index], key2 = JSON.stringify([to.collection, to.key]);
+      if (targets.has(key2)) throw new Error("Duplicate migration destination: " + key2);
+      targets.add(key2);
       const source = original.get(JSON.stringify([from.collection, from.key]));
       if (source === void 0) throw new Error("Missing migration source record");
       if (from.key === to.key) {
         if (!equal(source.value, to.value)) changes2.push([{ op: "put", collection: to.collection, key: to.key, value: to.value, expectedValue: source.value }]);
       } else {
-        if (original.has(key)) throw new Error("Occupied migration destination: " + key);
+        if (original.has(key2)) throw new Error("Occupied migration destination: " + key2);
         changes2.push([
           { op: "put", collection: to.collection, key: to.key, value: to.value, expectedValue: null },
           { op: "delete", collection: from.collection, key: from.key, expectedValue: source.value }
@@ -2461,10 +2383,10 @@ function prepareVersionOne(storage, metadata, directory) {
     const retained2 = new Set(before.map((row) => JSON.stringify([row.collection, row.key])));
     for (const row of rows) if (!retained2.has(JSON.stringify([row.collection, row.key])))
       changes2.push([{ op: "delete", collection: row.collection, key: row.key, expectedValue: row.value }]);
-    for (const [key, originalValue] of (yield storage.chats.data()).entries()) {
-      const collection = key.startsWith("binding_") ? "chat_bindings" : key.startsWith("draft_") ? "chat_drafts" : null;
-      if (collection === null) throw new Error("Unsupported chat preference during migration: " + key);
-      const id2 = key.slice(collection === "chat_bindings" ? 8 : 6);
+    for (const [key2, originalValue] of (yield storage.chats.data()).entries()) {
+      const collection = key2.startsWith("binding_") ? "chat_bindings" : key2.startsWith("draft_") ? "chat_drafts" : null;
+      if (collection === null) throw new Error("Unsupported chat preference during migration: " + key2);
+      const id2 = key2.slice(collection === "chat_bindings" ? 8 : 6);
       assertObject(originalValue, collection);
       const value = clone(originalValue);
       value.selection = selection(requireId(value.selection, "stored selection"));
@@ -2506,9 +2428,9 @@ function verifyFile(directory, file) {
 function migrationRecords(storage) {
   return __async(this, null, function* () {
     const rows = [], configuration = yield storage.data();
-    for (const name of configurationNames) for (const [key, value] of configuration[name].entries()) {
-      if (!key.startsWith(recordPrefix)) throw new Error("Unknown character preference during migration: " + key);
-      rows.push({ collection: name, key: key.slice(recordPrefix.length), value, version: null });
+    for (const name of configurationNames) for (const [key2, value] of configuration[name].entries()) {
+      if (!key2.startsWith(recordPrefix)) throw new Error("Unknown character preference during migration: " + key2);
+      rows.push({ collection: name, key: key2.slice(recordPrefix.length), value, version: null });
     }
     for (const collection of ["owners", "memories", "links", "chunks", "candidates", "embeddings"])
       for (const entry of yield storage.memory.read(collection)) rows.push({ collection, ...entry });
@@ -2527,11 +2449,11 @@ function applyChanges(storage, changes2) {
       yield store.edit((preferences) => {
         const prefix = collection === "chat_bindings" ? "binding_" : collection === "chat_drafts" ? "draft_" : recordPrefix;
         for (const change of changes2) {
-          const key = prefix + change.key, value = preferences.get(key);
+          const key2 = prefix + change.key, value = preferences.get(key2);
           if (change.op === "put" && equal(value, change.value) || change.op === "delete" && value === void 0) continue;
           if (change.expectedValue === null ? value !== void 0 : !equal(value, change.expectedValue)) throw new Error("Character migration source changed: " + collection + "/" + change.key);
-          if (change.op === "put") preferences.set(key, change.value);
-          else preferences.remove(key);
+          if (change.op === "put") preferences.set(key2, change.value);
+          else preferences.remove(key2);
         }
       });
       return;
@@ -2847,63 +2769,92 @@ var memory_merge_default = {
 
 // src/storage/memory.ts
 var characterMerge = memory_merge_default;
-var HOST_READ_PAGE_LIMIT = 200;
-var HOST_READ_PAGE_FLOOR = 32;
+var HOST_READ_PAGE_LIMIT = 100;
 var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
-  /** Retains one authenticated object handle without declaring business SQL tables. */
+  /** Retains one authenticated storage handle. */
   constructor(database) {
     this.database = database;
   }
-  /** Opens the sole synchronized character namespace independently of plugin installation scope. */
+  /** Opens the sole synchronized character namespace through the shared host. */
   static open() {
     return __async(this, null, function* () {
       const directory = ToolPkg.getSpaceDataDir();
-      if (typeof directory !== "string" || directory.trim() === "")
-        throw new Error("Plugin data directory is unavailable");
-      const database = new _CharacterMemoryDatabase(yield Tools.Storage.objects.open({ path: directory + "/memory.sqlite", merge: characterMerge }));
-      return database;
+      if (typeof directory !== "string" || directory.trim() === "") throw new Error("Plugin data directory is unavailable");
+      return new _CharacterMemoryDatabase(yield Tools.Storage.objects.open({ path: directory + "/memory.sqlite", merge: characterMerge }));
     });
   }
-  /** Closes the retained memory engine handle. */
+  /** Closes the retained memory database handle. */
   close() {
     return this.database.close();
   }
-  /**
-   * Reads complete JSON values in primary-key order using bounded host pages. Vector
-   * records push one page past the host structured bridge budget, so a rejected page
-   * shrinks toward the floor instead of failing the whole collection read.
-   */
+  /** Reads explicit backup or migration pages without hiding storage failures. */
   read(collection) {
     return __async(this, null, function* () {
       const result2 = [];
       const source = this.database.collection(collection);
-      let after = null, pageSize = HOST_READ_PAGE_LIMIT;
+      let after = null;
       for (; ; ) {
-        let page;
-        try {
-          page = yield source.list(after, pageSize);
-        } catch (error) {
-          if (pageSize <= HOST_READ_PAGE_FLOOR) throw error;
-          pageSize = Math.max(HOST_READ_PAGE_FLOOR, Math.floor(pageSize / 2));
-          continue;
-        }
+        const page = yield source.list(after, HOST_READ_PAGE_LIMIT);
         result2.push(...page);
-        if (page.length < pageSize) return result2;
+        if (page.length < HOST_READ_PAGE_LIMIT) return result2;
         after = page[page.length - 1].key;
       }
     });
   }
-  /** Reads one exact document and its host-issued concurrency version. */
-  get(collection, key) {
-    return this.database.collection(collection).get(key);
+  /** Executes database-side filtering, ranking and bounded projections. */
+  query(sql, params = []) {
+    return this.database.query(sql, params);
   }
-  /** Reads selected identities in one host snapshot without scanning their collections. */
+  /** Reads one owner's records using the indexed collection and primary-key range. */
+  select(_0, _1) {
+    return __async(this, arguments, function* (collection, ownerKey, condition = "1", params = [], limit2 = 100, after = "") {
+      const rows = yield this.query(
+        "SELECT key,value,version FROM plugin_objects WHERE collection=? AND key>=? AND key<? AND key>? AND (" + condition + ") ORDER BY key LIMIT ?",
+        [collection, ownerKey + "/", ownerKey + "0", after, ...params, limit2]
+      );
+      return rows.map(
+        /** Decodes only database-selected records. */
+        (row) => ({ key: String(row.key), value: JSON.parse(String(row.value)), version: String(row.version) })
+      );
+    });
+  }
+  /** Pages an explicitly requested owner export without loading other owners. */
+  all(_0, _1) {
+    return __async(this, arguments, function* (collection, ownerKey, condition = "1", params = []) {
+      const result2 = [];
+      let after = "";
+      for (; ; ) {
+        const page = yield this.select(collection, ownerKey, condition, params, HOST_READ_PAGE_LIMIT, after);
+        result2.push(...page);
+        if (page.length < HOST_READ_PAGE_LIMIT) return result2;
+        after = page[page.length - 1].key;
+      }
+    });
+  }
+  /** Removes the retired text cache after schema imports without reading vector payloads. */
+  retireLegacyEmbeddings() {
+    return __async(this, null, function* () {
+      for (; ; ) {
+        const rows = yield this.query("SELECT key,version FROM plugin_objects WHERE collection='embeddings' ORDER BY key LIMIT 100");
+        if (rows.length === 0) return;
+        yield this.commit(rows.map(
+          /** Deletes only exact cache versions selected by this migration. */
+          (row) => ({ op: "delete", collection: "embeddings", key: String(row.key), expectedVersion: String(row.version) })
+        ));
+      }
+    });
+  }
+  /** Reads one exact record and its host-issued concurrency version. */
+  get(collection, key2) {
+    return this.database.collection(collection).get(key2);
+  }
+  /** Reads selected identities in one host snapshot. */
   getMany(collection, keys) {
     return this.database.collection(collection).getMany([...keys]);
   }
-  /** Publishes complete changed JSON documents and memory objects in one guarded transaction. */
-  commit(mutations) {
-    return this.database.commit(mutations);
+  /** Publishes guarded source records and vectors in one synchronized transaction. */
+  commit(mutations, guards = []) {
+    return this.database.commit(mutations, guards);
   }
 };
 
@@ -2912,7 +2863,7 @@ var merge = merge_default;
 var configurationNames = ["cards", "groups", "tags", "stores", "conversationGroups"];
 var recordPrefix = "record_";
 function documents(preferences) {
-  return preferences.entries().filter(([key]) => key.startsWith(recordPrefix)).map(([, value]) => clone(value));
+  return preferences.entries().filter(([key2]) => key2.startsWith(recordPrefix)).map(([, value]) => clone(value));
 }
 function document(preferences, id2) {
   return clone(preferences.get(recordPrefix + id2));
@@ -2958,6 +2909,7 @@ var CharacterStorage = class _CharacterStorage {
         });
         yield metadata.data();
         yield migrateCharacterStorage(storage, directory);
+        yield memory.retireLegacyEmbeddings();
         return storage;
       } catch (error) {
         const closed = yield Promise.allSettled([...handles.map((handle) => handle.close()), ...memory === void 0 ? [] : [memory.close()]]);
@@ -3009,7 +2961,7 @@ var CharacterChatStore = class {
   /** Lists persisted bindings directly from one immutable preference snapshot. */
   listChatBindings() {
     return __async(this, null, function* () {
-      return (yield this.storage.chats.data()).entries().filter(([key]) => key.startsWith("binding_")).map(([key, value]) => ({ chatId: requireId(key.slice(8), "stored chat id"), selection: decodeChatMarker(value).selection }));
+      return (yield this.storage.chats.data()).entries().filter(([key2]) => key2.startsWith("binding_")).map(([key2, value]) => ({ chatId: requireId(key2.slice(8), "stored chat id"), selection: decodeChatMarker(value).selection }));
     });
   }
   /** Reads selected chat identities from a single JSON preference snapshot. */
@@ -3070,9 +3022,9 @@ var CharacterChatStore = class {
       requireId(binding.chatId, "draft id");
       const marker = decodeChatMarker({ version: 1, selection: binding.selection });
       yield this.storage.chats.edit((preferences) => {
-        const key = "draft_" + binding.chatId;
-        if (preferences.contains(key)) throw new Error("Chat draft binding already exists: " + binding.chatId);
-        preferences.set(key, { ...marker });
+        const key2 = "draft_" + binding.chatId;
+        if (preferences.contains(key2)) throw new Error("Chat draft binding already exists: " + binding.chatId);
+        preferences.set(key2, { ...marker });
       });
     });
   }
@@ -3123,6 +3075,746 @@ var CharacterChatStore = class {
   }
 };
 
+// src/storage/memory-repository.ts
+function key(ownerKey, id2) {
+  return requireId(ownerKey, "owner key") + "/" + requireId(id2, "record id");
+}
+function folder(value) {
+  if (value === null) return null;
+  const parts = value.replace(/\\/g, "/").split("/").map(
+    /** Normalizes authored folder components. */
+    (part) => part.trim()
+  ).filter(
+    /** Removes empty path components. */
+    (part) => part !== ""
+  );
+  if (parts.some(
+    /** Rejects relative traversal components. */
+    (part) => part === "." || part === ".."
+  )) throw new Error("Relative folder traversal is not allowed");
+  return parts.length === 0 ? null : parts.join("/");
+}
+function put(collection, recordKey2, value, version) {
+  return { op: "put", collection, key: recordKey2, value: storedValue(value), expectedVersion: version };
+}
+function remove(row) {
+  return { op: "delete", collection: row.collection, key: row.key, expectedVersion: row.version };
+}
+var DatabaseMemoryRepository = class {
+  /** Retains only the storage capability; network work never owns a database transaction. */
+  constructor(memoryDatabase) {
+    this.memoryDatabase = memoryDatabase;
+    this.snapshots = /* @__PURE__ */ new WeakMap();
+  }
+  /** Requires the persisted metadata for one exact owner. */
+  owner(ownerKey) {
+    return __async(this, null, function* () {
+      const entry = yield this.memoryDatabase.get("owners", requireId(ownerKey, "memory owner"));
+      if (entry === null) throw new Error("Missing memory owner: " + ownerKey);
+      return entry;
+    });
+  }
+  /** Requires one existing source or relationship without scanning its collection. */
+  entry(collection, ownerKey, id2) {
+    return __async(this, null, function* () {
+      const entry = yield this.memoryDatabase.get(collection, key(ownerKey, id2));
+      if (entry === null) throw new Error("Missing " + collection + " record: " + id2);
+      return entry;
+    });
+  }
+  /** Reads explicit owner exports while preserving exact versions for later edits. */
+  rows(_0, _1) {
+    return __async(this, arguments, function* (collection, ownerKey, condition = "1", params = []) {
+      return (yield this.memoryDatabase.all(collection, ownerKey, condition, params)).map(
+        /** Preserves record provenance for guarded writes. */
+        (row) => ({ collection, ...row })
+      );
+    });
+  }
+  /** Publishes one bounded operation atomically and rejects oversized operations before writing. */
+  commit(_0) {
+    return __async(this, arguments, function* (mutations, guards = []) {
+      if (mutations.length === 0) return;
+      if (mutations.length > 1e3) throw new Error("Memory operation exceeds the 1000-record atomic transaction limit");
+      yield this.memoryDatabase.commit(mutations, guards);
+    });
+  }
+  /** Builds or reuses the vector belonging to this exact source input. */
+  sourceEmbedding(text2, settings2, existing) {
+    return __async(this, null, function* () {
+      if (!settings2.cloudEmbeddingEnabled) return null;
+      const space = embeddingSpace(settings2);
+      if (existing !== void 0 && existing !== null && existing.space === space && existing.text === text2) return existing;
+      return (yield embedTexts([text2], settings2))[0];
+    });
+  }
+  /** Reads settings from one owner record. */
+  readMemorySettings(ownerKey) {
+    return __async(this, null, function* () {
+      return (yield this.owner(ownerKey)).value.settings;
+    });
+  }
+  /** Updates complete settings with the owner's exact version precondition. */
+  writeMemorySettings(ownerKey, settings2) {
+    return __async(this, null, function* () {
+      assertMemorySettings(settings2);
+      if (settings2.cloudEmbeddingEnabled) embeddingSpace(settings2);
+      const owner2 = yield this.owner(ownerKey);
+      yield this.commit([put("owners", ownerKey, { ...owner2.value, settings: settings2 }, owner2.version)]);
+    });
+  }
+  /** Saves editor settings and weights atomically while preserving the scheduler's current due time. */
+  writeMemoryOwnerSettings(ownerKey, settings2, config) {
+    return __async(this, null, function* () {
+      assertMemorySettings(settings2);
+      assertSearchConfig(config);
+      if (settings2.cloudEmbeddingEnabled) embeddingSpace(settings2);
+      const owner2 = yield this.owner(ownerKey), saved = { ...settings2, nextAutoSaveRunAtMs: owner2.value.settings.nextAutoSaveRunAtMs };
+      yield this.commit([put("owners", ownerKey, { ...owner2.value, settings: saved, searchConfig: config }, owner2.version)]);
+      return { settings: saved, config };
+    });
+  }
+  /** Reads persisted search weights without reading memory bodies. */
+  readMemorySearchConfig(ownerKey) {
+    return __async(this, null, function* () {
+      return (yield this.owner(ownerKey)).value.searchConfig;
+    });
+  }
+  /** Writes complete search configuration through optimistic concurrency. */
+  writeMemorySearchConfig(ownerKey, searchConfig2) {
+    return __async(this, null, function* () {
+      assertSearchConfig(searchConfig2);
+      const owner2 = yield this.owner(ownerKey);
+      yield this.commit([put("owners", ownerKey, { ...owner2.value, searchConfig: searchConfig2 }, owner2.version)]);
+    });
+  }
+  /** Returns bounded ranked results produced by the database. */
+  searchMemories(options) {
+    return __async(this, null, function* () {
+      assertSearchOptions(options);
+      const owner2 = yield this.owner(options.ownerKey);
+      return (yield searchMemoryDatabase(this.memoryDatabase, owner2.value.settings, options, owner2.value.searchConfig)).result.candidates.map(
+        /** Returns the complete source records selected in the database. */
+        (hit) => hit.memory
+      );
+    });
+  }
+  /** Returns one filtered page and its database-counted snapshot exclusions. */
+  searchMemoryPage(options) {
+    return __async(this, null, function* () {
+      assertSearchOptions(options);
+      const owner2 = yield this.owner(options.ownerKey);
+      const { result: result2, queryEmbedding } = yield searchMemoryDatabase(this.memoryDatabase, owner2.value.settings, options, owner2.value.searchConfig);
+      const items = result2.candidates.map(
+        /** Projects only selected source records. */
+        (hit) => hit.memory
+      );
+      const documents2 = yield Promise.all(items.filter(
+        /** Selects only returned document sources. */
+        (memory) => memory.isDocumentNode
+      ).map(
+        /** Reuses one query vector for every selected document without further HTTP requests. */
+        (memory) => __async(this, null, function* () {
+          return { memoryId: memory.id, ...yield this.queryChunks(options.ownerKey, owner2.value, memory, options.query, Math.min(options.limit ?? 20, 20), queryEmbedding) };
+        })
+      ));
+      return { ownerKey: options.ownerKey, items, documents: documents2, excludedBySnapshotCount: result2.excludedBySnapshotCount };
+    });
+  }
+  /** Returns bounded score explanations from the same database query used by recall. */
+  searchMemoryDebug(options, config) {
+    return __async(this, null, function* () {
+      assertSearchOptions(options);
+      assertSearchConfig(config);
+      const owner2 = yield this.owner(options.ownerKey);
+      return (yield searchMemoryDatabase(this.memoryDatabase, owner2.value.settings, options, config, true)).result;
+    });
+  }
+  /** Lists an explicitly requested owner library without loading other owners. */
+  listMemories(ownerKey) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      const rows = yield this.memoryDatabase.all("memories", ownerKey);
+      return rows.map(
+        /** Projects original records for the library view or export. */
+        (row) => row.value.record
+      );
+    });
+  }
+  /** Reads only the explicitly selected exact titles, including genuine duplicate clusters. */
+  readMemoriesByTitles(ownerKey, titles) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      const rows = yield this.memoryDatabase.all("memories", ownerKey, "json_extract(value,'$.record.title') IN (SELECT value FROM json_each(?))", [JSON.stringify(titles)]);
+      return rows.map(
+        /** Projects only selected source records. */
+        (row) => row.value.record
+      );
+    });
+  }
+  /** Requires one exact title and rejects ambiguity within a two-record database page. */
+  readMemoryByTitle(ownerKey, title) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      const name = requireName(title, "memory title");
+      const rows = yield this.memoryDatabase.select("memories", ownerKey, "json_extract(value,'$.record.title')=?", [name], 2);
+      if (rows.length === 0) throw new Error("\u8BB0\u5FC6\u4E0D\u5B58\u5728\uFF1A" + name);
+      if (rows.length !== 1) throw new Error("\u8BB0\u5FC6\u6807\u9898\u4E0D\u552F\u4E00\uFF1A" + name);
+      return rows[0].value.record;
+    });
+  }
+  /** Reads distinct folder paths in the database and expands their parent directories. */
+  listMemoryFolders(ownerKey) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      const rows = yield this.memoryDatabase.query("SELECT DISTINCT json_extract(value,'$.record.folderPath') AS folder FROM plugin_objects WHERE collection='memories' AND key>=? AND key<?", [ownerKey + "/", ownerKey + "0"]);
+      const folders = /* @__PURE__ */ new Set();
+      for (const row of rows) {
+        if (row.folder === null) {
+          folders.add("");
+          continue;
+        }
+        const parts = String(row.folder).split("/");
+        for (let length = 1; length <= parts.length; length += 1) folders.add(parts.slice(0, length).join("/"));
+      }
+      return [...folders].sort();
+    });
+  }
+  /** Creates an intentional new non-document memory. */
+  createMemory(ownerKey, values) {
+    return __async(this, null, function* () {
+      assertMemoryValues(values);
+      const now = Date.now();
+      return this.saveMemory(ownerKey, {
+        ...values,
+        id: "",
+        uuid: "",
+        title: requireName(values.title, "memory title"),
+        folderPath: folder(values.folderPath),
+        documentPath: null,
+        isDocumentNode: false,
+        chunkIndexFilePath: null,
+        createdAt: now,
+        updatedAt: now,
+        lastAccessedAt: now,
+        tags: normalizeNames(values.tags).map(
+          /** Allocates explicit authored tag identities. */
+          (name) => ({ id: uuid(), name })
+        ),
+        properties: []
+      });
+    });
+  }
+  /** Captures the source version before embedding work begins. */
+  saveMemory(ownerKey, memory) {
+    return __async(this, null, function* () {
+      const original = memory.id === "" ? null : yield this.entry("memories", ownerKey, memory.id);
+      return this.saveMemoryRecord(ownerKey, memory, original);
+    });
+  }
+  /** Commits a source and its vector under the version that supplied its original fields. */
+  saveMemoryRecord(ownerKey, memory, original) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.owner(ownerKey), incoming = clone(memory), now = Date.now();
+      incoming.title = requireName(incoming.title, "memory title");
+      incoming.folderPath = folder(incoming.folderPath);
+      if (incoming.id === "") {
+        incoming.id = incoming.uuid === "" ? uuid() : incoming.uuid;
+        incoming.uuid = incoming.id;
+        incoming.createdAt = now;
+        incoming.lastAccessedAt = now;
+      } else {
+        if (original === null) throw new Error("Existing memory requires its original source version");
+        if (original.value.record.uuid !== incoming.uuid) throw new Error("An existing memory UUID is immutable");
+        incoming.createdAt = original.value.record.createdAt;
+      }
+      incoming.updatedAt = now;
+      assertMemory(incoming);
+      const occupied = yield this.memoryDatabase.select(
+        "memories",
+        ownerKey,
+        "(json_extract(value,'$.record.title')=? OR json_extract(value,'$.record.uuid')=?) AND json_extract(value,'$.record.id')<>?",
+        [incoming.title, incoming.uuid, incoming.id],
+        1
+      );
+      if (occupied.length !== 0) throw new Error("Memory title or UUID already exists");
+      const embedding = yield this.sourceEmbedding(incoming.isDocumentNode ? incoming.title : incoming.content, owner2.value.settings, original?.value.embedding);
+      yield this.commit([put("memories", key(ownerKey, incoming.id), { ownerKey, record: incoming, embedding }, original === null ? null : original.version)], [{ collection: "owners", key: ownerKey, expectedVersion: owner2.version }]);
+      return incoming;
+    });
+  }
+  /** Updates authored fields while retaining the source identity and document metadata. */
+  updateMemory(ownerKey, id2, values) {
+    return __async(this, null, function* () {
+      assertMemoryValues(values);
+      const original = yield this.entry("memories", ownerKey, id2);
+      return this.saveMemoryRecord(ownerKey, { ...original.value.record, ...values, tags: normalizeNames(values.tags).map(
+        /** Allocates the explicit replacement tag list. */
+        (name) => ({ id: uuid(), name })
+      ) }, original);
+    });
+  }
+  /** Merges selected sources, redirects their relationships and commits the new vector atomically. */
+  mergeMemories(ownerKey, sourceTitles, values) {
+    return __async(this, null, function* () {
+      assertMemoryValues(values);
+      const owner2 = yield this.owner(ownerKey);
+      const titles = [...new Set(sourceTitles.map(
+        /** Validates explicit merge source titles. */
+        (title) => requireName(title, "merge source title")
+      ))];
+      const sources = yield this.rows("memories", ownerKey, "json_extract(value,'$.record.title') IN (SELECT value FROM json_each(?))", [JSON.stringify(titles)]);
+      const memories = sources.map(
+        /** Projects selected merge sources only. */
+        (row) => row.value.record
+      );
+      for (const title of titles) if (!memories.some(
+        /** Requires an exact persisted source title. */
+        (memory) => memory.title === title
+      )) throw new Error("Memory merge source does not exist: " + title);
+      if (memories.length < 2) throw new Error("Memory merge requires at least two unique source records");
+      const ids = memories.map(
+        /** Captures stable source identities for relationship rewrites. */
+        (memory) => memory.id
+      ), uuids = memories.map(
+        /** Captures document identities for chunk deletion. */
+        (memory) => memory.uuid
+      );
+      const occupied = yield this.memoryDatabase.select("memories", ownerKey, "json_extract(value,'$.record.title')=? AND json_extract(value,'$.record.id') NOT IN (SELECT value FROM json_each(?))", [values.title.trim(), JSON.stringify(ids)], 1);
+      if (occupied.length !== 0) throw new Error("Memory merge target title already exists");
+      const now = Date.now(), id2 = uuid();
+      const record2 = {
+        ...values,
+        id: id2,
+        uuid: id2,
+        title: requireName(values.title, "memory title"),
+        folderPath: folder(values.folderPath),
+        tags: normalizeNames(values.tags).map(
+          /** Allocates the merged record's authored tags. */
+          (name) => ({ id: uuid(), name })
+        ),
+        properties: [],
+        createdAt: now,
+        updatedAt: now,
+        lastAccessedAt: now,
+        documentPath: null,
+        isDocumentNode: false,
+        chunkIndexFilePath: null
+      };
+      assertMemory(record2);
+      const chunks = yield this.rows("chunks", ownerKey, "json_extract(value,'$.record.memoryUuid') IN (SELECT value FROM json_each(?))", [JSON.stringify(uuids)]);
+      const links = yield this.rows("links", ownerKey, "json_extract(value,'$.record.sourceMemoryId') IN (SELECT value FROM json_each(?)) OR json_extract(value,'$.record.targetMemoryId') IN (SELECT value FROM json_each(?))", [JSON.stringify(ids), JSON.stringify(ids)]);
+      const embedding = yield this.sourceEmbedding(record2.content, owner2.value.settings, null);
+      const mutations = [...sources.map(remove), ...chunks.map(remove), put("memories", key(ownerKey, id2), { ownerKey, record: record2, embedding }, null)];
+      const selected = new Set(ids);
+      for (const row of links) {
+        const envelope = row.value, link2 = { ...envelope.record };
+        if (selected.has(link2.sourceMemoryId)) link2.sourceMemoryId = id2;
+        if (selected.has(link2.targetMemoryId)) link2.targetMemoryId = id2;
+        mutations.push(link2.sourceMemoryId === link2.targetMemoryId ? remove(row) : put("links", row.key, { ...envelope, record: link2 }, row.version));
+      }
+      yield this.commit(mutations);
+      return record2;
+    });
+  }
+  /** Deletes the source vector, document chunks and incident links in the same transaction. */
+  deleteMemory(ownerKey, id2) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      const memory = yield this.entry("memories", ownerKey, id2);
+      const chunks = yield this.rows("chunks", ownerKey, "json_extract(value,'$.record.memoryUuid')=?", [memory.value.record.uuid]);
+      const links = yield this.rows("links", ownerKey, "json_extract(value,'$.record.sourceMemoryId')=? OR json_extract(value,'$.record.targetMemoryId')=?", [id2, id2]);
+      yield this.commit([{ op: "delete", collection: "memories", key: key(ownerKey, id2), expectedVersion: memory.version }, ...chunks.map(remove), ...links.map(remove)]);
+    });
+  }
+  /** Moves selected records without regenerating unchanged source vectors. */
+  moveMemories(ownerKey, ids, folderPath) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      const destination = folder(folderPath), mutations = [];
+      for (const id2 of new Set(ids)) {
+        const entry = yield this.entry("memories", ownerKey, id2);
+        mutations.push(put("memories", key(ownerKey, id2), { ...entry.value, record: { ...entry.value.record, folderPath: destination, updatedAt: Date.now() } }, entry.version));
+      }
+      yield this.commit(mutations);
+    });
+  }
+  /** Lists explicit graph relationships for one owner. */
+  listMemoryLinks(ownerKey) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      return (yield this.memoryDatabase.all("links", ownerKey)).map(
+        /** Projects complete graph relationships. */
+        (row) => row.value.record
+      );
+    });
+  }
+  /** Reads one relationship by its exact owner-scoped identity. */
+  readMemoryLink(ownerKey, id2) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      return (yield this.entry("links", ownerKey, id2)).value.record;
+    });
+  }
+  /** Creates a relationship after checking both exact source identities. */
+  createLink(ownerKey, values) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      yield this.entry("memories", ownerKey, values.sourceMemoryId);
+      yield this.entry("memories", ownerKey, values.targetMemoryId);
+      if (values.sourceMemoryId === values.targetMemoryId) throw new Error("Self relationships are not allowed");
+      assertNumber(values.weight, "link weight", 0, 1);
+      assertString(values.description, "link description");
+      const record2 = { ...values, type_: requireName(values.type_, "link type"), id: uuid() };
+      yield this.commit([put("links", key(ownerKey, record2.id), { ownerKey, record: record2 }, null)]);
+      return record2;
+    });
+  }
+  /** Updates the exact relationship version that supplied the original fields. */
+  updateLink(ownerKey, id2, values) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      const original = yield this.entry("links", ownerKey, id2);
+      assertNumber(values.weight, "link weight", 0, 1);
+      assertString(values.description, "link description");
+      const record2 = { ...original.value.record, ...values, type_: requireName(values.type_, "link type") };
+      yield this.commit([put("links", key(ownerKey, id2), { ownerKey, record: record2 }, original.version)]);
+      return record2;
+    });
+  }
+  /** Deletes one exact relationship with its optimistic concurrency precondition. */
+  deleteLink(ownerKey, id2) {
+    return __async(this, null, function* () {
+      yield this.owner(ownerKey);
+      const original = yield this.entry("links", ownerKey, id2);
+      yield this.commit([{ op: "delete", collection: "links", key: key(ownerKey, id2), expectedVersion: original.version }]);
+    });
+  }
+  /** Reads job metadata and candidates independently of memory bodies and vectors. */
+  readMemoryJobState(ownerKey) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.owner(ownerKey), candidates = yield this.rows("candidates", ownerKey);
+      const state = { ...owner2.value, candidates: candidates.map(
+        /** Projects job candidates without memory data. */
+        (row) => row.value.record
+      ) };
+      this.snapshots.set(state, clone([{ collection: "owners", key: ownerKey, value: storedValue(owner2.value), version: owner2.version }, ...candidates]));
+      return state;
+    });
+  }
+  /** Commits only changed job records against the versions read by this operation. */
+  writeMemoryJobState(ownerKey, state) {
+    return __async(this, null, function* () {
+      if (state.ownerKey !== ownerKey) throw new Error("Memory job owner cannot change");
+      const before = this.snapshots.get(state);
+      if (before === void 0) throw new Error("Memory job edits require their original database snapshot");
+      const { candidates, ...owner2 } = state;
+      const after = [{ collection: "owners", key: ownerKey, value: storedValue(owner2) }, ...candidates.map(
+        /** Uses stable candidate identities for concurrent scheduler claims. */
+        (record2) => ({ collection: "candidates", key: key(ownerKey, record2.id), value: storedValue({ ownerKey, record: record2 }) })
+      )];
+      yield this.commit(this.diff(before, after));
+      this.snapshots.delete(state);
+    });
+  }
+  /** Computes record-level mutations only for explicitly selected records. */
+  diff(before, after) {
+    const previous = new Map(before.map(
+      /** Indexes the operation's original exact versions. */
+      (row) => [row.collection + "\0" + row.key, row]
+    ));
+    const mutations = [];
+    for (const row of after) {
+      const identity3 = row.collection + "\0" + row.key, original = previous.get(identity3);
+      if (original === void 0 || !equal(original.value, row.value)) mutations.push({ op: "put", ...row, expectedVersion: original === void 0 ? null : original.version });
+      previous.delete(identity3);
+    }
+    mutations.push(...[...previous.values()].map(remove));
+    return mutations;
+  }
+  /** Counts candidate states in SQLite without loading their payloads. */
+  readMemoryAutoSaveStatus(ownerKey) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.owner(ownerKey);
+      const rows = yield this.memoryDatabase.query(`SELECT json_extract(value,'$.record.status') AS status,count(*) AS count,count(DISTINCT json_extract(value,'$.record.chatId')) AS chats
+      FROM plugin_objects WHERE collection='candidates' AND key>=? AND key<? GROUP BY json_extract(value,'$.record.status')`, [ownerKey + "/", ownerKey + "0"]);
+      let pendingCandidates = 0, pendingChats = 0, processingCandidates = 0, failedCandidates = 0;
+      for (const row of rows) {
+        if (row.status === "pending") {
+          pendingCandidates = Number(row.count);
+          pendingChats = Number(row.chats);
+        }
+        if (row.status === "processing") processingCandidates = Number(row.count);
+        if (row.status === "failed") failedCandidates = Number(row.count);
+      }
+      const failed = yield this.memoryDatabase.select("candidates", ownerKey, "json_extract(value,'$.record.status')='failed'", [], 1);
+      const nextRunAtMs = owner2.value.settings.nextAutoSaveRunAtMs;
+      return {
+        ownerKey,
+        pendingCandidates,
+        pendingChats,
+        processingCandidates,
+        failedCandidates,
+        nextRunAtMs,
+        minutesUntilNextRun: Math.max(0, Math.ceil((nextRunAtMs - Date.now()) / 6e4)),
+        lastError: failed.length === 0 ? "" : failed[0].value.record.lastError
+      };
+    });
+  }
+  /** Reads persisted rebuild progress without waiting for model requests. */
+  readMemoryRebuildProgress(ownerKey) {
+    return __async(this, null, function* () {
+      return (yield this.owner(ownerKey)).value.rebuildProgress;
+    });
+  }
+  /** Cancels a running task through an exact owner-version update. */
+  cancelMemoryRebuild(ownerKey) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.owner(ownerKey), progress = owner2.value.rebuildProgress;
+      if (progress.status !== "running" && progress.status !== "preparing") throw new Error("No memory rebuild is active");
+      yield this.commit([put("owners", ownerKey, { ...owner2.value, rebuildProgress: { ...progress, status: "cancelled" } }, owner2.version)]);
+    });
+  }
+  /** Rebuilds source vectors page by page and publishes completed pages durably. */
+  rebuildMemoryEmbeddings(ownerKey) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.owner(ownerKey);
+      embeddingSpace(owner2.value.settings);
+      let count = 0;
+      for (const collection of ["memories", "chunks"]) {
+        let after = "";
+        for (; ; ) {
+          const rows = yield this.memoryDatabase.select(collection, ownerKey, "1", [], 256, after);
+          if (rows.length === 0) break;
+          const texts = rows.map(
+            /** Selects the exact searchable source input. */
+            (row) => collection === "memories" && row.value.record.isDocumentNode ? row.value.record.title : row.value.record.content
+          );
+          const embeddings = yield embedTexts(texts, owner2.value.settings);
+          const mutations = rows.map(
+            /** Publishes source provenance and vector together under the original version. */
+            (row, index) => put(collection, row.key, { ...row.value, embedding: embeddings[index] }, row.version)
+          );
+          for (let start = 0; start < mutations.length; start += 64) yield this.commit(mutations.slice(start, start + 64), [{ collection: "owners", key: ownerKey, expectedVersion: owner2.version }]);
+          if (collection === "memories") count += rows.length;
+          after = rows[rows.length - 1].key;
+        }
+      }
+      return count;
+    });
+  }
+  /** Reads full owner records only for explicit backups and bulk imports. */
+  readMemorySpace(ownerKey) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.owner(ownerKey), state = { ...owner2.value, memories: [], links: [], chunks: [], candidates: [], embeddings: [] };
+      const before = [{ collection: "owners", key: ownerKey, value: storedValue(owner2.value), version: owner2.version }];
+      for (const collection of ["memories", "links", "chunks", "candidates"]) {
+        const rows = yield this.rows(collection, ownerKey);
+        before.push(...rows);
+        for (const row of rows) state[collection].push(row.value.record);
+      }
+      this.snapshots.set(state, clone(before));
+      return state;
+    });
+  }
+  /** Applies an explicit owner import while retaining unchanged source vectors. */
+  writeMemorySpace(ownerKey, state) {
+    return __async(this, null, function* () {
+      assertMemorySpace(state);
+      if (state.ownerKey !== ownerKey) throw new Error("Memory owner identity cannot change");
+      const before = this.snapshots.get(state);
+      if (before === void 0) throw new Error("Memory imports require their original database snapshot");
+      const { memories, links, chunks, candidates, embeddings: _retiredCache, ...owner2 } = state;
+      const originalOwner = before.find(
+        /** Selects the original owner path guard. */
+        (row) => row.collection === "owners"
+      );
+      if (originalOwner === void 0 || originalOwner.value.userDocumentPath !== owner2.userDocumentPath) throw new Error("Memory USER.md path cannot change");
+      const previous = new Map(before.map(
+        /** Indexes source envelopes by their stable persisted identity. */
+        (row) => [row.collection + "\0" + row.key, row]
+      ));
+      const after = [{ collection: "owners", key: ownerKey, value: storedValue(owner2) }];
+      const pending = [];
+      const space = owner2.settings.cloudEmbeddingEnabled ? embeddingSpace(owner2.settings) : "";
+      for (const [collection, records2] of [["memories", memories], ["links", links], ["chunks", chunks], ["candidates", candidates]]) {
+        for (const record2 of records2) {
+          const recordKey2 = key(ownerKey, record2.id), original = previous.get(collection + "\0" + recordKey2);
+          const envelope = { ownerKey, record: record2 };
+          if (collection === "memories" || collection === "chunks") {
+            const text2 = collection === "memories" && record2.isDocumentNode ? record2.title : record2.content;
+            const existing = original?.value?.embedding;
+            envelope.embedding = null;
+            if (owner2.settings.cloudEmbeddingEnabled) {
+              if (existing !== void 0 && existing !== null && existing.space === space && existing.text === text2) envelope.embedding = existing;
+              else pending.push({ text: text2, envelope });
+            }
+          }
+          after.push({ collection, key: recordKey2, value: storedValue(envelope) });
+        }
+      }
+      if (pending.length !== 0) {
+        const computed = yield embedTexts(pending.map(
+          /** Batches only changed searchable inputs. */
+          (item) => item.text
+        ), owner2.settings);
+        for (let index = 0; index < pending.length; index += 1) pending[index].envelope.embedding = computed[index];
+      }
+      const mutations = this.diff(before, after).sort(
+        /** Publishes owner configuration after its imported source records. */
+        (left, right) => Number(left.collection === "owners") - Number(right.collection === "owners")
+      );
+      for (let start = 0; start < mutations.length; start += 64) yield this.commit(mutations.slice(start, start + 64), [{ collection: "owners", key: ownerKey, expectedVersion: originalOwner.version }]);
+      this.snapshots.delete(state);
+    });
+  }
+  /** Builds the explicitly requested graph from this owner's sources and relationships. */
+  readMemoryGraph(ownerKey) {
+    return __async(this, null, function* () {
+      const memories = yield this.listMemories(ownerKey), links = yield this.listMemoryLinks(ownerKey), byId = new Map(memories.map(
+        /** Indexes graph endpoint identities. */
+        (memory) => [memory.id, memory]
+      ));
+      return {
+        nodes: memories.map(
+          /** Projects source identities for the graph view. */
+          (memory) => ({ id: memory.uuid, label: memory.title, color: memory.isDocumentNode ? 4287985101 : 4292072403, metadata: { memoryId: memory.id } })
+        ),
+        edges: links.map(
+          /** Requires actual persisted graph endpoints. */
+          (link2) => {
+            const source = byId.get(link2.sourceMemoryId), target = byId.get(link2.targetMemoryId);
+            if (source === void 0 || target === void 0) throw new Error("Memory relationship has a missing endpoint");
+            return { id: link2.id, sourceId: source.uuid, targetId: target.uuid, label: link2.type_, weight: link2.weight, metadata: { description: link2.description }, isCrossFolderLink: source.folderPath !== target.folderPath };
+          }
+        )
+      };
+    });
+  }
+  /** Searches original document chunks using database-side lexical and vector ranking. */
+  searchMemoryChunks(ownerKey, memoryId, query, count) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.owner(ownerKey), memory = (yield this.entry("memories", ownerKey, memoryId)).value.record;
+      if (!memory.isDocumentNode) throw new Error("Document search requires a stored document memory");
+      if (query.trim() === "") throw new Error("Document search query must not be blank");
+      if (!Number.isSafeInteger(count) || count < 1) throw new Error("Chunk result count must be positive");
+      const queryEmbedding = yield prepareMemoryQuery(owner2.value.settings, query, owner2.value.searchConfig);
+      return this.queryChunks(ownerKey, owner2.value, memory, query, count, queryEmbedding);
+    });
+  }
+  /** Ranks document chunks with the query vector already prepared for this operation. */
+  queryChunks(ownerKey, owner2, memory, query, count, queryEmbedding) {
+    return __async(this, null, function* () {
+      const semantic = queryEmbedding !== null;
+      const space = queryEmbedding === null ? "" : queryEmbedding.space, vector = queryEmbedding === null ? [] : queryEmbedding.vector;
+      const rows = yield this.memoryDatabase.query(
+        `WITH query_vector AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?6)), chunks AS (
+      SELECT value,json_extract(value,'$.record.chunkIndex') AS position FROM plugin_objects
+      WHERE collection='chunks' AND key>=?1 AND key<?2 AND json_extract(value,'$.record.memoryUuid')=?3
+    ), scored AS (
+      SELECT *,CASE WHEN ?4='*' THEN 1 ELSE
+        CASE WHEN lower(json_extract(value,'$.record.content')) GLOB '*'||lower(?4)||'*' THEN ?7 ELSE 0 END +
+        CASE WHEN ?8>0 THEN ?8*(SELECT sum(q.value*v.value) FROM json_each(chunks.value,'$.embedding.vector') v JOIN query_vector q ON q.dimension=v.key) ELSE 0 END END AS score
+      FROM chunks
+    ), page AS (SELECT * FROM scored WHERE score>0 ORDER BY score DESC,position LIMIT ?9), stats AS (
+      SELECT count(*) AS total,sum(CASE WHEN ?8>0 AND (json_extract(value,'$.embedding.text') IS NOT json_extract(value,'$.record.content') OR json_extract(value,'$.embedding.space') IS NOT ?5 OR json_array_length(value,'$.embedding.vector') IS NOT json_array_length(?6)) THEN 1 ELSE 0 END) AS invalid FROM chunks
+    ) SELECT json_extract(page.value,'$.record') AS record,stats.total,stats.invalid FROM stats LEFT JOIN page ON 1 ORDER BY page.score DESC,page.position`,
+        [ownerKey + "/", ownerKey + "0", memory.uuid, query.trim() === "*" ? "*" : query, space, JSON.stringify(vector), owner2.searchConfig.keywordWeight, semantic ? owner2.searchConfig.vectorWeight : 0, count]
+      );
+      if (rows[0].invalid !== null && Number(rows[0].invalid) !== 0) throw new Error("Document vector index requires an explicit rebuild");
+      return { total: Number(rows[0].total), chunks: rows.filter(
+        /** Omits the aggregate-only empty page row. */
+        (row) => row.record !== null
+      ).map(
+        /** Decodes only the selected source chunks. */
+        (row) => JSON.parse(String(row.record))
+      ) };
+    });
+  }
+  /** Imports complete document-aware records, relationships, settings and USER text in this operation. */
+  importMemorySpace(ownerKey, imported, strategy) {
+    return __async(this, null, function* () {
+      assertMemorySpace(imported);
+      const space = yield this.readMemorySpace(ownerKey), result2 = { newMemories: 0, updatedMemories: 0, skippedMemories: 0, newLinks: 0 };
+      const idMapping = /* @__PURE__ */ new Map();
+      for (const memory of imported.memories) {
+        const existing = space.memories.find(
+          /** Matches the import's actual UUID, not a guessed title. */
+          (item) => item.uuid === memory.uuid
+        );
+        if (existing !== void 0 && strategy === "SKIP") {
+          result2.skippedMemories += 1;
+          idMapping.set(memory.id, existing.id);
+          continue;
+        }
+        const value = clone(memory);
+        if (existing !== void 0 && strategy === "UPDATE") {
+          value.id = existing.id;
+          Object.assign(existing, value);
+          result2.updatedMemories += 1;
+        } else {
+          if (strategy === "CREATE_NEW") {
+            const identity3 = uuid();
+            value.id = identity3;
+            value.uuid = identity3;
+          } else {
+            if (space.memories.some(
+              /** Rejects an occupied imported identity instead of remapping it silently. */
+              (item) => item.id === value.id
+            )) throw new Error("Imported memory id is occupied: " + value.id);
+          }
+          space.memories.push(value);
+          result2.newMemories += 1;
+        }
+        idMapping.set(memory.id, value.id);
+        space.chunks = space.chunks.filter(
+          /** Replaces only the explicit updated document's prior chunks. */
+          (chunk) => chunk.memoryUuid !== value.uuid
+        );
+        for (const chunk of imported.chunks) if (chunk.memoryUuid === memory.uuid) {
+          const incoming = { ...clone(chunk), memoryUuid: value.uuid, id: strategy === "CREATE_NEW" ? uuid() : chunk.id };
+          if (space.chunks.some(
+            /** Rejects duplicate chunk identities in the target space. */
+            (record2) => record2.id === incoming.id
+          )) throw new Error("Imported chunk id is occupied: " + incoming.id);
+          space.chunks.push(incoming);
+        }
+      }
+      for (const link2 of imported.links) {
+        const source = idMapping.get(link2.sourceMemoryId), target = idMapping.get(link2.targetMemoryId);
+        if (source === void 0 || target === void 0) throw new Error("Imported link has no mapped endpoint");
+        const existing = space.links.find(
+          /** Resolves only a matching relationship identity in non-copy imports. */
+          (record2) => record2.id === link2.id
+        );
+        if (existing !== void 0 && strategy === "SKIP") continue;
+        const incoming = { ...clone(link2), sourceMemoryId: source, targetMemoryId: target, id: strategy === "CREATE_NEW" ? uuid() : link2.id };
+        if (existing !== void 0 && strategy === "UPDATE") Object.assign(existing, incoming);
+        else {
+          space.links.push(incoming);
+          result2.newLinks += 1;
+        }
+      }
+      space.settings = clone(imported.settings);
+      space.searchConfig = clone(imported.searchConfig);
+      space.rebuildProgress = clone(imported.rebuildProgress);
+      space.rebuildTask = clone(imported.rebuildTask);
+      space.embeddings = [];
+      for (const candidate of imported.candidates) {
+        const incoming = { ...clone(candidate), id: strategy === "CREATE_NEW" ? uuid() : candidate.id };
+        const existing = space.candidates.find(
+          /** Resolves a candidate's actual persistent identity. */
+          (record2) => record2.id === incoming.id
+        );
+        if (existing === void 0) space.candidates.push(incoming);
+        else if (strategy === "UPDATE") Object.assign(existing, incoming);
+      }
+      yield this.writeMemorySpace(ownerKey, space);
+      return result2;
+    });
+  }
+};
+
 // src/repository.ts
 function copy(value) {
   return clone(value);
@@ -3139,21 +3831,10 @@ function get(records2, id2, label) {
 function uniqueName(records2, name, id2) {
   for (const record2 of records2) if (record2.id !== id2 && record2.name === name) throw new Error("Name already exists: " + name);
 }
-function folder(value) {
-  if (value === null) return null;
-  const parts = value.replace(/\\/g, "/").split("/").map(
-    /** Trims individual folder names using the plugin's slash-delimited format. */
-    (part) => part.trim()
-  ).filter(
-    /** Removes separators, not missing persisted data. */
-    (part) => part !== ""
-  );
-  for (const part of parts) if (part === "." || part === "..") throw new Error("Relative folder traversal is not allowed");
-  return parts.length === 0 ? null : parts.join("/");
-}
-var RepositorySession = class {
+var RepositorySession = class extends DatabaseMemoryRepository {
   /** Receives the operation snapshot and explicitly connected external directory readers. */
-  constructor(state, directory, chatBindings, directories2 = null) {
+  constructor(state, directory, chatBindings, memory, directories2 = null) {
+    super(memory);
     this.state = state;
     this.directory = directory;
     this.chatBindings = chatBindings;
@@ -3165,11 +3846,11 @@ var RepositorySession = class {
       return copy(this.state.memoryPreferences);
     });
   }
-  writeGlobalMemoryPreference(key, value) {
+  writeGlobalMemoryPreference(key2, value) {
     return __async(this, null, function* () {
-      if (key !== "userDescriptionEnabled" && key !== "autoUpdateEnabled") throw new Error("Unknown global memory preference");
-      assertBoolean(value, key);
-      this.state.memoryPreferences[key] = value;
+      if (key2 !== "userDescriptionEnabled" && key2 !== "autoUpdateEnabled") throw new Error("Unknown global memory preference");
+      assertBoolean(value, key2);
+      this.state.memoryPreferences[key2] = value;
       return this.readGlobalMemoryPreferences();
     });
   }
@@ -3182,13 +3863,6 @@ var RepositorySession = class {
     return __async(this, null, function* () {
       this.state.memoryRecall = normalizeMemoryRecallSettings(settings2);
       return this.readMemoryRecallSettings();
-    });
-  }
-  searchMemoryDebug(options, config) {
-    return __async(this, null, function* () {
-      assertSearchOptions(options);
-      assertSearchConfig(config);
-      return copy(yield searchMemorySpaceDebug(this.space(options.ownerKey), options, config));
     });
   }
   /** Exposes staged owner documents to the sole file publisher without creating another persistent copy. */
@@ -3547,296 +4221,6 @@ var RepositorySession = class {
       return uuid();
     });
   }
-  /** Stores a complete private owner record without shadowing its USER.md content. */
-  writeMemorySpace(ownerKey, space) {
-    return __async(this, null, function* () {
-      const original = this.space(ownerKey);
-      assertMemorySpace(space);
-      if (space.ownerKey !== ownerKey || space.userDocumentPath !== original.userDocumentPath) throw new Error("Memory owner identity or USER.md path cannot change");
-      Object.assign(original, copy(space));
-    });
-  }
-  /** Reads the complete owner space for full backups. */
-  readMemorySpace(ownerKey) {
-    return __async(this, null, function* () {
-      return copy(this.space(ownerKey));
-    });
-  }
-  /** Lists full memory records, including every stored document node. */
-  listMemories(ownerKey) {
-    return __async(this, null, function* () {
-      return copy(this.space(ownerKey).memories);
-    });
-  }
-  /** Lists root and nested folders from actual full records. */
-  listMemoryFolders(ownerKey) {
-    return __async(this, null, function* () {
-      const folders = /* @__PURE__ */ new Set();
-      for (const memory of this.space(ownerKey).memories) {
-        if (memory.folderPath === null) {
-          folders.add("");
-          continue;
-        }
-        const parts = memory.folderPath.split("/");
-        for (let length = 1; length <= parts.length; length += 1) folders.add(parts.slice(0, length).join("/"));
-      }
-      return [...folders].sort();
-    });
-  }
-  /** Builds a faithful UUID graph from full stored records without dropping malformed links. */
-  readMemoryGraph(ownerKey) {
-    return __async(this, null, function* () {
-      const space = this.space(ownerKey), graph2 = { nodes: [], edges: [] };
-      for (const memory of space.memories) {
-        let color = 4292072403;
-        if (memory.isDocumentNode) color = 4287985101;
-        else if (memory.tags.length > 0 && memory.tags[0].name === "Person") color = 4286695300;
-        else if (memory.tags.length > 0 && memory.tags[0].name === "Concept") color = 4284790262;
-        graph2.nodes.push({ id: memory.uuid, label: memory.title, color, metadata: { memoryId: memory.id } });
-      }
-      for (const link2 of space.links) {
-        const source = get(space.memories, link2.sourceMemoryId, "source memory"), target = get(space.memories, link2.targetMemoryId, "target memory");
-        graph2.edges.push({ id: link2.id, sourceId: source.uuid, targetId: target.uuid, label: link2.type_, weight: link2.weight, metadata: { description: link2.description }, isCrossFolderLink: source.folderPath !== target.folderPath });
-      }
-      return graph2;
-    });
-  }
-  /** Searches real full records using the local lexical/tag/graph algorithm. */
-  searchMemories(options) {
-    return __async(this, null, function* () {
-      assertSearchOptions(options);
-      return copy(yield searchMemorySpace(this.space(options.ownerKey), options));
-    });
-  }
-  /** Creates an intentional new non-document memory. */
-  createMemory(ownerKey, values) {
-    return __async(this, null, function* () {
-      assertMemoryValues(values);
-      const now = Date.now();
-      return this.saveMemory(ownerKey, { ...values, id: "", uuid: "", title: requireName(values.title, "memory title"), folderPath: folder(values.folderPath), documentPath: null, isDocumentNode: false, chunkIndexFilePath: null, createdAt: now, updatedAt: now, lastAccessedAt: now, tags: normalizeNames(values.tags).map(
-        /** Initializes explicit new tag records with independent UUIDs. */
-        (name) => ({ id: uuid(), name })
-      ), properties: [] });
-    });
-  }
-  /** Saves the entire memory record and preserves all fields not explicitly changed. */
-  saveMemory(ownerKey, memory) {
-    return __async(this, null, function* () {
-      const space = this.space(ownerKey), now = Date.now(), incoming = copy(memory);
-      incoming.title = requireName(incoming.title, "memory title");
-      incoming.folderPath = folder(incoming.folderPath);
-      if (incoming.id === "") {
-        const identity3 = incoming.uuid === "" ? uuid() : incoming.uuid;
-        incoming.id = identity3;
-        incoming.uuid = identity3;
-        incoming.createdAt = now;
-        incoming.updatedAt = now;
-        incoming.lastAccessedAt = now;
-        assertMemory(incoming);
-        uniqueName(space.memories.map(
-          /** Checks title uniqueness for explicit creation. */
-          (item) => ({ id: item.id, name: item.title })
-        ), incoming.title, incoming.id);
-        for (const item of space.memories) if (item.uuid === incoming.uuid) throw new Error("Memory UUID already exists");
-        space.memories.push(incoming);
-        return copy(incoming);
-      }
-      requireId(incoming.id, "memory id");
-      const original = get(space.memories, incoming.id, "memory");
-      if (incoming.uuid !== original.uuid) throw new Error("An existing memory UUID is immutable");
-      incoming.createdAt = original.createdAt;
-      incoming.updatedAt = now;
-      assertMemory(incoming);
-      uniqueName(space.memories.map(
-        /** Checks title uniqueness while retaining the current memory identity. */
-        (item) => ({ id: item.id, name: item.title })
-      ), incoming.title, incoming.id);
-      Object.assign(original, incoming);
-      return copy(original);
-    });
-  }
-  /** Updates editable fields without projecting away document metadata or properties. */
-  updateMemory(ownerKey, id2, values) {
-    return __async(this, null, function* () {
-      assertMemoryValues(values);
-      const original = get(this.space(ownerKey).memories, id2, "memory");
-      return this.saveMemory(ownerKey, { ...copy(original), ...values, tags: normalizeNames(values.tags).map(
-        /** Allocates the explicit replacement tag list without changing the memory identity. */
-        (name) => ({ id: uuid(), name })
-      ) });
-    });
-  }
-  /** Replaces every exact source-title match with a new identity and redirects surviving external links. */
-  mergeMemories(ownerKey, sourceTitles, values) {
-    return __async(this, null, function* () {
-      assertMemoryValues(values);
-      const space = this.space(ownerKey), titles = /* @__PURE__ */ new Set();
-      for (const title of sourceTitles) titles.add(requireName(title, "merge source title"));
-      const ids = /* @__PURE__ */ new Set(), uuids = /* @__PURE__ */ new Set(), found = /* @__PURE__ */ new Set();
-      for (const memory of space.memories) if (titles.has(memory.title)) {
-        ids.add(memory.id);
-        uuids.add(memory.uuid);
-        found.add(memory.title);
-      }
-      for (const title of titles) if (!found.has(title)) throw new Error("Memory merge source does not exist: " + title);
-      if (ids.size < 2) throw new Error("Memory merge requires at least two unique source records");
-      const remaining = space.memories.filter(
-        /** Retains only records outside the explicitly selected merge. */
-        (memory) => !ids.has(memory.id)
-      );
-      if (remaining.some(
-        /** Rejects a target title already held by an unrelated record. */
-        (memory) => memory.title === values.title.trim()
-      )) throw new Error("Name already exists: " + values.title);
-      space.memories = remaining;
-      const merged = yield this.createMemory(ownerKey, values);
-      space.chunks = space.chunks.filter(
-        /** Deletes chunks owned by source documents as Kotlin mergeMemories does. */
-        (chunk) => !uuids.has(chunk.memoryUuid)
-      );
-      for (const link2 of space.links) {
-        if (ids.has(link2.sourceMemoryId)) link2.sourceMemoryId = merged.id;
-        if (ids.has(link2.targetMemoryId)) link2.targetMemoryId = merged.id;
-      }
-      space.links = space.links.filter(
-        /** Removes internal relationships that would become forbidden self-links. */
-        (link2) => link2.sourceMemoryId !== link2.targetMemoryId
-      );
-      return merged;
-    });
-  }
-  /** Deletes a memory and all referencing chunks and links in this operation. */
-  deleteMemory(ownerKey, id2) {
-    return __async(this, null, function* () {
-      requireId(id2, "memory id");
-      const space = this.space(ownerKey), memory = get(space.memories, id2, "memory");
-      space.memories.splice(space.memories.indexOf(memory), 1);
-      space.chunks = space.chunks.filter(
-        /** Removes the deleted document's exact UUID chunks. */
-        (chunk) => chunk.memoryUuid !== memory.uuid
-      );
-      space.links = space.links.filter(
-        /** Removes links with either exact deleted endpoint. */
-        (link2) => link2.sourceMemoryId !== id2 && link2.targetMemoryId !== id2
-      );
-    });
-  }
-  /** Moves only explicitly selected existing memories. */
-  moveMemories(ownerKey, ids, folderPath) {
-    return __async(this, null, function* () {
-      const space = this.space(ownerKey), destination = folder(folderPath), selected = new Set(ids);
-      for (const id2 of selected) {
-        requireId(id2, "memory id");
-        const memory = get(space.memories, id2, "memory");
-        memory.folderPath = destination;
-        memory.updatedAt = Date.now();
-      }
-    });
-  }
-  /** Lists full relationships including descriptions. */
-  listMemoryLinks(ownerKey) {
-    return __async(this, null, function* () {
-      return copy(this.space(ownerKey).links);
-    });
-  }
-  /** Reads one exact full relationship. */
-  readMemoryLink(ownerKey, id2) {
-    return __async(this, null, function* () {
-      requireId(id2, "link id");
-      return copy(get(this.space(ownerKey).links, id2, "link"));
-    });
-  }
-  /** Creates a relationship only between existing distinct owner-scoped memories. */
-  createLink(ownerKey, values) {
-    return __async(this, null, function* () {
-      const space = this.space(ownerKey);
-      get(space.memories, values.sourceMemoryId, "source memory");
-      get(space.memories, values.targetMemoryId, "target memory");
-      if (values.sourceMemoryId === values.targetMemoryId) throw new Error("Self relationships are not allowed");
-      assertNumber(values.weight, "link weight", 0, 1);
-      assertString(values.description, "link description");
-      const type_ = requireName(values.type_, "link type");
-      const saved = { ...copy(values), type_, id: uuid() };
-      space.links.push(saved);
-      return copy(saved);
-    });
-  }
-  /** Writes every editable field of one exact relationship. */
-  updateLink(ownerKey, id2, values) {
-    return __async(this, null, function* () {
-      const link2 = get(this.space(ownerKey).links, requireId(id2, "link id"), "link");
-      assertNumber(values.weight, "link weight", 0, 1);
-      assertString(values.description, "link description");
-      Object.assign(link2, copy(values), { type_: requireName(values.type_, "link type") });
-      return copy(link2);
-    });
-  }
-  /** Removes one exact relationship. */
-  deleteLink(ownerKey, id2) {
-    return __async(this, null, function* () {
-      const links = this.space(ownerKey).links, link2 = get(links, requireId(id2, "link id"), "link");
-      links.splice(links.indexOf(link2), 1);
-    });
-  }
-  /** Reads complete persisted memory settings. */
-  readMemorySettings(ownerKey) {
-    return __async(this, null, function* () {
-      return copy(this.space(ownerKey).settings);
-    });
-  }
-  /** Writes complete memory settings without silently activating unsupported embedding. */
-  writeMemorySettings(ownerKey, settings2) {
-    return __async(this, null, function* () {
-      assertMemorySettings(settings2);
-      this.space(ownerKey).settings = copy(settings2);
-    });
-  }
-  /** Reads complete persisted search configuration. */
-  readMemorySearchConfig(ownerKey) {
-    return __async(this, null, function* () {
-      return copy(this.space(ownerKey).searchConfig);
-    });
-  }
-  /** Writes all explicitly selected search weights. */
-  writeMemorySearchConfig(ownerKey, config) {
-    return __async(this, null, function* () {
-      assertSearchConfig(config);
-      this.space(ownerKey).searchConfig = copy(config);
-    });
-  }
-  /** Counts genuine candidate metadata without pretending a scheduler is running. */
-  readMemoryAutoSaveStatus(ownerKey) {
-    return __async(this, null, function* () {
-      const space = this.space(ownerKey), chats = /* @__PURE__ */ new Set();
-      let pendingCandidates = 0, processingCandidates = 0, failedCandidates = 0, lastError = "";
-      for (const candidate of space.candidates) {
-        if (candidate.status === "pending") {
-          pendingCandidates += 1;
-          chats.add(candidate.chatId);
-        } else if (candidate.status === "processing") processingCandidates += 1;
-        else if (candidate.status === "failed") {
-          failedCandidates += 1;
-          lastError = candidate.lastError;
-        }
-      }
-      const nextRunAtMs = space.settings.nextAutoSaveRunAtMs;
-      return { ownerKey, pendingCandidates, pendingChats: chats.size, processingCandidates, failedCandidates, nextRunAtMs, minutesUntilNextRun: Math.max(0, Math.ceil((nextRunAtMs - Date.now()) / 6e4)), lastError };
-    });
-  }
-  /** Reads actual persisted progress; the new-install idle state is not a fake running job. */
-  readMemoryRebuildProgress(ownerKey) {
-    return __async(this, null, function* () {
-      return copy(this.space(ownerKey).rebuildProgress);
-    });
-  }
-  /** Cancels only an actual active job record. */
-  cancelMemoryRebuild(ownerKey) {
-    return __async(this, null, function* () {
-      const progress = this.space(ownerKey).rebuildProgress;
-      if (progress.status !== "running" && progress.status !== "preparing") throw new Error("No memory rebuild is active");
-      progress.status = "cancelled";
-    });
-  }
   /** Restores explicit complete character/tag backup records through this snapshot. */
   restoreCharacters(cards, tags) {
     return __async(this, null, function* () {
@@ -3889,87 +4273,6 @@ var RepositorySession = class {
       return result2;
     });
   }
-  /** Imports complete document-aware records, relationships, settings and USER text in this operation. */
-  importMemorySpace(ownerKey, imported, strategy) {
-    return __async(this, null, function* () {
-      assertMemorySpace(imported);
-      const space = this.space(ownerKey), result2 = { newMemories: 0, updatedMemories: 0, skippedMemories: 0, newLinks: 0 };
-      const idMapping = /* @__PURE__ */ new Map();
-      for (const memory of imported.memories) {
-        const existing = space.memories.find(
-          /** Matches the import's actual UUID, not a guessed title. */
-          (item) => item.uuid === memory.uuid
-        );
-        if (existing !== void 0 && strategy === "SKIP") {
-          result2.skippedMemories += 1;
-          idMapping.set(memory.id, existing.id);
-          continue;
-        }
-        const value = copy(memory);
-        if (existing !== void 0 && strategy === "UPDATE") {
-          value.id = existing.id;
-          Object.assign(existing, value);
-          result2.updatedMemories += 1;
-        } else {
-          if (strategy === "CREATE_NEW") {
-            const identity3 = uuid();
-            value.id = identity3;
-            value.uuid = identity3;
-          } else {
-            if (space.memories.some(
-              /** Rejects an occupied imported identity instead of remapping it silently. */
-              (item) => item.id === value.id
-            )) throw new Error("Imported memory id is occupied: " + value.id);
-          }
-          space.memories.push(value);
-          result2.newMemories += 1;
-        }
-        idMapping.set(memory.id, value.id);
-        space.chunks = space.chunks.filter(
-          /** Replaces only the explicit updated document's prior chunks. */
-          (chunk) => chunk.memoryUuid !== value.uuid
-        );
-        for (const chunk of imported.chunks) if (chunk.memoryUuid === memory.uuid) {
-          const incoming = { ...copy(chunk), memoryUuid: value.uuid, id: strategy === "CREATE_NEW" ? uuid() : chunk.id };
-          if (space.chunks.some(
-            /** Rejects duplicate chunk identities in the target space. */
-            (record2) => record2.id === incoming.id
-          )) throw new Error("Imported chunk id is occupied: " + incoming.id);
-          space.chunks.push(incoming);
-        }
-      }
-      for (const link2 of imported.links) {
-        const source = idMapping.get(link2.sourceMemoryId), target = idMapping.get(link2.targetMemoryId);
-        if (source === void 0 || target === void 0) throw new Error("Imported link has no mapped endpoint");
-        const existing = space.links.find(
-          /** Resolves only a matching relationship identity in non-copy imports. */
-          (record2) => record2.id === link2.id
-        );
-        if (existing !== void 0 && strategy === "SKIP") continue;
-        const incoming = { ...copy(link2), sourceMemoryId: source, targetMemoryId: target, id: strategy === "CREATE_NEW" ? uuid() : link2.id };
-        if (existing !== void 0 && strategy === "UPDATE") Object.assign(existing, incoming);
-        else {
-          space.links.push(incoming);
-          result2.newLinks += 1;
-        }
-      }
-      space.settings = copy(imported.settings);
-      space.searchConfig = copy(imported.searchConfig);
-      space.rebuildProgress = copy(imported.rebuildProgress);
-      space.rebuildTask = copy(imported.rebuildTask);
-      space.embeddings = copy(imported.embeddings);
-      for (const candidate of imported.candidates) {
-        const incoming = { ...copy(candidate), id: strategy === "CREATE_NEW" ? uuid() : candidate.id };
-        const existing = space.candidates.find(
-          /** Resolves a candidate's actual persistent identity. */
-          (record2) => record2.id === incoming.id
-        );
-        if (existing === void 0) space.candidates.push(incoming);
-        else if (strategy === "UPDATE") Object.assign(existing, incoming);
-      }
-      return result2;
-    });
-  }
 };
 
 // src/storage/database.ts
@@ -4002,9 +4305,6 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
     this.storage = storage;
     this.directory = directory;
     this.directories = directories2;
-    this.busy = false;
-    this.publicationFailure = null;
-    this.waiters = [];
     this.chatBindings = new CharacterChatStore(storage);
   }
   /** Opens storage and initializes first-install records without retaining a synchronized domain snapshot. */
@@ -4045,94 +4345,56 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
     return __async(this, null, function* () {
       const rows = [];
       for (const name of configurationNames) {
-        for (const [key, value] of configuration[name].entries()) {
-          if (key.startsWith(recordPrefix)) rows.push({ collection: name, key: key.slice(recordPrefix.length), value: clone(value), version: null });
+        for (const [key2, value] of configuration[name].entries()) {
+          if (key2.startsWith(recordPrefix)) rows.push({ collection: name, key: key2.slice(recordPrefix.length), value: clone(value), version: null });
         }
       }
-      const results = yield Promise.allSettled(["owners", "memories", "links", "chunks", "candidates", "embeddings"].map(
-        (collection) => __async(this, null, function* () {
-          return (yield this.storage.memory.read(collection)).map((entry) => ({ collection, ...entry }));
-        })
+      rows.push(...(yield this.storage.memory.read("owners")).map(
+        /** Carries only owner metadata into the configuration edit snapshot. */
+        (entry) => ({ collection: "owners", ...entry })
       ));
-      for (const result2 of results) {
-        if (result2.status === "rejected") throw result2.reason;
-        rows.push(...result2.value);
-      }
       return rows;
     });
   }
-  /** Refreshes host records for each operation so remote synchronization and snapshot imports remain visible. */
+  /** Opens a configuration edit session while memory operations access database records directly. */
   run(action) {
     return __async(this, null, function* () {
-      yield this.acquire();
-      try {
-        if (this.publicationFailure !== null) throw this.publicationFailure.error;
-        const metadata = (yield this.storage.metadata.data()).get("state");
-        if (metadata === void 0)
-          throw new Error("Character database metadata disappeared");
-        const configuration = yield this.storage.data(), rows = yield this.readRecords(configuration);
-        assertObject(metadata, "character metadata");
-        const before = decodeStateFromRecords(metadata, rows);
-        const state = clone(before), session = new RepositorySession(
-          state,
-          this.directory,
-          this.chatBindings,
-          this.directories
-        );
-        const result2 = yield action(session);
-        const documents2 = session.documentWrites();
-        const removed = before.owners.filter(
-          (owner2) => !state.owners.some(
-            (retained2) => retained2.ownerKey === owner2.ownerKey
-          )
-        ).map(
-          (owner2) => this.directory + "/" + owner2.userDocumentPath.slice(
-            0,
-            owner2.userDocumentPath.lastIndexOf("/")
-          )
-        );
-        if (!equal(before, state) || documents2.length !== 0) {
-          try {
-            yield this.publish(
-              state,
-              rows,
-              documents2,
-              removed,
-              metadata
-            );
-          } catch (error) {
-            this.publicationFailure = { error };
-            throw error;
-          }
-        }
-        return result2;
-      } finally {
-        this.release();
-      }
+      const metadata = (yield this.storage.metadata.data()).get("state");
+      if (metadata === void 0) throw new Error("Character database metadata disappeared");
+      const configuration = yield this.storage.data(), rows = yield this.readRecords(configuration);
+      assertObject(metadata, "character metadata");
+      const before = decodeStateFromRecords(metadata, rows), state = clone(before);
+      const session = new RepositorySession(state, this.directory, this.chatBindings, this.storage.memory, this.directories);
+      const result2 = yield action(session), documents2 = session.documentWrites();
+      const removed = before.owners.filter(
+        /** Selects explicitly removed owner namespaces. */
+        (owner2) => !state.owners.some(
+          /** Matches retained owner identities. */
+          (retained2) => retained2.ownerKey === owner2.ownerKey
+        )
+      ).map(
+        /** Resolves the removed owner's document directory. */
+        (owner2) => this.directory + "/" + owner2.userDocumentPath.slice(0, owner2.userDocumentPath.lastIndexOf("/"))
+      );
+      if (!equal(before, state) || documents2.length !== 0) yield this.publish(state, rows, documents2, removed, metadata);
+      return result2;
     });
-  }
-  /** Rejects operations after an incomplete publication in this execution. */
-  requirePublicationReady() {
-    if (this.publicationFailure !== null) throw this.publicationFailure.error;
   }
   /** Uses each native owner's immutable snapshot without retrying business callbacks. */
   readConsistent(read) {
     return __async(this, null, function* () {
-      this.requirePublicationReady();
       return read();
     });
   }
   /** Reads the role directory from native immutable preference snapshots. */
   readSidebarDirectory() {
     return __async(this, null, function* () {
-      this.requirePublicationReady();
       const [cards, groups] = yield Promise.all([this.readCharacters(), this.readGroups()]);
       return { cards, groups };
     });
   }
   /** Reads the explicitly stored active selection. */
   readActive() {
-    this.requirePublicationReady();
     return this.readMetadata().then((metadata) => metadata.active);
   }
   /** Reads configuration records only; memory content and vectors remain in their own queries. */
@@ -4175,7 +4437,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   readCharacters() {
     return __async(this, null, function* () {
       const snapshot2 = yield this.storage.configuration.cards.data();
-      return snapshot2.entries().filter(([key]) => key.startsWith(recordPrefix)).map(([key, value]) => readCharacter(value, key.slice(recordPrefix.length)));
+      return snapshot2.entries().filter(([key2]) => key2.startsWith(recordPrefix)).map(([key2, value]) => readCharacter(value, key2.slice(recordPrefix.length)));
     });
   }
   /** Validates complete group documents including ordered members. */
@@ -4241,13 +4503,11 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   }
   /** Reads the actual model directory only when model validation needs it. */
   listModels() {
-    this.requirePublicationReady();
     if (this.directories === null) throw new Error("External directory readers are unavailable");
     return this.directories.listModels();
   }
   /** Reads the actual speech directory only when speech validation needs it. */
   listTtsConfigs() {
-    this.requirePublicationReady();
     if (this.directories === null) throw new Error("External directory readers are unavailable");
     return this.directories.listTtsConfigs();
   }
@@ -4286,14 +4546,12 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   /** Reads global memory preferences without loading memory bodies. */
   readGlobalMemoryPreferences() {
     return __async(this, null, function* () {
-      this.requirePublicationReady();
       return (yield this.readMetadata()).memoryPreferences;
     });
   }
   /** Reads recall settings; states persisted by the released plugin predate the field. */
   readMemoryRecallSettings() {
     return __async(this, null, function* () {
-      this.requirePublicationReady();
       const metadata = (yield this.storage.metadata.data()).get("state");
       if (metadata === void 0) throw new Error("Character database metadata disappeared");
       return normalizeMemoryRecallSettings(metadata.memoryRecall === void 0 ? { enabled: true } : metadata.memoryRecall);
@@ -4323,11 +4581,10 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       throw new Error("Invalid owner document path");
     return this.directory + "/" + row.userDocumentPath;
   }
-  /** Reads one owner directly; file IO never occupies the full-state editing queue. */
+  /** Reads one owner directly without loading memory bodies or holding a transaction across file IO. */
   readOwnerMetadata(ownerKey, action) {
     return __async(this, null, function* () {
       requireId(ownerKey, "memory owner");
-      if (this.publicationFailure !== null) throw this.publicationFailure.error;
       return this.readConsistent(() => __async(this, null, function* () {
         const row = yield this.storage.memory.get("owners", ownerKey);
         if (row === null) throw new Error("Memory owner is missing: " + ownerKey);
@@ -4340,22 +4597,6 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       }));
     });
   }
-  /** Serializes domain sessions within this execution while exact host versions guard other executions. */
-  acquire() {
-    if (!this.busy) {
-      this.busy = true;
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      this.waiters.push(resolve);
-    });
-  }
-  /** Grants the next waiting operation after the current session completes. */
-  release() {
-    const waiter = this.waiters.shift();
-    if (waiter === void 0) this.busy = false;
-    else waiter();
-  }
   /** Commits only changed domain records and retains the migration provenance in the metadata guard. */
   publish(state, before, documents2, removed, metadata) {
     return __async(this, null, function* () {
@@ -4364,7 +4605,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       );
       const mutations = [];
       for (const row of records(state)) {
-        const key = row.collection + "\0" + row.key, existing = previous.get(key);
+        const key2 = row.collection + "\0" + row.key, existing = previous.get(key2);
         if (existing === void 0 || !equal(existing.value, row.value))
           mutations.push({
             op: "put",
@@ -4373,7 +4614,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
             value: row.value,
             expectedVersion: existing === void 0 ? null : existing.version
           });
-        previous.delete(key);
+        previous.delete(key2);
       }
       for (const row of previous.values())
         mutations.push({
@@ -4382,6 +4623,11 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
           key: row.key,
           expectedVersion: row.version
         });
+      for (const mutation of [...mutations]) {
+        if (mutation.collection !== "owners" || mutation.op !== "delete") continue;
+        const children = yield this.storage.memory.query("SELECT collection,key,version FROM plugin_objects WHERE collection IN ('memories','links','chunks','candidates','embeddings') AND key>=? AND key<?", [mutation.key + "/", mutation.key + "0"]);
+        for (const child of children) mutations.push({ op: "delete", collection: String(child.collection), key: String(child.key), expectedVersion: String(child.version) });
+      }
       const memoryMutations = mutations.filter((row) => !configurationNames.some((name) => name === row.collection));
       const memoryBatches = boundedCommitBatches(memoryMutations);
       const stagedDocuments = [];
@@ -4418,7 +4664,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       }
       for (const batch of memoryBatches) yield this.storage.memory.commit(batch);
       const nextMetadata = { ...metadata, version: state.version, active: "Model" in state.active ? null : storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) };
-      yield this.storage.metadata.edit((preferences) => {
+      if (!equal(nextMetadata, metadata)) yield this.storage.metadata.edit((preferences) => {
         if (!equal(preferences.get("state"), metadata)) throw new Error("Character metadata edit conflict");
         preferences.set("state", nextMetadata);
       });
@@ -4492,8 +4738,8 @@ function assertChat(value) {
   assertObject(value, "chat");
   requireId(value.id, "chat id");
   assertString(value.title, "chat title");
-  for (const key of ["messageCount", "inputTokens", "outputTokens"]) assertInteger(value[key], key, 0);
-  for (const key of ["createdAt", "updatedAt"]) assertString(value[key], key);
+  for (const key2 of ["messageCount", "inputTokens", "outputTokens"]) assertInteger(value[key2], key2, 0);
+  for (const key2 of ["createdAt", "updatedAt"]) assertString(value[key2], key2);
   assertBoolean(value.isCurrent, "current chat");
 }
 function requireChat(chatId) {
@@ -4540,7 +4786,7 @@ function primaryOwner(card, repository2) {
 }
 function requireChatOwner(chatId, ownerKey, repository2) {
   return __async(this, null, function* () {
-    yield repository2.readMemorySpace(ownerKey);
+    yield repository2.readMemoryJobState(ownerKey);
     const cards = yield chatParticipants(chatId, repository2);
     for (const card of cards) {
       if ((yield primaryOwner(card, repository2)) === ownerKey) return;
@@ -4563,19 +4809,19 @@ function currentMessageMemoryAccess(chatId, message, repository2) {
     const resources = [{ key: primaryOwnerKey, readable: true, writable: true }];
     for (const mount2 of card.sharedMemoryMounts) {
       yield repository2.getStore(mount2.sharedMemoryId);
-      const key = "shared:" + mount2.sharedMemoryId;
-      const existing = resources.find((resource) => resource.key === key);
+      const key2 = "shared:" + mount2.sharedMemoryId;
+      const existing = resources.find((resource) => resource.key === key2);
       if (existing) {
         existing.readable || (existing.readable = mount2.readable);
         existing.writable || (existing.writable = mount2.writable);
-      } else resources.push({ key, readable: mount2.readable, writable: mount2.writable });
+      } else resources.push({ key: key2, readable: mount2.readable, writable: mount2.writable });
     }
     return { primaryOwnerKey, resources };
   });
 }
 function requireMessageOwner(chatId, message, ownerKey, repository2) {
   return __async(this, null, function* () {
-    yield repository2.readMemorySpace(ownerKey);
+    yield repository2.readMemoryJobState(ownerKey);
     const access = yield currentMessageMemoryAccess(chatId, message, repository2);
     if (!access.resources.some((resource) => resource.key === ownerKey && resource.writable)) throw new Error("Message author is not currently writable for this memory owner: " + ownerKey);
     return access;
@@ -4583,7 +4829,7 @@ function requireMessageOwner(chatId, message, ownerKey, repository2) {
 }
 function requireMessagesOwner(chatId, messages, ownerKey, repository2) {
   return __async(this, null, function* () {
-    yield repository2.readMemorySpace(ownerKey);
+    yield repository2.readMemoryJobState(ownerKey);
     for (const message of messages) {
       if (message.sender !== "ai" && message.sender !== "assistant") continue;
       const access = yield currentMessageMemoryAccess(chatId, message, repository2);
@@ -4628,7 +4874,7 @@ function pruneMissingMemoryChats(ownerKey, repository2) {
     for (const chatId of missingChatIds) {
       if ((yield repository2.chatBindings.deleteChatBinding(chatId)).deleted) removedChatIds.push(chatId);
     }
-    const space = yield repository2.readMemorySpace(ownerKey);
+    const space = yield repository2.readMemoryJobState(ownerKey);
     const candidateChats = [...new Set(space.candidates.map((candidate) => candidate.chatId))];
     const messagesByChat = /* @__PURE__ */ new Map();
     for (let offset = 0; offset < candidateChats.length; offset += 200) {
@@ -4648,7 +4894,7 @@ function pruneMissingMemoryChats(ownerKey, repository2) {
     });
     if (survivors.length !== space.candidates.length) {
       space.candidates = survivors;
-      yield repository2.writeMemorySpace(ownerKey, space);
+      yield repository2.writeMemoryJobState(ownerKey, space);
     }
     return { removedChatIds, removedCandidateIds };
   });
@@ -4741,7 +4987,7 @@ function update(value) {
   requireName(value.title, "update title");
   assertString(value.content, "update content");
   assertString(value.reason, "update reason");
-  for (const key of ["credibility", "importance"]) if (value[key] !== void 0 && value[key] !== null) assertNumber(value[key], key, 0, 1);
+  for (const key2 of ["credibility", "importance"]) if (value[key2] !== void 0 && value[key2] !== null) assertNumber(value[key2], key2, 0, 1);
 }
 function merge2(value) {
   assertObject(value, "memory merge");
@@ -4753,7 +4999,7 @@ function merge2(value) {
 }
 function link(value) {
   assertObject(value, "memory relationship");
-  for (const key of ["source", "target", "type"]) requireName(value[key], key);
+  for (const key2 of ["source", "target", "type"]) requireName(value[key2], key2);
   assertString(value.description, "relationship description");
   assertNumber(value.weight, "relationship weight", 0, 1);
 }
@@ -4881,7 +5127,19 @@ function applyAnalysis(ownerKey, result2, settings2, repository2) {
     if (result2.profile_markdown !== void 0 && result2.profile_markdown !== null && (!settings2.profileAutoUpdateEnabled || settings2.profileAutoUpdateLocked))
       throw new Error("Model returned a profile update forbidden by the owner settings");
     const index = /* @__PURE__ */ new Map();
-    for (const memory of yield repository2.listMemories(ownerKey)) {
+    const referenced = /* @__PURE__ */ new Set();
+    if (result2.main !== null) referenced.add(result2.main.title);
+    for (const item of result2.update) referenced.add(item.title);
+    for (const item of result2.merge) for (const title of item.source_titles) referenced.add(title);
+    for (const item of result2.new) {
+      referenced.add(item.title);
+      if (item.alias_for !== void 0 && item.alias_for !== null) referenced.add(item.alias_for);
+    }
+    for (const item of result2.links) {
+      referenced.add(item.source);
+      referenced.add(item.target);
+    }
+    for (const memory of yield repository2.readMemoriesByTitles(ownerKey, [...referenced])) {
       const matches = index.get(memory.title);
       if (matches === void 0) index.set(memory.title, [memory]);
       else matches.push(memory);
@@ -4997,16 +5255,16 @@ function extractMessages(ownerKey, messages, repository2) {
       (message) => message.sender === "user"
     );
     if (user === void 0) throw new Error("Memory extraction requires user context");
-    const space = yield repository2.readMemorySpace(ownerKey);
-    const profile = space.settings.profileAutoUpdateEnabled && !space.settings.profileAutoUpdateLocked ? (yield repository2.readUser(ownerKey)).content : "";
+    const settings2 = yield repository2.readMemorySettings(ownerKey);
+    const profile = settings2.profileAutoUpdateEnabled && !settings2.profileAutoUpdateLocked ? (yield repository2.readUser(ownerKey)).content : "";
     const query = buildCandidateSearchQuery(history);
     const candidates = yield repository2.searchMemories({ ownerKey, query, folderPath: null, relevanceThreshold: MEMORY_SEARCH_THRESHOLD, createdAtStartMs: null, createdAtEndMs: null });
-    const folders = yield repository2.listMemoryFolders(ownerKey), prompt = extractionPrompt(candidates.slice(0, 15), space.memories, folders, space.settings, profile);
+    const folders = yield repository2.listMemoryFolders(ownerKey), prompt = extractionPrompt(candidates.slice(0, 15), candidates, folders, settings2, profile);
     const response = yield Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: prompt }, { kind: "USER", content: "\u5BF9\u8BDD\u8BB0\u5F55\uFF1A\n" + history.map(
       /** Retains the real user and assistant sequence in the selected extraction window. */
       (message) => message.sender + ": " + message.content
     ).join("\n\n") }], recordTokenUsage: true, enableThinking: false });
-    return applyAnalysis(ownerKey, analysis(parseModelJson(response.text)), space.settings, repository2);
+    return applyAnalysis(ownerKey, analysis(parseModelJson(response.text)), settings2, repository2);
   });
 }
 function updateChatMemory(ownerKey, chatId, repository2) {
@@ -5112,7 +5370,7 @@ function enqueueCandidate(input, repository2) {
         /** Authorizes only the exact submitted resource through the already-read current author permissions. */
         (resource) => resource.key === ownerKey && resource.writable
       )) throw new Error("Current message author cannot write this memory owner: " + ownerKey);
-      yield repository2.readMemorySpace(ownerKey);
+      yield repository2.readMemoryJobState(ownerKey);
       owners.add(ownerKey);
     } else if (input.ownerKey !== null) {
       yield requireChatOwner(input.chatId, input.ownerKey, repository2);
@@ -5124,7 +5382,7 @@ function enqueueCandidate(input, repository2) {
     }
     const result2 = { owners: [...owners], candidateIds: [] }, now = Date.now();
     for (const ownerKey of owners) {
-      const space = yield repository2.readMemorySpace(ownerKey), previous = space.candidates.filter(
+      const space = yield repository2.readMemoryJobState(ownerKey), previous = space.candidates.filter(
         /** Uses the full owner-scoped source identity for genuine hook idempotency. */
         (candidate) => candidate.chatId === input.chatId && candidate.triggerMessageTimestamp === input.timestamp && candidate.triggerVariantIndex === input.variantIndex && candidate.sourceType === input.sourceType
       );
@@ -5135,7 +5393,7 @@ function enqueueCandidate(input, repository2) {
       const id2 = yield repository2.allocateRecordId();
       space.candidates.push({ id: id2, chatId: input.chatId, triggerMessageTimestamp: input.timestamp, triggerVariantIndex: input.variantIndex, createdAt: now, updatedAt: now, status: "pending", attemptCount: 0, lastError: "", sourceType: input.sourceType });
       if (space.settings.autoSaveIntervalMinutes > 0 && space.settings.nextAutoSaveRunAtMs === 0) space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
-      yield repository2.writeMemorySpace(ownerKey, space);
+      yield repository2.writeMemoryJobState(ownerKey, space);
       result2.candidateIds.push(id2);
     }
     return result2;
@@ -5143,7 +5401,7 @@ function enqueueCandidate(input, repository2) {
 }
 function retryFailedCandidates(ownerKey, repository2) {
   return __async(this, null, function* () {
-    const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
+    const space = yield repository2.readMemoryJobState(ownerKey), now = Date.now();
     let retried = 0;
     for (const candidate of space.candidates) if (candidate.status === "failed") {
       candidate.status = "pending";
@@ -5151,20 +5409,20 @@ function retryFailedCandidates(ownerKey, repository2) {
       candidate.updatedAt = now;
       retried += 1;
     }
-    if (retried !== 0) yield repository2.writeMemorySpace(ownerKey, space);
+    if (retried !== 0) yield repository2.writeMemoryJobState(ownerKey, space);
     return { retried };
   });
 }
 function clearFailedCandidates(ownerKey, repository2) {
   return __async(this, null, function* () {
-    const space = yield repository2.readMemorySpace(ownerKey);
+    const space = yield repository2.readMemoryJobState(ownerKey);
     const remaining = space.candidates.filter(
       /** Retains pending and processing records for their real owners. */
       (candidate) => candidate.status !== "failed"
     ), cleared = space.candidates.length - remaining.length;
     if (cleared !== 0) {
       space.candidates = remaining;
-      yield repository2.writeMemorySpace(ownerKey, space);
+      yield repository2.writeMemoryJobState(ownerKey, space);
     }
     return { cleared };
   });
@@ -5174,10 +5432,10 @@ function startMemoryRebuild(ownerKey, rebuild, repository2) {
     assertObject(rebuild, "memory rebuild");
     assertStrings(rebuild.chatIds, "rebuild chat ids");
     assertInteger(rebuild.windowMessageCount, "rebuild window size", 1);
-    for (const key of ["fromInclusive", "toInclusive"]) if (rebuild[key] !== null) assertInteger(rebuild[key], key, 0);
+    for (const key2 of ["fromInclusive", "toInclusive"]) if (rebuild[key2] !== null) assertInteger(rebuild[key2], key2, 0);
     if (rebuild.fromInclusive !== null && rebuild.toInclusive !== null && rebuild.fromInclusive > rebuild.toInclusive) throw new Error("Rebuild start must not follow its end");
     if (rebuild.chatIds.length === 0) throw new Error("Rebuild requires selected chats");
-    const space = yield repository2.readMemorySpace(ownerKey);
+    const space = yield repository2.readMemoryJobState(ownerKey);
     if (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") throw new Error("Memory rebuild is already active");
     const task = { id: yield repository2.allocateRecordId(), windows: [], nextWindow: 0 }, ids = /* @__PURE__ */ new Set();
     for (const id2 of rebuild.chatIds) {
@@ -5210,7 +5468,7 @@ function startMemoryRebuild(ownerKey, rebuild, repository2) {
       currentChatTitle: "",
       lastError: ""
     };
-    yield repository2.writeMemorySpace(ownerKey, space);
+    yield repository2.writeMemoryJobState(ownerKey, space);
     return space.rebuildProgress;
   });
 }
@@ -5231,7 +5489,7 @@ function processRebuildWindow(ownerKey, taskId, owner2) {
       yield owner2.run(
         /** Keeps one model result, graph mutation and progress checkpoint in the same publication. */
         (repository2) => __async(null, null, function* () {
-          const space = yield repository2.readMemorySpace(ownerKey), task = space.rebuildTask;
+          const space = yield repository2.readMemoryJobState(ownerKey), task = space.rebuildTask;
           if (task === null || task.id !== taskId) throw new Error("Rebuild task identity changed");
           if (space.rebuildProgress.status === "cancelled") return;
           if (space.rebuildProgress.status !== "preparing" && space.rebuildProgress.status !== "running") throw new Error("Rebuild task is not runnable");
@@ -5247,10 +5505,10 @@ function processRebuildWindow(ownerKey, taskId, owner2) {
           }
           yield requireMessagesOwner(window.chatId, window.messages, ownerKey, repository2);
           yield extractMessages(ownerKey, window.messages, repository2);
-          const updated = yield repository2.readMemorySpace(ownerKey), savedTask = updated.rebuildTask;
+          const updated = yield repository2.readMemoryJobState(ownerKey), savedTask = updated.rebuildTask;
           if (savedTask === null || savedTask.id !== taskId || savedTask.nextWindow !== task.nextWindow) throw new Error("Rebuild cursor changed within execution");
           advanceRebuildWindow(savedTask, updated.rebuildProgress);
-          yield repository2.writeMemorySpace(ownerKey, updated);
+          yield repository2.writeMemoryJobState(ownerKey, updated);
         })
       );
     } catch (error) {
@@ -5260,13 +5518,13 @@ function processRebuildWindow(ownerKey, taskId, owner2) {
         () => owner2.run(
           /** Retains the error and skips the failed window without publishing partial memory edits. */
           (repository2) => __async(null, null, function* () {
-            const space = yield repository2.readMemorySpace(ownerKey);
+            const space = yield repository2.readMemoryJobState(ownerKey);
             if (space.rebuildTask === null || space.rebuildTask.id !== taskId) throw new Error("Failed rebuild task identity changed");
             if (space.rebuildProgress.status === "cancelled") return;
             space.rebuildProgress.failedWindows += 1;
             space.rebuildProgress.lastError = errorText(error);
             advanceRebuildWindow(space.rebuildTask, space.rebuildProgress);
-            yield repository2.writeMemorySpace(ownerKey, space);
+            yield repository2.writeMemoryJobState(ownerKey, space);
           })
         )
       );
@@ -5329,7 +5587,7 @@ function processCandidates(ownerKey, candidates, owner2) {
             }
             yield extractMessages(ownerKey, messages, repository2);
           }
-          const space = yield repository2.readMemorySpace(ownerKey);
+          const space = yield repository2.readMemoryJobState(ownerKey);
           for (const candidate of space.candidates) {
             const failure2 = failures.get(candidate.id);
             if (failure2 !== void 0) failCandidate(candidate, failure2);
@@ -5338,7 +5596,7 @@ function processCandidates(ownerKey, candidates, owner2) {
             /** Deletes only candidates included in the committed extraction. */
             (candidate) => !completed3.has(candidate.id)
           );
-          yield repository2.writeMemorySpace(ownerKey, space);
+          yield repository2.writeMemoryJobState(ownerKey, space);
         })
       );
     } catch (error) {
@@ -5349,12 +5607,12 @@ function processCandidates(ownerKey, candidates, owner2) {
         () => owner2.run(
           /** Preserves individual source errors when a later extraction also fails. */
           (repository2) => __async(null, null, function* () {
-            const space = yield repository2.readMemorySpace(ownerKey);
+            const space = yield repository2.readMemoryJobState(ownerKey);
             for (const candidate of space.candidates) {
               const failure2 = failures.get(candidate.id);
               if (failure2 !== void 0) failCandidate(candidate, failure2);
             }
-            yield repository2.writeMemorySpace(ownerKey, space);
+            yield repository2.writeMemoryJobState(ownerKey, space);
           })
         )
       );
@@ -5431,20 +5689,20 @@ var MemoryJobRunner = class {
       yield this.owner.run(
         /** Reclaims only outdated processing claims so interrupted batches can genuinely run again. */
         (repository2) => __async(this, null, function* () {
-          const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
+          const space = yield repository2.readMemoryJobState(ownerKey), now = Date.now();
           let reclaimed = 0;
           for (const candidate of space.candidates) if (candidate.status === "processing" && now - candidate.updatedAt >= CANDIDATE_PROCESSING_LEASE_MS) {
             candidate.status = "pending";
             candidate.updatedAt = now;
             reclaimed += 1;
           }
-          if (reclaimed !== 0) yield repository2.writeMemorySpace(ownerKey, space);
+          if (reclaimed !== 0) yield repository2.writeMemoryJobState(ownerKey, space);
         })
       );
       const taskId = yield this.owner.run(
         /** Reads a persisted runnable rebuild identity without fabricating a job. */
         (repository2) => __async(this, null, function* () {
-          const space = yield repository2.readMemorySpace(ownerKey);
+          const space = yield repository2.readMemoryJobState(ownerKey);
           return space.rebuildTask !== null && (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") ? space.rebuildTask.id : null;
         })
       );
@@ -5456,7 +5714,7 @@ var MemoryJobRunner = class {
         /** Claims only due pending records; failed attempts are never automatically retried. */
         (repository2) => __async(this, null, function* () {
           if (!(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return [];
-          const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
+          const space = yield repository2.readMemoryJobState(ownerKey), now = Date.now();
           if (space.settings.autoSaveIntervalMinutes === 0 || now < space.settings.nextAutoSaveRunAtMs) return [];
           const pending = space.candidates.filter(
             /** Selects genuinely pending records, not terminal failures. */
@@ -5485,7 +5743,7 @@ var MemoryJobRunner = class {
             }
           }
           space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
-          yield repository2.writeMemorySpace(ownerKey, space);
+          yield repository2.writeMemoryJobState(ownerKey, space);
           return batches2;
         })
       );
@@ -5494,7 +5752,7 @@ var MemoryJobRunner = class {
           /** Claims each batch immediately before processing so independent failures cannot strand later work. */
           (repository2) => __async(this, null, function* () {
             if (!(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return false;
-            const space = yield repository2.readMemorySpace(ownerKey), ids = /* @__PURE__ */ new Set();
+            const space = yield repository2.readMemoryJobState(ownerKey), ids = /* @__PURE__ */ new Set();
             for (const candidate of batch) ids.add(candidate.id);
             let count = 0;
             for (const candidate of space.candidates) if (ids.has(candidate.id)) {
@@ -5505,7 +5763,7 @@ var MemoryJobRunner = class {
               count += 1;
             }
             if (count !== batch.length) throw new Error("A selected candidate no longer exists");
-            yield repository2.writeMemorySpace(ownerKey, space);
+            yield repository2.writeMemoryJobState(ownerKey, space);
             return true;
           })
         );
@@ -6754,16 +7012,7 @@ function dispatch(request, host) {
         assertMemorySettings(request.settings);
         assertSearchConfig(request.config);
         yield requireOwner(request.ownerKey, host);
-        const current = yield host.readMemorySettings(request.ownerKey);
-        yield host.writeMemorySettings(request.ownerKey, {
-          ...request.settings,
-          nextAutoSaveRunAtMs: current.nextAutoSaveRunAtMs
-        });
-        yield host.writeMemorySearchConfig(request.ownerKey, request.config);
-        return {
-          settings: yield host.readMemorySettings(request.ownerKey),
-          config: yield host.readMemorySearchConfig(request.ownerKey)
-        };
+        return host.writeMemoryOwnerSettings(request.ownerKey, request.settings, request.config);
       }
       case "combinePrompts":
         return combinePrompts(
@@ -6856,17 +7105,6 @@ function dispatch(request, host) {
     }
   });
 }
-function findMemory(items, title) {
-  const name = requireName(title, "\u8BB0\u5FC6\u6807\u9898");
-  let found;
-  for (const memory of items) {
-    if (memory.title !== name) continue;
-    if (found !== void 0) throw new Error(`\u8BB0\u5FC6\u6807\u9898\u4E0D\u552F\u4E00\uFF1A${name}`);
-    found = memory;
-  }
-  if (found === void 0) throw new Error(`\u8BB0\u5FC6\u4E0D\u5B58\u5728\uFF1A${name}`);
-  return found;
-}
 function deleteCharacter(id2, host) {
   return __async(this, null, function* () {
     yield host.deleteCharacter(requireId(id2, "\u89D2\u8272\u5361\u6807\u8BC6"));
@@ -6918,16 +7156,12 @@ function resolveConfiguration(input, service2) {
   });
 }
 var handlers = {
-  /** Ranks original chunks and commits provider vectors in the same repository operation. */
-  "memory.chunks": (input, repository2) => __async(null, null, function* () {
-    const space = yield repository2.readMemorySpace(input.ownerKey), cached = space.embeddings.length;
-    const result2 = yield searchMemoryChunks(space, input.memoryId, input.query, input.count);
-    if (space.embeddings.length !== cached) yield repository2.writeMemorySpace(input.ownerKey, space);
-    return result2;
-  }),
-  /** Keeps full-filter searches and provider embedding persistence on the same serialized service. */
+  /** Ranks persisted document source vectors without writing during retrieval. */
+  "memory.chunks": (input, repository2) => repository2.searchMemoryChunks(input.ownerKey, input.memoryId, input.query, input.count),
+  /** Searches bounded records and document chunks with one operation-scoped query vector. */
   "memory.searchWithOptions": (input, repository2) => __async(null, null, function* () {
-    return { ownerKey: input.ownerKey, items: yield searchMemories(input, repository2) };
+    yield requireOwner(input.ownerKey, repository2);
+    return repository2.searchMemoryPage({ ...input, folderPath: normalizeFolderPath(input.folderPath) });
   }),
   /** Lists actual owner-bound generic chat summaries. */
   "memory.chat.list": (input, repository2) => listMemoryChats(input.ownerKey, repository2),
@@ -7212,7 +7446,7 @@ var handlers = {
   }),
   /** Resolves an exact title to one complete canonical memory. */
   "memory.get": (input, host) => __async(null, null, function* () {
-    return { ownerKey: input.ownerKey, item: findMemory(yield listMemories(input.ownerKey, host), input.title) };
+    return { ownerKey: input.ownerKey, item: yield host.readMemoryByTitle(input.ownerKey, input.title) };
   }),
   /** Initializes an intentional full new record and writes all memory metadata in the plugin snapshot. */
   "memory.create": (input, host) => __async(null, null, function* () {
@@ -7245,7 +7479,7 @@ var handlers = {
   }),
   /** Merges every supplied memory field into its full canonical record while preserving untouched metadata. */
   "memory.update": (input, host) => __async(null, null, function* () {
-    const original = findMemory(yield listMemories(input.ownerKey, host), input.originalTitle);
+    const original = yield host.readMemoryByTitle(input.ownerKey, input.originalTitle);
     if (input.expectedId !== void 0 && input.expectedId !== original.id) throw new Error("Memory identity changed since editing began");
     const changes2 = { ...input.changes };
     const tags = [];
@@ -7267,19 +7501,15 @@ var handlers = {
   }),
   /** Moves the explicitly selected ids using the canonical repository's bulk operation. */
   "memory.move": (input, host) => __async(null, null, function* () {
-    const items = yield listMemories(input.ownerKey, host), existing = /* @__PURE__ */ new Set();
-    for (const item of items) existing.add(item.id);
-    const selected = /* @__PURE__ */ new Set();
-    for (const id2 of input.ids) {
-      if (!existing.has(id2)) throw new Error(`\u8BB0\u5FC6\u4E0D\u5B58\u5728\uFF1A${id2}`);
-      selected.add(id2);
-    }
+    yield requireOwner(input.ownerKey, host);
+    const selected = new Set(input.ids);
     yield host.moveMemories(input.ownerKey, [...selected], input.folderPath);
     return { ownerKey: input.ownerKey, ids: [...selected], folder: input.folderPath, moved: selected.size };
   }),
   /** Resolves exact source and target records before creating a canonical relationship. */
   "memory.link.create": (input, host) => __async(null, null, function* () {
-    const items = yield listMemories(input.ownerKey, host), source = findMemory(items, input.sourceTitle), target = findMemory(items, input.targetTitle);
+    yield requireOwner(input.ownerKey, host);
+    const source = yield host.readMemoryByTitle(input.ownerKey, input.sourceTitle), target = yield host.readMemoryByTitle(input.ownerKey, input.targetTitle);
     if (source.id === target.id) throw new Error("\u4E0D\u80FD\u521B\u5EFA\u8BB0\u5FC6\u81EA\u8EAB\u5173\u7CFB");
     const link2 = yield host.createLink(input.ownerKey, { sourceMemoryId: source.id, targetMemoryId: target.id, type_: requireName(input.linkType, "\u5173\u7CFB\u7C7B\u578B"), weight: input.weight, description: input.description });
     return { ownerKey: input.ownerKey, link: link2 };
@@ -7610,7 +7840,7 @@ function parseDomainMessage(value) {
   const envelope = record(value, "character-memory.domain"), keys = Object.keys(envelope);
   if (keys.length !== 2 || !keys.every(
     /** Rejects protocol spellings other than the established operation/input fields. */
-    (key) => key === "operation" || key === "input"
+    (key2) => key2 === "operation" || key2 === "input"
   )) throw new Error("character-memory.domain requires exactly operation and input");
   if (typeof envelope.operation !== "string" || envelope.operation.trim() === "") throw new Error("character-memory.domain.operation must be nonblank");
   const operation = envelope.operation;
@@ -7624,7 +7854,7 @@ function fields(value, expected, label) {
   const object3 = record(value, label), keys = Object.keys(object3);
   if (keys.length !== expected.length || keys.some(
     /** Requires each key to be one of the exact documented field names. */
-    (key) => expected.indexOf(key) < 0
+    (key2) => expected.indexOf(key2) < 0
   )) throw new Error(label + " has invalid fields");
   return object3;
 }
@@ -7646,7 +7876,7 @@ function parseSectionsRequest(value) {
     if (ids.has(id2)) throw new Error("Duplicate chat summary: " + id2);
     ids.add(id2);
     if (typeof chat.title !== "string" || typeof chat.updatedAt !== "string") throw new Error("Chat summary title and updatedAt must be strings");
-    for (const key of ["workspaceId", "workspaceName"]) if (chat[key] !== null && typeof chat[key] !== "string") throw new Error("Chat summary " + key + " must be a string or null");
+    for (const key2 of ["workspaceId", "workspaceName"]) if (chat[key2] !== null && typeof chat[key2] !== "string") throw new Error("Chat summary " + key2 + " must be a string or null");
     if (typeof chat.displayOrder !== "number" || !Number.isSafeInteger(chat.displayOrder)) throw new Error("Chat summary displayOrder must be an integer");
     if (typeof chat.locked !== "boolean" || typeof chat.pinned !== "boolean") throw new Error("Chat summary locked and pinned must be booleans");
     const workspaceId = nullableString(chat.workspaceId, "chat.workspaceId");
@@ -8841,9 +9071,9 @@ var MemoryTools = class {
     state.access = ++this.access;
     while (snapshots.size > 32) {
       let oldestKey, oldest = Infinity;
-      for (const [key, item] of snapshots) if (key !== id2 && item.access < oldest) {
+      for (const [key2, item] of snapshots) if (key2 !== id2 && item.access < oldest) {
         oldest = item.access;
-        oldestKey = key;
+        oldestKey = key2;
       }
       if (oldestKey === void 0) throw new Error("Query snapshot index is inconsistent");
       snapshots.delete(oldestKey);
@@ -8980,23 +9210,38 @@ var MemoryTools = class {
   /** Searches full records and commits snapshot exclusions only after document queries succeed. */
   query(ownerKey, input) {
     return __async(this, null, function* () {
-      const query = requiredText(input, "query"), count = limit(input, query.trim() === "*" ? Number.MAX_SAFE_INTEGER : 20);
+      const query = requiredText(input, "query"), count = limit(input, 20);
       const threshold = optionalNumber(input, "threshold"), folder2 = optionalText(input, "folder_path");
       if (threshold !== void 0 && threshold < 0) throw new Error("Invalid threshold. Expected number >= 0.");
       const start = timeBoundary(input, "start_time"), end = timeBoundary(input, "end_time");
       if (start !== null && end !== null && start > end) throw new Error("start_time must not be after end_time");
-      const result2 = yield this.domain("memory.searchWithOptions", { ownerKey, query, folderPath: folder2 === void 0 ? null : folder2, relevanceThreshold: threshold === void 0 ? MEMORY_SEARCH_THRESHOLD : threshold, createdAtStartMs: start, createdAtEndMs: end });
-      if (result2.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
       const snapshot2 = this.snapshot(ownerKey, optionalText(input, "snapshot_id"));
-      const unseen = result2.items.filter(
-        /** Excludes only records delivered by this exact owner-scoped snapshot. */
-        (memory) => !snapshot2.state.seen.has(ownerKey + ":" + memory.id)
-      ), returned = unseen.slice(0, count);
+      const excludeIds = [...snapshot2.state.seen].map(
+        /** Removes the exact selected owner namespace. */
+        (identity3) => identity3.slice(ownerKey.length + 1)
+      );
+      const result2 = yield this.domain("memory.searchWithOptions", {
+        ownerKey,
+        query,
+        limit: count,
+        excludeIds,
+        folderPath: folder2 === void 0 ? null : folder2,
+        relevanceThreshold: threshold === void 0 ? MEMORY_SEARCH_THRESHOLD : threshold,
+        createdAtStartMs: start,
+        createdAtEndMs: end
+      });
+      if (result2.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
+      const returned = result2.items;
       const memories = [];
       for (const memory of returned) {
         const info = this.info(ownerKey, memory);
         if (memory.isDocumentNode) {
-          const { total, chunks } = yield this.domain("memory.chunks", { ownerKey, memoryId: memory.id, query, count: Math.min(count, 20) });
+          const document2 = result2.documents.find(
+            /** Resolves the selected document's database results. */
+            (item) => item.memoryId === memory.id
+          );
+          if (document2 === void 0) throw new Error("Memory search omitted a selected document's chunks");
+          const { total, chunks } = document2;
           info.content = query.trim() === "*" || count > 20 ? "Document: " + memory.title + " (" + total + " chunks)" : this.formatChunks(memory.title, total, chunks);
           if (chunks.length !== 0) {
             info.chunkInfo = "Chunks " + chunks.slice(0, 5).map(
@@ -9012,7 +9257,7 @@ var MemoryTools = class {
         memories.push(info);
       }
       for (const memory of returned) snapshot2.state.seen.add(ownerKey + ":" + memory.id);
-      return { memories, snapshotId: snapshot2.id, snapshotCreated: snapshot2.created, excludedBySnapshotCount: result2.items.length - unseen.length };
+      return { memories, snapshotId: snapshot2.id, snapshotCreated: snapshot2.created, excludedBySnapshotCount: result2.excludedBySnapshotCount };
     });
   }
   /** Reads an exact title or validates the original one-based document query/index/range parameters. */
@@ -9739,7 +9984,7 @@ function fields2(value, keys, label) {
   const input = record(value, label), actual = Object.keys(input);
   if (actual.length !== keys.length || actual.some(
     /** Rejects undocumented fields rather than guessing their meaning or owner. */
-    (key) => keys.indexOf(key) === -1
+    (key2) => keys.indexOf(key2) === -1
   )) throw new Error(label + " has invalid fields");
   return input;
 }
@@ -9762,9 +10007,9 @@ function scopedInput(value) {
 }
 function parseChatInitialization(value) {
   const keys = Object.keys(value);
-  if (keys.length !== 7 || keys.some((key) => ["eventName", "creationKind", "chat", "sourceChatId", "sourceMessageTimestamp", "input", "sourceExtension"].indexOf(key) < 0)) throw new Error("chat lifecycle has invalid fields");
+  if (keys.length !== 7 || keys.some((key2) => ["eventName", "creationKind", "chat", "sourceChatId", "sourceMessageTimestamp", "input", "sourceExtension"].indexOf(key2) < 0)) throw new Error("chat lifecycle has invalid fields");
   const chatKeys = Object.keys(value.chat);
-  if (chatKeys.length !== 4 || chatKeys.some((key) => ["id", "title", "workspaceId", "parentChatId"].indexOf(key) < 0)) throw new Error("chat lifecycle.chat has invalid fields");
+  if (chatKeys.length !== 4 || chatKeys.some((key2) => ["id", "title", "workspaceId", "parentChatId"].indexOf(key2) < 0)) throw new Error("chat lifecycle.chat has invalid fields");
   if (value.eventName !== "before_create") throw new Error("chat lifecycle.eventName must be before_create");
   if (value.creationKind !== "new" && value.creationKind !== "branch") throw new Error("chat lifecycle.creationKind must be new or branch");
   const workspaceId = value.chat.workspaceId === null ? null : identity2(value.chat.workspaceId, "chat lifecycle.chat.workspaceId");
@@ -9846,14 +10091,14 @@ function executionContext(value, registeredOwner) {
   const actual = Object.keys(context);
   if (actual.some(
     /** Rejects complete plugin maps and undocumented alternative execution fields. */
-    (key) => fields4.indexOf(key) === -1
+    (key2) => fields4.indexOf(key2) === -1
   )) throw new Error("executionContext has unexpected fields");
-  for (const key of fields4) {
-    if (!Object.prototype.hasOwnProperty.call(context, key)) throw new Error("executionContext." + key + " is required");
+  for (const key2 of fields4) {
+    if (!Object.prototype.hasOwnProperty.call(context, key2)) throw new Error("executionContext." + key2 + " is required");
   }
-  for (const key of ["chatId", "participantId"]) {
-    const value2 = context[key];
-    if (value2 !== null && (typeof value2 !== "string" || value2.trim() === "" || value2.trim() !== value2)) throw new Error("executionContext." + key + " must be exact nonblank text or null");
+  for (const key2 of ["chatId", "participantId"]) {
+    const value2 = context[key2];
+    if (value2 !== null && (typeof value2 !== "string" || value2.trim() === "" || value2.trim() !== value2)) throw new Error("executionContext." + key2 + " must be exact nonblank text or null");
   }
   const chatId = context.chatId, participantId = context.participantId;
   if (chatId !== null && typeof chatId !== "string") throw new Error("Invalid execution chatId");
@@ -9959,7 +10204,7 @@ function object(value, keys, path) {
   const result2 = value, actual = Object.keys(result2);
   if (actual.length !== keys.length || actual.some(
     /** Rejects alternate containers, names and extra speculative planner fields. */
-    (key) => keys.indexOf(key) < 0
+    (key2) => keys.indexOf(key2) < 0
   )) throw new Error(path + " has unexpected or missing fields");
   return result2;
 }
@@ -10067,7 +10312,7 @@ function canonical(value) {
     for (const item of value) parts.push(canonical(item));
     return "[" + parts.join(",") + "]";
   }
-  for (const key of Object.keys(value).sort()) parts.push(JSON.stringify(key) + ":" + canonical(value[key]));
+  for (const key2 of Object.keys(value).sort()) parts.push(JSON.stringify(key2) + ":" + canonical(value[key2]));
   return "{" + parts.join(",") + "}";
 }
 function attachment(value) {
@@ -10114,8 +10359,8 @@ var GroupExecutionController = class {
   }
   /** Starts one retained submission and rejects a changed payload or competing sequence before doing any work. */
   submit(input) {
-    const saved = validateGroupSubmission(input), key = JSON.stringify([saved.chatId, saved.submissionId]), inputKey = canonical(jsonValue(saved));
-    const existing = this.sessions.get(key);
+    const saved = validateGroupSubmission(input), key2 = JSON.stringify([saved.chatId, saved.submissionId]), inputKey = canonical(jsonValue(saved));
+    const existing = this.sessions.get(key2);
     if (existing !== void 0) {
       if (existing.inputKey !== inputKey) throw new Error("Duplicate group submission id has a different input");
       if (existing.retained === null) throw new Error("Group submission retained result was not initialized");
@@ -10150,8 +10395,8 @@ var GroupExecutionController = class {
       cancellation: null,
       retained: null
     };
-    this.sessions.set(key, session);
-    this.chats.set(saved.chatId, key);
+    this.sessions.set(key2, session);
+    this.chats.set(saved.chatId, key2);
     session.retained = Promise.resolve().then(
       /** Starts after retaining identity so two synchronous submits cannot both begin planning. */
       () => this.run(session, true)
@@ -10409,7 +10654,7 @@ var NativeGroupTurnTransport = class {
   /** Records the complete original input before planning without selecting any participant. */
   submit(input) {
     return __async(this, null, function* () {
-      const submitted = input.submission, key = sequenceKey(submitted.chatId, submitted.submissionId), prior = this.sequences.get(key);
+      const submitted = input.submission, key2 = sequenceKey(submitted.chatId, submitted.submissionId), prior = this.sequences.get(key2);
       if (prior !== void 0 && (prior.last === null || prior.last.type !== "committed" || prior.last.receipt.status !== "cancelled" || prior.userTimestamp !== null)) {
         throw new Error("A second initial submit requires explicitly resumed cancellation before user-message persistence");
       }
@@ -10421,7 +10666,7 @@ var NativeGroupTurnTransport = class {
         assistants: [],
         finished: false
       };
-      this.sequences.set(key, sequence);
+      this.sequences.set(key2, sequence);
       const request = {
         kind: "submit",
         chatId: submitted.chatId,
@@ -10596,7 +10841,7 @@ function decodeGroupExecutionRequest(payload) {
   const action = payload.action;
   const keys = Object.keys(payload);
   const expected = action === "current" ? ["chatId", "action"] : ["chatId", "submissionId", "action"];
-  if (keys.length !== expected.length || keys.some((key) => expected.indexOf(key) < 0)) throw new Error("Group execution request has unexpected or missing fields");
+  if (keys.length !== expected.length || keys.some((key2) => expected.indexOf(key2) < 0)) throw new Error("Group execution request has unexpected or missing fields");
   if (action === "current") return { chatId, action };
   const submissionId = requireId(payload.submissionId, "group execution submissionId");
   if (action !== "status" && action !== "cancel" && action !== "resume") throw new Error("Unknown group execution action");
@@ -10694,7 +10939,7 @@ function exactFields(value, expected, label) {
   const object3 = record(value, label), keys = Object.keys(object3);
   if (keys.length !== expected.length || keys.some(
     /** Rejects every field not explicitly declared by this boundary. */
-    (key) => expected.indexOf(key) === -1
+    (key2) => expected.indexOf(key2) === -1
   )) throw new Error(label + " has invalid fields");
   return object3;
 }

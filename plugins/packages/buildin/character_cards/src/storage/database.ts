@@ -25,7 +25,6 @@ import { RepositorySession } from "../repository";
 import { createInitialState, normalizeMemoryRecallSettings } from "./state";
 import {
   clone,
-  collections,
   equal,
   records,
   decodeStateFromRecords,
@@ -94,9 +93,6 @@ function boundedCommitBatches(mutations: ObjectMutation[]): ObjectMutation[][] {
 /** Owns record transactions in the persistent synchronized plugin data namespace. */
 export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
   readonly chatBindings: CharacterChatStore;
-  private busy = false;
-  private publicationFailure: { error: unknown } | null = null;
-  private readonly waiters: (() => void)[] = [];
 
   /** Retains the host database handle and the explicit external directory readers. */
   private constructor(
@@ -147,95 +143,39 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
         if (key.startsWith(recordPrefix)) rows.push({ collection: name, key: key.slice(recordPrefix.length), value: clone(value), version: null });
       }
     }
-    const results = await Promise.allSettled(["owners", "memories", "links", "chunks", "candidates", "embeddings"].map(async collection =>
-      (await this.storage.memory.read(collection)).map(entry => ({ collection, ...entry })),
-    ));
-    for (const result of results) {
-      if (result.status === "rejected") throw result.reason;
-      rows.push(...result.value);
-    }
+    rows.push(...(await this.storage.memory.read("owners")).map(
+      /** Carries only owner metadata into the configuration edit snapshot. */ entry => ({ collection: "owners", ...entry })));
     return rows;
   }
 
-  /** Refreshes host records for each operation so remote synchronization and snapshot imports remain visible. */
-  async run<T>(
-    action: (repository: CharacterRepository) => Promise<T>,
-  ): Promise<T> {
-    await this.acquire();
-    try {
-      if (this.publicationFailure !== null) throw this.publicationFailure.error;
-      const metadata = (await this.storage.metadata.data()).get<Storage.Value>("state");
-      if (metadata === undefined)
-        throw new Error("Character database metadata disappeared");
-      const configuration = await this.storage.data(), rows = await this.readRecords(configuration);
-      assertObject(metadata, "character metadata");
-      const before = decodeStateFromRecords(metadata, rows);
-      const state = clone(before),
-        session = new RepositorySession(
-          state,
-          this.directory,
-          this.chatBindings,
-          this.directories,
-        );
-      const result = await action(session);
-      const documents = session.documentWrites();
-      const removed = before.owners
-        .filter(
-          (owner) =>
-            !state.owners.some(
-              (retained) => retained.ownerKey === owner.ownerKey,
-            ),
-        )
-        .map(
-          (owner) =>
-            this.directory +
-            "/" +
-            owner.userDocumentPath.slice(
-              0,
-              owner.userDocumentPath.lastIndexOf("/"),
-            ),
-        );
-      if (!equal(before, state) || documents.length !== 0) {
-        try {
-          await this.publish(
-            state,
-            rows,
-            documents,
-            removed,
-            metadata,
-          );
-        } catch (error) {
-          this.publicationFailure = { error };
-          throw error;
-        }
-      }
-      return result;
-    } finally {
-      this.release();
-    }
-  }
-
-  /** Rejects operations after an incomplete publication in this execution. */
-  private requirePublicationReady(): void {
-    if (this.publicationFailure !== null) throw this.publicationFailure.error;
+  /** Opens a configuration edit session while memory operations access database records directly. */
+  async run<T>(action: (repository: CharacterRepository) => Promise<T>): Promise<T> {
+    const metadata = (await this.storage.metadata.data()).get<Storage.Value>("state");
+    if (metadata === undefined) throw new Error("Character database metadata disappeared");
+    const configuration = await this.storage.data(), rows = await this.readRecords(configuration);
+    assertObject(metadata, "character metadata");
+    const before = decodeStateFromRecords(metadata, rows), state = clone(before);
+    const session = new RepositorySession(state, this.directory, this.chatBindings, this.storage.memory, this.directories);
+    const result = await action(session), documents = session.documentWrites();
+    const removed = before.owners.filter(/** Selects explicitly removed owner namespaces. */ owner => !state.owners.some(/** Matches retained owner identities. */ retained => retained.ownerKey === owner.ownerKey))
+      .map(/** Resolves the removed owner's document directory. */ owner => this.directory + "/" + owner.userDocumentPath.slice(0, owner.userDocumentPath.lastIndexOf("/")));
+    if (!equal(before, state) || documents.length !== 0) await this.publish(state, rows, documents, removed, metadata);
+    return result;
   }
 
   /** Uses each native owner's immutable snapshot without retrying business callbacks. */
   private async readConsistent<T>(read: () => Promise<T>): Promise<T> {
-    this.requirePublicationReady();
     return read();
   }
 
   /** Reads the role directory from native immutable preference snapshots. */
   async readSidebarDirectory(): Promise<Pick<Snapshot, "cards" | "groups">> {
-    this.requirePublicationReady();
     const [cards, groups] = await Promise.all([this.readCharacters(), this.readGroups()]);
     return { cards, groups };
   }
 
   /** Reads the explicitly stored active selection. */
   readActive(): Promise<ActivePrompt> {
-    this.requirePublicationReady();
     return this.readMetadata().then(metadata => metadata.active);
   }
 
@@ -341,14 +281,12 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
 
   /** Reads the actual model directory only when model validation needs it. */
   listModels(): ReturnType<CharacterDirectories["listModels"]> {
-    this.requirePublicationReady();
     if (this.directories === null) throw new Error("External directory readers are unavailable");
     return this.directories.listModels();
   }
 
   /** Reads the actual speech directory only when speech validation needs it. */
   listTtsConfigs(): ReturnType<CharacterDirectories["listTtsConfigs"]> {
-    this.requirePublicationReady();
     if (this.directories === null) throw new Error("External directory readers are unavailable");
     return this.directories.listTtsConfigs();
   }
@@ -392,13 +330,11 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
 
   /** Reads global memory preferences without loading memory bodies. */
   async readGlobalMemoryPreferences(): Promise<GlobalMemoryPreferences> {
-    this.requirePublicationReady();
     return (await this.readMetadata()).memoryPreferences;
   }
 
   /** Reads recall settings; states persisted by the released plugin predate the field. */
   async readMemoryRecallSettings(): Promise<MemoryRecallSettings> {
-    this.requirePublicationReady();
     const metadata = (await this.storage.metadata.data()).get<Record<string, Storage.Value>>("state");
     if (metadata === undefined) throw new Error("Character database metadata disappeared");
     return normalizeMemoryRecallSettings(metadata.memoryRecall === undefined ? { enabled: true } : metadata.memoryRecall);
@@ -433,13 +369,12 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     return this.directory + "/" + row.userDocumentPath;
   }
 
-  /** Reads one owner directly; file IO never occupies the full-state editing queue. */
+  /** Reads one owner directly without loading memory bodies or holding a transaction across file IO. */
   private async readOwnerMetadata<T>(
     ownerKey: string,
     action: (row: Record<string, Storage.Value>) => T | Promise<T>,
   ): Promise<T> {
     requireId(ownerKey, "memory owner");
-    if (this.publicationFailure !== null) throw this.publicationFailure.error;
     return this.readConsistent(async () => {
       const row = await this.storage.memory.get("owners", ownerKey);
       if (row === null) throw new Error("Memory owner is missing: " + ownerKey);
@@ -450,24 +385,6 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
       if (kind !== "character" && kind !== "shared") throw new Error("Invalid memory owner: " + ownerKey);
       return action(row.value);
     });
-  }
-
-  /** Serializes domain sessions within this execution while exact host versions guard other executions. */
-  private acquire(): Promise<void> {
-    if (!this.busy) {
-      this.busy = true;
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      this.waiters.push(resolve);
-    });
-  }
-
-  /** Grants the next waiting operation after the current session completes. */
-  private release(): void {
-    const waiter = this.waiters.shift();
-    if (waiter === undefined) this.busy = false;
-    else waiter();
   }
 
   /** Commits only changed domain records and retains the migration provenance in the metadata guard. */
@@ -502,6 +419,11 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
         key: row.key,
         expectedVersion: row.version,
       });
+    for (const mutation of [...mutations]) {
+      if (mutation.collection !== "owners" || mutation.op !== "delete") continue;
+      const children = await this.storage.memory.query("SELECT collection,key,version FROM plugin_objects WHERE collection IN ('memories','links','chunks','candidates','embeddings') AND key>=? AND key<?", [mutation.key + "/", mutation.key + "0"]);
+      for (const child of children) mutations.push({ op: "delete", collection: String(child.collection), key: String(child.key), expectedVersion: String(child.version) });
+    }
     const memoryMutations = mutations.filter(row => !configurationNames.some(name => name === row.collection));
     // One host object commit accepts at most 1000 mutations, and a large import exceeds that
     // on its own. The structured bridge additionally counts every converted node against a
@@ -544,7 +466,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     }
     for (const batch of memoryBatches) await this.storage.memory.commit(batch);
     const nextMetadata = { ...metadata, version: state.version, active: "Model" in state.active ? null : storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) };
-    await this.storage.metadata.edit(preferences => {
+    if (!equal(nextMetadata, metadata)) await this.storage.metadata.edit(preferences => {
       if (!equal(preferences.get("state"), metadata)) throw new Error("Character metadata edit conflict");
       preferences.set("state", nextMetadata);
     });

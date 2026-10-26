@@ -850,7 +850,7 @@ var format = enumeration("operit", "tavern");
 var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
   "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.searchWithOptions": shape({ limit: optional(integer), excludeIds: optional(strings), ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
   "memory.chat.pruneMissing": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
@@ -1195,23 +1195,38 @@ var MemoryTools = class {
   }
   /** Searches full records and commits snapshot exclusions only after document queries succeed. */
   async query(ownerKey, input) {
-    const query = requiredText(input, "query"), count = limit(input, query.trim() === "*" ? Number.MAX_SAFE_INTEGER : 20);
+    const query = requiredText(input, "query"), count = limit(input, 20);
     const threshold = optionalNumber(input, "threshold"), folder = optionalText(input, "folder_path");
     if (threshold !== void 0 && threshold < 0) throw new Error("Invalid threshold. Expected number >= 0.");
     const start = timeBoundary(input, "start_time"), end = timeBoundary(input, "end_time");
     if (start !== null && end !== null && start > end) throw new Error("start_time must not be after end_time");
-    const result = await this.domain("memory.searchWithOptions", { ownerKey, query, folderPath: folder === void 0 ? null : folder, relevanceThreshold: threshold === void 0 ? MEMORY_SEARCH_THRESHOLD : threshold, createdAtStartMs: start, createdAtEndMs: end });
-    if (result.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
     const snapshot = this.snapshot(ownerKey, optionalText(input, "snapshot_id"));
-    const unseen = result.items.filter(
-      /** Excludes only records delivered by this exact owner-scoped snapshot. */
-      (memory) => !snapshot.state.seen.has(ownerKey + ":" + memory.id)
-    ), returned = unseen.slice(0, count);
+    const excludeIds = [...snapshot.state.seen].map(
+      /** Removes the exact selected owner namespace. */
+      (identity) => identity.slice(ownerKey.length + 1)
+    );
+    const result = await this.domain("memory.searchWithOptions", {
+      ownerKey,
+      query,
+      limit: count,
+      excludeIds,
+      folderPath: folder === void 0 ? null : folder,
+      relevanceThreshold: threshold === void 0 ? MEMORY_SEARCH_THRESHOLD : threshold,
+      createdAtStartMs: start,
+      createdAtEndMs: end
+    });
+    if (result.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
+    const returned = result.items;
     const memories = [];
     for (const memory of returned) {
       const info = this.info(ownerKey, memory);
       if (memory.isDocumentNode) {
-        const { total, chunks } = await this.domain("memory.chunks", { ownerKey, memoryId: memory.id, query, count: Math.min(count, 20) });
+        const document = result.documents.find(
+          /** Resolves the selected document's database results. */
+          (item) => item.memoryId === memory.id
+        );
+        if (document === void 0) throw new Error("Memory search omitted a selected document's chunks");
+        const { total, chunks } = document;
         info.content = query.trim() === "*" || count > 20 ? "Document: " + memory.title + " (" + total + " chunks)" : this.formatChunks(memory.title, total, chunks);
         if (chunks.length !== 0) {
           info.chunkInfo = "Chunks " + chunks.slice(0, 5).map(
@@ -1227,7 +1242,7 @@ var MemoryTools = class {
       memories.push(info);
     }
     for (const memory of returned) snapshot.state.seen.add(ownerKey + ":" + memory.id);
-    return { memories, snapshotId: snapshot.id, snapshotCreated: snapshot.created, excludedBySnapshotCount: result.items.length - unseen.length };
+    return { memories, snapshotId: snapshot.id, snapshotCreated: snapshot.created, excludedBySnapshotCount: result.excludedBySnapshotCount };
   }
   /** Reads an exact title or validates the original one-based document query/index/range parameters. */
   async byTitle(ownerKey, input) {

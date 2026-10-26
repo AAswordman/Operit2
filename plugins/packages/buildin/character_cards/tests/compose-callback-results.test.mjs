@@ -1,3 +1,4 @@
+import { readComposeBuffer } from "../../../../../tools/tests/support/compose_buffer_fixture.mjs";
 import { compileComposeModule } from "../../../../../plugins/tools/compile_compose_module.mjs";
 import { readSdkScript, wrapComposeScript } from "../../../../../tools/runtime/compose_scripts.mjs";
 import { productionBootstrap, bootstrapLibrarySource } from '../../../../../tools/tests/fixtures/production_bootstrap.mjs';
@@ -54,6 +55,12 @@ function nativeTransport(callbackBody) {
   const context=vm.createContext({});
   vm.runInContext(source('hosts/web/src/javascript_promises.js'),context);
   const registry=context.__operitHostPromiseRegistry;
+  /** Tracks the native execution owner selected by the production continuation runtime. */
+  context.__operitNativeActivateCall = (callId, interrupt) => {
+    assert.equal(typeof callId, "string");
+    assert.equal(typeof interrupt, "boolean");
+    context.nativeActiveCallId = callId;
+  };
   /** Supplies the trusted library source through the production structured binding. */
   context.__operitNativeReadBootstrapLibrary=registry.syncBinding(bootstrapLibrarySource);
   context.__operitNativeSetCallError=registry.syncBinding((callId,value)=>{
@@ -62,6 +69,8 @@ function nativeTransport(callbackBody) {
   });
   context.__operitNativeLogJsExecutionTrace=(callId,message)=>traces.push({callId,message});
   context.__operitNativeCancelJavaScriptPromises=scope=>registry.cancel(scope);
+  /** Verifies detached command ownership remains registered until its continuations complete. */
+  context.__operitNativeNotifyDetachedCall = callId => { assert.ok(context.__operitGetCallState(callId)); };
   context.__operitNativeLog=()=>{};
   context.__operitNativeHashText=text=>{let hash=0;for(let i=0;i<text.length;i++)hash=(Math.imul(hash,31)+text.charCodeAt(i))>>>0;return hash.toString(16);};
   context.__operitNativePrepareComposeModule = compileComposeModule;
@@ -80,9 +89,10 @@ function nativeTransport(callbackBody) {
     };
   context.__operitNativeSendStructuredIntermediate =
     /** Records the genuine structured sink without converting UI nodes to JSON text. */
-    function(callId, envelope) {
-      const projected = fixture.accept(envelope.phase, envelope.response);
-      if (envelope.phase === "final") finalResponses.set(callId, projected);
+    function(callId, frame) {
+      const { phase } = readComposeBuffer(frame);
+      const projected = fixture.accept(phase, frame);
+      if (phase === "final") finalResponses.set(callId, projected);
       else intermediate.push({ callId, value: projected });
     };
   const script = `
@@ -104,6 +114,7 @@ function nativeTransport(callbackBody) {
     );
     const sourceId = callId + ":" + createHash("sha256").update(script).digest("hex");
     context.__operitRegisterScriptSource(sourceId, script);
+    if (name === "__operit_dispatch_compose_dsl_action") params = { ...params, actionId: fixture.actionTarget(params.actionId) };
     context.__operitExecuteScriptFunction(callId, {
       __operit_ui_package_name: "arbitrary.callback.fixture",
       __operit_script_screen: "ui/callback/index.ui.js",

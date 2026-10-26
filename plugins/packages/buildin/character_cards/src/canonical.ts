@@ -107,6 +107,14 @@ export interface CharacterRepository {
   pruneOrphanMemoryOwners(): Promise<string[]>;
   /** Allocates one lossless private candidate or job identity in this snapshot. */
   allocateRecordId(): Promise<string>;
+  /** Reads only owner job metadata and candidates. */
+  readMemoryJobState(ownerKey: string): Promise<import("./model").MemoryJobState>;
+  /** Writes job changes under their original exact record versions. */
+  writeMemoryJobState(ownerKey: string, state: import("./model").MemoryJobState): Promise<void>;
+  /** Rebuilds source vectors through bounded durable database pages. */
+  rebuildMemoryEmbeddings(ownerKey: string): Promise<number>;
+  /** Ranks original document chunks without constructing source vectors during queries. */
+  searchMemoryChunks(ownerKey: string, memoryId: string, query: string, count: number): Promise<{ total: number; chunks: import("./model").DocumentChunk[] }>;
   /** Writes a complete validated owner space without replacing the separate USER.md file. */
   writeMemorySpace(ownerKey: string, space: MemorySpace): Promise<void>;
   /** Reads the complete memory space for full-record exports. */
@@ -121,8 +129,14 @@ export interface CharacterRepository {
   readMemoryGraph(ownerKey: string): Promise<MemoryGraph>;
   /** Lists complete memories including document nodes. */
   listMemories(ownerKey: string): Promise<Memory[]>;
+  /** Reads exact titles in the selected owner without scanning the corpus in TypeScript. */
+  readMemoriesByTitles(ownerKey: string, titles: string[]): Promise<Memory[]>;
+  /** Requires one unambiguous exact title. */
+  readMemoryByTitle(ownerKey: string, title: string): Promise<Memory>;
   /** Lists stored folders without graph projection. */
   listMemoryFolders(ownerKey: string): Promise<string[]>;
+  /** Returns a bounded database page and the exact snapshot exclusion count. */
+  searchMemoryPage(options: MemorySearchOptions): Promise<import("./api").DomainOutput<"memory.searchWithOptions">>;
   /** Searches full records using the plugin's explicit scoring algorithm. */
   searchMemories(options: MemorySearchOptions): Promise<Memory[]>;
   /** Creates an intentional new memory with complete identity and metadata. */
@@ -166,6 +180,8 @@ export interface CharacterRepository {
     ownerKey: string,
     settings: MemorySettings,
   ): Promise<void>;
+  /** Saves settings and search weights in one owner transaction while retaining scheduler timing. */
+  writeMemoryOwnerSettings(ownerKey: string, settings: MemorySettings, config: MemorySearchConfig): Promise<{ settings: MemorySettings; config: MemorySearchConfig }>;
   /** Reads all search weights and scoring mode. */
   readMemorySearchConfig(ownerKey: string): Promise<MemorySearchConfig>;
   /** Writes all search weights and scoring mode. */

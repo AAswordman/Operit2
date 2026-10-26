@@ -204,7 +204,7 @@ test("registered selector awaits Theme and TTS before V1 completion for both cha
     await t.test((chatId === null ? "global:" : "chat:") + method, async s => {
       const { runtime, settings, card } = await environment(s), requestId = chatId === null ? "settings-global" : "settings-chat";
       const ui = await ready(runtime, presentation(requestId, chatId)), tree = ui.render().tree;
-      const row = keyedNode(tree, "card:" + card.id), close = keyedNode(tree, "selector-close"), gate = settings.hold(method);
+      const row = keyedNode(tree, "card:" + card.id), gate = settings.hold(method);
       let resolved = false;
       const pending = ui.dispatch(row.props.onClick).then(
         /** Records real SDK completion only after the returned action-result promise resolves. */
@@ -216,10 +216,13 @@ test("registered selector awaits Theme and TTS before V1 completion for both cha
         else assert.equal((await runtime.binding(chatId)).selection, "card:" + card.id);
         const busy = ui.render().tree;
         assert.equal(keyedNode(busy, "selector-close").props.enabled, false); assert.equal(keyedNode(busy, "card:" + card.id).props.onClick, undefined);
-        await assert.rejects(ui.dispatch(row.props.onClick), /already running/);
         assert.throws(
-          /** Requires a retained busy cancellation action to reject synchronously without completing or cancelling. */
-          () => ui.dispatch(close.props.onClick), /already running/,
+          /** Rejects an action removed by the busy render before another write can start. */
+          () => ui.dispatch(row.props.onClick), /compose action not found/,
+        );
+        assert.throws(
+          /** Requires the current cancellation action to reject while the independent write remains pending. */
+          () => ui.dispatch(keyedNode(busy, "selector-close").props.onClick), /already running/,
         );
         assert.deepEqual(settings.calls.map(
           /** Confirms no subsequent step or V1 completion can precede this exact outstanding acknowledgement. */

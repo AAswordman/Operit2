@@ -179,7 +179,13 @@ async function applyAnalysis(ownerKey: string, result: Analysis | null, settings
   if (result.profile_markdown !== undefined && result.profile_markdown !== null && (!settings.profileAutoUpdateEnabled || settings.profileAutoUpdateLocked))
     throw new Error("Model returned a profile update forbidden by the owner settings");
   const index = new Map<string, Memory[]>();
-  for (const memory of await repository.listMemories(ownerKey)) {
+  const referenced = new Set<string>();
+  if (result.main !== null) referenced.add(result.main.title);
+  for (const item of result.update) referenced.add(item.title);
+  for (const item of result.merge) for (const title of item.source_titles) referenced.add(title);
+  for (const item of result.new) { referenced.add(item.title); if (item.alias_for !== undefined && item.alias_for !== null) referenced.add(item.alias_for); }
+  for (const item of result.links) { referenced.add(item.source); referenced.add(item.target); }
+  for (const memory of await repository.readMemoriesByTitles(ownerKey, [...referenced])) {
     const matches = index.get(memory.title);
     if (matches === undefined) index.set(memory.title, [memory]); else matches.push(memory);
   }
@@ -240,16 +246,16 @@ export async function extractMessages(ownerKey: string, messages: MemoryChatMess
     message => message.sender === "user",
   );
   if (user === undefined) throw new Error("Memory extraction requires user context");
-  const space = await repository.readMemorySpace(ownerKey);
-  const profile = space.settings.profileAutoUpdateEnabled && !space.settings.profileAutoUpdateLocked ? (await repository.readUser(ownerKey)).content : "";
+  const settings = await repository.readMemorySettings(ownerKey);
+  const profile = settings.profileAutoUpdateEnabled && !settings.profileAutoUpdateLocked ? (await repository.readUser(ownerKey)).content : "";
   const query = buildCandidateSearchQuery(history);
   const candidates = await repository.searchMemories({ ownerKey, query, folderPath: null, relevanceThreshold: MEMORY_SEARCH_THRESHOLD, createdAtStartMs: null, createdAtEndMs: null });
-  const folders = await repository.listMemoryFolders(ownerKey), prompt = extractionPrompt(candidates.slice(0, 15), space.memories, folders, space.settings, profile);
+  const folders = await repository.listMemoryFolders(ownerKey), prompt = extractionPrompt(candidates.slice(0, 15), candidates, folders, settings, profile);
   const response = await Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: prompt }, { kind: "USER", content: "对话记录：\n" + history.map(
     /** Retains the real user and assistant sequence in the selected extraction window. */
     message => message.sender + ": " + message.content,
   ).join("\n\n") }], recordTokenUsage: true, enableThinking: false });
-  return applyAnalysis(ownerKey, analysis(parseModelJson(response.text)), space.settings, repository);
+  return applyAnalysis(ownerKey, analysis(parseModelJson(response.text)), settings, repository);
 }
 
 /** Updates only a genuine persisted chat-owned resource from its actual chronological messages. */

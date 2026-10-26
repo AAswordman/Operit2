@@ -1891,6 +1891,11 @@ mod tests {
         &self,
     ) -> Result<Vec<operit_plugin_sdk::js_sdk::models::ModelsSummary>, String> { panic!("Unexpected runtime service: listModelSummaries") }
         /// Rejects unexpected application service access in execution pipeline tests.
+    fn speakSpeech(&self, _request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest)
+        -> Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String> {
+        panic!("Unexpected runtime service: speakSpeech")
+    }
+        /// Rejects unexpected application service access in execution pipeline tests.
     fn listTtsConfigs(
         &self,
     ) -> Result<Vec<operit_plugin_sdk::js_sdk::tts::TtsConfig>, String> { panic!("Unexpected runtime service: listTtsConfigs") }
