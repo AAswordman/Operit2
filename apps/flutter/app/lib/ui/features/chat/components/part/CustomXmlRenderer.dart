@@ -23,6 +23,7 @@ import 'DetailsTagRenderer.dart';
 import 'DialogComponents.dart';
 import 'FileDiffDisplay.dart';
 import 'FontTagRenderer.dart';
+import 'ProtocolMarkupRecovery.dart';
 import 'ToolDisplayComponents.dart';
 import 'ToolResultDisplay.dart';
 import 'XmlCanvasBlockComponents.dart';
@@ -182,11 +183,41 @@ class CustomXmlRenderer extends StatelessWidget {
           splitMarkdownContent: splitMarkdownContent,
         );
     }
+    // 认不出的标签以前会把原文整段显示出来。如果这段其实是协议标记（块边界被流式切断、
+    // 标签名异常等），原文里就是 `<tool ...>`、`<param ...>`、`</tool_result>` 这种东西，
+    // 直接上屏等于把协议泄露给用户。真机截图里出现过，用户明确反馈这是 bug。
+    final recovered = _recoverProtocolMarkup(xmlContent);
+    if (recovered != null) {
+      return recovered;
+    }
     return SelectableText(
       parsed.body.isEmpty ? xmlContent : parsed.body,
       style: Theme.of(
         context,
       ).textTheme.bodyMedium?.copyWith(color: textColor, height: 1.45),
+    );
+  }
+
+  /// Renders the usable part of a protocol block that the XML parser could not classify.
+  ///
+  /// Returns null when the block is ordinary text and the caller should keep its existing behaviour.
+  /// When the block is protocol markup, the markup itself is never shown: only its `<content>`
+  /// payload, or nothing at all.
+  Widget? _recoverProtocolMarkup(String value) {
+    if (!looksLikeProtocolMarkup(value)) {
+      return null;
+    }
+    final payload = protocolMarkupPayload(value);
+    if (payload == null) {
+      return const SizedBox.shrink();
+    }
+    return SelectableText(
+      payload,
+      style: const TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 12,
+        height: 1.4,
+      ),
     );
   }
 }
