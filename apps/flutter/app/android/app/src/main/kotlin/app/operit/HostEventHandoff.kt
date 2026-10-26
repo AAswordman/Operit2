@@ -47,6 +47,9 @@ internal sealed class HostEventHandoffOutcome {
 
     object Delivered : HostEventHandoffOutcome()
 
+    /** The runtime storage is not configured yet; the firing was skipped without retention. */
+    object WaitingForStorage : HostEventHandoffOutcome()
+
     /** Keeps the delivery error and any separate diagnostic storage error. */
     data class Undelivered(
         val fire: UndeliveredHostEventFire,
@@ -60,11 +63,15 @@ internal object HostEventHandoff {
     fun begin(
         schedule: AndroidHostEventSchedule,
         firedAtMillis: Long,
+        storageReady: () -> Boolean,
         startCore: () -> Unit,
         submitBackground: (AndroidHostEventSchedule, Long) -> Unit,
         retain: (UndeliveredHostEventFire) -> Unit,
     ): HostEventHandoffOutcome {
         try {
+            if (!storageReady()) {
+                return HostEventHandoffOutcome.WaitingForStorage
+            }
             startCore()
         } catch (error: Throwable) {
             return retainFailure(retain, schedule, firedAtMillis, HostEventHandoffStage.START_CORE, error)

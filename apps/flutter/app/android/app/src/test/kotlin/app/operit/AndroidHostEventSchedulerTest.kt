@@ -1,11 +1,16 @@
 package app.operit
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONException
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -112,6 +117,7 @@ class AndroidHostEventSchedulerTest {
         val schedule = AndroidHostEventSchedule("hook-1", "timer", 1000L, null, 1234L)
         val outcome = HostEventHandoff.begin(
             schedule, 1234L,
+            storageReady = { true },
             startCore = { throw deliveryError },
             submitBackground = { _, _ -> throw AssertionError("must not submit") },
             retain = { AndroidHostEventScheduler.retainUndelivered(context, it) },
@@ -178,13 +184,131 @@ class AndroidHostEventSchedulerTest {
         assertEquals(HostEventHandoffStage.START_CORE, retained.stage)
         assertTrue(retained.reason.contains("service start denied"))
         assertEquals("[]", stored["schedules"])
+        assertEquals(1, AndroidHostEventScheduler.consecutiveDeliveryFailures(context, "hook-1"))
     }
 
-    private fun receive(scheduleId: String?) {
+    @Test
+    fun waitingForStorageSkipsDeliveryWithoutRetentionAndCountsTowardBackoff() {
+        val fireAt = System.currentTimeMillis() + 60_000L
+        stored["schedules"] = """[{"scheduleId":"hook-1","kind":"interval","delayMs":1000,"intervalMs":60000,"nextFireAtMillis":$fireAt}]"""
+        withAlarms {
+            receive("hook-1", storageReady = false)
+        }
+        assertTrue(AndroidHostEventScheduler.readUndelivered(context).isEmpty())
+        assertEquals(1, AndroidHostEventScheduler.consecutiveDeliveryFailures(context, "hook-1"))
+        Mockito.verify(context, Mockito.never()).startForegroundService(Mockito.any(Intent::class.java))
+        Mockito.verify(context, Mockito.never()).startService(Mockito.any(Intent::class.java))
+    }
+
+    @Test
+    fun deliveryBackoffStartsAfterTheThresholdAndIsCapped() {
+        assertEquals(0L, AndroidHostEventScheduler.deliveryBackoffMillis(60_000L, 0))
+        assertEquals(0L, AndroidHostEventScheduler.deliveryBackoffMillis(60_000L, AndroidHostEventScheduler.deliveryBackoffThreshold - 1))
+        assertEquals(
+            60_000L,
+            AndroidHostEventScheduler.deliveryBackoffMillis(60_000L, AndroidHostEventScheduler.deliveryBackoffThreshold),
+        )
+        assertEquals(120_000L, AndroidHostEventScheduler.deliveryBackoffMillis(60_000L, AndroidHostEventScheduler.deliveryBackoffThreshold + 1))
+        assertEquals(
+            AndroidHostEventScheduler.maxDeliveryBackoffMillis,
+            AndroidHostEventScheduler.deliveryBackoffMillis(60_000L, 500),
+        )
+        assertEquals(0L, AndroidHostEventScheduler.deliveryBackoffMillis(60_000L, 0))
+    }
+
+    @Test
+    fun consumeFireDelaysTheNextIntervalFireAfterRecordedFailures() {
+        val fireAt = System.currentTimeMillis() + 60_000L
+        stored["schedules"] = """[{"scheduleId":"hook-1","kind":"interval","delayMs":1000,"intervalMs":60000,"nextFireAtMillis":$fireAt}]"""
+        withAlarms {
+            repeat(AndroidHostEventScheduler.deliveryBackoffThreshold) {
+                AndroidHostEventScheduler.recordDeliveryFailure(context, "hook-1")
+            }
+            val consumed = AndroidHostEventScheduler.consumeFire(context, "hook-1")!!
+            assertEquals(fireAt, consumed.nextFireAtMillis)
+        }
+        val storedNext = JSONArray(stored["schedules"]!!)
+            .getJSONObject(0)
+            .getLong("nextFireAtMillis")
+        assertEquals(fireAt + 120_000L, storedNext)
+    }
+
+    @Test
+    fun deliverySuccessClearsRecordedFailuresSoTheNextFireKeepsTheRegularBoundary() {
+        val fireAt = System.currentTimeMillis() + 60_000L
+        stored["schedules"] = """[{"scheduleId":"hook-1","kind":"interval","delayMs":1000,"intervalMs":60000,"nextFireAtMillis":$fireAt}]"""
+        AndroidHostEventScheduler.recordDeliveryFailure(context, "hook-1")
+        AndroidHostEventScheduler.recordDeliveryFailure(context, "hook-1")
+        assertEquals(2, AndroidHostEventScheduler.consecutiveDeliveryFailures(context, "hook-1"))
+        AndroidHostEventScheduler.recordDeliverySuccess(context, "hook-1")
+        assertEquals(0, AndroidHostEventScheduler.consecutiveDeliveryFailures(context, "hook-1"))
+        withAlarms {
+            AndroidHostEventScheduler.consumeFire(context, "hook-1")
+        }
+        val storedNext = JSONArray(stored["schedules"]!!)
+            .getJSONObject(0)
+            .getLong("nextFireAtMillis")
+        assertEquals(fireAt + 60_000L, storedNext)
+    }
+
+    @Test
+    fun replaceSchedulesPrunesDeliveryFailureCountsForRemovedSchedules() {
+        AndroidHostEventScheduler.recordDeliveryFailure(context, "hook-1")
+        AndroidHostEventScheduler.recordDeliveryFailure(context, "hook-2")
+        withAlarms {
+            AndroidHostEventScheduler.replaceSchedules(
+                context,
+                """[{"scheduleId":"hook-1","kind":"interval","delayMs":1000,"intervalMs":60000}]""",
+            )
+        }
+        assertEquals("""{"hook-1":1}""", stored["delivery_failure_counts"])
+    }
+
+    @Test
+    fun corruptDeliveryFailureCountsFailOpenWithoutBlockingScheduling() {
+        stored["delivery_failure_counts"] = "not-json"
+        assertEquals(0, AndroidHostEventScheduler.consecutiveDeliveryFailures(context, "hook-1"))
+        assertEquals(1, AndroidHostEventScheduler.recordDeliveryFailure(context, "hook-1"))
+        assertEquals("""{"hook-1":1}""", stored["delivery_failure_counts"])
+    }
+
+    /** Installs alarm-manager, PendingIntent, Intent, and Uri.Builder test doubles for scheduling code paths. */
+    private fun withAlarms(block: () -> Unit) {
+        val alarmManager = Mockito.mock(AlarmManager::class.java)
+        Mockito.`when`(context.getSystemService(Context.ALARM_SERVICE)).thenReturn(alarmManager)
+        Mockito.mockStatic(PendingIntent::class.java).use { pendingIntents ->
+            val pendingIntent = Mockito.mock(PendingIntent::class.java)
+            pendingIntents.`when`<PendingIntent> {
+                PendingIntent.getBroadcast(
+                    Mockito.any(),
+                    Mockito.anyInt(),
+                    Mockito.any(),
+                    Mockito.anyInt(),
+                )
+            }.thenReturn(pendingIntent)
+            Mockito.mockConstruction(
+                Intent::class.java,
+                Mockito.withSettings().defaultAnswer(Mockito.RETURNS_DEEP_STUBS),
+            ).use {
+                Mockito.mockConstruction(
+                    Uri.Builder::class.java,
+                    Mockito.withSettings().defaultAnswer(Mockito.RETURNS_DEEP_STUBS),
+                ).use {
+                    block()
+                }
+            }
+        }
+    }
+
+    private fun receive(
+        scheduleId: String?,
+        storageReady: Boolean = true,
+    ) {
         val receiver = Mockito.mock(HostEventScheduleReceiver::class.java, Mockito.CALLS_REAL_METHODS)
         val pending = Mockito.mock(BroadcastReceiver.PendingResult::class.java)
         val intent = Mockito.mock(Intent::class.java)
         Mockito.doReturn(pending).`when`(receiver).goAsync()
+        Mockito.doReturn(storageReady).`when`(receiver).storageConfigured(context)
         Mockito.`when`(intent.getStringExtra("scheduleId")).thenReturn(scheduleId)
 
         receiver.onReceive(context, intent)
