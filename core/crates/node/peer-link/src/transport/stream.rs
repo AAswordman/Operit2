@@ -1,7 +1,7 @@
 //! 字节流传输共用的消息边界处理；不含 socket、配对或路由。
 use crate::{PeerConnection, PeerEndpoint, PeerMessage, PeerTransport};
 use async_trait::async_trait;
-use operit_link::{decodeLink, encodeLink};
+use operit_link::encodeLink;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -266,7 +266,7 @@ impl PeerConnection for FramedPeerConnection {
     async fn receive(&self) -> Result<Option<PeerMessage>, String> {
         self.readFrame()
             .await?
-            .map(|bytes| decodeLink(&bytes).map_err(|e| e.to_string()))
+            .map(|bytes| PeerMessage::decodeOwned(bytes.into()).map_err(|e| e.to_string()))
             .transpose()
     }
     async fn close(&self) {

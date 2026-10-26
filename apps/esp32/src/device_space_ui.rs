@@ -80,6 +80,11 @@ impl DeviceSpaceUi {
             nextPoll: Instant::now(),
         }
     }
+    pub fn isBusy(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        state.polling || state.phase == 4
+    }
+
     pub fn action(&mut self, action: &str) -> bool {
         match action {
             "edge_pair_discover" => self.discover(),
@@ -101,7 +106,11 @@ impl DeviceSpaceUi {
         true
     }
     fn schedule(&self, name: &str, epoch: u64, fallback: u8, task: HostRuntimeAsyncTask) {
-        if let Err(error) = self.scheduler.scheduleHostRuntimeAsyncTask(name, task) {
+        let guarded: HostRuntimeAsyncTask = Box::new(move || Box::pin(async move {
+            let _work = crate::space_work::acquire().await;
+            task().await;
+        }));
+        if let Err(error) = self.scheduler.scheduleHostRuntimeBlockingAsyncTask(name, guarded) {
             let mut state = self.state.lock().unwrap();
             if state.epoch == epoch {
                 state.phase = fallback;

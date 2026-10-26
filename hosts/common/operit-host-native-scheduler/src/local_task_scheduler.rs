@@ -35,7 +35,13 @@ impl LocalHostRuntimeTaskSchedulerHost {
         };
         let tasks = spawnTaskPoolWithOptions("operit-host-async", 1, stack, enableIo)
             .map_err(HostError::new)?;
-        let blocking = spawnTaskPoolWithOptions("operit-host-blocking", 1, stack, enableIo)
+        // Blocking device calls have a shallower stack than coordination's
+        // nested Link futures. Keep the measured headroom without reserving
+        // another full async stack from the ESP32's shared internal heap.
+        let blockingStack = if cfg!(any(target_os = "espidf", feature = "esp32-compat")) {
+            24 * 1024
+        } else { stack };
+        let blocking = spawnTaskPoolWithOptions("operit-host-blocking", 1, blockingStack, enableIo)
             .map_err(HostError::new)?;
         Ok(Self {
             tasks: Arc::new(tasks),

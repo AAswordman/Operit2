@@ -9,6 +9,27 @@ use std::collections::BTreeMap;
 use std::sync::{atomic::Ordering, Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
+#[path = "compact_message.rs"]
+mod compact_message;
+
+/// Compact queued values on bounded storage Hosts. Only the currently executing
+/// operation expands its wire tree; desktop queues keep their owned value.
+pub(super) enum StoredMessage<T> { Value(T), Encoded(Vec<u8>) }
+impl<T: Serialize> StoredMessage<T> {
+    pub(super) fn new(value: T, compact: bool) -> Result<Self, CoreLinkError> {
+        if compact { Ok(Self::Encoded(encodeLink(value).map_err(|failure| error(failure.to_string()))?)) }
+        else { Ok(Self::Value(value)) }
+    }
+    pub(super) fn intoEncoded(self) -> Result<Vec<u8>, CoreLinkError> {
+        match self { Self::Encoded(bytes) => Ok(bytes), Self::Value(value) => encodeLink(value).map_err(|failure| error(failure.to_string())) }
+    }
+}
+impl<T> StoredMessage<T> {
+    pub(super) fn decodeWith(self, decode: impl FnOnce(&[u8]) -> Result<T, operit_link::CoreLinkCodecError>) -> Result<T, CoreLinkError> {
+        match self { Self::Value(value) => Ok(value), Self::Encoded(bytes) => decode(&bytes).map_err(|failure| error(failure.to_string())) }
+    }
+}
+
 pub(super) fn error(message: impl Into<String>) -> CoreLinkError {
     CoreLinkError::new("PEER_SECURITY", message)
 }
@@ -284,23 +305,38 @@ impl Channel {
     pub async fn sendBatch(&self, messages: Vec<PeerMessage>) -> Result<(), CoreLinkError> {
         let mut cipher = self.send.lock().await;
         for message in messages {
-            let mut bytes = encodeLink(message).map_err(|e| error(e.to_string()))?;
-            let sequence = cipher.next;
-            cipher.seal(&mut bytes)?;
-            self.raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
-                sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes.into()))))).await.map_err(|message| {
-                if message == operit_peer_link::MESSAGE_TOO_LARGE_ERROR {
-                    CoreLinkError::new("PEER_MESSAGE_TOO_LARGE", message)
-                } else { error(message) }
-            })?;
+            let bytes = encodeLink(message).map_err(|e| error(e.to_string()))?;
+            self.sendEncoded(&mut cipher, bytes).await?;
         }
         Ok(())
+    }
+    /// Preserves the same nonce order and indivisible burst for prepared replies.
+    pub(super) async fn sendEncodedBatch(&self, messages: Vec<Vec<u8>>) -> Result<(), CoreLinkError> {
+        let mut cipher = self.send.lock().await;
+        for bytes in messages { self.sendEncoded(&mut cipher, bytes).await?; }
+        Ok(())
+    }
+    async fn sendEncoded(&self, cipher: &mut Cipher, mut bytes: Vec<u8>) -> Result<(), CoreLinkError> {
+        let sequence = cipher.next;
+        cipher.seal(&mut bytes)?;
+        self.raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
+            sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes.into()))))).await.map_err(|message| {
+            if message == operit_peer_link::MESSAGE_TOO_LARGE_ERROR {
+                CoreLinkError::new("PEER_MESSAGE_TOO_LARGE", message)
+            } else { error(message) }
+        })
     }
     /// Closes the authenticated carrier without retaining another session implementation.
     pub async fn close(&self) { self.raw.close().await; }
 
     /// Receives the next authenticated frame in nonce order.
     pub async fn receive(&self) -> Result<Option<PeerMessage>, CoreLinkError> {
+        self.receiveStored(false).await?
+            .map(|message| message.decodeWith(PeerMessage::decode)).transpose()
+    }
+
+    /// Keeps decrypted Call bodies compact until the execution worker is ready.
+    pub(super) async fn receiveStored(&self, compact: bool) -> Result<Option<StoredMessage<PeerMessage>>, CoreLinkError> {
         let mut cipher = self.receive.lock().await;
         let Some(message) = self.raw.receive().await.map_err(error)? else { return Ok(None); };
         let PeerMessage::Request(CoreLinkRequest::Call(request)) = message else { return Err(error("Encrypted Call required")); };
@@ -308,11 +344,16 @@ impl Channel {
             return Err(error(format!("Unexpected/replayed session message: expected={}, received={:?}", cipher.next, request.requestId.0.parse::<u64>().ok())));
         }
         let CoreValue::Bytes(bytes) = request.args else { return Err(error("Encrypted bytes required")); };
-        let mut bytes = bytes.to_vec();
+        // Reuse uniquely owned ciphertext. Shared buffers from Host adapters
+        // still copy before mutation, preserving every other reader's bytes.
+        let mut bytes = Vec::from(bytes);
         let nonce = cipher.nonce()?;
         let plaintext = cipher.key.open_in_place(nonce, aead::Aad::from(&cipher.context), &mut bytes)
             .map_err(|_| error("Session authentication tag rejected"))?;
-        decodeLink(plaintext).map(Some).map_err(|e| error(e.to_string()))
+        let length = plaintext.len();
+        bytes.truncate(length);
+        if compact { Ok(Some(StoredMessage::Encoded(bytes))) }
+        else { PeerMessage::decode(&bytes).map(|value| Some(StoredMessage::Value(value))).map_err(|e| error(e.to_string())) }
     }
 }
 
@@ -321,11 +362,11 @@ impl Channel {
 pub(super) struct MultiplexedChannel {
     scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>,
     channel: Arc<super::LiveChannel>,
-    pending: Mutex<BTreeMap<String, oneshot::Sender<Result<CoreLinkResponse, CoreLinkError>>>>,
+    pending: Mutex<BTreeMap<String, oneshot::Sender<Result<StoredMessage<CoreLinkResponse>, CoreLinkError>>>>,
     watches: Mutex<BTreeMap<String, mpsc::UnboundedSender<CoreEvent>>>,
     failure: StdMutex<Option<CoreLinkError>>,
     /// Routes peer requests independently while the shared reader correlates responses.
-    inboundRequests: StdMutex<Option<mpsc::UnboundedSender<CoreLinkRequest>>>,
+    inboundRequests: StdMutex<Option<mpsc::UnboundedSender<StoredMessage<PeerMessage>>>>,
     /// Signals that this channel's reader has stopped, for the accept path that
     /// closes the connection as soon as its serve call returns.
     stopped: tokio::sync::Notify,
@@ -391,7 +432,7 @@ impl MultiplexedChannel {
             self.pending.lock().await.remove(&key);
             return Err(error);
         }
-        receiver.await.map_err(|_| self.failureOr("Multiplexed response was cancelled"))?
+        receiver.await.map_err(|_| self.failureOr("Multiplexed response was cancelled"))??.decodeWith(decodeLink)
     }
 
     /// Opens one Watch and routes its future events through the shared reader.
@@ -471,15 +512,12 @@ impl MultiplexedChannel {
     /// calls to the dispatcher, so neither direction can starve the other.
     async fn readLoop(self: Arc<Self>) {
         loop {
-            match self.channel.receive().await {
-                Ok(Some(PeerMessage::Response(response))) => self.dispatchResponse(response).await,
-                Ok(Some(PeerMessage::Request(request))) => if let Err(error) = self.forwardInbound(request) {
-                    self.fail(error).await;
-                    break;
-                },
-                Ok(None) => { self.fail(error("Multiplexed channel closed")).await; break; }
-                Err(error) => { self.fail(error).await; break; }
-            }
+            let result = match self.channel.receiveStored().await {
+                Ok(Some(message)) => self.routeIncoming(message).await,
+                Ok(None) => Err(error("Multiplexed channel closed")),
+                Err(error) => Err(error),
+            };
+            if let Err(error) = result { self.fail(error).await; break; }
         }
         self.stopped.notify_one();
     }
@@ -490,15 +528,34 @@ impl MultiplexedChannel {
 
     /// Hands one request from the peer to this channel's dispatcher, keeping this
     /// reader free to correlate the calls made here.
-    fn forwardInbound(&self, request: CoreLinkRequest) -> Result<(), CoreLinkError> {
+    fn forwardInbound(&self, request: StoredMessage<PeerMessage>) -> Result<(), CoreLinkError> {
         let sender = self.inboundRequests.lock().unwrap().clone()
             .ok_or_else(|| error("Multiplexed channel received an unexpected request"))?;
         sender.send(request).map_err(|_| error("Multiplexed channel dispatcher stopped"))
     }
 
+    async fn routeIncoming(&self, message: StoredMessage<PeerMessage>) -> Result<(), CoreLinkError> {
+        if let Some(header) = message.callHeader()? {
+            if header.request { return self.forwardInbound(message); }
+            let response = match message {
+                StoredMessage::Encoded(bytes) => StoredMessage::Encoded(bytes),
+                StoredMessage::Value(PeerMessage::Response(response)) => StoredMessage::Value(response),
+                _ => return Err(error("Call response envelope required")),
+            };
+            if let Some(sender) = self.pending.lock().await.remove(&format!("call:{}", header.requestId.0)) {
+                let _ = sender.send(Ok(response));
+            }
+            return Ok(());
+        }
+        match message.decodeWith(PeerMessage::decode)? {
+            PeerMessage::Request(request) => self.forwardInbound(StoredMessage::new(PeerMessage::Request(request), self.channel.compactMessages())?),
+            PeerMessage::Response(response) => { self.dispatchResponse(response).await; Ok(()) },
+        }
+    }
+
     /// Answers the peer's calls while this reader keeps the other direction
     /// flowing, and flushes the watch events this side owes it.
-    async fn dispatchLoop(self: Arc<Self>, side: super::dispatch::InboundSide, requests: mpsc::UnboundedReceiver<CoreLinkRequest>) {
+    async fn dispatchLoop(self: Arc<Self>, side: super::dispatch::InboundSide, requests: mpsc::UnboundedReceiver<StoredMessage<PeerMessage>>) {
         // Dropping InboundSide also terminates its open Watch/Push sessions.
         // A dispatcher may be awaiting a backpressured Push item when the reader
         // ends, so closing only the request queue is not sufficient.
@@ -507,9 +564,9 @@ impl MultiplexedChannel {
             result = super::dispatch::serveIncoming(
                 side,
                 futures_util::stream::unfold(requests, |mut requests| async move {
-                    requests.recv().await.map(|request| (Ok(PeerMessage::Request(request)), requests))
+                    requests.recv().await.map(|request| (Ok(request), requests))
                 }),
-                |messages| self.channel.sendBatch(messages),
+                |messages| self.channel.sendEncodedBatch(messages),
             ) => if let Err(error) = result {
                 self.fail(error).await;
                 self.channel.raw.close().await;
@@ -530,7 +587,7 @@ impl MultiplexedChannel {
         }
         let key = responseKey(&response);
         let sender = self.pending.lock().await.remove(&key);
-        if let Some(sender) = sender { let _ = sender.send(Ok(response)); }
+        if let Some(sender) = sender { let _ = sender.send(Ok(StoredMessage::Value(response))); }
     }
 }
 

@@ -60,6 +60,7 @@ fn reviewingRecord(reviewer: &str, targetSpaceId: &str, version: u64) -> join::R
             departures: Vec::new(),
         },
         accepted: None,
+        acceptedReference: false,
         unavailableSince: None,
         approvedDecision: Some(true),
         decisionRevision: Some(2),

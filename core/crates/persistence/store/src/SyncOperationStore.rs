@@ -861,6 +861,23 @@ impl SyncOperationStore {
         )
     }
 
+    /// Permission replay reads committed authority only. It must not publish
+    /// unrelated preference outboxes while checking a pairing or routing a Call.
+    /// Preserve the existing control export floors and compaction semantics.
+    pub(crate) fn archivedControlOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.readJournal(
+            &SyncClock::empty(),
+            JournalQuery {
+                domains: &[NETWORK_CONTROL_SYNC_DOMAIN.to_owned()],
+                projection: JournalProjection::All,
+                export_floors: true,
+                limit: usize::MAX,
+                max_bytes: usize::MAX,
+                retain: None,
+            },
+        )
+    }
+
     /// Explicit exhaustive history for provenance consumers; never retained in a cache.
     pub fn preferenceHistory(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
         self.publishPreferenceOutboxes()?;

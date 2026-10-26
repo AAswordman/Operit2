@@ -199,6 +199,11 @@ impl SceneService {
     }
     fn now(&self) -> u64 { self.clock.elapsed().as_millis() as u64 }
     fn rect(&self) -> Rect { Rect { x: 0, y: self.reserved_top, w: self.width, h: self.height - self.reserved_top } }
+    /// Frame rendering needs only scalar flags; keep it free of JSON allocation.
+    pub fn render_state(&self) -> (bool, u32) {
+        let state = self.state.lock().unwrap();
+        (state.active, state.revision)
+    }
     pub fn summary(&self) -> Value {
         let state = self.state.lock().unwrap();
         json!({"active":state.active,"revision":state.revision,"taps":state.taps})
@@ -607,6 +612,7 @@ mod tests {
         let scene=SceneService::new(32,32,2,true).with_storage(storage.clone()).unwrap();
         upload(&scene,&hash(&bytes())).unwrap();
         scene.dispatch("config.apply",configuration(),10).unwrap();
+        assert_eq!(scene.render_state(), (true, scene.summary()["revision"].as_u64().unwrap() as u32));
         assert!(scene.dispatch("state",json!({"v":1}),600_000).unwrap()["active"].as_bool().unwrap());
         assert_eq!(scene.touch(4,6).as_deref(),Some("pet"));
         scene.advance_target_frame("pet");
@@ -618,7 +624,9 @@ mod tests {
         assert_eq!(restored.summary()["active"],true);
         assert_eq!(restored.visual_snapshot()["packs"].as_array().unwrap().len(),1);
         assert_eq!(restored.touch(4,6).as_deref(),Some("pet"));
+        let (_, revision) = restored.render_state();
         restored.system_exit();
+        assert_eq!(restored.render_state(), (false, revision.wrapping_add(1)));
         assert_eq!(restored.summary()["active"],false);
         assert_eq!(restored.dispatch("config.read",json!({"v":1}),0).unwrap()["enabled"],true);
     }

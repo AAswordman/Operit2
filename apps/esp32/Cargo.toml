@@ -63,7 +63,8 @@ extra_components = [
 # Remove duplicated code across the shared device runtime without changing the
 # fixed 4 MB board/partition layout or the package-specific Xtensa workarounds.
 [profile.release]
-lto = "thin"
+opt-level = "z"
+lto = "fat"
 codegen-units = 1
 
 # Xtensa LLVM cannot lower the vectorized UUID hex parser at opt-level 3.
@@ -81,27 +82,3 @@ ring = { path = ".embuild/ring-0.17.14" }
 
 [profile.release.package.tokio]
 opt-level = 1
-
-# Keep the shared peer runtime within the board's existing 4 MB flash layout.
-[profile.release.package.operit-esp32]
-opt-level = "z"
-[profile.release.package.operit-node-runtime]
-opt-level = "z"
-[profile.release.package.operit-store]
-opt-level = "z"
-[profile.release.package.operit-link]
-opt-level = "z"
-
-# The control-plane JSON adapter must fit the unchanged application partition.
-[profile.release.package.serde_json]
-opt-level = "z"
-[profile.release.package.operit-node-edge]
-opt-level = "z"
-
-[profile.release.package.operit-peer-link]
-opt-level = "z"
-[profile.release.package.operit-host-api]
-opt-level = "z"
-
-[profile.release.package.operit-edge-scene]
-opt-level = "z"

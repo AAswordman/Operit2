@@ -60,6 +60,13 @@ impl EdgePeerRouter {
         }
         Ok(())
     }
+    fn checkSpaceOrigin(&self, previous: &str, request: &RoutedCoreRequest<CoreCallRequest>) -> Result<(), CoreLinkError> {
+        if request.originNodeId != previous || (request.payload.target == NODE_SPACE_TARGET && request.ttl != 0) {
+            return Err(CoreLinkError::new("PEER_DIRECT_CALL_REQUIRED", "Edge Space calls cannot be relayed"));
+        }
+        Ok(())
+    }
+
 }
 #[async_trait(?Send)]
 impl PeerRouter for EdgePeerRouter {
@@ -82,16 +89,8 @@ impl PeerRouter for EdgePeerRouter {
             // Authenticate the direct origin, not the remaining routing budget.
             // Core's same-Space control/reviewer calls carry a positive TTL even
             // on a direct connection. Pre-admission calls remain zero-hop only.
-            if request.originNodeId != previous
-                || (request.payload.target == NODE_SPACE_TARGET && request.ttl != 0)
-            {
-                return CoreCallResponse::err(
-                    id,
-                    CoreLinkError::new(
-                        "PEER_DIRECT_CALL_REQUIRED",
-                        "Edge Space calls cannot be relayed",
-                    ),
-                );
+            if let Err(error) = self.checkSpaceOrigin(&previous, &request) {
+                return CoreCallResponse::err(id, error);
             }
             let Some(space) = self.space.get() else {
                 return CoreCallResponse::err(
@@ -128,7 +127,7 @@ impl PeerRouter for EdgePeerRouter {
                     .acceptSpaceApprovalCall(&previous, request.payload)
                     .await
             }
-            .map_err(CoreLinkError::internal);
+            .map_err(operit_node_runtime::NodeSpaceService::spaceCallError);
             return CoreCallResponse {
                 requestId: id,
                 result,
@@ -138,6 +137,45 @@ impl PeerRouter for EdgePeerRouter {
             Ok(node) => node.call(request.payload).await,
             Err(e) => CoreCallResponse::err(id, e),
         }
+    }
+    fn prepareRoutedCall(&self, previous: &str, request: &RoutedCoreRequest<CoreCallRequest>) -> Option<Result<Vec<u8>, CoreLinkError>> {
+        if request.payload.target != NODE_SPACE_TARGET || request.payload.methodName != "snapshot" { return None; }
+        let prepare = || {
+            self.check(request)?;
+            self.checkSpaceOrigin(previous, request)?;
+            self.space.get().ok_or_else(|| CoreLinkError::new("EDGE_SPACE_UNAVAILABLE", "Edge Space services are not installed"))
+        };
+        let result = match prepare() {
+            Ok(space) => space.encodePeerSpaceSnapshotReply(previous, &request.payload.requestId).map_err(CoreLinkError::internal),
+            Err(error) => operit_link::encodeLink(operit_link::CoreLinkResponse::Call(CoreCallResponse::err(request.payload.requestId.clone(), error)))
+                .map_err(|error| CoreLinkError::internal(error.to_string())),
+        };
+        Some(result)
+    }
+    fn prepareEncodedCall(&self, previous: &str, bytes: &mut Vec<u8>) -> Option<Result<Vec<u8>, CoreLinkError>> {
+        let (id, request) = operit_node_runtime::NodeSpaceService::encodedSpaceCallHeader(bytes)?;
+        let control = request.payload.target == NODE_SPACE_CONTROL_TARGET
+            && matches!(request.payload.methodName.as_str(), "exchange" | "exchangeBounded");
+        let bounded = request.payload.methodName == "exchangeBounded";
+        if !control && (request.payload.target != NODE_SPACE_TARGET || request.payload.methodName != "observeSpaceSnapshot") { return None; }
+        let prepare = || {
+            if request.payload.requestId != id { return Err(CoreLinkError::new("PEER_SECURITY", "Routed correlation mismatch")); }
+            self.check(&request)?;
+            self.checkSpaceOrigin(previous, &request)?;
+            let space = self.space.get().ok_or_else(|| CoreLinkError::new("EDGE_SPACE_UNAVAILABLE", "Edge Space services are not installed"))?;
+            if control && request.spaceId != space.spaceStore().space().map_err(CoreLinkError::internal)?.spaceId {
+                return Err(CoreLinkError::new("SPACE_ID_MISMATCH", "Approval traffic must belong to the current Space"));
+            }
+            Ok(space)
+        };
+        Some(match prepare() {
+            Ok(space) => if control {
+                if bounded { space.encodePeerSpaceBoundedControlReply(previous, bytes, id) }
+                else { space.encodePeerSpaceControlReply(previous, bytes, id) }
+            } else { space.encodePeerSpaceObservationReply(previous, bytes, id) }.map_err(CoreLinkError::internal),
+            Err(error) => operit_link::encodeLink(operit_link::CoreLinkResponse::Call(CoreCallResponse::err(id, error)))
+                .map_err(|error| CoreLinkError::internal(error.to_string())),
+        })
     }
     async fn routedWatchSnapshot(
         &self,

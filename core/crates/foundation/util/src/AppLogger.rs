@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, Once, OnceLock};
 
+#[cfg(not(target_os = "espidf"))]
 use chrono::{DateTime, Local, Utc};
 use operit_host_api::FileSystemHost;
 use serde::{Deserialize, Serialize};
@@ -809,7 +810,16 @@ fn format_package_log_line(entry: &LogEntry) -> String {
     out
 }
 
+/// The device uses UTC clock fields directly, avoiding the desktop local-time
+/// formatter and timezone machinery in the fixed 4 MB firmware image.
+#[cfg(target_os = "espidf")]
+fn format_timestamp_ms(timestamp_ms: u128) -> String {
+    let day = timestamp_ms % 86_400_000;
+    format!("{:02}:{:02}:{:02}.{:03}", day / 3_600_000, day / 60_000 % 60, day / 1_000 % 60, day % 1_000)
+}
+
 /// Formats one epoch-millis timestamp for human-readable local diagnostics.
+#[cfg(not(target_os = "espidf"))]
 fn format_timestamp_ms(timestamp_ms: u128) -> String {
     let timestamp = timestamp_ms.min(i64::MAX as u128) as i64;
     let Some(datetime) = DateTime::<Utc>::from_timestamp_millis(timestamp) else {

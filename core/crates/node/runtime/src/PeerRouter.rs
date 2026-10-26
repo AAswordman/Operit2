@@ -15,6 +15,16 @@ pub trait PeerRouter: Send + Sync {
         previousNodeId: String,
         request: RoutedCoreRequest<CoreCallRequest>,
     ) -> CoreCallResponse;
+    /// Optional standard encoded reply for bounded local handlers. Returning
+    /// None uses ordinary dispatch. This runs after the same channel validation;
+    /// implementations must retain their ordinary route and business checks.
+    fn prepareRoutedCall(
+        &self, _previousNodeId: &str, _request: &RoutedCoreRequest<CoreCallRequest>,
+    ) -> Option<Result<Vec<u8>, CoreLinkError>> { None }
+    /// Optional ingress for an owned standard encoded Call. Returning None must
+    /// leave the bytes unchanged; a handled Call may release them after decoding. Validation
+    /// and response transmission keep the same shared channel boundaries.
+    fn prepareEncodedCall(&self, _previousNodeId: &str, _bytes: &mut Vec<u8>) -> Option<Result<Vec<u8>, CoreLinkError>> { None }
     async fn routedWatchSnapshot(
         &self,
         previousNodeId: String,

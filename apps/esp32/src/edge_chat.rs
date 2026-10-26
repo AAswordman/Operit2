@@ -53,12 +53,24 @@ async fn uiTaskCancelled(cancelled: &mut tokio::sync::watch::Receiver<bool>) {
     }
 }
 
-async fn openUiSubscription(
+async fn openUiSubscription<F>(
     cancelled: &tokio::sync::watch::Receiver<bool>,
-    open: impl std::future::Future<Output = Result<operit_link::CoreEventStream, operit_link::CoreLinkError>>,
-) -> Result<Option<operit_link::CoreEventStream>, operit_link::CoreLinkError> {
+    open: impl FnOnce() -> F,
+) -> Result<Option<operit_link::CoreEventStream>, operit_link::CoreLinkError>
+where F: std::future::Future<Output = Result<operit_link::CoreEventStream, operit_link::CoreLinkError>> {
+    static OPENING: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     if *cancelled.borrow() { return Ok(None); }
-    let result = open.await;
+    let mut waiting = cancelled.clone();
+    let opening = tokio::select! {
+        biased;
+        _ = uiTaskCancelled(&mut waiting) => return Ok(None),
+        opening = OPENING.get_or_init(|| tokio::sync::Mutex::new(())).lock() => opening,
+    };
+    if *cancelled.borrow() { return Ok(None); }
+    // Construct the boxed routing/authorization future only after admission.
+    // Await its acknowledgement intact; established streams stay independent.
+    let result = open().await;
+    drop(opening);
     if *cancelled.borrow() {
         // Including late success: release the remote watch without cancelling
         // the acknowledgement transaction or retaining an obsolete UI session.
@@ -155,7 +167,6 @@ impl UiValue {
 struct PageCursor { timestamp: i64, offset: u32 }
 
 struct ChatSession {
-    spaceIdentity: Option<operit_node_runtime::NodeServices::SpaceClientIdentity>,
     client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     services: NodeServices,
     histories: Mutex<UiValue>,
@@ -463,7 +474,7 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
                 operit_link::CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT.into(),
                 windowArgs(&session.chatId, *session.window.borrow()),
             );
-            let result = openUiSubscription(&cancelled, session
+            let result = openUiSubscription(&cancelled, || session
                 .client
                 .watch(CoreWatchRequest::new(
                     operit_link::nextCoreRouteRequestId("openCoreStream"),
@@ -723,7 +734,6 @@ fn installSession(
     clear();
     let (window, _) = tokio::sync::watch::channel(None);
     let session = Arc::new(ChatSession {
-        spaceIdentity: services.peers().spaceConnection().map(|c| c.identity),
         client,
         services,
         chatId,
@@ -785,7 +795,7 @@ fn startSubscriptions(session: Arc<ChatSession>) {
         let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
         loop {
             let cursor = *pageChanges.borrow_and_update();
-            let result = openUiSubscription(&cancelled, watchChatMessages(&session.client, &session.chatId, cursor)).await;
+            let result = openUiSubscription(&cancelled, || watchChatMessages(&session.client, &session.chatId, cursor)).await;
             let mut stream = match result {
                 Ok(None) => return,
                 Ok(Some(stream)) => stream,
@@ -847,7 +857,7 @@ fn startSubscriptions(session: Arc<ChatSession>) {
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
         let session = stateSession;
         let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
-        let result = openUiSubscription(&cancelled, session.client.watch(CoreWatchRequest::new(
+        let result = openUiSubscription(&cancelled, || session.client.watch(CoreWatchRequest::new(
             operit_link::nextCoreRouteRequestId("edge-chat-state"), CORE_INTERNAL_TARGET,
             "chatStateFlow", operit_link::toCoreValue(serde_json::json!({"chatId": session.chatId})).unwrap(),
         ))).await;
@@ -1313,7 +1323,7 @@ pub fn conversationsAction() -> Result<(), String> {
     *session.conversationsError.lock().unwrap() = None;
     let owner = session.clone();
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
-        let result = openUiSubscription(&cancelled, session.client.watch(CoreWatchRequest::new(
+        let result = openUiSubscription(&cancelled, || session.client.watch(CoreWatchRequest::new(
             operit_link::nextCoreRouteRequestId("edge-chat-list"), CORE_INTERNAL_TARGET,
             "routedChatListFlow", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
         ))).await;
@@ -1905,7 +1915,7 @@ mod tests {
         }
         let abandoned_open = abandoned.clone();
         let closed_watch = closed.clone();
-        let mut opening = Box::pin(openUiSubscription(&cancelled, async move {
+        let mut opening = Box::pin(openUiSubscription(&cancelled, || async move {
             let mut request = InFlight(abandoned_open, false);
             reply.await.unwrap();
             request.1 = true;
@@ -1913,6 +1923,19 @@ mod tests {
             Ok(stream.withOnClose(move || { closed_watch.fetch_add(1, Ordering::SeqCst); }))
         }));
         poll_fn(|cx| { assert!(opening.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
+        // A second open must not construct its boxed routing future while the
+        // first acknowledgement is pending, and a cancelled waiter opens nothing.
+        let (cancel_waiter, waiter) = tokio::sync::watch::channel(false);
+        let constructed = AtomicBool::new(false);
+        let mut queued = Box::pin(openUiSubscription(&waiter, || {
+            constructed.store(true, Ordering::SeqCst);
+            async { Ok(operit_link::CoreEventStream::channel().1) }
+        }));
+        poll_fn(|cx| { assert!(queued.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
+        assert!(!constructed.load(Ordering::SeqCst));
+        cancel_waiter.send(true).unwrap();
+        assert!(queued.await.unwrap().is_none());
+        assert!(!constructed.load(Ordering::SeqCst));
         cancel.send(true).unwrap(); // Final message removes the in-flight descriptor.
         poll_fn(|cx| { assert!(opening.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
         assert_eq!(abandoned.load(Ordering::SeqCst), 0, "never abandon an in-flight Link transaction");
@@ -1926,7 +1949,7 @@ mod tests {
     async fn already_cancelled_subscription_does_not_open_remote_watch() {
         let (cancel, cancelled) = tokio::sync::watch::channel(false);
         cancel.send(true).unwrap();
-        assert!(openUiSubscription(&cancelled, async { panic!("must not open cancelled watch") }).await.unwrap().is_none());
+        assert!(openUiSubscription(&cancelled, || async { panic!("must not open cancelled watch") }).await.unwrap().is_none());
     }
 
     #[tokio::test]

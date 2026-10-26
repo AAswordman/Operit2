@@ -328,8 +328,8 @@ impl HostRuntimePeerService {
         if p.expires <= currentTimeMillis() { self.state.store.deleteRecord(path, id).map_err(error)?; return Err(error("Pairing transaction expired")); }
         Ok(p)
     }
-    fn inboundCredentials(&self) -> Result<BTreeMap<String, StoredInbound>, CoreLinkError> {
-        self.state.store.records(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).map_err(error)
+    fn inboundCredential(&self, sessionId: &str) -> Result<Option<StoredInbound>, CoreLinkError> {
+        self.state.store.record(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, sessionId).map_err(error)
     }
     fn pendingRecords(&self, path: &str) -> Result<BTreeMap<String, Pending>, CoreLinkError> {
         self.state.store.versionedRecords(path, PAIRING_SERVICE_VERSION).map_err(error)
@@ -485,7 +485,8 @@ impl HostRuntimePeerService {
             .ok_or_else(|| error("Host scheduler is not installed"))?;
         let state = Arc::downgrade(&self.state);
         let peer = node.to_owned();
-        let live = LiveChannel::start(channel, scheduler.clone(), move || {
+        let compact = self.state.host.runtimeStorageHost.as_ref().is_some_and(|storage| !storage.retainPreferencesCache());
+        let live = LiveChannel::start(channel, scheduler.clone(), compact, move || {
             if let Some(state) = state.upgrade() { HostRuntimePeerService { state }.refreshPeerAvailability(&peer); }
         })?;
         let inbound = dispatch::InboundSide::new(self.clone(), node.into(), pairingId, authorization);
@@ -560,8 +561,7 @@ impl HostRuntimePeerService {
                 Err(e) => return sendError(&raw, helloRequest.requestId, e).await,
             },
             _ => {
-                let records = self.inboundCredentials()?;
-                let record = records.get(&hello.sessionId).ok_or_else(|| error("Inbound authorization not found"))?;
+                let record = self.inboundCredential(&hello.sessionId)?.ok_or_else(|| error("Inbound authorization not found"))?;
                 if record.deviceId != hello.nodeId || record.pairingServiceVersion != PAIRING_SERVICE_VERSION { return Err(error("Inbound identity/version mismatch")); }
                 Some(BASE64.decode(&record.sessionSecret).map_err(|_| error("Invalid stored credential"))?)
             },
@@ -1415,7 +1415,7 @@ mod single_channel_tests {
         let encrypted = Channel::new(
             Arc::new(SilentPeer(PeerEndpoint { nodeId: "peer".into(), address: "unused".into() })),
             &[7; 32], b"test", false).unwrap();
-        let live = LiveChannel::start(encrypted, scheduler.clone(), || {}).unwrap();
+        let live = LiveChannel::start(encrypted, scheduler.clone(), false, || {}).unwrap();
         let side = dispatch::InboundSide::new(service(), "peer".into(), "test".into(), dispatch::Authorization::Inbound);
         MultiplexedChannel::start(live, scheduler, side).unwrap()
     }
@@ -1609,9 +1609,9 @@ mod single_channel_tests {
                 dispatch::serveIncoming(
                     dispatch::InboundSide::new(service, "p1".into(), "pairing".into(), dispatch::Authorization::Inbound),
                     futures_util::stream::unfold(incoming, |mut incoming| async move {
-                        incoming.recv().await.map(|request| (Ok(PeerMessage::Request(request)), incoming))
+                        incoming.recv().await.map(|request| (Ok(crypto::StoredMessage::Value(PeerMessage::Request(request))), incoming))
                     }),
-                    |batch| { responses.send(batch).unwrap(); std::future::ready(Ok(())) },
+                    |batch| { responses.send(batch.into_iter().map(|bytes| PeerMessage::decode(&bytes).unwrap()).collect::<Vec<_>>()).unwrap(); std::future::ready(Ok(())) },
                 )
             ).unwrap();
         });

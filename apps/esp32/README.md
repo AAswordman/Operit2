@@ -1,6 +1,13 @@
 # ESP32 Edge firmware
 
 Space responsibilities are defined in [Edge architecture](../../docs/edge-architecture.md).
+A proposed [Core-managed Space entry protocol](../../docs/edge-core-entry-protocol.md)
+would move full policy history and authorization computation to Core. The first
+stage adds explicit projection version/message-limit negotiation, one-record
+control export to Core, and Space message size checks. It still advertises
+`localReplay`: managed authorization and durable handover are not implemented.
+Current firmware retains local control records. Do not remove that state before
+a verified handover.
 This document covers the ESP32-2432S028 implementation and firmware build.
 Tooling and acceptance commands are maintained in the
 [editor README](../../tools/esp32-editor/README.md).
@@ -70,10 +77,171 @@ driver, so independent text chat does not imply verified physical voice I/O.
 
 ## Memory and connection lifetime
 
-- The firmware's Edge worker uses a 32 KiB stack; the previous 6 KiB stack
-  overflowed while processing pairing requests.
+- The firmware's asynchronous Edge worker uses a 32 KiB stack; the previous
+  6 KiB stack overflowed while processing pairing requests. The separate
+  blocking worker reserves 24 KiB, leaving 8 KiB more internal heap for node
+  state and Link operations. Health diagnostics expose the responding task's
+  stack high-water mark for hardware verification. The main UI task reserves
+  16 KiB for synchronous authorization and storage decoding; the previous
+  12 KiB reservation overflowed on the constrained-cache read path.
+- The display frame loop reads scene activity and revision as scalar fields,
+  avoiding a temporary JSON object on every frame while admission is running.
+- Idle UART input and TCP accept poll every 10 ms, reducing wakeups on the
+  shared worker so FreeRTOS idle work can run. Active byte-stream backpressure
+  keeps the existing shorter retry interval.
 - The optional RGB332 diagnostic mirror is disabled to leave heap space for
   pairing. The physical TFT remains enabled.
+- Runtime NVS writes stage one changed record and stream unchanged records from
+  a compact sorted index. They do not clone the full index during Space admission.
+  Index growth is reserved before writing; the in-memory change becomes visible
+  only after the alternate bank is published. Failed writes preserve the old
+  snapshot. The ONV3 format and 7000-byte logical storage limit are unchanged.
+  Node-local edits move unshared parsed records into the transaction instead
+  of cloning retained JSON trees. A weak mutation witness detects unchanged
+  edits without pinning the old tree; external immutable snapshots still receive
+  copy-on-write protection. Failed edits reload the unchanged durable snapshot.
+  Records serialize by reference with unindented JSON on constrained node-local
+  stores to avoid large temporary formatting buffers; desktop formatting remains
+  unchanged. Constrained serialization measures the complete encoding first and
+  fallibly reserves its exact size once, avoiding simultaneous old/new buffers
+  during growth. Capacity failure returns an error before NVS publication.
+  Edits and record replacements stage schema migration in the same atomic write,
+  so a failed first publication cannot leave a schema-only record behind.
+  Background approval polls persist only reconciliation changes; completed or
+  otherwise unchanged requests are not rewritten on every poll. Constrained
+  gateways retain two recent terminal application receipts, pruning older ones
+  before admitting more work. Pending, approving and approved handoffs remain
+  durable. Full Core keeps its complete application history. Record deletions
+  use the same transaction and atomic publication as record updates.
+- The NVS Host opts out of retaining parsed preference caches after their last
+  store handle closes. Node-state reads also release the shared decoded cache
+  when returning an immutable snapshot, so long-lived policy services cannot
+  pin large JSON trees. Committed and unchanged node-local edits release the
+  cache as well, including while a store handle remains open. Concurrent handles
+  still share a transaction lock; subsequent reads reload durable bytes from
+  the compressed NVS cache.
+  During node-local updates, the transaction releases the old decoded cache
+  before serialization. Failed publication invalidates that cache so every live
+  handle reloads the unchanged durable snapshot; existing immutable snapshots
+  remain valid. Temporary policy Stores also honor this memory policy.
+  Desktop storage keeps its existing persistent cache policy.
+  Approval and policy replay scans validate the current node-state schema and
+  decode typed records
+  directly from durable bytes, without an intermediate JSON tree or large tree
+  nodes for typed application records. Single-record reads skip unrelated
+  payloads, including retained join history. Single-record updates borrow the
+  unchanged JSON payloads and serialize the replacement directly, reserving the
+  measured output size once. They retain the shared transaction lock and atomic
+  publication boundary; failed writes leave all durable records intact. Whole
+  node-state replacements validate the old schema and retain replication metadata
+  without expanding the old business payloads. Policy projection tracks inserted
+  commands instead of retaining a second full JSON snapshot for comparison.
+  Immutable control imports borrow the old encoded map and decode existing
+  commands one at a time for equality. Authenticated endpoint imports also
+  compare old commands one at a time while holding the incoming batch, and
+  release validation state before publication. Every command and duplicate in the batch
+  is validated before one atomic publication; unchanged syncs do not write NVS.
+  Older schemas still use the existing migration transaction; newer schemas are
+  rejected. Obsolete Space policy caches are validated record by record before
+  any deletion; current Space authority is retained, including on retry after
+  a failed deletion.
+- Constrained receiving endpoints retain the source membership, profiles and
+  topology needed for live consent and approval recovery. After first receiving
+  and observing source departures, they omit the duplicate source command log
+  from the durable application. Applicants keep their original submission for
+  retries, even if a gateway returns a compacted record. Terminal endpoint
+  receipts retain identity and status without an obsolete accepted snapshot.
+  Review polling compacts legacy receipts before growing recovered membership;
+  the current authority log and active consent remain intact.
+- Node-local member retirement releases obsolete profile and topology records
+  before rewriting the remaining membership revision. Its membership marker is
+  removed last so failed cleanup can retry. Startup completes persisted removal
+  effects from the authority log even if the departing peer is offline. Full
+  Core membership tombstones and history retain their existing behavior.
+- Constrained Hosts serialize policy materialization across temporary store
+  instances, preventing UI, approval and authenticated transport checks from
+  simultaneously retaining complete replay working sets. Authorization replay
+  borrows encoded payloads from an immutable byte snapshot and decodes commands
+  directly, avoiding a generic JSON value tree during replay; full snapshot
+  exports decode projection entries directly into their final operation vector,
+  avoiding a second collection of decoded payloads. Constrained replay/export
+  vectors reserve their known entry bound without geometric growth; reservation
+  failures return an error. Immutable conflicts,
+  legacy admission compatibility, ordering and revocation checks remain enforced.
+  UI connection indicators poll with the existing 500 ms route refresh. While
+  an admission or pairing UI operation is busy, background route, settings and
+  pairing-indicator refreshes keep their previous display values instead of
+  allocating another working set. Each actual routed operation still validates
+  current authorization.
+- Device Space UI workflows run on the blocking worker. A device-local async
+  permit covers initialization, review, pairing, joining and local exit, including
+  their network waits. Periodic preference synchronization takes that same
+  permit only when available and skips busy ticks, avoiding a second authority
+  working set during approval. Display refreshes also defer while it is held.
+  Shared peer connection, availability, inbound request dispatch and reply
+  delivery remain independent so local workflows can await network responses.
+  Approval polling validates historical receipts one at a time, retains only
+  small summaries, and reloads live requests individually. Completed history does
+  not accumulate in a second typed collection during reconciliation; malformed
+  entries still fail validation before pruning or other writes.
+- Constrained Edge snapshot and control-exchange replies serialize typed
+  authority records directly into the existing standard Call response. Each
+  encoded operation releases its payload before the next operation is written;
+  the serializer runs once and preserves the standard map/sequence format.
+  Snapshot import also releases each accepted control payload before the next
+  durable operation, after validating the complete incoming policy.
+  Incoming Space snapshots and control batches decode
+  their queued envelope with the existing JSON record decoder, then consume it
+  into typed authority records. Operation payloads move unchanged into those
+  records, and the consumed input frame is released before policy replay or
+  publication. This avoids an intermediate Link value tree and reuses the
+  durable decoder to fit the application partition. The shared channel still validates current
+  authorization before execution and transmission; the prepared snapshot path
+  retains the ordinary destination, route-kind, direct-origin, TTL and pairing
+  checks. Control exchange also retains current Space scope and admitted-member
+  checks, and shares the ordinary authority import and removal effects. Other
+  handlers use the ordinary dispatcher.
+- Routed Call/Watch/Push envelopes move the owned argument subtree through
+  serialization and parsing. Only the small route metadata is reconstructed,
+  including for MessagePack struct sequences; metadata validation and correlation
+  checks still run before dispatch. The existing envelope encoding is unchanged.
+- Authenticated requests re-read only their current session credential, using
+  direct typed decoding on the constrained Host. This avoids copying all credentials
+  while preserving authorization checks after pairing revocation.
+- Constrained Hosts retain standard MessagePack bytes in pending inbound and
+  worker queues. The authenticated reader inspects only Call correlation and
+  control fields, skipping the business payload; queued Calls expand on their
+  execution worker and Call replies expand at their waiting consumer. Heartbeat
+  controls still bypass business dispatch. Completed replies are encoded before
+  the final authorization check and transferred to the
+  encrypted writer without rebuilding a value tree. Calls keep independent
+  execution, while Watch/Push ordering and the cipher lock across each response
+  batch remain intact. Credential revocation is checked at the existing entry
+  and transmission boundaries. Desktop request queues keep their value storage.
+- Peer transport decoding reads the existing request/response envelopes directly,
+  avoiding the generic untagged-union buffer for encrypted payloads. Owned byte
+  frames retain binary fields as shared slices of the received allocation;
+  borrowed decoding still copies. The explicit decode scope restores its parent
+  on nested decoding and failure, and releases its source when decoding ends. Decryption
+  reuses uniquely owned ciphertext and copies shared buffers before mutation.
+  Departure exchange releases the remote snapshot before constructing the local
+  reply. Space snapshot replies consume each authority payload while building
+  the Link value tree, instead of retaining two complete decoded copies. Control
+  exchange drops the received operation vector before building its response.
+  Snapshot reconciliation reads local membership without exporting a second
+  local snapshot and releases received authority payloads before replaying local
+  removal effects. Exchanges without remote leave/remove commands skip that
+  otherwise redundant removal replay. Policy validation sorts references to
+  received operations rather than cloning their payloads. ESP-IDF MessagePack
+  output grows in bounded blocks while the source tree is alive, avoiding a
+  second large allocation during buffer doubling. Serialization still runs
+  once, including stream source capture. Wire encoding, nonce checks and
+  authorization remain unchanged.
+- Device UI watch subscriptions open one at a time. Their boxed route and
+  authorization futures are constructed after the opening permit is acquired;
+  established streams still receive independently. Waiting opens can cancel
+  without sending a request, while an in-flight acknowledgement always finishes
+  before its stream is closed.
 - Native Core requests share a process-lifetime Tokio executor so the saved
   pairing socket and background receivers survive between commands. The Rust
   DLL requires a native rebuild and application restart, not Dart hot reload.
@@ -116,10 +284,53 @@ The hardware smoke tool requires an already paired/admitted device and does not
 complete first-pairing or full-chat acceptance. See the editor's verification
 commands and distinguish simulator, build and physical-device results.
 
+Physical validation on 2026-10-25 used an isolated Core and UART/TCP, preserving
+identity, pairing, Wi-Fi, the existing Space and the layout partition. The v72
+image completed one sync but failed its immediate repeat; the first upstream
+merge then exceeded the application partition by 38,352 bytes. These are
+historical results, not the current build status.
+
+Building the standard library with `backtrace-trace-only` brought the image
+inside the original partition. With the matching-policy `observeSpaceProjection`
+reply and boxed Core projection future, v74 passed five consecutive full sync
+rounds (28.936–39.186 seconds), with actual paging verified on every round.
+There were no resets, allocation failures or session errors during those rounds;
+minimum free heap was 18,892 bytes and NVS use remained stable. This verifies
+repeated synchronization with identical authority history only.
+
+Subsequent Core leave/rejoin attempts exposed approval OOM, receipt/topology
+storage failures, and a full-policy allocation hidden inside paged export.
+Compact approval references, lossless local topology encoding, and range-based
+permission-page scans address those failures. The original explicit approval
+completed using the same request, and Core adopted the original Edge Space at
+revision 13 with both members. The approval reply carries membership; Core
+fetches and verifies the complete current authority separately before adoption.
+
+Final v87 hardware validation on 2026-10-26 passed five consecutive real paged
+syncs (54.472–57.788 seconds), then two more after restarting both peers. Each
+round verified actual page/header calls, with no resets, allocation failures or
+session errors. Minimum free heap was 18,284 bytes. The original request stayed
+`joined`, the original two-member Space survived restart, and the chat page
+returned to connected/ready. This verifies the existing interrupted approval's
+recovery and repeated synchronization at the tested history size.
+
+The image uses **3,972,592 / 3,997,696 bytes** (**25,104 free**). The final logical
+snapshot uses **6,940 / 7,000 bytes** (**60 free**). Identity, pairing and encryption
+key contents were preserved; layout and authority-history bytes match their
+backups. Old requests and source/approval facts remain. Neither the original
+partition nor the logical budget was enlarged. The isolated Core was stopped
+and the serial port released after validation; the device retains its Space.
+
+Core-managed authority, durable handover, arbitrary history growth and broader
+concurrency/lifecycle acceptance remain pending. See the
+[validation record](../../docs/edge-core-entry-protocol.md) for the retained
+failure stages, exact page counts and final results.
+
 ## Recovering from an unavailable Space administrator
 
 Pairing and Space membership are independent. Unpairing does not silently leave
-or merge a Space. On the device, open **Status → 退出空间 → 确认退出** to leave an
+or merge a Space. On the device, open **Settings → Device Space → Space and
+pairing management → Leave current device Space → Confirm** to leave an
 unavailable old Space. This uses the shared local Space-exit transition, creates
 a singleton policy immediately, and retains identity, Wi-Fi and direct pairing.
 Obsolete local review records and completed applications from the abandoned
@@ -248,9 +459,16 @@ These are dependency-source overlays, not an unmodified upstream build, and
 must be reviewed when updating the pinned versions or compiler. Desktop
 builds do not use them.
 
-The firmware release uses Thin LTO to fit the existing 4 MB board and application
-partition. A single codegen unit keeps the Windows linker command within its
-length limit; package-specific Tokio and UUID optimization settings remain.
+The firmware release uses Fat LTO and size optimization across its Rust packages
+to fit the existing 4 MB board and application partition. ESP32 console timestamps use direct UTC clock fields;
+desktop logs retain their local-time formatter. A single codegen unit keeps the
+Windows linker command within its length limit; package-specific Tokio and UUID optimization settings remain.
+
+The ESP32 standard library uses `backtrace-trace-only`: panic diagnostics and
+raw backtrace addresses remain available, while symbol lookup runs on the host
+with the matching ELF. This avoids linking the device-side DWARF symbol reader;
+it does not disable panic reporting or the ESP-IDF abort backtrace. Keep the ELF
+from each flashed build for `xtensa-esp32-elf-addr2line -f -C -e <elf> <addresses>`.
 
 On Xtensa, the overlays keep the Tokio constructor and ring seal/open as named,
 non-inlined functions so LTO cannot erase the ABI inspection boundaries. These

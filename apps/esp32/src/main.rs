@@ -8,6 +8,7 @@ mod device_preferences;
 mod device_http;
 mod device_speech;
 mod device_space_ui;
+mod space_work;
 #[cfg(target_os = "espidf")]
 mod device_services;
 #[cfg(target_os = "espidf")]
@@ -324,7 +325,9 @@ fn runFirmware(
     let preferenceSpace = spaceService.clone();
     scheduler.scheduleHostRuntimeAsyncTask("device-preferences", Box::new(move || Box::pin(async move {
         loop {
-            let _ = preferenceSpace.synchronizePreferences().await;
+            if let Some(_work) = space_work::try_acquire() {
+                let _ = preferenceSpace.synchronizePreferences().await;
+            }
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
     })))?;
@@ -425,8 +428,10 @@ fn runFirmware(
         // The shared UI runtime receives the sampled touch directly.
         ui.setTouch(point.map(|sample| (sample.x, sample.y)));
         ui.pump(20);
-        deviceSpaceUi.poll();
-        ui.setDeviceSpaceState(&deviceSpaceUi.snapshot());
+        if !spaceJoinUi.isBusy() {
+            deviceSpaceUi.poll();
+            ui.setDeviceSpaceState(&deviceSpaceUi.snapshot());
+        }
         spaceJoinUi.pump(&mut ui);
         crate::device_services::pumpUi(&mut ui);
         for mut action in ui.drainActions() {
@@ -574,8 +579,10 @@ fn runFirmware(
             speech.cancel("此硬件未配置音频播放驱动".into());
             ui.actionError("此硬件未配置音频播放驱动");
         }
-        let speechState = speech.snapshot();
-        ui.setSpeechState(speechState["phase"].as_u64().unwrap_or(0) as u32);
+        if !spaceJoinUi.isBusy() && !deviceSpaceUi.isBusy() {
+            let speechState = speech.snapshot();
+            ui.setSpeechState(speechState["phase"].as_u64().unwrap_or(0) as u32);
+        }
         if let Some(result) = crate::edge_chat::takeSendResult() {
             ui.chatSendResult(result);
         }
@@ -585,9 +592,17 @@ fn runFirmware(
                 status.setExpression(face.expression);
             }
         }
+        // Connection status is presentation state: poll it with route refresh,
+        // not twice per rendered frame. Every routed operation still validates
+        // its current Space entry and authorization before dispatch.
+        let mut edgeReady = lastEdgeReady;
+        let spaceStateBusy = spaceJoinUi.isBusy() || deviceSpaceUi.isBusy();
+        // A review/merge can hold a source and a target snapshot. Display-only
+        // checks must not allocate another policy replay beside that work.
+        // Keep the previous indicators until the shared operation completes.
         // Poll first so a newly accepted Core carrier is reflected on the
         // display in the same loop iteration.
-        if std::time::Instant::now() >= nextChatRoutePoll {
+        if !spaceStateBusy && std::time::Instant::now() >= nextChatRoutePoll {
             nextChatRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
             let settings = (|| {
                 let scope = operit_node_runtime::NodeSpaceService::NodeSpaceContext::spaceStore(spaceService.as_ref())
@@ -608,8 +623,8 @@ fn runFirmware(
                 }
             }
             chatRoute.poll(NodeServices::new(peerService.clone()));
+            edgeReady = crate::edge_chat::isConnected();
         }
-        let edgeReady = crate::edge_chat::isConnected();
         let mut pairingChanged = false;
         loop {
             match peerChanges.try_recv() {
@@ -622,7 +637,7 @@ fn runFirmware(
         let now = std::time::Instant::now();
         // Changes are immediate; a slow fallback poll also expires displayed codes.
         // Never deserialize the entire node database every 20ms UI frame.
-        let paired = if pairingChanged || now >= nextPairingPoll {
+        let paired = if !spaceStateBusy && (pairingChanged || now >= nextPairingPoll) {
             nextPairingPoll = now + std::time::Duration::from_secs(1);
             match pairingState() {
                 Ok((paired, codes)) => {
@@ -649,7 +664,7 @@ fn runFirmware(
             lastPaired = paired;
         }
         let chatRevision = crate::edge_chat::revision();
-        let chatConnected = crate::edge_chat::isConnected();
+        let chatConnected = edgeReady;
         if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
             let chatState = crate::edge_chat::snapshot();
             ui.setChatState(&chatState);
