@@ -11,6 +11,7 @@ pub(crate) enum PeerSyncMethod {
     CoreVersion,
     DeviceSpace,
     SyncClock,
+    SyncClockDigest,
     SyncOperationsSince,
     SyncApplyOperations,
     SyncBlobExists,
@@ -22,7 +23,7 @@ impl PeerSyncMethod {
     /// Device-space inspection and immediate execution binding are control-plane
     /// calls, not an invitation to replicate persistent business data.
     pub(crate) fn requiresStorageProvider(self) -> bool {
-        matches!(self, Self::SyncClock | Self::SyncOperationsSince
+        matches!(self, Self::SyncClock | Self::SyncClockDigest | Self::SyncOperationsSince
             | Self::SyncApplyOperations | Self::SyncBlobExists | Self::SyncReadBlobChunk)
     }
 
@@ -101,6 +102,7 @@ mod tests {
             PeerSyncMethod::CoreVersion,
             PeerSyncMethod::DeviceSpace,
             PeerSyncMethod::SyncClock,
+            PeerSyncMethod::SyncClockDigest,
             PeerSyncMethod::SyncOperationsSince,
             PeerSyncMethod::SyncApplyOperations,
             PeerSyncMethod::SyncBlobExists,
