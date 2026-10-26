@@ -4,39 +4,66 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:mime/mime.dart';
 import 'package:operit_folder_access/operit_folder_access.dart';
 
+import 'ComposeDslFilePickerStorage.dart';
 import 'SelectedFileInput.dart';
 
 /// Opens Compose DSL file-picker requests through Flutter's platform selector.
 class ComposeDslFilePickerService {
+  /// Prevents instantiation of the host picker service.
   ComposeDslFilePickerService._();
 
   /// Opens one picker request serialized by the Rust Compose DSL host boundary.
-  static Future<String> open(String requestJson) async {
+  static Future<String> open(
+    String requestJson, {
+    ComposeDslFilePickerStorage storage =
+        const RuntimeComposeDslFilePickerStorage(),
+  }) async {
     final request = _ComposeDslFilePickerRequest.fromJson(requestJson);
     if (request.picker == _ComposeDslFilePickerMode.directory) {
-      final paths = request.allowMultiple
-          ? await OperitFolderAccess.pickDirectories()
+      final sources = request.allowMultiple
+          ? await OperitFolderAccess.pickWorkspaceDirectories()
           : await _openSingleDirectory();
-      return _encodeResult(
-        cancelled: paths.isEmpty,
-        files: paths
-            .whereType<String>()
-            .map(_PickedFile.fromDirectory)
-            .toList(growable: false),
-      );
+      final picked = <_PickedFile>[];
+      for (final source in sources) {
+        final path = await storage.mountDirectory(source);
+        picked.add(_PickedFile.fromDirectory(path, source.name));
+      }
+      return _encodeResult(cancelled: sources.isEmpty, files: picked);
     }
     final typeGroups = _typeGroupsFor(request);
     final files = request.allowMultiple
         ? await openFiles(acceptedTypeGroups: typeGroups)
         : await _openSingleFile(typeGroups);
     final picked = <_PickedFile>[];
-    for (final file in files) {
-      picked.add(await _PickedFile.fromXFile(file, request.maxContentBytes));
+    try {
+      for (final file in files) {
+        picked.add(
+          await _PickedFile.fromXFile(file, request.maxContentBytes, storage),
+        );
+      }
+      return _encodeResult(cancelled: files.isEmpty, files: picked);
+    } catch (_) {
+      for (final file in picked) {
+        await _discardFile(storage, file.path);
+      }
+      rethrow;
     }
-    return _encodeResult(cancelled: files.isEmpty, files: picked);
+  }
+
+  /// Removes an unpublished selection while reporting cleanup errors to the host log.
+  static Future<void> _discardFile(
+    ComposeDslFilePickerStorage storage,
+    String path,
+  ) async {
+    try {
+      await storage.deleteFile(path);
+    } catch (error) {
+      debugPrint('Failed to discard selected file: $error');
+    }
   }
 
   /// Builds the platform-neutral file-selector filter for one validated picker mode.
@@ -97,9 +124,9 @@ class ComposeDslFilePickerService {
   }
 
   /// Opens one directory and represents cancellation as an empty selection.
-  static Future<List<String>> _openSingleDirectory() async {
-    final path = await OperitFolderAccess.pickDirectory();
-    return path == null ? const <String>[] : <String>[path];
+  static Future<List<FolderMountSource>> _openSingleDirectory() async {
+    final source = await OperitFolderAccess.pickWorkspaceDirectory();
+    return source == null ? const <FolderMountSource>[] : [source];
   }
 
   /// Opens the single-file selector and normalizes a cancellation to an empty list.
@@ -180,6 +207,7 @@ const XTypeGroup _mediaTypeGroup = XTypeGroup(
 
 /// Stores the fully validated, platform-neutral picker request.
 class _ComposeDslFilePickerRequest {
+  /// Stores the validated host request fields.
   const _ComposeDslFilePickerRequest({
     required this.picker,
     required this.allowMultiple,
@@ -244,6 +272,7 @@ class _ComposeDslFilePickerRequest {
 
 /// Stores one selected item using the stable public Compose DSL result shape.
 class _PickedFile {
+  /// Stores a selected resource after publication through the VFS.
   const _PickedFile({
     required this.uri,
     required this.path,
@@ -260,68 +289,65 @@ class _PickedFile {
   final int size;
   final String? contentBase64;
 
-  /// Builds a directory result without attempting to read it as a file.
-  factory _PickedFile.fromDirectory(String path) {
-    final uri = _uriForPath(path, directory: true);
-    final segments = uri.pathSegments
-        .where((segment) => segment.isNotEmpty)
-        .toList();
-    return _PickedFile(
-      uri: uri.toString(),
-      path: path,
-      name: segments.isEmpty ? path : segments.last,
-      mimeType: null,
-      size: 0,
-    );
-  }
+  /// Builds a directory result from its registered VFS mount.
+  factory _PickedFile.fromDirectory(String path, String name) =>
+      _PickedFile(uri: path, path: path, name: name, mimeType: null, size: 0);
 
-  /// Builds one public result entry from a file_selector result.
-  static Future<_PickedFile> fromXFile(XFile file, int? maxContentBytes) async {
-    final size = await file.length();
-    String? contentBase64;
-    if (maxContentBytes != null) {
-      if (size > maxContentBytes) {
+  /// Publishes selected bytes into host storage before returning a public VFS path.
+  static Future<_PickedFile> fromXFile(
+    XFile file,
+    int? maxContentBytes,
+    ComposeDslFilePickerStorage storage,
+  ) async {
+    final input = await SelectedFileInput.fromXFile(file);
+    String? path;
+    try {
+      final size = input.byteLength!;
+      if (maxContentBytes != null && size > maxContentBytes) {
         throw StateError(
           'Selected file exceeds the $maxContentBytes byte limit',
         );
       }
-      final input = await SelectedFileInput.fromXFile(file);
-      try {
-        final bytes = BytesBuilder(copy: false);
+      path = await storage.createFile(file.name);
+      final content = maxContentBytes == null
+          ? null
+          : BytesBuilder(copy: false);
+
+      /// Checks the source size while forwarding bounded chunks to the host writer.
+      Stream<Uint8List> chunks() async* {
+        var received = 0;
         await for (final chunk in input.chunks()) {
-          if (bytes.length + chunk.length > maxContentBytes) {
-            throw StateError(
-              'Selected file exceeds the $maxContentBytes byte limit',
-            );
+          received += chunk.length;
+          if (received > size) {
+            throw StateError('Selected file exceeds its declared byte length');
           }
-          bytes.add(chunk);
+          content?.add(chunk);
+          yield chunk;
         }
-        if (bytes.length != size) {
+        if (received != size) {
           throw StateError('Selected file byte length changed during import');
         }
-        contentBase64 = base64Encode(bytes.takeBytes());
-      } finally {
-        await input.close();
       }
-    }
-    final path = file.path;
-    return _PickedFile(
-      uri: _uriForPath(path).toString(),
-      path: path,
-      name: file.name,
-      mimeType: file.mimeType,
-      size: size,
-      contentBase64: contentBase64,
-    );
-  }
 
-  /// Keeps selector-owned URIs intact and converts filesystem paths with Dart's URI API.
-  static Uri _uriForPath(String path, {bool directory = false}) {
-    final uri = Uri.parse(path);
-    return switch (uri.scheme) {
-      'file' || 'content' || 'blob' => uri,
-      _ => directory ? Uri.directory(path) : Uri.file(path),
-    };
+      await storage.writeFile(path, size, chunks());
+      return _PickedFile(
+        uri: path,
+        path: path,
+        name: file.name,
+        mimeType: file.mimeType,
+        size: size,
+        contentBase64: content == null
+            ? null
+            : base64Encode(content.takeBytes()),
+      );
+    } catch (_) {
+      if (path != null) {
+        await ComposeDslFilePickerService._discardFile(storage, path);
+      }
+      rethrow;
+    } finally {
+      await input.close();
+    }
   }
 
   /// Converts one selected item to the public Compose DSL JSON shape.

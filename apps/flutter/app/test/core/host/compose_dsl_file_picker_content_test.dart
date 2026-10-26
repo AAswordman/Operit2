@@ -6,9 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/host/ComposeDslFilePickerService.dart';
 import 'package:operit2/core/host/SelectedFileInput.dart';
 
+import 'support/MemoryFilePickerStorage.dart';
+
 /// Verifies bounded content reads independently of the test runner platform.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  late MemoryFilePickerStorage storage;
+  setUp(() => storage = MemoryFilePickerStorage());
   final original = FileSelectorPlatform.instance;
   tearDown(() => FileSelectorPlatform.instance = original);
 
@@ -22,19 +26,23 @@ void main() {
                 'mimeTypes': ['image/*'],
                 'maxContentBytes': ?limit,
               }),
+              storage: storage,
             ),
           )
           as Map<String, dynamic>;
 
   test(
-    'iOS picker bytes are returned without mounting the native path',
+    'iOS selection returns a readable VFS file and bounded content',
     () async {
       final file = _SelectedImage(selectedFileChunkBytes + 7);
       FileSelectorPlatform.instance = _Selector(file);
       final result = await pick(limit: 8 * 1024 * 1024);
       final entry = (result['files'] as List).single as Map;
       expect(result['cancelled'], false);
-      expect(entry['path'], file.path);
+      expect(entry['path'], storage.allocated.single);
+      expect(entry['uri'], entry['path']);
+      expect(storage.files[entry['path']], isNotNull);
+      expect(entry['path'], isNot(file.path));
       expect(entry['name'], 'avatar.png');
       expect(entry['size'], file.size);
       final bytes = base64Decode(entry['contentBase64'] as String);
@@ -56,13 +64,22 @@ void main() {
     expect(file.ranges, isEmpty);
   });
 
-  test('ordinary metadata selection does not read file contents', () async {
-    final file = _SelectedImage(100);
-    FileSelectorPlatform.instance = _Selector(file);
-    final result = await pick();
-    expect((result['files'] as List).single, isNot(contains('contentBase64')));
-    expect(file.ranges, isEmpty);
-  });
+  test(
+    'selection without inline content still publishes a readable VFS file',
+    () async {
+      final file = _SelectedImage(100);
+      FileSelectorPlatform.instance = _Selector(file);
+      final result = await pick();
+      expect(
+        (result['files'] as List).single,
+        isNot(contains('contentBase64')),
+      );
+      expect(file.ranges, [(0, file.size)]);
+      final entry = (result['files'] as List).single as Map;
+      expect(storage.files[entry['path']], hasLength(file.size));
+      expect(entry['uri'], entry['path']);
+    },
+  );
 
   test(
     'cancellation returns no content and invalid limits fail before selection',
@@ -81,6 +98,40 @@ void main() {
     final file = _SelectedImage(10, failRead: true);
     FileSelectorPlatform.instance = _Selector(file);
     await expectLater(pick(limit: 1024), throwsStateError);
+    expect(storage.files, isEmpty);
+    expect(storage.deleted, storage.allocated);
+  });
+
+  test(
+    'failed multi-file selection removes every committed destination',
+    () async {
+      FileSelectorPlatform.instance = _MultipleSelector([
+        _SelectedImage(10),
+        _SelectedImage(10, failRead: true),
+      ]);
+      await expectLater(
+        ComposeDslFilePickerService.open(
+          jsonEncode({
+            'picker': 'document',
+            'allowMultiple': true,
+            'mimeTypes': [],
+          }),
+          storage: storage,
+        ),
+        throwsStateError,
+      );
+      expect(storage.allocated, hasLength(2));
+      expect(storage.files, isEmpty);
+      expect(storage.deleted, unorderedEquals(storage.allocated));
+    },
+  );
+
+  test('storage failures never return a physical source path', () async {
+    FileSelectorPlatform.instance = _Selector(_SelectedImage(10));
+    storage.failWrite = true;
+    await expectLater(pick(), throwsStateError);
+    expect(storage.files, isEmpty);
+    expect(storage.deleted, storage.allocated);
   });
 }
 
@@ -131,4 +182,19 @@ class _SelectedImage extends XFile {
       List.generate(end - start, (i) => (start + i) % 251),
     );
   }
+}
+
+/// Supplies multiple sources so one failed read can exercise whole-request cleanup.
+class _MultipleSelector extends FileSelectorPlatform {
+  /// Sets the exact ordered sources selected by the user.
+  _MultipleSelector(this.files);
+  final List<XFile> files;
+
+  /// Returns the selected sources through the same multi-file adapter contract.
+  @override
+  Future<List<XFile>> openFiles({
+    List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,
+    String? confirmButtonText,
+  }) async => files;
 }

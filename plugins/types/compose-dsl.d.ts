@@ -4261,11 +4261,11 @@ export interface ComposeFilePickerOptions {
  */
 export interface ComposePickedFile {
   /**
-   * URI representing the selected document or media item.
+   * URI reference to the selected resource in the VFS; equal to path.
    */
   uri: string;
   /**
-   * Platform file path or browser object URL for the selected item.
+   * Canonical VFS path accepted by file tools; selected files remain available until runtime cleanup.
    */
   path: string;
   /**

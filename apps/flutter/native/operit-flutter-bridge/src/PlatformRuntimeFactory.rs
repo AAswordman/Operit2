@@ -42,12 +42,14 @@ pub(crate) fn startBridge(startup: BridgeStartup) -> Result<OperitFlutterBridge,
         return Err("Runtime and workspace storage roots must be explicit".to_string());
     }
     let mut context = platform::create_host_context(&startup)?;
+    let composeDslHost =
+        FlutterComposeDslWebViewBridge::new(&context).map_err(|error| error.to_string())?;
     context = context
         .withBrowserAutomationHostFactory(Arc::new(|files| {
             Arc::new(FlutterBrowserAutomationBridge::new(files))
         }))
         .withBrowserSessionHost(Arc::new(FlutterBrowserSessionBridge::new()))
-        .withComposeDslWebViewHost(Arc::new(FlutterComposeDslWebViewBridge::new()))
+        .withComposeDslWebViewHost(Arc::new(composeDslHost))
         .withToastHost(Arc::new(
             crate::FlutterOwnerCapabilities::presentFlutterToast,
         ));

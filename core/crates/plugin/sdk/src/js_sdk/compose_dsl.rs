@@ -3250,9 +3250,9 @@ pub struct ComposeFilePickerOptions {
 }
 /// File metadata returned by the host picker.
 pub struct ComposePickedFile {
-    /// URI representing the selected document or media item.
+    /// URI reference to the selected resource in the VFS; equal to path.
     pub uri: String,
-    /// Platform file path or browser object URL for the selected item.
+    /// Canonical VFS path accepted by file tools; selected files remain available until runtime cleanup.
     pub path: String,
     /// Display name reported by the content provider.
     pub name: Option<String>,

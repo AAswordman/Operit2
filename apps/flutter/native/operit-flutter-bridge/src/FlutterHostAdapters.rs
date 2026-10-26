@@ -19,6 +19,8 @@ use operit_host_api::{
     BrowserAutomationRequest, BrowserAutomationResponse, FileSystemHost, HostError, HostResult,
 };
 
+use operit_tools::files::{PathMapper::PathMapper, VisualFileSystem::VisualFileSystem};
+
 use crate::current_time_millis_u64;
 
 /// Adapts browser automation operations to the Flutter owner transport.
@@ -381,12 +383,81 @@ impl operit_host_api::WebVisitHost for FlutterWebVisitBridge {
 
 /// Forwards Compose DSL view commands from the runtime to the Flutter owner.
 #[derive(Clone)]
-pub(crate) struct FlutterComposeDslWebViewBridge {}
+pub(crate) struct FlutterComposeDslWebViewBridge {
+    vfs: VisualFileSystem,
+}
 
 impl FlutterComposeDslWebViewBridge {
-    /// Creates the Compose DSL view owner bridge.
-    pub(crate) fn new() -> Self {
-        Self {}
+    /// Binds Compose host responses to the owning runtime's VFS capabilities.
+    pub(crate) fn new(host: &operit_host_api::HostManager::HostManager) -> HostResult<Self> {
+        let storage = host.runtimeStorageHost.clone().ok_or_else(|| {
+            HostError::new("RuntimeStorageHost is not registered for file selection")
+        })?;
+        let files = host
+            .fileSystemHost
+            .clone()
+            .ok_or_else(|| HostError::new("FileSystemHost is not registered for file selection"))?;
+        let root = storage
+            .runtimeRootDir()
+            .ok_or_else(|| HostError::new("File selection requires a runtime storage root"))?;
+        let workspaces = storage
+            .workspaceRootDir()
+            .ok_or_else(|| HostError::new("File selection requires a workspace storage root"))?;
+        Ok(Self {
+            vfs: VisualFileSystem::new(files, PathMapper::new(root, workspaces, storage)),
+        })
+    }
+
+    /// Requires each returned locator to address an existing resource through the VFS.
+    fn validateFilePickerResult(
+        &self,
+        result: serde_json::Value,
+        directory: bool,
+    ) -> HostResult<serde_json::Value> {
+        let cancelled = result
+            .get("cancelled")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| HostError::new("File-picker response requires a cancellation flag"))?;
+        let files = result
+            .get("files")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| HostError::new("File-picker response requires a files array"))?;
+        if cancelled != files.is_empty() {
+            return Err(HostError::new(
+                "File-picker cancellation does not match its selection",
+            ));
+        }
+        for file in files {
+            let path = file
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| HostError::new("Selected resource requires a VFS path"))?;
+            if file.get("uri").and_then(serde_json::Value::as_str) != Some(path) {
+                return Err(HostError::new(
+                    "Selected resource URI must identify its VFS path",
+                ));
+            }
+            let resolved = self.vfs.resolvePath(path).map_err(HostError::new)?;
+            if resolved.vfsPath != path {
+                return Err(HostError::new(
+                    "Selected resource requires a canonical VFS path",
+                ));
+            }
+            let entry = self.vfs.fileExists(path).map_err(HostError::new)?;
+            if !entry.exists || entry.isDirectory != directory {
+                return Err(HostError::new(
+                    "Selected resource is not accessible through its VFS path",
+                ));
+            }
+            if !directory
+                && file.get("size").and_then(serde_json::Value::as_i64) != Some(entry.size)
+            {
+                return Err(HostError::new(
+                    "Selected file size does not match its VFS resource",
+                ));
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -425,11 +496,13 @@ impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
             Duration::from_secs(600),
         )
         .map_err(operit_host_api::HostError::new)?;
-        serde_json::from_str(&response.resultJson).map_err(|error| {
-            operit_host_api::HostError::new(format!(
-                "Invalid Compose file-picker owner response: {error}"
-            ))
-        })
+        let result = serde_json::from_str(&response.resultJson).map_err(|error| {
+            HostError::new(format!("Invalid Compose file-picker owner response: {error}"))
+        })?;
+        self.validateFilePickerResult(
+            result,
+            request.picker == operit_host_api::ComposeDslFilePickerMode::Directory,
+        )
     }
     /// Saves UTF-8 content through the same Flutter owner as file selection.
     fn saveFile(

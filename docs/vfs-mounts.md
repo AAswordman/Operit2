@@ -1,5 +1,13 @@
 # 工作区 VFS 挂载
 
+## Host 文件选择结果
+
+Compose DSL 文件选择器返回的 `path` 和 `uri` 都是同一个规范 VFS 路径，可以直接交给统一文件接口使用。原生物理路径、文档提供者 URI 和浏览器对象 URL 由 host 内部持有。
+
+选中的文件通过 Flutter `XFile` 分块读取，经运行时的 `RuntimeStorageWriteHost` 写入私有暂存文件；字节数验证通过并提交后才返回 `/app/data/temp/clean_on_exit/file_picker/<id>/<name>`。文件保留原始名称，属于退出时清理的临时数据，不参与同步。读取或存储失败会终止选择请求并清理本次产生的文件。`maxContentBytes` 只控制可选的内联 Base64 内容，未请求内联内容时同样返回可读取的 VFS 文件。
+
+选中的目录保留平台适配器提供的授权后端，通过挂载目录注册为 `/mnt/<namespace>/<kind>/<id>`。Rust host 出口验证每个返回资源的 VFS 可访问性、类型和文件大小。
+
 ## Android 文档树
 
 在聊天工作区中使用「选择本机文件夹」，Android 将打开系统 SAF 文档树选择器。选择 Termux 或其他文档提供者后，应用保留授权 URI，并将其注册为：

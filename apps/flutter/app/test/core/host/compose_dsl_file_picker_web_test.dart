@@ -13,9 +13,13 @@ import 'package:operit2/core/host/ComposeDslFilePickerService.dart';
 import 'package:operit2/core/host/SelectedFileInput.dart';
 import 'package:web/web.dart' as web;
 
+import 'support/MemoryFilePickerStorage.dart';
+
 /// Exercises browser File selection through the production Web adapter and bounded content reader.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  late MemoryFilePickerStorage storage;
+  setUp(() => storage = MemoryFilePickerStorage());
   final original = FileSelectorPlatform.instance;
   tearDown(() => FileSelectorPlatform.instance = original);
   final request = jsonEncode({
@@ -26,7 +30,7 @@ void main() {
   });
 
   test(
-    'Web avatar selection returns complete bounded bytes and its Blob URI',
+    'Web selection publishes browser bytes at a readable VFS path',
     () async {
       final bytes = Uint8List(selectedFileChunkBytes + 7);
       for (var i = 0; i < bytes.length; i++) {
@@ -41,14 +45,20 @@ void main() {
       );
       FileSelectorPlatform.instance = FileSelectorWeb(domHelper: selection);
       final result =
-          jsonDecode(await ComposeDslFilePickerService.open(request)) as Map;
+          jsonDecode(
+                await ComposeDslFilePickerService.open(
+                  request,
+                  storage: storage,
+                ),
+              )
+              as Map;
       final selected = (result['files'] as List).single as Map;
       final uri = selected['uri'] as String;
-      addTearDown(() => web.URL.revokeObjectURL(uri));
       expect(result['cancelled'], false);
       expect(selected['name'], 'avatar.png');
       expect(selected['mimeType'], 'image/png');
-      expect(uri, startsWith('blob:'));
+      expect(uri, startsWith('/app/data/temp/clean_on_exit/file_picker/'));
+      expect(storage.files[uri], bytes);
       expect(selected['path'], uri);
       expect(base64Decode(selected['contentBase64'] as String), bytes);
       expect(selection.accept, contains('image/*'));
@@ -60,7 +70,9 @@ void main() {
     FileSelectorPlatform.instance = FileSelectorWeb(
       domHelper: _BrowserSelection(null),
     );
-    final result = jsonDecode(await ComposeDslFilePickerService.open(request));
+    final result = jsonDecode(
+      await ComposeDslFilePickerService.open(request, storage: storage),
+    );
     expect(result, {'cancelled': true, 'files': []});
   });
 }
