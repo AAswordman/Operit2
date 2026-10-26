@@ -245,10 +245,14 @@ impl StandardFileSystemTools {
         change: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
         let mut storagePaths = Vec::new();
-        let mut workspaceChanged = false;
+        let mut workspacePaths = Vec::new();
         for path in paths {
             let canonical = PathMapper::canonicalizeVfsPath(path)?;
-            workspaceChanged |= PathMapper::relativePath("/app/workspaces", &canonical)?.is_some();
+            if let Some(relative) = PathMapper::relativePath("/app/workspaces", &canonical)? {
+                if !relative.is_empty() {
+                    workspacePaths.push(format!("workspaces/{relative}"));
+                }
+            }
             if let Some(relative) = PathMapper::relativePath("/app/data", &canonical)? {
                 storagePaths.push(format!("runtime/{relative}"));
             }
@@ -257,14 +261,16 @@ impl StandardFileSystemTools {
             RuntimeFileSyncStore::new(self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH)
                 .trackChanges(&storagePaths, change)
         };
-        if workspaceChanged {
+        if workspacePaths.is_empty() {
+            tracked()
+        } else {
             operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
                 self.runtimeStorageHost.clone(),
                 RUNTIME_SYNC_DIR_PATH,
             )
-            .track(tracked)
-        } else {
-            tracked()
+            // Re-hash the touched workspace files so same-size rewrites publish
+            // immediately instead of waiting for the periodic full-hash round.
+            .trackPaths(&workspacePaths, tracked)
         }
     }
 
