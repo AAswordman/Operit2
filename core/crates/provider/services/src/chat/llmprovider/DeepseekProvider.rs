@@ -498,13 +498,11 @@ impl DeepseekProvider {
         effectiveHistory: &[PromptTurn],
         useToolCall: bool,
     ) -> Result<Value, AiServiceError> {
-        let structuredMessages: Value =
-            serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
-                effectiveHistory,
-                true,
-                useToolCall,
-            ))
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let structuredMessages: Value = StructuredToolCallBridge::buildMessagesValueForProvider(
+            effectiveHistory,
+            true,
+            useToolCall,
+        );
 
         let mut messagesArray = Vec::new();
         let Some(messages) = structuredMessages.as_array() else {
