@@ -5,6 +5,7 @@ import { parseDomainPayload } from "./domain";
 import { listBindableChats } from "./chat-binding-catalog";
 import { parseChatSelection } from "./chat-bindings";
 import { MemoryJobRunner } from "./memory-jobs/scheduler";
+import { openMemoryJobLease } from "./memory-jobs/lease";
 import { listMemoryChats, pruneMissingMemoryChats } from "./memory-jobs/chat";
 import type { CharacterRepositoryOwner } from "./canonical";
 import type { Request, RequestOutput, Snapshot } from "./model";
@@ -26,6 +27,7 @@ export interface CharacterCardsService extends ChatConfigurationService {
     owners: number;
     rebuildWindows: number;
     candidateBatches: number;
+    conflicts: number;
   }>;
   /** Dispatches an editor or registered domain command through the supplied canonical port. */
   dispatch<R extends Request>(request: R): Promise<RequestOutput<R>>;
@@ -45,7 +47,7 @@ export function createCharacterCardsService(
   owner: CharacterRepositoryOwner,
   configurations: IndependentConfigurationAccess = independentConfigurations,
 ): CharacterCardsService {
-  const jobs = new MemoryJobRunner(owner),
+  const jobs = new MemoryJobRunner(owner, openMemoryJobLease),
     application = createSelectionApplication(configurations);
   /** Validates refs before any selection mutation and applies configs only after actual file/native acknowledgement. */
   function dispatchRequest<R extends Request>(
@@ -257,6 +259,6 @@ export async function dispatchDomain<K extends DomainOperation>(operation: K, in
 }
 
 /** Advances genuine memory jobs through the one retained main-runtime business service. */
-export async function runMemoryJobs(): Promise<{ owners: number; rebuildWindows: number; candidateBatches: number }> {
+export async function runMemoryJobs(): Promise<{ owners: number; rebuildWindows: number; candidateBatches: number; conflicts: number }> {
   return (await getService()).runMemoryJobs();
 }

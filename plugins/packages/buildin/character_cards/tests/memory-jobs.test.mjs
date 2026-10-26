@@ -292,7 +292,11 @@ test("controlled Chat/AI: rebuild and candidate execution plus state-publication
     assert.ok((await runtime.api("memory.rebuild.progress", owner)).status.length > 0);
     const writes = harness.disk.calls.filter(call => call.method === "storage.commit");
     assert.ok(writes.length > 0, "The failure must occur during an actual storage transaction");
-    const unpublished = writes[writes.length - 1].args[0];
+    /** The failed state publication is the last real payload commit; cross-device lease bookkeeping commits after it are not publications. */
+    const publicationCollection = kind === "rebuild" ? "owners" : "candidates";
+    const unpublished = [...writes].reverse().find(
+      call => call.args[0].some(mutation => mutation.op === "put" && mutation.collection === publicationCollection),
+    ).args[0];
     if (kind === "rebuild") {
       const owner = unpublished.find(mutation => mutation.collection === "owners" && mutation.op === "put");
       assert.equal(owner.value.rebuildProgress.status, "running");
@@ -493,4 +497,65 @@ test("controlled Chat/AI: interval prunes orphan memory owners and still serves 
   /** A second interval runs cleanly without the orphan and keeps making progress for the genuine owner. */
   await runtime.interval();
   assert.equal((await harness.readState()).owners.some(space => space.ownerKey === "character:90a3122d-b374-4422-9589-44a9d7fc18a9"), false);
+});
+
+/** Opens the same lease database the production interval hook coordinates through. */
+async function leaseCollection(harness) {
+  const database = await harness.tools.Storage.objects.open({ path: harness.disk.directory + "/memory-jobs-lease.sqlite" });
+  return { database, collection: database.collection("memory_job_lease") };
+}
+
+/** A fresh foreign claim skips the whole pass; its expiry hands the work to this runtime. */
+test("controlled Chat/AI: a live foreign memory job lease skips the interval and an expired lease is taken over and released", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime();
+  await runtime.initialize(); await runtime.bind();
+  await runtime.enqueueReplies(); await runtime.makeDue();
+  const { database, collection } = await leaseCollection(harness);
+
+  /** Another runtime currently owns this owner's pass. */
+  await collection.put(CONTROLLED_OWNER, { holder: "foreign-runtime", expiresAt: Date.now() + 600000 }, { expectedVersion: null });
+  await runtime.interval(); harness.assertOutputsConsumed();
+  assert.equal(harness.modelCalls.length, 0);
+  const untouched = await readOwner(harness);
+  assert.equal(untouched.candidates.length, 5);
+  const held = await collection.get(CONTROLLED_OWNER);
+  assert.equal(held.value.holder, "foreign-runtime");
+
+  /** Expiry hands the claim over, the queue completes, and the finished pass releases its claim. */
+  await collection.put(CONTROLLED_OWNER, { holder: "foreign-runtime", expiresAt: Date.now() - 1 }, { expectedVersion: held.version });
+  harness.queueAnalysis({ main: { title: "Lease takeover", content: "A fact extracted after takeover", tags: ["Lease"], folder_path: "Projects" }, new: [], update: [], merge: [], links: [] });
+  await runtime.interval(); harness.assertOutputsConsumed();
+  assert.equal(harness.modelCalls.length, 1);
+  assert.equal((await readOwner(harness)).candidates.length, 0);
+  assert.equal(await collection.get(CONTROLLED_OWNER), null);
+  await database.close();
+});
+
+/** One racing owner update must not discard the other owners' passes in the same interval. */
+test("memory job runner isolates storage version conflicts per owner and continues independent owners", async () => {
+  const { MemoryJobRunner } = loadModule("src/memory-jobs/scheduler.ts");
+  const spaces = new Map([
+    ["character:conflicted", { candidates: [], rebuildTask: null, rebuildProgress: { status: "idle" }, settings: { autoSaveIntervalMinutes: 0, nextAutoSaveRunAtMs: 0 } }],
+    ["character:healthy", { candidates: [], rebuildTask: null, rebuildProgress: { status: "idle" }, settings: { autoSaveIntervalMinutes: 0, nextAutoSaveRunAtMs: 0 } }],
+  ]);
+  const owner = {
+    /** The first read of the conflicted owner rejects with the genuine host concurrency error. */
+    async run(callback) {
+      return callback({
+        async pruneOrphanMemoryOwners() { return 0; },
+        async listMemoryOwnerKeys() { return [...spaces.keys()]; },
+        async readMemoryJobState(ownerKey) {
+          if (ownerKey === "character:conflicted") throw new Error("Storage version conflict: owners/character:conflicted");
+          return structuredClone(spaces.get(ownerKey));
+        },
+        async writeMemoryJobState(ownerKey, space) { spaces.set(ownerKey, space); },
+        async readGlobalMemoryPreferences() { return { autoUpdateEnabled: true }; },
+      });
+    },
+  };
+  const report = await new MemoryJobRunner(owner, async () => ({
+    acquire: async () => true, release: async () => {}, close: async () => {},
+  })).tick();
+  assert.equal(report.owners, 2);
+  assert.equal(report.conflicts, 1);
 });
