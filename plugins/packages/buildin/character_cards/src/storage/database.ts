@@ -550,7 +550,10 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     });
     for (const document of stagedDocuments)
       completed(await Tools.Files.move(document.stagedPath, document.path));
-    for (const path of removed)
+    for (const path of removed) {
+      // A pruned owner's document directory may never have been materialized on this device.
+      if (!(await Tools.Files.exists(path)).exists) continue;
       completed(await Tools.Files.deleteFile(path, true));
+    }
   }
 }

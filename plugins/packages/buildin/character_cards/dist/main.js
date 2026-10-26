@@ -3235,6 +3235,26 @@ var RepositorySession = class {
       return copy(get(this.state.cards, id2, "character"));
     });
   }
+  /** Removes memory owners whose backing entity no longer exists and returns their pruned owner keys.
+    * Orphan owners appear when a character or shared store is lost outside the removal path
+    * (for example a deleted-synced card); every scheduler transaction on such an owner throws,
+    * so the interval prunes them up front instead of failing forever. */
+  pruneOrphanMemoryOwners() {
+    return __async(this, null, function* () {
+      const alive = (ownerKey) => {
+        const parts = ownerKey.split(":");
+        if (parts.length !== 2) return false;
+        if (parts[0] === "character") return this.state.cards.some((card) => card.id === parts[1]);
+        if (parts[0] === "shared") return this.state.stores.some((store) => store.id === parts[1]);
+        return false;
+      };
+      const orphans = this.state.owners.filter((space) => !alive(space.ownerKey)).map((space) => space.ownerKey);
+      if (orphans.length === 0) return [];
+      this.state.owners = this.state.owners.filter((space) => alive(space.ownerKey));
+      for (const ownerKey of orphans) this.documents.delete(ownerKey);
+      return orphans;
+    });
+  }
   /** Creates all character fields and its genuine initialized memory space. */
   createCharacter(card) {
     return __async(this, null, function* () {
@@ -4404,8 +4424,10 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       });
       for (const document2 of stagedDocuments)
         completed2(yield Tools.Files.move(document2.stagedPath, document2.path));
-      for (const path of removed)
+      for (const path of removed) {
+        if (!(yield Tools.Files.exists(path)).exists) continue;
         completed2(yield Tools.Files.deleteFile(path, true));
+      }
     });
   }
 };
@@ -5357,6 +5379,10 @@ var MemoryJobRunner = class {
   /** Advances persisted rebuild windows and due candidates once. */
   runTick() {
     return __async(this, null, function* () {
+      const prunedOwners = yield this.owner.run(
+        /** Drops memory owners whose backing entity vanished; without this their first transaction throws every interval. */
+        (repository2) => repository2.pruneOrphanMemoryOwners()
+      );
       const keys = yield this.owner.run(
         /** Enumerates only genuine initialized memory spaces. */
         (repository2) => repository2.listMemoryOwnerKeys()
