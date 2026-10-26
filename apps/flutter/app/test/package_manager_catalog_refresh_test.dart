@@ -1203,6 +1203,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
     chatInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatViewHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatMessageHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
+    chatResponseHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatMessageMenuItems: <core_proxy.ToolPkgChatMessageMenuItemRuntime>[],
     chatRuntimeHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     hostEventHooks: <core_proxy.ToolPkgHostEventHookRuntime>[],

@@ -1,4 +1,5 @@
 {
   "dart.flutterSdkPath": "apps/flutter/app/.fvm/flutter_sdk",
+  "dart.analysisExcludedFolders": ["tools/release/work"],
   "cmake.sourceDirectory": "${workspaceFolder}/apps/esp32/ui_port"
 }
