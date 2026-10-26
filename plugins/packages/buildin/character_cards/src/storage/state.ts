@@ -87,6 +87,7 @@ export function assertMemorySpace(value: unknown): asserts value is MemorySpace 
   // Released queues may contain independent task IDs for the same migrated message revision.
   for (const candidate of value.candidates) {
     assertObject(candidate, "candidate"); requireId(candidate.id, "candidate id"); requireId(candidate.chatId, "candidate chat id");
+    if (candidate.producerNodeId !== undefined) requireId(candidate.producerNodeId, "candidate producer node id");
     for (const field of ["triggerMessageTimestamp", "triggerVariantIndex", "createdAt", "updatedAt", "attemptCount"] as const) assertInteger(candidate[field], field, 0);
     for (const field of ["status", "lastError", "sourceType"] as const) assertString(candidate[field], field);
     if (candidate.status !== "pending" && candidate.status !== "processing" && candidate.status !== "failed") throw new Error("Invalid candidate status");
@@ -104,6 +105,7 @@ export function assertMemorySpace(value: unknown): asserts value is MemorySpace 
   )) throw new Error("Invalid memory rebuild status");
   if (value.rebuildTask !== null) {
     assertObject(value.rebuildTask, "rebuild task"); requireId(value.rebuildTask.id, "rebuild task id");
+    if (value.rebuildTask.producerNodeId !== undefined) requireId(value.rebuildTask.producerNodeId, "rebuild producer node id");
     array(value.rebuildTask.windows, "rebuild windows"); assertInteger(value.rebuildTask.nextWindow, "rebuild cursor", 0);
     if (value.rebuildTask.windows.length === 0 || value.rebuildTask.nextWindow > value.rebuildTask.windows.length) throw new Error("Invalid rebuild cursor or source plan");
     let sourceTotal = 0, processedTotal = 0, completedChats = 0, windowIndex = 0;

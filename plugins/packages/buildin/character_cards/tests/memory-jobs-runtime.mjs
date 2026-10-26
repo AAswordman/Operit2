@@ -21,7 +21,7 @@ function strictCapability(name, members) {
 }
 
 /** Creates explicit Chat/AI fixtures around real temporary disk IO, never a substitute domain backend. */
-export async function createMemoryJobsHarness(testContext) {
+export async function createMemoryJobsHarness(testContext, producerNodeId = "controlled-node") {
   const disk = await createDiskHarness(testContext, { legacyIdentity: "default" }), modelCalls = [], rangeCalls = [], findCalls = [], outcomes = [];
   const history = [];
   for (let index = 0; index < 32; index += 1) {
@@ -137,9 +137,15 @@ export async function createMemoryJobsHarness(testContext) {
     executionDatas.set(JSON.stringify([timestamp, variantIndex]), messageMarker());
   }
 
+  /** Supplies the native discovery result with an explicitly selected stable device identity. */
+  async function toolCall(name, params) {
+    assert.equal(name, "list_core_nodes"); assert.deepEqual(plain(params), {});
+    return JSON.stringify({ currentNodeId: producerNodeId, nodes: [] });
+  }
+
   /** Opens a fresh production main module against the same real disk after the previous runtime is retired. */
   function openRuntime(runtimeGlobals = {}) {
-    const plugin = openPlugin({ ...disk, globals: { ...disk.globals, ...runtimeGlobals, Tools: tools } });
+    const plugin = openPlugin({ ...disk, globals: { ...disk.globals, toolCall, ...runtimeGlobals, Tools: tools } });
     assert.equal(plugin.toolLifecycleHooks.length, 1); assert.equal(plugin.toolPromptHooks.length, 1);
     return {
       ...plugin,

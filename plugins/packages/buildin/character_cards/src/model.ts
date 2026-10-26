@@ -164,6 +164,8 @@ export interface Memory {
 export interface DocumentChunk { id: string; memoryUuid: string; chunkIndex: number; content: string }
 /** Persists one exact owner-scoped message revision candidate and its durable execution metadata. */
 export interface MemoryCandidate {
+  /** Identifies the device that produced this request; released unassigned tasks require explicit retry. */
+  producerNodeId?: string;
   id: string; chatId: string; triggerMessageTimestamp: number; triggerVariantIndex: number; createdAt: number; updatedAt: number;
   status: string; attemptCount: number; lastError: string; sourceType: string;
 }
@@ -347,7 +349,11 @@ export interface MemoryChatMessage {
 /** Persists one planned extraction window, including the original source-message count. */
 export interface MemoryJobWindow { chatId: string; chatTitle: string; messages: MemoryChatMessage[]; sourceMessageCount: number }
 /** Persists the private rebuild cursor in the same authoritative owner snapshot. */
-export interface MemoryRebuildTask { id: string; windows: MemoryJobWindow[]; nextWindow: number }
+export interface MemoryRebuildTask {
+  /** Identifies the device on which this rebuild was requested. */
+  producerNodeId?: string;
+  id: string; windows: MemoryJobWindow[]; nextWindow: number;
+}
 /** Stores a real provider embedding, keyed by exact configured source and input text. */
 export interface MemoryEmbedding { id: string; endpoint: string; model: string; text: string; vector: number[]; updatedAt: number }
 /** Reports actual committed domain operations for a manual or background extraction. */

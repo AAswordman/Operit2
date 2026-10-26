@@ -267,9 +267,17 @@ publishes settings plus search weights in one repository transaction; it preserv
 the scheduler's latest `nextAutoSaveRunAtMs` rather than overwriting it from a stale
 editor draft. Both character and shared-library rows open their exact owner.
 
-History rebuilds use the registered memory-job interval hook and persisted plans,
-not browser timers. The modal polls only genuine queue/progress values, without
-replacing editable fields, and stops polling on close without cancelling jobs.
+Memory candidates are produced on the device that actually persists a reply; receiving
+synchronized history does not create another extraction request. Each candidate records
+that producing CoreNode, and each device's ordinary interval processes only its own
+requests. History rebuilds likewise remain with the device on which they were requested.
+Restarting that device resumes its persisted work; another device never takes work merely
+because its producer is unreachable. Memory records and task provenance remain synchronized.
+Released tasks without producer metadata are reported as failed without calling a model;
+explicit retry assigns candidate work to the requesting device, and a new rebuild records
+its requesting device. One owner's failure does not stop independent owners or later intervals.
+The modal polls genuine queue/progress values without replacing editable fields, and stops
+polling on close without cancelling jobs.
 Embedding rebuilds use the saved endpoint/model/key and the existing HTTP capability;
 provider errors stay visible. Rebuilds publish version-checked source pages; already
 committed pages remain committed when a later page fails. The unnecessary

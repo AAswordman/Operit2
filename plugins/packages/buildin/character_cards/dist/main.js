@@ -1215,6 +1215,15 @@ function timestamp(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+// src/memory-jobs/producer.ts
+function memoryJobProducer() {
+  return __async(this, null, function* () {
+    const state = JSON.parse(yield toolCall("list_core_nodes", {}));
+    assertObject(state, "CoreNode discovery");
+    return requireId(state.currentNodeId, "current CoreNode id");
+  });
+}
+
 // src/memory-jobs/embeddings.ts
 function assertEmbedding(value) {
   assertObject(value, "embedding");
@@ -1984,6 +1993,7 @@ function assertMemorySpace(value) {
     assertObject(candidate, "candidate");
     requireId(candidate.id, "candidate id");
     requireId(candidate.chatId, "candidate chat id");
+    if (candidate.producerNodeId !== void 0) requireId(candidate.producerNodeId, "candidate producer node id");
     for (const field of ["triggerMessageTimestamp", "triggerVariantIndex", "createdAt", "updatedAt", "attemptCount"]) assertInteger(candidate[field], field, 0);
     for (const field of ["status", "lastError", "sourceType"]) assertString(candidate[field], field);
     if (candidate.status !== "pending" && candidate.status !== "processing" && candidate.status !== "failed") throw new Error("Invalid candidate status");
@@ -2004,6 +2014,7 @@ function assertMemorySpace(value) {
   if (value.rebuildTask !== null) {
     assertObject(value.rebuildTask, "rebuild task");
     requireId(value.rebuildTask.id, "rebuild task id");
+    if (value.rebuildTask.producerNodeId !== void 0) requireId(value.rebuildTask.producerNodeId, "rebuild producer node id");
     array2(value.rebuildTask.windows, "rebuild windows");
     assertInteger(value.rebuildTask.nextWindow, "rebuild cursor", 0);
     if (value.rebuildTask.windows.length === 0 || value.rebuildTask.nextWindow > value.rebuildTask.windows.length) throw new Error("Invalid rebuild cursor or source plan");
@@ -5326,6 +5337,18 @@ var MemoryJobStatusError = class extends Error {
     this.name = "MemoryJobStatusError";
   }
 };
+var MemoryJobPassError = class extends Error {
+  /** Keeps original failures and completed work available to diagnostics without reporting false success. */
+  constructor(failures, report) {
+    super("Memory jobs failed for " + failures.length + " owner(s): " + failures.map(
+      /** Identifies each failed owner while retaining its original failure text. */
+      (failure2) => failure2.ownerKey + ": " + errorText(failure2.error)
+    ).join("; "));
+    this.failures = failures;
+    this.report = report;
+    this.name = "MemoryJobPassError";
+  }
+};
 function publishJobFailure(error, publishStatus) {
   return __async(this, null, function* () {
     try {
@@ -5381,6 +5404,7 @@ function enqueueCandidate(input, repository2) {
       owners.add(yield primaryOwner(participants[0], repository2));
     }
     const result2 = { owners: [...owners], candidateIds: [] }, now = Date.now();
+    const producerNodeId = yield memoryJobProducer();
     for (const ownerKey of owners) {
       const space = yield repository2.readMemoryJobState(ownerKey), previous = space.candidates.filter(
         /** Uses the full owner-scoped source identity for genuine hook idempotency. */
@@ -5391,7 +5415,7 @@ function enqueueCandidate(input, repository2) {
         continue;
       }
       const id2 = yield repository2.allocateRecordId();
-      space.candidates.push({ id: id2, chatId: input.chatId, triggerMessageTimestamp: input.timestamp, triggerVariantIndex: input.variantIndex, createdAt: now, updatedAt: now, status: "pending", attemptCount: 0, lastError: "", sourceType: input.sourceType });
+      space.candidates.push({ id: id2, producerNodeId, chatId: input.chatId, triggerMessageTimestamp: input.timestamp, triggerVariantIndex: input.variantIndex, createdAt: now, updatedAt: now, status: "pending", attemptCount: 0, lastError: "", sourceType: input.sourceType });
       if (space.settings.autoSaveIntervalMinutes > 0 && space.settings.nextAutoSaveRunAtMs === 0) space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
       yield repository2.writeMemoryJobState(ownerKey, space);
       result2.candidateIds.push(id2);
@@ -5401,9 +5425,10 @@ function enqueueCandidate(input, repository2) {
 }
 function retryFailedCandidates(ownerKey, repository2) {
   return __async(this, null, function* () {
-    const space = yield repository2.readMemoryJobState(ownerKey), now = Date.now();
+    const space = yield repository2.readMemoryJobState(ownerKey), now = Date.now(), producerNodeId = yield memoryJobProducer();
     let retried = 0;
     for (const candidate of space.candidates) if (candidate.status === "failed") {
+      candidate.producerNodeId = producerNodeId;
       candidate.status = "pending";
       candidate.lastError = "";
       candidate.updatedAt = now;
@@ -5437,7 +5462,7 @@ function startMemoryRebuild(ownerKey, rebuild, repository2) {
     if (rebuild.chatIds.length === 0) throw new Error("Rebuild requires selected chats");
     const space = yield repository2.readMemoryJobState(ownerKey);
     if (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") throw new Error("Memory rebuild is already active");
-    const task = { id: yield repository2.allocateRecordId(), windows: [], nextWindow: 0 }, ids = /* @__PURE__ */ new Set();
+    const task = { id: yield repository2.allocateRecordId(), producerNodeId: yield memoryJobProducer(), windows: [], nextWindow: 0 }, ids = /* @__PURE__ */ new Set();
     for (const id2 of rebuild.chatIds) {
       requireId(id2, "rebuild chat id");
       if (ids.has(id2)) throw new Error("Duplicate selected rebuild chat: " + id2);
@@ -5619,19 +5644,10 @@ function processCandidates(ownerKey, candidates, owner2) {
     }
   });
 }
-function storageConflict(error) {
-  if (error instanceof MemoryJobStatusError) return storageConflict(error.executionError) || storageConflict(error.statusPublicationError);
-  return errorText(error).indexOf("Storage version conflict") !== -1;
-}
 var MemoryJobRunner = class {
-  /**
-   * Uses the shared transactional repository for all job and failure publications.
-   * The optional lease factory provides cross-device single-flight; without it
-   * every device still runs every owner exactly as before.
-   */
-  constructor(owner2, leaseFactory) {
+  /** Uses the shared transactional repository for all job and failure publications. */
+  constructor(owner2) {
     this.owner = owner2;
-    this.leaseFactory = leaseFactory;
     this.running = null;
   }
   /** Shares the active pass while durable job failures remain visible in their own statuses. */
@@ -5643,67 +5659,66 @@ var MemoryJobRunner = class {
     }
     return this.running;
   }
-  /** Advances persisted rebuild windows and due candidates once. */
+  /** Advances only tasks produced by this device while preserving independent owner failures. */
   runTick() {
     return __async(this, null, function* () {
-      const prunedOwners = yield this.owner.run(
-        /** Drops memory owners whose backing entity vanished; without this their first transaction throws every interval. */
+      yield this.owner.run(
+        /** Removes memory owners whose backing entity disappeared. */
         (repository2) => repository2.pruneOrphanMemoryOwners()
       );
       const keys = yield this.owner.run(
-        /** Enumerates only genuine initialized memory spaces. */
+        /** Enumerates initialized memory owners without loading their corpora. */
         (repository2) => repository2.listMemoryOwnerKeys()
-      ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0, conflicts: 0 };
-      if (this.leaseFactory === void 0) {
-        for (const ownerKey of keys) yield this.runOwner(ownerKey, report);
-        return report;
-      }
-      let lease;
-      try {
-        lease = yield this.leaseFactory();
-      } catch {
-        for (const ownerKey of keys) yield this.runOwner(ownerKey, report);
-        return report;
-      }
-      try {
-        for (const ownerKey of keys) {
-          if (!(yield lease.acquire(ownerKey))) continue;
-          try {
-            yield this.runOwner(ownerKey, report);
-          } catch (error) {
-            if (!storageConflict(error)) throw error;
-            report.conflicts += 1;
-          } finally {
-            yield lease.release(ownerKey);
-          }
+      ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0 };
+      const failures = [], producerNodeId = yield memoryJobProducer();
+      for (const ownerKey of keys) {
+        try {
+          yield this.runOwner(ownerKey, producerNodeId, report);
+        } catch (error) {
+          failures.push({ ownerKey, error });
         }
-      } finally {
-        yield lease.close();
       }
+      if (failures.length !== 0) throw new MemoryJobPassError(failures, report);
       return report;
     });
   }
   /** Advances one owner's rebuild window and due candidate batches. */
-  runOwner(ownerKey, report) {
+  runOwner(ownerKey, producerNodeId, report) {
     return __async(this, null, function* () {
-      yield this.owner.run(
-        /** Reclaims only outdated processing claims so interrupted batches can genuinely run again. */
+      const runnable = yield this.owner.run(
+        /** Recovers this device's interrupted work and exposes released tasks with unknown provenance. */
         (repository2) => __async(this, null, function* () {
           const space = yield repository2.readMemoryJobState(ownerKey), now = Date.now();
-          let reclaimed = 0;
-          for (const candidate of space.candidates) if (candidate.status === "processing" && now - candidate.updatedAt >= CANDIDATE_PROCESSING_LEASE_MS) {
-            candidate.status = "pending";
-            candidate.updatedAt = now;
-            reclaimed += 1;
+          let changed = false;
+          for (const candidate of space.candidates) {
+            if (candidate.producerNodeId === void 0 && candidate.status !== "failed") {
+              failCandidate(candidate, "This legacy task has no producing device. Retry it on the device that should process it.");
+              changed = true;
+            } else if (candidate.producerNodeId === producerNodeId && candidate.status === "processing" && now - candidate.updatedAt >= CANDIDATE_PROCESSING_LEASE_MS) {
+              candidate.status = "pending";
+              candidate.updatedAt = now;
+              changed = true;
+            }
           }
-          if (reclaimed !== 0) yield repository2.writeMemoryJobState(ownerKey, space);
+          const task = space.rebuildTask, active = space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running";
+          if (task !== null && task.producerNodeId === void 0 && active) {
+            space.rebuildProgress.status = "failed";
+            space.rebuildProgress.lastError = "This legacy rebuild has no producing device. Start a new rebuild on the device that should process it.";
+            changed = true;
+          }
+          if (changed) yield repository2.writeMemoryJobState(ownerKey, space);
+          return task !== null && task.producerNodeId === producerNodeId && active || space.candidates.some(
+            /** Selects only runnable requests created on this device. */
+            (candidate) => candidate.producerNodeId === producerNodeId && candidate.status === "pending"
+          );
         })
       );
+      if (!runnable) return;
       const taskId = yield this.owner.run(
         /** Reads a persisted runnable rebuild identity without fabricating a job. */
         (repository2) => __async(this, null, function* () {
           const space = yield repository2.readMemoryJobState(ownerKey);
-          return space.rebuildTask !== null && (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") ? space.rebuildTask.id : null;
+          return space.rebuildTask !== null && space.rebuildTask.producerNodeId === producerNodeId && (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") ? space.rebuildTask.id : null;
         })
       );
       if (taskId !== null) {
@@ -5718,7 +5733,7 @@ var MemoryJobRunner = class {
           if (space.settings.autoSaveIntervalMinutes === 0 || now < space.settings.nextAutoSaveRunAtMs) return [];
           const pending = space.candidates.filter(
             /** Selects genuinely pending records, not terminal failures. */
-            (candidate) => candidate.status === "pending"
+            (candidate) => candidate.producerNodeId === producerNodeId && candidate.status === "pending"
           );
           const batches2 = [];
           if (pending.length >= 5) {
@@ -5756,7 +5771,7 @@ var MemoryJobRunner = class {
             for (const candidate of batch) ids.add(candidate.id);
             let count = 0;
             for (const candidate of space.candidates) if (ids.has(candidate.id)) {
-              if (candidate.status !== "pending") throw new Error("Candidate is no longer pending: " + candidate.id);
+              if (candidate.producerNodeId !== producerNodeId || candidate.status !== "pending") throw new Error("Candidate is no longer pending on this device: " + candidate.id);
               candidate.status = "processing";
               candidate.attemptCount += 1;
               candidate.updatedAt = Date.now();
@@ -7540,88 +7555,9 @@ function executeDomain(operation, input, host) {
   return handlers[operation](parseDomainPayload(operation, input), host);
 }
 
-// src/memory-jobs/lease.ts
-var _MemoryJobLease = class _MemoryJobLease {
-  constructor(database) {
-    this.database = database;
-    this.holder = "jobs-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-  }
-  /**
-   * Takes the owner's claim, or reports false when another live runtime owns it.
-   * A lost race against a concurrent acquirer is the expected skip signal; any
-   * other storage failure propagates.
-   */
-  acquire(ownerKey) {
-    return __async(this, null, function* () {
-      const entry = yield this.collection().get(ownerKey);
-      const record2 = leaseRecord(entry?.value);
-      const now = Date.now();
-      if (record2 !== null && record2.holder === this.holder) return this.claim(ownerKey, entry.version, now);
-      if (record2 !== null && record2.expiresAt > now) return false;
-      return this.claim(ownerKey, entry === null ? null : entry.version, now);
-    });
-  }
-  /**
-   * Drops this runtime's finished claim. An expired takeover by another runtime
-   * is left intact: that runtime legitimately owns the ongoing pass.
-   */
-  release(ownerKey) {
-    return __async(this, null, function* () {
-      const entry = yield this.collection().get(ownerKey);
-      if (entry === null) return;
-      const record2 = leaseRecord(entry.value);
-      if (record2 === null || record2.holder !== this.holder) return;
-      try {
-        yield this.collection().remove(ownerKey, { expectedVersion: entry.version });
-      } catch (error) {
-        if (!isVersionConflict(error)) throw error;
-      }
-    });
-  }
-  /** Releases the SDK handle for this execution. */
-  close() {
-    return this.database.close();
-  }
-  /** Commits one claim through the exact-version precondition; a conflict loses the race. */
-  claim(ownerKey, expectedVersion, now) {
-    return __async(this, null, function* () {
-      try {
-        yield this.collection().put(ownerKey, { holder: this.holder, expiresAt: now + _MemoryJobLease.TTL_MS }, { expectedVersion });
-        return true;
-      } catch (error) {
-        if (isVersionConflict(error)) return false;
-        throw error;
-      }
-    });
-  }
-  collection() {
-    return this.database.collection(_MemoryJobLease.COLLECTION);
-  }
-};
-/** Must exceed the slowest realistic pass (local model inference) so a live holder is never taken over mid-work. */
-_MemoryJobLease.TTL_MS = 10 * 60 * 1e3;
-_MemoryJobLease.COLLECTION = "memory_job_lease";
-var MemoryJobLease = _MemoryJobLease;
-function leaseRecord(value) {
-  if (value === null || typeof value !== "object") return null;
-  const record2 = value;
-  if (typeof record2.holder !== "string" || record2.holder === "" || typeof record2.expiresAt !== "number") return null;
-  return { holder: record2.holder, expiresAt: record2.expiresAt };
-}
-function isVersionConflict(error) {
-  return error instanceof Error && error.message.startsWith("Storage version conflict");
-}
-function openMemoryJobLease() {
-  return __async(this, null, function* () {
-    const directory = ToolPkg.getSpaceDataDir();
-    if (typeof directory !== "string" || directory.trim() === "") throw new Error("Plugin data directory is unavailable");
-    return new MemoryJobLease(yield Tools.Storage.objects.open({ path: directory + "/memory-jobs-lease.sqlite" }));
-  });
-}
-
 // src/service-runtime.ts
 function createCharacterCardsService(owner2, configurations = independentConfigurations) {
-  const jobs = new MemoryJobRunner(owner2, openMemoryJobLease), application = createSelectionApplication(configurations);
+  const jobs = new MemoryJobRunner(owner2), application = createSelectionApplication(configurations);
   function dispatchRequest(request) {
     if (request.action === "listThemeChoices")
       return readThemeChoices(configurations);

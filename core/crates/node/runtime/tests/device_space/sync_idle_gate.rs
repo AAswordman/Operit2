@@ -444,7 +444,8 @@ async fn a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange() {
 }
 
 /// A preference-only edit must reopen a settled storage-provider gate without
-/// creating business operations, then return to idling after convergence.#[tokio::test]
+/// creating business operations, then return to idling after convergence.
+#[tokio::test]
 async fn preference_edits_reopen_a_settled_storage_provider_gate() {
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
