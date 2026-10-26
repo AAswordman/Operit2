@@ -166,10 +166,29 @@ impl StructuredToolCallBridge {
         preserveThinkInHistory: bool,
         useToolCall: bool,
     ) -> String {
+        Self::buildMessagesValueForProvider(history, preserveThinkInHistory, useToolCall).to_string()
+    }
+
+    /// Builds provider messages as a JSON value, compiling history blocks exactly once.
+    pub fn buildMessagesValueForProvider(
+        history: &[PromptTurn],
+        preserveThinkInHistory: bool,
+        useToolCall: bool,
+    ) -> Value {
+        let compiledHistory = Self::compileHistoryForProvider(history, useToolCall);
+        Self::buildMessagesValueFromCompiled(compiledHistory, preserveThinkInHistory, useToolCall)
+    }
+
+    /// Builds provider messages from already-compiled history without recompiling blocks.
+    pub fn buildMessagesValueFromCompiled(
+        compiledHistory: Vec<PromptTurn>,
+        preserveThinkInHistory: bool,
+        useToolCall: bool,
+    ) -> Value {
         if useToolCall {
-            Self::buildStructuredMessages(history, preserveThinkInHistory).to_string()
+            Self::buildCompiledStructuredMessages(compiledHistory, preserveThinkInHistory)
         } else {
-            Self::buildXmlModeMessages(history, preserveThinkInHistory).to_string()
+            Self::buildCompiledXmlModeMessages(compiledHistory, preserveThinkInHistory)
         }
     }
 
@@ -385,6 +404,13 @@ impl StructuredToolCallBridge {
 
     fn buildStructuredMessages(history: &[PromptTurn], preserveThinkInHistory: bool) -> Value {
         let mergedHistory = Self::compileHistoryForProvider(history, true);
+        Self::buildCompiledStructuredMessages(mergedHistory, preserveThinkInHistory)
+    }
+
+    fn buildCompiledStructuredMessages(
+        mergedHistory: Vec<PromptTurn>,
+        preserveThinkInHistory: bool,
+    ) -> Value {
         let mut messagesArray = Vec::new();
         let mut queuedAssistantToolText: Option<String> = None;
         let mut queuedToolCalls = Vec::new();
@@ -491,7 +517,7 @@ impl StructuredToolCallBridge {
             let content = if !preserveThinkInHistory && turn.kind == PromptTurnKind::ASSISTANT {
                 removeThinkingContent(&turn.content)
             } else {
-                turn.content.clone()
+                turn.content
             };
 
             match turn.kind {
@@ -685,6 +711,13 @@ impl StructuredToolCallBridge {
 
     fn buildXmlModeMessages(history: &[PromptTurn], preserveThinkInHistory: bool) -> Value {
         let mergedHistory = Self::compileHistoryForProvider(history, false);
+        Self::buildCompiledXmlModeMessages(mergedHistory, preserveThinkInHistory)
+    }
+
+    fn buildCompiledXmlModeMessages(
+        mergedHistory: Vec<PromptTurn>,
+        preserveThinkInHistory: bool,
+    ) -> Value {
         let messagesArray = mergedHistory
             .into_iter()
             .map(|turn| {
