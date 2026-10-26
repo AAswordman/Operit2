@@ -387,42 +387,43 @@ if (start && end) {
     }
   }
 
-  Future<Object?> waitForText(String text) {
-    return controller.runJavaScriptReturningResult('''
-new Promise(function(resolve) {
-  const target = ${jsonEncode(text)};
-  const startedAt = Date.now();
-  const timer = setInterval(function() {
-    if (document.body && document.body.innerText.indexOf(target) >= 0) {
-      clearInterval(timer);
-      resolve(true);
-    }
-    if (Date.now() - startedAt > 10000) {
-      clearInterval(timer);
-      resolve(false);
-    }
-  }, 100);
-})
-''');
-  }
+  Future<Object?> waitForText(String text) => _waitForText(text, present: true);
 
-  Future<Object?> waitForTextGone(String text) {
-    return controller.runJavaScriptReturningResult('''
-new Promise(function(resolve) {
-  const target = ${jsonEncode(text)};
-  const startedAt = Date.now();
-  const timer = setInterval(function() {
-    if (!document.body || document.body.innerText.indexOf(target) < 0) {
-      clearInterval(timer);
-      resolve(true);
+  Future<Object?> waitForTextGone(String text) =>
+      _waitForText(text, present: false);
+
+  /// Polls from the owner runtime so hidden page timers and native Promise
+  /// return-value differences cannot stall a browser command.
+  Future<bool> _waitForText(String text, {required bool present}) async {
+    final stopwatch = Stopwatch()..start();
+    const timeout = Duration(seconds: 10);
+    final script =
+        """
+(function() {
+  const found = !!document.body && document.body.innerText.includes(${jsonEncode(text)});
+  return found === $present;
+})()
+""";
+    while (stopwatch.elapsed < timeout) {
+      final remaining = timeout - stopwatch.elapsed;
+      Object? result;
+      try {
+        result = await controller
+            .runJavaScriptReturningResult(script)
+            .timeout(remaining);
+      } on TimeoutException {
+        return false;
+      }
+      if (result == true || result == 'true') return true;
+      final pause = timeout - stopwatch.elapsed;
+      if (pause <= Duration.zero) break;
+      await Future<void>.delayed(
+        pause < const Duration(milliseconds: 100)
+            ? pause
+            : const Duration(milliseconds: 100),
+      );
     }
-    if (Date.now() - startedAt > 10000) {
-      clearInterval(timer);
-      resolve(false);
-    }
-  }, 100);
-})
-''');
+    return false;
   }
 
   String _resolverScript(String selectorOrRef) {

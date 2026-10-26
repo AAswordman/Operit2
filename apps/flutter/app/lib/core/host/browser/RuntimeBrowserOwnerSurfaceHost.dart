@@ -8,6 +8,7 @@ import 'package:webview_all/webview_all.dart';
 import 'package:webview_all_windows/webview_all_windows.dart';
 
 import 'RuntimeBrowserOwner.dart';
+import 'RuntimeBrowserSurface.dart';
 
 class RuntimeBrowserOwnerSurfaceHost extends StatelessWidget {
   /// Creates the runtime owner surface host around the application tree.
@@ -19,38 +20,25 @@ class RuntimeBrowserOwnerSurfaceHost extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sessions = RuntimeBrowserOwner.instance;
-    final keepsOffstageOwnerViews =
-        !kIsWeb && defaultTargetPlatform != TargetPlatform.macOS;
-    return Stack(
-      clipBehavior: Clip.none,
-      fit: StackFit.expand,
-      children: <Widget>[
-        child,
-        if (keepsOffstageOwnerViews)
-          Positioned(
-            left: -4096,
-            top: -4096,
-            width: 1,
-            height: 1,
-            child: IgnorePointer(
-              child: AnimatedBuilder(
-                animation: sessions,
-                builder: (context, child) {
-                  return Stack(
-                    children: <Widget>[
-                      for (final tab in sessions.tabs)
-                        if (!sessions.isWorkspaceSurfaceSession(tab.id))
-                          RuntimeBrowserOwnerWebView(
-                            tab: tab,
-                            layoutControlsSurfaceSize: false,
-                          ),
-                    ],
-                  );
-                },
+    return AnimatedBuilder(
+      animation: sessions,
+      child: child,
+      builder: (context, child) => Stack(
+        clipBehavior: Clip.hardEdge,
+        fit: StackFit.expand,
+        children: <Widget>[
+          child!,
+          for (final tab in sessions.tabs)
+            RuntimeBrowserSurface(
+              key: ValueKey(tab.id),
+              sessionId: tab.id,
+              child: RuntimeBrowserOwnerWebView(
+                tab: tab,
+                layoutControlsSurfaceSize: true,
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }

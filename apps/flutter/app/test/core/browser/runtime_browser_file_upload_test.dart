@@ -125,10 +125,10 @@ class _RecordingController extends PlatformWebViewController {
     if (failure case final error?) throw error;
   }
 
-  /// Returns the shared WebView result envelope for evaluation contract tests.
+  /// Returns the decoded value provided by the shared WebView controller API.
   @override
   Future<Object> runJavaScriptReturningResult(String javaScript) async {
     evaluations.add(javaScript);
-    return '{"value":42}';
+    return 42;
   }
 }

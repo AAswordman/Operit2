@@ -2,7 +2,6 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:operit2/core/web_visit/WebVisitModels.dart';
 import 'package:operit_folder_access/operit_folder_access.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 
@@ -41,7 +40,6 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onOpenTerminalSessions,
     required this.onOpenBrowserSessions,
     required this.onOpenBrowser,
-    required this.onFinishWebVisit,
     required this.onActivateCurrentTab,
     required this.onCloseCurrentTab,
     required this.onOpenWorkspaceCreator,
@@ -78,8 +76,6 @@ class WorkspaceTabContent extends StatelessWidget {
     String? workspaceHtmlPath,
   })
   onOpenBrowser;
-  final void Function(WorkspaceTab tab, WebVisitResponse response)
-  onFinishWebVisit;
   final VoidCallback onActivateCurrentTab;
   final VoidCallback onCloseCurrentTab;
   final VoidCallback onOpenWorkspaceCreator;
@@ -180,10 +176,7 @@ class WorkspaceTabContent extends StatelessWidget {
             subtitle: 'visit_web 请求未指定。',
           );
         }
-        return WorkspaceWebVisitContent(
-          request: request,
-          onFinished: (response) => onFinishWebVisit(tab, response),
-        );
+        return WorkspaceWebVisitContent(request: request);
       case WorkspaceTabKind.filePreview:
         return WorkspaceFilePreviewContent(
           tab: tab,

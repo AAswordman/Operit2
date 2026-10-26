@@ -21,7 +21,6 @@ import '../common/layout/ApplicationZoomPreferences.dart';
 import '../features/chat/tts/TtsFloatingPanel.dart';
 import '../features/startup/RuntimeActivityOverlay.dart';
 import '../../core/host/browser/RuntimeBrowserOwnerHost.dart';
-import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
 import 'OperitThemeAssets.dart';
 import 'ThemeAppearanceErrorScreen.dart';
 import 'ThemeCircularRevealHost.dart';
@@ -404,21 +403,21 @@ class _OperitMaterialApp extends StatelessWidget {
         );
       },
       home: UnhandledErrorHost(
-        child: RuntimeBrowserOwnerHost(
-          enabled: hostInteractionHostsEnabled,
-          child: WorkspaceWebVisitHost(
-            child: Stack(
-              fit: StackFit.expand,
-              children: <Widget>[
-                Positioned.fill(child: child),
-                const TtsFloatingPanel(),
-                RuntimeActivityOverlay(
-                  key: const ValueKey<String>('runtime-activity-overlay'),
-                  enabled: hostInteractionHostsEnabled,
-                ),
-              ],
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            Positioned.fill(
+              child: RuntimeBrowserOwnerHost(
+                enabled: hostInteractionHostsEnabled,
+                child: child,
+              ),
             ),
-          ),
+            const TtsFloatingPanel(),
+            RuntimeActivityOverlay(
+              key: const ValueKey<String>('runtime-activity-overlay'),
+              enabled: hostInteractionHostsEnabled,
+            ),
+          ],
         ),
       ),
     );

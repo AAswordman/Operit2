@@ -82,7 +82,6 @@ class RuntimeBrowserOwner extends ChangeNotifier {
   final Map<String, RuntimeBrowserAutomationController> _automation =
       <String, RuntimeBrowserAutomationController>{};
   final Map<String, String> _defaultUserAgents = <String, String>{};
-  final Set<String> _workspaceSurfaceSessionIds = <String>{};
   final RuntimeBrowserSessionRegistry _sessionRegistry =
       RuntimeBrowserSessionRegistry.instance;
 
@@ -115,25 +114,6 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       }
     }
     return null;
-  }
-
-  /// Returns whether a session is currently mounted in the workspace tree.
-  bool isWorkspaceSurfaceSession(String sessionId) {
-    return _workspaceSurfaceSessionIds.contains(sessionId);
-  }
-
-  /// Marks one owner WebView as mounted by the workspace tree.
-  void attachWorkspaceSurfaceSession(String sessionId) {
-    if (_workspaceSurfaceSessionIds.add(sessionId)) {
-      notifyListeners();
-    }
-  }
-
-  /// Marks one owner WebView as no longer mounted by the workspace tree.
-  void detachWorkspaceSurfaceSession(String sessionId) {
-    if (_workspaceSurfaceSessionIds.remove(sessionId)) {
-      notifyListeners();
-    }
   }
 
   RuntimeBrowserOwnerUiDelegate get _requiredUiDelegate {
@@ -796,7 +776,11 @@ class RuntimeBrowserOwner extends ChangeNotifier {
             return;
           }
           if (tab.desktopMode && _supportsPageJavaScript(tab)) {
-            await _applyDesktopViewport(tab);
+            // WKWebView can finish a navigation after its JavaScript context
+            // has already been replaced (redirects, downloads, closing a tab,
+            // or a WebKit content-process restart).  Do not let that native
+            // evaluation failure escape from this async navigation callback.
+            await _applyDesktopViewport(tab, pageUrl: logicalUrl);
           }
           if (tab.isDisposed) {
             return;
@@ -1149,24 +1133,46 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     await tab.controller.setZoomFactor(tab.zoomFactor);
   }
 
-  Future<void> _applyDesktopViewport(WorkspaceBrowserTabState tab) {
+  Future<void> _applyDesktopViewport(
+    WorkspaceBrowserTabState tab, {
+    required String pageUrl,
+  }) async {
     if (tab.isDisposed) {
-      return Future<void>.value();
+      return;
     }
     if (!_supportsPageJavaScript(tab)) {
-      return Future<void>.value();
+      return;
     }
-    return tab.controller.runJavaScript(r'''
+    try {
+      await tab.controller.runJavaScript(r'''
 (function() {
+  // Some documents (for example an intermediate redirect/error document) do
+  // not have a head yet.  Appending to document.head in that state throws a
+  // JavaScript exception and WKWebView reports it as a generic
+  // FWFEvaluateJavaScriptError.
+  if (!document || !document.documentElement) return;
   let viewport = document.querySelector('meta[name="viewport"]');
   if (!viewport) {
     viewport = document.createElement('meta');
     viewport.setAttribute('name', 'viewport');
-    document.head.appendChild(viewport);
+    const parent = document.head || document.documentElement;
+    parent.appendChild(viewport);
   }
   viewport.setAttribute('content', 'width=1280, initial-scale=1.0');
 })();
 ''');
+    } catch (error, stackTrace) {
+      // A page-finished callback may race with a new navigation or tab
+      // disposal.  Viewport injection is best-effort; page loading and the
+      // rest of the browser lifecycle must continue in that case.
+      ClientLogger.w(
+        'desktop viewport JavaScript skipped tab=${tab.id} '
+        'url=$pageUrl currentUrl=${tab.url}',
+        tag: _logTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   void _handlePermissionRequest(

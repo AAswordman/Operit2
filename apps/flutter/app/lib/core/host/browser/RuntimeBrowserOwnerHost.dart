@@ -18,6 +18,9 @@ import 'package:operit2/ui/features/chat/components/workspace/browser/tabs/Works
 import 'RuntimeBrowserAutomationController.dart';
 import 'RuntimeBrowserOwner.dart';
 import 'RuntimeBrowserSessionRegistry.dart';
+import '../../web_visit/RuntimeWebVisitRegistry.dart';
+import '../../web_visit/WebVisitBridge.dart';
+import '../../web_visit/WebVisitModels.dart';
 
 class RuntimeBrowserOwnerHost extends StatefulWidget {
   const RuntimeBrowserOwnerHost({
@@ -42,6 +45,7 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
       RuntimeBrowserSessionRegistry.instance;
   final RuntimeBrowserOwner _browserSessionStore = RuntimeBrowserOwner.instance;
   void Function()? _disposeBridgeHandler;
+  void Function()? _disposeWebVisitHandler;
 
   /// Enables browser automation only when runtime services are ready.
   @override
@@ -89,6 +93,19 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
     unawaited(_browserSessionStore.ensureLoaded());
     _attachOwnerUi();
     _disposeBridgeHandler = widget.bridge.registerHandler(_handleRequest);
+    _disposeWebVisitHandler = const WebVisitBridge().registerHandler((
+      request,
+    ) async {
+      try {
+        return await RuntimeWebVisitRegistry.instance.visitWeb(request);
+      } catch (error) {
+        return WebVisitResponse(
+          requestId: request.requestId,
+          success: false,
+          error: error.toString(),
+        );
+      }
+    });
   }
 
   /// Connects runtime-owner WebView prompts to this application host.
@@ -162,6 +179,8 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
   void _disable() {
     _disposeBridgeHandler?.call();
     _disposeBridgeHandler = null;
+    _disposeWebVisitHandler?.call();
+    _disposeWebVisitHandler = null;
   }
 
   Future<BrowserAutomationResponse> _handleRequest(
