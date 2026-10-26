@@ -98,9 +98,9 @@ class _ChatRouteStatusHintState extends State<ChatRouteStatusHint> {
       setState(_bindStatus);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text('$error')));
     } finally {
       _claimInFlight = false;
     }
@@ -132,7 +132,9 @@ class _ChatRouteStatusHintState extends State<ChatRouteStatusHint> {
             : chatRouteHint(l10n, status);
         return widget.builder(
           ChatRouteComposerHint(
-            suffix: ' ($suffix)',
+            suffix: !hostMissing && status?.ownerIsLocal == true
+                ? ''
+                : ' ($suffix)',
             hostMissing: hostMissing,
             onClaimHost: _claimHost,
           ),

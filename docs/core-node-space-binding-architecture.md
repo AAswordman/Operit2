@@ -171,6 +171,10 @@ switch_core(nodeId)
 `Binding(chatId)`。每次比较写入成功后 `generation` 单调递增，它同时标识目标节点即将
 执行的 continuation。Binding 缺失或指向非 Space 成员时，请求返回明确错误。
 
+Flutter 聊天输入框在当前设备执行对话时不显示设备后缀；远程执行时显示目标平台和
+离线状态。该提示来自 `BindingRouteStatus`，表示对话的执行节点，不表示模型推理位置
+或请求是否需要联网。
+
 Binding 的冲突顺序复用持久化同步操作的设备序列和向量时钟。同步元数据不是 Binding
 的业务字段。
 
