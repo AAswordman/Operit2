@@ -27,6 +27,7 @@ class HostEventHandoffTest {
         val beginOutcome = HostEventHandoff.begin(
             schedule = schedule,
             firedAtMillis = firedAtMillis,
+            storageReady = { true },
             startCore = { started++ },
             submitBackground = { _, _ -> submitted++ },
             retain = { retained.add(it) },
@@ -48,10 +49,29 @@ class HostEventHandoffTest {
 
 
     @Test
+    fun storageNotReadyWaitsWithoutStartingOrRetaining() {
+        var started = 0
+
+        val outcome = HostEventHandoff.begin(
+            schedule = schedule,
+            firedAtMillis = firedAtMillis,
+            storageReady = { false },
+            startCore = { started++ },
+            submitBackground = { _, _ -> throw AssertionError("must not submit while storage is unready") },
+            retain = { retained.add(it) },
+        )
+
+        assertEquals(HostEventHandoffOutcome.WaitingForStorage, outcome)
+        assertEquals(0, started)
+        assertTrue(retained.isEmpty())
+    }
+
+    @Test
     fun coreStartFailureIsRetainedAsStartCore() {
         val outcome = HostEventHandoff.begin(
             schedule = schedule,
             firedAtMillis = firedAtMillis,
+            storageReady = { true },
             startCore = { throw IllegalStateException("core service unavailable") },
             submitBackground = { _, _ -> throw AssertionError("must not submit after a start failure") },
             retain = { retained.add(it) },
@@ -74,6 +94,7 @@ class HostEventHandoffTest {
         val outcome = HostEventHandoff.begin(
             schedule = schedule,
             firedAtMillis = firedAtMillis,
+            storageReady = { true },
             startCore = {},
             submitBackground = { _, _ ->
                 submitCalls++
@@ -152,6 +173,7 @@ class HostEventHandoffTest {
         val outcome = HostEventHandoff.begin(
             schedule = schedule,
             firedAtMillis = firedAtMillis,
+            storageReady = { true },
             startCore = { throw failure },
             submitBackground = { _, _ -> throw AssertionError("must not submit after a start failure") },
             retain = { retained.add(it) },
@@ -170,6 +192,7 @@ class HostEventHandoffTest {
         var retentionCalls = 0
         val outcome = HostEventHandoff.begin(
             schedule, firedAtMillis,
+            storageReady = { true },
             startCore = { throw deliveryError },
             submitBackground = { _, _ -> throw AssertionError("must not submit") },
             retain = { retentionCalls++; throw storageError },
@@ -187,6 +210,7 @@ class HostEventHandoffTest {
         val storageError = AssertionError("storage failed")
         val outcome = HostEventHandoff.begin(
             schedule, firedAtMillis,
+            storageReady = { true },
             startCore = {},
             submitBackground = { _, _ -> throw deliveryError },
             retain = { throw storageError },

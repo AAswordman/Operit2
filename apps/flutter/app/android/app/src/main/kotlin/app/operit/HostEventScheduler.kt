@@ -107,7 +107,14 @@ object AndroidHostEventScheduler {
     private const val preferencesName = "operit_host_event_schedules"
     private const val schedulesKey = "schedules"
     private const val undeliveredFiresKey = "undelivered_fires"
+    private const val deliveryFailureCountsKey = "delivery_failure_counts"
     private const val retainedUndeliveredCap = 32
+
+    /** Consecutive undelivered fires tolerated before the next fire is pushed out. */
+    internal const val deliveryBackoffThreshold = 3
+
+    /** Upper bound for one backoff extension of the next interval fire. */
+    internal const val maxDeliveryBackoffMillis = 15 * 60 * 1000L
     private const val scheduleScheme = "operit-host-event"
     private const val scheduleAuthority = "schedule"
     private val lock = Any()
@@ -136,6 +143,7 @@ object AndroidHostEventScheduler {
                 }
             }
             writeSchedules(applicationContext, reconciled)
+            pruneDeliveryFailureCountsLocked(applicationContext, reconciled.keys)
             for (schedule in reconciled.values) {
                 scheduleAlarm(applicationContext, schedule)
             }
@@ -154,12 +162,22 @@ object AndroidHostEventScheduler {
                 val intervalMs = requireNotNull(schedule.intervalMs) {
                     "stored interval schedule ${schedule.scheduleId} is missing intervalMs"
                 }
+                // The next occurrence keeps its regular boundary; recorded delivery
+                // failures from previous fires extend it so a broken delivery path
+                // cannot keep waking the process every interval.
                 val nextFireAtMillis = nextIntervalTime(
                     schedule.nextFireAtMillis,
                     intervalMs,
                     System.currentTimeMillis(),
                 )
-                val nextSchedule = schedule.copy(nextFireAtMillis = nextFireAtMillis)
+                val failures = readDeliveryFailureCounts(applicationContext)[scheduleId] ?: 0
+                val backoffMillis = deliveryBackoffMillis(intervalMs, failures)
+                val delayedFireAtMillis = if (backoffMillis > 0L) {
+                    Math.addExact(nextFireAtMillis, backoffMillis)
+                } else {
+                    nextFireAtMillis
+                }
+                val nextSchedule = schedule.copy(nextFireAtMillis = delayedFireAtMillis)
                 schedules[scheduleId] = nextSchedule
                 scheduleAlarm(applicationContext, nextSchedule)
             }
@@ -250,6 +268,101 @@ object AndroidHostEventScheduler {
         }
     }
 
+    /** Returns the consecutive undelivered fire count for one schedule. */
+    internal fun consecutiveDeliveryFailures(context: Context, scheduleId: String): Int {
+        val applicationContext = context.applicationContext
+        synchronized(lock) {
+            return readDeliveryFailureCounts(applicationContext)[scheduleId] ?: 0
+        }
+    }
+
+    /** Records one fire that never reached the runtime and returns the updated count. */
+    internal fun recordDeliveryFailure(context: Context, scheduleId: String): Int {
+        val applicationContext = context.applicationContext
+        synchronized(lock) {
+            val counts = readDeliveryFailureCounts(applicationContext).toMutableMap()
+            val updated = (counts[scheduleId] ?: 0) + 1
+            counts[scheduleId] = updated
+            writeDeliveryFailureCounts(applicationContext, counts)
+            return updated
+        }
+    }
+
+    /** Clears the consecutive failure count after one fire reached the runtime. */
+    internal fun recordDeliverySuccess(context: Context, scheduleId: String) {
+        val applicationContext = context.applicationContext
+        synchronized(lock) {
+            val counts = readDeliveryFailureCounts(applicationContext).toMutableMap()
+            if (counts.remove(scheduleId) != null) {
+                writeDeliveryFailureCounts(applicationContext, counts)
+            }
+        }
+    }
+
+    /**
+     * Returns the extra delay for the next fire after [failures] consecutive undelivered
+     * fires. Zero until [deliveryBackoffThreshold] is reached, then doubling per further
+     * failure up to [maxDeliveryBackoffMillis].
+     */
+    internal fun deliveryBackoffMillis(intervalMs: Long, failures: Int): Long {
+        if (failures < deliveryBackoffThreshold) {
+            return 0L
+        }
+        var delay = intervalMs
+        var remainingDoublings = failures - deliveryBackoffThreshold
+        while (remainingDoublings > 0 && delay < maxDeliveryBackoffMillis) {
+            delay *= 2L
+            remainingDoublings--
+        }
+        return minOf(delay, maxDeliveryBackoffMillis)
+    }
+
+    /** Drops delivery failure counts for schedules Core no longer owns; lock is held. */
+    private fun pruneDeliveryFailureCountsLocked(
+        context: Context,
+        desiredScheduleIds: Set<String>,
+    ) {
+        val counts = readDeliveryFailureCounts(context)
+        val retained = counts.filterKeys { scheduleId -> desiredScheduleIds.contains(scheduleId) }
+        if (retained.size != counts.size) {
+            writeDeliveryFailureCounts(context, retained)
+        }
+    }
+
+    /**
+     * Reads persisted consecutive delivery failure counts. Advisory backoff state only:
+     * unreadable storage fails open to "no backoff" instead of blocking scheduling.
+     */
+    private fun readDeliveryFailureCounts(context: Context): Map<String, Int> {
+        val encoded = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+            .getString(deliveryFailureCountsKey, "{}")
+            ?: return emptyMap()
+        return try {
+            val values = JSONObject(encoded)
+            val counts = linkedMapOf<String, Int>()
+            for (scheduleId in values.keys()) {
+                counts[scheduleId] = values.getInt(scheduleId)
+            }
+            counts
+        } catch (error: JSONException) {
+            Log.w(logTag, "Ignoring corrupt delivery failure counts; treating as no backoff", error)
+            emptyMap()
+        }
+    }
+
+    /** Persists consecutive delivery failure counts; storage failures propagate. */
+    private fun writeDeliveryFailureCounts(context: Context, counts: Map<String, Int>) {
+        val values = JSONObject()
+        for ((scheduleId, count) in counts) {
+            values.put(scheduleId, count)
+        }
+        val committed = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+            .edit()
+            .putString(deliveryFailureCountsKey, values.toString())
+            .commit()
+        check(committed) { "failed to persist host event delivery failure counts" }
+    }
+
     /** Registers one wakeup alarm with Android's system AlarmManager. */
     private fun scheduleAlarm(context: Context, schedule: AndroidHostEventSchedule) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -338,6 +451,7 @@ class HostEventScheduleReceiver : BroadcastReceiver() {
             val outcome = HostEventHandoff.begin(
                 schedule = schedule,
                 firedAtMillis = System.currentTimeMillis(),
+                storageReady = { storageConfigured(context) },
                 startCore = { OperitCoreService.start(context) },
                 submitBackground = { fired, atMillis ->
                     val runtimeHost = AndroidCoreRuntime.get(context)
@@ -361,7 +475,10 @@ class HostEventScheduleReceiver : BroadcastReceiver() {
                                 retain = retain,
                             )
                             if (delivery is HostEventHandoffOutcome.Undelivered) {
+                                AndroidHostEventScheduler.recordDeliveryFailure(context, fired.scheduleId)
                                 logUndelivered(delivery)
+                            } else {
+                                AndroidHostEventScheduler.recordDeliverySuccess(context, fired.scheduleId)
                             }
                         } finally {
                             pendingResult.finish()
@@ -371,8 +488,22 @@ class HostEventScheduleReceiver : BroadcastReceiver() {
                 retain = retain,
             )
             submitted = outcome is HostEventHandoffOutcome.Submitted
-            if (outcome is HostEventHandoffOutcome.Undelivered) {
-                logUndelivered(outcome)
+            when (outcome) {
+                is HostEventHandoffOutcome.Undelivered -> {
+                    AndroidHostEventScheduler.recordDeliveryFailure(context, schedule.scheduleId)
+                    logUndelivered(outcome)
+                }
+                is HostEventHandoffOutcome.WaitingForStorage -> {
+                    AndroidHostEventScheduler.recordDeliveryFailure(context, schedule.scheduleId)
+                    Log.i(
+                        LOG_TAG,
+                        "Host event schedule waiting for Flutter storage roots " +
+                            "(scheduleId=$scheduleId); next fire will be delayed",
+                    )
+                }
+                is HostEventHandoffOutcome.Delivered,
+                is HostEventHandoffOutcome.Submitted,
+                -> {}
             }
         } catch (error: Exception) {
             Log.e(LOG_TAG, "Host event schedule dispatch failed", error)
@@ -381,6 +512,11 @@ class HostEventScheduleReceiver : BroadcastReceiver() {
                 pendingResult.finish()
             }
         }
+    }
+
+    /** Returns whether the runtime storage roots are installed; a seam for receiver tests. */
+    internal fun storageConfigured(context: Context): Boolean {
+        return AndroidCoreRuntime.get(context).isStorageConfigured()
     }
 
     private fun logUndelivered(outcome: HostEventHandoffOutcome.Undelivered) {
