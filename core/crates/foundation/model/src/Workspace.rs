@@ -87,8 +87,10 @@ impl Workspace {
     pub fn folderNameFromPath(path: &str) -> Result<String, String> {
         let trimmed = path.trim().trim_end_matches('/');
         let name = trimmed.rsplit('/').next().map(str::trim).unwrap_or("");
-        if name.is_empty() || name == "." || name == ".." {
-            return Err(format!("cannot derive folder name from path: {path}"));
+        if name.is_empty() || name == "." || name == ".." || name == "file:" {
+            // 兼容根路径（"/"、""、"file:///" 等）无法推导出文件夹名的场景。
+            // 返回一个稳定的默认文件夹名，避免整个 Operit1 快照导入流程失败。
+            return Ok("root".to_string());
         }
         if name.contains('\\') {
             return Err(format!("cannot derive folder name from path: {path}"));
