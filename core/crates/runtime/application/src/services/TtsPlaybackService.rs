@@ -65,16 +65,26 @@ impl TtsPlaybackService {
             .ttsConfigManager
             .getTtsConfig(ttsConfigId)
             .map_err(|error| error.to_string())?;
-        self.speakWithResolvedConfig(config, cleanedText, interrupt)
+        self.speakWithResolvedConfig(config, cleanedText, interrupt, 1.0)
     }
 
     /// Starts system speech with one already resolved TTS configuration.
-    fn speakWithResolvedConfig(
+    pub(crate) fn speakWithResolvedConfig(
         &self,
         config: TtsConfig,
         cleanedText: String,
         interrupt: bool,
+        pitch: f64,
     ) -> Result<TtsHostPlaybackResult, String> {
+        if cleanedText.is_empty() {
+            return Err("tts text is empty".to_string());
+        }
+        if !config.speed.is_finite() || config.speed <= 0.0 {
+            return Err("tts speech rate must be a finite positive number".to_string());
+        }
+        if !pitch.is_finite() || pitch <= 0.0 {
+            return Err("tts pitch must be a finite positive number".to_string());
+        }
         let providerType = TtsProviderType::normalize(&config.providerType);
         if providerType != TtsProviderType::SYSTEM_TTS {
             return Err(format!(
@@ -88,7 +98,7 @@ impl TtsPlaybackService {
                 voice: config.voice,
                 locale: config.model,
                 speed: config.speed,
-                pitch: 1.0,
+                pitch,
                 interrupt,
             })
             .map_err(|error| error.to_string())?;

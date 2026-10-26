@@ -427,6 +427,10 @@ pub trait ToolRuntimeSupport: Send + Sync {
         -> Result<operit_plugin_sdk::js_sdk::results::TtsSynthesizeResultData, String> {
         Err("Speech synthesis is unavailable on this host".into())
     }
+    /// Starts system speech through this runtime's shared playback host.
+    #[allow(non_snake_case)]
+    fn speakSpeech(&self, request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest)
+        -> Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String>;
     /// Recognizes supplied audio through the configured provider on this host.
     fn transcribeSpeech(&self, _request: operit_plugin_sdk::js_sdk::stt::SttTranscribeRequest)
         -> Result<operit_plugin_sdk::js_sdk::results::SttTranscribeResultData, String> {

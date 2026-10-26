@@ -17,6 +17,64 @@ function __operitCreateV1SoftwareSettings(current, packageName) {
     };
 }
 
+/**
+ * Adapts historical one-shot system speech to the canonical playback request.
+ * @param {(request: import('../../../../../../../plugins/types/tts').Tts.SpeakRequest) => Promise<import('../../../../../../../plugins/types/results').TtsSpeakResultData>} speak
+ * @returns {typeof import('../../../../../../../plugins/types-v1/software_settings').SoftwareSettings.testTtsPlayback}
+ */
+function __operitCreateV1TtsPlayback(speak) {
+    /** Preserves utterance overrides and reports the actual host start without changing saved settings. */
+    return async function testTtsPlayback(text, options) {
+        if (typeof text !== 'string' || !text.trim()) {
+            throw new TypeError('testTtsPlayback requires nonblank text');
+        }
+        if (options !== undefined && (!options || typeof options !== 'object' || Array.isArray(options))) {
+            throw new TypeError('testTtsPlayback options must be an object');
+        }
+        /** @type {import('../../../../../../../plugins/types/tts').Tts.SpeakRequest} */
+        var request = { text: text };
+        if (options !== undefined) {
+            for (var key of Object.keys(options)) {
+                if (key !== 'interrupt' && key !== 'speech_rate' && key !== 'pitch') {
+                    throw new TypeError('Unknown testTtsPlayback option: ' + key);
+                }
+            }
+            if (options.interrupt !== undefined) {
+                if (typeof options.interrupt !== 'boolean') throw new TypeError('interrupt must be a boolean');
+                request.interrupt = options.interrupt;
+            }
+            if (options.speech_rate !== undefined) {
+                if (!Number.isFinite(options.speech_rate) || options.speech_rate <= 0) {
+                    throw new TypeError('speech_rate must be a finite positive number');
+                }
+                request.speed = options.speech_rate;
+            }
+            if (options.pitch !== undefined) {
+                if (!Number.isFinite(options.pitch) || options.pitch <= 0) {
+                    throw new TypeError('pitch must be a finite positive number');
+                }
+                request.pitch = options.pitch;
+            }
+        }
+        var result = await speak(request);
+        if (result.providerType !== 'SYSTEM_TTS') {
+            throw new Error('Unsupported v1 system speech provider: ' + result.providerType);
+        }
+        return {
+            ttsServiceType: 'SIMPLE_TTS',
+            providerClass: 'TtsPlaybackHost',
+            initialized: true,
+            playbackTriggered: result.started,
+            interrupt: result.interrupt,
+            textLength: text.length,
+            speechRate: result.speed,
+            pitch: result.pitch,
+            /** Formats the historical structured playback receipt. */
+            toString() { return JSON.stringify(this); },
+        };
+    };
+}
+
 (/**
  * Installs typed v1 adapters in the runtime's dynamic registration namespace.
  * @param {Record<string, any>} runtime
@@ -41,6 +99,20 @@ function installV1Adapters(runtime) {
             .since('2.0.0', currentSettings[settingsMethod])
             .build('Tools.SoftwareSettings.' + settingsMethod);
     }
+    var legacyTtsPlayback = api.method()
+        .between('1.0.0', '2.0.0', __operitCreateV1TtsPlayback(
+            /** Uses the shared tool pipeline while preserving the active invocation owner. */
+            function(request) { return runtime.toolCall('tts_speak', { request: request }); },
+        ))
+        .build('Tools.SoftwareSettings.testTtsPlayback');
+    Object.defineProperty(Tools.SoftwareSettings, 'testTtsPlayback', {
+        configurable: true,
+        /** Exposes the historical settings method only to admitted v1 calls. */
+        get: function() {
+            var version = api.currentVersion();
+            return version === '1.0.0' || version === '1.0.1' ? legacyTtsPlayback : undefined;
+        },
+    });
     var currentFiles = Object.assign({}, Tools.Files);
     var legacyFiles = __operitCreateV1Files(currentFiles);
     for (var [method, filesImplementation] of Object.entries(legacyFiles)) {

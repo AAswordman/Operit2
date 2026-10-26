@@ -6,6 +6,7 @@ use operit_model::FunctionType::FunctionType;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{SystemToolPromptCategory, ToolParameterSchema, ToolPrompt};
+use operit_plugin_sdk::js_sdk::{results::TtsSpeakResultData, tts::TtsSpeakRequest};
 use operit_providers::chat::config::FunctionalPrompts::FunctionalPrompts;
 use operit_providers::chat::config::SystemToolPrompts as ProviderToolPrompts;
 use operit_providers::chat::enhance::FileBindingService::{
@@ -26,6 +27,7 @@ use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill::SkillManager::SkillManager;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_util::stream::Stream::Stream;
+use operit_util::TtsCleaner::TtsCleaner;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::services::core::ChatTurnTransport::{
@@ -37,6 +39,7 @@ use crate::data::preferences::EnvPreferences::EnvPreferences;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
 use crate::plugins::BuiltinPluginAssets::{BUILTIN_PLUGIN_ASSETS, BUNDLED_EXTERNAL_PLUGIN_ASSETS};
 use crate::plugins::BundledExternalSkillAssets::BUNDLED_EXTERNAL_SKILL_ASSETS;
+use crate::services::TtsPlaybackService::TtsPlaybackService;
 
 /// Creates runtime-backed services required by the tools crate.
 pub struct ToolRuntimeSupportService;
@@ -221,6 +224,37 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         };
         crate::services::TtsSynthesisService::TtsSynthesisService::getInstance(&self.hostManager)
             .synthesizeAudioWithConfig(&id, &request.text)
+    }
+
+    /// Resolves the exact configured system voice and applies utterance-only playback overrides.
+    #[allow(non_snake_case)]
+    fn speakSpeech(&self, request: TtsSpeakRequest) -> Result<TtsSpeakResultData, String> {
+        let manager = crate::data::preferences::TtsConfigManager::TtsConfigManager::getInstance();
+        let id = match request.configId {
+            Some(id) => id,
+            None => manager.getCurrentTtsConfigId()?,
+        };
+        let mut config = manager.getTtsConfig(&id)?;
+        if let Some(speed) = request.speed {
+            config.speed = speed;
+        }
+        let interrupt = request.interrupt.unwrap_or(true);
+        let pitch = request.pitch.unwrap_or(1.0);
+        let providerType = operit_model::TtsConfig::TtsProviderType::normalize(&config.providerType);
+        let speed = config.speed;
+        let status = TtsPlaybackService::getInstance(&self.hostManager)?.speakWithResolvedConfig(
+            config,
+            TtsCleaner::clean(&request.text),
+            interrupt,
+            pitch,
+        )?;
+        Ok(TtsSpeakResultData {
+            providerType,
+            started: status.active,
+            interrupt,
+            speed,
+            pitch,
+        })
     }
 
     fn transcribeSpeech(&self, request: operit_plugin_sdk::js_sdk::stt::SttTranscribeRequest)

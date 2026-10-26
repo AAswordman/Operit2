@@ -1163,6 +1163,11 @@ fn registerTtsTools(handler: &mut AIToolHandler) {
         ToolRegistrationVisibility::INTERNAL,
     );
     handler.registerBuiltinTool(
+        BuiltinToolName::TtsSpeak,
+        RegisteredToolExecutor::Shared(Arc::new(TtsToolExecutor { operation: TtsToolOperation::Speak })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
         BuiltinToolName::SttTranscribe,
         RegisteredToolExecutor::Shared(Arc::new(SttToolExecutor)),
         ToolRegistrationVisibility::INTERNAL,

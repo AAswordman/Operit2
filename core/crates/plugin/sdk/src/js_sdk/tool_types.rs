@@ -97,6 +97,7 @@ pub struct ToolResultMap {
     pub execute_cli_command: serde_json::Value,
     pub models_list_summaries: ModelsListSummariesResultData,
     pub tts_synthesize: TtsSynthesizeResultData,
+    pub tts_speak: TtsSpeakResultData,
     pub stt_transcribe: SttTranscribeResultData,
     pub tts_list_configs: TtsListConfigsResultData,
     pub tts_get_current_config_id: TtsGetCurrentConfigIdResultData,
