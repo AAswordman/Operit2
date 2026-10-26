@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createDiskHarness } from "./disk-files.mjs";
 import { fixture } from "./fixtures.mjs";
 import { loadModule, plain } from "./runtime.mjs";
 
@@ -129,9 +130,17 @@ test("record identifiers accept opaque strings and reject numeric or malformed v
   }
 });
 
+/** Exercises production ranking on real database records instead of an in-memory corpus helper. */
+async function searchStored(t, space, options, config) {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" });
+  const { DatabaseCharacterRepository } = loadModule("src/storage/database.ts", disk.globals), repository = await DatabaseCharacterRepository.open();
+  const state = plain(disk.readState()); Object.assign(state.owners[0], space); disk.replaceState(state);
+  return repository.run(session => session.searchMemoryDebug({ ...options, ownerKey: "character:default" }, config));
+}
+
 /** Verifies Kotlin RRF values, mode weights, reverse edges, and scope filters together. */
-test("memory ranking preserves channel scores and excludes filtered graph endpoints", async () => {
-  const { searchMemorySpaceDebug } = loadModule("src/memory-search.ts"), base = fixture().graph.items[0];
+test("memory ranking preserves channel scores and excludes filtered graph endpoints", async t => {
+  const base = fixture().graph.items[0];
   /** Creates independent records with explicit scope and importance. */
   const record = (id, title, changes = {}) => ({ ...base, id, uuid: "uuid-" + id, title, importance: 0.5,
     folderPath: "scope/child", createdAt: 10, tags: [], isDocumentNode: false, ...changes });
@@ -146,7 +155,7 @@ test("memory ranking preserves channel scores and excludes filtered graph endpoi
   for (const [scoreMode, lexicalMultiplier, edgeMultiplier] of [["BALANCED", 1, 1], ["KEYWORD_FIRST", 1.3, 0.9], ["SEMANTIC_FIRST", 0.8, 1.1]]) {
     const config = { scoreMode, keywordWeight: 2, tagWeight: 3, vectorWeight: 0, edgeWeight: 0.7 };
     const space = { memories, chunks: [], links: [link("incoming", "neighbor", "seed"), link("excluded", "seed", "outside")], searchConfig: config };
-    const result = await searchMemorySpaceDebug(space, options, config), hits = new Map(result.candidates.map(
+    const result = await searchStored(t, space, options, config), hits = new Map(result.candidates.map(
       /** Indexes results by their original identity for channel assertions. */
       hit => [hit.memory.id, hit],
     ));
@@ -162,32 +171,30 @@ test("memory ranking preserves channel scores and excludes filtered graph endpoi
 });
 
 /** Verifies authored titles cannot act as query wildcard expressions in reverse containment. */
-test("memory reverse containment treats wildcard characters in stored titles literally", async () => {
-  const { searchMemorySpaceDebug } = loadModule("src/memory-search.ts"), memory = { ...fixture().graph.items[0], title: "a*b", tags: [], isDocumentNode: false };
+test("memory reverse containment treats wildcard characters in stored titles literally", async t => {
+  const memory = { ...fixture().graph.items[0], title: "a*b", tags: [], isDocumentNode: false };
   const config = { scoreMode: "BALANCED", keywordWeight: 1, tagWeight: 0, vectorWeight: 0, edgeWeight: 0 };
-  const result = await searchMemorySpaceDebug({ memories: [memory], chunks: [], links: [], searchConfig: config },
+  const result = await searchStored(t, { memories: [memory], chunks: [], links: [], searchConfig: config },
     { ownerKey: "character:test", query: "aZZb", folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null }, config);
   assert.equal(result.candidates[0].keywordScore, 0); assert.equal(result.candidates[0].passedThreshold, false);
 });
 
 /** Verifies CJK lexical expansion retains exact single-character evidence without embeddings. */
-test("memory search retains Han unigrams alongside complete words and bigrams", async () => {
-  const { searchMemorySpaceDebug } = loadModule("src/memory-search.ts");
+test("memory search retains Han unigrams alongside complete words and bigrams", async t => {
   const memory = { id: "memory-north", uuid: "uuid-north", title: "北方", content: "", contentType: "text/plain", source: "manual",
     credibility: 0.5, importance: 0.8, documentPath: null, isDocumentNode: false, chunkIndexFilePath: null, folderPath: null,
     createdAt: 1, updatedAt: 1, lastAccessedAt: 1, tags: [], properties: [] };
   const config = { scoreMode: "BALANCED", keywordWeight: 1, tagWeight: 0, vectorWeight: 0, edgeWeight: 0 };
   const space = { memories: [memory], chunks: [], links: [], searchConfig: config };
-  const result = await searchMemorySpaceDebug(space, { ownerKey: "character:test", query: "北京", folderPath: null,
+  const result = await searchStored(t, space, { ownerKey: "character:test", query: "北京", folderPath: null,
     relevanceThreshold: 0.01, createdAtStartMs: null, createdAtEndMs: null }, config);
   assert.equal(result.candidates[0].memory.id, memory.id); assert.ok(result.candidates[0].keywordScore > 0);
 });
 
 /** Verifies duplicate-title merging creates a fresh identity and preserves only valid redirected graph edges. */
-test("canonical memory merge resolves duplicate titles and redirects external links", async () => {
-  const { createMemorySpace } = loadModule("src/storage/state.ts"), { RepositorySession } = loadModule("src/repository.ts");
-  const space = createMemorySpace("character:merge"), state = { version: 1, memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true },
-    cards: [{ id: "merge" }], groups: [], tags: [], stores: [], active: { Model: { id: "chat" } }, owners: [space], conversationGroups: [] };
+test("canonical memory merge resolves duplicate titles and redirects external links", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), { DatabaseCharacterRepository } = loadModule("src/storage/database.ts", disk.globals);
+  const repository = await DatabaseCharacterRepository.open(), state = plain(disk.readState()), space = state.owners[0];
   /** Builds complete existing source records with stable identities. */
   const record = (id, uuid, title) => ({ id, uuid, title, content: "source", contentType: "text/plain", source: "import",
     credibility: 0.5, importance: 0.5, documentPath: null, isDocumentNode: false, chunkIndexFilePath: null, folderPath: null,
@@ -197,12 +204,13 @@ test("canonical memory merge resolves duplicate titles and redirects external li
   space.chunks.push({ id: "source-chunk", memoryUuid: "uuid-two", chunkIndex: 0, content: "Merged source document" });
   space.links.push({ id: "external", sourceMemoryId: "one", targetMemoryId: "three", type_: "related", weight: 0.5, description: "keep" },
     { id: "internal", sourceMemoryId: "one", targetMemoryId: "two", type_: "related", weight: 0.5, description: "remove" });
-  const repository = new RepositorySession(state, "memory-root");
-  const merged = await repository.mergeMemories("character:merge", ["Duplicate"], { title: "Combined", content: "joined",
-    contentType: "text/plain", source: "merged_from_memory", credibility: 0.5, importance: 0.5, folderPath: null, tags: [] });
+  disk.replaceState(state);
+  const merged = await repository.run(session => session.mergeMemories("character:default", ["Duplicate"], { title: "Combined", content: "joined",
+    contentType: "text/plain", source: "merged_from_memory", credibility: 0.5, importance: 0.5, folderPath: null, tags: [] }));
+  const saved = plain(disk.readState()).owners[0];
   assert.notEqual(merged.id, "one"); assert.notEqual(merged.id, "two"); assert.equal(merged.source, "merged_from_memory");
-  assert.deepEqual(plain(space.memories.map(item => item.title)), ["External", "Combined"]);
-  assert.equal(space.chunks.length, 0); assert.equal(merged.isDocumentNode, false);
-  assert.deepEqual(plain(space.links.map(link => ({ id: link.id, sourceMemoryId: link.sourceMemoryId, targetMemoryId: link.targetMemoryId, description: link.description }))),
+  assert.deepEqual(plain(saved.memories.map(item => item.title).sort()), ["Combined", "External"]);
+  assert.equal(saved.chunks.length, 0); assert.equal(merged.isDocumentNode, false);
+  assert.deepEqual(plain(saved.links.map(link => ({ id: link.id, sourceMemoryId: link.sourceMemoryId, targetMemoryId: link.targetMemoryId, description: link.description }))),
     [{ id: "external", sourceMemoryId: merged.id, targetMemoryId: "three", description: "keep" }]);
 });

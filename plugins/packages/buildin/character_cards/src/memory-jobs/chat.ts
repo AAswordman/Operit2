@@ -53,7 +53,7 @@ export async function primaryOwner(card: Card, repository: CharacterRepository):
 
 /** Requires the selected participants to own or explicitly permit writes to this resource. */
 export async function requireChatOwner(chatId: string, ownerKey: string, repository: CharacterRepository): Promise<void> {
-  await repository.readMemorySpace(ownerKey);
+  await repository.readMemoryJobState(ownerKey);
   const cards = await chatParticipants(chatId, repository);
   for (const card of cards) {
     if (await primaryOwner(card, repository) === ownerKey) return;
@@ -85,7 +85,7 @@ export async function currentMessageMemoryAccess(chatId: string, message: Memory
 
 /** Checks current permissions for the real message author. */
 export async function requireMessageOwner(chatId: string, message: MemoryChatMessage, ownerKey: string, repository: CharacterRepository): Promise<CurrentMessageMemoryAccess> {
-  await repository.readMemorySpace(ownerKey);
+  await repository.readMemoryJobState(ownerKey);
   const access = await currentMessageMemoryAccess(chatId, message, repository);
   if (!access.resources.some(resource => resource.key === ownerKey && resource.writable)) throw new Error("Message author is not currently writable for this memory owner: " + ownerKey);
   return access;
@@ -93,7 +93,7 @@ export async function requireMessageOwner(chatId: string, message: MemoryChatMes
 
 /** Validates extraction against current author permissions. */
 export async function requireMessagesOwner(chatId: string, messages: MemoryChatMessage[], ownerKey: string, repository: CharacterRepository): Promise<void> {
-  await repository.readMemorySpace(ownerKey);
+  await repository.readMemoryJobState(ownerKey);
   for (const message of messages) {
     if (message.sender !== "ai" && message.sender !== "assistant") continue;
     const access = await currentMessageMemoryAccess(chatId, message, repository);
@@ -128,14 +128,14 @@ export async function listMemoryChats(ownerKey: string, repository: Pick<Charact
 /** Deletes bindings and extraction candidates whose Core conversation or source message no longer exists. */
 export async function pruneMissingMemoryChats(
   ownerKey: string,
-  repository: Pick<CharacterRepository, "readMemorySettings" | "chatBindings" | "readMemorySpace" | "writeMemorySpace">,
+  repository: Pick<CharacterRepository, "readMemorySettings" | "chatBindings" | "readMemoryJobState" | "writeMemoryJobState">,
 ): Promise<{ removedChatIds: string[]; removedCandidateIds: string[] }> {
   const { missingChatIds } = await listMemoryChats(ownerKey, repository);
   const removedChatIds: string[] = [];
   for (const chatId of missingChatIds) {
     if ((await repository.chatBindings.deleteChatBinding(chatId)).deleted) removedChatIds.push(chatId);
   }
-  const space = await repository.readMemorySpace(ownerKey);
+  const space = await repository.readMemoryJobState(ownerKey);
   const candidateChats = [...new Set(space.candidates.map(candidate => candidate.chatId))];
   const messagesByChat = new Map<string, MemoryChatMessage[] | null>();
   for (let offset = 0; offset < candidateChats.length; offset += 200) {
@@ -153,7 +153,7 @@ export async function pruneMissingMemoryChats(
     if (orphaned) removedCandidateIds.push(candidate.id);
     return !orphaned;
   });
-  if (survivors.length !== space.candidates.length) { space.candidates = survivors; await repository.writeMemorySpace(ownerKey, space); }
+  if (survivors.length !== space.candidates.length) { space.candidates = survivors; await repository.writeMemoryJobState(ownerKey, space); }
   return { removedChatIds, removedCandidateIds };
 }
 

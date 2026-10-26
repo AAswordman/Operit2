@@ -241,7 +241,7 @@ impl CharacterPluginWriter {
             let schema_version = started["snapshot"]["schemaVersion"].as_u64().ok_or("Preference schema version is missing")? as u32;
             self.request(StorageRequest::PreferencesFinishEdit { handle, token, edits, schema_version })?;
         }
-        if !memory.is_empty() { self.request(StorageRequest::Commit { handle: self.handle.clone(), mutations: memory })?; }
+        if !memory.is_empty() { self.request(StorageRequest::Commit { handle: self.handle.clone(), mutations: memory, guards: Vec::new() })?; }
         Ok(())
     }
 

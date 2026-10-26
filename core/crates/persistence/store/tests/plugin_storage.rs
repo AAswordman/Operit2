@@ -1478,3 +1478,39 @@ fn preference_references_do_not_block_independent_plugin_transactions() {
     source.dispose();
     target.dispose();
 }
+
+/// Queries synchronized source envelopes without exposing runtime metadata or accepting writes.
+#[test]
+fn object_queries_rank_vectors_after_sync_replay() {
+    let first = Fixture::new("first");
+    let handle = first.open("objects");
+    first.call(json!({"op":"commit","handle":handle,"mutations":[put("source", json!({"record":{"content":"source"},"embedding":{"vector":[1.0,0.0]}}))]})).unwrap();
+    let sql = "WITH query_vector AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each('[1.0,0.0]')) SELECT key,(SELECT sum(q.value*v.value) FROM json_each(o.value,'$.embedding.vector') v JOIN query_vector q ON q.dimension=v.key) AS score FROM plugin_objects o WHERE collection='keys' ORDER BY score DESC LIMIT 1";
+    let query = json!({"op":"query","handle":handle,"statement":{"sql":sql,"params":[]}});
+    let rows = first.call(query).unwrap();
+    assert_eq!(rows[0]["values"][1]["value"], 1.0);
+    let second = Fixture::new("second");
+    second.replay(&first.export());
+    let other = second.open("objects");
+    assert_eq!(rows, second.call(json!({"op":"query","handle":other,"statement":{"sql":sql,"params":[]}})).unwrap());
+    for statement in ["SELECT * FROM _operit_log", "DELETE FROM plugin_objects", "SELECT * FROM sqlite_master"] {
+        assert!(first.call(json!({"op":"query","handle":handle,"statement":{"sql":statement,"params":[]}})).is_err());
+    }
+    first.dispose(); second.dispose();
+}
+
+/// Rejects a source write when related owner metadata changed while the caller awaited a provider.
+#[test]
+fn object_record_guards_are_checked_before_source_publication() {
+    let f = Fixture::new("first");
+    let handle = f.open("objects");
+    f.call(json!({"op":"commit","handle":handle,"mutations":[put("owner",json!({"model":"old"}))]})).unwrap();
+    let version = f.get(&handle,"owner")["version"].clone();
+    f.call(json!({"op":"commit","handle":handle,"mutations":[put("owner",json!({"model":"new"}))]})).unwrap();
+    assert!(f.call(json!({"op":"commit","handle":handle,"mutations":[put("source",json!({"vector":[1.0]}))],"guards":[{"collection":"keys","key":"owner","expectedVersion":version}]})).is_err());
+    assert!(f.get(&handle,"source").is_null());
+    let current = f.get(&handle,"owner");
+    f.call(json!({"op":"commit","handle":handle,"mutations":[put("source",json!({"vector":[1.0]}))],"guards":[{"collection":"keys","key":"owner","expectedVersion":current["version"]}]})).unwrap();
+    assert_eq!(f.get(&handle,"owner"),current);
+    f.dispose();
+}

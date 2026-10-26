@@ -78,6 +78,15 @@ export interface StorageMutation {
 }
 
 /**
+ * Guards a related record without rewriting it or publishing an extra change.
+ */
+export interface StorageRecordGuard {
+  collection: string;
+  key: string;
+  expectedVersion: string | null;
+}
+
+/**
  * Identifies the last observed record state without exposing journal positions.
  */
 export interface StorageRecordWatchState {
@@ -87,7 +96,7 @@ export interface StorageRecordWatchState {
 /**
  * Dispatches storage operations only through an authenticated engine-owned handle.
  */
-export type StorageRequest = { op: "open"; path: string; kind: StorageKind; merge: StorageMergeDescriptor | null; } | { op: "open_preferences"; path: string; merge: StoragePreferencesMergeDescriptor | null; } | { op: "preferences_data"; handle: string; } | { op: "preferences_begin_edit"; handle: string; } | { op: "preferences_finish_edit"; handle: string; token: string; edits: StoragePreferenceEdit[]; schemaVersion: number; } | { op: "preferences_cancel_edit"; handle: string; token: string; } | { op: "close"; handle: string; } | { op: "query"; handle: string; statement: StorageStatement; } | { op: "execute"; handle: string; statement: StorageStatement; } | { op: "transaction"; handle: string; statements: StorageStatement[]; whenAbsent: StorageRecordIdentity | null; } | { op: "define_table"; handle: string; table: StorageTable; } | { op: "get"; handle: string; collection: string; key: string; } | { op: "get_many"; handle: string; collection: string; keys: string[]; } | { op: "list"; handle: string; collection: string; after: string | null; limit: number; } | { op: "commit"; handle: string; mutations: StorageMutation[]; };
+export type StorageRequest = { op: "open"; path: string; kind: StorageKind; merge: StorageMergeDescriptor | null; } | { op: "open_preferences"; path: string; merge: StoragePreferencesMergeDescriptor | null; } | { op: "preferences_data"; handle: string; } | { op: "preferences_begin_edit"; handle: string; } | { op: "preferences_finish_edit"; handle: string; token: string; edits: StoragePreferenceEdit[]; schemaVersion: number; } | { op: "preferences_cancel_edit"; handle: string; token: string; } | { op: "close"; handle: string; } | { op: "query"; handle: string; statement: StorageStatement; } | { op: "execute"; handle: string; statement: StorageStatement; } | { op: "transaction"; handle: string; statements: StorageStatement[]; whenAbsent: StorageRecordIdentity | null; } | { op: "define_table"; handle: string; table: StorageTable; } | { op: "get"; handle: string; collection: string; key: string; } | { op: "get_many"; handle: string; collection: string; keys: string[]; } | { op: "list"; handle: string; collection: string; after: string | null; limit: number; } | { op: "commit"; handle: string; mutations: StorageMutation[]; guards: StorageRecordGuard[]; };
 
 /**
  * Identifies one successfully opened database session.

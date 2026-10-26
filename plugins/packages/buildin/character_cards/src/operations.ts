@@ -15,7 +15,6 @@ import { decodeCharacterImport, decodeGroupImport, encodeCharacterExport } from 
 import { readThemeChoices } from "./selection-application";
 import { independentConfigurations } from "./selection-settings";
 import { uuid } from "./identity";
-import { searchMemoryChunks } from "./memory-search";
 import { autoCategorizeMemory, updateChatMemory } from "./memory-jobs/analysis";
 import { rebuildMemoryEmbeddings } from "./memory-jobs/embeddings";
 import { decodeCharacterBackup, decodeGroupBackup, decodeMemoryBackup, exportCharacterBackup, exportGroupBackup, exportMemoryBackup } from "./backup";
@@ -772,16 +771,7 @@ export async function dispatch(
       assertMemorySettings(request.settings);
       assertSearchConfig(request.config);
       await requireOwner(request.ownerKey, host);
-      const current = await host.readMemorySettings(request.ownerKey);
-      await host.writeMemorySettings(request.ownerKey, {
-        ...request.settings,
-        nextAutoSaveRunAtMs: current.nextAutoSaveRunAtMs,
-      });
-      await host.writeMemorySearchConfig(request.ownerKey, request.config);
-      return {
-        settings: await host.readMemorySettings(request.ownerKey),
-        config: await host.readMemorySearchConfig(request.ownerKey),
-      };
+      return host.writeMemoryOwnerSettings(request.ownerKey, request.settings, request.config);
     }
     case "combinePrompts":
       return combinePrompts(
@@ -878,19 +868,6 @@ export async function dispatch(
 
 type DomainHandlers = { [K in DomainOperation]: (input: DomainInput<K>, host: CharacterRepository) => Promise<DomainOutput<K>> };
 
-/** Requires one existing canonical memory for title-addressed public editor operations. */
-function findMemory(items: Memory[], title: string): Memory {
-  const name = requireName(title, "记忆标题");
-  let found: Memory | undefined;
-  for (const memory of items) {
-    if (memory.title !== name) continue;
-    if (found !== undefined) throw new Error(`记忆标题不唯一：${name}`);
-    found = memory;
-  }
-  if (found === undefined) throw new Error(`记忆不存在：${name}`);
-  return found;
-}
-
 /** Converts canonical deletion lifecycle completion to the public activation-independent result. */
 async function deleteCharacter(id: string, host: CharacterRepository): Promise<{ id: string; deleted: boolean }> {
   await host.deleteCharacter(requireId(id, "角色卡标识")); return { id, deleted: true };
@@ -939,15 +916,13 @@ export async function resolveConfiguration(
 
 /** Implements every published domain operation with typed handlers sharing the editor's actual business service. */
 const handlers: DomainHandlers = {
-  /** Ranks original chunks and commits provider vectors in the same repository operation. */
-  "memory.chunks": async (input, repository) => {
-    const space = await repository.readMemorySpace(input.ownerKey), cached = space.embeddings.length;
-    const result = await searchMemoryChunks(space, input.memoryId, input.query, input.count);
-    if (space.embeddings.length !== cached) await repository.writeMemorySpace(input.ownerKey, space);
-    return result;
+  /** Ranks persisted document source vectors without writing during retrieval. */
+  "memory.chunks": (input, repository) => repository.searchMemoryChunks(input.ownerKey, input.memoryId, input.query, input.count),
+  /** Searches bounded records and document chunks with one operation-scoped query vector. */
+  "memory.searchWithOptions": async (input, repository) => {
+    await requireOwner(input.ownerKey, repository);
+    return repository.searchMemoryPage({ ...input, folderPath: normalizeFolderPath(input.folderPath) });
   },
-  /** Keeps full-filter searches and provider embedding persistence on the same serialized service. */
-  "memory.searchWithOptions": async (input, repository) => ({ ownerKey: input.ownerKey, items: await searchMemories(input, repository) }),
   /** Lists actual owner-bound generic chat summaries. */
   "memory.chat.list": (input, repository) => listMemoryChats(input.ownerKey, repository),
   "memory.chat.pruneMissing": (input, repository) => pruneMissingMemoryChats(input.ownerKey, repository),
@@ -1122,7 +1097,7 @@ const handlers: DomainHandlers = {
   /** Searches complete repository records with the original explicit editor search filters. */
   "memory.search": async (input, host) => ({ ownerKey: input.ownerKey, query: input.query, items: await searchMemories({ ...input, folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null }, host) }),
   /** Resolves an exact title to one complete canonical memory. */
-  "memory.get": async (input, host) => ({ ownerKey: input.ownerKey, item: findMemory(await listMemories(input.ownerKey, host), input.title) }),
+  "memory.get": async (input, host) => ({ ownerKey: input.ownerKey, item: await host.readMemoryByTitle(input.ownerKey, input.title) }),
   /** Initializes an intentional full new record and writes all memory metadata in the plugin snapshot. */
   "memory.create": async (input, host) => {
     await requireOwner(input.ownerKey, host);
@@ -1137,7 +1112,7 @@ const handlers: DomainHandlers = {
   },
   /** Merges every supplied memory field into its full canonical record while preserving untouched metadata. */
   "memory.update": async (input, host) => {
-    const original = findMemory(await listMemories(input.ownerKey, host), input.originalTitle);
+    const original = await host.readMemoryByTitle(input.ownerKey, input.originalTitle);
     if (input.expectedId !== undefined && input.expectedId !== original.id) throw new Error("Memory identity changed since editing began");
     const changes = { ...input.changes };
     const tags = [];
@@ -1152,14 +1127,15 @@ const handlers: DomainHandlers = {
   "memory.delete": async (input, host) => { await requireOwner(input.ownerKey, host); await host.deleteMemory(input.ownerKey, input.id); return { ownerKey: input.ownerKey, id: input.id, deleted: true }; },
   /** Moves the explicitly selected ids using the canonical repository's bulk operation. */
   "memory.move": async (input, host) => {
-    const items = await listMemories(input.ownerKey, host), existing = new Set<string>(); for (const item of items) existing.add(item.id);
-    const selected = new Set<string>(); for (const id of input.ids) { if (!existing.has(id)) throw new Error(`记忆不存在：${id}`); selected.add(id); }
+    await requireOwner(input.ownerKey, host);
+    const selected = new Set(input.ids);
     await host.moveMemories(input.ownerKey, [...selected], input.folderPath);
     return { ownerKey: input.ownerKey, ids: [...selected], folder: input.folderPath, moved: selected.size };
   },
   /** Resolves exact source and target records before creating a canonical relationship. */
   "memory.link.create": async (input, host) => {
-    const items = await listMemories(input.ownerKey, host), source = findMemory(items, input.sourceTitle), target = findMemory(items, input.targetTitle);
+    await requireOwner(input.ownerKey, host);
+    const source = await host.readMemoryByTitle(input.ownerKey, input.sourceTitle), target = await host.readMemoryByTitle(input.ownerKey, input.targetTitle);
     if (source.id === target.id) throw new Error("不能创建记忆自身关系");
     const link = await host.createLink(input.ownerKey, { sourceMemoryId: source.id, targetMemoryId: target.id, type_: requireName(input.linkType, "关系类型"), weight: input.weight, description: input.description });
     return { ownerKey: input.ownerKey, link };

@@ -14,6 +14,7 @@ export function createStorageHost(directory, attempted) {
     attempted("storage.open", [options]);
     const sql = new DatabaseSync(target); handles.add(sql);
     sql.exec("CREATE TABLE IF NOT EXISTS records(collection TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,version TEXT NOT NULL,PRIMARY KEY(collection,key));CREATE TABLE IF NOT EXISTS revisions(id INTEGER PRIMARY KEY AUTOINCREMENT)");
+    sql.exec("CREATE VIEW IF NOT EXISTS plugin_objects AS SELECT collection,key,value,version FROM records");
     /** Reads one existing object and its exact version without treating stored null as absence. */
     function get(collection, key) {
       const row = sql.prepare("SELECT value,version FROM records WHERE collection=? AND key=?").get(collection, key);
@@ -21,13 +22,14 @@ export function createStorageHost(directory, attempted) {
       return { value: JSON.parse(row.value), version: row.version };
     }
     /** Executes one real rollback-capable SQLite transaction and checks every supplied record precondition. */
-    async function commit(mutations) {
+    async function commit(mutations, guards = []) {
       attempted("storage.commit", [structuredClone(mutations)]);
       if (transactionGate !== null && transactionGate.predicate(mutations)) await transactionGate.promise;
       if (mutations.length < 1 || mutations.length > 1000) throw new Error("Storage transaction limit");
       sql.exec("BEGIN IMMEDIATE");
       try {
         const revision = String(sql.prepare("INSERT INTO revisions DEFAULT VALUES").run().lastInsertRowid);
+        for (const guard of guards) { const actual = get(guard.collection, guard.key); if ((actual === null ? null : actual.version) !== guard.expectedVersion) throw new Error("Storage record guard failed"); }
         const identities = new Set();
         for (const mutation of mutations) {
           if (typeof mutation.key !== "string" || Buffer.byteLength(mutation.key) > 1024 || mutation.key === "" || /[\x00-\x1f\x7f]/.test(mutation.key)) throw new Error("Invalid storage mutation key");
@@ -44,6 +46,8 @@ export function createStorageHost(directory, attempted) {
     }
     return {
       path: options.path,
+      /** Executes the production read-only object SQL contract in real SQLite. */
+      async query(statement, params = []) { attempted("storage.query", [statement, structuredClone(params)]); return sql.prepare(statement).all(...params); },
       /** Exposes one named generic collection with primary-key pagination and atomic writes. */
       collection(name) {
         return {

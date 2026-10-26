@@ -216,6 +216,8 @@ function assertMetadata(value: unknown): asserts value is Record<string, string>
 /** Validates explicit search filters before passing them to the scoped repository. */
 export function assertSearchOptions(value: unknown): asserts value is MemorySearchOptions {
   assertObject(value, "记忆搜索参数");
+  if (value.limit !== undefined) { assertInteger(value.limit, "search limit", 1); if (value.limit > 1000) throw new Error("Memory search limit exceeds 1000"); }
+  if (value.excludeIds !== undefined) assertStrings(value.excludeIds, "excluded memory ids");
   assertString(value.ownerKey, "记忆库标识");
   assertString(value.query, "搜索文本");
   assertNullableString(value.folderPath, "搜索文件夹");

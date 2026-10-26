@@ -227,7 +227,7 @@ test("real main IPC and local HTTP provider: saved embedding configuration sends
     let body = ""; for await (const chunk of request) body += chunk;
     received.push({ path: request.url, method: request.method, authorization: request.headers.authorization, body: JSON.parse(body) });
     response.writeHead(fail ? 503 : 200, { "Content-Type": "application/json" });
-    response.end(fail ? JSON.stringify({ error: "Explicit local provider failure" }) : JSON.stringify({ data: [{ embedding: [1, 0.5, 0.25] }] }));
+    response.end(fail ? JSON.stringify({ error: "Explicit local provider failure" }) : JSON.stringify({ data: JSON.parse(body).input.map((input, index) => ({ index, embedding: [1, 0.5, 0.25] })) }));
   });
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => provider.close(resolve)));
@@ -247,33 +247,29 @@ test("real main IPC and local HTTP provider: saved embedding configuration sends
   await dialog.getByRole("button", { name: "重建 Embedding", exact: true }).click();
   assert.equal(received.length, 1); assert.equal(received[0].path, "/embeddings"); assert.equal(received[0].method, "POST");
   assert.equal(received[0].authorization, "Bearer explicit-provider-key");
-  assert.deepEqual(received[0].body, { input: "Real embedding input", model: "actual-local-model", encoding_format: "float" });
+  assert.deepEqual(received[0].body, { input: ["Real embedding input"], model: "actual-local-model", encoding_format: "float" });
   const owner = await storedOwner(ui.harness);
-  assert.equal(owner.settings.cloudEmbeddingEndpoint, endpoint); assert.equal(owner.embeddings.length, 1);
-  assert.deepEqual(owner.embeddings[0].vector, [1, 0.5, 0.25]);
+  assert.equal(owner.settings.cloudEmbeddingEndpoint, endpoint); assert.equal(owner.embeddings.length, 0);
+  /** Reads persisted source envelopes independently of the production search implementation. */
+  function sourceVectors() { return ui.harness.disk.storage.inspect(sql => sql.prepare("SELECT value FROM records WHERE collection='memories' ORDER BY key").all().map(row => JSON.parse(row.value).embedding)); }
+  assert.equal(sourceVectors().length, 1); assert.equal(sourceVectors()[0].text, "Real embedding input");
   await dialog.getByLabel("向量权重", { exact: true }).fill("1");
   await dialog.getByLabel("检索查询", { exact: true }).fill("Real provider query");
   await dialog.getByRole("button", { name: "使用当前权重检索", exact: true }).click();
-  assert.equal(received.length, 4);
-  assert.deepEqual(received.slice(1).map(
-    /** Requires each explicit query term rather than the removed whole-query vector path. */
-    request => request.body,
-  ), ["Real", "provider", "query"].map(
-    /** Preserves the configured model and actual provider request encoding. */
-    input => ({ input, model: "actual-local-model", encoding_format: "float" }),
-  ));
+  assert.equal(received.length, 2);
+  assert.deepEqual(received[1].body, { input: ["Real provider query"], model: "actual-local-model", encoding_format: "float" });
   const debug = plain(await ui.runtime.web({ action: "searchMemoryDebug", ownerKey: CONTROLLED_OWNER, query: "Real provider query", config: { scoreMode: "BALANCED", keywordWeight: 0, tagWeight: 0, vectorWeight: 1, edgeWeight: 0 }, relevanceThreshold: 0 }));
-  assert.ok(Math.abs(debug.candidates[0].vectorScore - Math.sqrt(3) * (1 + Math.sqrt(0.5) / 61)) < 1e-12);
-  assert.equal(received.length, 4, "Repeated per-term search must reuse the persisted cache"); assert.ok(debug.candidates[0].passedThreshold);
+  assert.ok(Math.abs(debug.candidates[0].vectorScore - 1) < 1e-12);
+  assert.equal(received.length, 3, "Repeated retrieval generates one query vector and does not persist it"); assert.ok(debug.candidates[0].passedThreshold);
   assert.equal((await ui.runtime.web({ action: "readMemorySearchConfig", ownerKey: CONTROLLED_OWNER })).vectorWeight, 0);
-  const cached = (await storedOwner(ui.harness)).embeddings;
+  const cached = sourceVectors();
   fail = true; await dialog.getByRole("button", { name: "重建 Embedding", exact: true }).click();
   assert.match(await dialog.getByRole("alert").innerText(), /503.*Explicit local provider failure/);
-  assert.deepEqual((await storedOwner(ui.harness)).embeddings, cached);
+  assert.deepEqual(sourceVectors(), cached);
   await dialog.getByLabel("检索查询", { exact: true }).fill("Actual failed provider query");
   await dialog.getByRole("button", { name: "使用当前权重检索", exact: true }).click();
   assert.match(await dialog.getByRole("alert").innerText(), /503.*Explicit local provider failure/);
-  assert.deepEqual((await storedOwner(ui.harness)).embeddings, cached);
+  assert.deepEqual(sourceVectors(), cached);
   assert.deepEqual(ui.errors, []);
 });
 

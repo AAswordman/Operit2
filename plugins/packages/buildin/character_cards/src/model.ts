@@ -178,6 +178,8 @@ export interface MemoryValues {
   tags: string[];
 }
 export interface MemorySearchOptions {
+  limit?: number;
+  excludeIds?: string[];
   ownerKey: string;
   query: string;
   folderPath: string | null;
@@ -228,7 +230,7 @@ export interface GlobalMemoryPreferences { userDescriptionEnabled: boolean; auto
 /** Controls the built-in per-turn recall that injects matched memories into the model request. */
 export interface MemoryRecallSettings { enabled: boolean; limit: number; allowRepeated: boolean }
 export interface MemorySearchHit { memory: Memory; score: number; keywordScore: number; tagScore: number; vectorScore: number; edgeScore: number; passedThreshold: boolean }
-export interface MemorySearchDebug { query: string; config: MemorySearchConfig; relevanceThreshold: number; memoriesInScopeCount: number; candidates: MemorySearchHit[] }
+export interface MemorySearchDebug { excludedBySnapshotCount: number; query: string; config: MemorySearchConfig; relevanceThreshold: number; memoriesInScopeCount: number; candidates: MemorySearchHit[] }
 
 export interface Snapshot {
   memoryPreferences: GlobalMemoryPreferences;
@@ -403,6 +405,9 @@ export interface MemorySpace {
   rebuildTask: MemoryRebuildTask | null;
   embeddings: MemoryEmbedding[];
 }
+/** Keeps scheduler state independent of searchable memory sources and vectors. */
+export type MemoryJobState = Omit<MemorySpace, "memories" | "links" | "chunks" | "embeddings">;
+
 /** Owns the file schema for this plugin only; no runtime-wide storage schema is imposed. */
 export interface CharacterState {
   version: 1;

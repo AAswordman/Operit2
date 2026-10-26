@@ -127,8 +127,8 @@ async function embeddingEnvironment(t) {
         let text = ""; for await (const bytes of request) text += bytes.toString("utf8");
         const payload = JSON.parse(text); requests.push(payload);
         if (fail) { response.writeHead(503); response.end("embedding-original"); return; }
-        if (request.url !== "/embeddings" || request.method !== "POST" || payload.model !== "test-vector-model" || !vectors.has(payload.input)) { response.writeHead(400); response.end("unexpected embedding request"); return; }
-        response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify({ data: [{ embedding: vectors.get(payload.input) }] }));
+        if (request.url !== "/embeddings" || request.method !== "POST" || payload.model !== "test-vector-model" || (!Array.isArray(payload.input) || payload.input.some(input => !vectors.has(input)))) { response.writeHead(400); response.end("unexpected embedding request"); return; }
+        response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify({ data: payload.input.map((input, index) => ({ index, embedding: vectors.get(input) })) }));
       } catch (error) { response.writeHead(500); response.end(error.message); }
     },
   );
@@ -165,18 +165,18 @@ test("async document ranking uses actual embedding HTTP and preserves original p
   await environment.domain("memory.settings.write", { ownerKey: "character:default", settings: { ...settings, cloudEmbeddingEnabled: true, cloudEmbeddingEndpoint: environment.endpoint, cloudEmbeddingApiKey: "", cloudEmbeddingModel: "test-vector-model" } });
   const config = await environment.domain("memory.searchConfig.read", { ownerKey: "character:default" });
   await environment.domain("memory.searchConfig.write", { ownerKey: "character:default", config: { ...config, keywordWeight: 0, tagWeight: 0, vectorWeight: 1, edgeWeight: 0 } });
+  await environment.domain("memory.embeddings.rebuild", { ownerKey: "character:default" });
   const title = await call(environment, "get_memory_by_title", { title: "Document", query: "travel", limit: 1 });
   assert.match(title, /semantic target/); assert.doesNotMatch(title, /lexical match first/);
   assert.equal(environment.requests.length, 3);
-  const committed = (await state(environment)).owners[0].embeddings;
-  assert.deepEqual(committed.map(item => item.text).sort(), ["lexical match first", "semantic target", "travel"]);
-  for (const entry of committed) { assert.equal(entry.endpoint, environment.endpoint); assert.equal(entry.model, "test-vector-model"); assert.ok(entry.vector.length !== 0); }
+  assert.deepEqual((await state(environment)).owners[0].embeddings, []);
+  assert.deepEqual(environment.requests.map(request => request.input), [["Document"], ["lexical match first", "semantic target"], ["travel"]]);
   const result = await call(environment, "query_memory", { query: "travel", limit: 1 });
   assert.equal(result.memories.length, 1); assert.deepEqual(plain(result.memories[0].chunkIndices), [1]);
-  assert.equal(environment.requests.length, 4, "Both tools must reuse the canonical persisted embedding cache");
+  assert.equal(environment.requests.length, 4, "Node and document retrieval share one ephemeral query vector");
   const snapshotId = result.snapshotId, beforeFailure = await state(environment); environment.fail();
   await assert.rejects(call(environment, "query_memory", { query: "uncached failure", snapshot_id: snapshotId }), /Embedding request failed: HTTP 503 embedding-original/);
-  assert.deepEqual(await state(environment), beforeFailure, "Rejected search must not publish a partial embedding cache");
+  assert.deepEqual(await state(environment), beforeFailure, "Rejected search must not mutate source vectors");
 });
 
 
