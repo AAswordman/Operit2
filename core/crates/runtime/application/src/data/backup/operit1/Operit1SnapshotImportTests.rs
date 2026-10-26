@@ -205,6 +205,139 @@ fn room_v20_complete_snapshot_projects_chats_without_legacy_associations() { ver
 #[test]
 fn room_v21_complete_snapshot_projects_chats_without_legacy_associations() { verifySourceProjection(21, true); }
 
+/// Imports real Room rows and messages through the production schema bridge for supplied workspace values.
+fn importChatsWithWorkspacePaths(
+    version: i32,
+    paths: &[Option<&str>],
+) -> Result<OperitChatArchive, String> {
+    let mut connection = TestSqliteConnection::new();
+    connection.executeBatch(ROOM_V10_SQL);
+    if matches!(version, 20 | 21) {
+        connection.executeBatch(ROOM_V20_SQL);
+    }
+    if version == 21 {
+        connection.executeBatch("PRAGMA user_version = 21;");
+    }
+    for (index, path) in paths.iter().enumerate() {
+        let chatId = format!("workspace-chat-{index}");
+        let workspace = match path {
+            Some(path) => SqliteValue::Text((*path).to_string()),
+            None => SqliteValue::Null,
+        };
+        connection
+            .execute(
+                r#"INSERT INTO chats (
+                id, title, createdAt, updatedAt, inputTokens, outputTokens,
+                currentWindowSize, "group", displayOrder, workspace, parentChatId,
+                characterCardName, locked
+            ) SELECT ?1, title, createdAt, updatedAt, inputTokens, outputTokens,
+                currentWindowSize, "group", ?2, ?3, parentChatId, characterCardName, locked
+            FROM chats WHERE id = 'source-chat'"#,
+                vec![
+                    SqliteValue::Text(chatId.clone()),
+                    SqliteValue::Integer(index as i64),
+                    workspace,
+                ],
+            )
+            .unwrap();
+        connection.execute(
+            "INSERT INTO messages (messageId, chatId, sender, content, timestamp, orderIndex, roleName, provider, modelName)
+             SELECT ?1, ?2, sender, content, timestamp, orderIndex, roleName, provider, modelName
+             FROM messages WHERE chatId = 'source-chat'",
+            vec![SqliteValue::Text(format!("workspace-message-{index}")), SqliteValue::Text(chatId)],
+        ).unwrap();
+    }
+    connection.executeBatch("DELETE FROM messages WHERE chatId = 'source-chat'; DELETE FROM chats WHERE id = 'source-chat';");
+    let bridge = prepareOperit1RoomImport(&mut connection)?;
+    let mut parsed = 0;
+    let archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
+        bridge,
+        &mut connection,
+        &SnapshotFileImportPlan::new(),
+        &mut |_| parsed += 1,
+    )?;
+    assert_eq!(parsed, paths.len());
+    Ok(archive)
+}
+
+/// Preserves every chat and message while legacy null, empty, and root values produce no workspace binding.
+#[test]
+fn legacy_root_workspaces_import_as_unbound_chats() {
+    let paths = [
+        None,
+        Some(""),
+        Some(" \t "),
+        Some("/"),
+        Some(" /// "),
+        Some("file:///"),
+        Some("file:////"),
+        Some(r"\"),
+    ];
+    for version in [10, 20, 21] {
+        let archive = importChatsWithWorkspacePaths(version, &paths).unwrap();
+        assert!(archive.workspaces.is_empty());
+        assert_eq!(archive.chats.len(), paths.len());
+        for chat in &archive.chats {
+            assert!(chat.workspaceId.is_none());
+            assert_eq!(chat.messages.len(), 1);
+            assert_eq!(
+                chat.messages[0].baseMessage.parts[0].content,
+                "Preserved user history"
+            );
+        }
+    }
+}
+
+/// Deduplicates equivalent legacy paths into one real workspace and preserves separate folders.
+#[test]
+fn legacy_workspace_aliases_share_real_workspace_ids() {
+    let paths = [
+        Some("/data/user/0/com.ai.assistance.operit/files/workspace/demo"),
+        Some(" file:///data/user/0/com.ai.assistance.operit/files/workspace/demo/ "),
+        Some("/data//user/0/com.ai.assistance.operit/files/workspace/demo///"),
+        Some(r"\data\user\0\com.ai.assistance.operit\files\workspace\demo"),
+        Some("/data/user/0/com.ai.assistance.operit/files/workspace/other"),
+    ];
+    for version in [10, 20, 21] {
+        let archive = importChatsWithWorkspacePaths(version, &paths).unwrap();
+        assert_eq!(archive.workspaces.len(), 2);
+        assert_eq!(archive.chats.len(), paths.len());
+        let workspace = &archive.workspaces[0];
+        assert_eq!(workspace.name, "demo");
+        assert_eq!(workspace.primaryFolder().path, "/app/workspaces/demo");
+        workspace.validate().unwrap();
+        for chat in &archive.chats[..4] {
+            assert_eq!(chat.workspaceId.as_deref(), Some(workspace.id.as_str()));
+            assert_eq!(chat.messages.len(), 1);
+        }
+        assert_ne!(archive.chats[4].workspaceId, archive.chats[0].workspaceId);
+        assert_eq!(
+            archive.workspaces[1].primaryFolder().path,
+            "/app/workspaces/other"
+        );
+    }
+}
+
+/// Rejects malformed non-root bindings with source chat context instead of dropping their errors.
+#[test]
+fn invalid_legacy_workspace_paths_remain_import_errors() {
+    for version in [10, 20, 21] {
+        for path in [
+            ".",
+            "..",
+            "relative/project",
+            "/tmp/../project",
+            "file://server/project",
+        ] {
+            let error = importChatsWithWorkspacePaths(version, &[Some(path)]).unwrap_err();
+            assert!(
+                error.starts_with("Operit1 chat workspace-chat-0 workspace:"),
+                "{error}"
+            );
+        }
+    }
+}
+
 /// Builds a legacy speech projection with saved credentials and an unrelated generic HTTP preset.
 fn legacyTtsConfig(serviceType: &str, endpoint: &str, voice: &str) -> Result<TtsConfig, String> {
     let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(20)).unwrap();

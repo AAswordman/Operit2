@@ -111,20 +111,6 @@ impl SnapshotFileImportPlan {
     }
 
     #[allow(non_snake_case)]
-    /// Rewrites the persisted chat workspace binding into the current virtual path space.
-    fn rewriteChatWorkspace(&self, workspace: Option<String>) -> Result<Option<String>, String> {
-        let Some(workspace) = workspace else {
-            return Ok(None);
-        };
-        // 根路径或空路径无法绑定到具体工作区，直接返回 None，避免后续推导文件夹名失败。
-        let trimmed = workspace.trim();
-        if trimmed.is_empty() || trimmed == "/" || trimmed == "file:///" {
-            return Ok(None);
-        }
-        self.rewritePath(&workspace).map(Some)
-    }
-
-    #[allow(non_snake_case)]
     fn rewriteWorkspacePath(&self, workspace: &str) -> Result<String, String> {
         let pathText = workspace.trim().replace('\\', "/");
         if pathText.is_empty() {

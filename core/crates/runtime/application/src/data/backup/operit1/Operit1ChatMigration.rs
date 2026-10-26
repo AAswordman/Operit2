@@ -64,32 +64,10 @@ where
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let mut chats = Vec::new();
-    for (chatIndex, chat) in chatRows.into_iter().enumerate() {
-        let mut onMessageForChat = || onMessageParsed(chatIndex + 1);
-        let messages = readOperit1RoomV10Messages(connection, &chat.id, &mut onMessageForChat)?;
-        chats.push(OperitArchivedChat {
-            id: chat.id,
-            title: chat.title,
-            group: chat.group,
-            pluginExtensions: std::collections::BTreeMap::from([(
-                crate::data::backup::CharacterPluginMigration::LEGACY_BINDING_NAMESPACE.to_string(),
-                serde_json::json!({"characterCardName":chat.characterCardName,"characterGroupId":chat.characterGroupId}),
-            )]),
-            messages,
-            createdAt: epochMillisToLocalDateTimeString(chat.createdAt)?,
-            updatedAt: epochMillisToLocalDateTimeString(chat.updatedAt)?,
-            inputTokens: chat.inputTokens,
-            outputTokens: chat.outputTokens,
-            currentWindowSize: chat.currentWindowSize,
-            displayOrder: chat.displayOrder,
-            workspaceId: fileImportPlan.rewriteChatWorkspace(chat.workspace)?,
-            parentChatId: chat.parentChatId,
-            locked: chat.locked,
-            pinned: false,
-        });
-    }
-    archiveFromOperit1Chats(chats)
+    archiveFromOperit1Chats(chatRows, fileImportPlan, |chatId, chatIndex| {
+        let mut onMessageForChat = || onMessageParsed(chatIndex);
+        readOperit1RoomV10Messages(connection, chatId, &mut onMessageForChat)
+    })
 }
 
 /// Builds a chat archive from the Operit1 Room schemas 20 and 21.
@@ -136,10 +114,75 @@ where
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let mut chats = Vec::new();
+    archiveFromOperit1Chats(chatRows, fileImportPlan, |chatId, chatIndex| {
+        let mut onMessageForChat = || onMessageParsed(chatIndex);
+        readOperit1RoomV20Messages(connection, chatId, &mut onMessageForChat)
+    })
+}
+
+/// Interprets legacy unbound values and normalizes actual workspace paths before migration.
+fn rewriteOperit1ChatWorkspacePath(
+    workspace: Option<&str>,
+    fileImportPlan: &SnapshotFileImportPlan,
+) -> Result<Option<String>, String> {
+    let Some(workspace) = workspace else {
+        return Ok(None);
+    };
+    let workspace = workspace.trim();
+    let path = match workspace.strip_prefix("file://") {
+        Some(path) => path,
+        None => workspace,
+    };
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let path = operit_tools::files::PathMapper::PathMapper::canonicalizeVfsPath(path)?;
+    if path == "/" {
+        return Ok(None);
+    }
+    fileImportPlan.rewritePath(&path).map(Some)
+}
+
+/// Projects every supported Room schema into final chat records with genuine workspace identities.
+fn archiveFromOperit1Chats<F>(
+    chatRows: Vec<Operit1ChatRow>,
+    fileImportPlan: &SnapshotFileImportPlan,
+    mut readMessages: F,
+) -> Result<OperitChatArchive, String>
+where
+    F: FnMut(&str, usize) -> Result<Vec<OperitArchivedMessage>, String>,
+{
+    let mut chats = Vec::with_capacity(chatRows.len());
+    let mut workspaces = Vec::new();
+    let mut pathToId = std::collections::BTreeMap::<String, String>::new();
+    let timestamp = currentTimeMillis();
     for (chatIndex, chat) in chatRows.into_iter().enumerate() {
-        let mut onMessageForChat = || onMessageParsed(chatIndex + 1);
-        let messages = readOperit1RoomV20Messages(connection, &chat.id, &mut onMessageForChat)?;
+        let mut messages = readMessages(&chat.id, chatIndex + 1)?;
+        migrateOperit1MessageTimestampIdentities(&mut messages)?;
+        let path = rewriteOperit1ChatWorkspacePath(chat.workspace.as_deref(), fileImportPlan)
+            .map_err(|error| format!("Operit1 chat {} workspace: {error}", chat.id))?;
+        let workspaceId = match path {
+            None => None,
+            Some(path) => {
+                let id = if let Some(id) = pathToId.get(&path) {
+                    id.clone()
+                } else {
+                    let folderName = operit_model::Workspace::Workspace::folderNameFromPath(&path)?;
+                    let workspace = operit_model::Workspace::Workspace::fromSingleFolder(
+                        folderName.clone(),
+                        folderName,
+                        path.clone(),
+                        timestamp,
+                    );
+                    workspace.validate()?;
+                    let id = workspace.id.clone();
+                    pathToId.insert(path, id.clone());
+                    workspaces.push(workspace);
+                    id
+                };
+                Some(id)
+            }
+        };
         chats.push(OperitArchivedChat {
             id: chat.id,
             title: chat.title,
@@ -155,47 +198,11 @@ where
             outputTokens: chat.outputTokens,
             currentWindowSize: chat.currentWindowSize,
             displayOrder: chat.displayOrder,
-            workspaceId: fileImportPlan.rewriteChatWorkspace(chat.workspace)?,
+            workspaceId,
             parentChatId: chat.parentChatId,
             locked: chat.locked,
             pinned: chat.pinned,
         });
-    }
-    archiveFromOperit1Chats(chats)
-}
-
-/// Converts Operit1 message identities and workspace paths into a portable archive.
-fn archiveFromOperit1Chats(
-    mut chats: Vec<OperitArchivedChat>,
-) -> Result<OperitChatArchive, String> {
-    let mut workspaces = Vec::new();
-    let mut pathToId = std::collections::BTreeMap::<String, String>::new();
-    let timestamp = currentTimeMillis();
-    for chat in &mut chats {
-        migrateOperit1MessageTimestampIdentities(&mut chat.messages)?;
-        let Some(path) = chat.workspaceId.take() else {
-            continue;
-        };
-        if let Some(workspaceId) = pathToId.get(&path) {
-            chat.workspaceId = Some(workspaceId.clone());
-            continue;
-        }
-        let folderName = operit_model::Workspace::Workspace::folderNameFromPath(&path)?;
-        let workspaceName = if chat.title.trim().is_empty() {
-            folderName.clone()
-        } else {
-            chat.title.clone()
-        };
-        let workspace = operit_model::Workspace::Workspace::fromSingleFolder(
-            workspaceName,
-            folderName,
-            path.clone(),
-            timestamp,
-        );
-        workspace.validate()?;
-        chat.workspaceId = Some(workspace.id.clone());
-        pathToId.insert(path, workspace.id.clone());
-        workspaces.push(workspace);
     }
     Ok(OperitChatArchive {
         archiveType: ARCHIVE_TYPE.to_string(),
