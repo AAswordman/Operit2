@@ -5361,10 +5361,19 @@ function processCandidates(ownerKey, candidates, owner2) {
     }
   });
 }
+function storageConflict(error) {
+  if (error instanceof MemoryJobStatusError) return storageConflict(error.executionError) || storageConflict(error.statusPublicationError);
+  return errorText(error).indexOf("Storage version conflict") !== -1;
+}
 var MemoryJobRunner = class {
-  /** Uses the shared transactional repository for all job and failure publications. */
-  constructor(owner2) {
+  /**
+   * Uses the shared transactional repository for all job and failure publications.
+   * The optional lease factory provides cross-device single-flight; without it
+   * every device still runs every owner exactly as before.
+   */
+  constructor(owner2, leaseFactory) {
     this.owner = owner2;
+    this.leaseFactory = leaseFactory;
     this.running = null;
   }
   /** Shares the active pass while durable job failures remain visible in their own statuses. */
@@ -5386,95 +5395,124 @@ var MemoryJobRunner = class {
       const keys = yield this.owner.run(
         /** Enumerates only genuine initialized memory spaces. */
         (repository2) => repository2.listMemoryOwnerKeys()
-      ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0 };
-      for (const ownerKey of keys) {
-        yield this.owner.run(
-          /** Reclaims only outdated processing claims so interrupted batches can genuinely run again. */
-          (repository2) => __async(this, null, function* () {
-            const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
-            let reclaimed = 0;
-            for (const candidate of space.candidates) if (candidate.status === "processing" && now - candidate.updatedAt >= CANDIDATE_PROCESSING_LEASE_MS) {
-              candidate.status = "pending";
-              candidate.updatedAt = now;
-              reclaimed += 1;
-            }
-            if (reclaimed !== 0) yield repository2.writeMemorySpace(ownerKey, space);
-          })
-        );
-        const taskId = yield this.owner.run(
-          /** Reads a persisted runnable rebuild identity without fabricating a job. */
-          (repository2) => __async(this, null, function* () {
-            const space = yield repository2.readMemorySpace(ownerKey);
-            return space.rebuildTask !== null && (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") ? space.rebuildTask.id : null;
-          })
-        );
-        if (taskId !== null) {
-          yield processRebuildWindow(ownerKey, taskId, this.owner);
-          report.rebuildWindows += 1;
+      ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0, conflicts: 0 };
+      if (this.leaseFactory === void 0) {
+        for (const ownerKey of keys) yield this.runOwner(ownerKey, report);
+        return report;
+      }
+      let lease;
+      try {
+        lease = yield this.leaseFactory();
+      } catch {
+        for (const ownerKey of keys) yield this.runOwner(ownerKey, report);
+        return report;
+      }
+      try {
+        for (const ownerKey of keys) {
+          if (!(yield lease.acquire(ownerKey))) continue;
+          try {
+            yield this.runOwner(ownerKey, report);
+          } catch (error) {
+            if (!storageConflict(error)) throw error;
+            report.conflicts += 1;
+          } finally {
+            yield lease.release(ownerKey);
+          }
         }
-        const batches = yield this.owner.run(
-          /** Claims only due pending records; failed attempts are never automatically retried. */
-          (repository2) => __async(this, null, function* () {
-            if (!(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return [];
-            const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
-            if (space.settings.autoSaveIntervalMinutes === 0 || now < space.settings.nextAutoSaveRunAtMs) return [];
-            const pending = space.candidates.filter(
-              /** Selects genuinely pending records, not terminal failures. */
-              (candidate) => candidate.status === "pending"
-            );
-            const batches2 = [];
-            if (pending.length >= 5) {
-              const grouped = /* @__PURE__ */ new Map();
-              for (const candidate of pending) {
-                const list = grouped.get(candidate.chatId);
-                if (list === void 0) grouped.set(candidate.chatId, [candidate]);
-                else list.push(candidate);
-              }
-              for (const records2 of grouped.values()) {
-                const capped = records2.sort(
-                  /** Applies the Kotlin oldest-source order before the per-chat twenty-record cap. */
-                  (left, right) => left.triggerMessageTimestamp - right.triggerMessageTimestamp || left.createdAt - right.createdAt
-                ).slice(0, 20);
-                for (const sourceType of ["selected_user_message", "reply_finalized_auto"]) {
-                  const batch = capped.filter(
-                    /** Preserves the original selected/automatic source partition. */
-                    (candidate) => candidate.sourceType === sourceType
-                  );
-                  if (batch.length !== 0) batches2.push(batch);
-                }
-              }
-            }
-            space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
-            yield repository2.writeMemorySpace(ownerKey, space);
-            return batches2;
-          })
-        );
-        for (const batch of batches) {
-          const claimed = yield this.owner.run(
-            /** Claims each batch immediately before processing so independent failures cannot strand later work. */
-            (repository2) => __async(this, null, function* () {
-              if (!(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return false;
-              const space = yield repository2.readMemorySpace(ownerKey), ids = /* @__PURE__ */ new Set();
-              for (const candidate of batch) ids.add(candidate.id);
-              let count = 0;
-              for (const candidate of space.candidates) if (ids.has(candidate.id)) {
-                if (candidate.status !== "pending") throw new Error("Candidate is no longer pending: " + candidate.id);
-                candidate.status = "processing";
-                candidate.attemptCount += 1;
-                candidate.updatedAt = Date.now();
-                count += 1;
-              }
-              if (count !== batch.length) throw new Error("A selected candidate no longer exists");
-              yield repository2.writeMemorySpace(ownerKey, space);
-              return true;
-            })
-          );
-          if (!claimed) break;
-          yield processCandidates(ownerKey, batch, this.owner);
-          report.candidateBatches += 1;
-        }
+      } finally {
+        yield lease.close();
       }
       return report;
+    });
+  }
+  /** Advances one owner's rebuild window and due candidate batches. */
+  runOwner(ownerKey, report) {
+    return __async(this, null, function* () {
+      yield this.owner.run(
+        /** Reclaims only outdated processing claims so interrupted batches can genuinely run again. */
+        (repository2) => __async(this, null, function* () {
+          const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
+          let reclaimed = 0;
+          for (const candidate of space.candidates) if (candidate.status === "processing" && now - candidate.updatedAt >= CANDIDATE_PROCESSING_LEASE_MS) {
+            candidate.status = "pending";
+            candidate.updatedAt = now;
+            reclaimed += 1;
+          }
+          if (reclaimed !== 0) yield repository2.writeMemorySpace(ownerKey, space);
+        })
+      );
+      const taskId = yield this.owner.run(
+        /** Reads a persisted runnable rebuild identity without fabricating a job. */
+        (repository2) => __async(this, null, function* () {
+          const space = yield repository2.readMemorySpace(ownerKey);
+          return space.rebuildTask !== null && (space.rebuildProgress.status === "preparing" || space.rebuildProgress.status === "running") ? space.rebuildTask.id : null;
+        })
+      );
+      if (taskId !== null) {
+        yield processRebuildWindow(ownerKey, taskId, this.owner);
+        report.rebuildWindows += 1;
+      }
+      const batches = yield this.owner.run(
+        /** Claims only due pending records; failed attempts are never automatically retried. */
+        (repository2) => __async(this, null, function* () {
+          if (!(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return [];
+          const space = yield repository2.readMemorySpace(ownerKey), now = Date.now();
+          if (space.settings.autoSaveIntervalMinutes === 0 || now < space.settings.nextAutoSaveRunAtMs) return [];
+          const pending = space.candidates.filter(
+            /** Selects genuinely pending records, not terminal failures. */
+            (candidate) => candidate.status === "pending"
+          );
+          const batches2 = [];
+          if (pending.length >= 5) {
+            const grouped = /* @__PURE__ */ new Map();
+            for (const candidate of pending) {
+              const list = grouped.get(candidate.chatId);
+              if (list === void 0) grouped.set(candidate.chatId, [candidate]);
+              else list.push(candidate);
+            }
+            for (const records2 of grouped.values()) {
+              const capped = records2.sort(
+                /** Applies the Kotlin oldest-source order before the per-chat twenty-record cap. */
+                (left, right) => left.triggerMessageTimestamp - right.triggerMessageTimestamp || left.createdAt - right.createdAt
+              ).slice(0, 20);
+              for (const sourceType of ["selected_user_message", "reply_finalized_auto"]) {
+                const batch = capped.filter(
+                  /** Preserves the original selected/automatic source partition. */
+                  (candidate) => candidate.sourceType === sourceType
+                );
+                if (batch.length !== 0) batches2.push(batch);
+              }
+            }
+          }
+          space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 6e4;
+          yield repository2.writeMemorySpace(ownerKey, space);
+          return batches2;
+        })
+      );
+      for (const batch of batches) {
+        const claimed = yield this.owner.run(
+          /** Claims each batch immediately before processing so independent failures cannot strand later work. */
+          (repository2) => __async(this, null, function* () {
+            if (!(yield repository2.readGlobalMemoryPreferences()).autoUpdateEnabled) return false;
+            const space = yield repository2.readMemorySpace(ownerKey), ids = /* @__PURE__ */ new Set();
+            for (const candidate of batch) ids.add(candidate.id);
+            let count = 0;
+            for (const candidate of space.candidates) if (ids.has(candidate.id)) {
+              if (candidate.status !== "pending") throw new Error("Candidate is no longer pending: " + candidate.id);
+              candidate.status = "processing";
+              candidate.attemptCount += 1;
+              candidate.updatedAt = Date.now();
+              count += 1;
+            }
+            if (count !== batch.length) throw new Error("A selected candidate no longer exists");
+            yield repository2.writeMemorySpace(ownerKey, space);
+            return true;
+          })
+        );
+        if (!claimed) break;
+        yield processCandidates(ownerKey, batch, this.owner);
+        report.candidateBatches += 1;
+      }
     });
   }
 };
@@ -7272,9 +7310,88 @@ function executeDomain(operation, input, host) {
   return handlers[operation](parseDomainPayload(operation, input), host);
 }
 
+// src/memory-jobs/lease.ts
+var _MemoryJobLease = class _MemoryJobLease {
+  constructor(database) {
+    this.database = database;
+    this.holder = "jobs-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+  /**
+   * Takes the owner's claim, or reports false when another live runtime owns it.
+   * A lost race against a concurrent acquirer is the expected skip signal; any
+   * other storage failure propagates.
+   */
+  acquire(ownerKey) {
+    return __async(this, null, function* () {
+      const entry = yield this.collection().get(ownerKey);
+      const record2 = leaseRecord(entry?.value);
+      const now = Date.now();
+      if (record2 !== null && record2.holder === this.holder) return this.claim(ownerKey, entry.version, now);
+      if (record2 !== null && record2.expiresAt > now) return false;
+      return this.claim(ownerKey, entry === null ? null : entry.version, now);
+    });
+  }
+  /**
+   * Drops this runtime's finished claim. An expired takeover by another runtime
+   * is left intact: that runtime legitimately owns the ongoing pass.
+   */
+  release(ownerKey) {
+    return __async(this, null, function* () {
+      const entry = yield this.collection().get(ownerKey);
+      if (entry === null) return;
+      const record2 = leaseRecord(entry.value);
+      if (record2 === null || record2.holder !== this.holder) return;
+      try {
+        yield this.collection().remove(ownerKey, { expectedVersion: entry.version });
+      } catch (error) {
+        if (!isVersionConflict(error)) throw error;
+      }
+    });
+  }
+  /** Releases the SDK handle for this execution. */
+  close() {
+    return this.database.close();
+  }
+  /** Commits one claim through the exact-version precondition; a conflict loses the race. */
+  claim(ownerKey, expectedVersion, now) {
+    return __async(this, null, function* () {
+      try {
+        yield this.collection().put(ownerKey, { holder: this.holder, expiresAt: now + _MemoryJobLease.TTL_MS }, { expectedVersion });
+        return true;
+      } catch (error) {
+        if (isVersionConflict(error)) return false;
+        throw error;
+      }
+    });
+  }
+  collection() {
+    return this.database.collection(_MemoryJobLease.COLLECTION);
+  }
+};
+/** Must exceed the slowest realistic pass (local model inference) so a live holder is never taken over mid-work. */
+_MemoryJobLease.TTL_MS = 10 * 60 * 1e3;
+_MemoryJobLease.COLLECTION = "memory_job_lease";
+var MemoryJobLease = _MemoryJobLease;
+function leaseRecord(value) {
+  if (value === null || typeof value !== "object") return null;
+  const record2 = value;
+  if (typeof record2.holder !== "string" || record2.holder === "" || typeof record2.expiresAt !== "number") return null;
+  return { holder: record2.holder, expiresAt: record2.expiresAt };
+}
+function isVersionConflict(error) {
+  return error instanceof Error && error.message.startsWith("Storage version conflict");
+}
+function openMemoryJobLease() {
+  return __async(this, null, function* () {
+    const directory = ToolPkg.getSpaceDataDir();
+    if (typeof directory !== "string" || directory.trim() === "") throw new Error("Plugin data directory is unavailable");
+    return new MemoryJobLease(yield Tools.Storage.objects.open({ path: directory + "/memory-jobs-lease.sqlite" }));
+  });
+}
+
 // src/service-runtime.ts
 function createCharacterCardsService(owner2, configurations = independentConfigurations) {
-  const jobs = new MemoryJobRunner(owner2), application = createSelectionApplication(configurations);
+  const jobs = new MemoryJobRunner(owner2, openMemoryJobLease), application = createSelectionApplication(configurations);
   function dispatchRequest(request) {
     if (request.action === "listThemeChoices")
       return readThemeChoices(configurations);
