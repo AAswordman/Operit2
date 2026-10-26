@@ -15,6 +15,20 @@ import 'linux_webview_requests.dart';
 
 part 'linux_webview_events.dart';
 
+/// Native GDK event kinds used by the Flutter platform-view input boundary.
+enum LinuxWebViewPointerEventType {
+  enter,
+  leave,
+  motion,
+  buttonPress,
+  buttonRelease,
+  scroll,
+  touchBegin,
+  touchUpdate,
+  touchEnd,
+  touchCancel,
+}
+
 String _createLinuxOpaqueIdentifier(String prefix) {
   final Random random = Random.secure();
   final String token = List<String>.generate(
@@ -65,6 +79,7 @@ class LinuxWebViewController extends PlatformWebViewController {
   EventChannel? _eventChannel;
   StreamSubscription<dynamic>? _eventSubscription;
   _LinuxWebViewDisposal? _nativeDisposal;
+  int? _nativeId;
 
   LinuxNavigationDelegate? _navigationDelegate;
   final Map<String, JavaScriptChannelParams> _javaScriptChannels =
@@ -101,6 +116,7 @@ class LinuxWebViewController extends PlatformWebViewController {
     final int id =
         await rootChannel.invokeMethod<int>('createWebView') ??
         (throw StateError('Failed to create Linux WebView instance.'));
+    _nativeId = id;
     _channel = MethodChannel('$linuxWebViewChannelPrefix/$id');
     _eventChannel = EventChannel('$linuxWebViewChannelPrefix/$id/events');
     _eventSubscription = _eventChannel!.receiveBroadcastStream().listen(
@@ -269,6 +285,21 @@ class LinuxWebViewController extends PlatformWebViewController {
     }
 
     await loadFile(canonicalAssetPath);
+  }
+
+  @override
+  String? get localResourceScheme => 'operit-vfs';
+
+  @override
+  Future<void> setLocalResourceHandler(
+    WebViewLocalResourceHandler? handler,
+  ) async {
+    await _ensureReady();
+    final int? identifier = _nativeId;
+    if (identifier == null) {
+      throw StateError('The Linux WebView has no native identifier.');
+    }
+    await WebViewLocalResourceBridge.setHandler(identifier, handler);
   }
 
   @override
@@ -629,6 +660,40 @@ class LinuxWebViewController extends PlatformWebViewController {
     });
   }
 
+  /// Resolves the identifier shared by native composition and platform layers.
+  Future<int> get nativeViewIdentifier async {
+    await _ensureReady();
+    return _nativeId!;
+  }
+
+  /// Reports disposal without interpreting platform error messages.
+  bool get isDisposed => _disposed;
+
+  /// Returns native keyboard and IME focus to Flutter.
+  Future<void> releaseFocus() => _invoke<void>('releaseFocus');
+
+  /// Sends one pointer event that Flutter hit-tested inside this WebView.
+  Future<void> dispatchPointerEvent({
+    required LinuxWebViewPointerEventType type,
+    required Offset position,
+    required int pointer,
+    required int time,
+    required int modifiers,
+    int button = 0,
+    Offset scrollDelta = Offset.zero,
+  }) => _invoke<void>('dispatchPointerEvent', <String, Object?>{
+    'type': type.index,
+    'x': position.dx,
+    'y': position.dy,
+    'pointer': pointer,
+    'time': time,
+    'modifiers': modifiers,
+    'button': button,
+    'scrollX': scrollDelta.dx,
+    'scrollY': scrollDelta.dy,
+  });
+
+  /// Updates the native layout and clipped viewport in logical pixels.
   Future<void> setFrame(Rect rect, {Rect? clipRect, required bool visible}) {
     final Rect effectiveClip = clipRect ?? rect;
     final int sequence = ++_frameSequence;
@@ -781,6 +846,15 @@ class LinuxWebViewController extends PlatformWebViewController {
       initializationError = error;
       initializationStackTrace = stackTrace;
     }
+    final int? nativeId = _nativeId;
+    if (nativeId != null) {
+      try {
+        await WebViewLocalResourceBridge.setHandler(nativeId, null);
+      } catch (_) {
+        // The native view may already be gone; disposal must still complete.
+      }
+    }
+    _nativeId = null;
     await _nativeDisposal?.dispose();
     _eventSubscription = null;
     _javaScriptChannels.clear();

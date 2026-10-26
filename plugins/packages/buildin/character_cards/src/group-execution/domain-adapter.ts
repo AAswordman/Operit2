@@ -16,7 +16,7 @@ export function createGroupExecutionController(service: ChatConfigurationService
     async readParticipants(selection: string) {
       const parsed = parseChatSelection(selection);
       if (parsed.kind !== "group") throw new Error("Group planner requires a group selection");
-      return orderedGroupParticipants(await service.dispatchDomain("group.get", { id: parsed.id }), service);
+      return orderedGroupParticipants(await service.getGroup(parsed.id), service);
     },
     plan: planGroupResponse,
     transport,

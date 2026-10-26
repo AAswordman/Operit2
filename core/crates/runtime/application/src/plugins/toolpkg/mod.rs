@@ -45,6 +45,8 @@ pub mod ToolPkgChatMessageHookBridge;
 
 #[path = "ToolPkgChatRuntimeHookBridge.rs"]
 pub mod ToolPkgChatRuntimeHookBridge;
+#[path = "ToolPkgChatResponseHookBridge.rs"]
+pub mod ToolPkgChatResponseHookBridge;
 
 #[path = "ToolPkgInputMenuToggleBridge.rs"]
 pub mod ToolPkgInputMenuToggleBridge;

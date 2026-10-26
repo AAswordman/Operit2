@@ -201,6 +201,7 @@ fn assembleRuntimeBootstrapScript() -> String {
         {}
         var globalThis = this;
         var window = globalThis;
+        var global = globalThis;
         var OPERIT_CLEAN_ON_EXIT_DIR = {};
         var __operitRuntimePrelude = {};
         var __operitComposeRuntimeSource = {};
@@ -208,6 +209,13 @@ fn assembleRuntimeBootstrapScript() -> String {
         var console = {{
             log: function() {{ __operitNativeLog('info', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }},
             info: function() {{ __operitNativeLog('info', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }},
+            /** Writes explicit developer diagnostics at Debug severity. */
+            debug: function() {{ __operitNativeLog('debug', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }},
+            /** Writes diagnostics at the same V1-V6 depth as the Rust and Flutter loggers. */
+            verbose: function(level) {{
+                if (!Number.isInteger(level) || level < 1 || level > 6) throw new RangeError('Verbose level must be an integer from 1 to 6');
+                __operitNativeLogVerbose(level, String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments, 1).join(' '));
+            }},
             warn: function() {{ __operitNativeLog('warn', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }},
             error: function() {{ __operitNativeLog('error', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }}
         }};
@@ -469,11 +477,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                 var artifact = OperitComposeArtifact.read(source);
                 preparedSource = artifact === null ? __operitNativePrepareComposeModule(source, identity) : artifact;
             }}
-            var factory = new Function(
-                'module',
-                'exports',
-                'require',
-                '__operit_call_runtime',
+            var factory = __operitNativeCompileModuleFactory(
                 __operitRuntimePrelude + '\n' + (composeCompilation ? preparedSource + (kind === 'main' ? '\n' + __operitComposeRuntimeSource : '') : source)
             );
             cache[key] = factory;
@@ -553,7 +557,22 @@ fn assembleRuntimeBootstrapScript() -> String {
             return names;
         }}
 
-        function __operitExecuteScriptFunction(callId, params, scriptText, targetFunctionName, timeoutSec, preTimeoutMs, structuredResult) {{
+        var __operitScriptSources = new Map();
+
+        /** Retains one immutable source under its realm-owned native identifier. */
+        function __operitRegisterScriptSource(sourceId, scriptText) {{
+            if (typeof sourceId !== 'string' || typeof scriptText !== 'string' || __operitScriptSources.has(sourceId)) {{
+                throw new Error('Invalid or duplicate script source registration');
+            }}
+            __operitScriptSources.set(sourceId, scriptText);
+        }}
+
+        /** Invokes a registered source without transferring or fingerprinting its text again. */
+        function __operitExecuteScriptFunction(callId, params, sourceId, targetFunctionName, structuredResult) {{
+            var scriptText = __operitScriptSources.get(sourceId);
+            if (typeof scriptText !== 'string') {{
+                throw new Error('Unknown registered script source: ' + sourceId);
+            }}
             var previousCallRuntime = globalThis.__operit_call_runtime_ref;
             var previousCallId = globalThis.__operitCurrentCallId;
             var registerCallSession = globalThis.__operitRegisterCallSession;
@@ -573,17 +592,12 @@ fn assembleRuntimeBootstrapScript() -> String {
                     ? globalThis.__operitGetCallState(callId)
                     : null;
             }}
+            /** Restores the surviving context and retires this call after its owned work ends. */
             function finalizeCall() {{
                 if (globalThis.__operitCurrentCallId === callId) {{
-                    globalThis.__operitCurrentCallId =
-                        typeof previousCallId === 'string' ? previousCallId : '';
-                }}
-                if (globalThis.__operit_call_runtime_ref === callRuntime) {{
-                    if (previousCallRuntime && typeof previousCallRuntime === 'object') {{
-                        globalThis.__operit_call_runtime_ref = previousCallRuntime;
-                    }} else {{
-                        delete globalThis.__operit_call_runtime_ref;
-                    }}
+                    globalThis.__operitRestoreCallContext(
+                        globalThis.__operitRestoreLiveCallId(previousCallId, callId)
+                    );
                 }}
                 if (callState.pendingReferences > 0) {{
                     callState.detached = true;
@@ -612,7 +626,7 @@ fn assembleRuntimeBootstrapScript() -> String {
             function markStage(stage) {{
                 if (profileComposeStages) {{
                     var now = Date.now();
-                    console.log('event=compose_pipeline_stage stage=js-stage-' + profileStageName +
+                    console.verbose(4, 'event=compose_pipeline_stage stage=js-stage-' + profileStageName +
                         ' durationMs=' + (now - profileStageStarted) + ' wallMicros=' + (now * 1000) + ' call=' + callId);
                     profileStageStarted = now;
                     profileStageName = stage;
@@ -736,13 +750,17 @@ fn assembleRuntimeBootstrapScript() -> String {
                 log: emitIntermediate,
                 update: emitIntermediate,
                 sendIntermediateResult: emitIntermediate,
-                /** Publishes each retained commit immediately on its own command's structured channel. */
+                /** Registers a subscription cleanup for the exact originating call session. */
+                onCleanup: function(cleanup) {{
+                    if (typeof cleanup !== 'function') {{ throw new TypeError('Call cleanup must be a function'); }}
+                    callState.cleanupCallbacks.add(cleanup);
+                    /** Releases a disposed subscription before its call finishes. */
+                    return function() {{ callState.cleanupCallbacks.delete(cleanup); }};
+                }},
+                /** Transfers the sealed Compose allocation on its owning call channel. */
                 sendComposeResponse: function(phase, response) {{
                     if (!isActive()) {{ throw new Error('Compose response owner is no longer active'); }}
-                    __operitNativeSendStructuredIntermediate(callId, {{
-                        phase: phase,
-                        response: __operitNormalizeComposeResult(response)
-                    }});
+                    __operitNativeSendStructuredIntermediate(callId, response);
                 }},
                 reportError: emitError,
                 done: complete,
@@ -1157,6 +1175,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                 }}
 
                 ensureToolPkgIpcApi();
+                __operitInstallToolPkgRouteApi();
                 if (!registrationMode) {{
                     ensureToolPkgWasmApi();
                 }}
@@ -1167,7 +1186,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                     globalThis.RuntimeContext.__operitEnsureContextRunnerRegistered();
                 }}
                 var moduleCache = registrationMode ? {{}} : __operitGetModuleInstanceCache();
-                var mainModuleKey = ['instance', 'main', packageTarget + ':' + screenPath, String(scriptText || '').length, __operitHashText(scriptText), 'compose=' + structuredResult].join(':');
+                var mainModuleKey = ['instance', 'main', packageTarget + ':' + screenPath, sourceId, 'compose=' + structuredResult].join(':');
                 var module = moduleCache[mainModuleKey];
                 var exports = module && module.exports ? module.exports : null;
                 /** Reads CommonJS candidates from the execution resource owner and preserves empty modules. */
@@ -1280,7 +1299,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                     moduleCache[mainModuleKey] = module;
                     exports = module.exports;
                     markStage('compile_main_script');
-                    var mainFactory = __operitGetFactory('main', packageTarget + ':' + screenPath, scriptText, structuredResult);
+                    var mainFactory = __operitGetFactory('main', packageTarget + ':' + screenPath + ':' + sourceId, scriptText, structuredResult);
                     markStage('execute_main_script');
                     var previousActiveModule = globalThis.__operitActiveModule;
                     var previousActiveExports = globalThis.__operitActiveModuleExports;
@@ -1352,6 +1371,10 @@ fn assembleRuntimeBootstrapScript() -> String {
                     globalThis.__operitActiveModuleExports = invokePreviousActiveExports;
                 }}
                 markStage('handle_function_result');
+                // A nested call may have left the shared cursor on its own id; handleAsync
+                // must subscribe the returned promise to this call, not to that nested one.
+                globalThis.__operitCurrentCallId = callId;
+                globalThis.__operit_call_runtime_ref = callRuntime;
                 if (!callRuntime.handleAsync(functionResult)) {{
                     complete(functionResult);
                 }}
@@ -1390,6 +1413,7 @@ fn assembleRuntimeBootstrapScript() -> String {
         loadPluginConfigJs(),
         loadRuntimeContextJs(),
         buildLazyLibraryBootstrapScript(),
-        JsExecutionScriptBuilder::buildExecutionRuntimeBridgeScript()
+        format!("{}\n{}\n__operitInstallV1Runtime(globalThis);", include_str!("../../../sdk/src/js_sdk/toolpkg_route_runtime.js"),
+            JsExecutionScriptBuilder::buildExecutionRuntimeBridgeScript())
     )
 }

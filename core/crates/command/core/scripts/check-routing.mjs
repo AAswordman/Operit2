@@ -113,7 +113,7 @@ assert.match(delegated, /resolve_root\(command_name, \|name, builtin_names\|[\s\
 assert.match(execute, /self\.manager\s*\.executeResolvedToolPkgCoreCommand\(handler, args, json_mode\)/);
 assert.equal([...delegated.matchAll(/\.executeResolvedToolPkgCoreCommand\(/g)].length, 1);
 assert.doesNotMatch(execute, /\.resolve\(|\.getOrCreatePackageManager\(|readySnapshot\(|\.clone\(/);
-assert.match(sdkExecute, /self\.prepareResolvedToolPkgCoreCommand\(resolved, args, jsonMode\)\.await/);
+assert.match(sdkExecute, /self\.prepareResolvedToolPkgCoreCommand\(resolved, args, jsonMode\)\s*\.await/);
 assert.match(sdkPrepareCommand, /let command = resolved\.declaration\(\);/);
 for (const execution of [sdkExecute, sdkPrepareCommand]) {
   assert.doesNotMatch(execution, /\.resolve\(|getToolPkgCoreCommandCatalog\(|readySnapshot\(/);

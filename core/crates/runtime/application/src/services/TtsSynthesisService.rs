@@ -104,6 +104,30 @@ impl TtsSynthesisService {
         self.synthesizeWithResolvedConfig(ttsConfigId, &config, &cleanedText)
     }
 
+    /// Returns provider audio directly for host plugins and remote device playback.
+    pub fn synthesizeAudioWithConfig(&self, id: &str, text: &str)
+        -> Result<operit_plugin_sdk::js_sdk::results::TtsSynthesizeResultData, String> {
+        if id.trim().is_empty() { return Err("tts config id is empty".into()); }
+        let text = TtsCleaner::clean(text);
+        if text.is_empty() { return Err("tts text is empty".into()); }
+        let config = self.ttsConfigManager.getTtsConfig(id).map_err(|e| e.to_string())?;
+        let provider = self.createVoiceService(&config)?;
+        let extension = provider.outputExtension(&config)?;
+        let contentType = match extension {
+            "wav" => "audio/wav", "mp3" => "audio/mpeg", "ogg" => "audio/ogg",
+            "opus" => "audio/opus", "flac" => "audio/flac", "aac" => "audio/aac",
+            "pcm" => "application/octet-stream",
+            _ => return Err(format!("Unsupported TTS output format: {extension}")),
+        };
+        let mut segments = Vec::new();
+        for segment in TtsSegmenter::segment(&text, 4000) {
+            let audio = provider.synthesize(&config, &segment)?;
+            if audio.is_empty() { return Err("TTS provider returned empty audio".into()); }
+            segments.push(operit_plugin_sdk::js_sdk::results::TtsAudioSegment { audio, contentType: contentType.into() });
+        }
+        Ok(operit_plugin_sdk::js_sdk::results::TtsSynthesizeResultData { segments })
+    }
+
     /// Synthesizes cleaned text and writes every generated segment to runtime storage.
     fn synthesizeWithResolvedConfig(
         &self,

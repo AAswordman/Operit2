@@ -18,7 +18,6 @@ pub(super) struct LiveChannel {
     inbox: AsyncMutex<mpsc::UnboundedReceiver<PeerMessage>>,
     heartbeat: Mutex<Heartbeat>,
     failure: Mutex<Option<CoreLinkError>>,
-    transaction: AsyncMutex<()>,
     changed: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -33,7 +32,7 @@ impl LiveChannel {
         let live = Arc::new(Self {
             raw: channel.raw.clone(), channel, inbox: AsyncMutex::new(receiver),
             heartbeat: Mutex::new(Heartbeat::new(now)),
-            failure: Mutex::new(None), transaction: AsyncMutex::new(()), changed: Box::new(changed),
+            failure: Mutex::new(None), changed: Box::new(changed),
         });
         let reader = live.clone();
         let tasks = scheduler.clone();
@@ -50,9 +49,12 @@ impl LiveChannel {
     pub(super) fn channel(&self) -> Arc<Channel> { self.channel.clone() }
 
     /// Sends an authenticated frame and makes explicit write failures terminal for this channel.
-    pub(super) async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> {
+    pub(super) async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> { self.sendBatch(vec![message]).await }
+
+    /// Publishes one ordered burst without interleaving other operations on the carrier.
+    pub(super) async fn sendBatch(&self, messages: Vec<PeerMessage>) -> Result<(), CoreLinkError> {
         if let Some(error) = self.failure.lock().unwrap().clone() { return Err(error); }
-        match self.channel.send(message).await {
+        match self.channel.sendBatch(messages).await {
             Ok(()) => Ok(()),
             Err(error) => { self.terminate(error.clone()).await; Err(error) }
         }
@@ -67,16 +69,6 @@ impl LiveChannel {
                 Some(error) => Err(error),
                 None => Ok(None),
             },
-        }
-    }
-
-    /// Exchanges setup messages before the multiplexed response reader is started.
-    pub(super) async fn exchange(&self, request: CoreLinkRequest) -> Result<CoreLinkResponse, CoreLinkError> {
-        let _transaction = self.transaction.lock().await;
-        self.send(PeerMessage::Request(request)).await?;
-        match self.receive().await? {
-            Some(PeerMessage::Response(response)) => Ok(response),
-            _ => Err(error("Missing Link response")),
         }
     }
 

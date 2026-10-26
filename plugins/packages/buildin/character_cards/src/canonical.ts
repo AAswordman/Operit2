@@ -1,7 +1,6 @@
 import type {
   ActivePrompt,
   Card,
-  ChatBinding,
   ConversationGroupRecord,
   Group,
   Memory,
@@ -27,6 +26,7 @@ import type {
 
 /** Defines the plugin's local business repository, not an SDK host or global service. */
 export interface CharacterRepository {
+  readonly chatBindings: import("./chat-bindings").CharacterChatBindings;
   readGlobalMemoryPreferences(): Promise<
     import("./model").GlobalMemoryPreferences
   >;
@@ -34,6 +34,10 @@ export interface CharacterRepository {
     key: keyof import("./model").GlobalMemoryPreferences,
     value: boolean,
   ): Promise<import("./model").GlobalMemoryPreferences>;
+  readMemoryRecallSettings(): Promise<import("./model").MemoryRecallSettings>;
+  writeMemoryRecallSettings(
+    settings: import("./model").MemoryRecallSettings,
+  ): Promise<import("./model").MemoryRecallSettings>;
   searchMemoryDebug(
     options: MemorySearchOptions,
     config: MemorySearchConfig,
@@ -51,8 +55,6 @@ export interface CharacterRepository {
   updateCharacter(card: Card): Promise<Card>;
   /** Removes the character and its owned memory space without changing the active actor. */
   deleteCharacter(id: string): Promise<void>;
-  /** Restores the explicit product default character, not a recovery record. */
-  resetDefaultCharacter(): Promise<Card>;
   /** Lists complete groups. */
   listGroups(): Promise<Group[]>;
   /** Requires an exact existing group. */
@@ -93,16 +95,6 @@ export interface CharacterRepository {
   readActive(): Promise<ActivePrompt>;
   /** Selects an existing character or group. */
   writeActive(active: ActivePrompt): Promise<void>;
-  /** Reads the authenticated host record namespace, never file or current global selection. */
-  readChatBinding(chatId: string): Promise<ChatBinding>;
-  /** Enumerates real host conversations and their record-extension selections for background tasks. */
-  listChatBindings(): Promise<ChatBinding[]>;
-  /** Writes an explicit selection only to the authenticated host record namespace. */
-  writeChatBinding(binding: ChatBinding): Promise<ChatBinding>;
-  /** Removes the authenticated namespace without deleting chats or file-owned membership. */
-  deleteChatBinding(
-    chatId: string,
-  ): Promise<{ chatId: string; deleted: boolean }>;
   /** Reads the owner's persisted USER.md content. */
   readUser(ownerKey: string): Promise<UserDocument>;
   /** Stages the owner's complete USER.md content in the same authoritative file. */
@@ -111,8 +103,18 @@ export interface CharacterRepository {
   readUserPath(ownerKey: string): Promise<string>;
   /** Lists genuinely initialized owner namespaces for the private job scheduler. */
   listMemoryOwnerKeys(): Promise<string[]>;
+  /** Removes memory owners whose backing entity no longer exists and returns their pruned keys. */
+  pruneOrphanMemoryOwners(): Promise<string[]>;
   /** Allocates one lossless private candidate or job identity in this snapshot. */
   allocateRecordId(): Promise<string>;
+  /** Reads only owner job metadata and candidates. */
+  readMemoryJobState(ownerKey: string): Promise<import("./model").MemoryJobState>;
+  /** Writes job changes under their original exact record versions. */
+  writeMemoryJobState(ownerKey: string, state: import("./model").MemoryJobState): Promise<void>;
+  /** Rebuilds source vectors through bounded durable database pages. */
+  rebuildMemoryEmbeddings(ownerKey: string): Promise<number>;
+  /** Ranks original document chunks without constructing source vectors during queries. */
+  searchMemoryChunks(ownerKey: string, memoryId: string, query: string, count: number): Promise<{ total: number; chunks: import("./model").DocumentChunk[] }>;
   /** Writes a complete validated owner space without replacing the separate USER.md file. */
   writeMemorySpace(ownerKey: string, space: MemorySpace): Promise<void>;
   /** Reads the complete memory space for full-record exports. */
@@ -127,8 +129,14 @@ export interface CharacterRepository {
   readMemoryGraph(ownerKey: string): Promise<MemoryGraph>;
   /** Lists complete memories including document nodes. */
   listMemories(ownerKey: string): Promise<Memory[]>;
+  /** Reads exact titles in the selected owner without scanning the corpus in TypeScript. */
+  readMemoriesByTitles(ownerKey: string, titles: string[]): Promise<Memory[]>;
+  /** Requires one unambiguous exact title. */
+  readMemoryByTitle(ownerKey: string, title: string): Promise<Memory>;
   /** Lists stored folders without graph projection. */
   listMemoryFolders(ownerKey: string): Promise<string[]>;
+  /** Returns a bounded database page and the exact snapshot exclusion count. */
+  searchMemoryPage(options: MemorySearchOptions): Promise<import("./api").DomainOutput<"memory.searchWithOptions">>;
   /** Searches full records using the plugin's explicit scoring algorithm. */
   searchMemories(options: MemorySearchOptions): Promise<Memory[]>;
   /** Creates an intentional new memory with complete identity and metadata. */
@@ -141,6 +149,8 @@ export interface CharacterRepository {
     id: string,
     values: MemoryValues,
   ): Promise<Memory>;
+  /** Combines all exact source-title matches into a new textual record and redirects their relationships. */
+  mergeMemories(ownerKey: string, sourceTitles: string[], values: MemoryValues): Promise<Memory>;
   /** Deletes a memory together with its chunks and links. */
   deleteMemory(ownerKey: string, id: string): Promise<void>;
   /** Moves selected memories in the same operation. */
@@ -170,6 +180,8 @@ export interface CharacterRepository {
     ownerKey: string,
     settings: MemorySettings,
   ): Promise<void>;
+  /** Saves settings and search weights in one owner transaction while retaining scheduler timing. */
+  writeMemoryOwnerSettings(ownerKey: string, settings: MemorySettings, config: MemorySearchConfig): Promise<{ settings: MemorySettings; config: MemorySearchConfig }>;
   /** Reads all search weights and scoring mode. */
   readMemorySearchConfig(ownerKey: string): Promise<MemorySearchConfig>;
   /** Writes all search weights and scoring mode. */
@@ -192,15 +204,30 @@ export interface CharacterRepository {
   restoreGroups(groups: Group[]): Promise<import("./model").BackupImportResult>;
 }
 
-/** Serializes service operations against the one plugin-owned file repository. */
+/** Separates indexed reads from full-state editing transactions. */
 export interface CharacterRepositoryOwner extends Pick<
   CharacterRepository,
+  | "chatBindings"
   | "readGlobalMemoryPreferences"
+  | "readMemoryRecallSettings"
+  | "readActive"
+  | "listCharacters"
+  | "listGroups"
+  | "getCharacter"
+  | "getGroup"
+  | "getTag"
+  | "getStore"
+  | "listModels"
+  | "listTtsConfigs"
+  | "listTags"
+  | "listStores"
   | "readMemorySettings"
   | "readMemorySearchConfig"
   | "readUser"
   | "readUserPath"
 > {
+  /** Reads the configuration directory without loading memory bodies or job relations. */
+  readConfigurationSnapshot(): Promise<import("./model").Snapshot>;
   /** Reads role presentation records without loading unrelated memory relations. */
   readSidebarDirectory(): Promise<
     Pick<import("./model").Snapshot, "cards" | "groups">

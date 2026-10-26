@@ -27,7 +27,9 @@ class AndroidRootCommandsTest(unittest.TestCase):
             'AndroidCommandProcessRunner.kt',
             'AndroidRootCommandRouter.kt',
         )]
-        sources.append(Path(__file__).parent / 'kotlin/AndroidRootCommandsTest.kt')
+        sources.extend(Path(__file__).parent / 'kotlin' / name for name in (
+            'AndroidRootCommandsTest.kt', 'HostTaskScheduler.kt',
+        ))
         with tempfile.TemporaryDirectory(prefix='operit-root-tests-') as directory:
             jar = str(Path(directory) / 'root-tests.jar')
             subprocess.run([compiler, *map(str, sources), '-jvm-target', '17', '-include-runtime', '-d', jar], check=True, timeout=120)

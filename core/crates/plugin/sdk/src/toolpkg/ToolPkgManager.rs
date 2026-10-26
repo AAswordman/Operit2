@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -49,14 +50,34 @@ struct ToolPkgExecutionEngineEntry {
     containerPackageName: String,
     engine: Arc<dyn JsExecutionEngine>,
     activeLeases: usize,
+    /// Container-owned main realms survive the end of an individual invocation.
+    containerOwned: bool,
+}
+
+/// Holds one execution lease until the associated asynchronous operation finishes or is cancelled.
+pub struct ToolPkgExecutionEngineLease {
+    manager: ToolPkgManager,
+    contextKey: String,
+    containerPackageName: String,
+    engine: Arc<dyn JsExecutionEngine>,
+}
+
+impl Drop for ToolPkgExecutionEngineLease {
+    /// Releases the execution lease after the caller stops owning the asynchronous operation.
+    fn drop(&mut self) {
+        self.manager
+            .releaseExecutionEngineLease(&self.contextKey, &self.containerPackageName, Some(&self.engine));
+    }
 }
 
 /// Tracks live engines and revocation generations under the same registry lock.
 #[derive(Default)]
 struct ToolPkgExecutionEngineRegistry {
+    mainScripts: BTreeMap<String, String>,
     entries: BTreeMap<String, ToolPkgExecutionEngineEntry>,
     packageGenerations: BTreeMap<String, u64>,
     factoryGeneration: u64,
+    closed: bool,
 }
 
 type ExecutionEngineGeneration = (u64, u64);
@@ -66,6 +87,7 @@ type ExecutionEngineGeneration = (u64, u64);
 pub struct ToolPkgManager {
     containers: Arc<RwLock<BTreeMap<String, ToolPkgContainerRuntime>>>,
     subpackageByPackageName: Arc<RwLock<BTreeMap<String, ToolPkgSubpackageRuntime>>>,
+    runtimeRevisions: Arc<RwLock<BTreeMap<String, Option<u64>>>>,
     runtimeChangeListeners: Arc<Mutex<Vec<ToolPkgRuntimeChangeListener>>>,
     toolPkgExecutionEngines: Arc<Mutex<ToolPkgExecutionEngineRegistry>>,
     executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
@@ -83,6 +105,7 @@ impl ToolPkgManager {
         Self {
             containers: Arc::new(RwLock::new(BTreeMap::new())),
             subpackageByPackageName: Arc::new(RwLock::new(BTreeMap::new())),
+            runtimeRevisions: Arc::new(RwLock::new(BTreeMap::new())),
             runtimeChangeListeners: Arc::new(Mutex::new(Vec::new())),
             toolPkgExecutionEngines: Arc::new(Mutex::new(ToolPkgExecutionEngineRegistry::default())),
             executionEngineFactory,
@@ -99,6 +122,17 @@ impl ToolPkgManager {
     ) {
         self.removeExecutionEnginesMatching(|_| true, |registry| registry.factoryGeneration += 1);
         self.executionEngineFactory = executionEngineFactory;
+    }
+
+    /// Ends the owning Core lifetime, including in-flight and container-owned realms.
+    /// The closed registry also rejects work scheduled before an identity/root switch.
+    #[allow(non_snake_case)]
+    pub fn shutdownExecutionEngines(&self) {
+        self.removeExecutionEnginesMatching(|_| true, |registry| {
+            registry.closed = true;
+            registry.mainScripts.clear();
+            registry.factoryGeneration += 1;
+        });
     }
 
     /// Returns whether a package name belongs to a registered ToolPkg container.
@@ -216,10 +250,12 @@ impl ToolPkgManager {
     #[allow(non_snake_case)]
     pub fn registerToolPkg(&mut self, loadResult: ToolPkgLoadResult) -> Vec<ToolPackage> {
         let containerName = loadResult.containerPackage.name.clone();
+        self.runtimeRevisions.write().expect("toolpkg revision lock poisoned")
+            .insert(containerName.clone(), self.runtimeRevision(&loadResult.containerRuntime));
         self.containers
             .write()
             .expect("toolpkg container runtime lock poisoned")
-            .insert(containerName, loadResult.containerRuntime.clone());
+            .insert(containerName.clone(), loadResult.containerRuntime.clone());
         let mut subpackages = self
             .subpackageByPackageName
             .write()
@@ -227,6 +263,10 @@ impl ToolPkgManager {
         for runtime in loadResult.containerRuntime.subpackages {
             subpackages.insert(runtime.packageName.clone(), runtime);
         }
+        drop(subpackages);
+        // Publish the replacement before revoking: a racing creator must never
+        // bind old metadata using the replacement generation.
+        self.revokeContainerExecutionContexts(&containerName);
         loadResult.subpackagePackages
     }
 
@@ -250,25 +290,71 @@ impl ToolPkgManager {
         }
         drop(subpackages);
         self.revokeContainerExecutionContexts(&runtime.packageName);
+        self.runtimeRevisions.write().expect("toolpkg revision lock poisoned").remove(&runtime.packageName);
         Some(runtime)
     }
 
-    /// Replaces catalog metadata and retires unowned caches while preserving active context leases.
+    /// Preserves unchanged container realms; changed/removed sources revoke every owned context.
     #[allow(non_snake_case)]
     pub fn replaceRuntimeMaps(
         &mut self,
         containers: BTreeMap<String, ToolPkgContainerRuntime>,
         subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
     ) {
-        *self
-            .containers
-            .write()
-            .expect("toolpkg container runtime lock poisoned") = containers;
-        *self
-            .subpackageByPackageName
-            .write()
-            .expect("toolpkg subpackage runtime lock poisoned") = subpackageByPackageName;
-        self.removeExecutionEnginesMatching(|entry| entry.activeLeases == 0, |_| {});
+        let revisions = containers.iter()
+            .map(|(name, runtime)| (name.clone(), self.runtimeRevision(runtime)))
+            .collect::<BTreeMap<_, _>>();
+        let revoked = {
+            let mut previous = self.runtimeRevisions.write().expect("toolpkg revision lock poisoned");
+            let revoked = previous.iter().filter_map(|(name, revision)| {
+                // A failed source read must never make a stale realm appear unchanged.
+                (revision.is_none() || revisions.get(name) != Some(revision))
+                    .then(|| name.clone())
+            }).collect::<Vec<_>>();
+            *previous = revisions;
+            revoked
+        };
+        *self.containers.write().expect("toolpkg container runtime lock poisoned") = containers;
+        *self.subpackageByPackageName.write().expect("toolpkg subpackage runtime lock poisoned") = subpackageByPackageName;
+        for name in revoked {
+            self.revokeContainerExecutionContexts(&name);
+        }
+    }
+
+    /// Fingerprints source content at catalog boundaries, never on the invocation hot path.
+    /// Embedded assets are immutable for this process. Directory contents must be checked:
+    /// replacing a child can leave both the manifest version and parent mtime unchanged.
+    #[allow(non_snake_case)]
+    fn runtimeRevision(&self, runtime: &ToolPkgContainerRuntime) -> Option<u64> {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        let mut metadata = serde_json::to_value(runtime).ok()?;
+        // Localized text uses HashMap; fresh scans must hash identical content identically.
+        metadata.sort_all_objects();
+        serde_json::to_vec(&metadata).ok()?.hash(&mut hash);
+        if runtime.sourceType != ToolPkgSourceType::ASSET {
+            self.hashSource(&runtime.sourcePath, 0, &mut hash)?;
+        }
+        Some(hash.finish())
+    }
+
+    #[allow(non_snake_case)]
+    fn hashSource(&self, path: &str, depth: usize, hash: &mut impl Hasher) -> Option<()> {
+        // Fail closed on pathological/symlink directory trees rather than recurse forever.
+        if depth > 64 { return None; }
+        let info = self.fileSystemHost.fileExists(path).ok()?;
+        if !info.exists { return None; }
+        path.hash(hash);
+        if info.isDirectory {
+            let mut entries = self.fileSystemHost.listFiles(path).ok()?;
+            entries.sort_by(|a, b| a.name.cmp(&b.name));
+            for entry in entries {
+                if entry.name == "." || entry.name == ".." { continue; }
+                self.hashSource(&joinToolPkgSourcePath(path, &entry.name), depth + 1, hash)?;
+            }
+        } else {
+            self.fileSystemHost.readFileBytes(path).ok()?.hash(hash);
+        }
+        Some(())
     }
 
     /// Checks one container using the same direct-or-subpackage rule as the active catalog.
@@ -365,7 +451,7 @@ impl ToolPkgManager {
         if !enabled || runtime.mainEntry.trim().is_empty() {
             return None;
         }
-        self.readToolPkgResourceText(&runtime, &runtime.mainEntry)
+        self.readToolPkgMainScript(&runtime)
     }
 
     /// Returns the main script of one registered ToolPkg container for runtime IPC dispatch.
@@ -375,7 +461,7 @@ impl ToolPkgManager {
         if runtime.mainEntry.trim().is_empty() {
             return None;
         }
-        self.readToolPkgResourceText(&runtime, &runtime.mainEntry)
+        self.readToolPkgMainScript(&runtime)
     }
 
     /// Reads a text resource from an enabled ToolPkg container or subpackage.
@@ -413,13 +499,48 @@ impl ToolPkgManager {
         contextKey: &str,
         containerPackageName: &str,
     ) -> Result<Arc<dyn JsExecutionEngine>, String> {
-        self.executionEngineWithLease(contextKey, containerPackageName, false)
+        self.executionEngineWithLease(contextKey, containerPackageName, false, false)
     }
 
     /// Acquires one counted lease for a ToolPkg JavaScript execution context.
     #[allow(non_snake_case)]
     pub fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) -> Result<(), String> {
-        self.executionEngineWithLease(contextKey, containerPackageName, true).map(|_| ())
+        self.executionEngineWithLease(contextKey, containerPackageName, true, false).map(|_| ())
+    }
+
+    /// Acquires an execution lease whose lifetime is coupled to the caller's asynchronous work.
+    #[allow(non_snake_case)]
+    pub fn leaseToolPkgExecutionEngine(
+        &self,
+        contextKey: &str,
+        containerPackageName: &str,
+    ) -> Result<(Arc<dyn JsExecutionEngine>, ToolPkgExecutionEngineLease), String> {
+        self.leaseExecutionEngine(contextKey, containerPackageName, false)
+    }
+
+    /// Main hooks, public APIs and package calls share the container-owned main realm.
+    #[allow(non_snake_case)]
+    pub fn leaseToolPkgMainExecutionEngine(
+        &self, containerPackageName: &str,
+    ) -> Result<(Arc<dyn JsExecutionEngine>, ToolPkgExecutionEngineLease), String> {
+        let contextKey = format!("toolpkg_main:{}", containerPackageName.trim());
+        self.leaseExecutionEngine(&contextKey, containerPackageName, true)
+    }
+
+    #[allow(non_snake_case)]
+    fn leaseExecutionEngine(
+        &self, contextKey: &str, containerPackageName: &str, containerOwned: bool,
+    ) -> Result<(Arc<dyn JsExecutionEngine>, ToolPkgExecutionEngineLease), String> {
+        let engine = self.executionEngineWithLease(contextKey, containerPackageName, true, containerOwned)?;
+        Ok((
+            engine.clone(),
+            ToolPkgExecutionEngineLease {
+                manager: self.clone(),
+                contextKey: contextKey.trim().to_string(),
+                containerPackageName: containerPackageName.trim().to_string(),
+                engine,
+            },
+        ))
     }
 
     /// Starts workers without holding the registry lock. Startup authenticates via
@@ -431,12 +552,13 @@ impl ToolPkgManager {
         contextKey: &str,
         containerPackageName: &str,
         acquireLease: bool,
+        containerOwned: bool,
     ) -> Result<Arc<dyn JsExecutionEngine>, String> {
-        let (existing, generation) = self.cachedExecutionEngine(contextKey, containerPackageName, acquireLease)?;
+        let (existing, generation) = self.cachedExecutionEngine(contextKey, containerPackageName, acquireLease, containerOwned)?;
         if let Some(engine) = existing { return Ok(engine); }
         let context = self.executionContext(contextKey, containerPackageName)?;
         let created = self.executionEngineFactory.createToolPkgExecutionEngine(context)?;
-        self.publishExecutionEngine(contextKey, containerPackageName, acquireLease, generation, created)
+        self.publishExecutionEngine(contextKey, containerPackageName, acquireLease, containerOwned, generation, created)
     }
 
     /// Acquires a counted page lease while awaiting a prepared engine outside registry locks.
@@ -444,17 +566,17 @@ impl ToolPkgManager {
     pub async fn acquireToolPkgExecutionEngineAsync(
         &self, contextKey: &str, containerPackageName: &str,
     ) -> Result<(), String> {
-        let (existing, generation) = self.cachedExecutionEngine(contextKey, containerPackageName, true)?;
+        let (existing, generation) = self.cachedExecutionEngine(contextKey, containerPackageName, true, false)?;
         if existing.is_some() { return Ok(()); }
         let context = self.executionContext(contextKey, containerPackageName)?;
         let created = self.executionEngineFactory.acquireToolPkgExecutionEngine(context).await?;
-        self.publishExecutionEngine(contextKey, containerPackageName, true, generation, created).map(|_| ())
+        self.publishExecutionEngine(contextKey, containerPackageName, true, false, generation, created).map(|_| ())
     }
 
     /// Validates an explicit owner and counts a lease only for an existing matching entry.
     #[allow(non_snake_case)]
     fn cachedExecutionEngine(
-        &self, contextKey: &str, containerPackageName: &str, acquireLease: bool,
+        &self, contextKey: &str, containerPackageName: &str, acquireLease: bool, containerOwned: bool,
     ) -> Result<(Option<Arc<dyn JsExecutionEngine>>, ExecutionEngineGeneration), String> {
         let normalizedKey = contextKey.trim();
         let normalizedContainer = containerPackageName.trim();
@@ -463,11 +585,13 @@ impl ToolPkgManager {
         {
             let mut engines = self.toolPkgExecutionEngines.lock()
                 .expect("toolpkg execution engine mutex poisoned");
+            if engines.closed { return Err("ToolPkg execution owner has shut down".into()); }
             let packageGeneration = *engines.packageGenerations.entry(normalizedContainer.to_string()).or_insert(0);
             let generation = (engines.factoryGeneration, packageGeneration);
             if let Some(entry) = engines.entries.get_mut(normalizedKey) {
                 if entry.containerPackageName != normalizedContainer { return Err("ToolPkg execution context belongs to a different container".into()); }
                 if acquireLease { entry.activeLeases += 1; }
+                entry.containerOwned |= containerOwned;
                 return Ok((Some(entry.engine.clone()), generation));
             }
             Ok((None, generation))
@@ -492,7 +616,7 @@ impl ToolPkgManager {
     /// Publishes a freshly bound engine and destroys an unused racing creator outside locks.
     #[allow(non_snake_case)]
     fn publishExecutionEngine(
-        &self, contextKey: &str, containerPackageName: &str, acquireLease: bool,
+        &self, contextKey: &str, containerPackageName: &str, acquireLease: bool, containerOwned: bool,
         generation: ExecutionEngineGeneration, created: Arc<dyn JsExecutionEngine>,
     ) -> Result<Arc<dyn JsExecutionEngine>, String> {
         let normalizedKey = contextKey.trim();
@@ -509,12 +633,14 @@ impl ToolPkgManager {
                     Err("ToolPkg execution context belongs to a different container".to_string())
                 } else {
                     if acquireLease { entry.activeLeases += 1; }
+                    entry.containerOwned |= containerOwned;
                     Ok(Some(entry.engine.clone()))
                 }
             } else {
                 engines.entries.insert(normalizedKey.to_string(), ToolPkgExecutionEngineEntry {
                     containerPackageName: normalizedContainer.to_string(),
                     engine: created.clone(), activeLeases: usize::from(acquireLease),
+                    containerOwned: containerOwned || !acquireLease,
                 });
                 Ok(None)
             }
@@ -559,11 +685,18 @@ impl ToolPkgManager {
     /// Releases one counted lease for a ToolPkg JavaScript execution context.
     #[allow(non_snake_case)]
     pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
+        self.releaseExecutionEngineLease(contextKey, containerPackageName, None);
+    }
+
+    /// An old in-flight call must not decrement a replacement realm's lease count.
+    #[allow(non_snake_case)]
+    fn releaseExecutionEngineLease(
+        &self, contextKey: &str, containerPackageName: &str,
+        expectedEngine: Option<&Arc<dyn JsExecutionEngine>>,
+    ) {
         let normalizedKey = contextKey.trim();
         let normalizedContainer = containerPackageName.trim();
-        if normalizedKey.is_empty() || normalizedContainer.is_empty() {
-            return;
-        }
+        if normalizedKey.is_empty() || normalizedContainer.is_empty() { return; }
         let removed = {
             let mut engines = self
                 .toolPkgExecutionEngines
@@ -572,6 +705,9 @@ impl ToolPkgManager {
             let Some(entry) = engines.entries.get_mut(normalizedKey) else {
                 return;
             };
+            if expectedEngine.is_some_and(|expected| !Arc::ptr_eq(expected, &entry.engine)) {
+                return;
+            }
             assert_eq!(
                 entry.containerPackageName, normalizedContainer,
                 "ToolPkg execution context belongs to a different container"
@@ -581,7 +717,7 @@ impl ToolPkgManager {
                 "ToolPkg execution context has no active lease"
             );
             entry.activeLeases -= 1;
-            if entry.activeLeases == 0 {
+            if entry.activeLeases == 0 && !entry.containerOwned {
                 engines.entries.remove(normalizedKey)
             } else {
                 None
@@ -601,7 +737,10 @@ impl ToolPkgManager {
         }
         self.removeExecutionEnginesMatching(
             |entry| entry.containerPackageName == normalizedContainer,
-            |registry| { *registry.packageGenerations.entry(normalizedContainer.to_string()).or_insert(0) += 1; },
+            |registry| {
+                registry.mainScripts.remove(normalizedContainer);
+                *registry.packageGenerations.entry(normalizedContainer.to_string()).or_insert(0) += 1;
+            },
         );
     }
 
@@ -630,6 +769,31 @@ impl ToolPkgManager {
         for entry in removed {
             entry.engine.destroy();
         }
+    }
+
+    /// Shares the main source for one catalog generation and rejects publication after revocation.
+    #[allow(non_snake_case)]
+    fn readToolPkgMainScript(&self, runtime: &ToolPkgContainerRuntime) -> Option<String> {
+        let containers = self.containers.read().expect("toolpkg container runtime lock poisoned");
+        let registered = containers.get(&runtime.packageName)?;
+        if registered.sourceType != runtime.sourceType || registered.sourcePath != runtime.sourcePath
+            || registered.mainEntry != runtime.mainEntry {
+            return None;
+        }
+        let generation = {
+            let mut registry = self.toolPkgExecutionEngines.lock().expect("toolpkg execution engine mutex poisoned");
+            if registry.closed { return None; }
+            if let Some(script) = registry.mainScripts.get(&runtime.packageName) {
+                return Some(script.clone());
+            }
+            *registry.packageGenerations.entry(runtime.packageName.clone()).or_insert(0)
+        };
+        let script = self.readToolPkgResourceText(runtime, &runtime.mainEntry)?;
+        let mut registry = self.toolPkgExecutionEngines.lock().expect("toolpkg execution engine mutex poisoned");
+        if registry.closed || registry.packageGenerations.get(&runtime.packageName) != Some(&generation) {
+            return None;
+        }
+        Some(registry.mainScripts.entry(runtime.packageName.clone()).or_insert(script).clone())
     }
 
     /// Reads one ToolPkg resource as UTF-8 text.
@@ -718,53 +882,60 @@ fn joinToolPkgSourcePath(sourcePath: &str, entryPath: &str) -> String {
 }
 
 impl ToolPkgHookDispatcher for ToolPkgManager {
-    /// Invokes one ToolPkg hook using its container main script and execution context.
+    /// Preserves typed failures and applies a deadline only to an explicitly timed before hook.
     #[allow(non_snake_case)]
     fn dispatchToolPkgHook(
         &self,
         enabledPackageNames: &[String],
         invocation: ToolPkgHookInvocation,
-    ) -> crate::javascript::JsExecutionCompletion<Result<Option<String>, String>> {
+    ) -> crate::javascript::JsExecutionCompletion<
+        crate::execution_result::JsExecutionResult<Option<String>>,
+    > {
         let prepared = self.prepareToolPkgHook(enabledPackageNames, &invocation);
         Box::pin(async move {
-            let (engine, script, params) = prepared?;
-            engine
-                .execute_script_function_with_timeout_millis(
-                    &script,
-                    &invocation.functionName,
-                    &params,
-                    &invocation.envOverrides,
-                    invocation.onIntermediateResult,
-                    invocation.dispatchIntermediateOnMain,
-                    invocation.timeoutMillis,
-                )
-                .await
-                .map_err(|error| error.to_string())
+            let (engine, script, params, _lease) =
+                prepared.map_err(crate::execution_result::JsExecutionError::invalid_request)?;
+            match invocation.timeoutMillis {
+                Some(timeout) => {
+                    engine
+                        .execute_script_function_with_timeout_millis(
+                            &script,
+                            &invocation.functionName,
+                            &params,
+                            &invocation.envOverrides,
+                            invocation.onIntermediateResult,
+                            invocation.dispatchIntermediateOnMain,
+                            timeout,
+                        )
+                        .await
+                }
+                None => {
+                    engine
+                        .execute_script_function(
+                            &script,
+                            &invocation.functionName,
+                            &params,
+                            &invocation.envOverrides,
+                            invocation.onIntermediateResult,
+                            invocation.dispatchIntermediateOnMain,
+                        )
+                        .await
+                }
+            }
         })
     }
 }
 
 impl ToolPkgManager {
-    /// Invokes a ToolPkg hook through the host-owned asynchronous execution boundary.
+    /// Uses the same typed lifecycle contract for asynchronous hook dispatch.
     #[allow(non_snake_case)]
     pub async fn dispatchToolPkgHookAsync(
         &self,
         enabledPackageNames: &[String],
         invocation: ToolPkgHookInvocation,
-    ) -> Result<Option<String>, String> {
-        let (engine, script, params) = self.prepareToolPkgHook(enabledPackageNames, &invocation)?;
-        engine
-            .execute_script_function_async(
-                script,
-                invocation.functionName,
-                params,
-                invocation.envOverrides,
-                invocation.onIntermediateResult,
-                invocation.dispatchIntermediateOnMain,
-                invocation.timeoutMillis,
-            )
+    ) -> crate::execution_result::JsExecutionResult<Option<String>> {
+        self.dispatchToolPkgHook(enabledPackageNames, invocation)
             .await
-            .map_err(|error| error.to_string())
     }
 
     /// Resolves the engine, script, and event parameters shared by hook execution APIs.
@@ -773,7 +944,12 @@ impl ToolPkgManager {
         &self,
         enabledPackageNames: &[String],
         invocation: &ToolPkgHookInvocation,
-    ) -> Result<(Arc<dyn JsExecutionEngine>, String, BTreeMap<String, Value>), String> {
+    ) -> Result<(
+        Arc<dyn JsExecutionEngine>,
+        String,
+        BTreeMap<String, Value>,
+        ToolPkgExecutionEngineLease,
+    ), String> {
         let containerPackageName = invocation.containerPackageName.trim();
         let runtime = self
             .getToolPkgContainerRuntime(containerPackageName)
@@ -887,8 +1063,12 @@ impl ToolPkgManager {
         }
 
         let contextKey = resolveToolPkgExecutionContextKey(&runtime.packageName, &params);
-        let engine = self.getToolPkgExecutionEngine(&contextKey, &runtime.packageName)?;
-        Ok((engine, script, params))
+        let (engine, lease) = if contextKey == format!("toolpkg_main:{}", runtime.packageName) {
+            self.leaseToolPkgMainExecutionEngine(&runtime.packageName)?
+        } else {
+            self.leaseToolPkgExecutionEngine(&contextKey, &runtime.packageName)?
+        };
+        Ok((engine, script, params, lease))
     }
 }
 
@@ -938,7 +1118,7 @@ mod tests {
     }
 
     use std::io::Write;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
     use super::*;
@@ -950,16 +1130,20 @@ mod tests {
     };
 
     /// Rejects filesystem operations because these engine lifecycle tests do not access files.
-    struct RejectingFileSystemHost;
+    #[derive(Default)]
+    struct TestFileSystemHost {
+        files: Mutex<BTreeMap<String, Vec<u8>>>,
+        byteReadCount: AtomicUsize,
+    }
 
-    impl RejectingFileSystemHost {
+    impl TestFileSystemHost {
         /// Returns the explicit error used for unsupported test filesystem operations.
         fn unsupported<T>() -> HostResult<T> {
             Err(HostError::new("filesystem access is not used by this test"))
         }
     }
 
-    impl FileSystemHost for RejectingFileSystemHost {
+    impl FileSystemHost for TestFileSystemHost {
         /// Returns the test host label.
         fn envLabel(&self) -> &str {
             "test"
@@ -976,8 +1160,15 @@ mod tests {
         }
 
         /// Rejects directory listing.
-        fn listFiles(&self, _path: &str) -> HostResult<Vec<FileEntry>> {
-            Self::unsupported()
+        fn listFiles(&self, path: &str) -> HostResult<Vec<FileEntry>> {
+            let prefix = format!("{}/", path.trim_end_matches('/'));
+            Ok(self.files.lock().unwrap().iter().filter_map(|(name, bytes)| {
+                let child = name.strip_prefix(&prefix)?;
+                (!child.contains('/')).then(|| FileEntry {
+                    name: child.to_string(), isDirectory: false, size: bytes.len() as i64,
+                    permissions: String::new(), lastModified: "unchanged".into(),
+                })
+            }).collect())
         }
 
         /// Rejects text reads.
@@ -990,9 +1181,11 @@ mod tests {
             Self::unsupported()
         }
 
-        /// Rejects byte reads.
-        fn readFileBytes(&self, _path: &str) -> HostResult<Vec<u8>> {
-            Self::unsupported()
+        /// Counts and returns the explicitly registered test bytes.
+        fn readFileBytes(&self, path: &str) -> HostResult<Vec<u8>> {
+            self.byteReadCount.fetch_add(1, Ordering::Relaxed);
+            self.files.lock().unwrap().get(path).cloned()
+                .ok_or_else(|| HostError::new("file missing"))
         }
 
         /// Rejects text writes.
@@ -1011,8 +1204,13 @@ mod tests {
         }
 
         /// Rejects file existence checks.
-        fn fileExists(&self, _path: &str) -> HostResult<FileExistence> {
-            Self::unsupported()
+        fn fileExists(&self, path: &str) -> HostResult<FileExistence> {
+            let files = self.files.lock().unwrap();
+            if let Some(bytes) = files.get(path) {
+                return Ok(FileExistence { exists: true, isDirectory: false, size: bytes.len() as i64 });
+            }
+            let prefix = format!("{}/", path.trim_end_matches('/'));
+            Ok(FileExistence { exists: files.keys().any(|key| key.starts_with(&prefix)), isDirectory: true, size: 0 })
         }
 
         /// Rejects moves.
@@ -1074,19 +1272,29 @@ mod tests {
     }
 
     impl JsExecutionEngine for RecordingExecutionEngine {
-        /// Returns no script result for registry tests.
+        /// Records hook parameters and yields once through the canonical host execution API.
         fn execute_script_function(
             &self,
             _script: &str,
             _function_name: &str,
-            _params: &BTreeMap<String, Value>,
+            params: &BTreeMap<String, Value>,
             _env_overrides: &BTreeMap<String, String>,
             _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
             _dispatch_intermediate_on_main: bool,
-            _timeout_sec: u64,
         ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<String>>> {
-            let result = (|| Ok(None))();
-            Box::pin(std::future::ready(result))
+            *self
+                .asyncHookParams
+                .lock()
+                .expect("async hook params mutex poisoned") = Some(params.clone());
+            let mut yielded = false;
+            Box::pin(std::future::poll_fn(move |context| {
+                if yielded {
+                    return std::task::Poll::Ready(Ok(Some("hook completed".to_string())));
+                }
+                yielded = true;
+                context.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }))
         }
 
         /// Returns no script result for exact-deadline registry tests.
@@ -1113,21 +1321,15 @@ mod tests {
             _env_overrides: BTreeMap<String, String>,
             _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
             _dispatch_intermediate_on_main: bool,
-            _timeout_millis: u64,
         ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<String>>> {
-            *self
-                .asyncHookParams
-                .lock()
-                .expect("async hook params mutex poisoned") = Some(params);
-            let mut yielded = false;
-            Box::pin(std::future::poll_fn(move |context| {
-                if yielded {
-                    return std::task::Poll::Ready(Ok(Some("hook completed".to_string())));
-                }
-                yielded = true;
-                context.waker().wake_by_ref();
-                std::task::Poll::Pending
-            }))
+            self.execute_script_function(
+                &_script,
+                &_function_name,
+                &params,
+                &_env_overrides,
+                _on_intermediate_result,
+                _dispatch_intermediate_on_main,
+            )
         }
 
         /// Returns an empty ToolPkg registration capture for registry tests.
@@ -1145,7 +1347,7 @@ mod tests {
         fn execute_compose_dsl_script_stream_async(
             &self, _script: String, _runtime_options: BTreeMap<String, Value>,
             _env_overrides: BTreeMap<String, String>, _text_resources: Arc<BTreeMap<String, String>>,
-            _on_response: Arc<dyn Fn(Value) + Send + Sync>,
+            _on_response: Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>,
         ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<Value>>> {
             Box::pin(async { Err(crate::execution_result::JsExecutionError::invalid_request("This recording engine does not execute live Compose sessions")) })
         }
@@ -1157,7 +1359,7 @@ mod tests {
             _payload: Option<Value>,
             _runtime_options: BTreeMap<String, Value>,
             _env_overrides: BTreeMap<String, String>,
-            _on_intermediate_result: Arc<dyn Fn(Value) + Send + Sync>,
+            _on_intermediate_result: Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>,
         ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<Value>>> {
             Box::pin(async { Ok(None) })
         }
@@ -1262,7 +1464,7 @@ mod tests {
         let mut manager = ToolPkgManager::new(
             factory.clone(),
             Arc::new(EmptyAssetSource),
-            Arc::new(RejectingFileSystemHost),
+            Arc::new(TestFileSystemHost::default()),
         );
         // Engine ownership checks require genuine registered containers, not
         // fabricated engines for undeclared package IDs.
@@ -1312,7 +1514,7 @@ mod tests {
         let manager = ToolPkgManager::new(
             factory.clone(),
             Arc::new(SnapshotAssetSource),
-            Arc::new(RejectingFileSystemHost),
+            Arc::new(TestFileSystemHost::default()),
         );
         (manager, factory)
     }
@@ -1406,9 +1608,9 @@ mod tests {
         manager.replaceRuntimeMaps(containers, subpackages);
     }
 
-    /// Keeps leased sidebar and provider engines while discarding unowned catalog caches.
+    /// Keeps both container-owned main realms and leased pages through unchanged catalog scans.
     #[test]
-    fn catalogScanPreservesLeasedContextsAndDiscardsUnleasedEngines() {
+    fn catalogScanPreservesMainRealmsAndLeasedContexts() {
         let (manager, factory) = recordingManager();
         manager.acquireToolPkgExecutionEngine("package-a-sidebar", "package_a").unwrap();
         let sidebar = manager.findToolPkgExecutionEngine("package-a-sidebar", "package_a").unwrap();
@@ -1421,18 +1623,57 @@ mod tests {
 
         assert!(Arc::ptr_eq(&sidebar, &manager.findToolPkgExecutionEngine("package-a-sidebar", "package_a").unwrap()));
         assert!(Arc::ptr_eq(&provider, &manager.findToolPkgExecutionEngine("package-b-provider", "package_b").unwrap()));
-        assert!(manager.findToolPkgExecutionEngine("package-a-main", "package_a").is_none());
-        assert!(manager.findToolPkgExecutionEngine("package-b-main", "package_b").is_none());
+        assert!(manager.findToolPkgExecutionEngine("package-a-main", "package_a").is_some());
+        assert!(manager.findToolPkgExecutionEngine("package-b-main", "package_b").is_some());
         {
             let engines = factory.engines.lock().unwrap();
             assert!(!engines[0].destroyed.load(Ordering::Acquire));
-            assert!(engines[1].destroyed.load(Ordering::Acquire));
+            assert!(!engines[1].destroyed.load(Ordering::Acquire));
             assert!(!engines[2].destroyed.load(Ordering::Acquire));
-            assert!(engines[3].destroyed.load(Ordering::Acquire));
+            assert!(!engines[3].destroyed.load(Ordering::Acquire));
         }
         manager.releaseToolPkgExecutionEngine("package-a-sidebar", "package_a");
         manager.releaseToolPkgExecutionEngine("package-b-provider", "package_b");
+        manager.revokeContainerExecutionContexts("package_a");
+        manager.revokeContainerExecutionContexts("package_b");
         assert!(factory.engines.lock().unwrap().iter().all(|engine| engine.destroyed.load(Ordering::Acquire)));
+    }
+
+    /// Preserves a live sidebar when fresh scans deserialize identical multilingual metadata.
+    #[test]
+    fn multilingualCatalogRescanPreservesSidebarRealm() {
+        let (mut manager, factory) = recordingManager();
+        let mut containers = manager.containers.read().unwrap().clone();
+        let runtime = containers.get_mut("package_a").unwrap();
+        runtime.displayName = serde_json::from_value(serde_json::json!({
+            "zh": "角色卡", "en": "Characters", "default": "Characters",
+            "ja": "キャラクター", "fr": "Personnages", "de": "Charaktere"
+        })).unwrap();
+        runtime.description = runtime.displayName.clone();
+        let snapshot = serde_json::to_value(&containers).unwrap();
+        let subpackages = manager.subpackageByPackageName.read().unwrap().clone();
+        manager.replaceRuntimeMaps(containers, subpackages.clone());
+        manager.acquireToolPkgExecutionEngine("character-sidebar", "package_a").unwrap();
+        let sidebar = manager.findToolPkgExecutionEngine("character-sidebar", "package_a").unwrap();
+        let (_, mainLease) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+        drop(mainLease);
+        for _ in 0..32 {
+            let rescanned = serde_json::from_value(snapshot.clone()).unwrap();
+            manager.replaceRuntimeMaps(rescanned, subpackages.clone());
+            let current = manager.findToolPkgExecutionEngine("character-sidebar", "package_a")
+                .expect("unchanged multilingual metadata must preserve the sidebar");
+            assert!(Arc::ptr_eq(&sidebar, &current));
+            assert!(factory.engines.lock().unwrap().iter()
+                .all(|engine| !engine.destroyed.load(Ordering::Acquire)));
+        }
+        let mut changed: BTreeMap<String, ToolPkgContainerRuntime> =
+            serde_json::from_value(snapshot).unwrap();
+        changed.get_mut("package_a").unwrap().displayName.values
+            .insert("en".into(), "Updated characters".into());
+        manager.replaceRuntimeMaps(changed, subpackages);
+        assert!(manager.findToolPkgExecutionEngine("character-sidebar", "package_a").is_none());
+        assert!(factory.engines.lock().unwrap().iter()
+            .all(|engine| engine.destroyed.load(Ordering::Acquire)));
     }
 
     /// Preserves engine identity and every counted lease across repeated catalog replacement.
@@ -1442,8 +1683,7 @@ mod tests {
         manager.acquireToolPkgExecutionEngine("shared-sidebar", "package_a").unwrap();
         manager.acquireToolPkgExecutionEngine("shared-sidebar", "package_a").unwrap();
         let engine = manager.findToolPkgExecutionEngine("shared-sidebar", "package_a").unwrap();
-        let mut containers = manager.containers.read().unwrap().clone();
-        containers.get_mut("package_a").unwrap().mainEntry = "dist/updated-main.js".into();
+        let containers = manager.containers.read().unwrap().clone();
         let subpackages = manager.subpackageByPackageName.read().unwrap().clone();
 
         manager.replaceRuntimeMaps(containers, subpackages);
@@ -1559,7 +1799,7 @@ mod tests {
                 runtimeKind: None,
                 envOverrides: BTreeMap::new(),
                 timestampMs: 1,
-                timeoutMillis: 60_000,
+                timeoutMillis: None,
                 dispatchIntermediateOnMain: true,
                 onIntermediateResult: None,
             },
@@ -1619,7 +1859,7 @@ mod tests {
                 runtimeKind: None,
                 envOverrides: BTreeMap::new(),
                 timestampMs: 1,
-                timeoutMillis: 1_000,
+                timeoutMillis: Some(1_000),
                 dispatchIntermediateOnMain: true,
                 onIntermediateResult: None,
             },
@@ -1741,6 +1981,163 @@ mod tests {
         assert!(engines[1].destroyed.load(Ordering::Acquire));
         manager.releaseToolPkgExecutionEngine("raced-sidebar", "package_b");
         assert!(engines[0].destroyed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn mainInvocationsKeepRealmAfterCompletionAndCancellation() {
+        let (mut manager, factory) = recordingManager();
+        let (first, lease) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+        drop(lease);
+        rescanRuntimeCatalog(&mut manager);
+        for _ in 0..3 {
+            let (next, lease) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+            assert!(Arc::ptr_eq(&first, &next));
+            // Dropping the future cancels the call; the container still owns the realm.
+            drop(async move { let _lease = lease; std::future::pending::<()>().await });
+        }
+        assert_eq!(factory.engines.lock().unwrap().len(), 1);
+        assert!(!factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+        manager.revokeContainerExecutionContexts("package_a");
+        assert!(factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn transientLeaseDestroysRealmWhenLastCallEnds() {
+        let (manager, factory) = recordingManager();
+        let (_, first) = manager.leaseToolPkgExecutionEngine("temporary", "package_a").unwrap();
+        let (_, second) = manager.leaseToolPkgExecutionEngine("temporary", "package_a").unwrap();
+        drop(first);
+        assert!(!factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+        drop(second);
+        assert!(factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn staleLeaseCannotReleaseReplacementRealm() {
+        let (manager, factory) = recordingManager();
+        let (_, stale) = manager.leaseToolPkgExecutionEngine("same-key", "package_a").unwrap();
+        manager.revokeContainerExecutionContexts("package_a");
+        let (_, current) = manager.leaseToolPkgExecutionEngine("same-key", "package_a").unwrap();
+        drop(stale);
+        assert!(!factory.engines.lock().unwrap()[1].destroyed.load(Ordering::Acquire));
+        drop(current);
+        assert!(factory.engines.lock().unwrap()[1].destroyed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn changedCatalogRevokesMainAndActivePageOnlyForChangedOwner() {
+        let (mut manager, factory) = recordingManager();
+        let (_, stale) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+        let (_, page) = manager.leaseToolPkgExecutionEngine("sidebar", "package_a").unwrap();
+        let (other, otherLease) = manager.leaseToolPkgMainExecutionEngine("package_b").unwrap();
+        drop(otherLease);
+        let mut containers = manager.containers.read().unwrap().clone();
+        containers.get_mut("package_a").unwrap().mainEntry = "dist/updated-main.js".into();
+        let subpackages = manager.subpackageByPackageName.read().unwrap().clone();
+        manager.replaceRuntimeMaps(containers, subpackages);
+        assert!(factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+        assert!(factory.engines.lock().unwrap()[1].destroyed.load(Ordering::Acquire));
+        assert!(Arc::ptr_eq(&other, &manager.findToolPkgExecutionEngine("toolpkg_main:package_b", "package_b").unwrap()));
+        let (_, replacement) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+        drop(stale);
+        drop(page);
+        drop(replacement);
+        assert!(!factory.engines.lock().unwrap()[3].destroyed.load(Ordering::Acquire));
+        manager.removeToolPkgContainer("package_a");
+        assert!(factory.engines.lock().unwrap()[3].destroyed.load(Ordering::Acquire));
+        manager.updateExecutionEngineFactory(Arc::new(RecordingExecutionEngineFactory::default()));
+        assert!(factory.engines.lock().unwrap()[2].destroyed.load(Ordering::Acquire));
+    }
+
+    /// Creates a real compressed main-script archive for source-generation tests.
+    fn mainScriptArchive(script: &str) -> Vec<u8> {
+        let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        archive.start_file("main.js", zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)).unwrap();
+        archive.write_all(script.as_bytes()).unwrap();
+        archive.finish().unwrap().into_inner()
+    }
+
+    /// Reads main code once per catalog generation and invalidates both directory and archive snapshots.
+    #[test]
+    fn mainScriptSourcesFollowCatalogGenerationAndShutdown() {
+        for (source, file, archived) in [("/plugin", "/plugin/main.js", false), ("/plugin.toolpkg", "/plugin.toolpkg", true)] {
+            let (mut manager, _) = recordingManager();
+            let fs = Arc::new(TestFileSystemHost::default());
+            let old = "exports.read = () => 1;";
+            let new = "exports.read = () => 2;";
+            let bytes = if archived { mainScriptArchive(old) } else { old.as_bytes().to_vec() };
+            fs.files.lock().unwrap().insert(file.into(), bytes);
+            manager.fileSystemHost = fs.clone();
+            let mut runtime = manager.getToolPkgContainerRuntime("package_a").unwrap();
+            runtime.sourceType = ToolPkgSourceType::EXTERNAL;
+            runtime.sourcePath = source.into();
+            runtime.mainEntry = "main.js".into();
+            manager.registerToolPkg(ToolPkgLoadResult {
+                containerPackage: ToolPackage { name: "package_a".into(), ..ToolPackage::default() },
+                containerRuntime: runtime, ..ToolPkgLoadResult::default()
+            });
+            fs.byteReadCount.store(0, Ordering::Relaxed);
+            for _ in 0..9 {
+                assert_eq!(manager.getRegisteredToolPkgMainScript("package_a").as_deref(), Some(old));
+                assert_eq!(manager.getToolPkgMainScriptInternal("package_a", &["package_a".into()]).as_deref(), Some(old));
+            }
+            assert_eq!(fs.byteReadCount.load(Ordering::Relaxed), 1);
+            let bytes = if archived { mainScriptArchive(new) } else { new.as_bytes().to_vec() };
+            fs.files.lock().unwrap().insert(file.into(), bytes);
+            rescanRuntimeCatalog(&mut manager);
+            fs.byteReadCount.store(0, Ordering::Relaxed);
+            assert_eq!(manager.getRegisteredToolPkgMainScript("package_a").as_deref(), Some(new));
+            assert_eq!(fs.byteReadCount.load(Ordering::Relaxed), 1);
+            manager.shutdownExecutionEngines();
+            assert!(manager.getRegisteredToolPkgMainScript("package_a").is_none());
+        }
+    }
+
+    /// Same-size edits with an unchanged manifest and parent mtime still replace the realm.
+    #[test]
+    fn catalogSourceEditsRevokeDirectoryAndArchiveRealmsWithoutVersionChanges() {
+        for source in ["/plugin", "/plugin.toolpkg"] {
+            let (mut manager, factory) = recordingManager();
+            let fs = Arc::new(TestFileSystemHost::default());
+            let file = if source.ends_with(".toolpkg") { source.to_string() } else { format!("{source}/main.js") };
+            fs.files.lock().unwrap().insert(file.clone(), b"old-code".to_vec());
+            manager.fileSystemHost = fs.clone();
+            let mut runtime = manager.getToolPkgContainerRuntime("package_a").unwrap();
+            runtime.sourceType = ToolPkgSourceType::EXTERNAL;
+            runtime.sourcePath = source.to_string();
+            manager.registerToolPkg(ToolPkgLoadResult {
+                containerPackage: ToolPackage { name: "package_a".into(), ..ToolPackage::default() },
+                containerRuntime: runtime, ..ToolPkgLoadResult::default()
+            });
+            let (_, stale) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+            rescanRuntimeCatalog(&mut manager);
+            assert!(!factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+            fs.files.lock().unwrap().insert(file.clone(), b"new-code".to_vec());
+            rescanRuntimeCatalog(&mut manager);
+            assert!(factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+            let (_, current) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+            drop(stale);
+            drop(current);
+            assert!(!factory.engines.lock().unwrap()[1].destroyed.load(Ordering::Acquire));
+            fs.files.lock().unwrap().remove(&file);
+            rescanRuntimeCatalog(&mut manager);
+            assert!(factory.engines.lock().unwrap()[1].destroyed.load(Ordering::Acquire));
+        }
+    }
+
+    #[test]
+    fn coreShutdownDestroysAllRealmsAndRejectsLateCalls() {
+        let (manager, factory) = recordingManager();
+        let (_, main) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+        let (_, page) = manager.leaseToolPkgExecutionEngine("sidebar", "package_b").unwrap();
+        manager.shutdownExecutionEngines();
+        assert!(factory.engines.lock().unwrap().iter().all(|engine| engine.destroyed.load(Ordering::Acquire)));
+        drop(main);
+        drop(page);
+        assert_eq!(manager.leaseToolPkgMainExecutionEngine("package_a").err().unwrap(),
+            "ToolPkg execution owner has shut down");
+        manager.shutdownExecutionEngines();
     }
 
 }

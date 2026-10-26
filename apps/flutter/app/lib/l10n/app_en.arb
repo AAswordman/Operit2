@@ -443,7 +443,7 @@
   "settingsCategoryModelSubtitle": "Models, keys, context",
   "settingsCategoryModelDescription": "Configure model connections, choose the chat model, and manage thinking, context, and multimodal abilities.",
   "settingsCategoryLocalModelsTitle": "Local Models",
-  "settingsCategoryLocalModelsSubtitle": "Downloads, engines, STT / TTS",
+  "settingsCategoryLocalModelsSubtitle": "LLMs, downloads, STT / TTS",
   "settingsCategoryLocalModelsDescription": "Manage local models and inference engines installed on demand.",
   "settingsCategoryToolsTitle": "Tools & Permissions",
   "settingsCategoryToolsSubtitle": "AI capability, system authorization, extensions",
@@ -697,7 +697,6 @@
   "settingsModelProviderTypeDeepseek": "DeepSeek",
   "settingsModelProviderTypeMistral": "Mistral",
   "settingsModelProviderTypeSiliconflow": "SiliconFlow",
-  "settingsModelProviderTypeIflow": "iFlow",
   "settingsModelProviderTypeOpenrouter": "OpenRouter",
   "settingsModelProviderTypeOpencode": "OpenCode",
   "settingsModelProviderTypeFourRouter": "4Router",
@@ -1129,6 +1128,8 @@
   "settingsRuntimeFinishPairing": "Finish connection",
   "settingsRuntimeBaseUrl": "Device address",
   "settingsRuntimeTcpAddressHint": "host:port, for example 192.168.1.10:37195",
+  "settingsRuntimeTransportAuto": "Auto (recommended)",
+  "settingsRuntimeTransportAutoHint": "Enter host:port; the carrier (HTTP/WebSocket/TCP) is detected automatically",
   "settingsRuntimeConnectionFailed": "Device connection failed: {error}",
   "@settingsRuntimeConnectionFailed": {
     "placeholders": {
@@ -1359,6 +1360,14 @@
   "settingsAppearanceBubbleImageAdjustAi": "Adjust AI bubble image",
   "settingsAppearanceBubbleImagePreview": "Preview",
   "settingsAppearanceBubbleImagePreviewText": "Bubble preview with 9-slice guides",
+  "settingsAppearanceBubbleImageImportFailed": "Bubble image was not applied: {error}",
+  "@settingsAppearanceBubbleImageImportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceBubbleImageCrop": "Crop",
   "settingsAppearanceBubbleImageRepeat": "Repeat region",
   "settingsAppearanceBubbleImageScale": "Image scale",
@@ -1736,7 +1745,13 @@
   "settingsRuntimeControlDeviceId": "Device ID",
   "settingsRuntimeControlNoAudit": "No activity yet. Identity and device changes will appear here.",
   "settingsRuntimeControlAuditCount": "{count} records",
-  "@settingsRuntimeControlAuditCount": {"placeholders": {"count": {"type": "int"}}},
+  "@settingsRuntimeControlAuditCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsRuntimeControlNoBindings": "No device bindings",
   "settingsRuntimeControlGranted": "Granted",
   "settingsRuntimeControlRevoked": "Revoked",
@@ -1757,7 +1772,13 @@
   "settingsRuntimeControlIdentityResetDone": "Identity reset to the default user",
   "settingsRuntimeControlIdentityDefinitions": "Identity permissions",
   "settingsRuntimeControlIdentityCount": "{count} identities",
-  "@settingsRuntimeControlIdentityCount": {"placeholders": {"count": {"type": "int"}}},
+  "@settingsRuntimeControlIdentityCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsRuntimeControlIdentityAssignment": "Identity assignment",
   "settingsRuntimeControlNoIdentity": "No identity assigned",
   "settingsRuntimeControlOnline": "Online",
@@ -1765,9 +1786,8 @@
   "settingsRuntimeControlCapabilityAll": "Everything",
   "settingsRuntimeControlCapabilityAuditRead": "View audit history",
   "settingsRuntimeControlCapabilityNetworkRelay": "Relay network traffic",
-  "settingsRuntimeControlCapabilityStorageProvide": "Provide storage",
-  "settingsRuntimeControlCapabilityRuntimeExecute": "Run tasks",
-  "settingsRuntimeControlCapabilityChatRead": "Read chat history",
+  "settingsRuntimeControlCapabilityStorageProvide": "Store shared data replicas",
+  "settingsRuntimeControlCapabilityRuntimeExecute": "Host Core execution",
   "settingsRuntimeControlCapabilityViewDevices": "View devices and current identities",
   "settingsRuntimeControlCapabilityApproval": "Approve authorizations",
   "chatRoutePermissionDenied": "Permission denied: target device {targetNodeId} lacks the {capability} capability.",
@@ -1778,10 +1798,8 @@
     }
   },
   "settingsRuntimeControlRoleAdministrator": "Administrator",
-  "settingsRuntimeControlRoleAuditor": "Auditor",
   "settingsRuntimeControlRoleRelay": "Relay node",
-  "settingsRuntimeControlRoleStorage": "Storage node",
-  "settingsRuntimeControlRoleRunner": "Task runner",
+  "settingsRuntimeControlRoleEdge": "Edge node",
   "settingsRuntimeControlRoleUser": "User",
   "pluginLoadingTitle": "Loading",
   "pluginLoadingSkip": "Skip",
@@ -1809,6 +1827,7 @@
   "pluginLoadingFailed": "Failed",
   "pluginLoadingWaiting": "Waiting",
   "pluginLoadingKindPackage": "Package",
+  "pluginLoadingKindPlugin": "Plugin",
   "pluginLoadingKindMcp": "MCP",
   "pluginLoadingCompleteSuccess": "All packages and plugins loaded",
   "pluginLoadingCompleteWithFailures": "Some packages or plugins failed to load",
@@ -1818,6 +1837,9 @@
   "chatRouteRemoteOffline": "Remote {platform} offline",
   "chatRouteLoading": "Loading execution device",
   "chatRouteUnknown": "Execution device status unknown",
+  "chatRouteClaimHostPrompt": "The device host for this chat was not found. Switch it to this device?",
+  "chatRouteClaimHostYes": "Yes",
+  "chatRouteClaimHostNo": "No",
   "@chatRouteRemote": {
     "placeholders": {
       "platform": {
@@ -2002,16 +2024,20 @@
       }
     }
   },
-
   "settingsPeerPortModeHelp": "Fixed mode keeps the entered IP and port for tunnels and port forwarding. A busy fixed port reports an error without changing the address.",
   "settingsPeerPortMode": "Port allocation",
   "settingsPeerPortModeFixed": "Fixed address and port",
   "settingsPeerPortModeAutomatic": "Automatic port",
-
   "settingsPeerAdvanced": "Advanced options",
   "settingsPeerDiscoveryUnavailable": "This Host cannot advertise listeners on the local network. Direct connections remain available for supported transports.",
   "settingsPeerTransportUnavailable": "{transport} listening is not supported by this Host.",
-  "@settingsPeerTransportUnavailable": {"placeholders": {"transport": {"type": "String"}}},
+  "@settingsPeerTransportUnavailable": {
+    "placeholders": {
+      "transport": {
+        "type": "String"
+      }
+    }
+  },
   "settingsPeerTransportHelp": "Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.",
   "settingsPeerBindAddress": "Listen IP address",
   "settingsPeerBindAddressHelp": "Example: 0.0.0.0 for LAN access; IPv6 addresses are also supported.",
@@ -2082,14 +2108,30 @@
   "deviceSpacePairedOnly": "Paired",
   "deviceSpaceDirectLink": "Direct",
   "deviceSpaceRelayHops": "Relayed · {hops} hops",
-  "@deviceSpaceRelayHops": {"placeholders": {"hops": {"type": "int"}}},
+  "@deviceSpaceRelayHops": {
+    "placeholders": {
+      "hops": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceRelayPath": "Path",
   "deviceSpaceLocalDevice": "This device",
   "deviceSpaceManageDevice": "Manage device",
   "deviceSpaceConnectDirect": "Connect directly",
   "deviceSpaceConnectDirectHint": "This device is already a Space member. Pairing it adds a direct link without joining again; pairing shows a six-digit code on the other device for you to enter.",
+  "deviceSpaceUpdateEndpoint": "Update direct address",
+  "deviceSpaceUpdateEndpointLabel": "Direct address",
+  "deviceSpaceUpdateEndpointHint": "For example ws://192.168.1.20:37195/link",
+  "deviceSpaceUpdateEndpointSaved": "Direct address updated",
   "deviceSpaceDirectLinkEstablished": "Direct link established: {device}",
-  "@deviceSpaceDirectLinkEstablished": {"placeholders": {"device": {"type": "String"}}},
+  "@deviceSpaceDirectLinkEstablished": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
   "deviceSpaceUnpair": "Unpair device",
   "deviceSpaceMore": "More device actions",
   "deviceSpaceConnectionSettings": "Connection settings",
@@ -2104,7 +2146,13 @@
   "workspaceUndo": "Undo",
   "workspaceRedo": "Redo",
   "workspaceInsertSymbol": "Insert {symbol}",
-  "@workspaceInsertSymbol": {"placeholders": {"symbol": {"type": "String"}}},
+  "@workspaceInsertSymbol": {
+    "placeholders": {
+      "symbol": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceThemeConfig": "Theme configuration",
   "settingsAppearanceThemeConfigCustom": "Unbound appearance",
   "settingsAppearanceThemeConfigCreate": "New theme configuration",
@@ -2125,6 +2173,126 @@
   "settingsRuntimeControlEditRole": "Edit role",
   "settingsRuntimeControlDeleteRole": "Delete role",
   "settingsRuntimeControlDeleteRoleTitle": "Delete role {roleName}?",
-  "@settingsRuntimeControlDeleteRoleTitle": {"placeholders":{"roleName":{"type":"String"}}},
-  "settingsRuntimeControlDeleteRoleMessage": "Devices holding this role fall back to the default user identity."
+  "@settingsRuntimeControlDeleteRoleTitle": {
+    "placeholders": {
+      "roleName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeControlDeleteRoleMessage": "Devices holding this role fall back to the default user identity.",
+  "settingsAppearanceThemeConfigSource": "Create from",
+  "settingsAppearanceThemeConfigFromDefaults": "Default appearance",
+  "settingsAppearanceThemeConfigFromCurrent": "Current appearance",
+  "settingsAppearanceThemeConfigInherit": "Inherit: {name}",
+  "@settingsAppearanceThemeConfigInherit": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfigFromTemplate": "Template: {name}",
+  "@settingsAppearanceThemeConfigFromTemplate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfigDefaultsHint": "Start with the app defaults",
+  "settingsAppearanceThemeConfigCurrentHint": "Copy your current appearance",
+  "settingsAppearanceThemeConfigSavedSources": "Inherit a saved configuration",
+  "settingsAppearanceThemeConfigPluginSources": "Use a plugin template",
+  "settingsAppearanceThemeConfigSourceHint": "Templates come from installed plugins. New configurations can be edited independently and use existing appearance sync.",
+  "settingsAppearanceLoadFailed": "Unable to load appearance",
+  "settingsAppearanceRepairHint": "Your saved appearance has not been replaced. Retry after repairing its resources, or reset appearance explicitly. Reset keeps your avatar and saved configurations and selects custom appearance.",
+  "settingsAppearanceRetry": "Retry",
+  "settingsAppearanceResetAfterError": "Reset appearance",
+  "backgroundWorkIdle": "No work is running",
+  "backgroundWorkRunningCount": "work items running",
+  "backgroundWorkWaiting": "Waiting for your confirmation",
+  "backgroundWorkWaitingCount": "awaiting confirmation",
+  "backgroundWorkCompleted": "Completed",
+  "backgroundWorkFailed": "Failed — open to view details",
+  "backgroundWorkCancelled": "Stopped",
+  "backgroundWorkProcessing": "Preparing",
+  "backgroundWorkConnecting": "Connecting",
+  "backgroundWorkReceiving": "Writing a response",
+  "backgroundWorkTool": "Running a tool",
+  "backgroundWorkToolResult": "Processing tool results",
+  "backgroundWorkSummarizing": "Organizing context",
+  "backgroundWorkPlan": "Executing a plan",
+  "backgroundWorkOpen": "View conversation",
+  "backgroundWorkReview": "Review",
+  "backgroundWorkStop": "Stop",
+  "localModelsDeviceOnly": "Stored on this device",
+  "localModelsDeviceOnlyDescription": "Weights, download progress and installation records stay on this device and are excluded from Space sync. Chats can route inference to the device with the model.",
+  "localModelsRunChat": "Run and configure",
+  "localModelsUseForChat": "Use for chat",
+  "localModelsChatActivated": "Selected as the chat model",
+  "localModelsPrompt": "Enter a prompt",
+  "localModelsGenerate": "Generate",
+  "localModelsGenerating": "Generating…",
+  "localModelsThreads": "CPU threads",
+  "localModelsContextSize": "Context size (tokens)",
+  "localModelsBatchSize": "Batch size",
+  "localModelsUnload": "Unload model",
+  "localModelsCpuBackend": "On-device CPU inference",
+  "localModelsLlmDescription": "Download a GGUF model for llama.cpp or an MNN model bundle. After installation, try it here or select it for chat.",
+  "localModelsInvalidSettings": "Check the thread count, context size and batch size.",
+  "localModelsFilterAll": "All models",
+  "localModelsFilterInstalled": "Installed only",
+  "localModelsSearchCatalog": "Search by name or inference engine",
+  "deviceSpaceSyncPeer": "a space device",
+  "deviceSpaceSyncActive": "Syncing with {device}",
+  "@deviceSpaceSyncActive": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncCompleted": "Synced with {device}",
+  "@deviceSpaceSyncCompleted": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncChecking": "Checking for changes",
+  "deviceSpaceSyncRecords": "Exchanging records",
+  "deviceSpaceSyncFiles": "Transferring and verifying files",
+  "deviceSpaceSyncRetrying": "Sync interrupted. Retrying automatically.",
+  "deviceSpaceSyncPending": "Some data is still pending. Retrying automatically.",
+  "deviceSpaceSyncCurrentFile": "Current file: {done} / {total}",
+  "@deviceSpaceSyncCurrentFile": {
+    "placeholders": {
+      "done": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncTransferred": "{count} records exchanged · {bytes} transferred",
+  "@deviceSpaceSyncTransferred": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "bytes": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncBackground": "You can keep using the app while syncing continues.",
+  "runtimeActivityTitle": "Background tasks",
+  "runtimeActivitySyncing": "Syncing",
+  "runtimeActivitySyncCompleted": "Sync complete",
+  "runtimeActivityWaiting": "Waiting to retry",
+  "runtimeActivityExpand": "Show background tasks",
+  "runtimeActivityLoadingPackages": "Loading extensions"
 }

@@ -69,6 +69,7 @@ class PackageSliverList extends StatelessWidget {
           );
         },
         childCount: rowCount,
+        addAutomaticKeepAlives: false,
         addRepaintBoundaries: false,
       ),
     );

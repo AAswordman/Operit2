@@ -3,7 +3,7 @@ mod renderer;
 use super::{app::OperitTui, i18n::TuiText, link_proxy_rs::TuiCore};
 use operit_link::{CoreEventKind, CoreEventStream};
 use operit_tools::tools::packTool::ToolPkgComposeDslSession::{ToolPkgComposeDslCommand, ToolPkgComposeDslEvent};
-use operit_tools::tools::packTool::ToolPkgComposeDslNodeStore::ToolPkgComposeDslNodeStore;
+use operit_tools::tools::packTool::ToolPkgComposeDslProgramStore::ToolPkgComposeDslProgramStore;
 use operit_util::stream::ReverseStream::{ReverseStream, ReverseStreamSender};
 use futures_util::{future::LocalBoxFuture, FutureExt};
 use std::task::{Context, Poll};
@@ -36,7 +36,7 @@ struct Session {
     stream: Option<CoreEventStream>,
     sender: ReverseStreamSender<ToolPkgComposeDslCommand>,
     submission: Option<LocalBoxFuture<'static, Result<(), operit_link::CoreLinkError>>>,
-    store: ToolPkgComposeDslNodeStore,
+    store: ToolPkgComposeDslProgramStore,
     pending: HashSet<String>,
     next_request: u64,
     loaded_key: Option<String>,
@@ -75,10 +75,10 @@ fn required(value: &Value, name: &str) -> Result<String, String> {
 
 impl Session {
     /// Rebuilds the terminal renderer input directly from retained records without a JSON tree codec.
-    fn tree_node(&self, id: &str) -> Result<Node, String> {
-        let record = self.store.node(id)?;
+    fn tree_node(&self, reference: &operit_tools::tools::packTool::ToolPkgComposeDslProtocol::ToolPkgComposeDslReference) -> Result<Node, String> {
+        let record = self.store.view(reference)?;
         Ok(Node {
-            kind: record.nodeType.clone(), props: record.props.clone().into_iter().collect(),
+            kind: record.node_type.clone(), props: record.props.clone().into_iter().collect(),
             children: record.children.iter().map(|id| self.tree_node(id)).collect::<Result<_, _>>()?,
             slots: record.slots.iter().map(|(name, ids)| Ok((name.clone(), ids.iter().map(|id| self.tree_node(id)).collect::<Result<_, String>>()?))).collect::<Result<_, String>>()?,
         })
@@ -133,7 +133,7 @@ impl Session {
             if !response.navigationCommands.is_empty() { return Err("Navigation is not supported in an embedded terminal Compose surface".into()); }
             if let Some(update) = response.update {
                 self.store.apply(update)?;
-                self.tree = Some(self.tree_node(&self.store.root()?.id)?);
+                self.tree = Some(self.tree_node(self.store.root()?)?);
                 self.error = None;
             }
             match response.phase.as_str() {
@@ -326,7 +326,7 @@ impl ComposeHost {
                         tree: None,
                         error: None,
                         stream: Some(stream), sender, submission: Some(submission),
-                        store: ToolPkgComposeDslNodeStore::default(), pending: HashSet::new(), next_request: 0,
+                        store: ToolPkgComposeDslProgramStore::default(), pending: HashSet::new(), next_request: 0,
                         loaded_key: None,
                     });
                 }
@@ -553,7 +553,7 @@ mod tests {
                 error: None,
                 stream: Some(CoreEventStream::channel().1), sender,
                 submission: Some(futures_util::future::pending().boxed_local()),
-                store: ToolPkgComposeDslNodeStore::default(), pending: HashSet::new(), next_request: 0,
+                store: ToolPkgComposeDslProgramStore::default(), pending: HashSet::new(), next_request: 0,
                 loaded_key: None,
                 tree: Some(
                     serde_json::from_value(

@@ -1,3 +1,6 @@
+import { OperitPdfPreview } from './OperitPdfPreview';
+import { OperitAudioPlayers } from './OperitAudioPlayers';
+import OperitKeepAlivePlugin from 'operit_keep_alive';
 
 import { FlutterAbility, FlutterEngine } from '@ohos/flutter_ohos';
 import promptAction from '@ohos.promptAction';
@@ -10,6 +13,8 @@ import AbilityConstant from '@ohos.app.ability.AbilityConstant';
 import { OperitRuntimeChannel } from './OperitRuntimeChannel';
 
 export default class EntryAbility extends FlutterAbility {
+  private pdfPreview: OperitPdfPreview | null = null;
+  private audioPlayers: OperitAudioPlayers | null = null;
   private operitRuntimeChannel: OperitRuntimeChannel | null = null;
   private crashChannel: MethodChannel | null = null;
   private themeChannel: MethodChannel | null = null;
@@ -18,6 +23,7 @@ export default class EntryAbility extends FlutterAbility {
 
   /// Captures the notification activation that launched this application process.
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    AppStorage.setOrCreate<boolean>('operitDataRescueRequested', want.parameters?.['dataRescue'] === true || want.action === 'app.operit.DATA_RESCUE')
     super.onCreate(want, launchParam)
     this.recordNotificationActivation(want)
   }
@@ -33,6 +39,7 @@ export default class EntryAbility extends FlutterAbility {
     super.configureFlutterEngine(flutterEngine)
     GeneratedPluginRegistrant.registerWith(flutterEngine)
     this.registerPackageInfoChannel(flutterEngine)
+    this.audioPlayers = new OperitAudioPlayers(flutterEngine, this.context)
     this.themeChannel = new MethodChannel(flutterEngine.getDartExecutor(), 'operit/webview_theme')
     // Updates ArkWeb preferences without overriding the application's system theme source.
     this.themeChannel.setMethodCallHandler({
@@ -51,7 +58,10 @@ export default class EntryAbility extends FlutterAbility {
       }
     })
     const channel = new MethodChannel(flutterEngine.getDartExecutor(), 'operit/runtime')
-    this.operitRuntimeChannel = OperitRuntimeChannel.register(channel, this.context, this.currentWindowStage)
+    const runtime = OperitRuntimeChannel.register(channel, this.context, this.currentWindowStage)
+    this.operitRuntimeChannel = runtime
+    this.pdfPreview = new OperitPdfPreview(flutterEngine, this.context,
+      (request: string): Promise<string> => runtime.renderPdf(request))
     this.crashChannel = new MethodChannel(flutterEngine.getDartExecutor(), 'operit/crash')
     this.crashChannel.setMethodCallHandler({
       onMethodCall: (call, result): void => {
@@ -125,6 +135,10 @@ export default class EntryAbility extends FlutterAbility {
     this.themeChannel = null
     this.crashChannel?.setMethodCallHandler(null)
     this.crashChannel = null
+    this.pdfPreview?.dispose()
+    this.pdfPreview = null
+    this.audioPlayers?.dispose().catch((error: Error): void => { console.error(error.message) })
+    this.audioPlayers = null
     this.operitRuntimeChannel?.destroy()
     this.operitRuntimeChannel = null
     super.onDestroy()
@@ -133,6 +147,11 @@ export default class EntryAbility extends FlutterAbility {
   /// Parses and forwards the Operit notification activation embedded in one Want.
   private recordNotificationActivation(want: Want): void {
     const parameters = want.parameters as Record<string, Object> | undefined
+    const workActivation = parameters?.['operitKeepAliveWorkAction']
+    if (typeof workActivation === 'string') {
+      OperitKeepAlivePlugin.receiveWorkActivation(workActivation)
+      return
+    }
     const encodedActivation = parameters?.['operitNotificationActivation']
     if (typeof encodedActivation !== 'string') {
       return

@@ -1,14 +1,8 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../../../types/compose-dsl";
 import {
-  clearGoalAsync,
-  readGoalAsync,
-  setGoalStatusAsync,
+  GoalService,
 } from "../../shared/goal_mode_ipc.js";
 import type { GoalRecord } from "../../shared/goal_mode_state.js";
-
-const refreshEpochs = new Map<string, number>();
-const refreshPendingEpochs = new Map<string, number>();
-const refreshTimers = new Map<string, { intervalId: number; epoch: number }>();
 
 /** Calculates active goal time from its persisted timing checkpoints. */
 function calculateGoalElapsedMs(goal: GoalRecord, now: number): number {
@@ -28,143 +22,82 @@ function formatGoalDuration(durationMs: number): string {
 /** Renders the current goal and its state controls above the chat composer. */
 export default function Screen(ctx: ComposeDslContext): ComposeNode {
   const [chatId] = ctx.useState<string>("chatId", "");
+  const [expanded, setExpanded] = ctx.useState("goal.expanded", false);
   const [goal, setGoal] = ctx.useState<GoalRecord | null>("goal", null);
-  if (!refreshEpochs.has(chatId)) {
-    refreshEpochs.set(chatId, 0);
-  }
-
-  /** Stops the chat-scoped refresh and invalidates reads started before this stop. */
-  const stopRefreshTimer = (): void => {
-    const epoch = (refreshEpochs.get(chatId) ?? 0) + 1;
-    refreshEpochs.set(chatId, epoch);
-    const timer = refreshTimers.get(chatId);
-    if (timer) {
-      clearInterval(timer.intervalId);
-      refreshTimers.delete(chatId);
-    }
-    refreshPendingEpochs.delete(chatId);
-  };
-
-  /** Starts one shared elapsed-time refresh for the chat. */
-  const ensureRefreshTimer = (): void => {
-    if (refreshTimers.has(chatId)) {
-      return;
-    }
-    const epoch = refreshEpochs.get(chatId)!;
-    const timer = { intervalId: 0, epoch };
-    timer.intervalId = setInterval(() => {
-      if (refreshTimers.get(chatId) !== timer || refreshEpochs.get(chatId) !== epoch) {
-        return;
-      }
-      void refreshGoal(epoch);
-    }, 1000);
-    refreshTimers.set(chatId, timer);
-  };
-
-  /** Reads the persisted goal and refreshes the rendered elapsed time. */
-  const refreshGoal = async (expectedEpoch = refreshEpochs.get(chatId)!): Promise<void> => {
-    if (expectedEpoch !== refreshEpochs.get(chatId)) {
-      return;
-    }
-    if (refreshPendingEpochs.get(chatId) === expectedEpoch) {
-      return;
-    }
-    refreshPendingEpochs.set(chatId, expectedEpoch);
-    try {
-      const nextGoal = await readGoalAsync(chatId);
-      if (expectedEpoch !== refreshEpochs.get(chatId)) {
-        return;
-      }
-      if (!nextGoal || nextGoal.status !== "active") {
-        stopRefreshTimer();
-        setGoal(nextGoal);
-        return;
-      }
-      ensureRefreshTimer();
-      setGoal(nextGoal);
-    } finally {
-      if (refreshPendingEpochs.get(chatId) === expectedEpoch) {
-        refreshPendingEpochs.delete(chatId);
-      }
-    }
-  };
-
-  /** Refreshes the goal snapshot stored by the owning plugin runtime. */
-  const refresh = async (): Promise<void> => {
-    await refreshGoal();
-  };
-
-  /** Pauses an active goal. */
-  const pause = async (): Promise<void> => {
-    stopRefreshTimer();
-    setGoal(await setGoalStatusAsync(chatId, "paused"));
-  };
-
-  /** Resumes a paused goal. */
-  const resume = async (): Promise<void> => {
-    stopRefreshTimer();
-    setGoal(await setGoalStatusAsync(chatId, "active"));
-    ensureRefreshTimer();
-  };
-
-  /** Removes the current goal. */
-  const clear = async (): Promise<void> => {
-    stopRefreshTimer();
-    await clearGoalAsync(chatId);
+  const goalRef = ctx.useRef<GoalRecord | null>("currentGoal", goal);
+  goalRef.current = goal;
+  /** Owns the subscription and elapsed-time refresh for this exact chat context. */
+  ctx.useEffect("goal", () => {
     setGoal(null);
-  };
+    const iterator = GoalService.watch(chatId);
+    let active = true;
+    /** Consumes routed state until the composition releases this collector. */
+    const observe = async (): Promise<void> => {
+      for await (const next of iterator) {
+        if (!active) return;
+        setGoal(next);
+      }
+    };
+    void observe().catch((error) => { if (active) ctx.reportError(error); });
+    /** Releases the chat subscription and timer together. */
+    return () => {
+      active = false;
+      void iterator.return(undefined).catch((error) => { ctx.reportError(error); });
+    };
+  }, [chatId]);
+  /** Refreshes elapsed time only while an active goal exposes its clock. */
+  ctx.useEffect("goal-clock", () => {
+    if (goal?.status !== "active" || !expanded) return () => {};
+    const timer = setInterval(() => {
+      if (goalRef.current?.status === "active") setGoal({ ...goalRef.current });
+    }, 1000);
+    /** Releases this composition's elapsed-time timer. */
+    return () => { clearInterval(timer); };
+  }, [chatId, goal?.status, expanded]);
+
+  /** Pauses the durable goal on its Binding owner. */
+  const pause = async (): Promise<void> => { await GoalService.status(chatId, "paused"); };
+  /** Resumes the durable goal on its Binding owner. */
+  const resume = async (): Promise<void> => { await GoalService.status(chatId, "active"); };
+  /** Removes the durable goal on its Binding owner. */
+  const clear = async (): Promise<void> => { await GoalService.clear(chatId); };
 
   const active = goal?.status === "active";
 
   // Keep the empty slot zero-height while the initial read is pending too.
   // Transient padding here resizes the transcript and nudges its bottom twice.
   if (goal === null) {
-    return ctx.UI.Column({ fillMaxWidth: true, onLoad: refresh }, []);
+    return ctx.UI.Column({ fillMaxWidth: true }, []);
   }
 
-  const paused = goal?.status === "paused";
-  const title = active ? "Task goal" : paused ? "Task goal paused" : "Task goal completed";
-  const elapsed = goal ? formatGoalDuration(calculateGoalElapsedMs(goal, Date.now())) : "00:00:00";
+  const paused = goal.status === "paused";
+  const title = active ? "目标进行中" : paused ? "目标已暂停" : "目标已完成";
+  const elapsed = formatGoalDuration(calculateGoalElapsedMs(goal, Date.now()));
+  /** Changes only the amount of goal context shown above the composer. */
+  const toggleExpanded = (): void => { setExpanded(!expanded); };
 
   return ctx.UI.Column(
-    { fillMaxWidth: true, padding: { horizontal: 8, vertical: 2 }, onLoad: refresh },
-    [
-      ctx.UI.Card(
-        {
-          fillMaxWidth: true,
-          containerColor: ctx.MaterialTheme.colorScheme.surfaceVariant.copy({ alpha: 0.22 }),
-          shape: { cornerRadius: 6 },
-          elevation: 0,
-        },
-        [
-          ctx.UI.Row(
-            { fillMaxWidth: true, padding: { horizontal: 8, vertical: 3 }, spacing: 6, verticalAlignment: "center" },
-            [
-              ctx.UI.Box(
-                { width: 32, height: 32, contentAlignment: "center" },
-                ctx.UI.Icon({ name: "flag", tint: "onSurfaceVariant", size: 16 }),
-              ),
-              ctx.UI.Text({ text: title, style: "labelMedium", maxLines: 1, overflow: "ellipsis", weight: 1 }),
-              ctx.UI.Text({ text: elapsed, style: "labelSmall", color: "onSurfaceVariant", maxLines: 1 }),
-              ctx.UI.Text({ text: goal.objective, style: "bodySmall", fontSize: 12, maxLines: 1, overflow: "ellipsis", weight: 2 }),
-              active
-                ? ctx.UI.IconButton({ icon: "pause", width: 32, height: 32, onClick: pause })
-                : paused
-                ? ctx.UI.IconButton({ icon: "playArrow", width: 32, height: 32, onClick: resume })
-                : ctx.UI.Box(
-                    { width: 32, height: 32, contentAlignment: "center" },
-                    ctx.UI.Icon({ name: "checkCircle", tint: "onSurfaceVariant", size: 16 }),
-                  ),
-              ctx.UI.IconButton({
-                width: 32,
-                height: 32,
-                onClick: clear,
-                content: ctx.UI.Icon({ name: "delete", tint: "onSurfaceVariant", size: 16 }),
-              }),
-            ]
-          ),
-        ]
-      ),
-    ]
+    { key: "goal.composer", fillMaxWidth: true, paddingHorizontal: 0, paddingBottom: 8 },
+    [ctx.UI.Card(
+      { key: "goal.surface", fillMaxWidth: true, containerColor: "surfaceContainer", themeSurface: "card", shape: { cornerRadius: 8 }, elevation: 0 },
+      ctx.UI.Column({ fillMaxWidth: true }, [
+        ctx.UI.Row(
+          { key: "goal.header", fillMaxWidth: true, padding: { horizontal: 12, vertical: 4 }, spacing: 4, verticalAlignment: "center", onClick: toggleExpanded },
+          [
+            ctx.UI.Icon({ key: "goal.status-icon", name: "flag", tint: "onSurfaceVariant", size: 16 }),
+            ctx.UI.Text({ key: "goal.title", text: goal.objective, style: "labelMedium", color: "onSurfaceVariant", maxLines: 1, overflow: "ellipsis", weight: 1 }),
+            ...(active ? [ctx.UI.IconButton({ key: "goal.pause", content: ctx.UI.Icon({ name: "pause", size: 20 }), tooltip: "暂停目标", width: 32, height: 32, onClick: pause })]
+              : paused ? [ctx.UI.IconButton({ key: "goal.resume", content: ctx.UI.Icon({ name: "playArrow", size: 20 }), tooltip: "继续目标", width: 32, height: 32, onClick: resume })]
+              : [ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center" }, ctx.UI.Icon({ name: "checkCircle", tint: "onSurfaceVariant", size: 16 }))]),
+            ctx.UI.IconButton({ key: "goal.clear", content: ctx.UI.Icon({ name: "delete", size: 20 }), tooltip: "清除目标", width: 32, height: 32, onClick: clear }),
+            ctx.UI.IconButton({ key: "goal.expand", content: ctx.UI.Icon({ name: expanded ? "keyboardArrowUp" : "keyboardArrowDown", size: 20 }), tooltip: expanded ? "收起目标" : "展开目标", width: 32, height: 32, onClick: toggleExpanded }),
+          ],
+        ),
+        ...(expanded ? [ctx.UI.Column({ key: "goal.details", fillMaxWidth: true, paddingHorizontal: 12, paddingBottom: 8, spacing: 4 }, [
+          ctx.UI.Text({ text: title + " · " + elapsed, style: "labelSmall", color: "onSurfaceVariant" }),
+          ctx.UI.Text({ text: goal.objective, style: "bodySmall", maxLines: 4, overflow: "ellipsis" }),
+        ])] : []),
+      ]),
+    )],
   );
 }

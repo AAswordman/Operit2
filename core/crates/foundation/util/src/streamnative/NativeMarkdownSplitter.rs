@@ -2,15 +2,13 @@ use std::collections::VecDeque;
 
 use crate::stream::plugins::StreamMarkdownPlugin::{
     StreamMarkdownBlockBracketLaTeXPlugin, StreamMarkdownBlockLaTeXPlugin,
-    StreamMarkdownBlockQuotePlugin, StreamMarkdownBoldPlugin, StreamMarkdownFencedCodeBlockPlugin,
-    StreamMarkdownHeaderPlugin, StreamMarkdownHorizontalRulePlugin, StreamMarkdownImagePlugin,
-    StreamMarkdownInlineCodePlugin, StreamMarkdownInlineLaTeXPlugin,
-    StreamMarkdownInlineParenLaTeXPlugin, StreamMarkdownItalicPlugin, StreamMarkdownLinkPlugin,
-    StreamMarkdownOrderedListPlugin, StreamMarkdownStrikethroughPlugin, StreamMarkdownTablePlugin,
-    StreamMarkdownUnderlinePlugin, StreamMarkdownUnorderedListPlugin,
+    StreamMarkdownBlockQuotePlugin, StreamMarkdownFencedCodeBlockPlugin,
+    StreamMarkdownHeaderPlugin, StreamMarkdownImagePlugin, StreamMarkdownOrderedListPlugin,
+    StreamMarkdownTablePlugin, StreamMarkdownUnorderedListPlugin,
 };
 use crate::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 use crate::stream::plugins::StreamXmlPlugin::StreamXmlPlugin;
+use crate::streamnative::MarkdownInlineStream::{InlineToken, MarkdownInlineStream};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(i32)]
@@ -68,6 +66,7 @@ pub struct MarkdownNodeStable {
     pub r#type: MarkdownProcessorType,
     pub content: String,
     pub children: Vec<MarkdownNodeStable>,
+    pub link_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -113,6 +112,41 @@ struct PendingChar {
     global_index: usize,
 }
 
+struct RulePrefix {
+    marker: Option<char>,
+    count: usize,
+    valid: bool,
+}
+impl Default for RulePrefix {
+    fn default() -> Self {
+        Self {
+            marker: None,
+            count: 0,
+            valid: true,
+        }
+    }
+}
+impl RulePrefix {
+    fn push(&mut self, ch: char) {
+        if !self.valid || matches!(ch, ' ' | '\t' | '\r' | '\n') {
+            return;
+        }
+        if !matches!(ch, '-' | '*' | '_') || self.marker.is_some_and(|marker| marker != ch) {
+            self.valid = false;
+        } else {
+            self.marker = Some(ch);
+            self.count += 1;
+        }
+    }
+    fn count(&self) -> Option<usize> {
+        if self.valid && self.marker.is_some() {
+            Some(self.count)
+        } else {
+            None
+        }
+    }
+}
+
 pub struct MarkdownSession {
     plugins: Vec<PluginEntry>,
     global_offset: usize,
@@ -121,6 +155,7 @@ pub struct MarkdownSession {
     active_tag: MarkdownProcessorType,
     eval_start_global: Option<usize>,
     evaluation_buffer: Vec<char>,
+    rule_prefix: RulePrefix,
     evaluation_emit_mask: Vec<u32>,
     waitfor_active: bool,
     waitfor_at_start_of_line: bool,
@@ -141,6 +176,7 @@ impl MarkdownSession {
             active_tag: MarkdownProcessorType::PlainText,
             eval_start_global: None,
             evaluation_buffer: Vec::new(),
+            rule_prefix: RulePrefix::default(),
             evaluation_emit_mask: Vec::new(),
             waitfor_active: false,
             waitfor_at_start_of_line: false,
@@ -171,6 +207,28 @@ impl MarkdownSession {
         }
 
         self.at_start_of_line = at_start_of_line;
+        Self::flush_run(&mut out, &mut run);
+        out
+    }
+
+    pub fn finish(&mut self) -> Vec<Segment> {
+        let mut out = Vec::new();
+        let mut run = RunState::default();
+        if let Some(start) = self.eval_start_global {
+            let tag = if self.rule_prefix.count().is_some_and(|count| count >= 3) {
+                MarkdownProcessorType::HorizontalRule
+            } else {
+                MarkdownProcessorType::PlainText
+            };
+            for offset in 0..self.evaluation_buffer.len() {
+                Self::emit_index(&mut out, tag, start + offset, &mut run);
+            }
+        }
+        self.clear_evaluation();
+        for pending in self.waitfor_pending.drain(..) {
+            Self::emit_index(&mut out, self.active_tag, pending.global_index, &mut run);
+        }
+        self.waitfor_active = false;
         Self::flush_run(&mut out, &mut run);
         out
     }
@@ -286,9 +344,11 @@ impl MarkdownSession {
     ) {
         if self.eval_start_global.is_none() {
             self.eval_start_global = Some(global_index);
+            self.rule_prefix.valid = at_start_of_line;
         }
 
         self.evaluation_buffer.push(c);
+        self.rule_prefix.push(c);
         let mut emit_mask = 0u32;
         let mut successful = None::<usize>;
 
@@ -317,6 +377,29 @@ impl MarkdownSession {
                 entry.plugin.reset();
             }
             return;
+        }
+
+        if let Some(count) = self.rule_prefix.count() {
+            if self.evaluation_buffer.last() == Some(&'\n') && count >= 3 {
+                let start = self.eval_start_global.unwrap_or(global_index);
+                for offset in 0..self.evaluation_buffer.len() {
+                    Self::emit_index(
+                        out,
+                        MarkdownProcessorType::HorizontalRule,
+                        start + offset,
+                        run,
+                    );
+                }
+                Self::emit_break(out, global_index + 1, run);
+                self.clear_evaluation();
+                for entry in &mut self.plugins {
+                    entry.plugin.reset();
+                }
+                return;
+            }
+            if self.evaluation_buffer.last() != Some(&'\n') {
+                return;
+            }
         }
 
         if let Some(index) = successful {
@@ -363,6 +446,7 @@ impl MarkdownSession {
 
     fn clear_evaluation(&mut self) {
         self.evaluation_buffer.clear();
+        self.rule_prefix = RulePrefix::default();
         self.evaluation_emit_mask.clear();
         self.eval_start_global = None;
     }
@@ -429,23 +513,15 @@ impl MarkdownSession {
     }
 
     fn matches_case_insensitive_prefix(buffer: &[char], pattern: &str) -> bool {
-        let pattern_chars = pattern.chars().collect::<Vec<_>>();
-        if buffer.len() > pattern_chars.len() {
-            return false;
-        }
-        buffer
-            .iter()
-            .zip(pattern_chars.iter())
-            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+        buffer.len() <= pattern.len()
+            && buffer
+                .iter()
+                .zip(pattern.bytes())
+                .all(|(left, right)| left.eq_ignore_ascii_case(&(right as char)))
     }
 
     fn matches_case_insensitive_full(buffer: &[char], pattern: &str) -> bool {
-        let pattern_chars = pattern.chars().collect::<Vec<_>>();
-        buffer.len() == pattern_chars.len()
-            && buffer
-                .iter()
-                .zip(pattern_chars.iter())
-                .all(|(left, right)| left.eq_ignore_ascii_case(right))
+        buffer.len() == pattern.len() && Self::matches_case_insensitive_prefix(buffer, pattern)
     }
 }
 
@@ -459,8 +535,8 @@ impl NativeMarkdownSplitter {
     }
 
     /// Creates the inline Markdown parser session.
-    pub fn create_inline_session() -> MarkdownSession {
-        MarkdownSession::new(Self::get_inline_plugins())
+    pub fn create_inline_session() -> MarkdownInlineStream {
+        MarkdownInlineStream::default()
     }
 
     /// Creates a stream session that emits only an XML block's inner content.
@@ -490,12 +566,8 @@ impl NativeMarkdownSplitter {
                 tag: MarkdownProcessorType::OrderedList,
             },
             PluginEntry {
-                plugin: Box::new(StreamMarkdownUnorderedListPlugin::new(false)),
+                plugin: Box::new(StreamMarkdownUnorderedListPlugin::new(true)),
                 tag: MarkdownProcessorType::UnorderedList,
-            },
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownHorizontalRulePlugin::new(true)),
-                tag: MarkdownProcessorType::HorizontalRule,
             },
             PluginEntry {
                 plugin: Box::new(StreamMarkdownBlockLaTeXPlugin::new(false)),
@@ -520,59 +592,62 @@ impl NativeMarkdownSplitter {
         ]
     }
 
-    fn get_inline_plugins() -> Vec<PluginEntry> {
-        vec![
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownBoldPlugin::new(false)),
-                tag: MarkdownProcessorType::Bold,
-            },
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownItalicPlugin::new(false)),
-                tag: MarkdownProcessorType::Italic,
-            },
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownInlineCodePlugin::new(false)),
-                tag: MarkdownProcessorType::InlineCode,
-            },
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownLinkPlugin::default()),
-                tag: MarkdownProcessorType::Link,
-            },
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownStrikethroughPlugin::new(false)),
-                tag: MarkdownProcessorType::Strikethrough,
-            },
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownUnderlinePlugin::new(true)),
-                tag: MarkdownProcessorType::Underline,
-            },
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownInlineLaTeXPlugin::new(false)),
-                tag: MarkdownProcessorType::InlineLatex,
-            },
-            PluginEntry {
-                plugin: Box::new(StreamMarkdownInlineParenLaTeXPlugin::new(true)),
-                tag: MarkdownProcessorType::InlineLatex,
-            },
-        ]
-    }
-
     pub fn parse_inline_to_stable_nodes(content: &str) -> Vec<MarkdownNodeStable> {
-        if content.is_empty() {
-            return Vec::new();
-        }
-        let mut session = Self::create_inline_session();
-        Self::segments_to_stable_nodes(content, session.push(content), false)
+        Self::native_markdown_split_by_inline(content)
     }
 
     pub fn native_markdown_split_by_block(content: &str) -> Vec<MarkdownNodeStable> {
         let mut session = Self::create_block_session();
-        Self::segments_to_stable_nodes(content, session.push(content), true)
+        let mut segments = session.push(content);
+        segments.extend(session.finish());
+        Self::segments_to_stable_nodes(content, segments, true)
     }
 
     pub fn native_markdown_split_by_inline(content: &str) -> Vec<MarkdownNodeStable> {
         let mut session = Self::create_inline_session();
-        Self::segments_to_stable_nodes(content, session.push(content), false)
+        let mut tokens = session.push(content);
+        tokens.extend(session.finish());
+        let mut stack = vec![MarkdownNodeStable {
+            r#type: MarkdownProcessorType::PlainText,
+            content: String::new(),
+            children: Vec::new(),
+            link_url: None,
+        }];
+        for token in tokens {
+            match token {
+                InlineToken::Open(kind, link_url) => stack.push(MarkdownNodeStable {
+                    r#type: kind.processor_type(),
+                    content: String::new(),
+                    children: Vec::new(),
+                    link_url,
+                }),
+                InlineToken::Close => {
+                    if stack.len() > 1 {
+                        let node = stack.pop().unwrap();
+                        stack.last_mut().unwrap().children.push(node);
+                    }
+                }
+                InlineToken::Text(kind, text) => {
+                    for parent in &mut stack {
+                        parent.content.push_str(&text);
+                    }
+                    let children = &mut stack.last_mut().unwrap().children;
+                    if let Some(last) = children.last_mut().filter(|last| {
+                        last.r#type == kind.processor_type() && last.children.is_empty()
+                    }) {
+                        last.content.push_str(&text);
+                    } else {
+                        children.push(MarkdownNodeStable {
+                            r#type: kind.processor_type(),
+                            content: text,
+                            children: Vec::new(),
+                            link_url: None,
+                        });
+                    }
+                }
+            }
+        }
+        stack.pop().unwrap().children
     }
 
     /// Converts character-indexed parser segments into nodes in linear total slice work.
@@ -614,6 +689,7 @@ impl NativeMarkdownSplitter {
                 r#type: node_type,
                 content: node_content,
                 children,
+                link_url: None,
             });
         }
         nodes

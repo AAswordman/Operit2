@@ -83,7 +83,7 @@ test("actual openPlugin uniquely registers chat initialization, policies and mem
 
 /** Resolves every real registered callback through the formal SDK capture/export pipeline, not test callback names. */
 test("actual openPlugin lifecycle and policy captures serialize through the real SDK export resolver", async t => {
-  const disk = await createDiskHarness(t), plugin = openPlugin(disk), actual = sdkRegistration(plugin);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), plugin = openPlugin(disk), actual = sdkRegistration(plugin);
   assert.deepEqual(actual.captured(), {
     chatLifecycleHooks: [{ id: "chat-initialization", function: "beforeChatCreate" }],
     chatMessageHooks: [{ id: "memory-candidate-enqueue", function: "onMemoryMessagePersisted" }],
@@ -96,7 +96,7 @@ test("actual openPlugin lifecycle and policy captures serialize through the real
 
 /** Exercises the actual SDK's duplicate-owner rejection using the real main-exported initializer. */
 test("real SDK rejects a second lifecycle registration for the actual openPlugin owner", async t => {
-  const disk = await createDiskHarness(t), actual = sdkRegistration(openPlugin(disk));
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), actual = sdkRegistration(openPlugin(disk));
   assert.throws(
     /** Registers the same real initializer twice; a test must not implement a substitute duplicate check. */
     () => actual.duplicateLifecycle(),
@@ -108,7 +108,7 @@ test("real SDK rejects a second lifecycle registration for the actual openPlugin
 
 /** Preserves the explicit model mode of a source conversation that has no role association. */
 test("actual registered initializer preserves model mode for an unassociated source conversation", async t => {
-  const disk = await createDiskHarness(t), plugin = openPlugin(disk), definition = plugin.chatLifecycleHooks[0];
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), plugin = openPlugin(disk), definition = plugin.chatLifecycleHooks[0];
   const event = {
     eventName: "before_create", creationKind: "new",
     chat: { id: "new-real-draft", title: "Real lifecycle input", workspaceId: null, parentChatId: null },
@@ -116,5 +116,5 @@ test("actual registered initializer preserves model mode for an unassociated sou
   };
   const result = await definition.function({ eventName: "before_create", eventPayload: plain(event) });
   assert.deepEqual(plain(result), { extension: { recordId: "new-real-draft", schemaVersion: 1 } });
-  disk.storage.inspect(sql => assert.equal(sql.prepare("SELECT selection FROM chat_drafts WHERE _key=?").get("new-real-draft").selection, "model:chat"));
+  disk.storage.inspectPreferences("chats", values => assert.equal(values["draft_new-real-draft"].selection, "model:chat"));
 });

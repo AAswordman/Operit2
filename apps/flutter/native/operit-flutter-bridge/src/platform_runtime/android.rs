@@ -77,6 +77,7 @@ pub(crate) fn default_native_storage_roots() -> Result<(PathBuf, PathBuf), Strin
 
 /// Releases Android registrations owned by the host boundary.
 pub(crate) fn release_host() {
+    crate::PlatformRuntimeAbi::AndroidJni::release_work_presentation();
     operit_host_android_native::clearAndroidHostSecretStoreBridge();
 }
 
@@ -93,4 +94,11 @@ impl crate::OperitFlutterBridge {
             metadata: StartupMetadata::AndroidDevice { model },
         })
     }
+}
+
+/// Creates only the platform secret-store adapter without starting Core or owner services.
+pub(crate) fn rescue_secret_store(default_runtime: &std::path::Path) -> Result<Option<std::sync::Arc<dyn operit_host_api::HostSecretStore>>, String> {
+    Ok(Some(std::sync::Arc::new(operit_host_android_native::AndroidRuntimeStorageHost::new(
+        default_runtime.to_path_buf(), default_runtime.with_file_name("workspaces"),
+    ))))
 }

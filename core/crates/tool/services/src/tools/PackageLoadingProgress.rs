@@ -10,6 +10,7 @@ pub const PLUGIN_LOAD_STATUS_SUCCESS: &str = "success";
 pub const PLUGIN_LOAD_STATUS_FAILED: &str = "failed";
 
 pub const PLUGIN_LOAD_KIND_PACKAGE: &str = "package";
+pub const PLUGIN_LOAD_KIND_PLUGIN: &str = "plugin";
 pub const PLUGIN_LOAD_KIND_MCP: &str = "mcp";
 
 #[derive(Default)]
@@ -190,11 +191,7 @@ pub fn pluginLoadingItem(id: String, displayName: String, kind: String) -> Plugi
 /// Ensures one overlay row exists so later status updates can find it.
 pub fn ensurePluginLoadingItem(id: &str, displayName: &str, kind: &str) {
     updatePluginLoadingProgress(|current| {
-        if current
-            .plugins
-            .iter()
-            .any(|item| item.id == id)
-        {
+        if current.plugins.iter().any(|item| item.id == id) {
             return;
         }
         current.plugins.push(pluginLoadingItem(
@@ -203,6 +200,15 @@ pub fn ensurePluginLoadingItem(id: &str, displayName: &str, kind: &str) {
             kind.to_string(),
         ));
         current.phase = "loading".to_string();
+    });
+}
+
+/// Corrects the category of an overlay row after its source has been identified.
+pub fn setPluginLoadingItemKind(id: &str, kind: &str) {
+    updatePluginLoadingProgress(|current| {
+        if let Some(item) = current.plugins.iter_mut().find(|item| item.id == id) {
+            item.kind = kind.to_string();
+        }
     });
 }
 
@@ -261,7 +267,13 @@ pub fn appendPluginLoadingItemLog(id: &str, message: &str) {
                 item.logText.push('\n');
                 item.logText.push_str(message);
             }
-            item.message = message.lines().next().unwrap_or(message).chars().take(160).collect();
+            item.message = message
+                .lines()
+                .next()
+                .unwrap_or(message)
+                .chars()
+                .take(160)
+                .collect();
         }
     });
 }

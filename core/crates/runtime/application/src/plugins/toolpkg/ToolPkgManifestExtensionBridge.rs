@@ -126,7 +126,7 @@ fn dispatchManifestExtension(
                 );
 
                 let manager = runtime.package_manager();
-                ChainLogger::info(
+                ChainLogger::verbose_with_level(
                     PLUGIN_CHAIN,
                     "plugin.toolpkg.manifest_extension.dispatch.start",
                     &[
@@ -134,6 +134,7 @@ fn dispatchManifestExtension(
                         ("extension", handler.extensionKey.clone()),
                         ("source", target.packageName.clone()),
                     ],
+                    operit_util::AppLogger::VERBOSE_LEVEL_3,
                 );
                 match manager
                     .runToolPkgMainHook(
@@ -156,7 +157,7 @@ fn dispatchManifestExtension(
                             .lock()
                             .expect("toolpkg manifest extension dispatch mutex poisoned")
                             .insert(dispatchKey);
-                        ChainLogger::info(
+                        ChainLogger::verbose_with_level(
                             PLUGIN_CHAIN,
                             "plugin.toolpkg.manifest_extension.dispatch.done",
                             &[
@@ -164,6 +165,7 @@ fn dispatchManifestExtension(
                                 ("extension", handler.extensionKey.clone()),
                                 ("source", target.packageName.clone()),
                             ],
+                            operit_util::AppLogger::VERBOSE_LEVEL_3,
                         );
                     }
                     Err(error) => ChainLogger::error(

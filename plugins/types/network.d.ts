@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { HttpResponseData, VisitWebResultData } from "./results";
+import type { HttpResponseData, VisitWebResultData, WebSocketResultData } from "./results";
 
 /**
  * Performs HTTP requests and controls the browser automation tools available at runtime.
@@ -716,6 +716,16 @@ export namespace Net {
   export type CookieManagerSetCookies = string | Record<string, string>;
 
   /**
+   * Selects an engine-owned text WebSocket operation.
+   */
+  export type WebSocketRequest = { op: "open"; url: string; connect_timeout_seconds: number; } | { op: "read"; handle: string; } | { op: "send"; handle: string; text: string; } | { op: "close"; handle: string; };
+
+  /**
+   * Preserves ordered WebSocket lifecycle and UTF-8 message events.
+   */
+  export type WebSocketEvent = { type: "opened"; } | { type: "message"; text: string; } | { type: "closed"; } | { type: "error"; message: string; };
+
+  /**
    * Click an element by snapshot ref or selector.
    * Only accepts one options object.
    */
@@ -862,6 +872,11 @@ export namespace Net {
    * @param urlOrParams - URL to visit, or an object with visit parameters.
    */
   function visit(urlOrParams: HostVisitUrlOrParams): Promise<VisitWebResultData>;
+  /**
+   * Controls one engine-owned text WebSocket through the networking Host.
+   * @since ToolPkg API 2.0.0
+   */
+  function webSocket(request: WebSocketRequest): Promise<WebSocketResultData>;
   /**
    * Reads, writes, and clears cookies associated with network domains.
    */

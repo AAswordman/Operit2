@@ -1,12 +1,12 @@
 #![allow(non_snake_case)]
 
+use operit_host_native_common::{scheduleNativeServiceTasks, NativeTaskHandle as JoinHandle};
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc,
 };
-use std::thread::{self, JoinHandle};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use operit_host_api::{
     logHostError, HostError, HostResult, HostRuntimeEventHost, HostRuntimeEventRegistration,
@@ -41,6 +41,8 @@ impl LinuxHostRuntimeEventHost {
 pub struct LinuxHostRuntimeEventRegistration {
     running: Arc<AtomicBool>,
     workers: Vec<JoinHandle<()>>,
+    systemConnection: Option<Connection>,
+    sessionConnection: Option<Connection>,
 }
 
 impl HostRuntimeEventRegistration for LinuxHostRuntimeEventRegistration {}
@@ -48,13 +50,29 @@ impl HostRuntimeEventRegistration for LinuxHostRuntimeEventRegistration {}
 impl Drop for LinuxHostRuntimeEventRegistration {
     fn drop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
-        for worker in self.workers.drain(..) {
-            let _ = worker.join();
+        // Blocking workers park inside the message iterator until the next
+        // signal shows up, so closing each bus connection is what wakes them.
+        // A quiet bus can still leave a worker parked, so the join itself is
+        // bounded: no shutdown path may block process exit forever.
+        for connection in self
+            .systemConnection
+            .take()
+            .into_iter()
+            .chain(self.sessionConnection.take())
+        {
+            let _ = connection.close();
+        }
+        let workers = std::mem::take(&mut self.workers);
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        for worker in workers {
+            let _ =
+                worker.join_timeout(deadline.saturating_duration_since(std::time::Instant::now()));
         }
     }
 }
 
 impl HostRuntimeEventHost for LinuxHostRuntimeEventHost {
+    /// Starts both bus readers as one admitted service group with owned shutdown.
     fn startHostRuntimeEventStream(
         &self,
         sink: HostRuntimeEventSink,
@@ -64,55 +82,64 @@ impl HostRuntimeEventHost for LinuxHostRuntimeEventHost {
         let sessionRunning = running.clone();
         let systemSink = sink.clone();
         let sessionSink = sink.clone();
-        let (systemSender, systemReceiver) = mpsc::channel::<Result<(), String>>();
-        let (sessionSender, sessionReceiver) = mpsc::channel::<Result<(), String>>();
-        let systemWorker = thread::Builder::new()
-            .name("operit-linux-host-runtime-event-system".to_string())
-            .spawn(move || run_system_dbus_event_loop(systemSink, systemRunning, systemSender))
-            .map_err(|error| {
-                HostError::new(format!("spawn linux system event worker failed: {error}"))
-            })?;
-        let sessionWorker = thread::Builder::new()
-            .name("operit-linux-host-runtime-event-session".to_string())
-            .spawn(move || run_session_dbus_event_loop(sessionSink, sessionRunning, sessionSender))
-            .map_err(|error| {
-                HostError::new(format!("spawn linux session event worker failed: {error}"))
-            })?;
+        let (systemSender, systemReceiver) = mpsc::channel::<Result<Connection, String>>();
+        let (sessionSender, sessionReceiver) = mpsc::channel::<Result<Connection, String>>();
+        let systemConnection = Connection::system()
+            .map_err(|error| HostError::new(format!("connect system dbus failed: {error}")))?;
+        let sessionConnection = Connection::session()
+            .map_err(|error| HostError::new(format!("connect session dbus failed: {error}")))?;
+        let systemReader = systemConnection.clone();
+        let sessionReader = sessionConnection.clone();
+        let workers = scheduleNativeServiceTasks(
+            "linux-host-runtime-events",
+            vec![
+                Box::new(move || {
+                    run_system_dbus_event_loop(
+                        systemSink,
+                        systemRunning,
+                        systemSender,
+                        systemReader,
+                    )
+                }),
+                Box::new(move || {
+                    run_session_dbus_event_loop(
+                        sessionSink,
+                        sessionRunning,
+                        sessionSender,
+                        sessionReader,
+                    )
+                }),
+            ],
+        )?;
+        let registration = LinuxHostRuntimeEventRegistration {
+            running,
+            workers,
+            systemConnection: Some(systemConnection),
+            sessionConnection: Some(sessionConnection),
+        };
         systemReceiver
             .recv()
             .map_err(|error| {
-                HostError::new(format!(
-                    "receive linux system event init result failed: {error}"
-                ))
+                HostError::new(format!("receive system event initialization: {error}"))
             })?
             .map_err(HostError::new)?;
         sessionReceiver
             .recv()
             .map_err(|error| {
-                HostError::new(format!(
-                    "receive linux session event init result failed: {error}"
-                ))
+                HostError::new(format!("receive session event initialization: {error}"))
             })?
             .map_err(HostError::new)?;
-        Ok(Box::new(LinuxHostRuntimeEventRegistration {
-            running,
-            workers: vec![systemWorker, sessionWorker],
-        }))
+        Ok(Box::new(registration))
     }
 }
 
+/// Receives one system bus signal stream on admitted Host service capacity.
 fn run_system_dbus_event_loop(
     sink: HostRuntimeEventSink,
     running: Arc<AtomicBool>,
-    init: mpsc::Sender<Result<(), String>>,
+    init: mpsc::Sender<Result<Connection, String>>,
+    connection: Connection,
 ) {
-    let connection = match Connection::system() {
-        Ok(connection) => connection,
-        Err(error) => {
-            let _ = init.send(Err(format!("connect system dbus failed: {error}")));
-            return;
-        }
-    };
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .build();
@@ -125,7 +152,7 @@ fn run_system_dbus_event_loop(
             return;
         }
     };
-    let _ = init.send(Ok(()));
+    let _ = init.send(Ok(connection.clone()));
     while running.load(Ordering::SeqCst) {
         let Some(message) = iterator.next() else {
             break;
@@ -157,18 +184,13 @@ fn run_system_dbus_event_loop(
     }
 }
 
+/// Receives one system bus signal stream on admitted Host service capacity.
 fn run_session_dbus_event_loop(
     sink: HostRuntimeEventSink,
     running: Arc<AtomicBool>,
-    init: mpsc::Sender<Result<(), String>>,
+    init: mpsc::Sender<Result<Connection, String>>,
+    connection: Connection,
 ) {
-    let connection = match Connection::session() {
-        Ok(connection) => connection,
-        Err(error) => {
-            let _ = init.send(Err(format!("connect session dbus failed: {error}")));
-            return;
-        }
-    };
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .build();
@@ -181,7 +203,7 @@ fn run_session_dbus_event_loop(
             return;
         }
     };
-    let _ = init.send(Ok(()));
+    let _ = init.send(Ok(connection.clone()));
     while running.load(Ordering::SeqCst) {
         let Some(message) = iterator.next() else {
             break;

@@ -10,6 +10,8 @@ import settings from '@ohos.settings';
 import bluetoothManager from '@ohos.bluetoothManager';
 import batteryInfo from '@ohos.batteryInfo';
 import deviceInfo from '@ohos.deviceInfo';
+import hidebug from '@ohos.hidebug';
+import statvfs from '@ohos.file.statvfs';
 import display from '@ohos.display';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
@@ -32,8 +34,17 @@ import runtimeNative from 'liboperit_runtime_ohos.so';
 
 const CHANNEL = 'operit/runtime';
 const OHOS_VROOT_RAWFILE_DIRECTORY = 'ohos-vroot';
-const OHOS_VROOT_ROOTFS_ARCHIVE = 'alpine-minirootfs-3.22.1-aarch64.tar.gz';
-const OHOS_VROOT_ROOTFS_SHA256 = 'alpine-minirootfs-3.22.1-aarch64.tar.gz.sha256';
+const OHOS_VROOT_ROOTFS_ARCHIVE = 'alpine-minirootfs-3.23.6-aarch64.tar.gz';
+const OHOS_VROOT_ROOTFS_SHA256 = 'alpine-minirootfs-3.23.6-aarch64.tar.gz.sha256';
+
+interface RescueLaunchMode {
+  rescue: boolean;
+}
+
+interface RescueLaunchResponse {
+  ok: boolean;
+  value: RescueLaunchMode;
+}
 
 interface FileOperationResponse {
   success: boolean;
@@ -242,7 +253,12 @@ interface BleCharacteristicPayload {
 }
 
 interface RuntimeNativeModule {
-  create(runtimeRoot: string, workspaceRoot: string, systemLanguageCode: string): bigint;
+  /** Executes the independent offline storage-maintenance ABI. */
+  dataRescue(defaultRuntimeRoot: string, request: string): Promise<string>;
+  /** Rasterizes PDF pages on a native worker with a retained runtime handle. */
+  renderPdf(handle: bigint, request: string): Promise<string>;
+  /** Creates Core on a worker using owner-supplied startup identity. */
+  create(runtimeRoot: string, workspaceRoot: string, systemLanguageCode: string, deviceModel: string): Promise<bigint>;
   /** Reads the client bootstrap record before the native Runtime is created. */
   runtimeBootstrapRead(defaultRuntimeRoot: string): string;
   /** Writes the client bootstrap record before the native Runtime is created. */
@@ -267,6 +283,8 @@ export class OperitRuntimeChannel {
   private channel: MethodChannel;
   private context: common.UIAbilityContext;
   private runtimeHandle: bigint = BigInt(0);
+  private runtimeCreation: Promise<bigint> | null = null;
+  private destroyed: boolean = false;
   private runtimeRoot: string = '';
   private workspaceRoot: string = '';
   private windowStage: window.WindowStage | null = null;
@@ -377,6 +395,21 @@ export class OperitRuntimeChannel {
         case 'localRuntimeStorageDefaults':
           result.success(this.defaultStoragePaths());
           return;
+        case 'dataRescue': {
+          const encoded = this.requiredStringArg(call, 'dataRescue');
+          const command = JSON.parse(encoded) as Record<string, string>;
+          if (command['operation'] === 'launchMode') {
+            const launch: RescueLaunchResponse = {
+              ok: true, value: { rescue: AppStorage.get<boolean>('operitDataRescueRequested') === true }
+            };
+            result.success(JSON.stringify(launch));
+          } else {
+            nativeBridge.dataRescue(this.defaultStoragePaths().runtimeRoot, encoded)
+              .then((response: string): void => { result.success(response); })
+              .catch((error: Object): void => { result.error('DATA_RESCUE_ERROR', `${error}`, null); });
+          }
+          return;
+        }
         case 'runtimeBootstrapRead':
           result.success(nativeBridge.runtimeBootstrapRead(this.defaultStoragePaths().runtimeRoot));
           return;
@@ -394,8 +427,9 @@ export class OperitRuntimeChannel {
           result.success(null);
           return;
         case 'startLocalCoreService':
-          this.ensureRuntimeHandle();
-          result.success(null);
+          this.ensureRuntimeHandle()
+            .then((): void => { result.success(null); })
+            .catch((error: Object): void => { result.error('RUNTIME_BRIDGE_ERROR', `${error}`, null); });
           return;
         case 'restartApplication':
           this.restartApplication()
@@ -407,7 +441,9 @@ export class OperitRuntimeChannel {
             });
           return;
         case 'connectCoreFfi':
-          result.success(nativeBridge.connectCoreFfi(this.ensureRuntimeHandle()));
+          this.ensureRuntimeHandle()
+            .then((handle: bigint): void => { result.success(nativeBridge.connectCoreFfi(handle)); })
+            .catch((error: Object): void => { result.error('RUNTIME_BRIDGE_ERROR', `${error}`, null); });
           return;
         case 'ownerSystemLanguageCode':
           result.success(this.ownerSystemLanguageCode());
@@ -429,9 +465,6 @@ export class OperitRuntimeChannel {
             .catch((error: Object) => {
               result.error('OWNER_SYSTEM_CAPTURE_SCREENSHOT_ERROR', `${error}`, null);
             });
-          return;
-        case 'ownerSystemRecognizeText':
-          result.error('OWNER_SYSTEM_RECOGNIZE_TEXT_ERROR', 'OpenHarmony OCR is unavailable in the configured SDK', null);
           return;
         case 'ownerSystemOperation':
           this.ownerSystemOperation(call)
@@ -513,6 +546,7 @@ export class OperitRuntimeChannel {
           return;
       }
     } catch (error) {
+      console.error(`[OperitRuntime] method=${call.method} failed: ${error}`);
       result.error('RUNTIME_BRIDGE_ERROR', `${error}`, null);
     }
   }
@@ -539,6 +573,7 @@ export class OperitRuntimeChannel {
 
   /// Releases the native runtime bridge handle.
   destroy(): void {
+    this.destroyed = true;
     this.releaseHostEventMonitoring();
     if (this.runtimeHandle !== BigInt(0)) {
       nativeBridge.destroy(this.runtimeHandle);
@@ -571,7 +606,7 @@ export class OperitRuntimeChannel {
   /// Stores OpenHarmony runtime storage roots.
   private setStorageRoots(call: MethodCall): void {
     const roots = this.storagePaths(call);
-    if (this.runtimeHandle !== BigInt(0) &&
+    if (this.runtimeCreation !== null &&
       (this.runtimeRoot !== roots.runtimeRoot || this.workspaceRoot !== roots.workspaceRoot)) {
       throw new Error('Runtime and workspace roots cannot change after runtime creation');
     }
@@ -579,60 +614,99 @@ export class OperitRuntimeChannel {
     this.workspaceRoot = roots.workspaceRoot;
   }
 
-  /// Returns the active native runtime handle.
-  private ensureRuntimeHandle(): bigint {
-    if (this.runtimeHandle !== BigInt(0)) {
-      return this.runtimeHandle;
+  /// Dispatches document work through the current runtime without blocking ArkUI.
+  async renderPdf(request: string): Promise<string> {
+    return nativeBridge.renderPdf(await this.ensureRuntimeHandle(), request);
+  }
+
+  /// Shares one asynchronous creation task across runtime consumers.
+  private ensureRuntimeHandle(): Promise<bigint> {
+    if (this.destroyed) {
+      return Promise.reject(new Error('Runtime channel has been destroyed'));
     }
+    if (this.runtimeCreation === null) {
+      this.runtimeCreation = this.createRuntimeHandle();
+    }
+    return this.runtimeCreation;
+  }
+
+  /// Creates Core from explicit owner roots without blocking ArkUI.
+  private async createRuntimeHandle(): Promise<bigint> {
     if (this.runtimeRoot.length === 0 || this.workspaceRoot.length === 0) {
-      const roots = this.defaultStoragePaths();
-      this.runtimeRoot = roots.runtimeRoot;
-      this.workspaceRoot = roots.workspaceRoot;
+      throw new Error('Runtime and workspace roots must be set before runtime creation');
     }
-    this.stageOhosVrootAssets();
-    this.runtimeHandle = nativeBridge.create(
+    await this.stageOhosVrootAssets();
+    if (this.destroyed) throw new Error('Runtime channel was destroyed during asset staging');
+    const handle = await nativeBridge.create(
       this.runtimeRoot,
       this.workspaceRoot,
-      i18n.System.getSystemLocale()
+      i18n.System.getSystemLocale(),
+      deviceInfo.productModel
     );
+    if (this.destroyed) {
+      nativeBridge.destroy(handle);
+      throw new Error('Runtime channel was destroyed during creation');
+    }
+    this.runtimeHandle = handle;
     this.installHostEventMonitoring();
-    return this.runtimeHandle;
+    return handle;
   }
 
-  /// Copies the packaged Alpine rootfs and checksum into app runtime storage before Rust starts.
-  private stageOhosVrootAssets(): void {
-    const assetDirectory = `${this.runtimeRoot}/${OHOS_VROOT_RAWFILE_DIRECTORY}`;
-    fs.mkdirSync(assetDirectory, true);
-    this.copyOhosVrootRawFile(
-      `${OHOS_VROOT_RAWFILE_DIRECTORY}/${OHOS_VROOT_ROOTFS_ARCHIVE}`,
-      `${assetDirectory}/${OHOS_VROOT_ROOTFS_ARCHIVE}`
+  /// Stages runtime assets only when the packaged checksum changes.
+  private async stageOhosVrootAssets(): Promise<void> {
+    const directory = `${this.runtimeRoot}/${OHOS_VROOT_RAWFILE_DIRECTORY}`;
+    if (!await fs.access(directory)) {
+      await fs.mkdir(directory, true);
+    }
+    const checksumPath = `${directory}/${OHOS_VROOT_ROOTFS_SHA256}`;
+    const rawChecksum = `${OHOS_VROOT_RAWFILE_DIRECTORY}/${OHOS_VROOT_ROOTFS_SHA256}`;
+    const checksum = new util.TextDecoder('utf-8').decode(
+      this.context.resourceManager.getRawFileContentSync(rawChecksum)
     );
-    this.copyOhosVrootRawFile(
-      `${OHOS_VROOT_RAWFILE_DIRECTORY}/${OHOS_VROOT_ROOTFS_SHA256}`,
-      `${assetDirectory}/${OHOS_VROOT_ROOTFS_SHA256}`
+    const archivePath = `${directory}/${OHOS_VROOT_ROOTFS_ARCHIVE}`;
+    if (await fs.access(checksumPath) && await fs.access(archivePath) &&
+        await fs.readText(checksumPath) === checksum) {
+      return;
+    }
+    await this.copyOhosVrootRawFile(
+      `${OHOS_VROOT_RAWFILE_DIRECTORY}/${OHOS_VROOT_ROOTFS_ARCHIVE}`, archivePath
     );
+    await this.copyOhosVrootRawFile(rawChecksum, checksumPath);
   }
 
-  /// Copies one packaged OpenHarmony rawfile into an exact app-private destination path.
-  private copyOhosVrootRawFile(rawFilePath: string, destinationPath: string): void {
-    const content = this.context.resourceManager.getRawFileContentSync(rawFilePath);
-    const data = content.buffer.slice(
-      content.byteOffset,
-      content.byteOffset + content.byteLength
-    );
-    const file = fs.openSync(
-      destinationPath,
-      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY
-    );
+  /// Copies a raw asset with bounded memory and publishes it atomically after fsync.
+  private async copyOhosVrootRawFile(rawFilePath: string, destinationPath: string): Promise<void> {
+    const resources = this.context.resourceManager;
+    const source = await resources.getRawFd(rawFilePath);
+    const temporary = `${destinationPath}.copying`;
     try {
-      const written = fs.writeSync(file.fd, data);
-      if (written !== content.byteLength) {
-        throw new Error(
-          `OpenHarmony vroot asset write is incomplete: ${rawFilePath} expected=${content.byteLength} actual=${written}`
-        );
+      const file = await fs.open(temporary, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      try {
+        const buffer = new ArrayBuffer(65536);
+        let offset = 0;
+        while (offset < source.length) {
+          const count = await fs.read(source.fd, buffer, {
+            offset: source.offset + offset,
+            length: Math.min(buffer.byteLength, source.length - offset)
+          });
+          if (count <= 0) throw new Error(`Truncated runtime asset: ${rawFilePath}`);
+          let written = 0;
+          while (written < count) {
+            const bytes = buffer.slice(written, count);
+            const size = await fs.write(file.fd, bytes);
+            if (size <= 0) throw new Error(`Incomplete runtime asset: ${rawFilePath}`);
+            written += size;
+          }
+          offset += count;
+        }
+        await fs.fsync(file.fd);
+      } finally {
+        await fs.close(file);
       }
+      await fs.rename(temporary, destinationPath);
     } finally {
-      fs.closeSync(file);
+      await resources.closeRawFd(rawFilePath);
+      if (await fs.access(temporary)) await fs.unlink(temporary);
     }
   }
 
@@ -905,7 +979,26 @@ export class OperitRuntimeChannel {
         console.error(`OpenHarmony network monitor registration failed: ${error}`);
       }
     });
+    monitor.on('netConnectionPropertiesChange', (event: connection.NetConnectionPropertyInfo): void => {
+      this.writeGuestResolver(event.connectionProperties);
+    });
     this.networkConnection = monitor;
+    connection.getDefaultNet().then((handle: connection.NetHandle): Promise<connection.ConnectionProperties> => {
+      return connection.getConnectionProperties(handle);
+    }).then((properties: connection.ConnectionProperties): void => {
+      this.writeGuestResolver(properties);
+    }).catch((error: Object): void => { console.error(`OpenHarmony DNS query failed: ${error}`); });
+  }
+
+  /// Publishes the active network DNS servers for Linux guest tools.
+  private writeGuestResolver(properties: connection.ConnectionProperties): void {
+    const content = properties.dnses.map((address: connection.NetAddress): string => {
+      return `nameserver ${address.address}\n`;
+    }).join('');
+    const path = `${this.runtimeRoot}/${OHOS_VROOT_RAWFILE_DIRECTORY}/resolv.conf`;
+    const file = fs.openSync(`${path}.writing`, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+    try { fs.writeSync(file.fd, content); } finally { fs.closeSync(file); }
+    fs.renameSync(`${path}.writing`, path);
   }
 
   /// Resolves OpenHarmony network metadata and emits the canonical network structure.
@@ -914,6 +1007,7 @@ export class OperitRuntimeChannel {
     capabilities: connection.NetCapabilities
   ): void {
     connection.getConnectionProperties(netHandle).then((properties: connection.ConnectionProperties): void => {
+      this.writeGuestResolver(properties);
       const caps = capabilities.networkCap ?? [];
       const connected = caps.includes(connection.NetCap.NET_CAPABILITY_INTERNET);
       const metered = !caps.includes(connection.NetCap.NET_CAPABILITY_NOT_METERED);
@@ -1348,24 +1442,26 @@ export class OperitRuntimeChannel {
   /// Reads OpenHarmony device information.
   private systemDeviceInfo(): JsonPayload {
     const currentDisplay = display.getDefaultDisplaySync();
+    const memory = hidebug.getSystemMemInfo();
+    const network = connection.getDefaultNetSync();
     const charging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
       batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
     return {
-      deviceId: deviceInfo.udid,
+      deviceId: deviceInfo.ODID,
       model: deviceInfo.productModel,
       manufacturer: deviceInfo.manufacture,
       androidVersion: deviceInfo.osFullName,
       sdkVersion: deviceInfo.sdkApiVersion,
       screenResolution: `${currentDisplay.width}x${currentDisplay.height}`,
       screenDensity: currentDisplay.densityPixels,
-      totalMemory: '',
-      availableMemory: '',
-      totalStorage: '',
-      availableStorage: '',
+      totalMemory: (memory.totalMem * BigInt(1024)).toString(),
+      availableMemory: (memory.availableMem * BigInt(1024)).toString(),
+      totalStorage: statvfs.getTotalSizeSync(this.context.filesDir).toString(),
+      availableStorage: statvfs.getFreeSizeSync(this.context.filesDir).toString(),
       batteryLevel: batteryInfo.batterySOC,
       batteryCharging: charging,
       cpuInfo: deviceInfo.abiList,
-      networkType: '',
+      networkType: network.netId === 0 ? 'none' : this.ohosNetworkType(connection.getNetCapabilitiesSync(network).bearerTypes),
       additionalInfo: {
         deviceType: deviceInfo.deviceType,
         brand: deviceInfo.brand,
@@ -1377,19 +1473,52 @@ export class OperitRuntimeChannel {
     };
   }
 
+  /// Waits for AVPlayer initialization before preparing a URL source.
+  private prepareAudioPlayer(
+    player: media.AVPlayer,
+    source: string,
+    onState: (state: media.AVPlayerState) => void
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject): void => {
+      let preparing = true;
+      const fail = (error: Error): void => {
+        if (!preparing) return;
+        preparing = false;
+        clearTimeout(timer);
+        reject(error);
+      };
+      const timer = setTimeout((): void => fail(new Error('Audio preparation timed out')), 30000);
+      player.on('stateChange', (state: media.AVPlayerState): void => {
+        onState(state);
+        if (state === 'initialized') {
+          player.prepare().catch((error: Error): void => fail(error));
+        } else if (state === 'prepared' && preparing) {
+          preparing = false;
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      player.on('error', (error: Error): void => fail(error));
+      try { player.url = source; } catch (error) { fail(new Error(`${error}`)); }
+    });
+  }
+
   /// Plays one local audio file with OpenHarmony AVPlayer.
   private async ownerAudioPlay(call: MethodCall): Promise<AudioPlayResponse> {
     const path = this.mapString(call, 'path');
     this.requireAccessibleFile(path);
     const player = await media.createAVPlayer();
-    player.on('stateChange', (state: media.AVPlayerState) => {
-      if (state === 'completed' || state === 'stopped' || state === 'error') {
-        player.release();
-      }
-    });
-    player.url = fileUri.getUriFromPath(path);
-    await player.prepare();
-    await player.play();
+    try {
+      await this.prepareAudioPlayer(player, fileUri.getUriFromPath(path), (state: media.AVPlayerState): void => {
+        if (state === 'completed' || state === 'stopped' || state === 'error') {
+          player.release().catch((error: Error): void => { console.error(error.message); });
+        }
+      });
+      await player.play();
+    } catch (error) {
+      await player.release();
+      throw new Error(`${error}`);
+    }
     return {
       path: path,
       started: true,
@@ -1425,19 +1554,15 @@ export class OperitRuntimeChannel {
     this.ttsPlayer = player;
     this.ttsPath = path;
     this.ttsState = 'preparing';
-    player.on('stateChange', (state: media.AVPlayerState) => {
-      if (this.ttsPlayer !== player) {
-        return;
-      }
-      this.ttsState = state;
-      if (state === 'completed' || state === 'stopped' || state === 'error') {
-        this.ttsPlayer = null;
-        player.release();
-      }
-    });
     try {
-      player.url = fileUri.getUriFromPath(path);
-      await player.prepare();
+      await this.prepareAudioPlayer(player, fileUri.getUriFromPath(path), (state: media.AVPlayerState): void => {
+        if (this.ttsPlayer !== player) return;
+        this.ttsState = state;
+        if (state === 'completed' || state === 'stopped' || state === 'error') {
+          this.ttsPlayer = null;
+          player.release().catch((error: Error): void => { console.error(error.message); });
+        }
+      });
       await player.play();
       this.ttsState = 'playing';
       return this.ttsStatus('ohos tts playback started');
@@ -1534,29 +1659,27 @@ export class OperitRuntimeChannel {
     const player = await media.createAVPlayer();
     const volume = this.normalizedVolume(this.mapNumber(call, 'volume'));
     const loopPlayback = this.mapBool(call, 'loopPlayback');
+    let url: string;
     switch (sourceType) {
       case 'path':
         this.requireAccessibleFile(source);
-        player.url = fileUri.getUriFromPath(source);
+        url = fileUri.getUriFromPath(source);
         break;
-      case 'uri':
-      case 'url':
-        player.url = source;
-        break;
+      case 'uri': case 'url': url = source; break;
       default:
+        await player.release();
         throw new Error(`unsupported music sourceType: ${sourceType}`);
     }
-    player.loop = loopPlayback;
-    player.setVolume(volume);
-    player.on('stateChange', (state: media.AVPlayerState) => {
-      if (state === 'completed') {
-        this.musicState = 'completed';
-      }
-      if (state === 'error') {
-        this.musicState = 'error';
-      }
-    });
-    await player.prepare();
+    try {
+      await this.prepareAudioPlayer(player, url, (state: media.AVPlayerState): void => {
+        if (this.musicPlayer === player) this.musicState = state;
+      });
+      player.loop = loopPlayback;
+      player.setVolume(volume);
+    } catch (error) {
+      await player.release();
+      throw new Error(`${error}`);
+    }
     const startPositionMs = this.mapNumber(call, 'positionMs');
     if (startPositionMs > 0) {
       player.seek(startPositionMs);
@@ -1716,13 +1839,9 @@ export class OperitRuntimeChannel {
     ];
   }
 
-  /// Returns OpenHarmony permissions required for Bluetooth operations.
+  /// Returns the user-granted permission required by API 18 Bluetooth operations.
   private bluetoothPermissions(): Array<Permissions> {
-    return [
-      'ohos.permission.USE_BLUETOOTH',
-      'ohos.permission.DISCOVER_BLUETOOTH',
-      'ohos.permission.MANAGE_BLUETOOTH'
-    ];
+    return ['ohos.permission.ACCESS_BLUETOOTH'];
   }
 
   /// Handles one OpenHarmony Bluetooth command.

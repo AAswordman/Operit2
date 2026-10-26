@@ -1,6 +1,6 @@
 [package]
 name = "operit-cli"
-version = "2.0.0-preview.15"
+version = "2.0.0-preview.21"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -13,13 +13,16 @@ name = "operit2"
 path = "src/main.rs"
 
 [dependencies]
+operit-host-data-rescue = { path = "../../hosts/common/operit-host-data-rescue" }
 arboard = "3"
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws"] }
 base64 = "0.22"
 crossterm = "0.28"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+fs2 = "0.4"
 futures-util = "0.3"
+gethostname = "1.1"
 hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["png"] }
 mdns-sd = "0.12"
@@ -29,7 +32,7 @@ operit-node-runtime = { path = "../../core/crates/node/runtime" }
 operit-core-application = { path = "../../core/crates/application/core" }
 operit-command-core = { path = "../../core/crates/command/core" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
-operit-host-native-common = { path = "../../hosts/common/operit-host-native-common", default-features = false, features = ["tcp", "serial", "storage"] }
+operit-host-native-common = { path = "../../hosts/common/operit-host-native-common", default-features = false, features = ["tcp", "serial", "storage", "daemon"] }
 operit-link = { path = "../../core/crates/foundation/link" }
 operit-model = { path = "../../core/crates/foundation/model" }
 operit-providers = { path = "../../core/crates/provider/services" }
@@ -45,18 +48,18 @@ serde_bytes = "0.11"
 serde_json = "1"
 sha2 = "0.10"
 tar = "0.4"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 uuid = { version = "1", features = ["v4"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
-operit-host-windows-native = { path = "../../hosts/windows" }
+operit-host-windows-native = { path = "../../hosts/windows", features = ["daemon"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_WindowsProgramming"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-operit-host-linux-native = { path = "../../hosts/linux" }
+operit-host-linux-native = { path = "../../hosts/linux", features = ["daemon"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-operit-host-macos-native = { path = "../../hosts/macos" }
+operit-host-macos-native = { path = "../../hosts/macos", features = ["daemon"] }

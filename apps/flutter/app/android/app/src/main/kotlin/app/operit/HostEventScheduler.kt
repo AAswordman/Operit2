@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 
 internal data class AndroidHostEventSchedule(
@@ -34,17 +35,19 @@ internal data class AndroidHostEventSchedule(
         .put("nextFireAtMillis", nextFireAtMillis)
 
     companion object {
-        /** Decodes and validates one schedule command received from Core. */
-        fun fromCommand(value: JSONObject, nowMillis: Long): AndroidHostEventSchedule {
-            val scheduleId = value.getString("scheduleId")
-            require(scheduleId.isNotBlank()) { "host event scheduleId is required" }
-            val kind = value.getString("kind")
+        /** Shared configuration rules; [source] names where the schedule came from in error messages. */
+        private fun requireValidConfiguration(
+            scheduleId: String,
+            kind: String,
+            delayMs: Long,
+            intervalMs: Long?,
+            source: String,
+        ) {
+            require(scheduleId.isNotBlank()) { "$source scheduleId is required" }
             require(kind == "timer" || kind == "interval") {
-                "host event schedule kind must be timer or interval"
+                "$source schedule kind must be timer or interval"
             }
-            val delayMs = value.getLong("delayMs")
-            require(delayMs > 0L) { "host event schedule delayMs must be positive" }
-            val intervalMs = if (value.isNull("intervalMs")) null else value.getLong("intervalMs")
+            require(delayMs > 0L) { "$source schedule delayMs must be positive" }
             if (kind == "timer") {
                 require(intervalMs == null) { "timer schedule must not define intervalMs" }
             }
@@ -53,6 +56,15 @@ internal data class AndroidHostEventSchedule(
                     "interval schedule intervalMs must be positive"
                 }
             }
+        }
+
+        /** Decodes and validates one schedule command received from Core. */
+        fun fromCommand(value: JSONObject, nowMillis: Long): AndroidHostEventSchedule {
+            val scheduleId = value.getString("scheduleId")
+            val kind = value.getString("kind")
+            val delayMs = value.getLong("delayMs")
+            val intervalMs = if (value.isNull("intervalMs")) null else value.getLong("intervalMs")
+            requireValidConfiguration(scheduleId, kind, delayMs, intervalMs, "host event")
             return AndroidHostEventSchedule(
                 scheduleId = scheduleId,
                 kind = kind,
@@ -62,14 +74,29 @@ internal data class AndroidHostEventSchedule(
             )
         }
 
-        /** Decodes one schedule persisted by the Android host. */
+        /**
+         * Decodes one schedule persisted by the Android host.
+         * Storage is validated with the same rules as incoming commands: corrupt data is
+         * rejected here explicitly instead of surfacing later as a swallowed failure.
+         */
         fun fromStored(value: JSONObject): AndroidHostEventSchedule {
+            val scheduleId = value.getString("scheduleId")
+            val kind = value.getString("kind")
+            val delayMs = value.getLong("delayMs")
+            val intervalMs = if (value.isNull("intervalMs")) null else value.getLong("intervalMs")
+            val nextFireAtMillis = value.getLong("nextFireAtMillis")
+            requireValidConfiguration(scheduleId, kind, delayMs, intervalMs, "stored host event")
+            // Commands can never produce a negative instant; a stored one is corrupt storage.
+            // Reject it here, before the rescheduler or the Core payload sees it.
+            require(nextFireAtMillis >= 0L) {
+                "stored host event schedule nextFireAtMillis must not be negative"
+            }
             return AndroidHostEventSchedule(
-                scheduleId = value.getString("scheduleId"),
-                kind = value.getString("kind"),
-                delayMs = value.getLong("delayMs"),
-                intervalMs = if (value.isNull("intervalMs")) null else value.getLong("intervalMs"),
-                nextFireAtMillis = value.getLong("nextFireAtMillis"),
+                scheduleId = scheduleId,
+                kind = kind,
+                delayMs = delayMs,
+                intervalMs = intervalMs,
+                nextFireAtMillis = nextFireAtMillis,
             )
         }
     }
@@ -79,6 +106,15 @@ object AndroidHostEventScheduler {
     private const val logTag = "AndroidHostEventScheduler"
     private const val preferencesName = "operit_host_event_schedules"
     private const val schedulesKey = "schedules"
+    private const val undeliveredFiresKey = "undelivered_fires"
+    private const val deliveryFailureCountsKey = "delivery_failure_counts"
+    private const val retainedUndeliveredCap = 32
+
+    /** Consecutive undelivered fires tolerated before the next fire is pushed out. */
+    internal const val deliveryBackoffThreshold = 3
+
+    /** Upper bound for one backoff extension of the next interval fire. */
+    internal const val maxDeliveryBackoffMillis = 15 * 60 * 1000L
     private const val scheduleScheme = "operit-host-event"
     private const val scheduleAuthority = "schedule"
     private val lock = Any()
@@ -107,6 +143,7 @@ object AndroidHostEventScheduler {
                 }
             }
             writeSchedules(applicationContext, reconciled)
+            pruneDeliveryFailureCountsLocked(applicationContext, reconciled.keys)
             for (schedule in reconciled.values) {
                 scheduleAlarm(applicationContext, schedule)
             }
@@ -122,13 +159,25 @@ object AndroidHostEventScheduler {
             if (schedule.kind == "timer") {
                 schedules.remove(scheduleId)
             } else {
-                val intervalMs = requireNotNull(schedule.intervalMs)
+                val intervalMs = requireNotNull(schedule.intervalMs) {
+                    "stored interval schedule ${schedule.scheduleId} is missing intervalMs"
+                }
+                // The next occurrence keeps its regular boundary; recorded delivery
+                // failures from previous fires extend it so a broken delivery path
+                // cannot keep waking the process every interval.
                 val nextFireAtMillis = nextIntervalTime(
                     schedule.nextFireAtMillis,
                     intervalMs,
                     System.currentTimeMillis(),
                 )
-                val nextSchedule = schedule.copy(nextFireAtMillis = nextFireAtMillis)
+                val failures = readDeliveryFailureCounts(applicationContext)[scheduleId] ?: 0
+                val backoffMillis = deliveryBackoffMillis(intervalMs, failures)
+                val delayedFireAtMillis = if (backoffMillis > 0L) {
+                    Math.addExact(nextFireAtMillis, backoffMillis)
+                } else {
+                    nextFireAtMillis
+                }
+                val nextSchedule = schedule.copy(nextFireAtMillis = delayedFireAtMillis)
                 schedules[scheduleId] = nextSchedule
                 scheduleAlarm(applicationContext, nextSchedule)
             }
@@ -185,6 +234,135 @@ object AndroidHostEventScheduler {
         check(committed) { "failed to persist Android host event schedules" }
     }
 
+    /** Reads retained failures without clearing them or scheduling retries. */
+    internal fun readUndelivered(context: Context): List<UndeliveredHostEventFire> {
+        synchronized(lock) {
+            val encoded = context.applicationContext
+                .getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+                .getString(undeliveredFiresKey, "[]")
+                ?: error("undelivered host event storage is unavailable")
+            val values = JSONArray(encoded)
+            return (0 until values.length()).map { index ->
+                UndeliveredHostEventFire.fromJson(values.getJSONObject(index))
+            }
+        }
+    }
+
+    /** Appends a diagnostic record under the schedule lock; storage failures propagate. */
+    internal fun retainUndelivered(context: Context, fire: UndeliveredHostEventFire) {
+        synchronized(lock) {
+            val retained = readUndelivered(context).toMutableList()
+            retained.add(fire)
+            while (retained.size > retainedUndeliveredCap) {
+                retained.removeAt(0)
+                Log.w(logTag, "Undelivered host event records at cap ($retainedUndeliveredCap); dropping the oldest record")
+            }
+            val values = JSONArray()
+            retained.forEach { values.put(it.toJson()) }
+            val committed = context.applicationContext
+                .getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+                .edit()
+                .putString(undeliveredFiresKey, values.toString())
+                .commit()
+            check(committed) { "failed to persist undelivered host event ${fire.scheduleId}" }
+        }
+    }
+
+    /** Returns the consecutive undelivered fire count for one schedule. */
+    internal fun consecutiveDeliveryFailures(context: Context, scheduleId: String): Int {
+        val applicationContext = context.applicationContext
+        synchronized(lock) {
+            return readDeliveryFailureCounts(applicationContext)[scheduleId] ?: 0
+        }
+    }
+
+    /** Records one fire that never reached the runtime and returns the updated count. */
+    internal fun recordDeliveryFailure(context: Context, scheduleId: String): Int {
+        val applicationContext = context.applicationContext
+        synchronized(lock) {
+            val counts = readDeliveryFailureCounts(applicationContext).toMutableMap()
+            val updated = (counts[scheduleId] ?: 0) + 1
+            counts[scheduleId] = updated
+            writeDeliveryFailureCounts(applicationContext, counts)
+            return updated
+        }
+    }
+
+    /** Clears the consecutive failure count after one fire reached the runtime. */
+    internal fun recordDeliverySuccess(context: Context, scheduleId: String) {
+        val applicationContext = context.applicationContext
+        synchronized(lock) {
+            val counts = readDeliveryFailureCounts(applicationContext).toMutableMap()
+            if (counts.remove(scheduleId) != null) {
+                writeDeliveryFailureCounts(applicationContext, counts)
+            }
+        }
+    }
+
+    /**
+     * Returns the extra delay for the next fire after [failures] consecutive undelivered
+     * fires. Zero until [deliveryBackoffThreshold] is reached, then doubling per further
+     * failure up to [maxDeliveryBackoffMillis].
+     */
+    internal fun deliveryBackoffMillis(intervalMs: Long, failures: Int): Long {
+        if (failures < deliveryBackoffThreshold) {
+            return 0L
+        }
+        var delay = intervalMs
+        var remainingDoublings = failures - deliveryBackoffThreshold
+        while (remainingDoublings > 0 && delay < maxDeliveryBackoffMillis) {
+            delay *= 2L
+            remainingDoublings--
+        }
+        return minOf(delay, maxDeliveryBackoffMillis)
+    }
+
+    /** Drops delivery failure counts for schedules Core no longer owns; lock is held. */
+    private fun pruneDeliveryFailureCountsLocked(
+        context: Context,
+        desiredScheduleIds: Set<String>,
+    ) {
+        val counts = readDeliveryFailureCounts(context)
+        val retained = counts.filterKeys { scheduleId -> desiredScheduleIds.contains(scheduleId) }
+        if (retained.size != counts.size) {
+            writeDeliveryFailureCounts(context, retained)
+        }
+    }
+
+    /**
+     * Reads persisted consecutive delivery failure counts. Advisory backoff state only:
+     * unreadable storage fails open to "no backoff" instead of blocking scheduling.
+     */
+    private fun readDeliveryFailureCounts(context: Context): Map<String, Int> {
+        val encoded = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+            .getString(deliveryFailureCountsKey, "{}")
+            ?: return emptyMap()
+        return try {
+            val values = JSONObject(encoded)
+            val counts = linkedMapOf<String, Int>()
+            for (scheduleId in values.keys()) {
+                counts[scheduleId] = values.getInt(scheduleId)
+            }
+            counts
+        } catch (error: JSONException) {
+            Log.w(logTag, "Ignoring corrupt delivery failure counts; treating as no backoff", error)
+            emptyMap()
+        }
+    }
+
+    /** Persists consecutive delivery failure counts; storage failures propagate. */
+    private fun writeDeliveryFailureCounts(context: Context, counts: Map<String, Int>) {
+        val values = JSONObject()
+        for ((scheduleId, count) in counts) {
+            values.put(scheduleId, count)
+        }
+        val committed = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+            .edit()
+            .putString(deliveryFailureCountsKey, values.toString())
+            .commit()
+        check(committed) { "failed to persist host event delivery failure counts" }
+    }
+
     /** Registers one wakeup alarm with Android's system AlarmManager. */
     private fun scheduleAlarm(context: Context, schedule: AndroidHostEventSchedule) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -221,7 +399,7 @@ object AndroidHostEventScheduler {
     }
 
     /** Computes the first future interval boundary after one alarm firing. */
-    private fun nextIntervalTime(
+    internal fun nextIntervalTime(
         scheduledAtMillis: Long,
         intervalMs: Long,
         nowMillis: Long,
@@ -240,37 +418,117 @@ class HostEventScheduleReceiver : BroadcastReceiver() {
         private const val LOG_TAG = "HostEventScheduleReceiver"
     }
 
-    /** Restores the persistent Core and forwards one system schedule firing. */
+    /** Consumes one alarm and transfers broadcast completion to an accepted background task. */
     override fun onReceive(context: Context, intent: Intent) {
         val pendingResult = goAsync()
-        val scheduleId = requireNotNull(intent.getStringExtra("scheduleId")) {
-            "host event scheduleId is required"
-        }
-        val schedule = AndroidHostEventScheduler.consumeFire(context, scheduleId)
-        if (schedule == null) {
-            pendingResult.finish()
-            return
-        }
-        val firedAtMillis = System.currentTimeMillis()
-        OperitCoreService.start(context)
-        val runtimeHost = AndroidCoreRuntime.get(context)
-        runtimeHost.runBackground {
-            try {
-                val handle = runtimeHost.ensureRuntimeHandle()
-                val response = JSONObject(OperitRuntimeNative.emitHostRuntimeEventSchedule(
-                    handle,
-                    schedule.scheduleId,
-                    schedule.nextFireAtMillis,
-                    firedAtMillis,
-                ))
-                check(response.getBoolean("ok")) {
-                    response.optString("error", "Core rejected Android host event schedule")
+        var submitted = false
+        try {
+            val scheduleId = intent.getStringExtra("scheduleId")
+            if (scheduleId.isNullOrBlank()) {
+                Log.w(LOG_TAG, "Host event broadcast without scheduleId; dropping")
+                return
+            }
+            val schedule = try {
+                AndroidHostEventScheduler.consumeFire(context, scheduleId)
+            } catch (error: Exception) {
+                val failure = when (error) {
+                    is IllegalArgumentException -> "Invalid host event schedule"
+                    is ArithmeticException -> "Host event interval overflow"
+                    is JSONException -> "Corrupt host event schedule storage"
+                    is IllegalStateException -> "Host event schedule storage failed"
+                    else -> "Host event consumption failed"
                 }
-            } catch (error: Throwable) {
-                Log.e(LOG_TAG, "Host event schedule delivery failed", error)
-            } finally {
+                Log.e(LOG_TAG, "$failure (scheduleId=$scheduleId)", error)
+                return
+            }
+            if (schedule == null) {
+                Log.w(LOG_TAG, "No stored host event schedule for scheduleId=$scheduleId; dropping broadcast")
+                return
+            }
+            val retain: (UndeliveredHostEventFire) -> Unit = { fire ->
+                AndroidHostEventScheduler.retainUndelivered(context, fire)
+            }
+            val outcome = HostEventHandoff.begin(
+                schedule = schedule,
+                firedAtMillis = System.currentTimeMillis(),
+                storageReady = { storageConfigured(context) },
+                startCore = { OperitCoreService.start(context) },
+                submitBackground = { fired, atMillis ->
+                    val runtimeHost = AndroidCoreRuntime.get(context)
+                    runtimeHost.runBackground {
+                        try {
+                            val delivery = HostEventHandoff.completeDelivery(
+                                schedule = fired,
+                                firedAtMillis = atMillis,
+                                emit = {
+                                    val handle = runtimeHost.ensureRuntimeHandle()
+                                    val response = JSONObject(OperitRuntimeNative.emitHostRuntimeEventSchedule(
+                                        handle,
+                                        fired.scheduleId,
+                                        fired.nextFireAtMillis,
+                                        atMillis,
+                                    ))
+                                    check(response.getBoolean("ok")) {
+                                        response.optString("error", "Core rejected Android host event schedule")
+                                    }
+                                },
+                                retain = retain,
+                            )
+                            if (delivery is HostEventHandoffOutcome.Undelivered) {
+                                AndroidHostEventScheduler.recordDeliveryFailure(context, fired.scheduleId)
+                                logUndelivered(delivery)
+                            } else {
+                                AndroidHostEventScheduler.recordDeliverySuccess(context, fired.scheduleId)
+                            }
+                        } finally {
+                            pendingResult.finish()
+                        }
+                    }
+                },
+                retain = retain,
+            )
+            submitted = outcome is HostEventHandoffOutcome.Submitted
+            when (outcome) {
+                is HostEventHandoffOutcome.Undelivered -> {
+                    AndroidHostEventScheduler.recordDeliveryFailure(context, schedule.scheduleId)
+                    logUndelivered(outcome)
+                }
+                is HostEventHandoffOutcome.WaitingForStorage -> {
+                    AndroidHostEventScheduler.recordDeliveryFailure(context, schedule.scheduleId)
+                    Log.i(
+                        LOG_TAG,
+                        "Host event schedule waiting for Flutter storage roots " +
+                            "(scheduleId=$scheduleId); next fire will be delayed",
+                    )
+                }
+                is HostEventHandoffOutcome.Delivered,
+                is HostEventHandoffOutcome.Submitted,
+                -> {}
+            }
+        } catch (error: Exception) {
+            Log.e(LOG_TAG, "Host event schedule dispatch failed", error)
+        } finally {
+            if (!submitted) {
                 pendingResult.finish()
             }
+        }
+    }
+
+    /** Returns whether the runtime storage roots are installed; a seam for receiver tests. */
+    internal fun storageConfigured(context: Context): Boolean {
+        return AndroidCoreRuntime.get(context).isStorageConfigured()
+    }
+
+    private fun logUndelivered(outcome: HostEventHandoffOutcome.Undelivered) {
+        val retention = if (outcome.retentionError == null) "failure retained" else "failure NOT retained"
+        Log.e(
+            LOG_TAG,
+            "Host event delivery failed (scheduleId=${outcome.fire.scheduleId}, " +
+                "stage=${outcome.fire.stage}); $retention; no retry",
+            outcome.cause,
+        )
+        outcome.retentionError?.let { error ->
+            Log.e(LOG_TAG, "Could not persist the undelivered host event ${outcome.fire.scheduleId}", error)
         }
     }
 }

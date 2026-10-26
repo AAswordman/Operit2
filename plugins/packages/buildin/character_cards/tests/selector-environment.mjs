@@ -9,7 +9,7 @@ import { createNativeChatHost } from "./native-chat-host.mjs";
 
 /** Opens real plugin files and registrations with explicitly controlled generic host-record namespaces, never fixture CRUD. */
 export async function selectorEnvironment(t, configurationSettings = {}, runtimeGlobals = {}, composeModules = undefined) {
-  const disk = await createDiskHarness(t), readonly = fixture().snapshot, records = new Map([["selector-chat", { extension: null }]]);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), readonly = fixture().snapshot, records = new Map([["selector-chat", { extension: null }]]);
   const native = createNativeChatHost(records), { calls } = native, directoryCalls = [];
   const chat = {
     ...native.chat,
@@ -50,22 +50,22 @@ export async function selectorEnvironment(t, configurationSettings = {}, runtime
     },
   } } });
   assert.equal(disk.calls.length, 0); assert.deepEqual(calls, []); assert.deepEqual(directoryCalls, []);
-  const storage = loadModule("src/chat-storage.ts", { ...disk.globals, Tools: tools });
+  // Assertions and deliberate malformed seeds use generic preference IO, never a second business owner.
+  const chatPreferences = () => disk.storage.dataStore.open({ path: disk.directory + "/chats.preferences.json" });
   return {
     ...plugin, disk, records, calls, tools,
     /** Reads actual plugin binding rows for independent persistence assertions. */
     async binding(chatId = "selector-chat") {
-      const row = await (await storage.chatDatabase()).get("chat_bindings", chatId);
-      return row === null ? null : plain(row.value);
+      const value = (await (await chatPreferences()).data()).get("binding_" + chatId);
+      return value === undefined ? null : plain(value);
     },
-    /** Seeds a declared SQL binding instead of modifying a Core extension fixture. */
+    /** Seeds a complete JSON binding instead of modifying a Core extension fixture. */
     async seedBinding(chatId, value) {
-      const database = await storage.chatDatabase(), existing = await database.get("chat_bindings", chatId);
-      await database.commit([{ op: "put", collection: "chat_bindings", key: chatId, value, expectedVersion: existing === null ? null : existing.version }]);
+      await (await chatPreferences()).edit(preferences => { preferences.set("binding_" + chatId, value); });
     },
-    /** Schedules an original error on the SQL boundary exercised by selection writes. */
+    /** Schedules an original error on the object commit boundary exercised by selection writes. */
     failNext(method, failure) { disk.failNext(method, failure); },
     /** Holds only real binding writes, allowing directory reads and UI rendering to continue. */
-    holdWrite() { return disk.storage.holdTransaction(statements => statements.some(statement => /^(INSERT INTO|UPDATE) "chat_bindings" /.test(statement.sql))); },
+    holdWrite() { return disk.storage.holdPreferencesEdit((file, values) => file.endsWith("chats.preferences.json") && Object.keys(values).some(key => key.startsWith("binding_"))); },
   };
 }

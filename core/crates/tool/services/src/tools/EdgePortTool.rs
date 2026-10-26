@@ -36,7 +36,7 @@ fn identifier(value: &str, limit: usize) -> bool {
         && value.len() <= limit
         && !value.chars().any(|c| c.is_whitespace() || c.is_control())
 }
-/// Maps only known hardware entrypoints. User data cannot select a Core RPC or route kind.
+/// Maps native device calls. Device selection and routing remain transport-owned.
 fn prepare(tool: &AITool, io: bool) -> Result<(String, CoreCallRequest, ToolEffect), String> {
     if tool
         .parameters
@@ -97,15 +97,16 @@ fn prepare(tool: &AITool, io: bool) -> Result<(String, CoreCallRequest, ToolEffe
     } else {
         let interface: EdgeInterfaceInfo =
             serde_json::from_str(info).map_err(|_| "Invalid Edge interface information")?;
-        if !identifier(&interface.pluginId, 108) || !identifier(&interface.action, 64) {
-            return Err("Invalid Edge plugin ID or action".into());
+        if !identifier(&interface.target, 108) || !identifier(&interface.method, 64)
+            || !interface.target.starts_with("edge.") || interface.target == "edge.plugins" {
+            return Err("Invalid native Edge service target or method".into());
         }
-        (
-            "edge.plugins",
-            "invoke",
-            serde_json::json!({"pluginId":interface.pluginId,"action":interface.action,"args":args}),
-            ToolEffect::WRITE,
-        )
+        // Native requests carry their arguments directly, without a plugin envelope.
+        let request = CoreCallRequest::new(
+            operit_link::nextCoreRouteRequestId("edgePort"), interface.target,
+            interface.method, toCoreValue(args).map_err(|_| "Edge arguments cannot be encoded")?,
+        );
+        return Ok((node.to_owned(), request, ToolEffect::WRITE));
     };
     let request = CoreCallRequest::new(
         operit_link::nextCoreRouteRequestId("edgePort"),
@@ -211,7 +212,7 @@ impl AsyncToolExecutor for EdgePortToolExecutor {
                             timeout_ms: 120_000,
                         }),
                     };
-                    let result = self.runtime.executeDeviceTool(request, None).await;
+                    let result = self.runtime.executeDeviceTool(request).await;
                     if !result.success {
                         failure(
                             tool,
@@ -296,7 +297,7 @@ mod tests {
             parameters: std::collections::BTreeMap::from([
                 (
                     "interface_info".into(),
-                    serde_json::json!({"pluginId":"device.status","action":"read"}),
+                    serde_json::json!({"target":"edge.status","method":"read"}),
                 ),
                 ("args".into(), serde_json::json!({})),
             ]),
@@ -324,15 +325,15 @@ mod tests {
     fn explicit_node_ports_only_and_correct_effect() {
         let t = tool(
             false,
-            serde_json::json!({"pluginId":"device.status","action":"read"}),
+            serde_json::json!({"target":"edge.status","method":"read"}),
             serde_json::json!({"text":"hello"}),
         );
         let (node, req, effect) = prepare(&t, false).unwrap();
         assert_eq!(node, "edge-board");
-        assert_eq!(req.target, "edge.plugins");
-        assert_eq!(req.methodName, "invoke");
+        assert_eq!(req.target, "edge.status");
+        assert_eq!(req.methodName, "read");
         assert_eq!(effect, ToolEffect::WRITE);
-        assert_eq!(req.args,toCoreValue(serde_json::json!({"pluginId":"device.status","action":"read","args":{"text":"hello"}})).unwrap());
+        assert_eq!(req.args,toCoreValue(serde_json::json!({"text":"hello"})).unwrap());
         let t = tool(
             true,
             serde_json::json!({"port":"gpio","operation":"read"}),
@@ -354,14 +355,14 @@ mod tests {
     fn optional_object_args_and_duplicate_parameters_are_checked() {
         let mut t = tool(
             false,
-            serde_json::json!({"pluginId":"device.status","action":"read"}),
+            serde_json::json!({"target":"edge.status","method":"read"}),
             serde_json::json!({}),
         );
         t.parameters.pop();
         let (_, request, _) = prepare(&t, false).unwrap();
         assert_eq!(
             request.args,
-            toCoreValue(serde_json::json!({"pluginId":"device.status","action":"read","args":{}}))
+            toCoreValue(serde_json::json!({}))
                 .unwrap()
         );
         t.parameters.push(ToolParameter {
@@ -383,7 +384,9 @@ mod tests {
     fn rejects_route_injection_missing_ports_and_oversized_payloads() {
         for info in [
             serde_json::json!({"target":"core.internal","method":"erase"}),
-            serde_json::json!({"pluginId":"ok","action":"read","target":"core.internal"}),
+            serde_json::json!({"target":"edge.status","method":"read","routeKind":"space"}),
+            serde_json::json!({"pluginId":"device.status","action":"read"}),
+            serde_json::json!({"target":"edge.plugins","method":"invoke"}),
         ] {
             assert!(prepare(&tool(false, info, serde_json::json!({})), false).is_err());
         }
@@ -409,7 +412,7 @@ mod tests {
         }
         let mut t = tool(
             false,
-            serde_json::json!({"pluginId":"ok","action":"read"}),
+            serde_json::json!({"target":"ok","method":"read"}),
             serde_json::json!({"text":"x".repeat(1024)}),
         );
         assert!(prepare(&t, false).is_err());
@@ -431,6 +434,7 @@ mod tests {
                         platform: "esp32".to_string(),
                         model: String::new(),
                         reachable: true,
+                        canExecute: false,
                         relayHops: None,
                         relayPath: None,
                     },

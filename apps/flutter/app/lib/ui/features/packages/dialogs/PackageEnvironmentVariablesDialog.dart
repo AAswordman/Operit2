@@ -36,8 +36,9 @@ class PackageEnvironmentVariablesDialog extends StatefulWidget {
 
 class _PackageEnvironmentVariablesDialogState
     extends State<PackageEnvironmentVariablesDialog> {
-  final Map<String, TextEditingController> _controllers =
-      <String, TextEditingController>{};
+  final Map<(String, String), TextEditingController> _controllers = {};
+  final Map<(String, String), String> _initialValues = {};
+  final Map<String, String> _owners = {};
   List<core_proxy.ToolPackage> _packages = <core_proxy.ToolPackage>[];
   bool _loading = true;
   bool _loaded = false;
@@ -51,7 +52,7 @@ class _PackageEnvironmentVariablesDialogState
     unawaited(_load());
   }
 
-  /// Releases the shared controller for each distinct environment variable.
+  /// Releases each controller owned by an installation and variable name.
   @override
   void dispose() {
     for (final controller in _controllers.values) {
@@ -74,26 +75,32 @@ class _PackageEnvironmentVariablesDialogState
               )
               .toList()
             ..sort((left, right) => left.name.compareTo(right.name));
-      final keys =
-          packages
-              .expand((package) => package.env)
-              .map((env) => env.name)
-              .toSet()
-              .toList()
-            ..sort();
       final preferences = widget.clients.preferences.envPreferences;
-      final values = await Future.wait<String?>(
-        keys.map((key) => preferences.getEnv(key: key)),
+      final environments = await Future.wait(
+        packages.map(
+          (package) =>
+              preferences.getPackageEnvironment(packageName: package.name),
+        ),
       );
       if (!mounted) {
         return;
       }
       setState(() {
         _packages = packages;
-        for (var index = 0; index < keys.length; index++) {
-          _controllers[keys[index]] = TextEditingController(
-            text: values[index],
-          );
+        for (var index = 0; index < packages.length; index++) {
+          final package = packages[index];
+          final environment = environments[index];
+          _owners[package.name] = environment.ownerId;
+          for (final variable in package.env) {
+            final key = (environment.ownerId, variable.name);
+            final controller = _controllers.putIfAbsent(
+              key,
+              () => TextEditingController(
+                text: environment.variables[variable.name],
+              ),
+            );
+            _initialValues[key] = controller.text;
+          }
         }
         _loading = false;
         _loaded = true;
@@ -109,7 +116,7 @@ class _PackageEnvironmentVariablesDialogState
     }
   }
 
-  /// Merges edited keys into persistent preferences without changing other keys.
+  /// Saves changed keys in their owning installation without replacing unrelated values.
   Future<void> _save() async {
     setState(() {
       _saving = true;
@@ -117,16 +124,21 @@ class _PackageEnvironmentVariablesDialogState
     });
     try {
       final preferences = widget.clients.preferences.envPreferences;
-      final variables = await preferences.getAllEnv();
+      final changes = <String, Map<String, String?>>{};
       for (final entry in _controllers.entries) {
         final value = entry.value.text;
-        if (value.trim().isEmpty) {
-          variables.remove(entry.key);
-        } else {
-          variables[entry.key] = value;
+        if (value == _initialValues[entry.key]) {
+          continue;
         }
+        final ownerChanges = changes.putIfAbsent(entry.key.$1, () => {});
+        ownerChanges[entry.key.$2] = value.trim().isEmpty ? null : value;
       }
-      await preferences.setAllEnv(variables: variables);
+      for (final entry in changes.entries) {
+        await preferences.editPackageEnvironment(
+          packageName: entry.key,
+          changes: entry.value,
+        );
+      }
       if (!mounted) {
         return;
       }
@@ -271,7 +283,7 @@ class _PackageEnvironmentVariablesDialogState
           const SizedBox(height: 4),
           TextField(
             key: ValueKey<String>('package-env:$packageName:${env.name}'),
-            controller: _controllers[env.name]!,
+            controller: _controllers[(_owners[packageName]!, env.name)]!,
             enabled: !_saving,
             maxLines: 1,
             autocorrect: false,

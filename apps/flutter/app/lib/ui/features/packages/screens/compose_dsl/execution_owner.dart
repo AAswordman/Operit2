@@ -4,8 +4,8 @@ import 'dart:math';
 class ComposeDslExecutionOwner {
   static final String _isolateId =
       '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-'
-      '${Random.secure().nextInt(1 << 32).toRadixString(16)}-'
-      '${Random.secure().nextInt(1 << 32).toRadixString(16)}';
+      '${Random.secure().nextInt(0x100000000).toRadixString(16)}-'
+      '${Random.secure().nextInt(0x100000000).toRadixString(16)}';
   static int _next = 0;
 
   /// Hot reload keeps the namespace; hot restart must never reuse an old lease key.

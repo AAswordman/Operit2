@@ -10,10 +10,23 @@
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
+    "compressNativeLibs": true,
     "pages": "$profile:main_pages",
     "abilities": [
       {
+        "name": "DataRescueAbility",
+        "srcEntry": "./ets/entryability/DataRescueAbility.ets",
+        "description": "$string:DataRescue_label",
+        "icon": "$media:icon",
+        "label": "$string:DataRescue_label",
+        "startWindowIcon": "$media:icon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [{ "entities": ["entity.system.home"], "actions": ["action.system.home", "app.operit.DATA_RESCUE"] }]
+      },
+      {
         "name": "EntryAbility",
+        "backgroundModes": ["taskKeeping"],
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
         "icon": "$media:icon",
@@ -34,18 +47,11 @@
       }
     ],
     "requestPermissions": [
+      {"name": "ohos.permission.KEEP_BACKGROUND_RUNNING"},
       {"name" :  "ohos.permission.INTERNET"},
       {"name" :  "ohos.permission.GET_NETWORK_INFO"},
       {"name": "ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"},
       {"name": "ohos.permission.kernel.DISABLE_CODE_MEMORY_PROTECTION"},
-      {
-        "name": "ohos.permission.USE_BLUETOOTH",
-        "reason": "$string:permission_bluetooth_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
-      },
       {
         "name": "ohos.permission.ACCESS_BLUETOOTH",
         "reason": "$string:permission_bluetooth_reason",
@@ -54,16 +60,7 @@
           "when": "inuse"
         }
       },
-      {
-        "name": "ohos.permission.DISCOVER_BLUETOOTH",
-        "reason": "$string:permission_bluetooth_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
-      },
       {"name": "ohos.permission.CAMERA", "reason": "$string:permission_camera_reason", "usedScene": {"abilities": ["EntryAbility"], "when": "inuse"}},
-      {"name" :  "ohos.permission.MANAGE_BLUETOOTH"},
       {
         "name": "ohos.permission.LOCATION",
         "reason": "$string:permission_location_reason",

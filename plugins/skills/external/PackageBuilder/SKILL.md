@@ -35,6 +35,8 @@ PackageBuilder/
       external/
 ```
 
+示例目录提供开发源码与构建配置，不携带 `dist/`、`build/`、`tests-dist/` 中的生成文件或成品包。Compose UI 按普通、可读的 CommonJS JavaScript 交付，保留界面声明和回调，运行时负责 Compose 编译与缓存。不要指导用户生成或修改 Compose 内部预编译产物。
+
 ## 创作步骤
 
 1. 阅读 `references/PLUGIN_CREATION_WORKFLOW.md`。通过 operit_editor 工具的 `args: ["skill", "show", "PackageBuilder"]`（或系统工具 `execute_cli_command`） 读取真实 Skill 目录，通过终端 host 信息和实际文件访问确定用户同意使用的 `<dev_root>`；不要写死平台目录，也不要把 VFS 地址直接当作终端或导入路径。

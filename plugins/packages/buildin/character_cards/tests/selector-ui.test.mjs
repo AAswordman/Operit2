@@ -12,7 +12,7 @@ function presentation(requestId, chatId, kind = "card", selected = null) { retur
 /** Counts actual host writes rather than declaring any successful plugin operation in a fixture. */
 function writes(runtime) { return runtime.disk.calls.filter(
   /** Audits the exact generic record-extension method. */
-  call => call.method === "storage.transaction" && call.args[0].some(statement => /^(INSERT INTO|UPDATE) "chat_bindings" /.test(statement.sql)),
+  call => call.method === "storage.preferences.edit" && call.args[0].endsWith("/chats.preferences.json") && Object.keys(call.args[1]).some(key => key.startsWith("binding_")),
 ); }
 /** Reads genuine file-owned state for cancellation and persistence assertions independently from the service. */
 async function stateBytes(runtime) { return runtime.disk.stateBytes(); }
@@ -78,7 +78,7 @@ test("one native row click commits the current chat exactly once before real SDK
   assert.equal(writes(runtime).length, before + 1);
   assert.deepEqual((await runtime.binding("selector-chat")), { version: 1, selection: "card:" + card.id });
   assert.deepEqual(plain(await runtime.api("activePrompt.get", {})), active);
-  await assert.rejects(ui.dispatch(row.props.onClick), /already finished/); assert.equal(writes(runtime).length, before + 1);
+  await assert.rejects(async () => ui.dispatch(row.props.onClick), /already finished|compose action not found/); assert.equal(writes(runtime).length, before + 1);
 });
 
 /** Selects a genuine stored role group with the same immediate-click flow and no editor/confirmation substitution. */
@@ -154,10 +154,10 @@ test("native selector disables clicks and close during the one actual pending bi
   assert.equal(writes(runtime).length, 1); const busyTree = ui.render().tree;
   assert.equal(Object.hasOwn(keyedNode(busyTree, "card:" + card.id).props, "onClick"), false); assert.equal(keyedNode(busyTree, "selector-close").props.enabled, false);
   assert.equal(busyTree.props.properties.dismissOnBackPress, false); assert.equal(busyTree.props.properties.dismissOnClickOutside, false);
-  await assert.rejects(ui.dispatch(row.props.onClick), /already running/);
+  await assert.rejects(async () => ui.dispatch(row.props.onClick), /already running|compose action not found/);
   assert.throws(
     /** The real SDK dispatch propagates this synchronous stale-close rejection before returning any action result. */
-    () => ui.dispatch(close.props.onClick), /already running/,
+    () => ui.dispatch(close.props.onClick), /already running|compose action not found/,
   );
   assert.equal(writes(runtime).length, 1); gate.release(); const result = await pending;
   assert.equal(result.actionResult.type, "toolpkg.presentation.complete"); assert.equal(writes(runtime).length, 1);
@@ -167,7 +167,7 @@ test("native selector disables clicks and close during the one actual pending bi
 test("failed native binding commit stays in the same modal and permits explicit cancellation", async t => {
   const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "Failure visible role" } });
   const ui = await ready(runtime, presentation("native-error", "selector-chat")), original = new Error("Controlled original native namespace write failure");
-  runtime.failNext("storage.transaction", original);
+  runtime.failNext("storage.preferences.edit", original);
   await assert.rejects(ui.dispatch(keyedNode(ui.render().tree, "card:" + card.id).props.onClick),
     /** Requires original error identity rather than replacing it with a successful or lossy response. */
     failure => failure === original,

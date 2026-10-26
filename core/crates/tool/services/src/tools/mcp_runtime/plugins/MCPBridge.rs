@@ -16,6 +16,10 @@ mod streamable_http;
 
 const REQUEST_TIMEOUT_MS: u64 = 180_000;
 const SPAWN_TIMEOUT_MS: u64 = 180_000;
+/// Size cap for one service's in-memory diagnostics log.
+const MAX_SERVICE_LOG_BYTES: usize = 256 * 1024;
+/// Newest bytes kept after one service log eviction pass.
+const KEEP_SERVICE_LOG_BYTES: usize = 128 * 1024;
 
 /// Shares one deadline across process launch and every initialization request.
 #[derive(Clone)]
@@ -1317,6 +1321,32 @@ fn nextRequestId(active: &mut ActiveService) -> u64 {
 }
 
 /// Reads a matching response and reports process exit without waiting for the deadline.
+/// Appends one diagnostics chunk, dropping the oldest records once the
+/// service log exceeds its in-memory cap.
+fn append_service_log(logs: &mut String, chunk: &str) {
+    if chunk.is_empty() {
+        return;
+    }
+    logs.push_str(chunk);
+    trim_service_log(logs);
+}
+
+/// Drops the oldest whole records, keeping roughly the newest half under the cap.
+fn trim_service_log(logs: &mut String) {
+    if logs.len() <= MAX_SERVICE_LOG_BYTES {
+        return;
+    }
+    let mut cut = logs.len() - KEEP_SERVICE_LOG_BYTES;
+    while cut < logs.len() && !logs.is_char_boundary(cut) {
+        cut += 1;
+    }
+    let start = match logs[cut..].find('\n') {
+        Some(offset) => cut + offset + 1,
+        None => logs.len(),
+    };
+    *logs = logs[start..].to_string();
+}
+
 #[allow(non_snake_case)]
 async fn readJsonResponse(
     active: &mut ActiveService,
@@ -1334,7 +1364,7 @@ async fn readJsonResponse(
                 .ok_or_else(|| "Local MCP process is not attached".to_string())?
                 .drainStderr()
                 .unwrap_or_default();
-            active.logs.push_str(&stderr);
+            append_service_log(&mut active.logs, &stderr);
             return Err(format!(
                 "MCP request {targetId} timed out: {}. {stderr}",
                 remaining.unwrap_err()
@@ -1354,7 +1384,7 @@ async fn readJsonResponse(
                 .ok_or_else(|| "Local MCP process is not attached".to_string())?;
             if !process.isRunning().map_err(|error| error.to_string())? {
                 let stderr = process.drainStderr().map_err(|error| error.to_string())?;
-                active.logs.push_str(&stderr);
+                append_service_log(&mut active.logs, &stderr);
                 active.ready = false;
                 return Err(format!(
                     "MCP process exited before response {targetId}. {stderr}"
@@ -1370,8 +1400,7 @@ async fn readJsonResponse(
         let parsed = match serde_json::from_str::<Value>(&line) {
             Ok(value) => value,
             Err(_) => {
-                active.logs.push_str(&line);
-                active.logs.push('\n');
+                append_service_log(&mut active.logs, &format!("{line}\n"));
                 continue;
             }
         };
@@ -1387,7 +1416,7 @@ async fn readJsonResponse(
                 .drainStderr()
                 .unwrap_or_default();
             if !stderr.is_empty() {
-                active.logs.push_str(&stderr);
+                append_service_log(&mut active.logs, &stderr);
             }
             return Ok(parsed);
         }
@@ -1638,6 +1667,32 @@ mod startup_tests {
         );
         assert!(!active.ready);
         assert_eq!(active.logs, "scripted stderr");
+    }
+
+    /// Drops the oldest whole records once a service log exceeds its in-memory cap.
+    #[test]
+    fn serviceLogEvictsOldestRecordsPastCap() {
+        let mut logs = String::new();
+        let line = "x".repeat(1024);
+        for index in 0..400 {
+            append_service_log(&mut logs, &format!("record {index} {line}\n"));
+        }
+        assert!(logs.len() > KEEP_SERVICE_LOG_BYTES, "roughly half the cap is kept");
+        assert!(logs.len() <= MAX_SERVICE_LOG_BYTES + 2 * 1024);
+        assert!(!logs.contains("record 0 "), "oldest records must be evicted");
+        assert!(logs.contains("record 399 "), "newest records must survive");
+        assert!(
+            logs.lines().next().unwrap().starts_with("record "),
+            "eviction keeps whole records only"
+        );
+    }
+
+    /// Drains a boundary-free oversized service log instead of keeping a partial record.
+    #[test]
+    fn serviceLogWithoutRecordBoundariesDrainsToEmpty() {
+        let mut logs = "y".repeat(MAX_SERVICE_LOG_BYTES + 1);
+        trim_service_log(&mut logs);
+        assert!(logs.is_empty());
     }
 
     /// Prevents a timeout-shaped server error from executing a side-effecting tool twice.

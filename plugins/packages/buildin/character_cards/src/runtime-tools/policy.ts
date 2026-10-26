@@ -1,26 +1,26 @@
 import type { CharacterRecord } from "../api";
 import { CHARACTER_CARDS_NAMESPACE } from "../chat-lifecycle";
-import { decodeMessageMarker } from "../chat-markers";
+import { decodeExecutionData } from "../chat-markers";
 import { record } from "../domain";
 
-/** Identifies the authenticated hook owner and its isolated snapshot for the already-open turn. */
+/** Identifies the authenticated hook owner and its isolated execution data for the already-open turn. */
 interface ExecutionContext {
   chatId: string | null;
   participantId: string | null;
   extensionOwner: string;
-  messageExtension: Record<string, unknown> | null;
+  executionData: Record<string, unknown> | null;
 }
-/** Requires the actual authenticated registration identity even when this owner contributes no snapshot. */
+/** Requires the actual authenticated registration identity even when this owner contributes no execution data. */
 function requirePolicyOwner(registeredOwner: unknown): asserts registeredOwner is typeof CHARACTER_CARDS_NAMESPACE {
   if (registeredOwner !== CHARACTER_CARDS_NAMESPACE) throw new Error("Tool policy requires this plugin's authenticated registered owner");
 }
 /** Validates the actual host projection without consulting current chat bindings or character records. */
 function executionContext(value: unknown, registeredOwner: unknown): ExecutionContext {
   requirePolicyOwner(registeredOwner);
-  const context = record(value, "executionContext"), fields = ["chatId", "participantId", "extensionOwner", "messageExtension"];
+  const context = record(value, "executionContext"), fields = ["chatId", "participantId", "extensionOwner", "executionData"];
   const actual = Object.keys(context);
   if (actual.some(
-    /** Rejects complete plugin maps and undocumented alternative snapshot fields. */
+    /** Rejects complete plugin maps and undocumented alternative execution fields. */
     key => fields.indexOf(key) === -1,
   )) throw new Error("executionContext has unexpected fields");
   for (const key of fields) {
@@ -35,17 +35,17 @@ function executionContext(value: unknown, registeredOwner: unknown): ExecutionCo
   if (participantId !== null && typeof participantId !== "string") throw new Error("Invalid execution participantId");
   if (typeof context.extensionOwner !== "string" || context.extensionOwner !== registeredOwner) throw new Error("executionContext.extensionOwner does not match the authenticated registered owner");
   if (chatId === null && participantId !== null) throw new Error("A selected execution participant requires a real chat context");
-  const messageExtension = context.messageExtension === null ? null : record(context.messageExtension, "executionContext.messageExtension");
-  return { chatId, participantId, extensionOwner: context.extensionOwner, messageExtension };
+  const executionData = context.executionData === null ? null : record(context.executionData, "executionContext.executionData");
+  return { chatId, participantId, extensionOwner: context.extensionOwner, executionData };
 }
-/** Reads permissions only from this turn's validated message marker; null is explicit non-participation. */
-function snapshotToolPolicy(context: ExecutionContext): CharacterRecord["toolAccessConfig"] | null {
-  if (context.messageExtension === null) return null;
-  const marker = decodeMessageMarker(context.messageExtension);
-  if (context.participantId === null || marker.profile.id !== context.participantId) throw new Error("Execution participant does not match the frozen message snapshot");
+/** Reads permissions only from this turn's validated execution data; null is explicit non-participation. */
+function executionToolPolicy(context: ExecutionContext): CharacterRecord["toolAccessConfig"] | null {
+  if (context.executionData === null) return null;
+  const marker = decodeExecutionData(context.executionData);
+  if (context.participantId === null || marker.profile.id !== context.participantId) throw new Error("Execution participant does not match the current execution data");
   return marker.profile.toolAccess;
 }
-/** Checks frozen tool rules using declared tool syntax and exact source identities. */
+/** Checks current tool rules using declared tool syntax and exact source identities. */
 export function toolAllowed(config: CharacterRecord["toolAccessConfig"], name: string, activationSource?: string): boolean {
   if (!config.enabled) return true;
   const sources = new Set([...config.allowedPackages, ...config.allowedSkills, ...config.allowedMcpServers]);
@@ -68,12 +68,12 @@ export function toolAllowed(config: CharacterRecord["toolAccessConfig"], name: s
     tool => tool === name,
   );
 }
-/** Intercepts actual tool execution using only this owner's already-resolved message snapshot. */
+/** Intercepts actual tool execution using only this owner's already-resolved execution data. */
 export async function toolCallPolicy(event: ToolPkg.ToolLifecycleHookEvent): Promise<ToolPkg.ToolLifecycleHookObjectResult | void> {
   if (event.eventName !== "tool_call_intercept") return;
   requirePolicyOwner(event.containerPackageName);
   if (event.eventPayload.runtimeContext === null) return;
-  const policy = snapshotToolPolicy(executionContext(event.eventPayload.runtimeContext, event.containerPackageName));
+  const policy = executionToolPolicy(executionContext(event.eventPayload.runtimeContext, event.containerPackageName));
   if (policy === null) return;
   let source: string | undefined;
   if (event.eventPayload.toolName === "use_package") {
@@ -84,14 +84,14 @@ export async function toolCallPolicy(event: ToolPkg.ToolLifecycleHookEvent): Pro
   if (toolAllowed(policy, event.eventPayload.toolName, source)) return { action: "allow" };
   return { action: "block", reason: "Selected execution participant is not allowed to access tool: " + event.eventPayload.toolName };
 }
-/** Filters model-visible tools through the same immutable message snapshot used for actual interception. */
+/** Filters model-visible tools through the same current execution data used for actual interception. */
 export async function toolPromptPolicy(event: ToolPkg.ToolPromptComposeHookEvent): Promise<ToolPkg.PromptHookObjectResult | void> {
   const payload = event.eventPayload;
   if (payload.stage !== "filter_tool_call_tools" && payload.stage !== "build_tool_prompt") return;
   requirePolicyOwner(event.containerPackageName);
   const metadata = record(payload.metadata, "tool-prompt metadata");
   if (metadata.executionContext === null) return;
-  const policy = snapshotToolPolicy(executionContext(metadata.executionContext, event.containerPackageName));
+  const policy = executionToolPolicy(executionContext(metadata.executionContext, event.containerPackageName));
   if (policy === null) return;
   if (!Array.isArray(payload.availableTools)) throw new Error("Tool-prompt availableTools must be the actual host catalog");
   return { availableTools: payload.availableTools.filter(

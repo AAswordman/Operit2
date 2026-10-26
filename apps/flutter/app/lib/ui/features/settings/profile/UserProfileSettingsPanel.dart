@@ -204,10 +204,22 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
             else if (_githubError != null)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                child: SelectableText(
-                  l10n.settingsUserProfileGitHubStatusError(
-                    _githubError.toString(),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    SelectableText(
+                      l10n.settingsUserProfileGitHubStatusError(
+                        _githubError.toString(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _logoutGitHub,
+                      style: _profileActionButtonStyle(),
+                      icon: const Icon(Icons.logout, size: 18),
+                      label: Text(l10n.settingsUserProfileLogout),
+                    ),
+                  ],
                 ),
               )
             else
@@ -407,10 +419,14 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
     }
     try {
       final auth = _clients.preferencesGitHubAuthPreferences;
-      final loggedIn = await auth.isLoggedIn();
+      var loggedIn = await auth.isLoggedIn();
       final user = await auth.getCurrentUserInfo();
       if (loggedIn && user == null) {
-        throw StateError('GitHub session has no user profile');
+        // An interrupted legacy login can leave a session without its profile.
+        // Clear it so this page recovers instead of trapping the user in an
+        // unrecoverable error state.
+        await auth.logout();
+        loggedIn = false;
       }
       if (!mounted) {
         return;

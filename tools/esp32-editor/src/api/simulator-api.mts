@@ -19,8 +19,6 @@ let ready = false;
 let output = '';
 let sequence = 0;
 let lifecycle = 0;
-// Each browser has its own self-drawn UI request counter. Only the page that opened
-// the preview may drain the simulator's destructive, single-chunk queue.
 let previousExit: Promise<void> = Promise.resolve();
 const pending = new Map<number, {resolve: (value: unknown) => void; reject: (error: Error) => void}>();
 
@@ -143,11 +141,11 @@ export function stopSimulator(): void {
   processToStop?.kill();
 }
 
-async function rpc(command: string, fields = {}): Promise<unknown> {
+async function rpc(command: string, fields = {}, timeoutMs = 5000): Promise<unknown> {
   if (!child || !ready) throw new Error('请先启动模拟设备并等待编译完成');
   const id = ++sequence;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('模拟设备响应超时')); }, 5000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error('模拟设备响应超时')); }, timeoutMs);
     pending.set(id, {resolve: value => { clearTimeout(timer); resolve(value); },
       reject: error => { clearTimeout(timer); reject(error); }});
     child!.stdin.write(JSON.stringify({id, command, ...fields}) + '\n');
@@ -177,11 +175,30 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, device});
+    } else if (url.pathname === '/api/simulator/speech' && req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) { body += String(chunk); if (Buffer.byteLength(body) > 24000) throw new Error('语音请求过长'); }
+      const input = JSON.parse(body) as Record<string, unknown>;
+      reply(200, await rpc('speech', input));
+    } else if (url.pathname === '/api/simulator/core-access'  && req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) {
+        body += String(chunk);
+        if (Buffer.byteLength(body) > 8192) throw new Error('Core 接入请求过长');
+      }
+      const input = JSON.parse(body) as Record<string, unknown>;
+      if (!['request', 'confirm', 'refresh', 'cancel'].includes(String(input.step))) {
+        throw new Error('无效的 Core 接入步骤');
+      }
+      reply(200, await rpc('coreAccess', {step: input.step, nodeId: input.nodeId, address: input.address,
+        pairingId: input.pairingId, confirmationCode: input.confirmationCode, requestId: input.requestId}, 30000));
     } else if (url.pathname === '/api/simulator/scene-view' && req.method === 'GET') {
       reply(200, ready ? await rpc('sceneView') : null);
     } else if (url.pathname === '/api/simulator/memory' && req.method === 'GET') {
       reply(200, ready ? await rpc('memory') : null);
     } else if (url.pathname === '/api/simulator/send-image' && req.method === 'POST') {
+      const sendId = req.headers['x-operit-send-id'];
+      if (sendId !== undefined && (typeof sendId !== 'string' || sendId.length > 64)) throw new Error('无效的发送编号');
       const mimeType = req.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
       if (mimeType !== 'image/png' && mimeType !== 'image/jpeg') throw new Error('只支持 PNG/JPEG 图片');
       const chunks: Buffer[] = []; let total = 0;
@@ -192,7 +209,7 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
       }
       if (!total) throw new Error('图片为空');
       const base64 = Buffer.concat(chunks).toString('base64');
-      reply(200, await rpc('sendImage', {mimeType, bytes: base64}));
+      reply(200, await rpc('sendImage', {mimeType, bytes: base64, sendId}));
     } else if (url.pathname === '/api/simulator/debug/commands' && req.method === 'GET') {
       reply(200, takeUiCommands());
     } else if (url.pathname === '/api/simulator/debug/result' && req.method === 'POST') {
@@ -227,10 +244,11 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         body += String(chunk);
         if (Buffer.byteLength(body) > 8192) throw new Error('消息过长');
       }
-      const input = JSON.parse(body) as {action?: unknown; text?: unknown; requestId?: unknown; assignmentVersion?: unknown};
+      const input = JSON.parse(body) as {action?: unknown; text?: unknown; sendId?: unknown; requestId?: unknown; assignmentVersion?: unknown; inputId?: unknown};
       if (url.pathname.endsWith('/send')) {
         if (typeof input.text !== 'string') throw new Error('缺少消息内容');
-        reply(200, await rpc('send', {text: input.text}));
+        if (input.sendId !== undefined && (typeof input.sendId !== 'string' || input.sendId.length > 64)) throw new Error('无效的发送编号');
+        reply(200, await rpc('send', {text: input.text, sendId: input.sendId}));
         return true;
       }
       if (typeof input.action !== 'string') throw new Error('缺少设备 action');
@@ -242,6 +260,10 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         }
         action.requestId = input.requestId;
         action.assignmentVersion = input.assignmentVersion;
+      }
+      if (input.action === 'edge_voice' && input.inputId !== undefined) {
+        if (typeof input.inputId !== 'string' || input.inputId.length > 128) throw new Error('无效的麦克风输入');
+        action.inputId = input.inputId;
       }
       reply(200, await rpc('action', action));
     } else reply(404, {error: 'Unknown simulator endpoint'});

@@ -2,59 +2,26 @@
 
 import 'package:flutter/material.dart';
 
-import 'StreamMarkdownRenderer.dart';
-
+/// Quote decoration around the already parsed semantic body.
 class MarkdownBlockQuote extends StatelessWidget {
-  const MarkdownBlockQuote({
-    super.key,
-    required this.content,
-    required this.textColor,
-    required this.backgroundColor,
-    required this.isStreaming,
-    required this.splitMarkdownContent,
-  });
-
-  final String content;
-  final Color textColor;
-  final Color backgroundColor;
-  final bool isStreaming;
-  final MarkdownContentSplitter splitMarkdownContent;
-
+  const MarkdownBlockQuote({super.key, required this.child});
+  final Widget child;
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final quoteText = stripBlockQuoteMarkers(content);
-    if (quoteText.trim().isEmpty) {
-      return const SizedBox.shrink();
-    }
+    final colors = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(vertical: 1),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+        color: colors.surfaceContainerHighest.withValues(alpha: .2),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
           width: 2,
-          color: colorScheme.primary.withValues(alpha: 0.15),
+          color: colors.primary.withValues(alpha: .15),
         ),
       ),
       padding: const EdgeInsets.all(4),
-      child: StreamMarkdownRenderer(
-        content: quoteText,
-        isStreaming: isStreaming,
-        textColor: textColor,
-        backgroundColor: backgroundColor,
-        selectionRoot: false,
-        splitMarkdownContent: splitMarkdownContent,
-      ),
+      child: child,
     );
   }
-}
-
-String stripBlockQuoteMarkers(String content) {
-  return content
-      .split('\n')
-      .map((line) => line.replaceFirst(RegExp(r'^\s*>\s?'), ''))
-      .join('\n')
-      .trim();
 }

@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
-use operit_link::CoreValue;
 
 pub mod image_preview;
-pub mod events;
 
 /// Link target reserved for the Edge device I/O service namespace.
 pub const EDGE_DEVICE_IO_OBJECT_ID: &str = "edge.deviceIo";
@@ -18,9 +16,6 @@ pub const EDGE_ROBOT_FACE_STATE_PROPERTY: &str = "robotFaceState";
 
 /// Link target reserved for the generic lightweight display service.
 pub const EDGE_SCREEN_OBJECT_ID: &str = "edge.screen";
-
-/// Link target reserved for device-owned native plugins.
-pub const EDGE_PLUGIN_TARGET: &str = "edge.plugins";
 
 /// Link property name reserved for future display state watches.
 pub const EDGE_SCREEN_STATE_PROPERTY: &str = "screenState";
@@ -49,23 +44,5 @@ pub struct EdgeScreenInputRequest {
 pub struct EdgeScreenInputState {
     pub accepted: bool,
     pub action: String,
-}
-
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EdgePluginManifest {
-    pub id: String,
-    pub name: String,
-    pub actions: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EdgePluginCall {
-    pub pluginId: String,
-    pub action: String,
-    #[serde(default = "CoreValue::emptyMap")]
-    pub args: CoreValue,
 }
 

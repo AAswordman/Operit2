@@ -1,13 +1,16 @@
 /// Validates immutable host theme snapshots and delivers changes.
 var OperitComposeTheme = function () {
   function makeColorToken(name, alpha) {
-    return {
-      __colorToken: name,
-      alpha: alpha,
-      copy: function (options) {
+    var token = { __colorToken: name, alpha: alpha };
+    // Methods are local helpers, not enumerable UI data or mounted callbacks.
+    Object.defineProperty(token, 'copy', {
+      configurable: true,
+      writable: true,
+      value: function (options) {
         return makeColorToken(name, options && typeof options.alpha === 'number' ? options.alpha : alpha);
       }
-    };
+    });
+    return token;
   }
   function create(runtime, options) {
     var colorSchemeNames = ['primary', 'onPrimary', 'primaryContainer', 'onPrimaryContainer', 'secondary', 'onSecondary', 'secondaryContainer', 'onSecondaryContainer', 'tertiary', 'onTertiary', 'tertiaryContainer', 'onTertiaryContainer', 'error', 'onError', 'errorContainer', 'onErrorContainer', 'background', 'onBackground', 'surface', 'onSurface', 'surfaceVariant', 'onSurfaceVariant', 'outline', 'outlineVariant', 'inverseSurface', 'inverseOnSurface', 'inversePrimary', 'surfaceTint', 'scrim', 'shadow', 'surfaceDim', 'surfaceBright', 'surfaceContainerLowest', 'surfaceContainerLow', 'surfaceContainer', 'surfaceContainerHigh', 'surfaceContainerHighest', 'primaryFixed', 'primaryFixedDim', 'onPrimaryFixed', 'onPrimaryFixedVariant', 'secondaryFixed', 'secondaryFixedDim', 'onSecondaryFixed', 'onSecondaryFixedVariant', 'tertiaryFixed', 'tertiaryFixedDim', 'onTertiaryFixed', 'onTertiaryFixedVariant'];
@@ -62,7 +65,10 @@ var OperitComposeTheme = function () {
         colorScheme: colorScheme
       },
       update: function (value) {
-        themeSnapshot = readThemeSnapshot(value);
+        var next = readThemeSnapshot(value);
+        if (JSON.stringify(next) === JSON.stringify(themeSnapshot)) return false;
+        themeSnapshot = next;
+        return true;
       }
     };
   }

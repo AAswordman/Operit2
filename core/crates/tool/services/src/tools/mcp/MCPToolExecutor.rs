@@ -193,7 +193,7 @@ impl MCPToolExecutor {
             result.insert(name, MCPToolParameter::smartConvert(value, expectedType));
         }
         if !filteredNames.is_empty() {
-            AppLogger::d(
+            AppLogger::v_with_level(
                 TAG,
                 &format!(
                     "Filtered undeclared MCP arguments: tool={}, parameters={}",
@@ -203,6 +203,7 @@ impl MCPToolExecutor {
                         .unwrap_or("unknown"),
                     filteredNames.join(", "),
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
         }
         result

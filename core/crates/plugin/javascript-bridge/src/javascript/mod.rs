@@ -37,8 +37,6 @@ pub mod JsJavaBridgeDelegates;
 #[path = "JsLibraries.rs"]
 pub mod JsLibraries;
 
-#[path = "JsTimeoutConfig.rs"]
-pub mod JsTimeoutConfig;
 
 #[path = "JsToolManager.rs"]
 pub mod JsToolManager;

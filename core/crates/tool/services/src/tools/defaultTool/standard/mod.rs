@@ -13,6 +13,9 @@ pub mod StandardChatManagerTool;
 #[path = "StandardFileSystemTools.rs"]
 pub mod StandardFileSystemTools;
 
+#[path = "StandardWebSocketTools.rs"]
+pub(crate) mod StandardWebSocketTools;
+
 #[path = "StandardHttpTools.rs"]
 pub mod StandardHttpTools;
 
@@ -34,6 +37,9 @@ pub mod StandardTerminalTools;
 #[path = "StandardThemeTools.rs"]
 pub(crate) mod StandardThemeTools;
 
+#[path = "StandardMediaTools.rs"]
+pub(crate) mod StandardMediaTools;
+
 #[path = "StandardTtsTools.rs"]
 pub(crate) mod StandardTtsTools;
 
@@ -42,3 +48,6 @@ pub mod StandardWebVisitTool;
 
 #[path = "ToolArguments.rs"]
 pub(crate) mod ToolArguments;
+
+#[path = "StandardTerminalStreaming.rs"]
+pub(crate) mod StandardTerminalStreaming;

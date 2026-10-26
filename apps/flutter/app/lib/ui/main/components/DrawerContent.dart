@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -22,6 +23,7 @@ import '../../theme/OperitTheme.dart';
 import '../../window/DetachedChatWindowLauncher.dart';
 import '../../window/OperitWindowPlatform.dart';
 import 'CollapsedDrawerContent.dart';
+import 'ChatHistoryTree.dart';
 import '../../common/components/M3LoadingIndicator.dart';
 import 'DrawerContentDialogs.dart';
 import 'NavigationDrawerAppearance.dart';
@@ -77,6 +79,9 @@ class _DrawerContentState extends State<DrawerContent> {
   String? _errorMessage;
   final Set<String> _collapsedGroups = {};
   bool _groupMutationPending = false;
+  final Set<String> _expandedParents = {};
+  late ChatHistoryTree _historyTree;
+  Set<String> _matchingHistoryIds = {};
 
   /// Uses the actual receiving bridge for native conversation operations.
   GeneratedCoreProxyClients get _clients =>
@@ -135,9 +140,10 @@ class _DrawerContentState extends State<DrawerContent> {
       if (chatId != widget.currentChatId) ChatSelectionTransition.begin(chatId);
       widget.onConversationActivated();
       await _chatCoreProxy.switchChat(chatId: chatId);
-      ClientLogger.i(
+      ClientLogger.v(
         'chat_switch.command_completed chatId=$chatId elapsedMs=${switchStartedAt.elapsedMilliseconds}',
         tag: 'ChatSwitchTrace',
+        verboseLevel: VerboseLevel.level2,
       );
     } catch (error, stackTrace) {
       ChatSelectionTransition.complete(chatId);
@@ -158,6 +164,7 @@ class _DrawerContentState extends State<DrawerContent> {
       await chatCore.createNewChat(
         setAsCurrentChat: true,
         sourceChatId: sourceChatId,
+        parentChatId: null,
         input: null,
       );
       onActivated();
@@ -221,6 +228,15 @@ class _DrawerContentState extends State<DrawerContent> {
     await _deleteConversation(history);
   }
 
+  /// Shares the host's current theme and desktop launcher with all sidebar tabs.
+  Future<void> _openConversationInWindow(
+    core_proxy.ChatHistoryListItem history,
+  ) => DetachedChatWindowLauncher.openChat(
+    chatId: history.id,
+    title: history.title,
+    themePreferenceSnapshot: OperitTheme.of(context).themePreferenceSnapshot,
+  );
+
   /// Presents native workspace actions for a canonical conversation row.
   Future<void> _showConversationActionDialog(
     core_proxy.ChatHistoryListItem history,
@@ -244,13 +260,7 @@ class _DrawerContentState extends State<DrawerContent> {
     }
     switch (action) {
       case ConversationAction.openInWindow:
-        await DetachedChatWindowLauncher.openChat(
-          chatId: history.id,
-          title: history.title,
-          themePreferenceSnapshot: OperitTheme.of(
-            context,
-          ).themePreferenceSnapshot,
-        );
+        await _openConversationInWindow(history);
       case ConversationAction.rename:
         await _showRenameConversationDialog(history);
       case ConversationAction.moveUp:
@@ -414,14 +424,19 @@ class _DrawerContentState extends State<DrawerContent> {
   /// Projects the full canonical order into native workspace sections and search matches.
   List<_WorkspaceSection> _workspaceSections({bool filter = true}) {
     final query = _searchController.text.trim().toLowerCase();
+    _historyTree = ChatHistoryTree(widget.histories);
+    _matchingHistoryIds = _historyTree.matching(
+      (history) =>
+          history.title.toLowerCase().contains(query) ||
+          _workspaceLabel(history).toLowerCase().contains(query) ||
+          (history.group ?? '未分组').toLowerCase().contains(query),
+    );
     final sections = <String, _WorkspaceSection>{};
-    for (final history in widget.histories) {
+    for (final history in _historyTree.roots) {
       final label = _workspaceLabel(history);
       if (filter &&
           query.isNotEmpty &&
-          !history.title.toLowerCase().contains(query) &&
-          !label.toLowerCase().contains(query) &&
-          !(history.group ?? '未分组').toLowerCase().contains(query)) {
+          !_matchingHistoryIds.contains(history.id)) {
         continue;
       }
       final key = _workspaceKey(history);
@@ -460,7 +475,8 @@ class _DrawerContentState extends State<DrawerContent> {
     return index >= 0 &&
         target >= 0 &&
         target < widget.histories.length &&
-        _workspaceKey(history) == _workspaceKey(widget.histories[target]);
+        _workspaceKey(history) == _workspaceKey(widget.histories[target]) &&
+        history.parentChatId == widget.histories[target].parentChatId;
   }
 
   /// Moves a native workspace row without reading a role or plugin selection field.
@@ -481,7 +497,8 @@ class _DrawerContentState extends State<DrawerContent> {
     core_proxy.ChatHistoryListItem target,
   ) async {
     if (moved.id == target.id ||
-        _workspaceKey(moved) != _workspaceKey(target)) {
+        _workspaceKey(moved) != _workspaceKey(target) ||
+        moved.parentChatId != target.parentChatId) {
       return;
     }
     if (moved.group != target.group) {
@@ -512,45 +529,95 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
+  bool get _isChatRouteSelected =>
+      widget.selectedRouteId ==
+      ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat);
+
   /// Builds a native row with the original pin, lock, title, delete and detached-window actions.
-  Widget _historyRow(core_proxy.ChatHistoryListItem history) =>
-      ConversationDrawerItem(
-        key: ValueKey('workspace-chat:${history.id}'),
-        history: history,
+  Widget _historyRow(
+    core_proxy.ChatHistoryListItem history, {
+    Widget? childrenToggle,
+  }) => ConversationDrawerItem(
+    key: ValueKey('workspace-chat:${history.id}'),
+    history: history,
+    title: history.title,
+    childrenToggle: childrenToggle,
+    selected: _isChatRouteSelected && widget.currentChatId == history.id,
+    isRunning: widget.activeStreamingChatIds.contains(history.id),
+    appearance: widget.appearance,
+    nested: true,
+    workspaceStyle: true,
+    onClick: () => unawaited(_switchConversation(history)),
+    onRename: () => unawaited(_showRenameConversationDialog(history)),
+    onTogglePinned: () => unawaited(_updateConversationPinned(history)),
+    onToggleLocked: () => unawaited(_updateConversationLocked(history)),
+    onDelete: () => unawaited(_deleteConversation(history)),
+    onSwipeDelete: () => unawaited(_showDeleteConversationDialog(history)),
+    onLongPress: () => unawaited(_showConversationActionDialog(history)),
+    canDetach: operitSupportsDesktopMultiWindow,
+    onDetach: () => unawaited(
+      DetachedChatWindowLauncher.openChat(
+        chatId: history.id,
         title: history.title,
-        selected:
-            widget.selectedRouteId ==
-                ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat) &&
-            widget.currentChatId == history.id,
-        isRunning: widget.activeStreamingChatIds.contains(history.id),
-        appearance: widget.appearance,
-        nested: true,
-        workspaceStyle: true,
-        onClick: () => unawaited(_switchConversation(history)),
-        onRename: () => unawaited(_showRenameConversationDialog(history)),
-        onTogglePinned: () => unawaited(_updateConversationPinned(history)),
-        onToggleLocked: () => unawaited(_updateConversationLocked(history)),
-        onDelete: () => unawaited(_deleteConversation(history)),
-        onSwipeDelete: () => unawaited(_showDeleteConversationDialog(history)),
-        onLongPress: () => unawaited(_showConversationActionDialog(history)),
-        canDetach: operitSupportsDesktopMultiWindow,
-        onDetach: () => unawaited(
-          DetachedChatWindowLauncher.openChat(
-            chatId: history.id,
-            title: history.title,
-            themePreferenceSnapshot: OperitTheme.of(
-              context,
-            ).themePreferenceSnapshot,
-          ).catchError((Object error, StackTrace stackTrace) {
-            if (mounted) setState(() => _errorMessage = error.toString());
-          }),
+        themePreferenceSnapshot: OperitTheme.of(
+          context,
+        ).themePreferenceSnapshot,
+      ).catchError((Object error, StackTrace stackTrace) {
+        if (mounted) setState(() => _errorMessage = error.toString());
+      }),
+    ),
+    onMoveTo: (moved) =>
+        unawaited(_runGroupMutation(() => _moveConversationTo(moved, history))),
+    canAcceptDrop: (moved) =>
+        _workspaceKey(moved) == _workspaceKey(history) &&
+        moved.parentChatId == history.parentChatId,
+  );
+
+  /// Keeps child conversations beneath their parent until explicitly expanded or found by search.
+  Widget _historyBranch(
+    core_proxy.ChatHistoryListItem history,
+    bool searching, [
+    int depth = 0,
+  ]) {
+    final children = _historyTree.children[history.id]!;
+    final expanded = searching || _expandedParents.contains(history.id);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: EdgeInsetsDirectional.only(start: depth * 16.0),
+          child: _historyRow(
+            history,
+            childrenToggle: children.isEmpty
+                ? null
+                : IconButton(
+                    key: ValueKey('workspace-children:${history.id}'),
+                    tooltip: expanded ? '收起子会话' : '展开子会话（${children.length}）',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 26,
+                      height: 28,
+                    ),
+                    padding: EdgeInsets.zero,
+                    iconSize: 18,
+                    icon: Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
+                    ),
+                    onPressed: () => setState(() {
+                      if (!_expandedParents.remove(history.id)) {
+                        _expandedParents.add(history.id);
+                      }
+                    }),
+                  ),
+          ),
         ),
-        onMoveTo: (moved) => unawaited(
-          _runGroupMutation(() => _moveConversationTo(moved, history)),
-        ),
-        canAcceptDrop: (moved) =>
-            _workspaceKey(moved) == _workspaceKey(history),
-      );
+        if (expanded)
+          for (final child in children)
+            if (!searching || _matchingHistoryIds.contains(child.id))
+              _historyBranch(child, searching, depth + 1),
+      ],
+    );
+  }
 
   Widget _sidebarHeader(Widget tabs) => Padding(
     padding: const EdgeInsets.only(top: 26, right: 12),
@@ -607,8 +674,9 @@ class _DrawerContentState extends State<DrawerContent> {
             expanded: !_collapsedGroups.contains(group.key),
             appearance: widget.appearance,
             onToggleExpanded: () => setState(() {
-              if (!_collapsedGroups.remove(group.key))
+              if (!_collapsedGroups.remove(group.key)) {
                 _collapsedGroups.add(group.key);
+              }
             }),
             onCreateChat: () => unawaited(
               _runGroupMutation(
@@ -640,7 +708,7 @@ class _DrawerContentState extends State<DrawerContent> {
                 in searching || _expandedWorkspaces.contains(group.key)
                     ? group.histories
                     : _groupPreview(group.histories))
-              _historyRow(chat),
+              _historyBranch(chat, searching),
             if (!searching &&
                 _groupPreview(group.histories).length < group.histories.length)
               _HistoryLimitButton(
@@ -789,7 +857,7 @@ class _DrawerContentState extends State<DrawerContent> {
           child: ChatSidebarTabHost(
             clients: _clients,
             chats: widget.histories,
-            currentChatId: widget.currentChatId,
+            currentChatId: _isChatRouteSelected ? widget.currentChatId : null,
             activeStreamingChatIds: widget.activeStreamingChatIds,
             headerBuilder: (context, tabs) => Column(
               children: <Widget>[
@@ -804,6 +872,9 @@ class _DrawerContentState extends State<DrawerContent> {
                 ? null
                 : _pluginNavigationContent(),
             onActivateChat: _activateChat,
+            onOpenChatInWindow: operitSupportsDesktopMultiWindow
+                ? _openConversationInWindow
+                : null,
           ),
         ),
         Padding(
@@ -1064,43 +1135,11 @@ class _BottomThemeToggleButton extends StatelessWidget {
   final VoidCallback onToggle;
 
   @override
-  Widget build(BuildContext context) {
-    final shape = BorderRadius.circular(8);
-    return Tooltip(
-      message: darkThemeActive ? '切换白天模式' : '切换黑夜模式',
-      child: SizedBox(
-        width: 34,
-        height: 34,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: appearance.buttonContainerColor.withValues(alpha: 0.55),
-            borderRadius: shape,
-            border: Border.all(
-              color: appearance.dividerColor.withValues(alpha: 0.35),
-              width: 1,
-            ),
-          ),
-          child: Material(
-            color: Colors.transparent,
-            borderRadius: shape,
-            child: InkWell(
-              borderRadius: shape,
-              onTap: onToggle,
-              child: Center(
-                child: Icon(
-                  darkThemeActive
-                      ? Icons.light_mode_outlined
-                      : Icons.dark_mode_outlined,
-                  size: 16,
-                  color: appearance.itemColor.withValues(alpha: 0.85),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ThemeBottomThemeToggleButton(
+    appearance: appearance,
+    darkThemeActive: darkThemeActive,
+    onToggle: onToggle,
+  );
 }
 
 class _ToolbarIconButton extends StatelessWidget {
@@ -1120,31 +1159,12 @@ class _ToolbarIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: SizedBox(
-        width: 34,
-        height: 34,
-        child: Material(
-          color: active
-              ? appearance.selectedContainerColor.withValues(alpha: 0.35)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(6),
-            onTap: onClick,
-            child: Center(
-              child: Icon(
-                icon,
-                size: 17,
-                color: active
-                    ? appearance.statusAvailableColor
-                    : appearance.itemColor.withValues(alpha: 0.78),
-              ),
-            ),
-          ),
-        ),
-      ),
+    return ThemeDrawerToolbarIconButton(
+      icon: icon,
+      tooltip: tooltip,
+      appearance: appearance,
+      onClick: onClick,
+      active: active,
     );
   }
 }

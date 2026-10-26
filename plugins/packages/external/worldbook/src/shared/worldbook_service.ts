@@ -1,5 +1,4 @@
 import {
-  ensureWorldBookStorage,
   readWorldBookEntries,
   readWorldBookGroups,
   writeWorldBookEntries,
@@ -1017,5 +1016,3 @@ export async function updateWorldBookGroup(params: WorldBookGroupMutationParams)
   await writeWorldBookGroups(groups);
   return groups[index];
 }
-
-void ensureWorldBookStorage();

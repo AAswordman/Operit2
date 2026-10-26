@@ -11,8 +11,13 @@ mod chat_runtime;
 mod cli;
 mod client_paths;
 mod core_proxy;
+mod daemon;
 mod error;
+mod host;
 mod mdns;
+mod rescue;
+#[cfg(test)]
+mod profile_migration_acceptance_tests;
 mod tui;
 
 pub(crate) use bootstrap::{
@@ -54,11 +59,13 @@ async fn run() -> Result<(), CliError> {
     }
 
     match args[0].as_str() {
+        "rescue" => rescue::run(&args[1..]).map_err(CliError::user),
         "help" | "-h" | "--help" => {
             cli::print_root_usage();
             Ok(())
         }
         "cli" => cli::run_cli_root(&args[1..]).await.map_err(CliError::user),
+        "daemon" => daemon::run(&args[1..]).await.map_err(CliError::user),
         "tui" => tui::run_tui_command(&args[1..]).await.map_err(map_tui_error),
         "install" | "uninstall" => cli::run_cli_root(&args).await.map_err(CliError::user),
         value if value.starts_with('-') => {

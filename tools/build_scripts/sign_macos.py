@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from common import REPO_ROOT, run
+from common import REPO_ROOT, release_asset_name, run
 
 DEFAULT_APP = REPO_ROOT / "apps" / "flutter" / "app" / "build" / "macos" / "Build" / "Products" / "Release" / "Operit2.app"
 DEFAULT_WORK = REPO_ROOT / "tools" / "release" / "work" / "macos-local"
@@ -35,6 +35,7 @@ def first_identity(kind: str) -> str:
     raise RuntimeError(f"No valid {kind} signing identity found in the login keychain.")
 
 
+# Signs the App bundle and creates a versioned macOS installer package.
 def sign_macos_app(app_source: Path, work_dir: Path, profile: Path, entitlements_source: Path, app_identity: str, installer_identity: str) -> Path:
     if not app_source.is_dir():
         raise RuntimeError(f"macOS app bundle not found: {app_source}")
@@ -70,7 +71,7 @@ def sign_macos_app(app_source: Path, work_dir: Path, profile: Path, entitlements
     run(["codesign", "--force", "--sign", app_identity, "--timestamp", "--entitlements", str(entitlements_path), str(app)])
     run(["codesign", "--verify", "--deep", "--strict", str(app)])
 
-    pkg = work_dir / "Operit2.pkg"
+    pkg = work_dir / release_asset_name("app", "macos", "universal", "pkg")
     run(["productbuild", "--component", str(app), "/Applications", "--sign", installer_identity, str(pkg)])
     if not pkg.is_file() or pkg.stat().st_size == 0:
         raise RuntimeError(f"macOS installer was not produced: {pkg}")

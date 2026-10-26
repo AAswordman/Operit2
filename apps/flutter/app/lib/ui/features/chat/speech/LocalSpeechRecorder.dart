@@ -165,9 +165,10 @@ class LocalSpeechRecorder {
     await _recorder.stop();
     await streamDone.future;
     if (diagnostics != null) {
-      ClientLogger.d(
+      ClientLogger.v(
         'recording complete ${diagnostics.summary()}',
         tag: _logTag,
+        verboseLevel: VerboseLevel.level2,
       );
     }
     final streamError = _streamError;

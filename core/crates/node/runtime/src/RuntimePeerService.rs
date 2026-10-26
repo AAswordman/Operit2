@@ -20,6 +20,10 @@ pub trait RuntimePeerService: Send + Sync {
     /// Selects an admitted entry together with its volatile identity for UI reconnection.
     fn spaceConnection(&self) -> Option<super::NodeServices::SpaceClientConnection> { None }
 
+    /// Largest encoded Link message this endpoint accepts or sends on one
+    /// connection. Callers that assemble their own payloads must stay below it.
+    fn maxMessageBytes(&self) -> usize { operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES }
+
     /// Returns unpaired local-discovery candidates for every application using this Core.
     /// Excludes local and paired node IDs in either authorization direction, including offline peers.
     /// Discovery is not authentication or Space membership proof; candidates still require pairing.
@@ -31,14 +35,18 @@ pub trait RuntimePeerService: Send + Sync {
     /// Starts pairing over PeerLink using ephemeral keys and identity-bound proofs.
     /// Every transport requires confirmation with the code shown by the receiving device.
     /// Pairing grants no Space membership or business-call authorization.
+    /// transport 为 None 时按地址自动判定载体：URL scheme 直接映射，
+    /// 裸 `ip:port` 用一次性探测连接分类。
     async fn startPairing(
         &self,
         target: PeerEndpoint,
-        transport: PeerTransport,
+        transport: Option<PeerTransport>,
     ) -> Result<PendingPairing, CoreLinkError>;
 
     /// 按配对标识取出本地待确认状态，通过同一 Link Call 流程提交确认码。
     /// 授权方向分别记录；一次配对不自动创建反向授权，按设备撤销时则同时清除两边。
+    /// 单向解除后允许重新向仍有旧记录的接收端配对；仅新配对码验证成功后，
+    /// 接收端替换该设备的旧凭证并关闭旧会话，不改变 Space 成员或审批规则。
     /// 必要时使用已保存的端点和传输方式重新连接；双方身份与证明校验通过后才保存配对。
     /// 配对成功不等于获得 Space 成员资格，也不等于获得任意业务调用权限。
     async fn finishPairing(
@@ -108,8 +116,7 @@ pub trait RuntimePeerService: Send + Sync {
     /// 多个传输渠道属于同一个身份；调用方看不到端点、会话或密钥。
     fn outboundPeerNodeIds(&self) -> Result<std::collections::BTreeSet<String>, CoreLinkError>;
 
-    /// 当前有已认证在线证据的相邻节点，不包含匿名连接。
-    /// 同空间回连通过独立的空间凭证建立，不修改普通配对方向。
+    /// Returns neighbors reachable through the sole authenticated channel, excluding anonymous connections.
     fn activePeerNodeIds(&self) -> Result<std::collections::BTreeSet<String>, CoreLinkError>;
 
     /// 订阅待确认配对、授权或可用性变化；先订阅再读取快照，避免启动时漏掉变化。
@@ -122,8 +129,23 @@ pub trait RuntimePeerService: Send + Sync {
     /// 关闭该节点所有渠道的当前连接，保留配对授权；由统一连接所有者执行。
     async fn disconnectPeer(&self, peerNodeId: &str) -> Result<(), CoreLinkError>;
 
+    /// Updates the existing outbound pairing endpoint and probes the single authenticated channel.
+    /// Preserves pairing direction and credentials; rejects peers without outbound authorization.
+    async fn updatePeerEndpoint(
+        &self,
+        peerNodeId: &str,
+        endpoint: &str,
+        transport: Option<PeerTransport>,
+    ) -> Result<(), CoreLinkError> {
+        let _ = (peerNodeId, endpoint, transport);
+        Err(CoreLinkError::new(
+            "PEER_OUTBOUND_NOT_AUTHORIZED",
+            "No current outbound authorization for node",
+        ))
+    }
+
     /// 按设备撤销全部入站/出站授权、所有传输渠道及关联凭证；不让用户选择方向。
-    /// 这是需要本地管理权限的操作，不属于匿名配对入口。
+    /// 这是需要本地管理权限的单向本地操作，不通知对端，不属于匿名配对入口。
     async fn removePairedPeer(&self, peerNodeId: &str) -> Result<(), CoreLinkError>;
 
     /// 同步撤销这些设备的配对凭证（入站/出站授权与关联会话），不等待关闭在用渠道。

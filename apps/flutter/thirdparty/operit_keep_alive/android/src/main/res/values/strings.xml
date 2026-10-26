@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="operit_work_channel">Background work</string>
+    <string name="operit_work_running">Working</string>
+    <string name="operit_work_waiting">Waiting for your confirmation</string>
+    <string name="operit_work_completed">Completed</string>
+    <string name="operit_work_failed">Failed — open to view details</string>
+    <string name="operit_work_cancelled">Stopped</string>
+    <string name="operit_work_processing">Preparing</string>
+    <string name="operit_work_connecting">Connecting</string>
+    <string name="operit_work_receiving">Writing a response</string>
+    <string name="operit_work_executing_tool">Running a tool</string>
+    <string name="operit_work_processing_tool_result">Processing tool results</string>
+    <string name="operit_work_summarizing">Organizing context</string>
+    <string name="operit_work_executing_plan">Executing a plan</string>
+    <string name="operit_work_open">View work</string>
+    <string name="operit_work_review">Review</string>
+    <string name="operit_work_stop">Stop</string>
+    <string name="operit_work_summary">%1$d running · %2$d awaiting confirmation</string>
+    <string name="operit_work_chip_running">Working</string>
+    <string name="operit_work_chip_waiting">Review</string>
+</resources>

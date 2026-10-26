@@ -42,6 +42,11 @@ pub(crate) fn call_managed_runtime_process(method: &str, args: &[JsValue]) -> Ho
     call_function(&module, method, args)
 }
 
+/// Calls the independent browser storage-maintenance Host.
+pub(crate) fn call_data_rescue(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    call_function(&bridge_module("dataRescue")?, method, args)
+}
+
 pub(crate) fn call_storage(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
     let module = bridge_module("runtimeStorage")?;
     call_function(&module, method, args)

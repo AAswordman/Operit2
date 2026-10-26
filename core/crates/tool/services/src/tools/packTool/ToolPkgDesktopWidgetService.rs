@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::ToolPkgComposeDslNodeStore::ToolPkgComposeDslNodeStore;
+use super::ToolPkgComposeDslProgramStore::ToolPkgComposeDslProgramStore;
 use super::ToolPkgComposeDslSession::{
     ToolPkgComposeDslCommand, ToolPkgComposeDslEventStream, ToolPkgComposeDslSession,
 };
@@ -17,7 +17,7 @@ use super::RuntimePackageManager::RuntimePackageManager;
 #[allow(non_snake_case)]
 pub struct ToolPkgDesktopWidgetSnapshot {
     pub widget: ToolPkgDesktopWidget,
-    pub renderUpdate: crate::tools::packTool::ToolPkgComposeDslSession::ToolPkgComposeDslNodeUpdate,
+    pub renderUpdate: crate::tools::packTool::ToolPkgComposeDslProtocol::ToolPkgComposeDslTransaction,
 }
 
 static NEXT_RENDER_ID: AtomicU64 = AtomicU64::new(1);
@@ -124,7 +124,7 @@ pub(super) fn render(
         let (mut sender, commands) = ReverseStream::channel();
         let rendering = async {
             let work = async {
-                let mut store = ToolPkgComposeDslNodeStore::default();
+                let mut store = ToolPkgComposeDslProgramStore::default();
                 sender
                     .send(ToolPkgComposeDslCommand {
                         requestId: "render".into(),
@@ -138,7 +138,7 @@ pub(super) fn render(
                     .await?;
                 collect_command(&mut updates, &mut store, "render").await?;
                 let on_load = store
-                    .root()?
+                    .view(store.root()?)?
                     .props
                     .get("onLoad")
                     .and_then(|value| value.get("__actionId"))
@@ -160,7 +160,7 @@ pub(super) fn render(
                 }
                 Ok::<_, String>(ToolPkgDesktopWidgetSnapshot {
                     widget,
-                    renderUpdate: store.snapshot()?,
+                    renderUpdate: store.snapshot()?.encode()?,
                 })
             }
             .await;
@@ -176,7 +176,7 @@ pub(super) fn render(
 /// Collects one command's commits through the same session stream used by interactive hosts.
 async fn collect_command(
     updates: &mut ToolPkgComposeDslEventStream,
-    store: &mut ToolPkgComposeDslNodeStore,
+    store: &mut ToolPkgComposeDslProgramStore,
     request: &str,
 ) -> Result<(), String> {
     loop {

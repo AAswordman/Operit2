@@ -43,7 +43,7 @@ function toErrorText(error) {
     }
     return error || "error";
 }
-/** Completes the tool call with the current workspace plan content. */
+/** Completes the tool call with the current plugin-owned chat plan content. */
 async function get_plan() {
     const text = (0, plan_mode_i18n_js_1.resolvePlanModeI18n)();
     const chatId = getChatId();
@@ -78,7 +78,7 @@ async function get_plan() {
         });
     }
 }
-/** Deletes the current workspace plan after implementation completes. */
+/** Deletes the current plugin-owned chat plan after implementation completes. */
 async function complete_plan() {
     const chatId = getChatId();
     if (chatId === undefined) {

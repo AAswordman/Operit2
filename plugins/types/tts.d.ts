@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { TtsGetCurrentConfigIdResultData, TtsListConfigsResultData, TtsSetCurrentConfigIdResultData } from "./results";
+import type { TtsGetCurrentConfigIdResultData, TtsListConfigsResultData, TtsSetCurrentConfigIdResultData, TtsSpeakResultData, TtsSynthesizeResultData } from "./results";
 
 /**
  * Reads and selects speech configurations through the canonical host manager.
@@ -46,6 +46,40 @@ export namespace Tts {
   }
 
   /**
+   * Synthesizes audio on the plugin's host without starting host playback.
+   */
+  export interface SynthesizeRequest {
+    text: string;
+    /**
+     * Uses the selected host configuration when omitted.
+     */
+    configId?: string;
+  }
+
+  /**
+   * Starts system speech on this host using one configured voice.
+   */
+  export interface SpeakRequest {
+    text: string;
+    /**
+     * Uses the selected host configuration when omitted.
+     */
+    configId?: string;
+    /**
+     * Interrupts active speech when omitted.
+     */
+    interrupt?: boolean;
+    /**
+     * Overrides the configured speed for this utterance only.
+     */
+    speed?: number;
+    /**
+     * Overrides the unit pitch for this utterance only.
+     */
+    pitch?: number;
+  }
+
+  /**
    * Reads the current application-wide speech configuration ID.
    */
   function getCurrentConfigId(): Promise<TtsGetCurrentConfigIdResultData>;
@@ -57,4 +91,9 @@ export namespace Tts {
    * Selects an exact existing speech configuration ID.
    */
   function setCurrentConfigId(id: string): Promise<TtsSetCurrentConfigIdResultData>;
+  /**
+   * Starts system speech through the shared host playback capability.
+   */
+  function speak(request: SpeakRequest): Promise<TtsSpeakResultData>;
+  function synthesize(request: SynthesizeRequest): Promise<TtsSynthesizeResultData>;
 }

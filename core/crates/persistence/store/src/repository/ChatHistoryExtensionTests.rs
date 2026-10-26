@@ -1,5 +1,7 @@
 use super::*;
 use crate::sync::SqlChatSyncStore::tests::{openTestStore, DATABASE_MUTEX};
+use operit_model::ChatMessagePresentation::{ChatMessagePresentation, PRESENTATION_EXTENSION};
+use operit_model::MessagePart::MessagePart;
 use operit_model::PluginExtensionTarget::PluginExtensionTarget;
 use serde_json::{json, Value};
 
@@ -487,4 +489,194 @@ fn early_request_failure_does_not_leak_a_runtime_clone_lease() {
     assert!(manager
         .deletePluginExtension("alpha", &chatTarget())
         .unwrap());
+}
+
+/// Persists delivered presentation snapshots while retaining live plugin namespaces and variants.
+#[test]
+fn assistant_presentation_survives_reload_and_final_commit() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, database) = fixture("extensions-assistant-presentation");
+    let mut message = manager
+        .loadChatMessageVariant("extensions-chat", 42, 0)
+        .unwrap();
+    message.pluginExtensions.insert(
+        PRESENTATION_EXTENSION.into(),
+        json!({"bubbles": [], "pending": true}),
+    );
+    manager
+        .commitAssistantMessageSegment("extensions-chat".into(), message.clone(), None)
+        .unwrap();
+    for target in [chatTarget(), messageTarget(0), messageTarget(2)] {
+        manager
+            .writePluginExtension("alpha", &target, json!({"generation": 7}))
+            .unwrap();
+        manager
+            .writePluginExtension("beta", &target, json!({"generation": 9}))
+            .unwrap();
+    }
+    let lease = manager.beginChatExecution("extensions-chat").unwrap();
+    lease.protectRevision(42, 0).unwrap();
+    let first = vec![MessagePart::markdown(
+        "sentence-0".into(),
+        0,
+        "first。".into(),
+    )];
+    let second = vec![MessagePart::markdown(
+        "sentence-1".into(),
+        0,
+        "second。".into(),
+    )];
+    message.replace_with_markdown("first。second。".into());
+    let mut presentation = ChatMessagePresentation {
+        bubbles: vec![first],
+        pending: true,
+    };
+    message.pluginExtensions.insert(
+        PRESENTATION_EXTENSION.into(),
+        serde_json::to_value(&presentation).unwrap(),
+    );
+    manager
+        .commitAssistantMessageSegment("extensions-chat".into(), message.clone(), None)
+        .unwrap();
+    assert_eq!(
+        database
+            .messageDao()
+            .getMessageByTimestamp("extensions-chat", 42)
+            .unwrap()
+            .unwrap()
+            .pluginExtensions[PRESENTATION_EXTENSION],
+        serde_json::to_value(&presentation).unwrap()
+    );
+    assert!(manager
+        .writePluginExtension("alpha", &messageTarget(0), json!({"generation": 8}))
+        .is_err());
+    presentation.bubbles.push(second);
+    presentation.pending = false;
+    message.pluginExtensions.insert(
+        PRESENTATION_EXTENSION.into(),
+        serde_json::to_value(&presentation).unwrap(),
+    );
+    manager
+        .commitAssistantMessageSegment("extensions-chat".into(), message, Some((10, 20, 30)))
+        .unwrap();
+    let reloaded = manager
+        .loadChatMessageVariant("extensions-chat", 42, 0)
+        .unwrap();
+    assert_eq!(reloaded.displayText(), "first。second。");
+    assert_eq!(
+        serde_json::from_value::<ChatMessagePresentation>(
+            reloaded.pluginExtensions[PRESENTATION_EXTENSION].clone()
+        )
+        .unwrap(),
+        presentation
+    );
+    assert_eq!(
+        manager
+            .loadChatMessageVariant("extensions-chat", 42, 2)
+            .unwrap()
+            .displayText(),
+        "variant-2"
+    );
+    for target in [chatTarget(), messageTarget(0), messageTarget(2)] {
+        assert_eq!(
+            manager.readPluginExtension("alpha", &target).unwrap(),
+            Some(json!({"generation": 7}))
+        );
+        assert_eq!(
+            manager.readPluginExtension("beta", &target).unwrap(),
+            Some(json!({"generation": 9}))
+        );
+    }
+    let operations = manager
+        .syncStore
+        .operationsSince(&crate::SyncOperationStore::SyncClock::default(), &[], 100)
+        .unwrap();
+    let payload: crate::sync::SqlChatSyncStore::ChatSyncPayload =
+        serde_json::from_value(operations.last().unwrap().payload.clone()).unwrap();
+    assert_eq!(
+        payload.messageRows[0].pluginExtensions,
+        reloaded.pluginExtensions
+    );
+    assert_eq!(payload.chatRows[0].inputTokens, 10);
+    assert_eq!(payload.chatRows[0].outputTokens, 20);
+    lease.release().unwrap();
+}
+
+/// Finalizes cancellation with only delivered bubbles and keeps the canonical partial response.
+#[test]
+fn cancelled_presentation_keeps_only_delivered_bubbles() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, _) = fixture("extensions-presentation-cancel");
+    let mut message = manager
+        .loadChatMessageVariant("extensions-chat", 42, 0)
+        .unwrap();
+    message.replace_with_markdown("first。second still being typed".into());
+    let mut presentation = ChatMessagePresentation {
+        bubbles: vec![vec![MessagePart::markdown(
+            "sentence-0".into(),
+            0,
+            "first。".into(),
+        )]],
+        pending: true,
+    };
+    message.pluginExtensions.insert(
+        PRESENTATION_EXTENSION.into(),
+        serde_json::to_value(&presentation).unwrap(),
+    );
+    manager
+        .commitAssistantMessageSegment("extensions-chat".into(), message.clone(), None)
+        .unwrap();
+    presentation.pending = false;
+    message.pluginExtensions.insert(
+        PRESENTATION_EXTENSION.into(),
+        serde_json::to_value(&presentation).unwrap(),
+    );
+    manager
+        .commitAssistantMessageSegment("extensions-chat".into(), message, None)
+        .unwrap();
+    let reloaded = manager
+        .loadChatMessageVariant("extensions-chat", 42, 0)
+        .unwrap();
+    assert_eq!(reloaded.displayText(), "first。second still being typed");
+    assert_eq!(
+        reloaded.pluginExtensions[PRESENTATION_EXTENSION],
+        serde_json::to_value(&presentation).unwrap()
+    );
+}
+
+/// Rejects invalid native presentation updates before changing persisted parts or sync operations.
+#[test]
+fn invalid_assistant_presentation_does_not_mutate_history() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, _) = fixture("extensions-presentation-validation");
+    let original = manager
+        .loadChatMessageVariant("extensions-chat", 42, 0)
+        .unwrap();
+    let operations = manager
+        .syncStore
+        .operationsSince(&crate::SyncOperationStore::SyncClock::default(), &[], 100)
+        .unwrap();
+    let mut invalid = original.clone();
+    invalid.replace_with_markdown("must not be saved".into());
+    invalid.pluginExtensions.insert(
+        PRESENTATION_EXTENSION.into(),
+        json!({"bubbles": [], "pending": "invalid"}),
+    );
+    assert!(manager
+        .commitAssistantMessageSegment("extensions-chat".into(), invalid, None)
+        .is_err());
+    assert_eq!(
+        manager
+            .loadChatMessageVariant("extensions-chat", 42, 0)
+            .unwrap(),
+        original
+    );
+    assert_eq!(
+        manager
+            .syncStore
+            .operationsSince(&crate::SyncOperationStore::SyncClock::default(), &[], 100)
+            .unwrap()
+            .len(),
+        operations.len()
+    );
 }

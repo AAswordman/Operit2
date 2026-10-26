@@ -4,7 +4,9 @@
 The esp LLVM 21 windowed backend realigns SP then addresses incoming stack
 arguments relative to the shifted SP. Tokio's 128-byte WorkerMetrics and
 64-byte CachePadded trigger this. On Xtensa only, cap these performance-only
-padding alignments at the 16-byte ABI alignment. No scheduler/protocol changes.
+padding alignments at the 16-byte ABI alignment. Keep the constructor named
+and non-inlined on Xtensa for the final ELF check even with LTO enabled.
+No scheduler/protocol changes.
 """
 from pathlib import Path
 import hashlib
@@ -18,7 +20,21 @@ VERSION = "1.53.1"
 SHA256 = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 DEST = ROOT / "apps/esp32/.embuild"
 CRATE = f"tokio-{VERSION}"
-PATCH_MARKER = "operit-xtensa-align-v1"
+PATCH_MARKER = "operit-xtensa-align-v2"
+CHECK_PATH = "src/runtime/scheduler/current_thread/mod.rs"
+CHECK_EXPORT = "operit_xtensa_tokio_current_thread_new"
+
+
+def patch_check_boundary(text):
+    needle = "impl CurrentThread {\n    pub(crate) fn new("
+    if text.count(needle) != 1 or CHECK_EXPORT in text:
+        raise RuntimeError("Unexpected pinned Tokio constructor; manual review required")
+    return text.replace(needle, '\n'.join([
+        "impl CurrentThread {",
+        '    #[cfg_attr(target_arch = "xtensa", inline(never))]',
+        f'    #[cfg_attr(target_arch = "xtensa", export_name = "{CHECK_EXPORT}")]',
+        "    pub(crate) fn new(",
+    ]), 1)
 
 
 def prepare():
@@ -48,7 +64,7 @@ def prepare():
     assert text.count("#[repr(align(128))]") == 1
     text = text.replace("#[repr(align(128))]", '#[cfg_attr(not(target_arch = "xtensa"), repr(align(128)))]\n#[cfg_attr(target_arch = "xtensa", repr(align(16)))]')
     worker.write_text(text, encoding="utf-8")
-    for relative, marker in [
+    for relative, struct_marker in [
         ("src/runtime/io/scheduled_io.rs", "pub(crate) struct ScheduledIo"),
         ("src/runtime/task/core.rs", "pub(super) struct Cell<T: Future, S>"),
     ]:
@@ -60,7 +76,7 @@ def prepare():
                 '        target_arch = "x86_64",',
                 '        target_arch = "xtensa",\n        target_arch = "x86_64",', 1)
         if '#[cfg_attr(target_arch = "xtensa", repr(align(16)))]' not in text:
-            text = text.replace(marker, '#[cfg_attr(target_arch = "xtensa", repr(align(16)))]\n' + marker, 1)
+            text = text.replace(struct_marker, '#[cfg_attr(target_arch = "xtensa", repr(align(16)))]\n' + struct_marker, 1)
         path.write_text(text, encoding="utf-8")
 
     cache = DEST / CRATE / "src/util/cacheline.rs"
@@ -70,6 +86,8 @@ def prepare():
     text = text.replace(needle, '    not(any(\n        target_arch = "xtensa",\n        target_arch = "x86_64",')
     text = text.replace("pub(crate) struct CachePadded<T>", '#[cfg_attr(target_arch = "xtensa", repr(align(16)))]\npub(crate) struct CachePadded<T>')
     cache.write_text(text, encoding="utf-8")
+    constructor = DEST / CRATE / CHECK_PATH
+    constructor.write_text(patch_check_boundary(constructor.read_text(encoding="utf-8")), encoding="utf-8")
     marker.write_text(SHA256 + "\n", encoding="utf-8")
     verify()
 
@@ -79,7 +97,10 @@ def verify():
         text = (DEST / CRATE / "src" / name).read_text(encoding="utf-8")
         if '#[cfg_attr(target_arch = "xtensa", repr(align(16)))]' not in text:
             raise RuntimeError(f"Missing Xtensa alignment workaround in {name}")
-    print(f"ESP32 Tokio {VERSION}: verified pinned source and Xtensa-only padding workaround")
+    constructor = (DEST / CRATE / CHECK_PATH).read_text(encoding="utf-8")
+    if f'export_name = "{CHECK_EXPORT}"' not in constructor or '#[cfg_attr(target_arch = "xtensa", inline(never))]' not in constructor:
+        raise RuntimeError("Missing Tokio ABI inspection boundary")
+    print(f"ESP32 Tokio {VERSION}: verified pinned source, Xtensa padding and ABI inspection boundary")
 
 
 if __name__ == "__main__":

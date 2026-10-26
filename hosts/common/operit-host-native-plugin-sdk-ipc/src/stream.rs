@@ -1,7 +1,7 @@
+use operit_host_native_scheduler::{scheduleNativeServiceTask, NativeTaskHandle as JoinHandle};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 use operit_host_api::{HostError, HostResult, PluginSdkIpcSessionCallbacks, PluginSdkIpcSessionId};
 
@@ -31,6 +31,17 @@ impl PluginSdkIpcStreamSession {
     }
 }
 
+/// Releases registration state on completion, panic, or rejected service admission.
+struct ReaderRegistration(Option<Box<dyn FnOnce() + Send>>);
+impl Drop for ReaderRegistration {
+    /// Runs session cleanup exactly once even when the task was never started.
+    fn drop(&mut self) {
+        if let Some(exit) = self.0.take() {
+            exit();
+        }
+    }
+}
+
 /// Starts the read loop that forwards framed payloads into session callbacks.
 #[allow(non_snake_case)]
 pub fn spawnPluginSdkIpcReadLoop(
@@ -39,19 +50,19 @@ pub fn spawnPluginSdkIpcReadLoop(
     callbacks: PluginSdkIpcSessionCallbacks,
     onReaderExit: impl FnOnce() + Send + 'static,
 ) -> HostResult<JoinHandle<()>> {
-    std::thread::Builder::new()
-        .name(format!("operit-plugin-sdk-ipc-{}", sessionId.0))
-        .spawn(move || {
-            loop {
-                match readPluginSdkIpcFrame(&mut reader) {
-                    Ok(payload) => (callbacks.onMessage)(sessionId.clone(), payload),
-                    Err(_) => break,
-                }
+    let registration = ReaderRegistration(Some(Box::new(onReaderExit)));
+    scheduleNativeServiceTask("operit-plugin-sdk-ipc-reader", move || {
+        let registration = registration;
+        loop {
+            match readPluginSdkIpcFrame(&mut reader) {
+                Ok(payload) => (callbacks.onMessage)(sessionId.clone(), payload),
+                Err(_) => break,
             }
-            onReaderExit();
-            (callbacks.onClosed)(sessionId);
-        })
-        .map_err(|error| HostError::new(error.to_string()))
+        }
+        drop(registration);
+        (callbacks.onClosed)(sessionId);
+    })
+    .map_err(|error| HostError::new(error.to_string()))
 }
 
 /// Writes one frame through a connected session writer.

@@ -67,7 +67,6 @@ fn all_provider_type_names() -> Vec<String> {
         ApiProviderType::DEEPSEEK,
         ApiProviderType::MISTRAL,
         ApiProviderType::SILICONFLOW,
-        ApiProviderType::IFLOW,
         ApiProviderType::OPENROUTER,
         ApiProviderType::OPENCODE,
         ApiProviderType::FOUR_ROUTER,

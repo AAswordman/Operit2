@@ -9,13 +9,20 @@ downloads_dir="$cache_dir/downloads"
 builtin_downloads_dir="$downloads_dir/builtin"
 python_runtime_dir="$cache_dir/python-3.12.11-i686"
 work_dir="$cache_dir/work"
+node_alpine_root="$cache_dir/node-alpine-rootfs"
+apk_static_dir="$cache_dir/alpine-apk-static"
 
 kernel_file="operit-runtime-bzimage.bin"
 kernel_url="https://i.copy.sh/buildroot-bzimage.bin"
 kernel_sha256="7befbaea31e249d9a518c4b95fa42b2a193d0e3de46250d617cbdeb866ee28b0"
-node_archive="node-v20.19.0-linux-x86.tar.xz"
-node_url="https://unofficial-builds.nodejs.org/download/release/v20.19.0/$node_archive"
-node_sha256="6c0e9b2447569ec0e02a3cca93b71372085f86ce924fca0e74a359187f04a8bc"
+alpine_mirror="https://dl-cdn.alpinelinux.org/alpine"
+alpine_branch="v3.23"
+alpine_version="3.23.6"
+alpine_arch="x86"
+alpine_host_arch="x86_64"
+alpine_rootfs_archive="alpine-minirootfs-$alpine_version-$alpine_arch.tar.gz"
+alpine_rootfs_url="$alpine_mirror/$alpine_branch/releases/$alpine_arch/$alpine_rootfs_archive"
+alpine_rootfs_sha256="8e058c4feb00ea72bd4711125d75e4bda17213b76eb4b278eae203fde9139f40"
 python_archive="Python-3.12.11.tgz"
 python_url="https://www.python.org/ftp/python/3.12.11/$python_archive"
 python_sha256="7b8d59af8216044d2313de8120bfc2cc00a9bd2e542f15795e1d616c51faf3d6"
@@ -64,6 +71,67 @@ download_verified() {
             curl -fL -o "$output_path" "$url"
     fi
     printf '%s  %s\n' "$expected_sha256" "$output_path" | sha256sum -c - >&2
+}
+
+## Installs the host-native static APK client used for the i686 Alpine Node package.
+install_apk_static() {
+    local index_path="$downloads_dir/APKINDEX-main-$alpine_host_arch.tar.gz"
+    local record
+    local version
+    local archive
+    local archive_path
+
+    if refresh_requested || [[ ! -s "$index_path" ]]; then
+        env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY \
+            curl -fL -o "$index_path" "$alpine_mirror/$alpine_branch/main/$alpine_host_arch/APKINDEX.tar.gz"
+    fi
+    record="$(tar -xzO -f "$index_path" APKINDEX | awk '
+        BEGIN { RS = "" }
+        found != 1 && $0 ~ /(^|\n)P:apk-tools-static(\n|$)/ { print; found = 1 }
+        END { if (found != 1) exit 1 }
+    ')"
+    version="$(awk -F: '$1 == "V" { print substr($0, 3); exit }' <<< "$record")"
+    test -n "$version"
+    archive="apk-tools-static-$version.apk"
+    archive_path="$downloads_dir/$archive"
+    if refresh_requested || [[ ! -s "$archive_path" ]]; then
+        env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY \
+            curl -fL -o "$archive_path" "$alpine_mirror/$alpine_branch/main/$alpine_host_arch/$archive"
+    fi
+
+    rm -rf "$apk_static_dir"
+    mkdir -p "$apk_static_dir"
+    tar -xzf "$archive_path" -C "$apk_static_dir" sbin/apk.static
+    chmod 0755 "$apk_static_dir/sbin/apk.static"
+}
+
+## Creates a minimal signed Alpine x86 root and verifies its Node package major.
+prepare_node_runtime() {
+    local installed_db="$node_alpine_root/lib/apk/db/installed"
+    local repository_file="$node_alpine_root/etc/apk/repositories"
+
+    if ! refresh_requested && [[ -x "$node_alpine_root/usr/bin/node" ]] && \
+        python3 "$repo_dir/tools/runtime/verify_alpine_node24.py" "$installed_db" >/dev/null 2>&1; then
+        return
+    fi
+
+    rm -rf "$node_alpine_root"
+    mkdir -p "$node_alpine_root"
+    tar -xzf "$downloads_dir/$alpine_rootfs_archive" -C "$node_alpine_root"
+    printf '%s/main\n%s/community\n' \
+        "$alpine_mirror/$alpine_branch" "$alpine_mirror/$alpine_branch" > "$repository_file"
+    env -u https_proxy -u http_proxy -u all_proxy -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY \
+        "$apk_static_dir/sbin/apk.static" \
+        --usermode \
+        --root "$node_alpine_root" \
+        --arch "$alpine_arch" \
+        --keys-dir "$node_alpine_root/etc/apk/keys" \
+        --repositories-file "$repository_file" \
+        --no-cache \
+        --no-scripts \
+        --initdb \
+        add "nodejs~24"
+    python3 "$repo_dir/tools/runtime/verify_alpine_node24.py" "$installed_db"
 }
 
 ## Downloads the fixed offline package archives used by the browser runtime.
@@ -190,17 +258,34 @@ stage_builtin_python_packages() {
 ## Copies the Node and Python runtime files into the dedicated V86 initramfs tree.
 stage_runtime_programs() {
     local initramfs_root="$1"
-    local node_root="$work_dir/node"
+    local node_runtime="$initramfs_root/usr/local/lib/operit-node24"
     local python_root="$python_runtime_dir/usr/local/operit-python"
     local extension
+    local library
+    local node_loader
 
-    rm -rf "$node_root"
-    mkdir -p "$node_root"
-    tar -xJf "$downloads_dir/$node_archive" -C "$node_root" --strip-components=1
-    install -Dm0755 "$node_root/bin/node" "$initramfs_root/usr/local/bin/node"
+    mkdir -p "$node_runtime/lib" "$initramfs_root/lib"
+    install -Dm0755 "$node_alpine_root/usr/bin/node" "$initramfs_root/usr/local/bin/node"
+    for library in "$node_alpine_root"/lib/*.so* "$node_alpine_root"/usr/lib/*.so*; do
+        [[ -e "$library" || -L "$library" ]] || continue
+        cp -a "$library" "$node_runtime/lib/"
+    done
+    node_loader="$(patchelf --print-interpreter "$node_alpine_root/usr/bin/node")"
+    [[ "$node_loader" == /lib/ld-musl-*.so.1 ]] || { echo "Unexpected Node loader: $node_loader" >&2; return 1; }
+    install -Dm0755 "$node_alpine_root$node_loader" "$initramfs_root$node_loader"
+    # Alpine's ICU libraries load their locale data from a separate package.
+    # Copying only shared objects leaves Node unable to initialize Intl.
+    mkdir -p "$initramfs_root/usr/share"
+    cp -a "$node_alpine_root/usr/share/icu" "$initramfs_root/usr/share/"
+    if [[ -d "$node_alpine_root/etc/ssl" ]]; then
+        mkdir -p "$initramfs_root/etc/ssl"
+        cp -a "$node_alpine_root/etc/ssl/." "$initramfs_root/etc/ssl/"
+    fi
+    # Keep musl's libraries private; a global LD_LIBRARY_PATH would break the
+    # glibc-linked Python and terminal children spawned by Node.
+    patchelf --set-rpath '$ORIGIN/../lib/operit-node24/lib' "$initramfs_root/usr/local/bin/node"
     strip --strip-unneeded "$initramfs_root/usr/local/bin/node"
     stage_builtin_node_packages "$initramfs_root"
-    copy_runtime_dependencies "$node_root/bin/node" "$initramfs_root"
 
     mkdir -p "$initramfs_root/usr/bin"
     mkdir -p "$initramfs_root/usr/local/operit-python"
@@ -322,6 +407,8 @@ main() {
     require_command gzip
     require_command lddtree
     require_command make
+    require_command patchelf
+    require_command python3
     require_command sha256sum
     require_command strip
     require_command tar
@@ -329,7 +416,9 @@ main() {
     require_command zip
     mkdir -p "$asset_dir" "$downloads_dir" "$builtin_downloads_dir" "$work_dir"
     download_verified "$kernel_url" "$downloads_dir/buildroot-bzimage.bin" "$kernel_sha256"
-    download_verified "$node_url" "$downloads_dir/$node_archive" "$node_sha256"
+    download_verified "$alpine_rootfs_url" "$downloads_dir/$alpine_rootfs_archive" "$alpine_rootfs_sha256"
+    install_apk_static
+    prepare_node_runtime
     download_verified "$python_url" "$downloads_dir/$python_archive" "$python_sha256"
     download_builtin_runtime_packages
     prepare_python_runtime

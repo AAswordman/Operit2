@@ -1,9 +1,13 @@
-import { requireChatSelection } from "./chat-bindings";
-import { decodeChatMarker, decodeMessageMarker, encodeMessageMarker, markerObject } from "./chat-markers";
+import { characterModelBindingMode } from "./model-binding";
+import { parseChatSelection } from "./chat-bindings";
+import type { CharacterRepository } from "./canonical";
+import { configurationReadScope } from "./configuration-reads";
+import { combineCharacterPrompt } from "./character-prompt";
+import { decodeChatMarker, encodeExecutionData, markerObject } from "./chat-markers";
 import { resolveChatDisplay } from "./group-execution/display";
 import { modelParticipant } from "./model-participant";
 import { withGroupParticipantPrompt } from "./group-execution/prompts";
-import type { MemoryQueryRequest, JsonValue, ChatConfigurationExecutionResult, ChatConfigurationRequest, ChatConfigurationResult, ChatParticipantProfile, CharacterRecord, DomainInput, DomainOperation, DomainOutput, SnapshotRecord } from "./api";
+import type { MemoryQueryRequest, JsonValue, ChatConfigurationExecutionResult, ChatConfigurationRequest, ChatConfigurationResult, ChatParticipantProfile, CharacterRecord, DomainInput, DomainOperation, DomainOutput } from "./api";
 export type { DomainInput, DomainOperation, DomainOutput, DomainOperations } from "./api";
 
 type Validator = (value: unknown, path: string) => void;
@@ -24,11 +28,9 @@ function nonblank(value: unknown, path: string): void {
   text(value, path);
   if ((value as string).trim() === "") throw new Error(`${path} must not be blank`);
 }
-/** Validates a lossless plugin record identity without accepting or coercing numeric JSON. */
-export function parseMemoryIdentifier(value: unknown, path: string, positive = true): string {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${path} must be a canonical decimal string`);
-  const id = BigInt(value);
-  if (id > 9223372036854775807n || (positive && id === 0n)) throw new Error(`${path} is outside its declared identity range`);
+/** Validates a plugin record identity as an opaque, device-independent string. */
+export function parseMemoryIdentifier(value: unknown, path: string, _positive = true): string {
+  if (typeof value !== "string" || value.trim() === "" || value !== value.trim() || value.length > 256) throw new Error(`${path} must be a nonblank identity`);
   return value;
 }
 /** Validates an existing memory or relationship identity as an unchanged string. */
@@ -47,6 +49,8 @@ function number(value: unknown, path: string): void {
 function integer(value: unknown, path: string): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${path} must be a safe integer`);
 }
+/** Validates bounded collection counts without accepting negative slicing offsets. */
+function nonnegativeInteger(value: unknown, path: string): void { integer(value, path); nonnegative(value, path); }
 /** Requires one explicit persisted message revision inside the generic host's i32 range. */
 function messageVariant(value: unknown, path: string): void {
   integer(value, path);
@@ -118,9 +122,9 @@ const characterFields: Fields = {
   name: optional(nonblank), description: optional(text), characterSetting: optional(text), openingStatement: optional(text),
   otherContentChat: optional(text), otherContentVoice: optional(text), avatarUri: optional(nullable(text)), attachedTagIds: optional(identifiers),
   advancedCustomPrompt: optional(text), marks: optional(text), chatModelBindingMode: optional(enumeration("FOLLOW_GLOBAL", "FIXED_MODEL")),
-  chatModelId: optional(nullable(text)), ttsConfigId: optional(nullable(text)), themeConfigId: optional(nullable(text)), memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
+  chatModelId: optional(nullable(text)), chatProviderId: optional(nullable(text)), ttsConfigId: optional(nullable(text)), themeConfigId: optional(nullable(text)), memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
   sharedMemoryId: optional(nullable(text)), sharedMemoryMounts: optional(array(mount)), toolAccessConfig: optional(toolAccess),
-  isDefault: optional(boolean), createdAt: optional(integer), updatedAt: optional(integer),
+  createdAt: optional(integer), updatedAt: optional(integer),
 };
 const groupFields: Fields = { name: optional(nonblank), description: optional(text), themeConfigId: optional(nullable(text)), members: optional(array(member)), createdAt: optional(integer), updatedAt: optional(integer) };
 const tagFields: Fields = { name: optional(nonblank), description: optional(text), promptContent: optional(text), tagType: optional(enumeration("TONE", "CHARACTER", "FUNCTION", "CUSTOM")), createdAt: optional(integer), updatedAt: optional(integer) };
@@ -150,8 +154,10 @@ export function parseMemoryQueryRequest(payload: unknown): MemoryQueryRequest {
 }
 
 const validators: Record<DomainOperation, Validator> = {
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
+  "memory.searchWithOptions": shape({ limit: optional(integer), excludeIds: optional(strings), ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
+  "memory.chat.pruneMissing": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
   "memory.categorize": ownerOnly,
   "memory.rebuild.start": shape({ ownerKey: required(owner), rebuild: required(shape({ chatIds: required(strings), windowMessageCount: required(integer), fromInclusive: required(nullable(integer)), toInclusive: required(nullable(integer)) })) }),
@@ -159,7 +165,10 @@ const validators: Record<DomainOperation, Validator> = {
   "memory.rebuild.cancel": ownerOnly,
   "memory.embeddings.rebuild": ownerOnly,
   "memory.candidate.enqueue": shape({ chatId: required(nonblank), timestamp: required(integer), variantIndex: required(messageVariant), sourceType: required(enumeration("reply_finalized_auto", "selected_user_message")), ownerKey: required(nullable(owner)) }),
+  "memory.candidates.retryFailed": ownerOnly,
+  "memory.candidates.clearFailed": ownerOnly,
   "chat.configuration.resolve": parseChatConfigurationRequest,
+  "chat.configuration.binding.find": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.read": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.write": shape({ chatId: required(nonblank), selection: required(nonblank) }),
   "chat.configuration.binding.delete": shape({ chatId: required(nonblank) }),
@@ -171,7 +180,6 @@ const validators: Record<DomainOperation, Validator> = {
   "character.delete": id,
   "character.setActive": id,
   "character.combine": shape({ id: required(nonblank), promptFunctionType: optional(enumeration("CHAT", "VOICE")), additionalTagIds: optional(identifiers) }),
-  "character.resetDefault": empty,
   "character.export": shape({ id: required(nonblank), format: required(format) }),
   "character.import": shape({ format: required(format), content: required(nonblank) }),
   "character.exportBackup": empty,
@@ -270,10 +278,9 @@ export function jsonValue(value: unknown, path = "result"): JsonValue {
 }
 
 /** Exposes only the shared business service operations used by resolved chat configuration. */
-export interface ChatConfigurationService {
-  readGlobalMemoryPreferences(): Promise<import("./model").GlobalMemoryPreferences>;
-  /** Reads the real persisted plugin directory. */
-  snapshot(): Promise<SnapshotRecord>;
+export interface ChatConfigurationService extends Pick<CharacterRepository,
+  "getCharacter" | "getGroup" | "getTag" | "getStore" | "listModels" | "listTtsConfigs" | "readGlobalMemoryPreferences"
+> {
   /** Calls a typed business operation without invoking another command. */
   dispatchDomain<K extends DomainOperation>(operation: K, input: DomainInput<K>): Promise<DomainOutput<K>>;
 }
@@ -282,14 +289,14 @@ export interface ChatConfigurationService {
 export function parseChatConfigurationRequest(value: unknown): ChatConfigurationRequest {
   shape({
     purpose: required(enumeration("display", "execution")),
-    chatId: required(nullable(nonblank)), chatExtension: required(nullable(markerObject)), messageExtension: required(nullable(markerObject)),
+    chatId: required(nullable(nonblank)), chatExtension: required(nullable(markerObject)),
     participantId: required(nullable(nonblank)), promptFunctionType: required(enumeration("CHAT", "VOICE")),
     defaultModelBinding: required(shape({ providerId: required(text), modelId: required(text) })),
     defaultTtsConfigId: required(text),
   })(value, "chat.configuration.resolve");
   const request = value as ChatConfigurationRequest;
   if (request.purpose === "display") {
-    if (request.participantId !== null || request.messageExtension !== null) throw new Error("Display configuration cannot request an execution participant or message snapshot");
+    if (request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
   } else {
     nonblank(request.defaultModelBinding.providerId, "execution default provider");
     nonblank(request.defaultModelBinding.modelId, "execution default model");
@@ -312,17 +319,19 @@ function chatRecord<T extends { id: string }>(records: T[], id: string, kind: st
 
 /** Resolves model, voice, prompt and resource policy exclusively from complete plugin records. */
 async function chatParticipant(
-  card: CharacterRecord, request: ChatConfigurationRequest, directory: SnapshotRecord, service: ChatConfigurationService,
+  card: CharacterRecord, request: ChatConfigurationRequest, service: ChatConfigurationService,
 ): Promise<ChatParticipantProfile> {
   nonblank(card.name, "profile.name");
+  const models = await service.listModels();
   let modelBinding: ChatConfigurationRequest["defaultModelBinding"];
-  switch (card.chatModelBindingMode) {
+  switch (characterModelBindingMode(card.chatModelBindingMode)) {
     case "FOLLOW_GLOBAL": modelBinding = { ...request.defaultModelBinding }; break;
     case "FIXED_MODEL": {
       nonblank(card.chatModelId, "profile.fixedModelId");
-      const candidates = directory.models.filter(
-        /** Resolves the legacy record's deliberately provider-free model selection exactly. */
-        model => model.modelId === card.chatModelId,
+      nonblank(card.chatProviderId, "Fixed model provider must be explicitly selected");
+      const candidates = models.filter(
+        /** Resolves the exact provider-scoped model selected by the user. */
+        model => model.providerId === card.chatProviderId && model.modelId === card.chatModelId,
       );
       if (candidates.length !== 1) throw new Error(
         candidates.length === 0 ? "Fixed model unavailable: " + card.chatModelId : "Fixed model ambiguous: " + card.chatModelId,
@@ -330,22 +339,22 @@ async function chatParticipant(
       modelBinding = { providerId: candidates[0].providerId, modelId: candidates[0].modelId };
       break;
     }
-    default: throw new Error("Invalid model binding mode: " + card.chatModelBindingMode);
+    default: throw new Error("角色卡“" + card.name + "”的模型绑定模式无效，请在角色卡设置中重新绑定模型：" + card.chatModelBindingMode);
   }
-  const resolvedModels = directory.models.filter(
+  const resolvedModels = models.filter(
     /** Requires the actual configured provider/model pair. */
     model => model.providerId === modelBinding.providerId && model.modelId === modelBinding.modelId,
   );
   if (resolvedModels.length !== 1) throw new Error("Model binding unavailable or duplicated: " + modelBinding.providerId + "/" + modelBinding.modelId);
   const ttsConfigId = card.ttsConfigId === null ? request.defaultTtsConfigId : card.ttsConfigId;
   nonblank(ttsConfigId, "profile.ttsConfigId");
-  chatRecord(directory.ttsConfigs, ttsConfigId, "TTS configuration");
+  chatRecord(await service.listTtsConfigs(), ttsConfigId, "TTS configuration");
   let primary: string;
   switch (card.memoryBindingMode) {
     case "CHARACTER": primary = "character:" + card.id; break;
     case "SHARED":
       nonblank(card.sharedMemoryId, "profile.sharedMemoryId");
-      chatRecord(directory.stores, card.sharedMemoryId as string, "shared memory");
+      await service.getStore(card.sharedMemoryId as string);
       primary = "shared:" + card.sharedMemoryId;
       break;
     default: throw new Error("Invalid memory binding mode: " + card.memoryBindingMode);
@@ -353,17 +362,17 @@ async function chatParticipant(
   const routes = new Map<string, { key: string; readable: boolean; writable: boolean }>();
   routes.set(primary, { key: primary, readable: true, writable: true });
   for (const mount of card.sharedMemoryMounts) {
-    chatRecord(directory.stores, mount.sharedMemoryId, "mounted shared memory");
+    await service.getStore(mount.sharedMemoryId);
     const key = "shared:" + mount.sharedMemoryId;
     const existing = routes.get(key);
     routes.set(key, { key, readable: mount.readable || existing?.readable === true, writable: mount.writable || existing?.writable === true });
   }
-  const prompt = await service.dispatchDomain("character.combine", { id: card.id, promptFunctionType: request.promptFunctionType, additionalTagIds: [] });
+  const prompt = await combineCharacterPrompt(card, [], request.promptFunctionType, service);
   const userPreferencesText = (await service.readGlobalMemoryPreferences()).userDescriptionEnabled
     ? (await service.dispatchDomain("memory.user.read", { ownerKey: primary })).content : "";
   return {
     id: card.id, name: card.name, avatarUri: card.avatarUri,
-    introPrompt: prompt.prompt, userPreferencesText,
+    introPrompt: prompt, userPreferencesText,
     openingStatement: card.openingStatement, modelBinding, ttsConfigId,
     toolAccess: { ...card.toolAccessConfig,
       allowedBuiltinTools: [...card.toolAccessConfig.allowedBuiltinTools], allowedPackages: [...card.toolAccessConfig.allowedPackages],
@@ -375,50 +384,46 @@ async function chatParticipant(
 
 /** Resolves an explicit execution participant without moving domain selection rules into Core. */
 export async function resolveChatConfiguration(request: ChatConfigurationRequest, service: ChatConfigurationService): Promise<ChatConfigurationResult> {
-  if (request.purpose === "display") return resolveChatDisplay(request, service, resolveChatExecution);
-  return resolveChatExecution(request, service);
+  const reads = configurationReadScope(service);
+  if (request.purpose === "display") return resolveChatDisplay(request, reads);
+  return resolveChatExecution(request, reads);
 }
 
-/** Resolves only an explicitly requested execution or its exact saved historical message snapshot. */
+/** Resolves only an explicitly requested execution from current configuration. */
 export async function resolveChatExecution(request: ChatConfigurationRequest, service: ChatConfigurationService): Promise<ChatConfigurationExecutionResult> {
   if (request.purpose !== "execution") throw new Error("Execution configuration requires purpose execution");
-  if (request.messageExtension !== null) {
-    const marker = decodeMessageMarker(request.messageExtension);
-    if (request.participantId !== null && request.participantId !== marker.profile.id) throw new Error("Historical execution participant does not match the saved message snapshot");
-    return { contextKey: marker.selection, profile: marker.profile, participants: marker.participants, messageExtension: markerObject(request.messageExtension, "historical message extension") };
-  }
   const marker = decodeChatMarker(request.chatExtension);
-  const directory = await service.snapshot();
-  const selection = requireChatSelection(marker.selection, directory.cards, directory.groups);
+  const selection = parseChatSelection(marker.selection);
   if (selection.kind === "model") {
-    const profile = modelParticipant(request, directory), participants = [profile];
-    const messageExtension = encodeMessageMarker({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey: "", profile, participants });
-    return { contextKey: marker.selection, profile, participants, messageExtension };
+    const [models, ttsConfigs] = await Promise.all([service.listModels(), service.listTtsConfigs()]);
+    const profile = modelParticipant(request, { models, ttsConfigs }), participants = [profile];
+    const executionData = encodeExecutionData({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey: "", profile, participants });
+    return { contextKey: marker.selection, historyPolicy: { isolateParticipants: false, labelUserMessages: false }, profile, participants, executionData };
   }
   let cards: CharacterRecord[];
-  if (selection.kind === "card") cards = [chatRecord(directory.cards, selection.id, "character")];
+  if (selection.kind === "card") cards = [await service.getCharacter(selection.id)];
   else {
-    const group = chatRecord(directory.groups, selection.id, "group");
+    const group = await service.getGroup(selection.id);
     const members = [...group.members].sort(
       /** Preserves the persisted participant order without planning turns in Core. */
       (left, right) => left.orderIndex - right.orderIndex,
     );
     if (members.length === 0) throw new Error("Selected group has no participants: " + group.id);
     const ids = new Set<string>();
-    cards = members.map(
+    cards = await Promise.all(members.map(
       /** Rejects duplicate or deleted group members before producing any execution profile. */
       member => {
         if (ids.has(member.characterCardId)) throw new Error("Duplicate group participant: " + member.characterCardId);
         ids.add(member.characterCardId);
-        return chatRecord(directory.cards, member.characterCardId, "group participant");
+        return service.getCharacter(member.characterCardId);
       },
-    );
+    ));
   }
   if (request.participantId === null && cards.length !== 1) throw new Error("A planned conversation requires an explicit execution participant");
   if (request.participantId !== null) chatRecord(cards, request.participantId, "selected participant");
   const participants: ChatParticipantProfile[] = [];
   for (const card of cards) {
-    const participant = await chatParticipant(card, request, directory, service);
+    const participant = await chatParticipant(card, request, service);
     participants.push(selection.kind === "group" ? withGroupParticipantPrompt(participant, cards) : participant);
   }
   let profile: ChatParticipantProfile;
@@ -427,8 +432,8 @@ export async function resolveChatExecution(request: ChatConfigurationRequest, se
     if (participants.length !== 1) throw new Error("A planned conversation requires an explicit execution participant");
     profile = participants[0];
   }
-  const owner = await service.dispatchDomain("memory.resolveOwner", { characterId: profile.id });
-  const primaryOwnerKey = (owner.kind === "CHARACTER" ? "character:" : "shared:") + owner.id;
-  const messageExtension = encodeMessageMarker({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey, profile, participants });
-  return { contextKey: marker.selection, profile, participants, messageExtension };
+  const card = chatRecord(cards, profile.id, "selected participant");
+  const primaryOwnerKey = (card.memoryBindingMode === "CHARACTER" ? "character:" + card.id : "shared:" + card.sharedMemoryId);
+  const executionData = encodeExecutionData({ version: 1, selection: marker.selection, promptFunctionType: request.promptFunctionType, primaryOwnerKey, profile, participants });
+  return { contextKey: marker.selection, historyPolicy: { isolateParticipants: selection.kind === "group", labelUserMessages: selection.kind === "group" }, profile, participants, executionData };
 }

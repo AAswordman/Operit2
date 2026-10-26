@@ -21,19 +21,20 @@ chacha20poly1305 = "0.10"
 chrono.workspace = true
 getrandom = "0.2"
 operit-host-api = { version = "0.1.0", path = "../../foundation/host-api" }
-operit-model = { version = "2.0.0-preview.15", path = "../../foundation/model", optional = true }
-operit-util = { version = "2.0.0-preview.15", path = "../../foundation/util" }
+operit-model = { version = "2.0.0-preview.17", path = "../../foundation/model", optional = true }
+operit-util = { version = "2.0.0-preview.17", path = "../../foundation/util" }
 regex = { workspace = true, optional = true }
 jieba-rs = { version = "=0.8.1", optional = true }
 serde.workspace = true
 serde_bytes = "0.11"
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sqlparser = { version = "0.63", default-features = false, features = ["std", "visitor"] }
 sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+image.workspace = true
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 rusqlite.workspace = true
 

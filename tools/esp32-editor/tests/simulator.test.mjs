@@ -10,6 +10,7 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   const dir = await mkdtemp(path.join(tmpdir(), 'operit-sim-api-'));
   process.env.OPERIT_SIM_STATE_DIR = dir;
   process.env.OPERIT_SIM_BIND = '127.0.0.1:0';
+  process.env.OPERIT_SIM_DISCOVERY = 'false';
   const {simulatorRoute, stopSimulator} = await import('../src/api/simulator-api.mts');
   const server = http.createServer((req, res) => void simulatorRoute(req, res, new URL(req.url, 'http://localhost')));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -37,6 +38,13 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   await new Promise(resolve => setTimeout(resolve, 100));
   const first = await ready();
   assert.equal(first.device.chat.connected, false);
+  const voice = await fetch(base + '/api/simulator/speech', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({operation:'begin'})});
+  assert.equal(voice.status,400);
+  assert.match((await voice.json()).error,/请先连接语音处理插件/);
+  assert.equal((await state()).device.speech.phase,0);
+  assert.match(first.device.sessionId, /^[0-9a-f-]{36}$/);
+  assert.equal((await state()).device.sessionId, first.device.sessionId);
   assert.equal(first.device.memory.profile, 'esp32-2432s028');
   assert.equal(first.device.memory.kind, 'configured-limits');
   assert.equal(first.device.memory.maxPeerMessageBytes, 8192);
@@ -46,11 +54,17 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   const memory = await (await fetch(base + '/api/simulator/memory')).json();
   assert.deepEqual(memory, first.device.memory);
   assert.equal(Object.hasOwn(first, 'token'), false);
+  await assert.rejects(stat(path.join(dir, 'token')), {code: 'ENOENT'});
   const runtimeData = path.join(dir, 'runtime');
   const runtimeExecutable = path.join(dir, 'operit-esp32-simulator' +
     (process.platform === 'win32' ? '.exe' : ''));
   assert((await stat(runtimeData)).isDirectory(), 'runtime data must not collide with the executable');
   assert((await stat(runtimeExecutable)).isFile(), 'the child executable has its own path');
+
+  const invalidSend = await fetch(base + '/api/simulator/send', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:'test',sendId:'x'.repeat(65)})});
+  assert.equal(invalidSend.status,400);
+  assert.match((await invalidSend.json()).error,/发送编号/);
 
   const invalidImage = await fetch(base + '/api/simulator/send-image', {method:'POST',headers:{'Content-Type':'text/plain'},body:'not an image'});
   assert.equal(invalidImage.status,400);
@@ -109,5 +123,8 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   });
   await fetch(base + '/api/simulator/start', {method: 'POST'});
   await new Promise(resolve => setTimeout(resolve, 100));
-  assert.equal(Object.hasOwn(await ready(), 'token'), false);
+  const restarted = await ready();
+  assert.equal(Object.hasOwn(restarted, 'token'), false);
+  assert.equal(restarted.device.deviceId, first.device.deviceId);
+  assert.notEqual(restarted.device.sessionId, first.device.sessionId);
 });

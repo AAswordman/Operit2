@@ -137,8 +137,9 @@ export class ScenePreview {
         }
         void fetch('/api/simulator/scene-view').then(r => { if (!r.ok)
             throw new Error('Scene preview unavailable'); return r.json(); }).then((view: SceneView | null) => {
-            if (request !== this.request || this.runtime !== runtime || !view)
+            if (request !== this.request || this.runtime !== runtime)
                 return;
+            if (!view) { this.wanted = ''; return; }
             this.assets = decodePacks(view.packs);
             this.view = view;
             this.loadedAt = performance.now();

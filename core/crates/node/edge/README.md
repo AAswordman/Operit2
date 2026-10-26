@@ -1,24 +1,30 @@
 # operit-node-edge
 
-Lightweight device-side Edge Core node.
+Device-side Edge Services and their Link adapter. The device's place in a Space
+is defined in [Edge responsibilities](../../../../docs/edge-architecture.md).
 
-The crate owns typed Edge Services and adapts them to the internal
-`CoreLinkSharedClient` boundary. It consumes `operit-host-api::HostManager` and
-does not represent the full `CoreNode` defined by the Space architecture. It
-does not own `OperitApplication`, providers, ToolPkg, chat orchestration,
-persistence, identity, Access sessions, Space sync, or Proxy implementations.
+This crate owns typed device services, native application endpoint hooks and
+`EdgePeerRouter`. It does not assemble `OperitApplication`, an Agent runtime,
+providers, ToolPkg engines or a full business replica. Device applications wire
+shared node identity, pairing, Space control and storage services at their
+composition root; those services are not independently reimplemented here.
 
-## Native plugins
+`peer::createPeerService` uses the shared code-confirmed pairing and encrypted
+session engine. Pairing and Space admission remain separate. `EdgePeerRouter`
+accepts local Target routes and the defined shared Space control calls; it is
+not a full Core Binding router or a relay implementation.
 
-Firmware registers small `EdgePlugin` implementations at startup with
-`EdgeNode::withPlugin`. Each declares a stable id and action names. Authenticated
-PeerLink callers use the `edge.plugins` target: `list` returns manifests;
-`invoke` accepts `pluginId`, `action`, and `args`. Core callers can use
-`EdgeProxy::plugins()` for the same operations.
+Applications register native calls with `withCallHandler` and optional output
+and input endpoints with `withStreamHandlers`. These use Call, Watch / Stream
+and Push / ReverseStream. Missing endpoints return a standard method error.
+Host API traits provide hardware, I/O and storage; the device app owns behavior.
 
-Only firmware-registered actions run on the device. ToolPkg JavaScript and
-unadapted plugin UI remain on Core and are not transferred as executable code.
+An Edge can persist its own configuration and resources without
+`storage.provide`. Bounded device preferences are exchanged on the shared Space
+control channel with membership and revocation checks. Full business replicas
+require storage capability and actual Core storage services at both endpoints.
 
-Transport carriers are composition concerns. A future ESP32 Wi-Fi, BLE, or
-serial carrier should feed the node through a transport adapter while keeping
-Link request and event types out of the device app layer.
+The current [ESP32 application](../../../../apps/esp32/README.md) supports native
+device services, bounded independent HTTP chat and optional remote Core chat.
+Configuration ToolPkg runs on a capable host and need not remain installed or
+running after the device configuration has been saved.

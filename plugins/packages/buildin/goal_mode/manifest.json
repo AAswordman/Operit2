@@ -12,5 +12,6 @@
     "zh": "为当前聊天持续维护目标、监督任务完成，并在输入框上方显示目标状态。",
     "en": "Tracks a persistent chat goal, supervises task completion, and displays its status above the composer."
   },
-  "enabled_by_default": true
+  "enabled_by_default": true,
+  "installation_scope": "space"
 }

@@ -10,6 +10,7 @@ class _ComposeHost extends StatefulWidget {
     required this.error,
     required this.renderResult,
     required this.showLoadingIndicator,
+    required this.contentBuilder,
     required this.onAction,
     required this.onTextInput,
     required this.webViewHostContext,
@@ -21,6 +22,7 @@ class _ComposeHost extends StatefulWidget {
   final String? error;
   final _ComposeDslRenderResult? renderResult;
   final bool showLoadingIndicator;
+  final ToolPkgUiContentBuilder contentBuilder;
   final String? dialogTitle;
 
   /// Resolves function for the Compose DSL renderer.
@@ -78,10 +80,10 @@ class _ComposeHostState extends State<_ComposeHost> {
       _dispatchRootOnLoad();
     }
     if (widget.loading && widget.showLoadingIndicator) {
-      return const M3LoadingPane();
+      return _presentBox(context, const M3LoadingPane());
     }
     if (widget.loading) {
-      return const SizedBox.shrink();
+      return _presentBox(context, const SizedBox.shrink());
     }
     final error = widget.error;
     final errorView = error == null
@@ -99,26 +101,31 @@ class _ComposeHostState extends State<_ComposeHost> {
             ),
           );
     if (tree == null) {
-      return errorView == null ? const _NoUiView() : Center(child: errorView);
+      return _presentBox(
+        context,
+        errorView == null ? const _NoUiView() : Center(child: errorView),
+      );
     }
     // Keep the mounted renderer in a stable slot while reporting action failures.
     // Removing it would fire disposal callbacks, whose commits can mount it again.
-    return Stack(
-      children: [
-        _ComposeDslRenderer(
-          node: tree,
-          onLoadHandledByHost: true,
-          onAction: widget.onAction,
-          onTextInput: widget.onTextInput,
-          webViewHostContext: widget.webViewHostContext,
-          splitMarkdownContent: widget.splitMarkdownContent,
-          embedDialog: widget.dialogTitle != null,
-        ),
-        if (errorView != null)
-          Positioned(top: 0, left: 0, right: 0, child: errorView),
-      ],
+    final renderer = _ComposeProgramExecutor(
+      node: tree,
+      onLoadHandledByHost: true,
+      onAction: widget.onAction,
+      onTextInput: widget.onTextInput,
+      webViewHostContext: widget.webViewHostContext,
+      splitMarkdownContent: widget.splitMarkdownContent,
+      embedDialog: widget.dialogTitle != null,
+    );
+    return widget.contentBuilder(
+      context,
+      ToolPkgUiContent._compose(renderer, errorView),
     );
   }
+
+  /// Presents loading and error boxes through the same embedding contract.
+  Widget _presentBox(BuildContext context, Widget body) =>
+      widget.contentBuilder(context, ToolPkgUiContent._box(body));
 
   /// Runs initial loading once and measures its first subsequent content frame.
   void _dispatchRootOnLoad() {
@@ -173,12 +180,13 @@ class _ComposeHostState extends State<_ComposeHost> {
           return;
         }
         watch.stop();
-        ClientLogger.i(
+        ClientLogger.v(
           'event=compose_onload_frame package=${owner.packageName} '
           'context=${owner.executionContextKey} elapsedMs=${watch.elapsedMilliseconds} '
           'actionMs=${(actionMicros / 1000).toStringAsFixed(3)} '
           'frameWaitMs=${((watch.elapsedMicroseconds - actionMicros) / 1000).toStringAsFixed(3)}',
           tag: 'ToolPkgUiLauncher',
+          verboseLevel: VerboseLevel.level4,
         );
       });
     });
@@ -191,16 +199,15 @@ Widget buildComposeDslHostForTest({
   required Map<String, Object?> node,
   required ComposeDslWebViewHostContext hostContext,
   String? error,
+  ToolPkgUiContentBuilder contentBuilder = _buildToolPkgUiBody,
 }) {
-  final tree = _ComposeDslNode.parse(node);
-  if (tree == null) {
-    throw const FormatException('A Compose host requires a valid node');
-  }
+  final tree = _composeProgramFixture(node);
   return _ComposeHost(
     loading: false,
     error: error,
     renderResult: _ComposeDslRenderResult(tree: tree, actionResult: null),
     showLoadingIndicator: false,
+    contentBuilder: contentBuilder,
     onAction: hostContext.dispatchAction,
     onTextInput: (id, text) => hostContext.dispatchAction(id, text),
     webViewHostContext: hostContext,

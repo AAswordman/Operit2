@@ -599,18 +599,18 @@ void main() {
   test('route permission errors expose structured client state', () {
     const error = CoreLinkError(
       code: 'ROUTE_PERMISSION_DENIED',
-      message: 'Space route chatMessagesFlow requires capability chat.read',
+      message: 'switch_core target lacks runtime.execute',
       details: <String, Object?>{
-        'method': 'chatMessagesFlow',
-        'requiredCapability': 'chat.read',
+        'method': 'switch_core',
+        'requiredCapability': 'runtime.execute',
         'targetNodeId': 'windows-node',
       },
     );
 
     expect(error.isRoutePermissionDenied, isTrue);
-    expect(error.requiredCapability, 'chat.read');
+    expect(error.requiredCapability, 'runtime.execute');
     expect(error.targetNodeId, 'windows-node');
-    expect(error.deniedMethod, 'chatMessagesFlow');
+    expect(error.deniedMethod, 'switch_core');
   });
 
   test('native bytes use MessagePack bin', () {

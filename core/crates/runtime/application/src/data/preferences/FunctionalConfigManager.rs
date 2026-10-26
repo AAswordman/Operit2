@@ -1,3 +1,5 @@
+use operit_store::PreferenceMerge::PreferenceMergeStore;
+use operit_host_api::PluginStorage::{StoragePreferencesMergeDescriptor, StoragePreferencesMergeKey, StoragePreferencesMergePathSegment, StoragePreferencesMergeReference};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -62,6 +64,50 @@ pub struct FunctionalConfigManager {
 }
 
 impl FunctionalConfigManager {
+    /// Opens this owner's versioned store through the supplied runtime storage host.
+    pub(crate) fn preferenceStore(
+        storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
+        path: impl Into<String>,
+    ) -> PreferencesDataStore {
+        PreferencesDataStore::newWithStorage(storage, path)
+            .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences)
+    }
+
+    /// Converts historical binding values without creating unrelated default bindings.
+    fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+        entry.decodeHistoricalValues(|version, values| {
+            if version > Self::PREFERENCES_VERSION {
+                return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
+            }
+            if version < 3 && values.contains(&Self::FUNCTION_MODEL_BINDING()) {
+                if version < 2 { Self::migratePreferences(1, values)?; }
+                Self::migratePreferences(2, values)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Declares provider UUID references using the same contract as plugin owners.
+    pub(crate) fn spaceMergeStore() -> PreferenceMergeStore {
+        PreferenceMergeStore {
+            path: operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH.to_string(),
+            encrypted: false,
+            storageVersion: Some(Self::PREFERENCES_VERSION),
+            decode: Some(Self::decodeSyncedEntry),
+            merge: StoragePreferencesMergeDescriptor {
+                version: 1,
+                catalog: None,
+                references: vec![StoragePreferencesMergeReference {
+                    key: StoragePreferencesMergeKey::Exact { key: "function_model_binding".to_string() },
+                    path: vec![StoragePreferencesMergePathSegment::ObjectValues,
+                        StoragePreferencesMergePathSegment::Field { name: "providerId".to_string() }],
+                    target: operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH.to_string(),
+                }],
+                projection: None,
+            },
+        }
+    }
+
     const PREFERENCES_VERSION: u32 = 3;
 
     /// Returns the preference key that stores function-to-model bindings.
@@ -76,8 +122,10 @@ impl FunctionalConfigManager {
             operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
         );
         Self {
-            functionalConfigDataStore: PreferencesDataStore::new(path)
-                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
+            functionalConfigDataStore: Self::preferenceStore(
+                operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
+                operit_store::RuntimeStorageHost::runtimeStoragePath(&path),
+            ),
             modelConfigManager: ModelConfigManager::new(root_dir),
         }
     }

@@ -360,3 +360,36 @@ fn responsesStreamAcceptsReasoningItemAfterCompletedEvent() {
         .expect("done marker must be accepted");
     assert!(state.streamEndReceived);
 }
+
+/// Preserves partial output and reports the original request error after closing the response.
+#[tokio::test]
+async fn terminal_request_failure_reaches_the_response_consumer() {
+    use crate::chat::llmprovider::AIService::{ensure_response_completed, AiServiceError, SharedAiResponseStream};
+    use operit_util::stream::HotStream::mutable_shared_stream;
+    use operit_util::stream::RevisableTextStream::{ResponseStreamItem, RevisableTextStream, RevisableTextStreamLike};
+
+    let output = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
+    let mut response: Box<dyn RevisableTextStreamLike> = Box::new(output.clone());
+    output.emit_chunk("unfinished answer".to_string());
+    let error = AiServiceError::ConnectionFailed("transport closed".to_string());
+    super::finish_response_stream(&output, Err(error.clone()));
+    let mut items = Vec::new();
+    response.collect_ordered(&mut |item| items.push(item)).await;
+    assert_eq!(items, vec![ResponseStreamItem::Chunk("unfinished answer".to_string())]);
+    assert_eq!(ensure_response_completed(response.as_ref()), Err(AiServiceError::RequestFailed(error.to_string())));
+}
+
+/// Does not record user cancellation or successful empty completion as a transport failure.
+#[tokio::test]
+async fn cancelled_and_successful_requests_do_not_report_terminal_failure() {
+    use crate::chat::llmprovider::AIService::{ensure_response_completed, AiServiceError, SharedAiResponseStream};
+    use operit_util::stream::HotStream::mutable_shared_stream;
+    use operit_util::stream::RevisableTextStream::RevisableTextStream;
+
+    for result in [Ok(()), Err(AiServiceError::RequestCancelled)] {
+        let mut output = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
+        super::finish_response_stream(&output, result);
+        output.collect_ordered(&mut |_| {}).await;
+        assert_eq!(ensure_response_completed(&output), Ok(()));
+    }
+}

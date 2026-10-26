@@ -1,7 +1,8 @@
+use crate::process::background_command;
+
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::Command;
 use std::time::UNIX_EPOCH;
 
 use globset::GlobBuilder;
@@ -414,6 +415,7 @@ impl FileSystemHost for WindowsFileSystemHost {
         Ok(())
     }
 
+    /// Opens one file on Host-owned isolated COM capacity.
     fn openFile(&self, path: &str) -> HostResult<()> {
         self.validateReadableFile(path)?;
         // The filename is data, not a cmd.exe command (spaces, %, &, and Unicode are valid).
@@ -427,7 +429,7 @@ impl FileSystemHost for WindowsFileSystemHost {
             use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
             let path = path.to_string();
             // Shell extensions can require STA; do not change a runtime worker's COM apartment.
-            std::thread::spawn(move || {
+            operit_host_native_common::NativeHostRuntimeTaskSchedulerHost::new().runPlatformTask("windows-file-open", move || {
                 let initialized = unsafe {
                     CoInitializeEx(std::ptr::null(), (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32)
                 };
@@ -436,6 +438,7 @@ impl FileSystemHost for WindowsFileSystemHost {
                 }
                 struct Apartment;
                 impl Drop for Apartment {
+                    /// Releases COM state before the shared platform worker is reused.
                     fn drop(&mut self) { unsafe { CoUninitialize() }; }
                 }
                 let _apartment = Apartment;
@@ -452,7 +455,7 @@ impl FileSystemHost for WindowsFileSystemHost {
                     )));
                 }
                 Ok(())
-            }).join().map_err(|_| HostError::new("Windows file opener thread panicked"))?
+            })
         }
         #[cfg(not(target_os = "windows"))]
         Err(HostError::new(
@@ -489,7 +492,7 @@ $item.InvokeVerb("share")
             folder = powershell_string_literal(&parent.display().to_string()),
             file_name = powershell_string_literal(fileName),
         );
-        let output = Command::new("powershell.exe")
+        let output = background_command("powershell.exe")
             .arg("-NoProfile")
             .arg("-Command")
             .arg(script)

@@ -1,3 +1,5 @@
+use operit_host_api::PluginStorage::{StoragePreferencesMergeCatalog, StoragePreferencesMergeDescriptor, StoragePreferencesMergeKey, StoragePreferencesMergeReference};
+use operit_store::PreferenceMerge::PreferenceMergeStore;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -23,13 +25,63 @@ pub struct TtsConfigManager {
 }
 
 impl TtsConfigManager {
-    const PREFERENCES_VERSION: u32 = 2;
+    /// Opens this owner's versioned store through the supplied runtime storage host.
+    pub(crate) fn preferenceStore(
+        storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
+        path: impl Into<String>,
+    ) -> PreferencesDataStore {
+        PreferencesDataStore::newEncryptedWithStorage(storage, path)
+            .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences)
+    }
+
+    /// Decodes historical record encodings without running new-store initialization.
+    fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+        entry.decodeHistoricalValues(|version, values| {
+            if version > Self::PREFERENCES_VERSION {
+                return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
+            }
+            for version in version.max(1)..Self::PREFERENCES_VERSION { Self::migratePreferences(version, values)?; }
+            Ok(())
+        })
+    }
+
+    /// Declares this owner's catalog and references using the shared merge contract.
+    pub(crate) fn spaceMergeStore() -> PreferenceMergeStore {
+        let path = operit_util::RuntimeStorageLayout::TTS_CONFIGS_PREFERENCES_PATH;
+        PreferenceMergeStore {
+            path: path.to_string(),
+            encrypted: true,
+            storageVersion: Some(3),
+            decode: Some(Self::decodeSyncedEntry),
+            merge: StoragePreferencesMergeDescriptor {
+                version: 1,
+                catalog: Some(StoragePreferencesMergeCatalog {
+                    key_prefix: "tts_config_".to_string(),
+                    key_suffix: "_json".to_string(),
+                    identity_field: "id".to_string(),
+                    name_field: "name".to_string(),
+                    ignored_fields: vec!["createdAt".to_string(), "updatedAt".to_string()],
+                    retired_keys: vec!["tts_config_list".to_string()],
+                }),
+                references: vec![StoragePreferencesMergeReference {
+                    key: StoragePreferencesMergeKey::Exact { key: "current_tts_config_id".to_string() },
+                    path: vec![],
+                    target: path.to_string(),
+                }],
+                projection: None,
+            },
+        }
+    }
+
+    const PREFERENCES_VERSION: u32 = 3;
 
     /// Creates a text-to-speech configuration manager backed by runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::newEncrypted(paths.tts_configs_preferences_path())
-                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
+            dataStore: Self::preferenceStore(
+                operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
+                operit_store::RuntimeStorageHost::runtimeStoragePath(&paths.tts_configs_preferences_path()),
+            ),
             paths,
         }
     }
@@ -413,7 +465,7 @@ impl TtsConfigManager {
                 if hasCurrentConfig || !list.is_empty() {
                     return Ok(());
                 }
-                let config = defaultSystemTtsConfig(currentTimeMillis());
+                let config = defaultSystemTtsConfig(0);
                 preferences.set(
                     &Self::TTS_CONFIG_LIST(),
                     serde_json::to_string(&[DEFAULT_SYSTEM_TTS_CONFIG_ID])?,
@@ -449,6 +501,19 @@ impl TtsConfigManager {
                     preferences.set(&stringPreferencesKey(&key), record);
                 }
                 preferences.remove(&Self::TTS_CONFIG_LIST());
+                Ok(())
+            }
+            2 => {
+                let key = configJsonKey(DEFAULT_SYSTEM_TTS_CONFIG_ID);
+                if let Some(value) = preferences.get(&key) {
+                    let mut config: TtsConfig = serde_json::from_value(value.clone())?;
+                    config.createdAt = 0;
+                    config.updatedAt = 0;
+                    let normalized = serde_json::to_value(&config)?;
+                    if normalized == serde_json::to_value(defaultSystemTtsConfig(0))? {
+                        preferences.set(&key, normalized);
+                    }
+                }
                 Ok(())
             }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
@@ -621,7 +686,8 @@ fn configJsonKey(id: &str) -> operit_store::PreferencesDataStore::PreferencesKey
 }
 
 #[allow(non_snake_case)]
-fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
+/// Validates and canonicalizes a TTS configuration before storage or import matching.
+pub(crate) fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
     let name = config.name.trim().to_string();
     if name.is_empty() {
         return Err("tts config name is empty".to_string());

@@ -20,6 +20,7 @@ operit-plugin-sdk-ipc = { path = "../../plugin/sdk-ipc" }
 operit-providers = { path = "../../provider/services" }
 operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"] }
 operit-store = { path = "../../persistence/store" }
+operit-plugin-theme = { path = "../../plugin/theme" }
 operit-tools = { path = "../../tool/services", default-features = false }
 operit-util = { path = "../../foundation/util" }
 serde.workspace = true
@@ -33,6 +34,7 @@ operit-proxy-rust-codegen = { path = "../rust-codegen" }
 operit-plugin-sdk-codegen = { path = "../../plugin/codegen" }
 
 [dev-dependencies]
+zip.workspace = true
 operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 

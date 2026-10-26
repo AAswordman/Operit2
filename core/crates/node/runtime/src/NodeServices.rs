@@ -131,7 +131,7 @@ mod tests {
         async fn startPairing(
             &self,
             target: PeerEndpoint,
-            transport: PeerTransport,
+            transport: Option<PeerTransport>,
         ) -> Result<PendingPairing, CoreLinkError> {
             self.calls.lock().unwrap().push(format!(
                 "start:{}:{}:{transport:?}",
@@ -302,7 +302,8 @@ mod tests {
                         nodeId: "board".into(),
                         address: "endpoint".into(),
                     },
-                    transport)
+                    Some(transport),
+                )
                 .await
                 .unwrap();
             assert_eq!(pending.pairingId, "transaction");
@@ -325,11 +326,11 @@ mod tests {
             address: "endpoint".into(),
         };
         services.peers()
-            .startPairing(endpoint.clone(), PeerTransport::Tcp)
+            .startPairing(endpoint.clone(), Some(PeerTransport::Tcp))
             .await
             .unwrap();
         services.peers()
-            .startPairing(endpoint, PeerTransport::Tcp)
+            .startPairing(endpoint, Some(PeerTransport::Tcp))
             .await
             .unwrap();
         services.peers().removePairedPeer("board").await.unwrap();

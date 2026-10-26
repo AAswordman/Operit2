@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "api_version": "2.0.0",
   "toolpkg_id": "com.operit.examples.wasm_demo",
   "version": "0.1.0",
   "author": ["Operit"],

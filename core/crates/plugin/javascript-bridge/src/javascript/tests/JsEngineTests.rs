@@ -23,48 +23,62 @@ use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeSto
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
-/// Retains real streamed records solely to support existing tree-oriented assertions.
+#[path = "../../../../../tool/services/src/tools/packTool/ToolPkgComposeDslProtocol.rs"]
+mod ToolPkgComposeDslProtocol;
+#[path = "../../../../../tool/services/src/tools/packTool/ToolPkgComposeDslProgramStore.rs"]
+mod ToolPkgComposeDslProgramStore;
+
+/// Uses the production program interpreter for tree-oriented behavior assertions.
 #[derive(Default)]
 struct AssertionGraph {
-    nodes: BTreeMap<String, Value>,
-    root: Option<String>,
-    revision: u64,
+    store: ToolPkgComposeDslProgramStore::ToolPkgComposeDslProgramStore,
 }
 
 impl AssertionGraph {
-    /// Applies the real stream protocol before projecting an assertion tree.
-    fn accept(&mut self, response: &Value) {
-        assert!(response.get("tree").is_none() && response.get("state").is_none() && response.get("memo").is_none());
-        if let Some(update) = response.get("update") {
-            if update["reset"] == true { self.nodes.clear(); }
-            else { assert_eq!(update["revision"].as_u64().unwrap(), self.revision + 1); }
-            self.revision = update["revision"].as_u64().unwrap();
-            for node in update["upserts"].as_array().unwrap() { self.nodes.insert(node["id"].as_str().unwrap().into(), node.clone()); }
-            for id in update["removed"].as_array().unwrap() { self.nodes.remove(id.as_str().unwrap()); }
-            self.root = Some(update["rootId"].as_str().unwrap().into());
+    /// Applies the binary arena before projecting only the fields needed by assertions.
+    fn accept(&mut self, envelope: operit_host_api::HostJavaScriptValue) -> (bool, Value) {
+        let operit_host_api::HostJavaScriptValue::Buffer(bytes) = envelope else { panic!("Expected Compose buffer") };
+        let arena = ToolPkgComposeDslProtocol::ComposeBuffer::new(&bytes).unwrap();
+        let mut response = serde_json::json!({"navigationCommands": arena.navigation().unwrap()});
+        if let Some(result) = arena.action_result().unwrap() { response["actionResult"] = result; }
+        if arena.has_update().unwrap() {
+            let update = arena.transaction().unwrap();
+            response["update"] = serde_json::to_value(&update).unwrap();
+            self.store.apply_decoded(update).unwrap();
+            response["tree"] = self.tree(self.store.root().unwrap());
+        }
+        (arena.is_final().unwrap(), response)
+    }
+
+    /// Expands finite views only inside assertions outside production delivery.
+    fn tree(&self, reference: &ToolPkgComposeDslProtocol::ToolPkgComposeDslReference) -> Value {
+        let node = self.store.view(reference).unwrap();
+        let children: Vec<Value> = node.children.iter().map(|child| self.tree(child)).collect();
+        let slots: BTreeMap<String, Vec<Value>> = node.slots.iter().map(|(name, refs)| (name.clone(), refs.iter().map(|child| self.tree(child)).collect())).collect();
+        serde_json::json!({"type": node.node_type, "props": node.props, "children": children, "slots": slots})
+    }
+}
+
+/// Visits a finite assertion tree without depending on the removed transport records.
+fn assertionNodes(response: &Value) -> Vec<&Value> {
+    /// Collects ordinary children and explicit slots in visible order.
+    fn visit<'a>(node: &'a Value, nodes: &mut Vec<&'a Value>) {
+        nodes.push(node);
+        for child in node["children"].as_array().unwrap() { visit(child, nodes); }
+        for children in node["slots"].as_object().unwrap().values() {
+            for child in children.as_array().unwrap() { visit(child, nodes); }
         }
     }
-
-    /// Expands node identifiers only inside test assertions, outside the production transport.
-    fn tree(&self, id: &str) -> Value {
-        let node = &self.nodes[id];
-        let children: Vec<Value> = node["children"].as_array().unwrap().iter().map(|id| self.tree(id.as_str().unwrap())).collect();
-        let slots: BTreeMap<String, Vec<Value>> = node["slots"].as_object().unwrap().iter().map(|(name, ids)| (name.clone(), ids.as_array().unwrap().iter().map(|id| self.tree(id.as_str().unwrap())).collect())).collect();
-        serde_json::json!({"type": node["nodeType"], "props": node["props"], "children": children, "slots": slots})
-    }
-
-    /// Adds a test tree only to responses that actually contain a composition update.
-    fn project(&self, mut response: Value) -> Value {
-        if response.get("update").is_some() { response["tree"] = self.tree(self.root.as_deref().unwrap()); }
-        response
-    }
+    let mut nodes = Vec::new();
+    visit(&response["tree"], &mut nodes);
+    nodes
 }
 
 /// Resolves a test-owned retained graph for the concrete native engine handle.
@@ -102,16 +116,10 @@ impl super::JsEngine {
         let graph = assertionGraph(self);
         let final_response = Arc::new(Mutex::new(None));
         let capture = final_response.clone();
-        let sink = Arc::new(move |envelope: Value| {
-            let response = envelope["response"].clone();
-            let mut graph = graph.lock().unwrap();
-            graph.accept(&response);
-            let projected = if retained_only { response } else { graph.project(response) };
-            match envelope["phase"].as_str().unwrap() {
-                "final" => *capture.lock().unwrap() = Some(projected),
-                "intermediate" => if let Some(callback) = &intermediate { callback(projected); },
-                phase => panic!("Unexpected response phase: {phase}"),
-            }
+        let sink = Arc::new(move |envelope: operit_host_api::HostJavaScriptValue| {
+            let (is_final, response) = graph.lock().unwrap().accept(envelope);
+            if is_final { *capture.lock().unwrap() = Some(response); }
+            else if let Some(callback) = &intermediate { callback(response); }
         });
         Box::pin(async move {
             let result = match script {
@@ -123,7 +131,7 @@ impl super::JsEngine {
             if !retained_only {
                 let storage = engine.execute_script_function(
                     "exports.inspectComposeStorage = function() { const bundle = globalThis.__operit_compose_bundle; return { state: bundle.stateStore, memo: bundle.memoStore }; };",
-                    "inspectComposeStorage", &options, &env, None, true, 60, None,
+                    "inspectComposeStorage", &options, &env, None, true, None,
                 ).await?.unwrap();
                 let storage: Value = serde_json::from_str(&storage).unwrap();
                 response["state"] = storage["state"].clone();
@@ -197,14 +205,23 @@ pub(super) fn newTestJsEngineState(
     let runtime = testJavaScriptRuntimeHost()
         .createHostJavaScriptRuntime()
         .expect("test JavaScript runtime must start");
-    JsEngineState::newWithRuntime(runtime, executionHost, None, Arc::new(Mutex::new(None)))
+    JsEngineState::newWithRuntime(
+        runtime,
+        executionHost,
+        None,
+        Arc::new(Mutex::new(None)),
+        operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(),
+        Arc::new(AtomicBool::new(true)),
+    )
         .expect("test JavaScript state must initialize")
 }
 
 #[derive(Clone, Default)]
 struct TestPluginConfigExecutionHost {
     storage: Option<StorageTestFixture>,
+    routedPluginCalls: Arc<Mutex<Vec<Value>>>,
     gatedToolCalls: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<JsToolCallResult>>>>,
+    blockingToolCalls: Arc<Mutex<Vec<std::sync::mpsc::Sender<JsToolCallResult>>>>,
     edgePortCalls: Arc<Mutex<Vec<Value>>>,
     gatedToolStarted: Arc<tokio::sync::Notify>,
     toolPkgTextResourceReads: Arc<AtomicUsize>,
@@ -212,6 +229,7 @@ struct TestPluginConfigExecutionHost {
     toolPkgContextBindings: Arc<AtomicUsize>,
     packageManagerLock: Arc<Mutex<()>>,
     environment: Arc<Mutex<BTreeMap<String, String>>>,
+    environmentOwners: Arc<Mutex<Vec<operit_plugin_sdk::javascript::JsEnvironmentOwner>>>,
     toolCatalogError: Arc<Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     toolPkgIpcThreadName: Arc<Mutex<Option<String>>>,
@@ -237,6 +255,50 @@ impl ToolPkgTextResourceHost for StaticToolPkgTextResourceHost {
 }
 
 impl JsExecutionHost for TestPluginConfigExecutionHost {
+    /// Uses a concrete Binding identity to exercise native decorator selection.
+    fn should_route_toolpkg(&self, binding: String, _streaming: bool) -> Result<bool, String> { Ok(binding == "remote") }
+
+    /// Captures the private native envelope produced by an ordinary decorated call.
+    fn call_core_route(&self, target: String, method: String, args: Value) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<Value, String>> {
+        self.routedPluginCalls.lock().unwrap().push(serde_json::json!({"target":target, "method":method, "args":args}));
+        Box::pin(async { Ok(serde_json::json!({"chatId":"remote", "count":42})) })
+    }
+
+    /// Opens a deterministic host-owned output stream for native bridge verification.
+    fn open_core_route_watch(&self, target: String, method: String, args: Value) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<Value, String>> {
+        self.routedPluginCalls.lock().unwrap().push(serde_json::json!({"target":target, "method":method, "args":args}));
+        Box::pin(async { Ok(serde_json::json!({"subscriptionId":"native-route-watch"})) })
+    }
+
+    /// Returns one standard iterator value through the asynchronous native callback.
+    fn next_core_route_watch(&self, _id: String) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<Value, String>> {
+        Box::pin(async { Ok(serde_json::json!({"done":false,"value":"native-stream-value"})) })
+    }
+
+    /// Opens the private Push transport underneath an ordinary async iterable input.
+    fn open_toolpkg_route_push(&self, method: String, args: Value) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<Value, String>> {
+        self.routedPluginCalls.lock().unwrap().push(serde_json::json!({"reverse":method,"args":args}));
+        Box::pin(async {Ok(serde_json::json!({"subscriptionId":"native-input"}))})
+    }
+
+    /// Records one ordered value accepted by the existing native input transport.
+    fn send_toolpkg_route_push(&self, id: String, value: Value) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<Value, String>> {
+        self.routedPluginCalls.lock().unwrap().push(serde_json::json!({"input":id,"value":value}));
+        Box::pin(async {Ok(Value::Null)})
+    }
+
+    /// Records completion or cancellation of an input collector.
+    fn close_toolpkg_route_push(&self, id: String, abort: bool) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<Value, String>> {
+        self.routedPluginCalls.lock().unwrap().push(serde_json::json!({"inputClosed":id,"abort":abort}));
+        Box::pin(async {Ok(Value::Null)})
+    }
+
+    /// Records native collector release after the consumer exits its loop.
+    fn close_core_route_watch(&self, id: String) -> Result<(), String> {
+        self.routedPluginCalls.lock().unwrap().push(serde_json::json!({"closed":id}));
+        Ok(())
+    }
+
         /// Captures this fixture's shared state through the same native invocation boundary.
         fn capture_tool_invocation_host(&self) -> Arc<dyn JsExecutionHost> { Arc::new(self.clone()) }
 
@@ -282,6 +344,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
             } });
         }
         let gatedToolCalls = self.gatedToolCalls.clone();
+        let blockingToolCalls = self.blockingToolCalls.clone();
         let gatedToolStarted = self.gatedToolStarted.clone();
         let edgePortCalls = self.edgePortCalls.clone();
         Box::pin(async move {
@@ -298,6 +361,13 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
                 };
             }
 
+            if request.tool_name == "echo_owned" {
+                return JsToolCallResult {
+                    success: true,
+                    data: JsToolCallResultData::Value(Value::Object(request.parameters.into_iter().collect())),
+                    error: None,
+                };
+            }
             if request.tool_name == "echo" {
                 return JsToolCallResult {
                     success: true,
@@ -313,6 +383,13 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
                     data: JsToolCallResultData::Binary(vec![1, 2, 3]),
                     error: None,
                 };
+            }
+            if request.tool_name == "blocking_gate" {
+                let (sender, receiver) = std::sync::mpsc::channel();
+                blockingToolCalls.lock().unwrap().push(sender);
+                gatedToolStarted.notify_one();
+                return receiver.recv_timeout(Duration::from_secs(5))
+                    .expect("test must finish the blocking Host call");
             }
             if request.tool_name == "gate" {
                 let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -372,13 +449,24 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         Ok("zh-CN".to_string())
     }
 
+    /// Prepares registration values inside test-owned state before any module code runs.
+    fn prepare_environment(&self, owner: &operit_plugin_sdk::javascript::JsEnvironmentOwner, declared_names: &[String]) -> Result<(), String> {
+        self.environmentOwners.lock().unwrap().push(owner.clone());
+        for name in declared_names {
+            self.environment.lock().unwrap().insert(name.clone(), "prepared".into());
+        }
+        Ok(())
+    }
+
     /// Keeps environment state isolated from the application's actual preferences.
-    fn read_environment_variable(&self, key: &str) -> Result<Option<String>, String> {
+    fn read_environment_variable(&self, owner: &operit_plugin_sdk::javascript::JsEnvironmentOwner, key: &str) -> Result<Option<String>, String> {
+        self.environmentOwners.lock().unwrap().push(owner.clone());
         Ok(self.environment.lock().unwrap().get(key).cloned())
     }
 
     /// Supports call-context tests without writing application configuration.
-    fn write_environment_variable(&self, key: &str, value: &str) -> Result<(), String> {
+    fn write_environment_variable(&self, owner: &operit_plugin_sdk::javascript::JsEnvironmentOwner, key: &str, value: &str) -> Result<(), String> {
+        self.environmentOwners.lock().unwrap().push(owner.clone());
         self.environment
             .lock()
             .unwrap()
@@ -570,7 +658,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
                         .expect("test target runtime must start");
                     let output = runtime.block_on(engine.execute_script_function_async(
                         mainScript, "__test_ipc_dispatch__".to_string(), params,
-                        BTreeMap::new(), None, true, 2_000, None,
+                        BTreeMap::new(), None, true, None,
                     ));
                     let result = output.map_err(|error| error.to_string()).and_then(|output| {
                         operit_plugin_sdk::execution_result::decode_js_execution_result_value(output.as_deref())
@@ -622,7 +710,6 @@ async fn structured_tool_failure_rejects_with_message() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await
@@ -647,19 +734,18 @@ fn testParams() -> BTreeMap<String, Value> {
 /// Verifies a synchronous loop is interrupted and does not pin the worker afterward.
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test(flavor = "current_thread")]
-async fn synchronous_timeout_interrupts_quickjs_worker() {
+async fn before_hook_timeout_interrupts_quickjs_worker() {
     let engine = newTestToolPkgRegistrationEngine();
     let params = testParams();
     let started = Instant::now();
     let error = engine
-        .execute_script_function(
+        .execute_script_function_with_timeout_millis(
             "exports.block = function() { while (true) {} };",
             "block",
             &params,
             &BTreeMap::new(),
             None,
-            true,
-            1,
+            true, 1_000,
             None,
         )
         .await
@@ -676,7 +762,6 @@ async fn synchronous_timeout_interrupts_quickjs_worker() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await
@@ -722,7 +807,6 @@ async fn system_sleep_host_call_releases_quickjs_worker() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await
@@ -754,7 +838,6 @@ async fn async_tool_call_yields_to_ready_javascript_promise() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await
@@ -765,6 +848,46 @@ async fn async_tool_call_yields_to_ready_javascript_promise() {
         started.elapsed() < Duration::from_millis(100),
         "tool execution must not block the QuickJS worker"
     );
+    engine.destroy();
+}
+
+/// Verifies the promise-job pump resumes execution when a callback wake is lost.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn lost_callback_wake_is_recovered_by_the_promise_job_pump() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    engine
+        .worker
+        .asyncCallbackWakeEnabled
+        .store(false, Ordering::Release);
+    let started = Instant::now();
+    let output = engine
+        .execute_script_function(
+            r#"
+                exports.wait = async function() {
+                    var slept = await Tools.System.sleep(20);
+                    return slept.sleptMs;
+                };
+            "#,
+            "wait",
+            &testParams(),
+            &BTreeMap::new(),
+            None,
+            true,
+            None,
+        )
+        .await
+        .expect("the promise job pump must resume a lost callback wake");
+    assert_eq!(output.as_deref(), Some("20"));
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "the pump must recover the lost wake well before the 2 second deadline"
+    );
+    engine
+        .worker
+        .asyncCallbackWakeEnabled
+        .store(true, Ordering::Release);
     engine.destroy();
 }
 
@@ -781,7 +904,6 @@ async fn tool_catalog_bridge_returns_structured_response() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await
@@ -819,7 +941,6 @@ async fn javascript_timer_can_win_race_against_async_tool_call() {
                 &BTreeMap::new(),
                 Some(Arc::new(move |value| { sender.send(value).unwrap(); })),
                 true,
-                2,
                 None,
             ),
             host.gatedToolStarted.notified(),
@@ -925,7 +1046,6 @@ async fn failed_async_callback_does_not_poison_quickjs_engine() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await
@@ -941,45 +1061,12 @@ async fn failed_async_callback_does_not_poison_quickjs_engine() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await
         .expect("the next request must run after an asynchronous callback failure");
 
     assert_eq!(output.as_deref(), Some("\"ready\""));
-    engine.destroy();
-}
-
-/// Verifies ToolPkg registration timeout interrupts synchronous code and releases the worker.
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn toolpkg_registration_timeout_interrupts_quickjs_worker() {
-    let engine = newTestToolPkgRegistrationEngine();
-    let params = testParams();
-    let error = engine
-        .executeToolPkgMainRegistrationWithTimeout(
-            "exports.registerToolPkg = function() { while (true) {} };",
-            "registerToolPkg",
-            &params,
-            None,
-            1,
-        )
-        .expect_err("synchronous ToolPkg registration must time out");
-
-    assert_eq!(error.kind, JsExecutionErrorKind::Timeout);
-
-    let capture = engine
-        .executeToolPkgMainRegistrationWithTimeout(
-            "exports.registerToolPkg = function() { return true; };",
-            "registerToolPkg",
-            &params,
-            None,
-            2,
-        )
-        .expect("worker must accept ToolPkg registration after an interrupt");
-
-    assert!(capture.toolboxUiModules.is_empty());
     engine.destroy();
 }
 
@@ -1025,6 +1112,12 @@ impl TestRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for TestRuntimeStorageHost {
+    /// Flushes the existing test file through its backing filesystem.
+    fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+        std::fs::OpenOptions::new().write(true).open(self.resolve(path)?)?.sync_all()?;
+        Ok(())
+    }
+
     /// Returns the test runtime root directory.
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         Some(self.runtime_root.clone())
@@ -1038,6 +1131,11 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
     /// Reads bytes from the test runtime root.
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(std::fs::read(self.resolve(path)?)?)
+    }
+
+    /// Atomically publishes one complete in-memory test entry.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        self.writeBytes(path, content)
     }
 
     /// Writes bytes into the test runtime root.
@@ -1126,6 +1224,63 @@ pub(super) fn ensure_test_runtime_root() {
     ));
     setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtime_root, workspace_root));
     setDefaultRuntimeStorageHost(host);
+}
+
+/// Keeps large hot calls on source handles and preserves the module's mutable state.
+#[test]
+fn registered_script_hot_calls_transfer_only_handles_without_hashing() {
+    let mut state = newTestJsEngineState(None);
+    state.evalJavaScriptVoid(r#"
+        globalThis.__sourceRegistrations = 0;
+        globalThis.__sourceInvocations = 0;
+        const registerSource = __operitRegisterScriptSource;
+        __operitRegisterScriptSource = function(id, text) {
+            globalThis.__sourceRegistrations += 1;
+            return registerSource(id, text);
+        };
+        const invokeSource = __operitExecuteScriptFunction;
+        __operitExecuteScriptFunction = function() {
+            if (typeof arguments[2] !== 'string' || arguments[2].length > 32) {
+                throw new Error('Invocation transferred source text instead of its handle');
+            }
+            globalThis.__sourceInvocations += 1;
+            return invokeSource.apply(this, arguments);
+        };
+    "#).unwrap();
+    let script = format!("/*{}*/ let calls = 0; exports.count = () => ++calls;", "x".repeat(524_000));
+    for index in 1..=10 {
+        let output = state.execute_script_function_on_current_thread(
+            super::JsTextResourceSource::ExecutionHost,
+            &script, "count", &testParams(), &BTreeMap::new(), None, true, 60, None,
+        );
+        assert_eq!(expect_js_output(output, "registered source counter"), index.to_string());
+        if index == 1 {
+            state.evalJavaScriptVoid(r#"
+                __operitNativeHashText = function() { throw new Error('Hot call rescanned source'); };
+            "#).unwrap();
+        }
+    }
+    state.evalJavaScriptVoid(r#"
+        if (__sourceRegistrations !== 1 || __sourceInvocations !== 10) {
+            throw new Error('Source registration or invocation count changed');
+        }
+    "#).unwrap();
+}
+
+/// Distinguishes equal-length legacy fingerprint collisions and restores each source's own state.
+#[test]
+fn registered_script_replacement_preserves_exact_source_identity() {
+    let mut state = newTestJsEngineState(None);
+    let first = "let count = 0; exports.read = () => 'Aa:' + ++count;";
+    let second = "let count = 0; exports.read = () => 'BB:' + ++count;";
+    assert_eq!(super::javaScriptSourceFingerprint(first), super::javaScriptSourceFingerprint(second));
+    for (script, expected) in [(first, "\"Aa:1\""), (second, "\"BB:1\""), (first, "\"Aa:2\"")] {
+        let output = state.execute_script_function_on_current_thread(
+            super::JsTextResourceSource::ExecutionHost,
+            script, "read", &testParams(), &BTreeMap::new(), None, true, 60, None,
+        );
+        assert_eq!(expect_js_output(output, "source replacement"), expected);
+    }
 }
 
 #[test]
@@ -1269,6 +1424,74 @@ fn bootstrap_exposes_ui_android_okhttp_api() {
     );
 }
 
+/// Exercises real QuickJS logging, native severity/depth metadata, and strict level validation.
+#[test]
+fn plugin_console_uses_shared_diagnostic_depths() {
+    let mut state = newTestJsEngineState(None);
+    let script = r#"
+        /** Exercises console forwarding, diagnostic depths, and strict validation. */
+        exports.verify_logging = function() {
+            const callId = String(globalThis.__operitCurrentCallId);
+            for (let level = 1; level <= 6; level++) console.verbose(level, 'log-policy-v' + level);
+            console.debug('log-policy-debug');
+            console.log('log-policy-log');
+            console.info('log-policy-info');
+            console.warn('log-policy-warn');
+            console.error('log-policy-error');
+            let rejected = 0;
+            for (const level of [0, 7, 1.5, '3', null]) {
+                try { console.verbose(level, 'invalid-policy'); }
+                catch (error) { if (error instanceof RangeError) rejected++; }
+            }
+            let nativeRejected = false;
+            try { __operitNativeLogVerbose(7, callId, 'invalid-native-policy'); }
+            catch (_) { nativeRejected = true; }
+            return { callId, rejected, nativeRejected };
+        };
+    "#;
+    let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
+        script,
+        "verify_logging",
+        &testParams(),
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
+    let result: serde_json::Value =
+        serde_json::from_str(&expect_js_output(output, "plugin logging policy")).unwrap();
+    assert_eq!(result["rejected"], 5);
+    assert_eq!(result["nativeRejected"], true);
+    let call_id = result["callId"].as_str().unwrap();
+    let entries = operit_util::AppLogger::AppLogger::entries();
+    for level in 1..=6 {
+        let message = format!("[{call_id}] log-policy-v{level}");
+        let entry = entries
+            .iter()
+            .find(|entry| entry.tag == "ToolPkg" && entry.message == message)
+            .unwrap();
+        assert_eq!(entry.priority, operit_util::AppLogger::VERBOSE);
+        assert_eq!(entry.verbose_level, Some(level));
+    }
+    for (label, priority) in [
+        ("debug", operit_util::AppLogger::DEBUG),
+        ("log", operit_util::AppLogger::INFO),
+        ("info", operit_util::AppLogger::INFO),
+        ("warn", operit_util::AppLogger::WARN),
+        ("error", operit_util::AppLogger::ERROR),
+    ] {
+        let message = format!("[{call_id}] log-policy-{label}");
+        let entry = entries
+            .iter()
+            .find(|entry| entry.tag == "ToolPkg" && entry.message == message)
+            .unwrap();
+        assert_eq!(entry.priority, priority);
+        assert_eq!(entry.verbose_level, None);
+    }
+}
+
 #[test]
 fn toolpkg_ipc_local_call_returns_handler_result() {
     let mut state = newTestJsEngineState(None);
@@ -1372,7 +1595,6 @@ async fn toolpkg_ipc_cross_runtime_dispatch_is_asynchronous() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await;
@@ -1517,7 +1739,6 @@ async fn workflow_list_async_same_engine_ipc_completes() {
             BTreeMap::new(),
             None,
             true,
-            2_000,
             None,
         )
         .await;
@@ -1552,7 +1773,6 @@ async fn pending_call_releases_state_and_preserves_call_context() {
         &BTreeMap::from([("CALL_OWNER".to_string(), "first".to_string())]),
         Some(callback),
         true,
-        2,
         None,
     ));
     assert_eq!(received.recv().await.unwrap(), "waiting");
@@ -1560,7 +1780,7 @@ async fn pending_call_releases_state_and_preserves_call_context() {
         r#"exports.second = function() { return { owner: getEnv('CALL_OWNER'), firstFinished: globalThis.firstFinished }; };"#,
         "second", &testParams(),
         &BTreeMap::from([("CALL_OWNER".to_string(), "second".to_string())]),
-        None, true, 2, None,
+        None, true, None,
     ).await;
     assert_eq!(
         serde_json::from_str::<Value>(&expect_js_output(output, "interleaved second call")).unwrap(),
@@ -1574,11 +1794,41 @@ async fn pending_call_releases_state_and_preserves_call_context() {
     engine.destroy();
 }
 
+/// A package awaiting a synchronous host tool must leave another package's tools and timers usable.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn blocking_host_call_leaves_other_package_runtime_responsive() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let firstEngine = newTestJsEngine(host.clone());
+    let secondEngine = newTestJsEngine(host.clone());
+    let first = tokio::spawn(firstEngine.execute_script_function(
+        "exports.first = async function() { return await toolCall('blocking_gate', {}); };",
+        "first", &testParams(), &BTreeMap::new(), None, true, None,
+    ));
+    host.gatedToolStarted.notified().await;
+    let output = tokio::time::timeout(Duration::from_secs(1), secondEngine.execute_script_function(
+        "exports.second = async function() { await Tools.System.sleep(5); return await toolCall('echo', {value: 'other-package'}); };",
+        "second", &testParams(), &BTreeMap::new(), None, true, None,
+    )).await;
+    host.blockingToolCalls.lock().unwrap().pop().unwrap().send(JsToolCallResult {
+        success: true,
+        data: JsToolCallResultData::Value(Value::String("terminal-done".into())),
+        error: None,
+    }).unwrap();
+    let firstOutput = first.await.unwrap();
+    firstEngine.destroy();
+    secondEngine.destroy();
+    assert_eq!(expect_js_output(firstOutput, "blocking terminal result"), "\"terminal-done\"");
+    assert_eq!(expect_js_output(output.expect("Other packages must progress before the terminal finishes"), "other package"), r#"{"value":"other-package"}"#);
+}
+
 /// Per-call overrides must keep writes made before an await, rather than restoring an old snapshot.
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test(flavor = "current_thread")]
 async fn call_environment_updates_survive_state_turns() {
     let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let mut params = testParams();
+    params.insert("__operit_package_name".into(), Value::String("test.package".into()));
     let output = engine
         .execute_script_function(
             r#"exports.update = async function() {
@@ -1588,11 +1838,10 @@ async fn call_environment_updates_survive_state_turns() {
             return { owner: getEnv('CALL_OWNER'), second: getEnv('SECOND') };
         };"#,
             "update",
-            &testParams(),
+            &params,
             &BTreeMap::from([("CALL_OWNER".to_string(), "original".to_string())]),
             None,
             true,
-            2,
             None,
         )
         .await;
@@ -1603,11 +1852,13 @@ async fn call_environment_updates_survive_state_turns() {
     engine.destroy();
 }
 
-/// Abandoning an async request must cancel its session on the owning affine thread.
+/// Abandoning a host wait must run JavaScript cleanup before the affine cancellation step finishes.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn abandoned_async_request_cancels_affine_session() {
-    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let toolHost = host.clone();
+    let engine = newTestJsEngine(host.clone());
     let caller = engine.clone();
     let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let signal = started.clone();
@@ -1623,9 +1874,15 @@ fn abandoned_async_request_cancels_affine_session() {
         let task = tokio::task::spawn_local(async move {
             caller
                 .execute_script_function_async(
-                    r#"exports.wait = async function() {
-                    __operitSendIntermediateResult(globalThis.__operitCurrentCallId, 'started');
-                    return await new Promise(function() {});
+                    r#"/** Releases shared state when the owning host wait is cancelled. */
+                    exports.wait = async function() {
+                    globalThis.cancelledCleanupCount = 0;
+                    try {
+                        __operitSendIntermediateResult(globalThis.__operitCurrentCallId, 'started');
+                        return await toolCall('gate', {});
+                    } finally {
+                        globalThis.cancelledCleanupCount++;
+                    }
                 };"#
                     .to_string(),
                     "wait".to_string(),
@@ -1633,7 +1890,6 @@ fn abandoned_async_request_cancels_affine_session() {
                     BTreeMap::new(),
                     Some(callback),
                     true,
-                    2_000,
                     None,
                 )
                 .await
@@ -1646,6 +1902,9 @@ fn abandoned_async_request_cancels_affine_session() {
             started.load(Ordering::Acquire),
             "aborted request must have started"
         );
+        tokio::time::timeout(Duration::from_secs(1), toolHost.gatedToolStarted.notified())
+            .await
+            .expect("host wait must have started before cancellation");
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
     });
@@ -1655,20 +1914,26 @@ fn abandoned_async_request_cancels_affine_session() {
             .worker
             .runtimeHost
             .executeHostJavaScriptRuntimeStateTask(
-                engine.worker.stateHandle,
-                1_000,
+                engine.worker.stateHandle, operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(),
                 Box::new(|state, _| {
                     let state = state.downcast_mut::<JsEngineState>().unwrap();
-                    Ok(Box::new(state.pendingScriptExecutions.len()))
+                    let cleanup = state.runtime.evaluateHostJavaScriptString(
+                        "cancellation-cleanup",
+                        "String(globalThis.cancelledCleanupCount)",
+                    )?;
+                    Ok(Box::new((state.pendingScriptExecutions.len(), cleanup)))
                 }),
             )
             .unwrap();
-        if *output.downcast::<usize>().unwrap() == 0 {
+        let (pending, cleanup) = *output.downcast::<(usize, String)>().unwrap();
+        if pending == 0 {
+            assert_eq!(cleanup, "1", "cancelled host wait must run its finally block");
             break;
         }
         assert!(Instant::now() < deadline, "abandoned affine session leaked");
         std::thread::sleep(Duration::from_millis(1));
     }
+    finishGatedTool(&host);
     engine.destroy();
 }
 
@@ -1709,7 +1974,6 @@ fn runtime_context_cross_runtime_dispatch_is_asynchronous() {
         BTreeMap::new(),
         None,
         true,
-        2_000,
         None,
     ));
 
@@ -2182,6 +2446,7 @@ fn execute_minified_package_script_with_metadata() {
     );
 }
 
+/// Registers the bundled package with its explicit installation scope.
 #[test]
 fn register_thinking_guidance_toolpkg_main() {
     ensure_test_runtime_root();
@@ -2193,6 +2458,10 @@ fn register_thinking_guidance_toolpkg_main() {
     params.insert(
         "toolPkgId".to_string(),
         Value::String("thinking_guidance".to_string()),
+    );
+    params.insert(
+        "__operit_registration_config_scope".to_string(),
+        Value::String("device".to_string()),
     );
 
     let capture = engine
@@ -2207,6 +2476,7 @@ fn register_thinking_guidance_toolpkg_main() {
     assert_eq!(prompt["function"], "onSystemPromptCompose");
 }
 
+/// Registers the package and its text resources in the selected installation scope.
 #[test]
 fn register_message_insert_toolpkg_main() {
     ensure_test_runtime_root();
@@ -2223,6 +2493,10 @@ fn register_message_insert_toolpkg_main() {
     params.insert(
         "toolPkgId".to_string(),
         Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_registration_config_scope".to_string(),
+        Value::String("device".to_string()),
     );
     params.insert(
         "__operit_ui_package_name".to_string(),
@@ -2391,7 +2665,6 @@ fn toolpkg_ipc_main_request_uses_bound_resource_host() {
         BTreeMap::new(),
         None,
         true,
-        60_000,
         None,
     ));
     assert_eq!(
@@ -2478,16 +2751,11 @@ fn render_planask_through_async_compose_host() {
     );
     let intermediate = intermediate.lock().unwrap();
     assert!(
-        !intermediate.is_empty(),
-        "onLoad must deliver intermediate renders"
+        intermediate.is_empty(),
+        "Synchronous onLoad must publish its state through the final render only"
     );
-    for raw in intermediate.iter() {
-        let result: Value = raw.clone();
-        assert!(
-            result["tree"].is_object(),
-            "Unexpected intermediate result: {raw}"
-        );
-    }
+    assert_eq!(result["state"]["closed"], true);
+    assert_eq!(result["tree"]["props"]["key"], "planask-ready");
     engine.destroy();
 }
 
@@ -2839,6 +3107,7 @@ fn execute_script_can_require_axios_and_uuid() {
     );
 }
 
+/// Registers UI routes without evaluating UI modules in the selected installation scope.
 #[test]
 fn registration_mode_uses_ui_module_placeholder() {
     let engine = newTestToolPkgRegistrationEngine();
@@ -2855,6 +3124,10 @@ fn registration_mode_uses_ui_module_placeholder() {
     "#;
     let mut params = testParams();
     params.insert("toolPkgId".to_string(), Value::String("ui_pkg".to_string()));
+    params.insert(
+        "__operit_registration_config_scope".to_string(),
+        Value::String("device".to_string()),
+    );
 
     let capture = engine
         .execute_toolpkg_main_registration_function(script, "registerToolPkg", &params)
@@ -2947,7 +3220,7 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
             };
         "#;
         let capture = engine
-            .executeToolPkgMainRegistrationWithTimeout(script, "registerToolPkg", &params, None, 1)
+            .execute_toolpkg_main_registration_function_with_text_resources(script, "registerToolPkg", &params, None)
             .expect("registration must resolve paths while its caller holds the manager lock");
         let entry: Value = serde_json::from_str(&capture.navigationEntries[0]).unwrap();
         let root = format!(
@@ -2992,7 +3265,6 @@ async fn registration_config_context_does_not_leak_into_runtime_execution() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await
@@ -3019,7 +3291,7 @@ async fn local_data_directory_is_stable_across_registration_and_runtime() {
     ).expect("local data is available before installation");
     let output = engine.execute_script_function(
         "exports.local_data = function() { return {local:ToolPkg.getLocalDataDir(),shared:ToolPkg.getSpaceDataDir()}; };",
-        "local_data", &params, &BTreeMap::new(), None, true, 2, None,
+        "local_data", &params, &BTreeMap::new(), None, true, None,
     ).await.expect("local runtime directory").expect("local directory output");
     assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!({"local":"/app/data/plugin_data/device/first_import","shared":"/app/data/plugin_data/space/first_import"}));
 }
@@ -3189,8 +3461,7 @@ async fn executionSessionCounts(engine: &super::JsEngine) -> (usize, usize) {
         .worker
         .runtimeHost
         .executeHostJavaScriptRuntimeStateAsyncTask(
-            engine.worker.stateHandle,
-            1_000,
+            engine.worker.stateHandle, operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(),
             Box::new(|state, _interrupt| {
                 Box::pin(async move {
                     let state = state
@@ -3232,6 +3503,7 @@ async fn completion_retains_detached_promise_context_until_host_event() {
     let engine = newTestJsEngine(host.clone());
     let (sender, mut progress) = tokio::sync::mpsc::unbounded_channel();
     let mut params = testParams();
+    params.insert("__operit_package_name".into(), Value::String("workflow".into()));
     params.insert(
         "toolPkgId".to_string(),
         Value::String("workflow".to_string()),
@@ -3258,7 +3530,6 @@ async fn completion_retains_detached_promise_context_until_host_event() {
                 sender.send(value).unwrap();
             })),
             true,
-            2,
             None,
         )
         .await;
@@ -3276,7 +3547,6 @@ async fn completion_retains_detached_promise_context_until_host_event() {
             &BTreeMap::from([("CALL_OWNER".to_string(), "next".to_string())]),
             None,
             true,
-            2,
             None,
         )
         .await;
@@ -3324,7 +3594,6 @@ async fn destruction_completes_pending_request() {
         &BTreeMap::new(),
         None,
         true,
-        2,
         None,
     ));
     host.gatedToolStarted.notified().await;
@@ -3356,7 +3625,6 @@ async fn promise_continuation_respects_execution_interrupt() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await;
@@ -3375,6 +3643,7 @@ async fn promise_jobs_restore_execution_host_for_native_calls() {
     let host = Arc::new(TestPluginConfigExecutionHost::default());
     let engine = newTestJsEngine(host.clone());
     let mut params = testParams();
+    params.insert("__operit_package_name".into(), Value::String("workflow".into()));
     params.insert(
         "toolPkgId".to_string(),
         Value::String("workflow".to_string()),
@@ -3392,7 +3661,6 @@ async fn promise_jobs_restore_execution_host_for_native_calls() {
             &BTreeMap::new(),
             None,
             true,
-            2,
             None,
         )
         .await;
@@ -3426,19 +3694,19 @@ async fn device_tools_hardware_uses_selected_node_and_rejects_failures() {
             if (tools !== Tools) throw Error('different Tools object');
             if (Tools.Edge !== undefined || Tools.Io !== undefined) throw Error('old global hardware APIs remain');
             if (Tools.edge !== undefined || Tools.io !== undefined) throw Error('noncanonical namespace');
-            const edge=await Tools.device('edge-one').Edge.execute({pluginId:'device.status',action:'read'},{text:'ping'});
+            const edge=await Tools.device('edge-one').Edge.execute({target:'edge.status',method:'read'},{text:'ping'});
             const io=await Tools.device('edge-two').Io.execute({port:'gpio',operation:'read'},{pin:2});
             let failure='';
-            try { await Tools.device('unauthorized').Edge.execute({pluginId:'device.status',action:'read'}); }
+            try { await Tools.device('unauthorized').Edge.execute({target:'edge.status',method:'read'}); }
             catch(error) { failure=String(error.message || error); }
             return {edge:edge.nodeId,io:io.nodeId,failure};
         };
-    "#,"ports",&testParams(),&BTreeMap::new(),None,true,2000,None).await.unwrap().unwrap();
+    "#,"ports",&testParams(),&BTreeMap::new(),None,true,None).await.unwrap().unwrap();
     let result:Value=serde_json::from_str(&output).unwrap();
     assert_eq!(result,serde_json::json!({"edge":"edge-one","io":"edge-two","failure":"Edge node access denied"}));
     let calls=host.edgePortCalls.lock().unwrap();
     assert_eq!(calls.len(),3);
-    assert_eq!(calls[0]["params"], serde_json::json!({"interface_info":{"pluginId":"device.status","action":"read"},"args":{"text":"ping"}}));
+    assert_eq!(calls[0]["params"], serde_json::json!({"interface_info":{"target":"edge.status","method":"read"},"args":{"text":"ping"}}));
     assert_eq!(calls[0]["device"]["nodeId"], "edge-one");
     assert_eq!(calls[1]["params"], serde_json::json!({"interface_info":{"port":"gpio","operation":"read"},"args":{"pin":2}}));
     assert_eq!(calls[1]["device"]["nodeId"], "edge-two");
@@ -3481,7 +3749,7 @@ async fn structured_tool_calls_preserve_values_and_avoid_json_text() {
                 };
             };"#,
             "main", &BTreeMap::new(),
-            &BTreeMap::new(), None, true, 5, None,
+            &BTreeMap::new(), None, true, None,
         ).await;
     let output: Value = serde_json::from_str(&expect_js_output(result, "structured echo")).unwrap();
     assert_eq!(
@@ -3518,7 +3786,6 @@ async fn structured_tool_calls_recover_from_invalid_parameters_and_preserve_bina
             &BTreeMap::new(),
             None,
             true,
-            5,
             None,
         )
         .await;
@@ -3571,7 +3838,6 @@ async fn bridge_roundtrip_benchmark() {
                     &BTreeMap::new(),
                     None,
                     true,
-                    30,
                     None,
                 )
                 .await,
@@ -3589,7 +3855,6 @@ async fn bridge_roundtrip_benchmark() {
                         &BTreeMap::new(),
                         None,
                         true,
-                        30,
                         None,
                     )
                     .await,
@@ -3605,6 +3870,71 @@ async fn bridge_roundtrip_benchmark() {
         );
         engine.destroy();
     }
+}
+
+/// Separates strict request snapshots, Promise jobs and complete host round trips.
+/// Run explicitly in release mode; timing is diagnostic, never a correctness assertion.
+#[tokio::test]
+#[ignore = "manual release bridge payload benchmark"]
+async fn bridge_payload_benchmark() {
+    let iterations: usize = std::env::var("OPERIT_JS_BRIDGE_BENCH_ITERATIONS")
+        .expect("set OPERIT_JS_BRIDGE_BENCH_ITERATIONS")
+        .parse().expect("positive iteration count");
+    assert!(iterations > 0);
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let script = r#"exports.main = async function(params) {
+        var data = {rows: []}, result;
+        for (var row = 0; row < params.rows; row++)
+            data.rows.push({id: row, name: 'role-' + row, enabled: true,
+                settings: {prompt: 'x'.repeat(64), tags: ['a', 'b', 'c']}});
+        for (var i = 0; i < params.iterations; i++) {
+            if (params.mode === 'input') { __operitHostSnapshotJsonObject(data); result = data; }
+            else if (params.mode === 'snapshot') result = __operitSnapshotJsonObject(data);
+            else if (params.mode === 'promise') result = await Promise.resolve(data);
+            else result = await toolCall(params.mode === 'hostOwned' || params.mode === 'hostReadAll' ? 'echo_owned' : 'echo', data);
+            if (params.mode === 'hostReadAll') {
+                for (var row = 0; row < params.rows; row++) {
+                    var value = result.rows[row];
+                    if (value.id !== row || value.name !== 'role-' + row || value.enabled !== true ||
+                        value.settings.prompt !== 'x'.repeat(64) || value.settings.tags.join(',') !== 'a,b,c')
+                        throw new Error('Payload changed in transit at row ' + row);
+                }
+            }
+        }
+        for (var row = 0; row < params.rows; row++) {
+            var value = result.rows[row];
+            if (value.id !== row || value.name !== 'role-' + row || value.enabled !== true ||
+                value.settings.prompt !== 'x'.repeat(64) || value.settings.tags.join(',') !== 'a,b,c')
+                throw new Error('Payload changed in transit at row ' + row);
+        }
+        return result.rows.length;
+    };"#;
+    let rows: Vec<usize> = std::env::var("OPERIT_JS_BRIDGE_BENCH_ROWS").unwrap_or_else(|_| "0,1,32,256".into())
+        .split(',').map(|value| value.parse().expect("row count")).collect();
+    let modes = std::env::var("OPERIT_JS_BRIDGE_BENCH_MODES").unwrap_or_else(|_| "promise,snapshot,input,host,hostOwned,hostReadAll".into());
+    for rows in rows {
+        for mode in modes.split(',') {
+            let params = BTreeMap::from([
+                ("rows".to_owned(), serde_json::json!(rows)),
+                ("mode".to_owned(), serde_json::json!(mode)),
+                ("iterations".to_owned(), serde_json::json!(iterations)),
+            ]);
+            let mut times = Vec::new();
+            for sample in 0..6 {
+                let started = Instant::now();
+                let output = expect_js_output(engine.execute_script_function(
+                    script, "main", &params, &BTreeMap::new(), None, true, None,
+                ).await, "payload benchmark");
+                assert_eq!(output, rows.to_string());
+                if sample > 0 {
+                    times.push(started.elapsed().as_secs_f64() * 1e6 / iterations as f64);
+                }
+            }
+            times.sort_by(f64::total_cmp);
+            eprintln!("BRIDGE_PAYLOAD rows={rows} mode={mode} median_us_per_call={:.3} samples_us={times:?}", times[2]);
+        }
+    }
+    engine.destroy();
 }
 
 /// Creates an actual immutable SDK execution context without authenticating any owner through JavaScript data.
@@ -3684,7 +4014,7 @@ async fn shared_initialization_promise_preserves_each_waiting_call_context() {
         };"#,
         "initialize", &testParams(),
         &BTreeMap::from([("CALL_OWNER".to_string(), "initializer".to_string())]),
-        None, true, 2, None,
+        None, true, None,
     ));
     host.gatedToolStarted.notified().await;
     let (sender, mut started) = tokio::sync::mpsc::unbounded_channel();
@@ -3700,13 +4030,139 @@ async fn shared_initialization_promise_preserves_each_waiting_call_context() {
         };"#,
         "useService", &testParams(),
         &BTreeMap::from([("CALL_OWNER".to_string(), "consumer".to_string())]),
-        Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, 2, None,
+        Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, None,
     ));
     started.recv().await.expect("consumer must await initialization before its completion");
     finishGatedTool(&host);
     assert_eq!(expect_js_output(first.await.unwrap(), "shared initialization owner"), "\"initializer\"");
     assert_eq!(expect_js_output(second.await.unwrap(), "shared initialization consumer"), "\"consumer\"");
     assert_eq!(executionSessionCounts(&engine).await, (0, 0));
+    engine.destroy();
+}
+
+/// A completed asynchronous call must not resurrect its cleaned id for a suspended caller.
+///
+/// The reported failure was a memory query that resumed after an unrelated async hook had
+/// finished: the hook's completion restored the suspended call's id, then the continuation
+/// wrapper wrote the hook's now-deleted id back over it.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn completed_async_call_keeps_a_suspended_call_context_alive() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let awaiter_engine = engine.clone();
+    let awaiter = tokio::spawn(async move {
+        awaiter_engine
+            .execute_script_function(
+                r#"exports.awaiter = async function() {
+                    await new Promise(function(resolve) { setTimeout(resolve, 100); });
+                    var callId = String(globalThis.__operitCurrentCallId || '');
+                    return JSON.stringify({
+                        callId: callId,
+                        callStateAvailable: !!(callId && globalThis.__operitGetCallState(callId))
+                    });
+                };"#,
+                "awaiter",
+                &testParams(),
+                &BTreeMap::new(),
+                None,
+                true,
+                None,
+            )
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    engine
+        .execute_script_function(
+            r#"exports.hook = async function() { return 'hook'; };"#,
+            "hook",
+            &testParams(),
+            &BTreeMap::new(),
+            None,
+            true,
+            None,
+        )
+        .await
+        .expect("independent async call must complete");
+    let output = awaiter.await.expect("awaiter task must not panic");
+    let encoded = expect_js_output(output, "suspended call context");
+    let json = serde_json::from_str::<String>(&encoded).expect("suspended call context string");
+    let report: Value =
+        serde_json::from_str(&json).expect("suspended call context must be JSON");
+    assert_eq!(
+        report["callStateAvailable"], true,
+        "suspended call must keep a live call state: {report}"
+    );
+    engine.destroy();
+}
+
+/// A hook that finishes while another call is suspended must hand the execution id back
+/// to the suspended call instead of clearing it.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn completed_hook_restores_a_concurrently_suspended_call() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let (started_sender, mut started) = tokio::sync::mpsc::unbounded_channel();
+    let hook_engine = engine.clone();
+    let hook = tokio::spawn(async move {
+        hook_engine
+            .execute_script_function(
+                r#"exports.hook = async function() {
+                    sendIntermediateResult('hook-started');
+                    await new Promise(function(resolve) { setTimeout(resolve, 25); });
+                    return 'hook';
+                };"#,
+                "hook",
+                &testParams(),
+                &BTreeMap::new(),
+                Some(Arc::new(move |value| { started_sender.send(value).unwrap(); })),
+                true,
+                None,
+            )
+            .await
+    });
+    started.recv().await.expect("hook must start before the probe");
+    let probe_engine = engine.clone();
+    let probe = tokio::spawn(async move {
+        probe_engine
+            .execute_script_function(
+                r#"exports.probe = async function() {
+                    var owner = String(globalThis.__operitCurrentCallId || '');
+                    await new Promise(function(resolve) { setTimeout(resolve, 100); });
+                    var current = String(globalThis.__operitCurrentCallId || '');
+                    return JSON.stringify({
+                        owner: owner,
+                        current: current,
+                        sameOwner: current === owner,
+                        callStateAvailable: !!(current && globalThis.__operitGetCallState(current))
+                    });
+                };"#,
+                "probe",
+                &testParams(),
+                &BTreeMap::new(),
+                None,
+                true,
+                None,
+            )
+            .await
+    });
+    expect_js_output(
+        hook.await.expect("hook task must not panic"),
+        "hook completion",
+    );
+    let encoded = expect_js_output(
+        probe.await.expect("probe task must not panic"),
+        "suspended call after hook completion",
+    );
+    let json = serde_json::from_str::<String>(&encoded).expect("probe report string");
+    let report: Value = serde_json::from_str(&json).expect("probe report JSON");
+    assert_eq!(
+        report["callStateAvailable"], true,
+        "suspended call must keep a live state: {report}"
+    );
+    assert_eq!(
+        report["sameOwner"], true,
+        "suspended call must keep its own execution id: {report}"
+    );
     engine.destroy();
 }
 
@@ -3730,7 +4186,7 @@ fn storageTestRequest(host: &TestPluginConfigExecutionHost, request: operit_plug
     })
 }
 
-/// Exercises the production JS callback and actual SQLite engine with JSON text codecs disabled.
+/// Exercises structured callbacks against real SQLite and native JSON preferences with text codecs disabled.
 #[tokio::test(flavor = "current_thread")]
 async fn storage_structured_promise_roundtrips_real_sqlite_and_record_proxies() {
     let root = std::env::temp_dir().join(format!("operit-js-storage-{}",uuid::Uuid::new_v4()));
@@ -3768,21 +4224,29 @@ async fn storage_structured_promise_roundtrips_real_sqlite_and_record_proxies() 
             await sql.defineTable({name:'records',primaryKey:'id',columns:[{name:'id',affinity:'text',nullable:false},{name:'count',affinity:'integer',nullable:false},{name:'bytes',affinity:'blob',nullable:false}]});
             await sql.execute('INSERT INTO records VALUES(?,?,?)',['one',9223372036854775807n,new Uint8Array([0,255])]);
             const rows=await sql.query('SELECT count,bytes FROM records');
-            const keys=await Tools.Storage.dataStore.open({path:params.config+'/keys.sqlite'});
-            await keys.commit({set:{nullable:null,a:1},expectedVersions:{a:null}});
+            const preferencesPath=params.config+'/keys.preferences.json';
+            const keys=await Tools.Storage.dataStore.open({path:preferencesPath});
+            await keys.edit(p=>{p.set('nullable',null);p.set('a',1);});
+            const competingKeys=await Tools.Storage.dataStore.open({path:preferencesPath});
             let conflict=false;
-            try { await keys.commit({set:{a:2,b:3},expectedVersions:{b:'wrong'}}); }
-            catch(error) {conflict=error.message.startsWith('Storage version conflict:');}
-            const a=await keys.get('a');const b=await keys.get('b');const nullable=await keys.get('nullable');
-            await objects.close();await sql.close();await keys.close();
-            return {count:stored.value.nested.count,int64:String(rows[0].count),bytes:Array.from(rows[0].bytes),conflict,a:a.value,b,nullable:nullable.value};
+            try {
+                await keys.edit(async p=>{
+                    p.set('a',2);p.set('b',3);
+                    await competingKeys.edit(other=>other.set('concurrent',true));
+                });
+            } catch(error) {conflict=error.message.startsWith('DataStore edit conflict:');}
+            const data=await keys.data();
+            await objects.close();await sql.close();await keys.close();await competingKeys.close();
+            return {count:stored.value.nested.count,int64:String(rows[0].count),bytes:Array.from(rows[0].bytes),
+                conflict,a:data.get('a'),hasB:data.contains('b'),nullable:data.get('nullable'),
+                hasNullable:data.contains('nullable'),concurrent:data.get('concurrent')};
         };
     "#;
     let mut params=testParams();params.insert("config".into(),Value::String(config));
-    let output=engine.execute_script_function(script,"storage_roundtrip",&params,&BTreeMap::new(),None,true,10,None).await;
+    let output=engine.execute_script_function(script,"storage_roundtrip",&params,&BTreeMap::new(),None,true,None).await;
     let output=expect_js_output(output,"real structured storage bridge");
     let value:Value=serde_json::from_str(&output).unwrap();
-    assert_eq!(value,serde_json::json!({"count":2,"int64":"9223372036854775807","bytes":[0,255],"conflict":true,"a":1,"b":null,"nullable":null}));
+    assert_eq!(value,serde_json::json!({"count":2,"int64":"9223372036854775807","bytes":[0,255],"conflict":true,"a":1,"hasB":false,"nullable":null,"hasNullable":true,"concurrent":true}));
     engine.destroy(); drop(engine);
     assert_eq!(root.parent().unwrap(),std::env::temp_dir());std::fs::remove_dir_all(root).unwrap();
 }
@@ -3830,7 +4294,7 @@ async fn compose_dsl_retained_state_stays_in_native_js_session() {
         "initial retained render",
     );
     assert!(first.get("state").is_none() && first.get("memo").is_none());
-    let action = first["update"]["upserts"][0]["props"]["onClick"]["__actionId"]
+    let action = assertionNodes(&first)[0]["props"]["onClick"]["__actionId"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -3883,9 +4347,7 @@ async fn compose_dsl_retained_state_stays_in_native_js_session() {
             .await,
         "host input update",
     );
-    assert!(input["update"]["upserts"]
-        .as_array()
-        .unwrap()
+    assert!(assertionNodes(&input)
         .iter()
         .any(|node| node["props"]["text"] == "host:2"));
     assert!(input.get("state").is_none() && input.get("memo").is_none());
@@ -3913,12 +4375,10 @@ async fn compose_dsl_retained_state_stays_in_native_js_session() {
     );
     assert_eq!(fresh["update"]["reset"], true);
     assert_eq!(fresh["update"]["revision"], 1);
-    assert!(fresh["update"]["upserts"]
-        .as_array()
-        .unwrap()
+    assert!(assertionNodes(&fresh)
         .iter()
         .any(|node| node["props"]["text"] == "initial:0"));
-    let fresh_action = fresh["update"]["upserts"][0]["props"]["onClick"]["__actionId"]
+    let fresh_action = assertionNodes(&fresh)[0]["props"]["onClick"]["__actionId"]
         .as_str()
         .unwrap();
     let fresh_result = expect_js_output(
@@ -3957,7 +4417,7 @@ async fn compose_dsl_webview_interface_actions_survive_retained_commits() {
     params.insert("__test_retained_response".into(), Value::Bool(true));
     params.insert("executionContextKey".into(), Value::String("webview-actions".into()));
     let first = expect_js_output(engine.renderForAssertions(script, &params, &BTreeMap::new(), Arc::new(BTreeMap::new())).await, "WebView initial render");
-    let on_load = first["update"]["upserts"].as_array().unwrap().iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap();
+    let on_load = assertionNodes(&first).iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap();
     let loaded = expect_js_output(engine.actionForAssertions(on_load, None, &params, &BTreeMap::new(), None).await, "WebView initialization");
     let id = loaded["actionResult"].as_str().unwrap();
     for _ in 0..5 {
@@ -3991,11 +4451,11 @@ async fn compose_dsl_character_card_webview_interface_survives_native_commits() 
     params.insert("executionContextKey".into(), Value::String("character-webview-actions".into()));
     params.insert("theme".into(), serde_json::json!({"brightness":"dark", "colors":{"primary":"#ff102030"}}));
     let first = expect_js_output(engine.renderForAssertions(&script, &params, &BTreeMap::new(), Arc::new(BTreeMap::new())).await, "character initial render");
-    let on_load = first["update"]["upserts"].as_array().unwrap().iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap();
+    let on_load = assertionNodes(&first).iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap();
     expect_js_output(engine.actionForAssertions(on_load, None, &params, &BTreeMap::new(), None).await, "character onLoad");
     let raw = engine.execute_script_function(
         "exports.inspect = function() {return globalThis.characterWebViewCommand.payload.object.loadScreen.__actionId;};",
-        "inspect", &params, &BTreeMap::new(), None, true, 5, None
+        "inspect", &params, &BTreeMap::new(), None, true, None
     ).await.unwrap().unwrap();
     let id: String = serde_json::from_str(&raw).unwrap();
     for _ in 0..5 {
@@ -4018,8 +4478,9 @@ async fn compose_dsl_reload_drains_intermediate_revisions_before_final() {
         exports.default = function(ctx) {
             const [count, setCount] = ctx.useState('count', 0);
             return ctx.UI.Column({onLoad: async function() {
-                await toolCall('gate', {});
                 setCount(count + 1);
+                await toolCall('gate', {});
+                setCount(count + 2);
                 return 'done';
             }}, [ctx.UI.Text({text: String(count)})]);
         };
@@ -4028,22 +4489,32 @@ async fn compose_dsl_reload_drains_intermediate_revisions_before_final() {
     params.insert("__test_retained_response".into(), Value::Bool(true));
     params.insert("executionContextKey".into(), Value::String("revision-order".into()));
     let initial = expect_js_output(engine.renderForAssertionsAsync(source.into(), params.clone(), BTreeMap::new(), Arc::new(BTreeMap::new())).await, "initial revision");
-    let action_id = initial["update"]["upserts"].as_array().unwrap().iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap().to_owned();
+    let action_id = assertionNodes(&initial).iter().find_map(|node| node["props"]["onLoad"]["__actionId"].as_str()).unwrap().to_owned();
     let delivered = Arc::new(Mutex::new(vec![initial["update"]["revision"].as_u64().unwrap()]));
     let captured = delivered.clone();
+    let intermediate_ready = Arc::new(tokio::sync::Notify::new());
+    let notify_intermediate = intermediate_ready.clone();
     let action = engine.actionForAssertionsAsync(action_id, None, params.clone(), BTreeMap::new(), Some(Arc::new(move |value| {
         captured.lock().unwrap().push(value["update"]["revision"].as_u64().unwrap());
+        notify_intermediate.notify_one();
     })));
     tokio::pin!(action);
     tokio::select! {
         _ = host.gatedToolStarted.notified() => {},
         result = &mut action => panic!("gated action completed before release: {result:?}"),
     }
+    // Keep the action pending until its real pre-await change has streamed.
+    // The post-await state is coalesced into final and need not publish twice.
+    tokio::select! {
+        _ = intermediate_ready.notified() => {},
+        result = &mut action => panic!("gated action completed before its intermediate: {result:?}"),
+    }
     let reloaded = expect_js_output(engine.renderForAssertionsAsync(source.into(), params, BTreeMap::new(), Arc::new(BTreeMap::new())).await, "same-context render");
     delivered.lock().unwrap().push(reloaded["update"]["revision"].as_u64().unwrap());
     finishGatedTool(&host);
     let final_response = expect_js_output(action.await, "action final revision");
     assert_eq!(final_response["actionResult"], "done");
+    assert!(assertionNodes(&final_response).iter().any(|node| node["props"]["text"] == "2"));
     delivered.lock().unwrap().push(final_response["update"]["revision"].as_u64().unwrap());
     let revisions = delivered.lock().unwrap().clone();
     assert!(revisions.len() >= 4, "both action intermediates and final updates must be exercised: {revisions:?}");
@@ -4080,7 +4551,7 @@ async fn prepared_engine_binds_once_and_uses_bound_ipc_host() {
     params.insert("__operit_toolpkg_runtime_kind".into(), Value::String("ui".into()));
     let output = expect_js_output(engine.execute_script_function(
         "exports.probe = async function() { return await ToolPkg.ipc.call('test.async', {value:41}, {targetRuntime:'main'}); };",
-        "probe", &params, &BTreeMap::new(), None, false, 60, None,
+        "probe", &params, &BTreeMap::new(), None, false, None,
     ).await, "prepared engine IPC");
     assert_eq!(serde_json::from_str::<Value>(&output).unwrap()["value"], 42);
     engine.destroy();
@@ -4093,7 +4564,7 @@ async fn prepared_provider_replenishes_without_reusing_page_state() {
     testJavaScriptRuntimeHost();
     register_test_runtime_storage("js-engine-tests");
     let host = Arc::new(TestPluginConfigExecutionHost::default());
-    let provider = crate::javascript::JsExecutionProvider::QuickJsExecutionProvider::new();
+    let provider = crate::javascript::JsExecutionProvider::HostJsExecutionProvider::new();
     for index in 0..5 {
         let engine = provider.acquire_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
             context_key: format!("prepared-page-{index}"), container_package_name: "test.package".into(),
@@ -4102,7 +4573,7 @@ async fn prepared_provider_replenishes_without_reusing_page_state() {
         }).await.unwrap();
         let output = expect_js_output(engine.execute_script_function(
             "exports.probe = function() { globalThis.pageCounter = (globalThis.pageCounter || 0) + 1; return {counter:globalThis.pageCounter}; };",
-            "probe", &testParams(), &BTreeMap::new(), None, false, 60,
+            "probe", &testParams(), &BTreeMap::new(), None, false,
         ).await, "fresh prepared page");
         assert_eq!(serde_json::from_str::<Value>(&output).unwrap()["counter"], 1);
         engine.destroy();
@@ -4155,13 +4626,13 @@ fn catalog_initialization_failure_returns_error_without_killing_host_worker() {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let script = "exports.read = function() { return getToolCatalog(); };";
     let error = runtime.block_on(engine.execute_script_function(
-        script, "read", &BTreeMap::new(), &BTreeMap::new(), None, false, 60, None,
+        script, "read", &BTreeMap::new(), &BTreeMap::new(), None, false, None,
     )).expect_err("Catalog errors must reject discovery");
     assert_eq!(error.kind, JsExecutionErrorKind::Runtime);
     assert!(error.message.contains(reason), "{}", error.message);
     *host.toolCatalogError.lock().unwrap() = None;
     let output = expect_js_output(runtime.block_on(engine.execute_script_function(
-        script, "read", &BTreeMap::new(), &BTreeMap::new(), None, false, 60, None,
+        script, "read", &BTreeMap::new(), &BTreeMap::new(), None, false, None,
     )), "engine after catalog repair");
     assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!({"tools": []}));
     engine.destroy();
@@ -4198,7 +4669,7 @@ fn native_compose_compiler_defers_parser_until_first_source_compilation() {
         &operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::buildComposeDslCompilerDefinition(&testComposeParserSourceProvider())).unwrap();
     let result = runtime.evaluateHostJavaScriptString("probe-lazy-parser", r#"JSON.stringify((function() {
         var startup = parserInitializations;
-        var artifact = '// @operit-compose-artifact 1\nexports.default = ctx => ctx.UI.Text({text:"artifact"});';
+        var artifact = '// @operit-compose-artifact 4\nexports.default = ctx => ctx.UI.Text({text:"artifact"});';
         OperitComposeCompiler.prepare(artifact, 'artifact');
         var afterArtifact = parserInitializations;
         OperitComposeCompiler.prepare('exports.default = ctx => ctx.UI.Text({text:"source"});', 'first');
@@ -4216,7 +4687,7 @@ fn native_compose_parser_rejects_after_interrupted_initialization() {
     let mut runtime = testJavaScriptRuntimeHost().createHostJavaScriptRuntime().unwrap();
     let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let signal = armed.clone();
-    runtime.registerHostJavaScriptJsonFunction("__armParserInterrupt", Arc::new(move |_| {
+    runtime.registerHostJavaScriptFunction("__armParserInterrupt", Arc::new(move |_| {
         signal.store(true, Ordering::SeqCst);
         Ok(Value::Null)
     })).unwrap();
@@ -4339,8 +4810,8 @@ async fn native_compose_page_load_probe() {
                 ("__operit_package_lang".into(), Value::String("en".into())),
                 ("theme".into(), serde_json::json!({"brightness":"dark", "colors":{"primary":"#ff102030"}})),
             ]);
-            engine.execute_script_function(&setup, "install", &options, &BTreeMap::new(), None, false, 60, None).await.unwrap();
-            let updates = Arc::new(Mutex::new(Vec::<Value>::new()));
+            engine.execute_script_function(&setup, "install", &options, &BTreeMap::new(), None, false, None).await.unwrap();
+            let updates = Arc::new(Mutex::new(Vec::<operit_host_api::HostJavaScriptValue>::new()));
             let sink = updates.clone();
             let started = Instant::now();
             let result = engine.execute_compose_dsl_script_stream_async(
@@ -4349,7 +4820,10 @@ async fn native_compose_page_load_probe() {
             ).await.unwrap();
             let render_ms = started.elapsed().as_secs_f64() * 1000.0;
             assert_eq!(result, Some(Value::Null));
-            let nodes: usize = updates.lock().unwrap().iter().filter_map(|event| event["response"]["update"]["upserts"].as_array()).map(Vec::len).sum();
+            let nodes: usize = updates.lock().unwrap().iter().map(|event| {
+                let operit_host_api::HostJavaScriptValue::Buffer(bytes) = event else { panic!("Expected Compose buffer") };
+                ToolPkgComposeDslProtocol::ComposeBuffer::new(bytes).unwrap().transaction().unwrap().instances.len()
+            }).sum();
             assert!(nodes > 0, "Page must publish a real retained tree");
             samples.push(serde_json::json!({"mode":mode,"sample":index,"sourceBytes":source.len(),"bootstrapMs":bootstrap_ms,"renderMs":render_ms,"nodes":nodes}));
             engine.destroy();
@@ -4396,7 +4870,7 @@ async fn device_tools_cross_native_bridge_without_leaking_target_into_parameters
                 Tools.device('desktop').call('example:echo', {value:'{\"literal\":true}'}),
                 Tools.device('phone').catalog()
             ]);
-        };"#, "run", &params, &BTreeMap::new(), None, true, 5, None,
+        };"#, "run", &params, &BTreeMap::new(), None, true, None,
     ).await.unwrap().unwrap();
     let values: Value = serde_json::from_str(&output).unwrap();
     assert_eq!(values[0]["device"]["nodeId"], "desktop");
@@ -4407,4 +4881,351 @@ async fn device_tools_cross_native_bridge_without_leaking_target_into_parameters
     assert_eq!(values[2]["parameters"]["value"], "{\"literal\":true}");
     assert_eq!(values[3]["device"]["action"], "catalog");
     engine.destroy();
+}
+
+/// Runs actual TypeScript decorator output through the concrete native JavaScript engine.
+#[tokio::test(flavor = "current_thread")]
+async fn implemented_toolpkg_decorators_use_native_call_watch_and_cancellation() {
+    ensure_test_runtime_root();
+    let host = TestPluginConfigExecutionHost::default();
+    let calls = host.routedPluginCalls.clone();
+    let engine = newTestJsEngine(Arc::new(host));
+    let service = std::fs::read_to_string(testRepositoryRoot().join("tools/tests/fixtures/compiled/toolpkg_route.js")).unwrap();
+    let script = format!("{}\n{}", service, r#"
+        exports.run = async function() {
+            const local = await ExampleService.read('local', 2);
+            const remote = await ExampleService.read('remote', 3);
+            const values = [];
+            for await (const value of ExampleService.values('remote')) { values.push(value); break; }
+            const collector = ExampleService.values('local');
+            const first = await collector.next();
+            const pending = collector.next();
+            await Promise.resolve();
+            await collector.return();
+            const completed = await pending;
+            return { local, remote, values, first, completed };
+        };
+    "#);
+    let output = engine.execute_script_function(&script, "run", &testParams(), &BTreeMap::new(), None, true, None).await.unwrap().unwrap();
+    let result: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(result["local"]["count"], 2);
+    assert_eq!(result["remote"]["count"], 42);
+    assert_eq!(result["values"], serde_json::json!(["native-stream-value"]));
+    assert_eq!(result["completed"]["done"], true);
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls[0]["method"], "ExampleService.read");
+    assert_eq!(calls[0]["args"]["arguments"], serde_json::json!(["remote", 3]));
+    assert_eq!(calls[1]["method"], "ExampleService.values");
+    assert_eq!(calls[2]["closed"], "native-route-watch");
+    engine.destroy();
+}
+
+/// Preserves ordinary async iterable syntax through native transport and actual destination execution.
+#[tokio::test(flavor = "current_thread")]
+async fn implemented_toolpkg_reverse_stream_uses_native_transport_and_actual_consumer() {
+    ensure_test_runtime_root();
+    let host=TestPluginConfigExecutionHost::default();let calls=host.routedPluginCalls.clone();
+    let engine=newTestJsEngine(Arc::new(host));
+    let fixture=std::fs::read_to_string(testRepositoryRoot().join("tools/tests/fixtures/compiled/toolpkg_route.js")).unwrap();
+    let script=format!("{}\n{}",fixture,r#"
+        exports.run=async function(){
+            async function* input(){yield 2;yield 3;}
+            await ExampleService.consume('remote',input());
+            const id=await __operitInvokeToolPkgRouteLocal({op:'pushOpen',methodName:'ExampleService.consume',bindingKey:'local',arguments:['local',null],inputIndex:1});
+            await __operitInvokeToolPkgRouteLocal({op:'pushItem',id,value:4});
+            await __operitInvokeToolPkgRouteLocal({op:'pushItem',id,value:5});
+            await __operitInvokeToolPkgRouteLocal({op:'pushClose',id});
+            return await ExampleService.read('local',0);
+        };
+    "#);
+    let output=engine.execute_script_function(&script,"run",&testParams(),&BTreeMap::new(),None,true,None).await.unwrap().unwrap();
+    let value:Value=serde_json::from_str(&output).unwrap();assert_eq!(value["count"],9);
+    let calls=calls.lock().unwrap();assert_eq!(calls[0]["reverse"],"ExampleService.consume");
+    assert_eq!(calls[0]["args"]["bindingKey"],"remote");assert_eq!(calls[0]["args"]["inputIndex"],1);
+    assert_eq!(calls[1]["value"],2);assert_eq!(calls[2]["value"],3);assert_eq!(calls[3]["abort"],false);
+    engine.destroy();
+}
+
+/// Keeps ordinary asynchronous execution alive until its collector explicitly cancels it.
+#[tokio::test(flavor = "current_thread")]
+async fn collector_owned_execution_has_no_wall_deadline_and_cancels_cleanly() {
+    ensure_test_runtime_root();let engine=newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let mut waiting=engine.worker.execute_script_function_async(
+        "exports.wait=async function(){await new Promise(function(){});};".into(),"wait".into(),
+        testParams(),BTreeMap::new(),None,true, None,None,None,false,
+    );
+    tokio::select! {
+        result=&mut waiting=>panic!("Collector wait acquired a wall deadline: {result:?}"),
+        _=tokio::time::sleep(Duration::from_millis(120))=>{},
+    }
+    let output=engine.worker.runtimeHost.executeHostJavaScriptRuntimeStateAsyncTask(
+        engine.worker.stateHandle, operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(),Box::new(|state,_|Box::pin(async move {
+            let state=state.downcast_mut::<JsEngineState>().unwrap();
+            Ok(Box::new(state.pendingScriptExecutions.len()==1 && state.pendingScriptExecutions.values().all(|pending|pending.deadlineMillis.is_none())) as operit_host_api::HostJavaScriptRuntimeStateOutput)
+        })),
+    ).await.unwrap();assert!(*output.downcast::<bool>().unwrap());
+    drop(waiting);
+    tokio::time::timeout(Duration::from_secs(2),async {
+        while executionSessionCounts(&engine).await.0 != 0 {tokio::task::yield_now().await;}
+    }).await.expect("Collector cancellation leaked its session");
+    engine.destroy();
+}
+
+
+/// Queues continuations without blocking, preserving the original affine owner and FIFO order.
+#[test]
+fn host_notification_queue_preserves_affinity_and_order() {
+    let host = NativeHostJavaScriptRuntimeHost::new();
+    let (owner_sender, owner_receiver) = std::sync::mpsc::channel();
+    let handle = host.createHostJavaScriptRuntimeState("notification-test", operit_host_api::HostJavaScriptRuntimeStateKind::Execution, Box::new(move || {
+        owner_sender.send(std::thread::current().id()).unwrap();
+        Ok(Box::new(Vec::<usize>::new()))
+    })).unwrap();
+    let owner = owner_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (started_sender, started_receiver) = std::sync::mpsc::channel();
+    let (release_sender, release_receiver) = std::sync::mpsc::channel();
+    host.enqueueHostJavaScriptRuntimeStateTask(handle, operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(), Box::new(move |state, _| {
+        assert_eq!(std::thread::current().id(), owner);
+        started_sender.send(()).unwrap();
+        release_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        state.downcast_mut::<Vec<usize>>().unwrap().push(1);
+        Ok(Box::new(()))
+    })).unwrap();
+    started_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    host.enqueueHostJavaScriptRuntimeStateTask(handle, operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(), Box::new(move |state, _| {
+        assert_eq!(std::thread::current().id(), owner);
+        state.downcast_mut::<Vec<usize>>().unwrap().push(2);
+        Ok(Box::new(()))
+    })).unwrap();
+    release_sender.send(()).unwrap();
+    let result = host.executeHostJavaScriptRuntimeStateTask(handle, operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(), Box::new(move |state, _| {
+        assert_eq!(std::thread::current().id(), owner);
+        Ok(Box::new(state.downcast_ref::<Vec<usize>>().unwrap().clone()))
+    })).unwrap();
+    assert_eq!(*result.downcast::<Vec<usize>>().unwrap(), [1, 2]);
+    host.destroyHostJavaScriptRuntimeState(handle).unwrap();
+    assert!(host.enqueueHostJavaScriptRuntimeStateTask(handle, operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(), Box::new(|_, _| Ok(Box::new(())))).is_err());
+}
+
+
+/// Completes an owner-lifetime call when its Host discards the queued start before execution.
+#[tokio::test(flavor = "current_thread")]
+async fn discarded_queued_start_finishes_without_a_wall_deadline() {
+    use operit_host_api::{
+        HostJavaScriptRuntime, HostJavaScriptRuntimeStateFactory,
+        HostJavaScriptRuntimeStateHandle, HostJavaScriptRuntimeStateTask,
+        HostJavaScriptRuntimeStateOutput, HostJavaScriptRuntimeStateAsyncTask,
+        HostJavaScriptRuntimeStateOutputFuture,
+    };
+
+    struct DiscardQueuedHost(Arc<dyn HostJavaScriptRuntimeHost>);
+
+    impl HostJavaScriptRuntimeHost for DiscardQueuedHost {
+        /// Keeps runtime creation on the real native Host.
+        fn createHostJavaScriptRuntime(&self) -> HostResult<Box<dyn HostJavaScriptRuntime>> {
+            self.0.createHostJavaScriptRuntime()
+        }
+        /// Keeps state creation on the real native Host.
+        fn createHostJavaScriptRuntimeState(&self, name: &str, kind: operit_host_api::HostJavaScriptRuntimeStateKind, factory: HostJavaScriptRuntimeStateFactory) -> HostResult<HostJavaScriptRuntimeStateHandle> {
+            self.0.createHostJavaScriptRuntimeState(name, kind, factory)
+        }
+        /// Preserves synchronous lifecycle operations on the existing state.
+        fn executeHostJavaScriptRuntimeStateTask(&self, handle: HostJavaScriptRuntimeStateHandle, timeout: operit_host_api::HostJavaScriptExecutionInterrupt, task: HostJavaScriptRuntimeStateTask) -> HostResult<HostJavaScriptRuntimeStateOutput> {
+            self.0.executeHostJavaScriptRuntimeStateTask(handle, timeout, task)
+        }
+        /// Models destruction after admission but before the owner runs the queued start.
+        fn enqueueHostJavaScriptRuntimeStateTask(&self, _: HostJavaScriptRuntimeStateHandle, _: operit_host_api::HostJavaScriptExecutionInterrupt, task: HostJavaScriptRuntimeStateTask) -> HostResult<()> {
+            drop(task);
+            Ok(())
+        }
+        /// Preserves real cancellation and cleanup operations.
+        fn executeHostJavaScriptRuntimeStateAsyncTask(&self, handle: HostJavaScriptRuntimeStateHandle, timeout: operit_host_api::HostJavaScriptExecutionInterrupt, task: HostJavaScriptRuntimeStateAsyncTask) -> HostJavaScriptRuntimeStateOutputFuture {
+            self.0.executeHostJavaScriptRuntimeStateAsyncTask(handle, timeout, task)
+        }
+        /// Releases the same native state during cleanup.
+        fn destroyHostJavaScriptRuntimeState(&self, handle: HostJavaScriptRuntimeStateHandle) -> HostResult<()> {
+            self.0.destroyHostJavaScriptRuntimeState(handle)
+        }
+    }
+
+    let engine = newTestToolPkgRegistrationEngine();
+    let mut worker = engine.worker.clone();
+    worker.runtimeHost = Arc::new(DiscardQueuedHost(worker.runtimeHost.clone()));
+    let result = tokio::time::timeout(Duration::from_secs(2), worker.execute_script_function_async(
+        "exports.run = function() { return true; };".into(), "run".into(),
+        BTreeMap::new(), BTreeMap::new(), None, false, None,
+        None, None, false,
+    )).await;
+    engine.destroy();
+    let error = result.expect("A discarded start must disconnect without a wall-clock timer").unwrap_err();
+    assert_eq!(error.kind, JsExecutionErrorKind::WorkerUnavailable);
+}
+
+/// Keeps an ordinary await alive when another call in the same runtime exhausts its before-hook deadline.
+#[tokio::test(flavor = "current_thread")]
+async fn before_hook_timeout_does_not_cancel_an_unrelated_ordinary_await() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let ordinary = engine.execute_script_function(
+        "exports.run = async function() { await Tools.System.sleep(200); return 'ordinary-done'; };",
+        "run", &testParams(), &BTreeMap::new(), None, true, None,
+    );
+    let before = engine.execute_script_function_with_timeout_millis(
+        "exports.before = async function() { await Tools.System.sleep(500); return 'late'; };",
+        "before", &testParams(), &BTreeMap::new(), None, true, 50, None,
+    );
+    let (ordinary, before) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(ordinary, before)
+    }).await.expect("Before-hook cancellation must leave ordinary work responsive");
+    assert_eq!(before.unwrap_err().kind, JsExecutionErrorKind::Timeout);
+    assert_eq!(ordinary.unwrap().as_deref(), Some("\"ordinary-done\""));
+    engine.destroy();
+}
+
+/// Attributes an interrupted Promise continuation to its own before hook instead of every pending call.
+#[tokio::test(flavor = "current_thread")]
+async fn before_hook_busy_continuation_preserves_other_pending_calls() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let ordinary = engine.execute_script_function(
+        "exports.run = async function() { await Tools.System.sleep(200); return 'survived'; };",
+        "run", &testParams(), &BTreeMap::new(), None, true, None,
+    );
+    let before = engine.execute_script_function_with_timeout_millis(
+        "exports.before = async function() { await Tools.System.sleep(5); while (true) {} };",
+        "before", &testParams(), &BTreeMap::new(), None, true, 50, None,
+    );
+    let (ordinary, before) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(ordinary, before)
+    }).await.expect("A busy before hook must not monopolize the runtime after its deadline");
+    assert_eq!(before.unwrap_err().kind, JsExecutionErrorKind::Timeout);
+    assert_eq!(ordinary.unwrap().as_deref(), Some("\"survived\""));
+    engine.destroy();
+}
+
+/// Interrupts active ordinary JavaScript only when its waiting owner explicitly cancels it.
+#[tokio::test(flavor = "current_thread")]
+async fn ordinary_busy_script_can_be_cancelled_by_its_owner() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let mut execution = engine.execute_script_function(
+        "exports.run = function() { while (true) {} };", "run", &testParams(),
+        &BTreeMap::new(), None, true, None,
+    );
+    tokio::select! {
+        result = &mut execution => panic!("Ordinary execution ended without owner cancellation: {result:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(50)) => {},
+    }
+    drop(execution);
+    let next = engine.execute_script_function(
+        "exports.next = function() { return 'ready'; };", "next", &testParams(),
+        &BTreeMap::new(), None, true, None,
+    );
+    let result = tokio::time::timeout(Duration::from_secs(3), next).await
+        .expect("Explicit cancellation must release the JS owner").unwrap();
+    assert_eq!(result.as_deref(), Some("\"ready\""));
+    engine.destroy();
+}
+
+/// Keeps a timed-out await's rejection cleanup from monopolizing subsequent ordinary calls.
+#[tokio::test(flavor = "current_thread")]
+async fn before_hook_timeout_interrupts_a_busy_rejection_continuation() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let before = engine.execute_script_function_with_timeout_millis(
+        "exports.before = async function() { try { await Tools.System.sleep(10000); } catch (error) { while (true) {} } };",
+        "before", &testParams(), &BTreeMap::new(), None, true, 50, None,
+    ).await;
+    assert_eq!(before.unwrap_err().kind, JsExecutionErrorKind::Timeout);
+    let next = engine.execute_script_function(
+        "exports.next = function() { return 'ready'; };", "next", &testParams(),
+        &BTreeMap::new(), None, true, None,
+    );
+    let result = tokio::time::timeout(Duration::from_secs(2), next).await;
+    engine.destroy();
+    assert_eq!(result.expect("A cancelled before hook must release its rejection continuation").unwrap().as_deref(), Some("\"ready\""));
+}
+
+
+/// Persistent environment access rejects unowned scripts instead of reading any global store.
+#[tokio::test(flavor = "current_thread")]
+async fn environment_requires_an_explicit_package_owner() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let error = engine
+        .execute_script_function(
+            "exports.main = function() { return getEnv('TOKEN'); };",
+            "main",
+            &testParams(),
+            &BTreeMap::new(),
+            None,
+            true,
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("Environment access requires an owning package installation"));
+    assert!(host.environmentOwners.lock().unwrap().is_empty());
+}
+
+/// An authenticated engine retains its package environment across Promise jobs and ignores caller aliases.
+#[tokio::test(flavor = "current_thread")]
+async fn environment_owner_is_bound_to_the_engine_across_async_callbacks() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestIpcEngine(host.clone());
+    host.environment
+        .lock()
+        .unwrap()
+        .insert("TOKEN".into(), "package-token".into());
+    let mut params = testParams();
+    params.insert(
+        "__operit_package_name".into(),
+        Value::String("wrong-owner".into()),
+    );
+    let result = engine.execute_script_function(
+    "exports.main = async function() { await Promise.resolve(); var value = getEnv('TOKEN'); __operitNativeSetEnv(String(globalThis.__operitCurrentCallId), 'UPDATED', value); return value; };",
+    "main", &params, &BTreeMap::new(), None, true, None,
+).await;
+    assert_eq!(
+        expect_js_output(result, "package environment"),
+        "\"package-token\""
+    );
+    let owners = host.environmentOwners.lock().unwrap();
+    assert_eq!(owners.len(), 2);
+    assert!(owners.iter().all(|owner| owner
+        == &operit_plugin_sdk::javascript::JsEnvironmentOwner::Package("test.package".into())));
+}
+
+/// Registration environment calls carry the explicit scope before an installation record exists.
+#[test]
+fn registration_environment_uses_the_native_owner_and_scope() {
+    for scope in [ToolPkgConfigScope::Device, ToolPkgConfigScope::Space] {
+        let host = Arc::new(TestPluginConfigExecutionHost::default());
+        let engine = newTestJsEngine(host.clone());
+        let mut params = testParams();
+        params.insert("toolPkgId".into(), Value::String("first_import".into()));
+        params.insert(
+            "__operit_registration_config_scope".into(),
+            Value::String(scope.as_str().into()),
+        );
+        params.insert(
+            "__operit_registration_environment_names".into(),
+            serde_json::json!(["TOKEN"]),
+        );
+        let capture = engine.execute_toolpkg_main_registration_function_with_text_resources(
+        "const value = getEnv('TOKEN'); exports.registerToolPkg = function() { __operitNativeSetEnv(String(globalThis.__operitCurrentCallId), 'TOKEN', 'registered'); ToolPkg.registerNavigationEntry({id: 'environment', surface: 'toolbox', value: value}); return true; };",
+        "registerToolPkg", &params, None,
+    ).expect("registration environment access");
+        let entry: Value = serde_json::from_str(&capture.navigationEntries[0]).unwrap();
+        assert_eq!(entry["value"], "prepared");
+        let owners = host.environmentOwners.lock().unwrap();
+        assert_eq!(owners.len(), 3);
+        assert!(owners.iter().all(|owner| owner
+            == &operit_plugin_sdk::javascript::JsEnvironmentOwner::Registration {
+                id: "first_import".into(),
+                scope
+            }));
+    }
 }

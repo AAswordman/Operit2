@@ -70,6 +70,7 @@ function normalizeLimit(value: string | number | undefined): number {
   return parsed;
 }
 
+/** Saves the validated limit in the container installation environment. */
 export function set_floor_limit(params: FloorLimitParams) {
   const limit = normalizeLimit(params.n);
   if (!Number.isFinite(limit) || limit < 1) {
@@ -77,7 +78,7 @@ export function set_floor_limit(params: FloorLimitParams) {
     return;
   }
 
-  Tools.SoftwareSettings.writeEnvironmentVariable(ENV_KEYS.floorLimit, String(limit))
+  Tools.SoftwareSettings.writeEnvironmentVariable("com.operit.context_limiter", ENV_KEYS.floorLimit, String(limit))
     .then(() => {
       complete({
         success: true,

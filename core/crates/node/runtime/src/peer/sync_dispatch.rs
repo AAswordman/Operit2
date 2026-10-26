@@ -22,7 +22,7 @@ impl CoreNodeRouter {
         request: &RoutedCoreRequest<T>,
     ) -> Result<bool, CoreLinkError> {
         // Synchronization is a same-Space operation, unlike pre-admission
-        // join calls. A member may arrive over its admitted return channel.
+        // join calls. Membership is checked independently of the carrier direction.
         let peers = self.nodeServices().map_err(CoreLinkError::internal)?.peers();
         if !peers.hasPairing(previousNodeId, PairingDirection::Either)?
             || self.spaceChannelScope(previousNodeId)?.is_none() {

@@ -1,6 +1,7 @@
 //! Core tool invocation, runtime utilities, and native bridge contracts for plugins.
 use super::{JsAny, JsDate, JsFuture, JsObject, JsUndefined};
 use serde::{Deserialize, Serialize};
+use operit_plugin_sdk_macros::js_declaration;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -265,3 +266,36 @@ pub trait DataUtilsApi: Send + Sync {
 pub struct DataUtilsGlobal(pub Arc<dyn DataUtilsApi>);
 /// Stores the named values assigned to CommonJS module exports.
 pub struct CommonJsExports(pub BTreeMap<String, JsAny>);
+
+/// Represents the standard cancellation signal available in every plugin runtime.
+#[js_declaration(scope = "global", readonly)]
+pub struct AbortSignal {
+    /// Indicates whether cancellation has already been requested.
+    pub aborted: bool,
+    /// Carries the reason passed to AbortController.abort.
+    pub reason: JsAny,
+}
+/// Observes standard abort events without depending on a browser host.
+#[js_declaration(scope = "global")]
+pub trait AbortSignalMethods: Send + Sync {
+    /// Registers an abort event listener.
+    fn addEventListener(&self, event: String, listener: Arc<dyn Fn() + Send + Sync>);
+    /// Removes a registered abort event listener.
+    fn removeEventListener(&self, event: String, listener: Arc<dyn Fn() + Send + Sync>);
+    /// Throws the cancellation reason when this signal is aborted.
+    fn throwIfAborted(&self);
+}
+/// Owns one standard cancellation signal.
+#[js_declaration(scope = "global", readonly)]
+pub struct AbortController {
+    /// Exposes the signal passed to cancellable SDK operations.
+    pub signal: AbortSignal,
+}
+/// Creates and cancels a standard abort controller.
+#[js_declaration(scope = "global")]
+pub trait AbortControllerMethods: Send + Sync {
+    /// Creates an initially active abort controller.
+    fn new() -> AbortController;
+    /// Cancels the owned signal exactly once with an optional reason.
+    fn abort(&self, reason: Option<JsAny>);
+}

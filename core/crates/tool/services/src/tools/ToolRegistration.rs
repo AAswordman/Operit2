@@ -20,6 +20,9 @@ use operit_tools::tools::defaultTool::standard::StandardFileSystemTools::{
 use operit_tools::tools::defaultTool::standard::StandardHttpTools::{
     HttpToolExecutor, HttpToolOperation, StandardHttpTools,
 };
+use operit_tools::tools::defaultTool::standard::StandardMediaTools::{
+    RegisterMediaExecutor, RegisterMediaFromPathExecutor,
+};
 use operit_tools::tools::defaultTool::standard::StandardMusicTools::{
     MusicToolExecutor, MusicToolOperation, StandardMusicTools,
 };
@@ -45,7 +48,7 @@ use operit_tools::ToolExecutionManager::{
 
 use crate::tools::defaultTool::standard::{
     StandardModelTools::ModelToolExecutor,
-    StandardTtsTools::{TtsToolExecutor, TtsToolOperation},
+    StandardTtsTools::{TtsToolExecutor, TtsToolOperation, SttToolExecutor},
     StandardThemeTools::{ThemeToolExecutor, ThemeToolOperation},
     StandardCatalogTools::CatalogToolExecutor,
     StandardStorageTools::StorageToolExecutor,
@@ -56,6 +59,53 @@ use crate::tools::defaultTool::standard::{
 pub fn registerAllTools(handler: &mut AIToolHandler, context: &HostManager) {
     registerPublicTools(handler, context);
     registerInternalTools(handler, context);
+}
+
+/// Exposes enabled package metadata for this session; invoked tools retain their own access checks.
+#[allow(non_snake_case)]
+pub(crate) fn registerPackageActivationTool(handler: &mut AIToolHandler) {
+    let usePackageManager = handler.getOrCreatePackageManager();
+    handler.registerBuiltinTool(
+        BuiltinToolName::UsePackage,
+        crate::ToolExecutionManager::RegisteredToolExecutor::Asynchronous(Box::new(AsyncFnToolExecutor {
+            effect: ToolEffect::READ,
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(move |tool, invocationContext| {
+                let usePackageManager = usePackageManager.clone();
+                let usePackageHandler = invocationContext.host().clone();
+                Box::pin(async move {
+                    let tool = &tool;
+                    let packageName = requiredParameterValue(tool, "package_name");
+                    if let Err(error) = RuntimePackageManager::prepareMcpPackage(&usePackageManager, &packageName).await {
+                        return toolErrorResult(tool, error);
+                    }
+                    let (result, selectedPackage) = {
+                        let mut guard = usePackageManager
+                            .lock()
+                            .expect("package manager mutex poisoned");
+                        let result = guard.executeUsePackageTool(&tool.name, &packageName);
+                        let selectedPackage = if result.success {
+                            guard
+                                .getEffectivePackageTools(&packageName)
+                                .filter(|package| !guard.isToolPkgContainer(&package.name))
+                        } else {
+                            None
+                        };
+                        (result, selectedPackage)
+                    };
+                    if let Some(selectedPackage) = selectedPackage {
+                        let mut usePackageHandler = usePackageHandler;
+                        usePackageHandler.registerPackageTools(usePackageManager.clone(), selectedPackage);
+                    }
+                    result
+                })
+            }),
+        })),
+        ToolRegistrationVisibility::PUBLIC,
+    );
 }
 
 #[allow(non_snake_case)]
@@ -122,6 +172,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                                 "platform": node.platform,
                                 "model": node.model,
                                 "reachable": node.reachable,
+                                "canExecute": node.canExecute,
                             });
                             if let Some(relayHops) = node.relayHops {
                                 encoded["relayHops"] = serde_json::json!(relayHops);
@@ -216,49 +267,8 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
         StandardChatManagerTool::new(handler.runtimeSupport()),
     );
 
+    registerPackageActivationTool(handler);
     let packageManager = handler.getOrCreatePackageManager();
-    let usePackageManager = packageManager.clone();
-    handler.registerBuiltinTool(
-        BuiltinToolName::UsePackage,
-        crate::ToolExecutionManager::RegisteredToolExecutor::Asynchronous(Box::new(AsyncFnToolExecutor {
-            effect: ToolEffect::WRITE,
-            validate: Arc::new(|_| ToolValidationResult {
-                valid: true,
-                errorMessage: String::new(),
-            }),
-            invoke: Arc::new(move |tool, invocationContext| {
-                let usePackageManager = usePackageManager.clone();
-                let usePackageHandler = invocationContext.host().clone();
-                Box::pin(async move {
-                let tool = &tool;
-                let packageName = requiredParameterValue(tool, "package_name");
-                if let Err(error) = RuntimePackageManager::prepareMcpPackage(&usePackageManager, &packageName).await {
-                    return toolErrorResult(tool, error);
-                }
-                let (result, selectedPackage) = {
-                    let mut guard = usePackageManager
-                        .lock()
-                        .expect("package manager mutex poisoned");
-                    let result = guard.executeUsePackageTool(&tool.name, &packageName);
-                    let selectedPackage = if result.success {
-                        guard
-                            .getEffectivePackageTools(&packageName)
-                            .filter(|package| !guard.isToolPkgContainer(&package.name))
-                    } else {
-                        None
-                    };
-                    (result, selectedPackage)
-                };
-                if let Some(selectedPackage) = selectedPackage {
-                    let mut usePackageHandler = usePackageHandler;
-                    usePackageHandler.registerPackageTools(usePackageManager.clone(), selectedPackage);
-                }
-                result
-                })
-            }),
-        })),
-        ToolRegistrationVisibility::PUBLIC,
-    );
     let searchContext = context.clone();
     let searchPackageManager = packageManager.clone();
     let searchRuntimeSupport = handler.runtimeSupport();
@@ -614,8 +624,19 @@ fn registerSystemOperationTool(
     );
 }
 
+/// Registers terminal tools with the same host execution and scheduling context.
 #[allow(non_snake_case)]
 fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTerminalTools) {
+    handler.registerBuiltinTool(
+        BuiltinToolName::TerminalObserve,
+        operit_tools::ToolExecutionManager::RegisteredToolExecutor::Shared(Arc::new(
+            operit_tools::tools::defaultTool::standard::StandardTerminalStreaming::TerminalStreamExecutor::new(
+                terminalTools.terminalHost.clone(),
+                handler.getContext().hostRuntimeTaskSchedulerHost.clone(),
+            ),
+        )),
+        ToolRegistrationVisibility::PUBLIC,
+    );
     registerTerminalTool(
         handler,
         &terminalTools,
@@ -899,6 +920,11 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
     );
     let readEnvironmentRuntimeSupport = handler.runtimeSupport();
     registerHttpTools(handler, ToolGetter::getHttpTools(context));
+    handler.registerBuiltinTool(
+        BuiltinToolName::WebSocket,
+        RegisteredToolExecutor::Shared(Arc::new(super::defaultTool::standard::StandardWebSocketTools::WebSocketToolExecutor)),
+        ToolRegistrationVisibility::INTERNAL,
+    );
     if let Some(browserTools) = ToolGetter::getBrowserAutomationTools(context) {
         registerBrowserAutomationTools(handler, browserTools);
     }
@@ -956,6 +982,10 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                 errorMessage: String::new(),
             }),
             invoke: Arc::new(move |tool| {
+                let packageName = requiredParameterValue(tool, "package_name");
+                if packageName.trim().is_empty() {
+                    return toolErrorResult(tool, "Missing required parameter: package_name".to_string());
+                }
                 let key = requiredParameterValue(tool, "key");
                 if key.trim().is_empty() {
                     return ToolResult {
@@ -971,7 +1001,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                         error: Some("Missing required parameter: key".to_string()),
                     };
                 }
-                match readEnvironmentRuntimeSupport.readEnvironmentVariable(&key) {
+                match readEnvironmentRuntimeSupport.readEnvironmentVariable(&packageName, &key) {
                     Ok(value) => ToolResult {
                         toolName: tool.name.clone(),
                         success: true,
@@ -1011,6 +1041,10 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                 errorMessage: String::new(),
             }),
             invoke: Arc::new(move |tool| {
+                let packageName = requiredParameterValue(tool, "package_name");
+                if packageName.trim().is_empty() {
+                    return toolErrorResult(tool, "Missing required parameter: package_name".to_string());
+                }
                 let key = requiredParameterValue(tool, "key");
                 let value = tool
                     .parameters
@@ -1036,9 +1070,9 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                     };
                 }
                 let writeResult = if cleared {
-                    writeEnvironmentRuntimeSupport.removeEnvironmentVariable(&key)
+                    writeEnvironmentRuntimeSupport.removeEnvironmentVariable(&packageName, &key)
                 } else {
-                    writeEnvironmentRuntimeSupport.writeEnvironmentVariable(&key, value.trim())
+                    writeEnvironmentRuntimeSupport.writeEnvironmentVariable(&packageName, &key, &value)
                 };
                 if let Err(error) = writeResult {
                     return ToolResult {
@@ -1057,7 +1091,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                     };
                 }
 
-                match writeEnvironmentRuntimeSupport.readEnvironmentVariable(&key) {
+                match writeEnvironmentRuntimeSupport.readEnvironmentVariable(&packageName, &key) {
                     Ok(current) => ToolResult {
                         toolName: tool.name.clone(),
                         success: true,
@@ -1092,6 +1126,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
         ToolRegistrationVisibility::INTERNAL,
     );
     registerModelTools(handler);
+    registerMediaTools(handler);
     registerTtsTools(handler);
     registerThemeTools(handler);
     registerCatalogTools(handler);
@@ -1107,7 +1142,36 @@ fn registerModelTools(handler: &mut AIToolHandler) {
 }
 
 #[allow(non_snake_case)]
+fn registerMediaTools(handler: &mut AIToolHandler) {
+    handler.registerBuiltinTool(
+        BuiltinToolName::MediaRegister,
+        RegisteredToolExecutor::Shared(Arc::new(RegisterMediaExecutor)),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::MediaRegisterFromPath,
+        RegisteredToolExecutor::Shared(Arc::new(RegisterMediaFromPathExecutor)),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+}
+
+#[allow(non_snake_case)]
 fn registerTtsTools(handler: &mut AIToolHandler) {
+    handler.registerBuiltinTool(
+        BuiltinToolName::TtsSynthesize,
+        RegisteredToolExecutor::Shared(Arc::new(TtsToolExecutor { operation: TtsToolOperation::Synthesize })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::TtsSpeak,
+        RegisteredToolExecutor::Shared(Arc::new(TtsToolExecutor { operation: TtsToolOperation::Speak })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::SttTranscribe,
+        RegisteredToolExecutor::Shared(Arc::new(SttToolExecutor)),
+        ToolRegistrationVisibility::INTERNAL,
+    );
     handler.registerBuiltinTool(
         BuiltinToolName::TtsListConfigs,
         RegisteredToolExecutor::Shared(Arc::new(TtsToolExecutor {
@@ -1378,10 +1442,10 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
     );
     handler.registerBuiltinTool(
         BuiltinToolName::ApplyFile,
-        Box::new(FileSystemToolExecutor {
-            tools: fileSystemTools,
+        RegisteredToolExecutor::Asynchronous(Box::new(FileSystemToolExecutor {
+            tools: fileSystemTools.clone(),
             operation: FileSystemToolOperation::ApplyFile,
-        }),
+        })),
         ToolRegistrationVisibility::INTERNAL,
     );
     handler.registerBuiltinTool(
@@ -1389,22 +1453,55 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
         RegisteredToolExecutor::Shared(Arc::new(StorageToolExecutor)),
         ToolRegistrationVisibility::INTERNAL,
     );
+    registerFileTransferTools(handler, &fileSystemTools);
 
 }
 
+/// Registers the internal cross-node transfer endpoints. They are transport
+/// plumbing for `node:` copies and never appear in any model-facing catalog.
 #[allow(non_snake_case)]
+fn registerFileTransferTools(
+    handler: &mut AIToolHandler,
+    fileSystemTools: &StandardFileSystemTools,
+) {
+    use crate::tools::transfer::FileTransferTools::{
+        FileTransferExecutor, FileTransferOperation, FS_PUSH_FILE_TOOL, FS_READ_CHUNK_TOOL,
+        FS_TRANSFER_BEGIN_TOOL, FS_TRANSFER_CHUNK_TOOL, FS_TRANSFER_COMMIT_TOOL,
+    };
+    let endpoints = [
+        (FS_TRANSFER_BEGIN_TOOL, FileTransferOperation::Begin),
+        (FS_TRANSFER_CHUNK_TOOL, FileTransferOperation::Chunk),
+        (FS_TRANSFER_COMMIT_TOOL, FileTransferOperation::Commit),
+        (FS_READ_CHUNK_TOOL, FileTransferOperation::ReadChunk),
+        (FS_PUSH_FILE_TOOL, FileTransferOperation::PushFile),
+    ];
+    for (name, operation) in endpoints {
+        handler.registerInternalAsyncTool(
+            name.to_string(),
+            Box::new(FileTransferExecutor {
+                tools: fileSystemTools.clone(),
+                operation,
+            }),
+        );
+    }
+}
+
+#[allow(non_snake_case)]
+/// Registers file tools through the asynchronous Host execution contract.
 fn registerFileSystemTool(
     handler: &mut AIToolHandler,
     fileSystemTools: &StandardFileSystemTools,
     name: BuiltinToolName,
     operation: FileSystemToolOperation,
 ) {
+    // File tools own an asynchronous execution contract: qualified `node:` paths
+    // dispatch to the target device through the device-tool transport.
     handler.registerBuiltinTool(
         name,
-        Box::new(FileSystemToolExecutor {
+        RegisteredToolExecutor::Asynchronous(Box::new(FileSystemToolExecutor {
             tools: fileSystemTools.clone(),
             operation,
-        }),
+        })),
         ToolRegistrationVisibility::PUBLIC,
     );
 }
@@ -1442,6 +1539,12 @@ fn resolveSwitchCoreTarget<'a>(
     };
     match state.resolveNodeReference(targetReference) {
         CoreNodeReferenceMatch::Resolved(node) => {
+            if !node.canExecute {
+                return Err(format!(
+                    "switch_core target cannot host Core execution: {}",
+                    coreNodeReferenceLabel(node)
+                ));
+            }
             if !node.reachable {
                 return Err(format!(
                     "switch_core target is not currently reachable: {}",
@@ -1476,10 +1579,22 @@ mod switch_core_tests {
                     platform: "linux".to_string(),
                     model: String::new(),
                     reachable,
+                    canExecute: true,
                     relayHops: None,
                     relayPath: None,
                 })
                 .collect(),
+        }
+    }
+
+    #[test]
+    fn switch_core_rejects_reachable_devices_without_execution_capacity() {
+        let mut state = routeState(vec![("esp-relay", "desk-relay", "owner", true)]);
+        state.nodes[0].canExecute = false;
+        for reference in ["esp-relay", "desk-relay", "owner", "esp-"] {
+            let error = resolveSwitchCoreTarget(&state, reference).unwrap_err();
+            assert!(error.contains("cannot host Core execution"), "{error}");
+            assert!(error.contains("esp-relay"), "{error}");
         }
     }
 

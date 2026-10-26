@@ -166,10 +166,29 @@ impl StructuredToolCallBridge {
         preserveThinkInHistory: bool,
         useToolCall: bool,
     ) -> String {
+        Self::buildMessagesValueForProvider(history, preserveThinkInHistory, useToolCall).to_string()
+    }
+
+    /// Builds provider messages as a JSON value, compiling history blocks exactly once.
+    pub fn buildMessagesValueForProvider(
+        history: &[PromptTurn],
+        preserveThinkInHistory: bool,
+        useToolCall: bool,
+    ) -> Value {
+        let compiledHistory = Self::compileHistoryForProvider(history, useToolCall);
+        Self::buildMessagesValueFromCompiled(compiledHistory, preserveThinkInHistory, useToolCall)
+    }
+
+    /// Builds provider messages from already-compiled history without recompiling blocks.
+    pub fn buildMessagesValueFromCompiled(
+        compiledHistory: Vec<PromptTurn>,
+        preserveThinkInHistory: bool,
+        useToolCall: bool,
+    ) -> Value {
         if useToolCall {
-            Self::buildStructuredMessages(history, preserveThinkInHistory).to_string()
+            Self::buildCompiledStructuredMessages(compiledHistory, preserveThinkInHistory)
         } else {
-            Self::buildXmlModeMessages(history, preserveThinkInHistory).to_string()
+            Self::buildCompiledXmlModeMessages(compiledHistory, preserveThinkInHistory)
         }
     }
 
@@ -385,6 +404,13 @@ impl StructuredToolCallBridge {
 
     fn buildStructuredMessages(history: &[PromptTurn], preserveThinkInHistory: bool) -> Value {
         let mergedHistory = Self::compileHistoryForProvider(history, true);
+        Self::buildCompiledStructuredMessages(mergedHistory, preserveThinkInHistory)
+    }
+
+    fn buildCompiledStructuredMessages(
+        mergedHistory: Vec<PromptTurn>,
+        preserveThinkInHistory: bool,
+    ) -> Value {
         let mut messagesArray = Vec::new();
         let mut queuedAssistantToolText: Option<String> = None;
         let mut queuedToolCalls = Vec::new();
@@ -491,7 +517,7 @@ impl StructuredToolCallBridge {
             let content = if !preserveThinkInHistory && turn.kind == PromptTurnKind::ASSISTANT {
                 removeThinkingContent(&turn.content)
             } else {
-                turn.content.clone()
+                turn.content
             };
 
             match turn.kind {
@@ -685,6 +711,13 @@ impl StructuredToolCallBridge {
 
     fn buildXmlModeMessages(history: &[PromptTurn], preserveThinkInHistory: bool) -> Value {
         let mergedHistory = Self::compileHistoryForProvider(history, false);
+        Self::buildCompiledXmlModeMessages(mergedHistory, preserveThinkInHistory)
+    }
+
+    fn buildCompiledXmlModeMessages(
+        mergedHistory: Vec<PromptTurn>,
+        preserveThinkInHistory: bool,
+    ) -> Value {
         let messagesArray = mergedHistory
             .into_iter()
             .map(|turn| {
@@ -1346,5 +1379,39 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or("")
             .contains("工具结果缺失"));
+    }
+
+    /// Retains one native result per call after large same-name results pass through finalized markup.
+    #[test]
+    fn large_same_name_tool_results_remain_protocol_complete() {
+        use operit_tools::ConversationMarkupManager::ToolResult;
+        use operit_tools::ToolExecutionManager::ToolExecutionBatch;
+        use operit_tools::tools::ToolResultDataClasses::stringResultData;
+
+        let batch = ToolExecutionBatch::new(
+            ["a".repeat(100_000), "证".repeat(100_000)].into_iter().map(|text| ToolResult {
+                toolName: "grep_code".to_string(), success: true,
+                result: stringResultData(text), error: None,
+            }).collect(), None,
+        );
+        let history = vec![
+            PromptTurn::new(PromptTurnKind::ASSISTANT, concat!(
+                "<tool name=\"grep_code\"><param name=\"path\">/app/data</param><param name=\"pattern\">first</param></tool>",
+                "<tool name=\"grep_code\"><param name=\"path\">/app/data</param><param name=\"pattern\">second</param></tool>",
+            )),
+            PromptTurn::new(PromptTurnKind::TOOL_RESULT, batch.message.clone()),
+        ];
+        let messages: Value = serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(&history, true, true)).unwrap();
+        let messages = messages.as_array().unwrap();
+        let calls = messages[0].get("tool_calls").unwrap().as_array().unwrap();
+        let results = messages.iter().filter(|message| message.get("role").and_then(Value::as_str) == Some("tool")).collect::<Vec<_>>();
+        let blocks = operit_util::ChatMarkupRegex::ChatMarkupRegex::tool_result_blocks(&batch.message);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(results.len(), calls.len());
+        for ((call, result), block) in calls.iter().zip(results).zip(blocks) {
+            assert_eq!(result.get("tool_call_id"), call.get("id"));
+            let expected = block.body.strip_prefix("<content>").unwrap().strip_suffix("</content>").unwrap();
+            assert_eq!(result.get("content").and_then(Value::as_str), Some(expected));
+        }
     }
 }

@@ -835,6 +835,7 @@ impl ChatToolPermissionBroker {
                 .cmp(&right.requestedAtMillis)
                 .then_with(|| left.requestId.cmp(&right.requestId))
         });
+        crate::services::WorkActivityService::permissionsChanged(requests.clone());
         self.requests.set_value(requests);
     }
 

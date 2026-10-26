@@ -1,4 +1,3 @@
-// @operit-compose-artifact 1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -47,14 +46,14 @@ module.exports = __toCommonJS(index_ui_exports);
 
 // src/validation.ts
 function assertObject(value, label) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是对象`);
 }
 function assertString(value, label) {
-  if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
 }
 function requireId(value, label) {
   assertString(value, label);
-  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} \u65E0\u6548`);
+  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} 无效`);
   return value;
 }
 
@@ -106,10 +105,8 @@ function nonblank(value, path) {
   text(value, path);
   if (value.trim() === "") throw new Error(`${path} must not be blank`);
 }
-function parseMemoryIdentifier(value, path, positive = true) {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${path} must be a canonical decimal string`);
-  const id2 = BigInt(value);
-  if (id2 > 9223372036854775807n || positive && id2 === 0n) throw new Error(`${path} is outside its declared identity range`);
+function parseMemoryIdentifier(value, path, _positive = true) {
+  if (typeof value !== "string" || value.trim() === "" || value !== value.trim() || value.length > 256) throw new Error(`${path} must be a nonblank identity`);
   return value;
 }
 function memoryIdentifier(value, path) {
@@ -126,6 +123,10 @@ function number(value, path) {
 }
 function integer(value, path) {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${path} must be a safe integer`);
+}
+function nonnegativeInteger(value, path) {
+  integer(value, path);
+  nonnegative(value, path);
 }
 function messageVariant(value, path) {
   integer(value, path);
@@ -198,13 +199,13 @@ var characterFields = {
   marks: optional(text),
   chatModelBindingMode: optional(enumeration("FOLLOW_GLOBAL", "FIXED_MODEL")),
   chatModelId: optional(nullable(text)),
+  chatProviderId: optional(nullable(text)),
   ttsConfigId: optional(nullable(text)),
   themeConfigId: optional(nullable(text)),
   memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
   sharedMemoryId: optional(nullable(text)),
   sharedMemoryMounts: optional(array(mount)),
   toolAccessConfig: optional(toolAccess),
-  isDefault: optional(boolean),
   createdAt: optional(integer),
   updatedAt: optional(integer)
 };
@@ -247,8 +248,10 @@ var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
 var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
+  "memory.searchWithOptions": shape({ limit: optional(integer), excludeIds: optional(strings), ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
+  "memory.chat.pruneMissing": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
   "memory.categorize": ownerOnly,
   "memory.rebuild.start": shape({ ownerKey: required(owner), rebuild: required(shape({ chatIds: required(strings), windowMessageCount: required(integer), fromInclusive: required(nullable(integer)), toInclusive: required(nullable(integer)) })) }),
@@ -256,7 +259,10 @@ var validators = {
   "memory.rebuild.cancel": ownerOnly,
   "memory.embeddings.rebuild": ownerOnly,
   "memory.candidate.enqueue": shape({ chatId: required(nonblank), timestamp: required(integer), variantIndex: required(messageVariant), sourceType: required(enumeration("reply_finalized_auto", "selected_user_message")), ownerKey: required(nullable(owner)) }),
+  "memory.candidates.retryFailed": ownerOnly,
+  "memory.candidates.clearFailed": ownerOnly,
   "chat.configuration.resolve": parseChatConfigurationRequest,
+  "chat.configuration.binding.find": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.read": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.write": shape({ chatId: required(nonblank), selection: required(nonblank) }),
   "chat.configuration.binding.delete": shape({ chatId: required(nonblank) }),
@@ -268,7 +274,6 @@ var validators = {
   "character.delete": id,
   "character.setActive": id,
   "character.combine": shape({ id: required(nonblank), promptFunctionType: optional(enumeration("CHAT", "VOICE")), additionalTagIds: optional(identifiers) }),
-  "character.resetDefault": empty,
   "character.export": shape({ id: required(nonblank), format: required(format) }),
   "character.import": shape({ format: required(format), content: required(nonblank) }),
   "character.exportBackup": empty,
@@ -333,7 +338,6 @@ function parseChatConfigurationRequest(value) {
     purpose: required(enumeration("display", "execution")),
     chatId: required(nullable(nonblank)),
     chatExtension: required(nullable(markerObject)),
-    messageExtension: required(nullable(markerObject)),
     participantId: required(nullable(nonblank)),
     promptFunctionType: required(enumeration("CHAT", "VOICE")),
     defaultModelBinding: required(shape({ providerId: required(text), modelId: required(text) })),
@@ -341,7 +345,7 @@ function parseChatConfigurationRequest(value) {
   })(value, "chat.configuration.resolve");
   const request = value;
   if (request.purpose === "display") {
-    if (request.participantId !== null || request.messageExtension !== null) throw new Error("Display configuration cannot request an execution participant or message snapshot");
+    if (request.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
   } else {
     nonblank(request.defaultModelBinding.providerId, "execution default provider");
     nonblank(request.defaultModelBinding.modelId, "execution default model");
@@ -350,946 +354,11 @@ function parseChatConfigurationRequest(value) {
   return request;
 }
 
-// src/storage/schema.json
-var collections = {
-  cards: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      characterSetting: {
-        kind: "text"
-      },
-      openingStatement: {
-        kind: "text"
-      },
-      otherContentChat: {
-        kind: "text"
-      },
-      otherContentVoice: {
-        kind: "text"
-      },
-      avatarUri: {
-        kind: "text",
-        nullable: true
-      },
-      attachedTagIds: {
-        kind: "array",
-        item: {
-          kind: "text"
-        }
-      },
-      advancedCustomPrompt: {
-        kind: "text"
-      },
-      marks: {
-        kind: "text"
-      },
-      chatModelBindingMode: {
-        kind: "text"
-      },
-      chatModelId: {
-        kind: "text",
-        nullable: true
-      },
-      ttsConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      themeConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      memoryBindingMode: {
-        kind: "text"
-      },
-      sharedMemoryId: {
-        kind: "text",
-        nullable: true
-      },
-      sharedMemoryMounts: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            sharedMemoryId: {
-              kind: "text"
-            },
-            readable: {
-              kind: "boolean"
-            },
-            writable: {
-              kind: "boolean"
-            }
-          }
-        }
-      },
-      toolAccessConfig: {
-        kind: "object",
-        fields: {
-          enabled: {
-            kind: "boolean"
-          },
-          allowedBuiltinTools: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedPackages: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedSkills: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedMcpServers: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          }
-        }
-      },
-      isDefault: {
-        kind: "boolean"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  groups: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      members: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            characterCardId: {
-              kind: "text"
-            },
-            orderIndex: {
-              kind: "integer"
-            }
-          }
-        }
-      },
-      themeConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  tags: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      promptContent: {
-        kind: "text"
-      },
-      tagType: {
-        kind: "text"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  stores: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  conversationGroups: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      ownerSelection: {
-        kind: "text",
-        nullable: true
-      },
-      name: {
-        kind: "text"
-      },
-      chatIds: {
-        kind: "array",
-        item: {
-          kind: "text"
-        }
-      },
-      displayOrder: {
-        kind: "integer"
-      },
-      pinned: {
-        kind: "boolean"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  owners: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      settings: {
-        kind: "object",
-        fields: {
-          autoSaveIntervalMinutes: {
-            kind: "integer"
-          },
-          nextAutoSaveRunAtMs: {
-            kind: "integer"
-          },
-          memoryExtractionCustomRules: {
-            kind: "text"
-          },
-          profileAutoUpdateEnabled: {
-            kind: "boolean"
-          },
-          profileAutoUpdateLocked: {
-            kind: "boolean"
-          },
-          cloudEmbeddingEnabled: {
-            kind: "boolean"
-          },
-          cloudEmbeddingEndpoint: {
-            kind: "text"
-          },
-          cloudEmbeddingApiKey: {
-            kind: "text"
-          },
-          cloudEmbeddingModel: {
-            kind: "text"
-          }
-        }
-      },
-      searchConfig: {
-        kind: "object",
-        fields: {
-          scoreMode: {
-            kind: "text"
-          },
-          keywordWeight: {
-            kind: "number"
-          },
-          tagWeight: {
-            kind: "number"
-          },
-          vectorWeight: {
-            kind: "number"
-          },
-          edgeWeight: {
-            kind: "number"
-          }
-        }
-      },
-      userDocumentPath: {
-        kind: "text"
-      },
-      rebuildProgress: {
-        kind: "object",
-        fields: {
-          status: {
-            kind: "text"
-          },
-          totalChats: {
-            kind: "integer"
-          },
-          completedChats: {
-            kind: "integer"
-          },
-          totalWindows: {
-            kind: "integer"
-          },
-          completedWindows: {
-            kind: "integer"
-          },
-          totalSourceMessages: {
-            kind: "integer"
-          },
-          processedSourceMessages: {
-            kind: "integer"
-          },
-          failedWindows: {
-            kind: "integer"
-          },
-          currentChatTitle: {
-            kind: "text"
-          },
-          lastError: {
-            kind: "text"
-          }
-        }
-      },
-      rebuildTask: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          windows: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                chatId: {
-                  kind: "text"
-                },
-                chatTitle: {
-                  kind: "text"
-                },
-                messages: {
-                  kind: "array",
-                  item: {
-                    kind: "object",
-                    fields: {
-                      sender: {
-                        kind: "text"
-                      },
-                      content: {
-                        kind: "text"
-                      },
-                      timestamp: {
-                        kind: "integer"
-                      },
-                      variantIndex: {
-                        kind: "integer"
-                      },
-                      variantCount: {
-                        kind: "integer"
-                      },
-                      provider: {
-                        kind: "text"
-                      },
-                      modelName: {
-                        kind: "text"
-                      }
-                    }
-                  }
-                },
-                sourceMessageCount: {
-                  kind: "integer"
-                }
-              }
-            }
-          },
-          nextWindow: {
-            kind: "integer"
-          }
-        },
-        nullable: true
-      }
-    }
-  },
-  memories: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          uuid: {
-            kind: "text"
-          },
-          title: {
-            kind: "text"
-          },
-          content: {
-            kind: "text"
-          },
-          contentType: {
-            kind: "text"
-          },
-          source: {
-            kind: "text"
-          },
-          credibility: {
-            kind: "number"
-          },
-          importance: {
-            kind: "number"
-          },
-          documentPath: {
-            kind: "text",
-            nullable: true
-          },
-          isDocumentNode: {
-            kind: "boolean"
-          },
-          chunkIndexFilePath: {
-            kind: "text",
-            nullable: true
-          },
-          folderPath: {
-            kind: "text",
-            nullable: true
-          },
-          createdAt: {
-            kind: "integer"
-          },
-          updatedAt: {
-            kind: "integer"
-          },
-          lastAccessedAt: {
-            kind: "integer"
-          },
-          tags: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                id: {
-                  kind: "text"
-                },
-                name: {
-                  kind: "text"
-                }
-              }
-            }
-          },
-          properties: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                id: {
-                  kind: "text"
-                },
-                key: {
-                  kind: "text"
-                },
-                value: {
-                  kind: "text"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  links: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          sourceMemoryId: {
-            kind: "text"
-          },
-          targetMemoryId: {
-            kind: "text"
-          },
-          type_: {
-            kind: "text"
-          },
-          weight: {
-            kind: "number"
-          },
-          description: {
-            kind: "text"
-          }
-        }
-      }
-    }
-  },
-  chunks: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          memoryUuid: {
-            kind: "text"
-          },
-          chunkIndex: {
-            kind: "integer"
-          },
-          content: {
-            kind: "text"
-          }
-        }
-      }
-    }
-  },
-  candidates: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          chatId: {
-            kind: "text"
-          },
-          triggerMessageTimestamp: {
-            kind: "integer"
-          },
-          triggerVariantIndex: {
-            kind: "integer"
-          },
-          createdAt: {
-            kind: "integer"
-          },
-          updatedAt: {
-            kind: "integer"
-          },
-          status: {
-            kind: "text"
-          },
-          attemptCount: {
-            kind: "integer"
-          },
-          lastError: {
-            kind: "text"
-          },
-          sourceType: {
-            kind: "text"
-          }
-        }
-      }
-    }
-  },
-  embeddings: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          endpoint: {
-            kind: "text"
-          },
-          model: {
-            kind: "text"
-          },
-          text: {
-            kind: "text"
-          },
-          vector: {
-            kind: "vector"
-          },
-          updatedAt: {
-            kind: "integer"
-          }
-        }
-      }
-    }
-  },
-  meta: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      nextId: {
-        kind: "text"
-      },
-      active: {
-        kind: "object",
-        nullable: true,
-        fields: {
-          CharacterCard: {
-            kind: "object",
-            optional: true,
-            fields: {
-              id: {
-                kind: "text"
-              }
-            }
-          },
-          CharacterGroup: {
-            kind: "object",
-            optional: true,
-            fields: {
-              id: {
-                kind: "text"
-              }
-            }
-          }
-        }
-      },
-      memoryPreferences: {
-        kind: "object",
-        fields: {
-          userDescriptionEnabled: {
-            kind: "boolean"
-          },
-          autoUpdateEnabled: {
-            kind: "boolean"
-          }
-        },
-        optional: true
-      },
-      migrationStatus: {
-        kind: "text",
-        optional: true
-      },
-      migrationSource: {
-        kind: "text",
-        optional: true
-      }
-    }
-  },
-  chat_bindings: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      }
-    }
-  },
-  chat_drafts: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      }
-    }
-  },
-  message_snapshots: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      },
-      promptFunctionType: {
-        kind: "text"
-      },
-      primaryOwnerKey: {
-        kind: "text"
-      },
-      profile: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          name: {
-            kind: "text"
-          },
-          avatarUri: {
-            kind: "text",
-            nullable: true
-          },
-          introPrompt: {
-            kind: "text"
-          },
-          userPreferencesText: {
-            kind: "text"
-          },
-          openingStatement: {
-            kind: "text"
-          },
-          modelBinding: {
-            kind: "object",
-            fields: {
-              providerId: {
-                kind: "text"
-              },
-              modelId: {
-                kind: "text"
-              }
-            }
-          },
-          ttsConfigId: {
-            kind: "text"
-          },
-          toolAccess: {
-            kind: "object",
-            fields: {
-              enabled: {
-                kind: "boolean"
-              },
-              allowedBuiltinTools: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedPackages: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedSkills: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedMcpServers: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              }
-            }
-          },
-          resources: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                key: {
-                  kind: "text"
-                },
-                readable: {
-                  kind: "boolean"
-                },
-                writable: {
-                  kind: "boolean"
-                }
-              }
-            }
-          }
-        }
-      },
-      participants: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            id: {
-              kind: "text"
-            },
-            name: {
-              kind: "text"
-            },
-            avatarUri: {
-              kind: "text",
-              nullable: true
-            },
-            introPrompt: {
-              kind: "text"
-            },
-            userPreferencesText: {
-              kind: "text"
-            },
-            openingStatement: {
-              kind: "text"
-            },
-            modelBinding: {
-              kind: "object",
-              fields: {
-                providerId: {
-                  kind: "text"
-                },
-                modelId: {
-                  kind: "text"
-                }
-              }
-            },
-            ttsConfigId: {
-              kind: "text"
-            },
-            toolAccess: {
-              kind: "object",
-              fields: {
-                enabled: {
-                  kind: "boolean"
-                },
-                allowedBuiltinTools: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedPackages: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedSkills: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedMcpServers: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                }
-              }
-            },
-            resources: {
-              kind: "array",
-              item: {
-                kind: "object",
-                fields: {
-                  key: {
-                    kind: "text"
-                  },
-                  readable: {
-                    kind: "boolean"
-                  },
-                  writable: {
-                    kind: "boolean"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-};
-
-// src/storage/relational.ts
-var schemas = collections;
-function field(path) {
-  return path === "" ? "_value" : path;
-}
-function layout(name, node, child = false) {
-  const columns = [
-    { name: "_key", affinity: "text", nullable: false },
-    { name: "_revision", affinity: "text", nullable: false }
-  ];
-  if (child)
-    columns.push(
-      { name: "_root", affinity: "text", nullable: false },
-      { name: "_parent", affinity: "text", nullable: false },
-      { name: "_position", affinity: "integer", nullable: false },
-      { name: "_map_key", affinity: "text", nullable: true }
-    );
-  const children = [];
-  function visit(schema, path, absent) {
-    if (schema.optional || schema.nullable)
-      columns.push({
-        name: field(path) + "__state",
-        affinity: "integer",
-        nullable: absent
-      });
-    const nullable2 = absent || schema.optional === true || schema.nullable === true;
-    if (schema.kind === "object") {
-      for (const [key, value] of Object.entries(schema.fields).sort(
-        ([left], [right]) => left < right ? -1 : left > right ? 1 : 0
-      ))
-        visit(value, path === "" ? key : path + "__" + key, nullable2);
-    } else if (schema.kind === "array" || schema.kind === "map") {
-      columns.push({
-        name: field(path) + "__count",
-        affinity: "integer",
-        nullable: nullable2
-      });
-      children.push(layout(name + "_" + field(path), schema.item, true));
-    } else
-      columns.push({
-        name: field(path),
-        affinity: schema.kind === "text" ? "text" : schema.kind === "vector" ? "blob" : schema.kind === "boolean" || schema.kind === "integer" ? "integer" : "real",
-        nullable: nullable2
-      });
-  }
-  visit(node, "", false);
-  return { name, node, table: { name, primaryKey: "_key", columns }, children };
-}
-var layouts = Object.fromEntries(
-  Object.entries(schemas).map(([name, node]) => [name, layout(name, node)])
-);
+// src/memory-jobs/scheduler.ts
+var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
 
 // src/definition.ts
-var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
+var definition = { id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 };
 var chatUiRoutes = {
   editor: `toolpkg:${definition.id}:ui:main`,
   selection: `toolpkg:${definition.id}:ui:selection`,
@@ -1331,6 +400,44 @@ function createChatInput(selection) {
   return { [CHARACTER_CARDS_NAMESPACE]: { version: 1, selection: marker.selection } };
 }
 
+// src/sidebar-chat-tree.ts
+var SidebarChatTree = class {
+  /** Rejects duplicate identities and cycles before any recursive rows are rendered. */
+  constructor(chats) {
+    this.roots = /* @__PURE__ */ new Set();
+    this.children = /* @__PURE__ */ new Map();
+    const ids = new Set(chats.map((chat) => chat.id));
+    if (ids.size !== chats.length) throw new Error("Duplicate conversation id");
+    for (const chat of chats) this.children.set(chat.id, []);
+    for (const chat of chats) {
+      if (chat.parentChatId === null || !ids.has(chat.parentChatId)) this.roots.add(chat.id);
+      else this.children.get(chat.parentChatId).push(chat);
+    }
+    const visiting = /* @__PURE__ */ new Set(), visited = /* @__PURE__ */ new Set();
+    const visit = (chat) => {
+      if (visited.has(chat.id)) return;
+      if (visiting.has(chat.id)) throw new Error("Cyclic conversation parent: " + chat.id);
+      visiting.add(chat.id);
+      for (const child of this.children.get(chat.id)) visit(child);
+      visiting.delete(chat.id);
+      visited.add(chat.id);
+    };
+    for (const chat of chats) visit(chat);
+  }
+  /** Retains the complete ancestor path of every matching descendant. */
+  matching(chats, predicate) {
+    const result = /* @__PURE__ */ new Set();
+    const visit = (chat) => {
+      let matches = predicate(chat);
+      for (const child of this.children.get(chat.id)) matches = visit(child) || matches;
+      if (matches) result.add(chat.id);
+      return matches;
+    };
+    for (const chat of chats) if (this.roots.has(chat.id)) visit(chat);
+    return result;
+  }
+};
+
 // src/ui-sidebar-native-layout.ts
 var legacySidebarMetrics = Object.freeze({
   categoryStart: 20,
@@ -1350,23 +457,28 @@ var legacySidebarMetrics = Object.freeze({
   createRadius: 17,
   previewLimit: 4
 });
-function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
+function sidebarRowBuilders(ctx, current, state, actions, defaultAvatar) {
   const colors = ctx.MaterialTheme.colorScheme, m = legacySidebarMetrics;
   const query = state.query.trim().toLocaleLowerCase();
   const muted = colors.onSurfaceVariant.copy({ alpha: 0.8 });
   const rows = [];
+  const tree = new SidebarChatTree(current.chatSidebar.chats);
+  const matching = tree.matching(current.chatSidebar.chats, (chat) => query === "" || chat.title.toLocaleLowerCase().includes(query));
   function dragType(section) {
     return "character-sidebar.chat:" + section.id;
   }
-  const gap = (width) => OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:39949",[width],()=>[{ width }],(...__operitArgs)=>ctx.UI.Spacer(...__operitArgs));
+  const gap = (width) => ctx.UI.Spacer({ width });
   function more(kind, id2, selected = false) {
-    return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:40033",[{ key: "sidebar-" + kind + "-menu-" + id2 + "-visibility", alwaysVisible: selected },actions.menu(kind, id2)],(...__operitArgs)=>ctx.UI.HoverOnly(...__operitArgs));
+    return ctx.UI.HoverOnly(
+      { key: "sidebar-" + kind + "-menu-" + id2 + "-visibility", alwaysVisible: selected },
+      actions.menu(kind, id2)
+    );
   }
-  function chatRow(chat, section, groupId) {
+  function chatRow(chat, section, groupId, depth = 0) {
     const selected = current.chatSidebar.currentChatId === chat.id;
     const titleColor = selected ? colors.onSecondaryContainer : muted;
     const running = current.chatSidebar.activeStreamingChatIds.includes(chat.id);
-    const status = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:40469",[{
+    const status = ctx.UI.ActivityDots({
       key: "sidebar-status-" + chat.id,
       width: 10,
       height: 13.5,
@@ -1374,14 +486,17 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
       selected,
       restingColor: selected ? colors.onSecondaryContainer.copy({ alpha: 0.7 }) : colors.onSurfaceVariant.copy({ alpha: 0.3 }),
       activeColor: colors.primary
-    }],(...__operitArgs)=>ctx.UI.ActivityDots(...__operitArgs));
-    const content = [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:40790",[{
+    });
+    const content = [ctx.UI.Draggable({
       key: "sidebar-chat-drag-" + chat.id,
       data: chat.id,
       dragType: dragType(section),
       enabled: true,
-      feedback: OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:40945",[{ width: 220, height: 34, paddingHorizontal: 10, verticalAlignment: "center", background: colors.surfaceContainerHighest, backgroundShape: { cornerRadius: 8 } },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:41135",[{ text: chat.title, weight: 1, maxLines: 1, overflow: "ellipsis", fontSize: 13, color: colors.onSurface }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))
-    },status],(...__operitArgs)=>ctx.UI.Draggable(...__operitArgs)), gap(5), OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:41286",[{
+      feedback: ctx.UI.Row(
+        { width: 220, height: 34, paddingHorizontal: 10, verticalAlignment: "center", background: colors.surfaceContainerHighest, backgroundShape: { cornerRadius: 8 } },
+        ctx.UI.Text({ text: chat.title, weight: 1, maxLines: 1, overflow: "ellipsis", fontSize: 13, color: colors.onSurface })
+      )
+    }, status), gap(5), ctx.UI.Text({
       key: "sidebar-chat-title-" + chat.id,
       text: chat.title,
       weight: 1,
@@ -1391,11 +506,24 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
       overflow: "ellipsis",
       color: titleColor,
       ...{ letterSpacing: -0.1 }
-    }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))];
-    if (chat.pinned) content.push(gap(5), OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:41605",[{ name: "PushPin", size: 12, tint: titleColor.copy ? titleColor.copy({ alpha: 0.6 }) : titleColor }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs)));
-    if (chat.locked) content.push(gap(5), OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:41762",[{ name: "Lock", size: 12, tint: titleColor.copy ? titleColor.copy({ alpha: 0.6 }) : titleColor }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs)));
+    })];
+    if (chat.pinned) content.push(gap(5), ctx.UI.Icon({ name: "PushPin", size: 12, tint: titleColor.copy ? titleColor.copy({ alpha: 0.6 }) : titleColor }));
+    if (chat.locked) content.push(gap(5), ctx.UI.Icon({ name: "Lock", size: 12, tint: titleColor.copy ? titleColor.copy({ alpha: 0.6 }) : titleColor }));
+    const children = tree.children.get(chat.id);
+    if (children.length > 0) {
+      const expanded = query !== "" || state.expandedGroups.includes("children:" + chat.id);
+      content.push(ctx.UI.IconButton({
+        key: "sidebar-children-" + chat.id,
+        icon: expanded ? "ExpandLess" : "ExpandMore",
+        width: 26,
+        height: 28,
+        tooltip: expanded ? "收起子会话" : "展开子会话（" + children.length + "）",
+        /** Changes presentation without interrupting any running conversation. */
+        onClick: () => actions.toggleGroup("children:" + chat.id)
+      }));
+    }
     content.push(gap(4), more("chat", chat.id, selected));
-    const surface = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:41953",[{
+    const surface = ctx.UI.Row({
       key: "sidebar-chat-hit-" + chat.id,
       weight: 1,
       height: 31,
@@ -1404,21 +532,21 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
       // Keep the wrapper hierarchy stable when host selection refreshes. Adding
       // background/border only for selected rows would dispose the active ripple.
       modifier: ctx.Modifier.clip({ cornerRadius: m.chatRadius }).background(colors.secondaryContainer.copy({ alpha: selected ? 0.78 : 0 }), { cornerRadius: m.chatRadius }).border(1, colors.onSecondaryContainer.copy({ alpha: selected ? 0.08 : 0 }), { cornerRadius: m.chatRadius }).combinedClickable({ onClick: () => actions.activate(chat.id), onLongClick: () => actions.longPress(chat.id) })
-    },content],(...__operitArgs)=>ctx.UI.Row(...__operitArgs));
+    }, content);
     const indicatorColor = selected ? colors.primary : colors.onSurface.copy({ alpha: 0 });
-    const rail = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:42788",[{
+    const rail = ctx.UI.Box({
       key: "sidebar-chat-rail-" + chat.id,
       width: m.railWidth,
       height: m.chatHeight,
       contentAlignment: "center"
-    },[
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:42946",[{
+    }, [
+      ctx.UI.Box({
         key: "sidebar-chat-rail-base-" + chat.id,
         width: 1,
         height: m.chatHeight,
         backgroundColor: colors.outlineVariant.copy({ alpha: 0.45 })
-      }],(...__operitArgs)=>ctx.UI.Box(...__operitArgs)),
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:43142",[{
+      }),
+      ctx.UI.Box({
         key: "sidebar-chat-rail-indicator-" + chat.id,
         width: selected ? 2 : 1,
         height: selected ? 16 : 0,
@@ -1430,9 +558,10 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
           height: selected ? 16 : 10,
           backgroundColor: selected ? colors.primary : colors.onSurface.copy({ alpha: 0.55 })
         }
-      }],(...__operitArgs)=>ctx.UI.Box(...__operitArgs))
-    ]],(...__operitArgs)=>ctx.UI.Box(...__operitArgs));
-    return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:43646",[{
+      })
+    ]);
+    return ctx.UI.DragTarget(
+      {
         key: "sidebar-chat-drop-" + chat.id,
         acceptedTypes: [dragType(section)],
         excludedData: [chat.id],
@@ -1440,35 +569,58 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
         shape: { cornerRadius: 8 },
         fillMaxWidth: true,
         onDrop: (id2) => actions.drop(String(id2), section.id, groupId, chat.id)
-      },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:44019",[{ key: "sidebar-chat-hover-" + chat.id, fillMaxWidth: true },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:44117",[{
+      },
+      ctx.UI.HoverRegion(
+        { key: "sidebar-chat-hover-" + chat.id, fillMaxWidth: true },
+        ctx.UI.Row({
           key: "sidebar-chat-" + chat.id,
           fillMaxWidth: true,
           height: m.chatHeight,
-          paddingStart: m.chatStart,
+          paddingStart: m.chatStart + depth * 16,
           paddingEnd: m.chatEnd,
           verticalAlignment: "center"
-        },[
+        }, [
           rail,
           gap(2),
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:44399",[{ weight: 1, hoverBackground: colors.onSurfaceVariant.copy({ alpha: 0.07 }), shape: { cornerRadius: m.chatRadius } },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:44561",[{
+          ctx.UI.HoverRegion(
+            { weight: 1, hoverBackground: colors.onSurfaceVariant.copy({ alpha: 0.07 }), shape: { cornerRadius: m.chatRadius } },
+            ctx.UI.SwipeActions({
               key: "sidebar-chat-swipe-" + chat.id,
               actionThreshold: 0.5,
               height: 31,
               modifier: ctx.Modifier.clip({ cornerRadius: m.chatRadius }),
               onStartAction: () => actions.rename(chat.id),
               onEndAction: () => actions.confirmSwipeDelete(chat.id),
-              startBackground: OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:44933",[{ fillMaxSize: true, paddingStart: 12, background: colors.primary, contentAlignment: "start" },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:45073",[{ name: "Edit", size: m.swipeIconSize, width: m.swipeIconSize, height: m.swipeIconSize, tint: colors.onPrimary }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs)),
-              endBackground: OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:45245",[{ fillMaxSize: true, paddingEnd: 12, background: colors.error, contentAlignment: "end" },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:45379",[{ name: "Delete", size: m.swipeIconSize, width: m.swipeIconSize, height: m.swipeIconSize, tint: colors.onError }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs))
-            },surface],(...__operitArgs)=>ctx.UI.SwipeActions(...__operitArgs))],(...__operitArgs)=>ctx.UI.HoverRegion(...__operitArgs))
-        ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))],(...__operitArgs)=>ctx.UI.HoverRegion(...__operitArgs))],(...__operitArgs)=>ctx.UI.DragTarget(...__operitArgs));
+              startBackground: ctx.UI.Box(
+                { fillMaxSize: true, paddingStart: 12, background: colors.primary, contentAlignment: "start" },
+                ctx.UI.Icon({ name: "Edit", size: m.swipeIconSize, width: m.swipeIconSize, height: m.swipeIconSize, tint: colors.onPrimary })
+              ),
+              endBackground: ctx.UI.Box(
+                { fillMaxSize: true, paddingEnd: 12, background: colors.error, contentAlignment: "end" },
+                ctx.UI.Icon({ name: "Delete", size: m.swipeIconSize, width: m.swipeIconSize, height: m.swipeIconSize, tint: colors.onError })
+              )
+            }, surface)
+          )
+        ])
+      )
+    );
   }
   function chats(values, id2, section, groupId, matchAll = false) {
-    const matches = query === "" || matchAll ? values : values.filter((chat) => chat.title.toLocaleLowerCase().includes(query));
+    const matches = values.filter((chat) => tree.roots.has(chat.id) && (matchAll || matching.has(chat.id)));
     const expanded = state.expandedGroups.includes("preview:" + id2);
     const preview = query !== "" || expanded ? matches : matches.filter((chat, index) => index < m.previewLimit || chat.pinned || current.chatSidebar.currentChatId === chat.id || current.chatSidebar.activeStreamingChatIds.includes(chat.id));
-    const result = preview.map((chat) => chatRow(chat, section, groupId));
-    const hidden = matches.filter((chat) => !preview.includes(chat)).length;
-    if (query === "" && (hidden > 0 || expanded && matches.length > m.previewLimit)) result.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:46345",[{
+    const result = [];
+    function append(chat, depth) {
+      result.push(() => chatRow(chat, section, groupId, depth));
+      if (query !== "" || state.expandedGroups.includes("children:" + chat.id)) {
+        for (const child of tree.children.get(chat.id)) {
+          if (matchAll || matching.has(child.id)) append(child, depth + 1);
+        }
+      }
+    }
+    for (const chat of preview) append(chat, 0);
+    const hidden = matches.length - preview.length;
+    if (query === "" && (hidden > 0 || expanded && matches.length > m.previewLimit)) result.push(() => ctx.UI.Row({
       key: "sidebar-preview-" + id2,
       fillMaxWidth: true,
       paddingStart: m.chatStart,
@@ -1478,15 +630,15 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
       verticalAlignment: "center",
       spacing: 8,
       onClick: () => actions.toggleGroup("preview:" + id2)
-    },[
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:46649",[{ name: expanded ? "ExpandLess" : "ExpandMore", size: 18, tint: colors.onSurfaceVariant.copy({ alpha: 0.72 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs)),
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:46781",[{ text: expanded ? "\u6536\u8D77" : "\u5C55\u5F00\u66F4\u591A " + hidden, style: "labelMedium", fontWeight: "600", color: colors.onSurfaceVariant.copy({ alpha: 0.72 }) }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))
-    ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs)));
+    }, [
+      ctx.UI.Icon({ name: expanded ? "ExpandLess" : "ExpandMore", size: 18, tint: colors.onSurfaceVariant.copy({ alpha: 0.72 }) }),
+      ctx.UI.Text({ text: expanded ? "收起" : "展开更多 " + hidden, style: "labelMedium", fontWeight: "600", color: colors.onSurfaceVariant.copy({ alpha: 0.72 }) })
+    ]));
     return result;
   }
   function category(section) {
     const collapsed = state.collapsed.includes(section.id);
-    const avatar = section.kind === "card" ? OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:47132",[{
+    const avatar = section.kind === "card" ? ctx.UI.Image({
       key: "sidebar-avatar-" + section.id,
       uri: section.avatarUri ?? defaultAvatar ?? "",
       width: m.categoryAvatar,
@@ -1494,34 +646,41 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
       contentScale: "crop",
       contentDescription: section.title,
       modifier: ctx.Modifier.clip({ type: "circle" })
-    }],(...__operitArgs)=>ctx.UI.Image(...__operitArgs)) : OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:47438",[{
+    }) : ctx.UI.Box(
+      {
         width: m.categoryAvatar,
         height: m.categoryAvatar,
         contentAlignment: "center",
         background: colors.surfaceContainerLow.copy({ alpha: 0.72 }),
         backgroundShape: { type: "circle" }
-      },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:47690",[{ name: section.kind === "group" ? "Groups" : "AccountTree", size: 14, tint: colors.onSurfaceVariant }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs));
-    return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:47824",[{
+      },
+      ctx.UI.Icon({ name: section.kind === "group" ? "Groups" : "AccountTree", size: 14, tint: colors.onSurfaceVariant })
+    );
+    return ctx.UI.Column(
+      {
         key: "sidebar-section-" + section.id,
         fillMaxWidth: true,
         paddingStart: m.categoryStart,
         paddingEnd: m.categoryEnd,
-        paddingTop: 10,
+        paddingTop: 5,
         paddingBottom: 5
-      },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:48059",[{
+      },
+      ctx.UI.DragTarget(
+        {
           key: "sidebar-category-drop-" + section.id,
           acceptedTypes: [dragType(section)],
           onDrop: (id2) => actions.drop(String(id2), section.id, null)
-        },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:48278",[{
+        },
+        ctx.UI.Row({
           fillMaxWidth: true,
           verticalAlignment: "center",
           height: 24,
           onClick: () => actions.toggleSection(section.id),
           modifier: ctx.Modifier.clip({ cornerRadius: m.categoryRadius })
-        },[
+        }, [
           avatar,
           gap(8),
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:48575",[{
+          ctx.UI.Text({
             text: section.title,
             style: "titleSmall",
             fontWeight: "700",
@@ -1529,48 +688,56 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
             overflow: "ellipsis",
             modifier: ctx.Modifier.widthIn({ max: 170 }),
             color: colors.onSurface
-          }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
+          }),
           gap(8),
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:48881",[{ text: String(section.chats.length), style: "labelSmall", fontWeight: "700", color: colors.onSurfaceVariant.copy({ alpha: 0.64 }) }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:49038",[{ weight: 1, paddingHorizontal: 10, height: 2, startColor: colors.outlineVariant.copy({ alpha: 0.62 }), endColor: colors.outlineVariant.copy({ alpha: 0 }) }],(...__operitArgs)=>ctx.UI.GradientRule(...__operitArgs)),
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:49227",[{ name: collapsed ? "KeyboardArrowDown" : "KeyboardArrowUp", size: 23, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))
-        ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))],(...__operitArgs)=>ctx.UI.DragTarget(...__operitArgs))],(...__operitArgs)=>ctx.UI.Column(...__operitArgs));
+          ctx.UI.Text({ text: String(section.chats.length), style: "labelSmall", fontWeight: "700", color: colors.onSurfaceVariant.copy({ alpha: 0.64 }) }),
+          ctx.UI.GradientRule({ weight: 1, paddingHorizontal: 10, height: 2, startColor: colors.outlineVariant.copy({ alpha: 0.62 }), endColor: colors.outlineVariant.copy({ alpha: 0 }) }),
+          ctx.UI.Icon({ name: collapsed ? "KeyboardArrowDown" : "KeyboardArrowUp", size: 23, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) })
+        ])
+      )
+    );
   }
   function groupRow(group, section, ungrouped = false) {
     const expanded = !state.collapsed.includes("group:" + group.id);
-    const groupBody = OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:49543",[{
+    const groupBody = ctx.UI.Row({
       fillMaxWidth: true,
       verticalAlignment: "center",
       paddingStart: 12,
       paddingEnd: 8,
-      paddingTop: 6,
-      paddingBottom: 6,
+      paddingTop: 2,
+      paddingBottom: 2,
       ...{ background: colors.surfaceContainerLow.copy({ alpha: 0.72 }), backgroundShape: { cornerRadius: m.groupRadius }, modifier: ctx.Modifier.border(1, colors.outlineVariant.copy({ alpha: 0.24 }), { cornerRadius: m.groupRadius }) },
       onClick: () => actions.toggleSection("group:" + group.id)
-    },[
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:50023",[{ name: "FolderOutlined", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.76 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs)),
+    }, [
+      ctx.UI.Icon({ name: "FolderOutlined", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.76 }) }),
       gap(7),
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:50147",[{ text: group.name, weight: 1, style: "labelLarge", fontWeight: "700", maxLines: 1, overflow: "ellipsis", color: colors.onSurface.copy({ alpha: 1 }) }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
-      ...group.pinned ? [gap(4), OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:50345",[{ name: "PushPinRounded", size: 12, tint: colors.onSurfaceVariant.copy({ alpha: 0.65 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))] : [],
+      ctx.UI.Text({ text: group.name, weight: 1, style: "labelLarge", fontWeight: "700", maxLines: 1, overflow: "ellipsis", color: colors.onSurface.copy({ alpha: 1 }) }),
+      ...group.pinned ? [gap(4), ctx.UI.Icon({ name: "PushPinRounded", size: 12, tint: colors.onSurfaceVariant.copy({ alpha: 0.65 }) })] : [],
       gap(2),
-      ungrouped ? OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:50487",[{ width: 24, height: 24 },actions.menu("ungrouped", section.id)],(...__operitArgs)=>ctx.UI.HoverOnly(...__operitArgs)) : more("group", group.id),
+      ungrouped ? ctx.UI.HoverOnly({ width: 24, height: 24 }, actions.menu("ungrouped", section.id)) : more("group", group.id),
       gap(2),
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:50617",[{ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 20, tint: colors.onSurfaceVariant.copy({ alpha: 0.62 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))
-    ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs));
-    return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:50773",[{
+      ctx.UI.Icon({ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 20, tint: colors.onSurfaceVariant.copy({ alpha: 0.62 }) })
+    ]);
+    return ctx.UI.Column(
+      {
         key: "sidebar-group-" + group.id,
         fillMaxWidth: true,
         paddingStart: m.groupStart,
         paddingEnd: m.groupEnd,
-        paddingTop: 4,
-        paddingBottom: expanded ? 2 : 0
-      },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:51012",[{
+        paddingTop: 3,
+        paddingBottom: 3
+      },
+      ctx.UI.DragTarget(
+        {
           key: "sidebar-group-drop-" + group.id,
           acceptedTypes: [dragType(section)],
           hoverBorderColor: colors.primary.copy({ alpha: 0.55 }),
           shape: { cornerRadius: m.groupRadius },
           onDrop: (id2) => actions.drop(String(id2), section.id, ungrouped ? null : group.id)
-        },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:51365",[{ shape: { cornerRadius: m.groupRadius } },groupBody],(...__operitArgs)=>ctx.UI.HoverRegion(...__operitArgs))],(...__operitArgs)=>ctx.UI.DragTarget(...__operitArgs))],(...__operitArgs)=>ctx.UI.Column(...__operitArgs));
+        },
+        ctx.UI.HoverRegion({ shape: { cornerRadius: m.groupRadius } }, groupBody)
+      )
+    );
   }
   const sections = state.data.view === "characters" ? state.data.sections : state.data.scopes.map((scope) => ({
     id: scope.id,
@@ -1583,25 +750,29 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
     ungroupedChats: scope.ungrouped
   }));
   for (const section of sections) {
-    const groups = section.conversationGroups ?? [], ungrouped = section.ungroupedChats ?? section.chats;
-    if (section.chats.length === 0 && groups.length === 0) continue;
+    const groups = (section.conversationGroups ?? []).filter((group) => group.chats.length === 0 || group.chats.some((chat) => tree.roots.has(chat.id)));
+    const ungrouped = (section.ungroupedChats ?? section.chats).filter((chat) => tree.roots.has(chat.id));
+    if (ungrouped.length === 0 && groups.length === 0) continue;
     const categoryMatches = query === "" || section.title.toLocaleLowerCase().includes(query);
-    const visibleGroups = groups.filter((group) => categoryMatches || group.name.toLocaleLowerCase().includes(query) || group.chats.some((chat) => chat.title.toLocaleLowerCase().includes(query)));
-    if (!categoryMatches && visibleGroups.length === 0 && !ungrouped.some((chat) => chat.title.toLocaleLowerCase().includes(query))) continue;
-    rows.push(category(section));
+    const visibleGroups = groups.filter((group) => categoryMatches || group.name.toLocaleLowerCase().includes(query) || group.chats.some((chat) => tree.roots.has(chat.id) && matching.has(chat.id)));
+    if (!categoryMatches && visibleGroups.length === 0 && !ungrouped.some((chat) => matching.has(chat.id))) continue;
+    rows.push(() => category(section));
     if (state.collapsed.includes(section.id)) continue;
     for (const group of visibleGroups) {
-      rows.push(groupRow(group, section));
+      rows.push(() => groupRow(group, section));
       if (!state.collapsed.includes("group:" + group.id)) rows.push(...chats(group.chats, group.id, section, group.id, categoryMatches || group.name.toLocaleLowerCase().includes(query)));
     }
-    if (ungrouped.length > 0 && (categoryMatches || "\u672A\u5206\u7EC4".includes(query) || ungrouped.some((chat) => chat.title.toLocaleLowerCase().includes(query)))) {
+    if (ungrouped.length > 0 && (categoryMatches || "未分组".includes(query) || ungrouped.some((chat) => matching.has(chat.id)))) {
       const id2 = "ungrouped:" + section.id;
-      rows.push(groupRow({ id: id2, name: "\u672A\u5206\u7EC4", pinned: ungrouped.every((chat) => chat.pinned), displayOrder: 0, chats: ungrouped }, section, true));
-      if (!state.collapsed.includes("group:" + id2)) rows.push(...chats(ungrouped, id2, section, null, categoryMatches || "\u672A\u5206\u7EC4".includes(query)));
+      rows.push(() => groupRow({ id: id2, name: "未分组", pinned: ungrouped.every((chat) => chat.pinned), displayOrder: 0, chats: ungrouped }, section, true));
+      if (!state.collapsed.includes("group:" + id2)) rows.push(...chats(ungrouped, id2, section, null, categoryMatches || "未分组".includes(query)));
     }
   }
-  if (rows.length === 0) rows.push(OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:53488",[query,muted],()=>[{ text: query === "" ? "\u6682\u65E0\u4F1A\u8BDD" : "\u6CA1\u6709\u5339\u914D\u7684\u4F1A\u8BDD", color: muted, fontSize: 12, paddingHorizontal: 20, paddingVertical: 12 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)));
+  if (rows.length === 0) rows.push(() => ctx.UI.Text({ text: query === "" ? "暂无会话" : "没有匹配的会话", height: m.chatHeight, color: muted, fontSize: 12, paddingHorizontal: 20 }));
   return rows;
+}
+function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
+  return sidebarRowBuilders(ctx, current, state, actions, defaultAvatar).map((build) => build());
 }
 
 // src/sidebar-group-delete.ts
@@ -1626,8 +797,8 @@ function deleteConversationGroupMembers(chatIds, deleteChat) {
 function renderSidebarScreen(ctx) {
   const [input] = ctx.useState("input", null);
   const [chatSidebar] = ctx.useState("chatSidebar", null);
-  const supplied = { input, chatSidebar };
-  const parsed = parseCurrentSidebar(supplied);
+  const [capabilities] = ctx.useState("chatSidebarCapabilities", null);
+  const parsed = ctx.useMemo("native-sidebar-inputs", () => parseCurrentSidebar({ input, chatSidebar }), [input, chatSidebar]);
   const current = ctx.useRef("native-sidebar-current", parsed);
   current.current = parsed;
   const catalogKey = sidebarCatalogKey;
@@ -1652,8 +823,12 @@ function renderSidebarScreen(ctx) {
   const pending = ctx.useRef("native-sidebar-pending", null);
   const avatarResource = ctx.useRef("native-sidebar-avatar-resource", null);
   function update(change) {
-    latest.current = { ...latest.current, ...change };
-    setState(latest.current);
+    const previous = latest.current;
+    const keys = Object.keys(change);
+    if (keys.every((key) => Object.is(previous[key], change[key]))) return;
+    const next = { ...previous, ...change };
+    latest.current = next;
+    setState(next);
   }
   function assertCurrent() {
     if (catalogKey(current.current) !== identity2) throw new Error("The sidebar context changed; refresh before using this action");
@@ -1717,7 +892,7 @@ function renderSidebarScreen(ctx) {
       }
     });
   }
-  function activate2(chatId) {
+  function activate(chatId) {
     assertCurrent();
     if (!current.current.chatSidebar.chats.some((chat) => chat.id === chatId)) throw new Error("The conversation is absent from the supplied sidebar history");
     return { type: "toolpkg.chat.activate", chatId };
@@ -1777,7 +952,7 @@ function renderSidebarScreen(ctx) {
           break;
         case "create": {
           const name = staged.name.trim();
-          if (name === "") throw new Error("\u5206\u7EC4\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+          if (name === "") throw new Error("分组名称不能为空");
           const selection = scopeFor(staged.id).ownerSelection;
           const created = yield Tools.Chat.createNew({ setAsCurrentChat: false, input: selection === null ? null : createChatInput(selection) });
           yield Tools.Chat.updateGroup([created.chatId], name);
@@ -1844,6 +1019,13 @@ function renderSidebarScreen(ctx) {
   function longPress(id2) {
     dialog("chatActions", id2, chatFor(id2).title);
   }
+  function openInWindow(id2) {
+    assertCurrent();
+    chatFor(id2);
+    if (capabilities?.openInWindow !== true) throw new Error("Detached chat windows are not available");
+    update({ dialog: null });
+    return { type: "toolpkg.chat.openInWindow", chatId: id2 };
+  }
   function changeFlag(id2, pinned) {
     return __async(this, null, function* () {
       yield run(() => __async(null, null, function* () {
@@ -1889,17 +1071,17 @@ function renderSidebarScreen(ctx) {
   function menu(kind, id2) {
     if (kind === "chat") {
       const chat = chatFor(id2);
-      return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:65763",[{
+      return ctx.UI.PopupMenu({
         key: "sidebar-chat-menu-" + id2,
         width: 22,
         height: 22,
-        tooltip: "\u5BF9\u8BDD\u64CD\u4F5C",
+        tooltip: "对话操作",
         enabled: !state.busy,
         items: [
-          { label: "\u7F16\u8F91\u540D\u79F0", icon: "Edit" },
-          { label: chat.pinned ? "\u53D6\u6D88\u7F6E\u9876" : "\u7F6E\u9876", icon: "PushPin" },
-          { label: chat.locked ? "\u89E3\u9501" : "\u9501\u5B9A", icon: chat.locked ? "LockOpen" : "Lock" },
-          { label: "\u5220\u9664", icon: "DeleteOutline", danger: true }
+          { label: "编辑名称", icon: "Edit" },
+          { label: chat.pinned ? "取消置顶" : "置顶", icon: "PushPin" },
+          { label: chat.locked ? "解锁" : "锁定", icon: chat.locked ? "LockOpen" : "Lock" },
+          { label: "删除", icon: "DeleteOutline", danger: true }
         ],
         onSelected: (index) => __async(null, null, function* () {
           if (index === 0) renameChat(id2);
@@ -1907,49 +1089,49 @@ function renderSidebarScreen(ctx) {
           else if (index === 2) yield changeFlag(id2, false);
           else if (index === 3) yield deleteChat(id2);
         })
-      },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:66615",[{ name: "MoreHoriz", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.PopupMenu(...__operitArgs));
+      }, ctx.UI.Icon({ name: "MoreHoriz", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
     }
     if (kind === "ungrouped") {
       const scope = scopeFor(id2);
       const pinned = scope.ungrouped.length > 0 && scope.ungrouped.every((chat) => chat.pinned);
-      return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:66898",[{
+      return ctx.UI.PopupMenu({
         key: "sidebar-ungrouped-menu-" + id2,
         width: 22,
         height: 22,
         menuMaxWidth: 138,
-        tooltip: "\u5206\u7EC4\u64CD\u4F5C",
+        tooltip: "分组操作",
         enabled: !state.busy && state.data !== null,
         items: [
-          { label: "\u65B0\u5EFA\u5BF9\u8BDD", icon: "AddCommentOutlined" },
-          { label: "\u7F16\u8F91\u540D\u79F0", icon: "EditOutlined" },
-          { label: pinned ? "\u53D6\u6D88\u7F6E\u9876" : "\u7F6E\u9876", icon: pinned ? "PushPinOutlined" : "PushPinRounded" },
-          { label: "\u5220\u9664", icon: "DeleteOutlineRounded", danger: true, dividerBefore: true }
+          { label: "新建对话", icon: "AddCommentOutlined" },
+          { label: "编辑名称", icon: "EditOutlined" },
+          { label: pinned ? "取消置顶" : "置顶", icon: pinned ? "PushPinOutlined" : "PushPinRounded" },
+          { label: "删除", icon: "DeleteOutlineRounded", danger: true, dividerBefore: true }
         ],
         onSelected: (index) => __async(null, null, function* () {
           if (index === 0) return createChat(scope.ownerSelection ?? "", null);
-          if (index === 1) dialog("renameUngrouped", id2, "\u672A\u5206\u7EC4");
+          if (index === 1) dialog("renameUngrouped", id2, "未分组");
           if (index === 2) yield run(() => __async(null, null, function* () {
             for (const chat of scope.ungrouped) yield Tools.Chat.updatePinned(chat.id, !pinned);
             yield refresh();
           }));
-          if (index === 3) dialog("deleteUngrouped", id2, "\u672A\u5206\u7EC4");
+          if (index === 3) dialog("deleteUngrouped", id2, "未分组");
           return null;
         })
-      },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:68102",[{ name: "MoreHorizRounded", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.PopupMenu(...__operitArgs));
+      }, ctx.UI.Icon({ name: "MoreHorizRounded", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
     }
     const group = scopeFor(id2).groups.find((value) => value.id === id2);
     const items = [
-      { label: "\u65B0\u5EFA\u5BF9\u8BDD", icon: "AddCommentOutlined" },
-      { label: "\u7F16\u8F91\u540D\u79F0", icon: "EditOutlined" },
-      { label: group.pinned ? "\u53D6\u6D88\u7F6E\u9876" : "\u7F6E\u9876", icon: group.pinned ? "PushPinOutlined" : "PushPinRounded" },
-      { label: "\u5220\u9664", icon: "DeleteOutlineRounded", danger: true, dividerBefore: true }
+      { label: "新建对话", icon: "AddCommentOutlined" },
+      { label: "编辑名称", icon: "EditOutlined" },
+      { label: group.pinned ? "取消置顶" : "置顶", icon: group.pinned ? "PushPinOutlined" : "PushPinRounded" },
+      { label: "删除", icon: "DeleteOutlineRounded", danger: true, dividerBefore: true }
     ];
-    return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:68700",[{
+    return ctx.UI.PopupMenu({
       key: "sidebar-group-menu-" + id2,
       width: 22,
       height: 22,
       menuMaxWidth: 138,
-      tooltip: "\u5206\u7EC4\u64CD\u4F5C",
+      tooltip: "分组操作",
       items,
       enabled: !state.busy,
       onSelected: (index) => __async(null, null, function* () {
@@ -1964,7 +1146,7 @@ function renderSidebarScreen(ctx) {
         else if (index === 3) dialog("delete", id2, group.name);
         return null;
       })
-    },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:69484",[{ name: "MoreHorizRounded", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.PopupMenu(...__operitArgs));
+    }, ctx.UI.Icon({ name: "MoreHorizRounded", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
   }
   function drop(chatId, scopeId, groupId, targetId) {
     return __async(this, null, function* () {
@@ -1997,7 +1179,8 @@ function renderSidebarScreen(ctx) {
   const data = visibleCatalog();
   const toggleSection = (id2) => update({ collapsed: state.collapsed.includes(id2) ? state.collapsed.filter((key) => key !== id2) : [...state.collapsed, id2] });
   const toggleGroup = (id2) => update({ expandedGroups: state.expandedGroups.includes(id2) ? state.expandedGroups.filter((key) => key !== id2) : [...state.expandedGroups, id2] });
-  const rows = [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:71499",[{
+  const searchActive = state.search || state.query.trim() !== "";
+  const rows = [ctx.UI.Row({
     key: "sidebar-toolbar",
     fillMaxWidth: true,
     verticalAlignment: "center",
@@ -2005,16 +1188,18 @@ function renderSidebarScreen(ctx) {
     paddingStart: 14,
     paddingEnd: 12,
     paddingBottom: 8
-  },[
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:71687",[{
+  }, [
+    ctx.UI.Surface(
+      {
         key: "sidebar-create-bar",
         weight: 1,
         height: 34,
         containerColor: colors.primaryContainer,
         contentColor: colors.onPrimaryContainer,
         shape: { type: "pill" }
-      },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:71930",[{ fillMaxSize: true, verticalAlignment: "center" },[
-        OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:72003",[{
+      },
+      ctx.UI.Row({ fillMaxSize: true, verticalAlignment: "center" }, [
+        ctx.UI.Row({
           key: "sidebar-new-chat",
           weight: 1,
           height: 34,
@@ -2025,12 +1210,12 @@ function renderSidebarScreen(ctx) {
             return createChat(encodeSelection(active), null);
           }),
           spacing: 6
-        },[
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:72429",[{ name: "AddRounded", size: 17, tint: colors.onPrimaryContainer }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs)),
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:72519",[{ text: "\u65B0\u5EFA\u5BF9\u8BDD", fontSize: 13, fontWeight: "600", color: colors.onPrimaryContainer, ...{ letterSpacing: -0.1 } }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))
-        ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs)),
-        OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:72684",[{ width: 1, height: 16, background: colors.onPrimaryContainer.copy({ alpha: 0.16 }) }],(...__operitArgs)=>ctx.UI.Box(...__operitArgs)),
-        OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:72791",[{
+        }, [
+          ctx.UI.Icon({ name: "AddRounded", size: 17, tint: colors.onPrimaryContainer }),
+          ctx.UI.Text({ text: "新建对话", fontSize: 13, fontWeight: "600", color: colors.onPrimaryContainer, ...{ letterSpacing: -0.1 } })
+        ]),
+        ctx.UI.Box({ width: 1, height: 16, background: colors.onPrimaryContainer.copy({ alpha: 0.16 }) }),
+        ctx.UI.Row({
           key: "sidebar-new-group",
           width: 38,
           height: 34,
@@ -2045,9 +1230,11 @@ function renderSidebarScreen(ctx) {
             if (scope === void 0) throw new Error("The active owner is absent from the actual sidebar catalog");
             dialog("create", scope.id);
           })
-        },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:73651",[{ name: "CreateNewFolderOutlined", size: 16, tint: colors.onPrimaryContainer, contentDescription: "\u65B0\u5EFA\u5206\u7EC4" }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))
-      ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))],(...__operitArgs)=>ctx.UI.Surface(...__operitArgs)),
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:73812",[{
+        }, ctx.UI.Icon({ name: "CreateNewFolderOutlined", size: 16, tint: colors.onPrimaryContainer, contentDescription: "新建分组" }))
+      ])
+    ),
+    ctx.UI.Row(
+      {
         key: "sidebar-search-toggle",
         width: 34,
         height: 34,
@@ -2055,70 +1242,119 @@ function renderSidebarScreen(ctx) {
         horizontalArrangement: "center",
         onClick: () => update({ search: !state.search }),
         modifier: ctx.Modifier.clip({ cornerRadius: 6 }),
-        background: state.search ? colors.secondaryContainer.copy({ alpha: 0.35 }) : colors.surface.copy({ alpha: 0 })
-      },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:74237",[{ name: state.search ? "SearchOff" : "Search", size: 17, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }), contentDescription: state.search ? "\u6536\u8D77\u641C\u7D22" : "\u641C\u7D22\u5BF9\u8BDD" }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))
-  ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))];
-  if (state.search) rows.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:74496",[{
-    key: "sidebar-search",
-    value: state.query,
-    onValueChange: (query) => update({ query }),
-    placeholder: "\u641C\u7D22\u5BF9\u8BDD",
-    singleLine: true,
-    fillMaxWidth: true,
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    ...{ shape: { cornerRadius: 14 } }
-  }],(...__operitArgs)=>ctx.UI.TextField(...__operitArgs)));
-  if (state.error !== "") rows.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:74838",[{ key: "sidebar-error", text: state.error, fontSize: 11, color: colors.error, paddingHorizontal: 20, paddingVertical: 6 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)));
-  if (data !== null) rows.push(...nativeSidebarRows(ctx, current.current, {
-    data,
-    query: state.query,
-    collapsed: state.collapsed,
-    expandedGroups: state.expandedGroups
-  }, {
-    activate: activate2,
-    toggleSection,
-    toggleGroup,
-    menu,
-    longPress,
-    rename: renameChat,
-    confirmSwipeDelete,
-    drop
-  }, state.defaultAvatar));
-  else if (state.loading) rows.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:75372",[{ fillMaxWidth: true, height: 80, contentAlignment: "center" },OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:75456",[],()=>[{ size: 24 }],(...__operitArgs)=>ctx.UI.LoadingIndicator(...__operitArgs))],(...__operitArgs)=>ctx.UI.Box(...__operitArgs)));
-  const content = [OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:75519",[rows],()=>[{ key: "native-sidebar-history", fillMaxWidth: true, paddingBottom: 16, spacing: 0 },rows],(...__operitArgs)=>ctx.UI.Column(...__operitArgs))];
+        background: searchActive ? colors.secondaryContainer.copy({ alpha: 0.35 }) : colors.surface.copy({ alpha: 0 })
+      },
+      ctx.UI.Icon({ name: state.search ? "SearchOffRounded" : "SearchRounded", size: 17, tint: searchActive ? colors.primary : colors.onSurfaceVariant.copy({ alpha: 0.78 }), contentDescription: state.search ? "收起搜索" : "搜索对话" })
+    )
+  ])];
+  rows.push(ctx.UI.Box(
+    {
+      key: "sidebar-search-container",
+      fillMaxWidth: true,
+      animation: { durationMillis: 180, curve: "easeOutCubic", animateContentSize: true }
+    },
+    state.search ? ctx.UI.Column(
+      { fillMaxWidth: true, paddingHorizontal: 12, paddingBottom: 12 },
+      ctx.UI.TextField({
+        key: "sidebar-search",
+        value: state.query,
+        onValueChange: (query) => update({ query }),
+        placeholder: "搜索对话",
+        singleLine: true,
+        fillMaxWidth: true,
+        style: { color: colors.onSurface },
+        leadingIcon: ctx.UI.Icon({ name: "Search", size: 20, tint: colors.onSurfaceVariant.copy({ alpha: 0.72 }) }),
+        decoration: {
+          isDense: true,
+          filled: true,
+          fillColor: colors.surfaceContainerLow.copy({ alpha: 0.72 }),
+          cornerRadius: 14,
+          focusedBorderColor: colors.primary,
+          hintStyle: { color: colors.onSurfaceVariant.copy({ alpha: 0.62 }) },
+          contentPadding: { horizontal: 12, vertical: 10 }
+        }
+      })
+    ) : ctx.UI.Spacer({ height: 0 })
+  ));
+  if (state.error !== "") rows.push(ctx.UI.Text({ key: "sidebar-error", text: state.error, fontSize: 11, color: colors.error, paddingHorizontal: 20, paddingVertical: 6 }));
+  if (data !== null) {
+    const actions = {
+      activate,
+      toggleSection,
+      toggleGroup,
+      menu,
+      longPress,
+      rename: renameChat,
+      confirmSwipeDelete,
+      drop
+    };
+    const layoutActions = ctx.useRef("native-sidebar-layout-actions", actions);
+    Object.assign(layoutActions.current, actions);
+    rows.push(...nativeSidebarRows(
+      ctx,
+      current.current,
+      {
+        data,
+        query: state.query,
+        collapsed: state.collapsed,
+        expandedGroups: state.expandedGroups,
+        busy: state.busy
+      },
+      layoutActions.current,
+      state.defaultAvatar
+    ));
+  } else if (state.loading) rows.push(ctx.UI.Box(
+    { fillMaxWidth: true, height: 80, contentAlignment: "center" },
+    ctx.UI.LoadingIndicator({ size: 24 })
+  ));
+  const content = [...rows];
   if (state.dialog !== null) {
-    const staged = state.dialog, body = [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:75699",[{ text: { create: "\u65B0\u5EFA\u5206\u7EC4", rename: "\u91CD\u547D\u540D\u5206\u7EC4", delete: "\u5220\u9664\u5206\u7EC4\u53CA\u5176\u5BF9\u8BDD", renameUngrouped: "\u91CD\u547D\u540D\u5206\u7EC4", deleteUngrouped: "\u5220\u9664\u5206\u7EC4\u53CA\u5176\u5BF9\u8BDD", renameChat: "\u7F16\u8F91\u5BF9\u8BDD\u540D\u79F0", deleteChat: "\u5220\u9664\u5BF9\u8BDD", chatActions: "\u804A\u5929\u8BB0\u5F55" }[staged.kind], fontSize: 16, fontWeight: "600" }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))];
-    if (staged.kind === "create" || staged.kind === "rename" || staged.kind === "renameUngrouped" || staged.kind === "renameChat") body.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:76305",[{ key: "sidebar-group-name", value: staged.name, label: staged.kind === "renameChat" ? "\u5BF9\u8BDD\u540D\u79F0" : "\u5206\u7EC4\u540D\u79F0", onValueChange: (name) => update({ dialog: { ...staged, name } }), enabled: !state.busy }],(...__operitArgs)=>ctx.UI.TextField(...__operitArgs)));
-    if (staged.kind === "delete" || staged.kind === "deleteUngrouped" || staged.kind === "deleteChat") body.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:76671",[{ text: staged.kind === "deleteChat" ? `\u786E\u8BA4\u5220\u9664\u5BF9\u8BDD\u201C${staged.name}\u201D\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\u3002` : `\u786E\u8BA4\u5220\u9664\u201C${staged.name}\u201D\u53CA\u5176\u4E2D\u7684\u5168\u90E8\u5BF9\u8BDD\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\u3002`, fontSize: 12 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)));
+    const staged = state.dialog, body = [ctx.UI.Text({ text: { create: "新建分组", rename: "重命名分组", delete: "删除分组及其对话", renameUngrouped: "重命名分组", deleteUngrouped: "删除分组及其对话", renameChat: "编辑对话名称", deleteChat: "删除对话", chatActions: "聊天记录" }[staged.kind], fontSize: 16, fontWeight: "600" })];
+    if (staged.kind === "create" || staged.kind === "rename" || staged.kind === "renameUngrouped" || staged.kind === "renameChat") body.push(ctx.UI.TextField({ key: "sidebar-group-name", value: staged.name, label: staged.kind === "renameChat" ? "对话名称" : "分组名称", onValueChange: (name) => update({ dialog: { ...staged, name } }), enabled: !state.busy }));
+    if (staged.kind === "delete" || staged.kind === "deleteUngrouped" || staged.kind === "deleteChat") body.push(ctx.UI.Text({ text: staged.kind === "deleteChat" ? `确认删除对话“${staged.name}”？此操作不可撤销。` : `确认删除“${staged.name}”及其中的全部对话？此操作不可撤销。`, fontSize: 12 }));
     if (staged.kind === "chatActions") {
       const chat = chatFor(staged.id), ids = orderNeighbours(staged.id), index = ids.indexOf(staged.id);
-      body.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:77179",[{ text: chat.title, fillMaxWidth: true, maxLines: 2, style: "titleMedium", color: colors.onSurfaceVariant }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)));
-      const tile = (label, icon, callback, enabled = true, danger = false) => OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:77380",[{ fillMaxWidth: true, onClick: enabled ? callback : void 0, shape: { cornerRadius: 12 }, color: colors.surface },OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:77526",[{ fillMaxWidth: true, paddingHorizontal: 16, paddingVertical: 10, verticalAlignment: "center", spacing: 12 },[
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:77659",[{ name: icon, size: 20, tint: danger ? colors.error : colors.onSurfaceVariant }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs)),
-          OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:77763",[{ text: label, weight: 1, fontSize: 14, color: danger ? colors.error : colors.onSurface }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))
-        ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))],(...__operitArgs)=>ctx.UI.Surface(...__operitArgs));
+      body.push(ctx.UI.Text({ text: chat.title, fillMaxWidth: true, maxLines: 2, style: "titleMedium", color: colors.onSurfaceVariant }));
+      const tile = (label, icon, callback, enabled = true, danger = false) => ctx.UI.Surface(
+        { fillMaxWidth: true, onClick: enabled ? callback : void 0, shape: { cornerRadius: 12 }, color: colors.surface },
+        ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 16, paddingVertical: 10, verticalAlignment: "center", spacing: 12 }, [
+          ctx.UI.Icon({ name: icon, size: 20, tint: danger ? colors.error : colors.onSurfaceVariant }),
+          ctx.UI.Text({ text: label, weight: 1, fontSize: 14, color: danger ? colors.error : colors.onSurface })
+        ])
+      );
+      if (capabilities?.openInWindow === true) body.push(tile("在新窗口打开", "OpenInNew", () => openInWindow(chat.id)));
       body.push(
-        tile("\u7F16\u8F91\u540D\u79F0", "Edit", () => renameChat(chat.id)),
-        tile("\u4E0A\u79FB", "KeyboardArrowUp", () => moveRelative(chat.id, -1), index > 0),
-        tile("\u4E0B\u79FB", "KeyboardArrowDown", () => moveRelative(chat.id, 1), index >= 0 && index < ids.length - 1),
-        tile(chat.pinned ? "\u53D6\u6D88\u7F6E\u9876" : "\u7F6E\u9876", "PushPin", () => changeFlag(chat.id, true)),
-        tile(chat.locked ? "\u89E3\u9501" : "\u9501\u5B9A", chat.locked ? "LockOpen" : "Lock", () => changeFlag(chat.id, false)),
-        tile("\u5220\u9664", "DeleteOutline", () => deleteChat(chat.id), true, true)
+        tile("编辑名称", "Edit", () => renameChat(chat.id)),
+        tile("上移", "KeyboardArrowUp", () => moveRelative(chat.id, -1), index > 0),
+        tile("下移", "KeyboardArrowDown", () => moveRelative(chat.id, 1), index >= 0 && index < ids.length - 1),
+        tile(chat.pinned ? "取消置顶" : "置顶", "PushPin", () => changeFlag(chat.id, true)),
+        tile(chat.locked ? "解锁" : "锁定", chat.locked ? "LockOpen" : "Lock", () => changeFlag(chat.id, false)),
+        tile("删除", "DeleteOutline", () => deleteChat(chat.id), true, true)
       );
     }
-    if (staged.progress !== null) body.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:78585",[{ key: "sidebar-delete-result", text: `\u5DF2\u5220\u9664 ${staged.progress.deletedChatIds.length} \u6761\u5BF9\u8BDD
-` + staged.progress.failedChatIds.map((value) => value.chatId + ": " + value.error).join("\n"), fontSize: 11, color: staged.progress.failedChatIds.length === 0 ? colors.onSurface : colors.error }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)));
-    if (state.error !== "") body.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:78952",[{ text: state.error, color: colors.error, fontSize: 11 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)));
-    body.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:79038",[{ spacing: 8 },[
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:79073",[{ text: "\u53D6\u6D88", enabled: !state.busy, onClick: () => update({ dialog: null }) }],(...__operitArgs)=>ctx.UI.TextButton(...__operitArgs)),
-      ...staged.progress === null && staged.kind !== "chatActions" ? [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:79251",[{ text: "\u786E\u8BA4", enabled: !state.busy, onClick: () => run(submit) }],(...__operitArgs)=>ctx.UI.Button(...__operitArgs))] : []
-    ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs)));
-    content.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:79373",[{ key: "sidebar-edit-dialog", closeOnDismissRequest: !state.busy, onDismissRequest: () => {
+    if (staged.progress !== null) body.push(ctx.UI.Text({ key: "sidebar-delete-result", text: `已删除 ${staged.progress.deletedChatIds.length} 条对话
+` + staged.progress.failedChatIds.map((value) => value.chatId + ": " + value.error).join("\n"), fontSize: 11, color: staged.progress.failedChatIds.length === 0 ? colors.onSurface : colors.error }));
+    if (state.error !== "") body.push(ctx.UI.Text({ text: state.error, color: colors.error, fontSize: 11 }));
+    body.push(ctx.UI.Row({ spacing: 8 }, [
+      ctx.UI.TextButton({ text: "取消", enabled: !state.busy, onClick: () => update({ dialog: null }) }),
+      ...staged.progress === null && staged.kind !== "chatActions" ? [ctx.UI.Button({ text: "确认", enabled: !state.busy, onClick: () => run(submit) })] : []
+    ]));
+    content.push(ctx.UI.Dialog({ key: "sidebar-edit-dialog", closeOnDismissRequest: !state.busy, onDismissRequest: () => {
       if (!state.busy) update({ dialog: null });
-    } },OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:79537",[body],()=>[{ padding: 20, spacing: 12, width: 320 },body],(...__operitArgs)=>ctx.UI.Column(...__operitArgs))],(...__operitArgs)=>ctx.UI.Dialog(...__operitArgs)));
+    } }, ctx.UI.Column({ padding: 20, spacing: 12, width: 320 }, body)));
   }
-  return OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-sidebar/index.ui.js:79615",[refresh,refreshInputs,content],()=>[{ key: "native-character-sidebar", fillMaxWidth: true, onLoad: refresh, onInputsChanged: refreshInputs },content],(...__operitArgs)=>ctx.UI.Column(...__operitArgs));
+  const onLoad = prepared === null ? refresh : () => {
+    void Promise.resolve().then(refresh).catch(() => {
+    });
+  };
+  return ctx.UI.Column({
+    key: "native-character-sidebar",
+    fillMaxWidth: true,
+    paddingBottom: 16,
+    spacing: 0,
+    onLoad,
+    onInputsChanged: refreshInputs
+  }, content);
 }
 
 // src/ui-sidebar.ts
@@ -2154,15 +1390,16 @@ function parseSidebarInput(value) {
   return { view: input.view };
 }
 function parseSidebarChat(value) {
-  const chat = exactFields(value, ["id", "title", "updatedAt", "displayOrder", "workspaceId", "workspaceName", "locked", "pinned", "group"], "sidebar chat");
+  const chat = exactFields(value, ["id", "title", "updatedAt", "displayOrder", "workspaceId", "workspaceName", "locked", "pinned", "group", "parentChatId"], "sidebar chat");
   if (chat.group !== null && typeof chat.group !== "string") throw new Error("sidebar chat.group must be a string or null");
+  if (chat.parentChatId !== null) sidebarIdentity(chat.parentChatId, "sidebar chat.parentChatId");
   const id2 = sidebarIdentity(chat.id, "sidebar chat.id");
   if (typeof chat.title !== "string" || typeof chat.updatedAt !== "string") throw new Error("sidebar chat title and updatedAt must be strings");
   if (typeof chat.displayOrder !== "number" || !Number.isSafeInteger(chat.displayOrder)) throw new Error("sidebar chat.displayOrder must be a safe integer");
   if (chat.workspaceId !== null && typeof chat.workspaceId !== "string") throw new Error("sidebar chat.workspaceId must be a string or null");
   if (chat.workspaceName !== null && typeof chat.workspaceName !== "string") throw new Error("sidebar chat.workspaceName must be a string or null");
   if (typeof chat.locked !== "boolean" || typeof chat.pinned !== "boolean") throw new Error("sidebar chat locked and pinned must be booleans");
-  return { id: id2, title: chat.title, updatedAt: chat.updatedAt, displayOrder: chat.displayOrder, workspaceId: chat.workspaceId, workspaceName: chat.workspaceName, locked: chat.locked, pinned: chat.pinned, group: chat.group };
+  return { id: id2, title: chat.title, updatedAt: chat.updatedAt, displayOrder: chat.displayOrder, workspaceId: chat.workspaceId, workspaceName: chat.workspaceName, locked: chat.locked, pinned: chat.pinned, group: chat.group, parentChatId: chat.parentChatId };
 }
 function parseChatSidebarContext(value) {
   const context = exactFields(value, ["chats", "currentChatId", "activeStreamingChatIds"], "chatSidebar");

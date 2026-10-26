@@ -22,7 +22,8 @@ use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
+    with_event_channel_and_failure, RevisableTextStream, RevisableTextStreamLike,
+    TerminalFailureState, TextStreamEventCarrier,
 };
 use operit_util::stream::Stream::{FnStream, Stream};
 use operit_util::AppLogger::AppLogger;
@@ -497,13 +498,11 @@ impl DeepseekProvider {
         effectiveHistory: &[PromptTurn],
         useToolCall: bool,
     ) -> Result<Value, AiServiceError> {
-        let structuredMessages: Value =
-            serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
-                effectiveHistory,
-                true,
-                useToolCall,
-            ))
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let structuredMessages: Value = StructuredToolCallBridge::buildMessagesValueForProvider(
+            effectiveHistory,
+            true,
+            useToolCall,
+        );
 
         let mut messagesArray = Vec::new();
         let Some(messages) = structuredMessages.as_array() else {
@@ -766,6 +765,7 @@ impl AIService for DeepseekProvider {
         }
     }
 
+    /// Sends a DeepSeek request while preserving parent-stream failures.
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
@@ -777,23 +777,27 @@ impl AIService for DeepseekProvider {
 
         let request_body = self.create_request_body(&request)?;
         if request.stream {
-            AppLogger::i(
+            AppLogger::v_with_level(
                 PROVIDER_TRANSPORT_LOG_TAG,
                 &format!(
                     "provider.deepseek.parent.create providerModel={} stream=true",
                     self.provider_model(),
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
             let mut parent = self.open_ai_parent(self.uses_responses_protocol()?);
             let mut result = parent.send_prepared_request(request, request_body).await?;
-            AppLogger::i(
+            AppLogger::v_with_level(
                 PROVIDER_TRANSPORT_LOG_TAG,
                 &format!(
                     "provider.deepseek.parent.stream.ready providerModel={}",
                     self.provider_model(),
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
             let event_channel = result.event_channel().clone();
+            let terminalFailure = TerminalFailureState::new();
+            let producerTerminalFailure = terminalFailure.clone();
             let mut provider = self.clone();
             let activeParentGeneration = provider.setActiveParent(parent.clone());
             if provider.isCancelled() {
@@ -812,9 +816,13 @@ impl AIService for DeepseekProvider {
                 let mut provider = ownedProvider
                     .take()
                     .expect("Deepseek parent stream must only be collected once");
+                let producerTerminalFailure = producerTerminalFailure.clone();
                 Box::pin(async move {
                     result.collect(emit).await;
-                    AppLogger::i(
+                    if let Some(error) = result.terminal_failure() {
+                        producerTerminalFailure.set(error);
+                    }
+                    AppLogger::v_with_level(
                         PROVIDER_TRANSPORT_LOG_TAG,
                         &format!(
                             "provider.deepseek.parent.stream.done providerModel={} inputTokens={} cachedInputTokens={} outputTokens={}",
@@ -823,6 +831,7 @@ impl AIService for DeepseekProvider {
                             parent.cached_input_token_count(),
                             parent.output_token_count(),
                         ),
+                        operit_util::AppLogger::VERBOSE_LEVEL_3,
                     );
                     provider.apply_token_counts(TokenCounts {
                         input: (parent.input_token_count() - parent.cached_input_token_count()).max(0),
@@ -832,7 +841,11 @@ impl AIService for DeepseekProvider {
                     provider.clearActiveParent(activeParentGeneration);
                 })
             });
-            return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
+            return Ok(Box::new(with_event_channel_and_failure(
+                cold_stream,
+                event_channel,
+                terminalFailure,
+            )));
         }
 
         let client = reqwest::Client::new();

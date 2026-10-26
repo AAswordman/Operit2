@@ -42,7 +42,7 @@ export function productionBootstrap() {
     source(bridge + 'PluginConfig.script.js'),
     source(bridge + 'RuntimeContext.script.js'),
     lazyBootstrapLibraries(),
-    source(sdk + 'JsExecutionRuntimeBridge.script.js'),
+    source(sdk + 'js_sdk/toolpkg_route_runtime.js') + '\n' + source(sdk + 'JsExecutionRuntimeBridge.script.js'),
   ];
   let position = 0;
   const result = text.slice(start, end).replace(/\{\{|\}\}|\{\}/g, token => {

@@ -1,9 +1,12 @@
 # ToolPkg v1 handwritten declarations
 
-These 25 declaration files are copied verbatim from `assistance/examples/types`.
+These 25 declaration files originate from `assistance/examples/types`.
 The v1 handwritten TypeScript contract remains authoritative; it is not generated
-from the v2 Rust SDK. `source.json` records the source commit and SHA-256 hashes.
-`LICENSE` is copied from that repository.
+from the v2 Rust SDK. Operit2 adds one local declaration in `quickjs-runtime.d.ts`:
+`global: typeof globalThis`, matching the alias supplied by the shared engine
+bootstrap.
+`source.json` records the upstream commit, local extensions, and current file
+identities. `LICENSE` is copied from that repository.
 
 `1.0.0` and `1.0.1` share this tree. Their differences remain expressed by the
 upstream `@since` annotations. They do not have separate declaration directories.
@@ -44,9 +47,11 @@ tsc -p core/crates/plugin/sdk/src/compat/v1/tsconfig.json
 node --test tools/tests/toolpkg_api_compatibility.test.mjs tools/tests/toolpkg_v1_adapters.test.mjs
 ```
 
-Importing updates the declarations and provenance only. It does not establish
-runtime support for newly declared capabilities. Review adapter and fixture
-changes before committing an upstream update. The verification command does not
+Importing reads the committed source bytes, applies the documented `global`
+alias extension, and records the resulting hashes. Git preserves the snapshot's
+bytes across platforms. Importing updates the declarations and provenance only.
+It does not establish runtime support for newly declared capabilities. Review
+adapter and fixture changes before committing an upstream update. The verification command does not
 need the original repository.
 
 See `plugins/docs/V1_COMPATIBILITY.md` for the implemented runtime boundary and

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.0.0+19
+version: 2.0.0+27
 
 environment:
   sdk: ^3.10.8
@@ -28,6 +28,8 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  operit_ui:
+    path: ../packages/operit_ui
   operit_folder_access:
     path: ../thirdparty/operit_folder_access
   flutter:
@@ -107,6 +109,8 @@ dependencies:
   desktop_multi_window: ^0.3.0
   desktop_widgets:
     path: ../thirdparty/desktop_widgets
+  operit_keep_alive:
+    path: ../thirdparty/operit_keep_alive
   geolocator: ^14.1.1
 
 dev_dependencies:

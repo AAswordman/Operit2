@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -151,14 +152,14 @@ class _ProjectLinksSection extends StatelessWidget {
             icon: Icons.code_outlined,
             title: '项目源码',
             subtitle: 'github.com/AAswordman/Operit2',
-            onTap: () => _launchExternalUri(_projectUri),
+            onTap: () => _launchExternalUri(context, _projectUri),
           ),
           const Divider(height: 1),
           _AboutActionRow(
             icon: Icons.menu_book_outlined,
             title: '使用文档',
             subtitle: 'README 与命令行说明',
-            onTap: () => _launchExternalUri(_documentationUri),
+            onTap: () => _launchExternalUri(context, _documentationUri),
           ),
           const Divider(height: 1),
           _AboutActionRow(
@@ -185,7 +186,7 @@ class _SupportSection extends StatelessWidget {
         icon: Icons.alternate_email_outlined,
         title: '开发者 AAswordman',
         subtitle: 'aaswordsman@foxmail.com',
-        onTap: () => _launchExternalUri(_contactUri),
+        onTap: () => _launchExternalUri(context, _contactUri),
       ),
     );
   }
@@ -318,10 +319,23 @@ const List<_OpenSourceComponent> _openSourceComponents = <_OpenSourceComponent>[
 ];
 
 /// Opens an external URI using the platform handler.
-Future<void> _launchExternalUri(Uri uri) async {
-  final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-  if (!launched) {
-    throw StateError('Unable to open $uri');
+///
+/// When no activity can handle the URI (for example no browser or mail app),
+/// copies the address to the clipboard and notifies the user instead of
+/// surfacing an unhandled platform exception.
+Future<void> _launchExternalUri(BuildContext context, Uri uri) async {
+  try {
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched) {
+      throw StateError('Unable to open $uri');
+    }
+  } catch (_) {
+    await Clipboard.setData(ClipboardData(text: uri.toString()));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('没有应用能打开此链接，已复制到剪贴板：${uri.toString()}')),
+      );
+    }
   }
 }
 

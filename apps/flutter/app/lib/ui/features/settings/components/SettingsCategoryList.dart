@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -16,7 +17,7 @@ class SettingsCategoryList extends StatelessWidget {
   final SettingsCategory? selectedCategory;
   final ValueChanged<SettingsCategory> onCategorySelected;
 
-  /// Builds the categorized settings navigation list.
+  /// Shares one control blur across the non-overlapping category tiles.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -51,35 +52,42 @@ class SettingsCategoryList extends StatelessWidget {
       ),
     ];
     final theme = Theme.of(context);
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
-      children: <Widget>[
-        SettingsCategoryTile(
-          spec: SettingsCategorySpec.of(SettingsCategory.accessLinks, l10n),
-          selected: selectedCategory == SettingsCategory.accessLinks,
-          onTap: () => onCategorySelected(SettingsCategory.accessLinks),
-          prominent: true,
-        ),
-        for (final groupEntry in groups.asMap().entries) ...<Widget>[
-          Padding(
-            padding: EdgeInsets.fromLTRB(8, groupEntry.key == 0 ? 2 : 12, 8, 6),
-            child: Text(
-              groupEntry.value.title,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.6,
+    return ThemeGlassSurfaceGroup(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
+        children: <Widget>[
+          SettingsCategoryTile(
+            spec: SettingsCategorySpec.of(SettingsCategory.accessLinks, l10n),
+            selected: selectedCategory == SettingsCategory.accessLinks,
+            onTap: () => onCategorySelected(SettingsCategory.accessLinks),
+            prominent: true,
+          ),
+          for (final groupEntry in groups.asMap().entries) ...<Widget>[
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                8,
+                groupEntry.key == 0 ? 2 : 12,
+                8,
+                6,
+              ),
+              child: Text(
+                groupEntry.value.title,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.6,
+                ),
               ),
             ),
-          ),
-          for (final category in groupEntry.value.categories)
-            SettingsCategoryTile(
-              spec: SettingsCategorySpec.of(category, l10n),
-              selected: selectedCategory == category,
-              onTap: () => onCategorySelected(category),
-            ),
+            for (final category in groupEntry.value.categories)
+              SettingsCategoryTile(
+                spec: SettingsCategorySpec.of(category, l10n),
+                selected: selectedCategory == category,
+                onTap: () => onCategorySelected(category),
+              ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

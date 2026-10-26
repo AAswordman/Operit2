@@ -16,12 +16,11 @@ struct _WebviewAllLinuxPlugin {
 
   FlPluginRegistrar *registrar;
   FlMethodChannel *root_channel;
+  FlMethodChannel *resource_channel;
   GtkOverlay *overlay;
   GtkWidget *flutter_view;
-  GtkWidget *flutter_input_widget;
   GHashTable *webviews;
   gint next_webview_id;
-  guint input_region_update_source_id;
   gboolean disposing;
 };
 
@@ -45,6 +44,7 @@ typedef struct {
   GHashTable *user_scripts;
   GPtrArray *user_script_order;
   gint next_request_id;
+  gboolean local_resources_enabled;
   gboolean console_enabled;
   gboolean scroll_enabled;
   gboolean java_script_alert_dialog_enabled;
@@ -92,9 +92,6 @@ void destroy_linux_webview(gpointer data);
 void root_method_call_cb(FlMethodChannel *channel, FlMethodCall *method_call,
                          gpointer user_data);
 GtkOverlay *ensure_overlay(WebviewAllLinuxPlugin *self);
-void update_flutter_view_input_region(WebviewAllLinuxPlugin *self);
-void schedule_flutter_view_input_region_update(WebviewAllLinuxPlugin *self);
-void restore_flutter_view_input_region(WebviewAllLinuxPlugin *self);
 void detach_linux_webview_host(WebviewAllLinuxPlugin *self);
 void release_linux_webview_focus(LinuxWebView *webview);
 void cancel_pending_request_timeout(LinuxWebView *webview, gint request_id);

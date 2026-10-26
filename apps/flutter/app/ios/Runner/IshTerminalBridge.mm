@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import "IshRootFilesystem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -7,8 +8,9 @@
 extern "C" {
 #import "LinuxInterop.h"
 #include "kernel/errno.h"
-#include "tools/fakefs.h"
 }
+
+typedef bool (*ORTIshOutputCallback)(void *, const uint8_t *, size_t);
 
 static const NSUInteger ORTIshOutputCapacity = 1024 * 1024;
 static const NSTimeInterval ORTIshStartTimeout = 30.0;
@@ -51,7 +53,7 @@ static ORTIshTerminalSession *ORTIshPendingSession;
 static NSLock *ORTIshStateLock;
 static NSLock *ORTIshStartLock;
 static NSString *ORTIshRootPath;
-static BOOL ORTIshKernelStarted;
+static NSNumber *ORTIshKernelResult;
 static uint64_t ORTIshNextSessionId;
 
 /// Initializes the process-global iSH bridge state.
@@ -168,58 +170,30 @@ static BOOL ORTIshResize(ORTIshTerminalSession *session, NSInteger rows, NSInteg
   return YES;
 }
 
-/// Imports the bundled Alpine root archive into the persistent iSH fakefs directory.
-static BOOL ORTIshPrepareRoot(NSString **errorOut) {
-  NSFileManager *fileManager = [NSFileManager defaultManager];
-  NSURL *supportDirectory = [fileManager URLsForDirectory:NSApplicationSupportDirectory
-                                                inDomains:NSUserDomainMask].firstObject;
-  NSURL *runtimeDirectory = [supportDirectory URLByAppendingPathComponent:@"operit-ish"];
-  NSURL *rootDirectory = [runtimeDirectory URLByAppendingPathComponent:@"rootfs"];
-  NSError *directoryError = nil;
-  if (![fileManager createDirectoryAtURL:runtimeDirectory
-             withIntermediateDirectories:YES
-                              attributes:nil
-                                   error:&directoryError]) {
-    *errorOut = directoryError.localizedDescription;
-    return NO;
-  }
-  if ([fileManager fileExistsAtPath:rootDirectory.path]) {
-    ORTIshRootPath = rootDirectory.path;
-    return YES;
-  }
-  NSURL *archive = [NSBundle.mainBundle URLForResource:@"ish-root" withExtension:@"tar.gz"];
-  if (archive == nil) {
-    *errorOut = @"Bundled iSH Alpine root archive is missing";
-    return NO;
-  }
-  struct fakefsify_error fakefsError = {};
-  if (!fakefs_import(archive.fileSystemRepresentation, rootDirectory.fileSystemRepresentation,
-                     &fakefsError, (struct progress){})) {
-    NSString *message = fakefsError.message == NULL ? @"iSH root import failed"
-                                                    : [NSString stringWithUTF8String:fakefsError.message];
-    free(fakefsError.message);
-    *errorOut = message;
-    return NO;
-  }
-  ORTIshRootPath = rootDirectory.path;
-  return YES;
-}
-
-/// Starts the iSH Linux kernel after its fakefs root has been prepared.
+/// Prepares one complete root and starts Linux once, retaining its actual result.
 static BOOL ORTIshEnsureKernel(NSString **errorOut) {
   ORTIshInitializeState();
   [ORTIshStateLock lock];
-  if (ORTIshKernelStarted) {
-    [ORTIshStateLock unlock];
-    return YES;
+  if (ORTIshKernelResult == nil) {
+    NSURL *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                        inDomains:NSUserDomainMask].firstObject;
+    NSURL *runtime = [support URLByAppendingPathComponent:@"operit-ish"];
+    NSURL *archive = [NSBundle.mainBundle URLForResource:@"ish-root" withExtension:@"tar.gz"];
+    ORTIshRootPath = ORTIshPrepareRootAtURL(runtime, archive, errorOut);
+    if (ORTIshRootPath == nil) {
+      [ORTIshStateLock unlock];
+      return NO;
+    }
+    // run_kernel already waits for startup. A failed embedded kernel cannot
+    // be restarted in the same process, so retain failure as well as success.
+    ORTIshKernelResult = @(actuate_kernel("earlyprintk"));
   }
-  BOOL prepared = ORTIshPrepareRoot(errorOut);
-  if (prepared) {
-    actuate_kernel("earlyprintk");
-    ORTIshKernelStarted = YES;
-  }
+  int result = ORTIshKernelResult.intValue;
   [ORTIshStateLock unlock];
-  return prepared;
+  if (result != 0) {
+    *errorOut = [NSString stringWithFormat:@"iSH kernel startup failed (%d); reopen the app to retry", result];
+  }
+  return result == 0;
 }
 
 /// Creates one required iSH runtime mount directory and accepts an existing directory.
@@ -377,7 +351,8 @@ static NSDictionary *ORTIshSessionEntry(ORTIshTerminalSession *session) {
 
 /// Executes one shell command and waits for its exact iSH completion marker.
 static NSDictionary *ORTIshExecute(ORTIshTerminalSession *session, NSString *command,
-                                   uint64_t timeoutMs, NSString **errorOut) {
+                                   uint64_t timeoutMs, NSString **errorOut,
+                                   void *callbackContext = nullptr, ORTIshOutputCallback onOutput = nullptr) {
   NSString *marker = [NSString stringWithFormat:@"__OPERIT_ISH_%@__", NSUUID.UUID.UUIDString];
   NSString *wrapped = [NSString stringWithFormat:@"%@\nprintf '\\036%@:%%s\\037' \"$?\"\n", command, marker];
   @synchronized (session) {
@@ -399,7 +374,15 @@ static NSDictionary *ORTIshExecute(ORTIshTerminalSession *session, NSString *com
   NSData *markerData = [[NSString stringWithFormat:@"\036%@:", marker] dataUsingEncoding:NSUTF8StringEncoding];
   NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:(NSTimeInterval)timeoutMs / 1000.0];
   for (;;) {
-    [output appendData:ORTIshDrainOutput(session)];
+    NSData *frame = ORTIshDrainOutput(session);
+    [output appendData:frame];
+    if (onOutput != nullptr && !onOutput(callbackContext, static_cast<const uint8_t *>(frame.bytes), frame.length)) {
+      NSString *interruptError = nil;
+      ORTIshWrite(session, [@"\003" dataUsingEncoding:NSUTF8StringEncoding], &interruptError);
+      @synchronized (session) { session.commandRunning = NO; }
+      *errorOut = interruptError ?: @"iSH terminal execution canceled";
+      return nil;
+    }
     NSRange markerRange = [output rangeOfData:markerData options:0 range:NSMakeRange(0, output.length)];
     if (markerRange.location != NSNotFound) {
       NSUInteger statusStart = markerRange.location + markerRange.length;
@@ -452,7 +435,8 @@ static NSDictionary *ORTIshExecute(ORTIshTerminalSession *session, NSString *com
 }
 
 /// Handles one typed iSH terminal bridge command.
-static NSDictionary *ORTIshHandleCommand(NSString *command, NSDictionary *request) {
+static NSDictionary *ORTIshHandleCommand(NSString *command, NSDictionary *request,
+                                         void *callbackContext = nullptr, ORTIshOutputCallback onOutput = nullptr) {
   NSString *error = nil;
   if ([command isEqualToString:@"managedRuntimeMount"]) {
     NSString *hostDirectory = ORTIshRequiredString(request, @"hostDirectory", &error);
@@ -548,7 +532,7 @@ static NSDictionary *ORTIshHandleCommand(NSString *command, NSDictionary *reques
     NSString *shellCommand = ORTIshRequiredString(request, @"command", &error);
     NSNumber *timeout = request[@"timeoutMs"];
     if (session == nil || shellCommand == nil || ![timeout isKindOfClass:[NSNumber class]]) return ORTIshError(error ?: @"iSH terminal request has invalid timeoutMs");
-    NSDictionary *result = ORTIshExecute(session, shellCommand, timeout.unsignedLongLongValue, &error);
+    NSDictionary *result = ORTIshExecute(session, shellCommand, timeout.unsignedLongLongValue, &error, callbackContext, onOutput);
     return result == nil ? ORTIshError(error) : ORTIshResult(result);
   }
   if ([command isEqualToString:@"terminalScreen"]) {
@@ -564,15 +548,27 @@ static NSDictionary *ORTIshHandleCommand(NSString *command, NSDictionary *reques
 }
 
 /// Handles one iSH terminal JSON request from the Rust host bridge.
-extern "C" char *operit_ios_ish_terminal_call(const char *command, const char *request_json) {
+static char *ORTIshBridgeCall(const char *command, const char *request_json,
+                              void *callbackContext, ORTIshOutputCallback onOutput) {
   @autoreleasepool {
     if (command == NULL || request_json == NULL) return ORTIshEncodeResponse(ORTIshError(@"iSH terminal bridge request is missing"));
     NSError *jsonError = nil;
     NSData *requestData = [NSData dataWithBytes:request_json length:strlen(request_json)];
     id requestValue = [NSJSONSerialization JSONObjectWithData:requestData options:0 error:&jsonError];
     if (jsonError != nil || ![requestValue isKindOfClass:[NSDictionary class]]) return ORTIshEncodeResponse(ORTIshError(@"iSH terminal request is not a JSON object"));
-    return ORTIshEncodeResponse(ORTIshHandleCommand([NSString stringWithUTF8String:command], requestValue));
+    return ORTIshEncodeResponse(ORTIshHandleCommand([NSString stringWithUTF8String:command], requestValue, callbackContext, onOutput));
   }
+}
+
+/// Executes the existing terminal request without output observation.
+extern "C" char *operit_ios_ish_terminal_call(const char *command, const char *request_json) {
+  return ORTIshBridgeCall(command, request_json, nullptr, nullptr);
+}
+
+/// Forwards live PTY bytes synchronously while the existing execution loop owns the command.
+extern "C" char *operit_ios_ish_terminal_call_stream(const char *command, const char *request_json,
+                                                   void *callbackContext, ORTIshOutputCallback onOutput) {
+  return ORTIshBridgeCall(command, request_json, callbackContext, onOutput);
 }
 
 /// Frees one response string returned by the iSH terminal bridge.

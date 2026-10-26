@@ -2,27 +2,73 @@
 
 import 'package:flutter/material.dart';
 
-import '../theme/OperitThemeAssets.dart';
+import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../features/packages/screens/ComposeDslImageSource.dart';
 import '../features/settings/model/ProviderLogo.dart';
 
-class ChatAvatarImage extends StatelessWidget {
-  /// Creates a chat avatar from an identity asset or the default app avatar.
+class ChatAvatarImage extends StatefulWidget {
+  /// Creates a chat avatar backed by the same file service as plugin images.
   const ChatAvatarImage({
     super.key,
     required this.avatarUri,
     required this.fit,
+    this.clients = const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge()),
   });
 
   final String? avatarUri;
   final BoxFit fit;
+  final GeneratedCoreProxyClients clients;
 
-  /// Displays the default avatar for an unset identity or loads its runtime asset.
+  /// Retains the resolved image while the surrounding message is rebuilt.
+  @override
+  State<ChatAvatarImage> createState() => _ChatAvatarImageState();
+}
+
+class _ChatAvatarImageState extends State<ChatAvatarImage> {
+  Future<ImageProvider>? _provider;
+
+  /// Resolves the initial identity image through the shared image loader.
+  @override
+  void initState() {
+    super.initState();
+    _resolveImage();
+  }
+
+  /// Resolves a new image when its identity or runtime bridge changes.
+  @override
+  void didUpdateWidget(covariant ChatAvatarImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.avatarUri != widget.avatarUri ||
+        oldWidget.clients.bridge != widget.clients.bridge) {
+      _resolveImage();
+    }
+  }
+
+  /// Uses the Core file service for VFS paths and shares Flutter image caching.
+  void _resolveImage() {
+    final path = widget.avatarUri?.trim();
+    if (path == null ||
+        path.isEmpty ||
+        Uri.parse(path).scheme == 'provider-logo') {
+      _provider = null;
+      return;
+    }
+    final clients = widget.clients;
+    _provider = resolveComposeDslImage(
+      path,
+      readVfsBytes: (path) => readComposeDslVfsBytes(clients, path),
+      vfsOwner: clients.bridge,
+    );
+  }
+
+  /// Displays the identity image, provider logo, or configured default avatar.
   @override
   Widget build(BuildContext context) {
-    final path = avatarUri?.trim();
+    final path = widget.avatarUri?.trim();
     if (path == null || path.isEmpty) {
       return SizedBox.expand(
-        child: Image.asset('assets/images/operit_avatar.png', fit: fit),
+        child: Image.asset('assets/images/operit_avatar.png', fit: widget.fit),
       );
     }
     final uri = Uri.parse(path);
@@ -40,6 +86,17 @@ class ChatAvatarImage extends StatelessWidget {
         ),
       );
     }
-    return ThemeAssetImage(storagePath: path, fit: fit);
+    return SizedBox.expand(
+      child: FutureBuilder<ImageProvider>(
+        future: _provider,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+          }
+          if (!snapshot.hasData) return const SizedBox.expand();
+          return Image(image: snapshot.requireData, fit: widget.fit);
+        },
+      ),
+    );
   }
 }

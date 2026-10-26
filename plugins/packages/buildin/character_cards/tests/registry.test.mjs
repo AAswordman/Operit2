@@ -59,7 +59,6 @@ test("every declared domain method is published as a provider registerApi callba
   const api = loadModule("src/public-api.ts", { ToolPkg: registry });
   api.registerDomainApis();
   const declared = [...interfaceMembers("../src/api.ts", "DomainOperations"), "memory.query",
-    "chat.configuration.snapshot.store", "chat.configuration.snapshot.read",
     "chat.configuration.draft.resolve", "chat.configuration.draft.commit", "chat.configuration.draft.abort", "chat.configuration.delete"].sort();
   const names = definitions.map(
     /** Preserves each stable published method name. */
@@ -90,6 +89,17 @@ test("memory command provider retains exact shared owner scope", () => {
   assert.equal(parsed.kind, "domain"); assert.equal(parsed.operation, "memory.search");
   assert.deepEqual(plain(parsed.payload), { ownerKey: "shared:shared-main", query: "不需要子串命中" });
   assert.throws(() => api.parseMemoryCommand(["character", "wrong:id", "graph"]), /character:<id> or shared:<id>/);
+});
+
+/** Verifies the import command keeps pasted JSON inline and defers a file path without reading it during parsing. */
+test("memory import accepts pasted JSON or a file path", () => {
+  const api = loadModule("src/commands.ts");
+  const inline = api.parseMemoryCommand(["character", "operit", "import", "SKIP", '{"version":"2.0"}']);
+  assert.equal(inline.kind, "domain"); assert.equal(inline.operation, "memory.import");
+  assert.deepEqual(plain(inline.payload), { ownerKey: "character:operit", strategy: "SKIP", content: '{"version":"2.0"}' });
+  const file = api.parseMemoryCommand(["character", "operit", "import", "UPDATE", "/home/test/backup.json"]);
+  assert.equal(file.kind, "deferred"); assert.equal(typeof file.execute, "function");
+  assert.throws(() => api.parseMemoryCommand(["character", "operit", "import", "REPLACE", "/home/test/backup.json"]), /SKIP \| UPDATE \| CREATE_NEW/);
 });
 
 /** Verifies invalid host command events remain explicit failures in text and structured outputs. */

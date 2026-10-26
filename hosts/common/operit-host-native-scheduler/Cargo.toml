@@ -7,20 +7,16 @@ publish = false
 
 [features]
 default = ["javascript"]
-javascript = ["dep:rquickjs"]
+javascript = ["dep:v8"]
 # Desktop simulator mode that uses the ESP32 host worker stack budget.
 esp32-compat = []
 
 [dependencies]
+bytes = "1"
 serde_json = "1"
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
-tokio = { version = "1", default-features = false, features = ["net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+v8 = { version = "152.2.0", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["io-util"] }
-
-[target.'cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))'.dependencies]
-rquickjs = { version = "0.12.0", optional = true }
-
-[target.'cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))'.dependencies]
-rquickjs = { version = "0.12.0", features = ["bindgen"], optional = true }

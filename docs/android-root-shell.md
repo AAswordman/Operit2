@@ -1,25 +1,6 @@
 # Android Root / su 封装
 
-## 参考范围
-
-设计参考：GitHub `AAswordman/Operit`，提交
-`dbf71916fae9750cfdc9f9a774f5a0fee56633fb`（2026-10-07 拉取）。主要阅读：
-
-- `app/src/main/java/com/ai/assistance/operit/core/tools/system/RootAuthorizer.kt`
-- `app/src/main/java/com/ai/assistance/operit/core/tools/system/shell/RootShellExecutor.kt`
-- `app/src/main/java/com/ai/assistance/operit/core/tools/system/shell/ShellExecutorFactory.kt`
-- `app/src/main/java/com/ai/assistance/operit/data/preferences/AndroidPermissionPreferences.kt`
-
-本实现按 Operit2 的同步 Kotlin owner / Flutter MethodChannel 边界重新实现，
-没有直接复制上游源文件，也没有引入其 UI、DataStore、Flow 或工具层依赖。
-保留已有 libsu 6.0.0 和 Shizuku 13.1.5 依赖。
-
-## 主要修正
-
-之前 Root 授权固定执行 `su -c 'id -u'`，截图却固定使用 libsu；授权状态只读取
-SharedPreferences 的历史布尔值，libsu 执行则没有落实调用者的命令超时。
-
-现在分为：
+## 组件职责
 
 - `AndroidRootCommandRouter`：自动/强制模式、自定义 su argv、设备 Root 迹象与
   实际授权区分、身份探测、执行路由。可以通过假后端进行 JVM 行为测试。
@@ -67,7 +48,7 @@ Owner `execute_privileged_command` 支持 `root` / `root_auto`，同时保留
 授权请求总预算为 30 秒；已同意后的状态复查总预算为 10 秒，并放到后台线程。
 RootAuto 单条命令的传输探测与实际执行共用调用者传入的超时预算。
 
-## 验证
+## 维护检查
 
 原生接线契约（无需 Android SDK）：
 

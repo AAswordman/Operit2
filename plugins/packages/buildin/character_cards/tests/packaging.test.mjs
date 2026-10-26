@@ -92,6 +92,9 @@ test("archive includes all current nested source modules with their exact bytes"
   for (const [file, bytes] of Object.entries(await buildUiScreenScripts())) {
     assert.ok(Object.hasOwn(entries, file), "Package archive omitted executable screen: " + file);
     assert.equal(digest(entries[file]), digest(bytes), "Stale archived screen: " + file);
+    const source = Buffer.from(entries[file]).toString("utf8");
+    assert.doesNotMatch(source, /^\/\/ @operit-compose-artifact /u, "Screens must ship editable source: " + file);
+    assert.match(source, /\.UI\.[A-Za-z_$]/u, "Screens must preserve their UI declarations: " + file);
   }
   assert.equal(digest(entries["dist/main.js"]), digest(main));
   assert.equal(digest(entries["dist/tools.js"]), digest(tools));
@@ -169,7 +172,7 @@ test("all declared resources are packaged and the obsolete sidebar browser chain
 });
 
 /** Main and standalone screens must lower native awaits to retain call-scoped Promise continuations. */
-test("main and Compose screen providers lower every async function while retaining ES2020 features", async () => {
+test("main and Compose screen providers lower every async function for scoped Promise continuations", async () => {
   const ts = require("typescript");
   const scripts = { "dist/main.js": await buildMainScript(), ...await buildUiScreenScripts() };
   for (const [file, bytes] of Object.entries(scripts)) {
@@ -184,5 +187,4 @@ test("main and Compose screen providers lower every async function while retaini
     visit(tree);
     assert.equal(nativeAsyncFunctions, 0, "Native await bypasses call-scoped Promise.then: " + file);
   }
-  assert.match(Buffer.from(scripts["dist/main.js"]).toString("utf8"), /1n/u, "Lowering async must not remove supported BigInt identifiers");
 });

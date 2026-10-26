@@ -8,6 +8,7 @@ import '../../../../../../../core/application/PluginHotReload.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../packages/screens/ToolPkgUiLauncherScreen.dart';
+import '../../../../../../theme/OperitTheme.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 
 /// Renders enabled Compose DSL contributions for the host-owned composer slot.
@@ -82,46 +83,55 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
         .createSlotDefinitions(slot: 'above_input');
   }
 
-  /// Builds every resolved DSL contribution for the current chat composer.
+  /// Aligns contributions with the input surface edges and builds the current slot.
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<core_proxy.ToolPkgChatComposerSlot>>(
-      future: _slotsFuture,
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const SizedBox.shrink();
-        }
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: snapshot.data!
-              .map(
-                (contribution) => ToolPkgUiLauncherScreen(
-                  key: ValueKey<String>(
-                    '${widget.chatId}:${contribution.containerPackageName}:'
-                    '${contribution.contributionId}:$_contentGeneration',
-                  ),
-                  clients: widget.viewModel.clients,
-                  plugin: contribution.containerRuntime,
-                  initialRouteId: contribution.contributionId,
-                  embeddedScreenPath: contribution.screen,
-                  showLauncherChrome: false,
-                  showLoadingIndicator: false,
-                  initialState: <String, Object?>{
-                    'chatId': widget.chatId,
-                    'isProcessing': widget.isProcessing,
-                    'pendingQueueCount': widget.pendingQueueCount,
-                  },
-                  initialModuleSpec: <String, Object?>{
-                    'id': contribution.contributionId,
-                    'screen': contribution.screen,
-                    'slot': contribution.slot,
-                    'keepAlive': contribution.keepAlive,
-                  },
-                ),
-              )
-              .toList(growable: false),
-        );
-      },
+    final themeSnapshot = OperitTheme.of(context).themePreferenceSnapshot;
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: themeSnapshot.chatInputFloating ? 8 : 0,
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: FutureBuilder<List<core_proxy.ToolPkgChatComposerSlot>>(
+          future: _slotsFuture,
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const SizedBox.shrink();
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: snapshot.data!
+                  .map(
+                    (contribution) => ToolPkgUiLauncherScreen(
+                      key: ValueKey<String>(
+                        '${widget.chatId}:${contribution.containerPackageName}:'
+                        '${contribution.contributionId}:$_contentGeneration',
+                      ),
+                      clients: widget.viewModel.clients,
+                      plugin: contribution.containerRuntime,
+                      initialRouteId: contribution.contributionId,
+                      embeddedScreenPath: contribution.screen,
+                      showLauncherChrome: false,
+                      showLoadingIndicator: false,
+                      initialState: <String, Object?>{
+                        'chatId': widget.chatId,
+                        'isProcessing': widget.isProcessing,
+                        'pendingQueueCount': widget.pendingQueueCount,
+                      },
+                      initialModuleSpec: <String, Object?>{
+                        'id': contribution.contributionId,
+                        'screen': contribution.screen,
+                        'slot': contribution.slot,
+                        'keepAlive': contribution.keepAlive,
+                      },
+                    ),
+                  )
+                  .toList(growable: false),
+            );
+          },
+        ),
+      ),
     );
   }
 }

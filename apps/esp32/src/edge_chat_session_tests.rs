@@ -133,7 +133,7 @@ impl RuntimePeerService for Peers {
     async fn startPairing(
         &self,
         _: PeerEndpoint,
-        _: PeerTransport,
+        _: Option<PeerTransport>,
     ) -> Result<PendingPairing, CoreLinkError> {
         panic!("unused")
     }
@@ -200,6 +200,9 @@ impl RuntimePeerService for Peers {
     async fn removePairedPeer(&self, _: &str) -> Result<(), CoreLinkError> {
         panic!("unused")
     }
+    fn forgetPairingRecords(&self, _: &[String]) -> Result<(), CoreLinkError> {
+        panic!("unused")
+    }
 }
 async fn until(condition: impl Fn() -> bool) {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -217,7 +220,6 @@ fn assertWatches(client: &Client, chat: &str) {
     let watches = client.watches.lock().unwrap();
     for method in [
         "chatMessagesWindowFlow",
-        "routedChatListFlow",
         "chatStateFlow",
         "events",
     ] {
@@ -277,6 +279,7 @@ async fn provision_reconnect_and_restore_without_local_business_state_or_mutatio
         "no watches before object creation is acknowledged"
     );
     assert!(send("before ack".into()).is_err());
+    assert!(conversationsAction().is_err(), "initialization cannot open metadata early");
     // Replace the entry without observing None. The old acknowledgement cannot
     // revive obsolete subscriptions, and retries retain the same creation key.
     let (second, ack) = Client::gated();
@@ -286,8 +289,9 @@ async fn provision_reconnect_and_restore_without_local_business_state_or_mutatio
     assert_eq!(session().chatId, id);
     lateAck.send(Ok(CoreValue::Null)).unwrap();
     ack.send(Ok(CoreValue::Null)).unwrap();
-    until(|| second.watches.lock().unwrap().len() == 4).await;
+    until(|| second.watches.lock().unwrap().len() == 3).await;
     assert!(first.watches.lock().unwrap().is_empty());
+    assert!(second.watches.lock().unwrap().iter().all(|(r,_)| r.propertyName != "routedChatListFlow"), "metadata must stay unloaded until browsing");
     assertWatches(&second, &id);
     let stable = session();
     route.poll(services.clone());
@@ -299,7 +303,7 @@ async fn provision_reconnect_and_restore_without_local_business_state_or_mutatio
     let third = Arc::new(Client::default());
     peers.set("space", "other-core", "3", third.clone());
     route.poll(services.clone());
-    until(|| third.watches.lock().unwrap().len() == 4).await;
+    until(|| third.watches.lock().unwrap().len() == 3).await;
     assert_eq!(session().chatId, id);
     assertWatches(&third, &id);
     until(|| {
@@ -331,7 +335,7 @@ async fn provision_reconnect_and_restore_without_local_business_state_or_mutatio
     until(|| session().needsReconnect.load(Ordering::Acquire)).await;
     route.lastAttempt = Some(std::time::Instant::now() - std::time::Duration::from_secs(4));
     route.poll(services.clone());
-    until(|| third.watches.lock().unwrap().len() == 8).await;
+    until(|| third.watches.lock().unwrap().len() == 6).await;
     assert_eq!(
         third.calls.lock().unwrap().len(),
         1,
@@ -343,7 +347,7 @@ async fn provision_reconnect_and_restore_without_local_business_state_or_mutatio
     assert!(!isConnected());
     peers.set("space", "other-core", "3", third.clone());
     route.poll(services.clone());
-    until(|| third.watches.lock().unwrap().len() == 12).await;
+    until(|| third.watches.lock().unwrap().len() == 9).await;
     assert_eq!(session().chatId, id);
     assert_eq!(third.calls.lock().unwrap().len(), 1);
     // A different Space must not inherit the previous Space's chat ID.
@@ -363,8 +367,22 @@ async fn provision_reconnect_and_restore_without_local_business_state_or_mutatio
     // repurposing an ordinary read/send as a Binding-creation operation.
     route.lastAttempt = Some(std::time::Instant::now() - std::time::Duration::from_secs(4));
     route.poll(services);
-    until(|| fourth.watches.lock().unwrap().len() == 4).await;
+    until(|| fourth.watches.lock().unwrap().len() == 3).await;
     assert_eq!(session().chatId, nextId);
+    let primaryTasks=session().tasks.lock().unwrap().len();
+    conversationsAction().unwrap();conversationsAction().unwrap();
+    until(|| !session().conversationsLoading.load(Ordering::Acquire)).await;
+    assert_eq!(fourth.watches.lock().unwrap().iter().filter(|(r,_)|r.propertyName=="routedChatListFlow").count(),1,"duplicate browse actions share one metadata watch");
+    assert!(selectChat("missing-chat").is_err());
+    let (listRequest,listSender)=fourth.watches.lock().unwrap().iter().find(|(r,_)|r.propertyName=="routedChatListFlow").unwrap().clone();
+    listSender.send(CoreEvent {requestId:None,target:listRequest.target,propertyName:listRequest.propertyName,kind:CoreEventKind::Completed,value:CoreValue::Null}).unwrap();
+    until(|| session().conversationsError.lock().unwrap().is_some()).await;
+    assert!(!session().needsReconnect.load(Ordering::Acquire),"optional list failure must not restart the active chat");
+    conversationsAction().unwrap();
+    until(|| fourth.watches.lock().unwrap().iter().filter(|(r,_)|r.propertyName=="routedChatListFlow").count()==2).await;
+    until(|| !session().conversationsLoading.load(Ordering::Acquire)).await;
+    assert!(session().conversationsError.lock().unwrap().is_none());
+    assert_eq!(session().tasks.lock().unwrap().len(),primaryTasks,"list retries may not accumulate lifetime task handles");
     assert_eq!(fourth.calls.lock().unwrap().len(), 2);
     assertWatches(&fourth, &nextId);
     // Plugin RTT acknowledgements belong to one attempt, page and session.

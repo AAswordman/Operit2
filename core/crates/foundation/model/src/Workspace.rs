@@ -85,14 +85,14 @@ impl Workspace {
 
     /// Derives a single-segment folder name from a VFS path.
     pub fn folderNameFromPath(path: &str) -> Result<String, String> {
-        let trimmed = path.trim().trim_end_matches('/');
-        let name = trimmed.rsplit('/').next().map(str::trim).unwrap_or("");
-        if name.is_empty() || name == "." || name == ".." {
-            return Err(format!("cannot derive folder name from path: {path}"));
-        }
-        if name.contains('\\') {
-            return Err(format!("cannot derive folder name from path: {path}"));
-        }
+        let name = path
+            .trim()
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .map(str::trim)
+            .filter(|name| !matches!(*name, "" | "." | ".." | "file:") && !name.contains('\\'))
+            .ok_or_else(|| format!("cannot derive folder name from path: {path}"))?;
         Ok(name.to_string())
     }
 
@@ -186,5 +186,27 @@ mod tests {
         assert_eq!(workspace.folders.len(), 1);
         assert_eq!(workspace.folders[0].path, "/home/harmoon");
         workspace.validate().expect("rebind must stay valid");
+    }
+
+    /// Rejects paths without a real folder name instead of inventing a root folder.
+    #[test]
+    fn folderNamesRejectInvalidPaths() {
+        for path in [
+            "", " \t ", "/", "///", ".", "..", "/tmp/.", "/tmp/..", "file:", "file:///",
+        ] {
+            assert!(Workspace::folderNameFromPath(path).is_err(), "{path:?}");
+        }
+    }
+
+    /// Derives folder names from real VFS folders while accepting surrounding whitespace and trailing separators.
+    #[test]
+    fn folderNamesPreserveRealFolders() {
+        for (path, expected) in [
+            ("/mnt/linux/home/harmoon", "harmoon"),
+            (" /app/workspaces/demo/ ", "demo"),
+            ("/mnt/android/sdcard/Projects", "Projects"),
+        ] {
+            assert_eq!(Workspace::folderNameFromPath(path).unwrap(), expected);
+        }
     }
 }

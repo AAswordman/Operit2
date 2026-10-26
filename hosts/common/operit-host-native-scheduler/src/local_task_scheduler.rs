@@ -1,78 +1,64 @@
-//! Small Host executor for device embeddings: all !Send futures stay on one
-//! worker instead of allocating a native thread for every peer task.
+//! Small Host scheduler with separate asynchronous and blocking capacity for device embeddings.
+use crate::runtime_task_scheduler::{spawnTaskPoolWithOptions, RuntimeTaskQueue};
 use operit_host_api::{
     HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
     HostRuntimeTurnFuture,
 };
-use tokio::sync::mpsc;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct LocalHostRuntimeTaskSchedulerHost {
-    tasks: mpsc::UnboundedSender<HostRuntimeAsyncTask>,
+    tasks: Arc<RuntimeTaskQueue>,
+    blocking: Arc<RuntimeTaskQueue>,
 }
 
 impl LocalHostRuntimeTaskSchedulerHost {
+    /// Shares process-wide device workers while keeping blocking and asynchronous work separate.
     pub fn new() -> HostResult<Self> {
-        // ESP Host sockets use nonblocking std I/O and Host timers, not Mio.
-        // enable_all() reserves 1024 I/O events and creates a select/poll
-        // driver that can abort on ENOMEM during concurrent authentication.
-        Self::newWithIo(!cfg!(target_os = "espidf"))
+        static SHARED: std::sync::OnceLock<Result<LocalHostRuntimeTaskSchedulerHost, String>> =
+            std::sync::OnceLock::new();
+        SHARED
+            .get_or_init(|| {
+                Self::newWithIo(!cfg!(target_os = "espidf")).map_err(|error| error.to_string())
+            })
+            .as_ref()
+            .cloned()
+            .map_err(|error| HostError::new(error.clone()))
     }
 
+    /// Selects timer-only execution for Host sockets that do not use the Tokio I/O driver.
     fn newWithIo(enableIo: bool) -> HostResult<Self> {
-        let (sender, mut receiver) = mpsc::unbounded_channel::<HostRuntimeAsyncTask>();
-        let (ready, started) = std::sync::mpsc::sync_channel(1);
-        std::thread::Builder::new()
-            .name("operit-host-tasks".into())
-            .stack_size(
-                if cfg!(any(target_os = "espidf", feature = "esp32-compat")) {
-                    32 * 1024
-                } else {
-                    2 * 1024 * 1024
-                },
-            )
-            .spawn(move || {
-                let mut builder = tokio::runtime::Builder::new_current_thread();
-                builder.enable_time();
-                if enableIo {
-                    builder.enable_io();
-                }
-                let runtime = match builder.build() {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        let _ = ready.send(Err(error.to_string()));
-                        return;
-                    }
-                };
-                let _ = ready.send(Ok(()));
-                let local = tokio::task::LocalSet::new();
-                local.block_on(&runtime, async {
-                    while let Some(task) = receiver.recv().await {
-                        // Use the LocalSet handle explicitly. Calling the free
-                        // spawn_local function here can lose the LocalSet
-                        // context on ESP-IDF and abort the firmware.
-                        local.spawn_local(async move { task().await });
-                    }
-                });
-            })
-            .map_err(|error| HostError::new(format!("start Host task worker: {error}")))?;
-        started
-            .recv()
-            .map_err(|error| HostError::new(error.to_string()))?
+        let stack = if cfg!(any(target_os = "espidf", feature = "esp32-compat")) {
+            32 * 1024
+        } else {
+            2 * 1024 * 1024
+        };
+        let tasks = spawnTaskPoolWithOptions("operit-host-async", 1, stack, enableIo)
             .map_err(HostError::new)?;
-        Ok(Self { tasks: sender })
+        let blocking = spawnTaskPoolWithOptions("operit-host-blocking", 1, stack, enableIo)
+            .map_err(HostError::new)?;
+        Ok(Self {
+            tasks: Arc::new(tasks),
+            blocking: Arc::new(blocking),
+        })
     }
 }
 
 impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
-    /// Reads the same native timer clock as the delegated delay implementation.
+    /// Reads the process-wide monotonic timer clock.
     fn monotonicTimeMillis(&self) -> HostResult<u64> {
         crate::NativeHostRuntimeTaskSchedulerHost.monotonicTimeMillis()
     }
 
+    /// Executes synchronous device work on bounded blocking capacity.
     fn scheduleHostRuntimeTask(&self, name: &str, task: HostRuntimeTask) -> HostResult<()> {
-        self.scheduleHostRuntimeAsyncTask(name, Box::new(|| Box::pin(async move { task() })))
+        self.scheduleHostRuntimeBlockingAsyncTask(
+            name,
+            Box::new(move || Box::pin(async move { task() })),
+        )
     }
+
+    /// Creates an affine future on the device's asynchronous worker.
     fn scheduleHostRuntimeAsyncTask(
         &self,
         name: &str,
@@ -80,19 +66,30 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
     ) -> HostResult<()> {
         self.tasks
             .send(task)
-            .map_err(|_| HostError::new(format!("Host task worker closed: {name}")))
+            .map_err(|_| HostError::new(format!("Host async queue is closed or full: {name}")))
     }
 
-    /// Executes cooperative work on the host-owned asynchronous executor.
+    /// Keeps synchronous calls inside asynchronous workflows off the coordination worker.
+    fn scheduleHostRuntimeBlockingAsyncTask(
+        &self,
+        name: &str,
+        task: HostRuntimeAsyncTask,
+    ) -> HostResult<()> {
+        self.blocking
+            .send(task)
+            .map_err(|_| HostError::new(format!("Host blocking queue is closed or full: {name}")))
+    }
+
+    /// Shares the asynchronous worker for cooperative callers.
     fn scheduleHostRuntimeCooperativeAsyncTask(
         &self,
         name: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
-        self.tasks
-            .send(task)
-            .map_err(|_| HostError::new(format!("Host task worker closed: {name}")))
+        self.scheduleHostRuntimeAsyncTask(name, task)
     }
+
+    /// Waits without occupying a thread and runs the synchronous callback on blocking capacity.
     fn scheduleDelayedHostRuntimeTask(
         &self,
         name: &str,
@@ -100,20 +97,23 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
         task: HostRuntimeTask,
     ) -> HostResult<()> {
         let delay = self.waitForHostRuntimeDelay(delayMs);
-        self.scheduleHostRuntimeAsyncTask(
+        self.scheduleHostRuntimeBlockingAsyncTask(
             name,
-            Box::new(|| {
+            Box::new(move || {
                 Box::pin(async move {
-                    if delay.await.is_ok() {
-                        task();
-                    }
+                    delay.await.expect("Host timer must remain available");
+                    task();
                 })
             }),
         )
     }
+
+    /// Yields one asynchronous executor turn.
     fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
         crate::NativeHostRuntimeTaskSchedulerHost.waitForHostRuntimeTaskTurn()
     }
+
+    /// Waits on the timer driver owned by the current Host worker.
     fn waitForHostRuntimeDelay(&self, delayMs: u64) -> HostRuntimeTurnFuture {
         crate::NativeHostRuntimeTaskSchedulerHost.waitForHostRuntimeDelay(delayMs)
     }
@@ -122,6 +122,41 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// A blocked device call must leave the asynchronous timer worker available.
+    #[test]
+    fn blocking_device_work_does_not_stall_async_timers() {
+        let scheduler = LocalHostRuntimeTaskSchedulerHost::newWithIo(false).unwrap();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (started, ready) = std::sync::mpsc::channel();
+        scheduler
+            .scheduleHostRuntimeTask(
+                "device-blocked",
+                Box::new(move || {
+                    started.send(()).unwrap();
+                    let _ = blocked.recv_timeout(std::time::Duration::from_secs(5));
+                }),
+            )
+            .unwrap();
+        ready
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let (sent, received) = std::sync::mpsc::channel();
+        scheduler
+            .scheduleHostRuntimeAsyncTask(
+                "device-timer",
+                Box::new(move || {
+                    Box::pin(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                        sent.send(()).unwrap();
+                    })
+                }),
+            )
+            .unwrap();
+        let completed = received.recv_timeout(std::time::Duration::from_secs(2));
+        release.send(()).unwrap();
+        completed.unwrap();
+    }
+
     #[test]
     fn timer_only_worker_runs_host_delays_without_an_io_driver() {
         let scheduler = LocalHostRuntimeTaskSchedulerHost::newWithIo(false).unwrap();

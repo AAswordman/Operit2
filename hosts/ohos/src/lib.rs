@@ -7,6 +7,7 @@ use operit_host_api::HostManager::HostManager;
 
 mod audio_playback;
 mod bluetooth;
+pub mod documents;
 mod filesystem;
 mod http;
 mod local_inference;

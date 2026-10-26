@@ -51,6 +51,11 @@ impl TestRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for TestRuntimeStorageHost {
+    /// Delegates durability to the real storage host without rewriting the file.
+    fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+        self.inner.flushFile(path)
+    }
+
     /// Returns the physical test runtime root.
     fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
         self.inner.runtimeRootDir()
@@ -64,6 +69,11 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
     /// Reads bytes from the mapped test path.
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         self.inner.readBytes(path)
+    }
+
+    /// Atomically publishes one complete in-memory test entry.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        self.writeBytes(path, content)
     }
 
     /// Writes bytes to the mapped test path.
@@ -507,6 +517,48 @@ async fn generated_proxy_chat_messages_flow_opens_local_flow() {
         .await;
 }
 
+/// Verifies explicit parents survive creation/list projection without cloning source messages or selection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn child_chat_creation_preserves_parent_without_cloning_history() {
+    let _testGuard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    tokio::task::LocalSet::new().run_until(async {
+        let storage = register_test_runtime_roots();
+        let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+        hosts.runtimeStorageHost = Some(storage.clone());
+        hosts.runtimeSqliteHost = Some(storage);
+        hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+        hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+        hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+        let proxy = proxy_with_loaded_packages(hosts);
+        let holder = proxy.chatRuntimeHolder();
+        let mut holder = holder.lock().await;
+        let target = LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain").unwrap();
+        let core = holder.coreForTarget(target).unwrap();
+        let parent = core.createNewChat(true, None, None, None).await.unwrap();
+        core.chatHistoryDelegate.addMessageToChat(
+            ChatMessage::new_with_markdown("user".into(), "parent history must stay in its conversation".into()),
+            Some(parent.clone()),
+        );
+        let child = core.createNewChat(false, Some(parent.clone()), Some(parent.clone()), None).await.unwrap();
+        assert_ne!(child, parent);
+        assert_eq!(core.currentChatIdFlow().await.unwrap().value(), Some(parent.clone()));
+        let stored = core.chatHistoryDelegate.chatHistoryManager.loadChatHistory(child.clone()).unwrap().unwrap();
+        assert_eq!(stored.parentChatId, Some(parent.clone()));
+        assert!(!stored.messages.iter().any(|message| message.parts.iter().any(|part| part.content == "parent history must stay in its conversation")));
+        let summaries = core.chatHistoryListItemsFlow().value();
+        assert_eq!(summaries.iter().find(|chat| chat.id == child).unwrap().parentChatId, Some(parent.clone()));
+        let before = summaries.len();
+        let error = core.createNewChat(false, Some(parent), Some("absent-parent".into()), None).await.unwrap_err();
+        assert_eq!(error, "Parent chat does not exist: absent-parent");
+        assert_eq!(core.chatHistoryListItemsFlow().value().len(), before);
+        let empty = core.createNewChat(true, None, None, None).await.unwrap();
+        let selectedChild = core.createNewChat(true, Some(empty.clone()), Some(empty.clone()), None).await.unwrap();
+        assert_ne!(selectedChild, empty, "An explicit child cannot reuse its empty source");
+        let selected = core.chatHistoryDelegate.chatHistoryManager.loadChatHistory(selectedChild).unwrap().unwrap();
+        assert_eq!(selected.parentChatId, Some(empty));
+    }).await;
+}
+
 /// Verifies a generated chat proxy instance resolves to an isolated detached slot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn generated_proxy_chat_instance_uses_detached_runtime_slot() {
@@ -535,7 +587,7 @@ async fn generated_proxy_chat_instance_uses_detached_runtime_slot() {
                     .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
                 main_core
-                    .createNewChat(true, None, None)
+                    .createNewChat(true, None, None, None)
                     .await
                     .expect("test chat creation must succeed");
                 let main_chat_id = main_core
@@ -552,7 +604,7 @@ async fn generated_proxy_chat_instance_uses_detached_runtime_slot() {
                     .coreForInstanceId(detached_slot_id.to_string())
                     .expect("detached runtime core must exist");
                 detached_core
-                    .createNewChat(true, None, None)
+                    .createNewChat(true, None, None, None)
                     .await
                     .expect("test chat creation must succeed");
                 let detached_chat_id = detached_core
@@ -641,7 +693,7 @@ async fn local_chat_messages_flow_update_opens_embedded_stream() {
                 let core = holder
                     .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
-                core.createNewChat(true, None, None)
+                core.createNewChat(true, None, None, None)
                     .await
                     .expect("test chat creation must succeed");
                 core.chatHistoryDelegate
@@ -799,7 +851,7 @@ async fn local_chat_messages_flow_update_inside_async_capture_opens_embedded_str
                 let core = holder
                     .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
-                core.createNewChat(true, None, None)
+                core.createNewChat(true, None, None, None)
                     .await
                     .expect("test chat creation must succeed");
                 core.chatHistoryDelegate
@@ -1232,3 +1284,6 @@ mod annotated_route_tests {
 
 #[path = "support/ui_resource_tests.rs"]
 mod ui_resource_tests;
+
+#[path = "support/failed_package_tests.rs"]
+mod failed_package_tests;

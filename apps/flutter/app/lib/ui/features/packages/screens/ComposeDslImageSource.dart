@@ -129,7 +129,11 @@ String? composeDslVfsImagePath(String source) {
     final host = uri!.host;
     return host.isEmpty || host == 'localhost' ? uri.path : '/$host${uri.path}';
   }
-  final path = uri?.scheme == 'file' ? uri!.toFilePath() : source;
+  // Virtual file URIs keep decoded URI separators on every operating system.
+  final path =
+      uri?.scheme == 'file' && (uri!.host.isEmpty || uri.host == 'localhost')
+      ? Uri.decodeComponent(uri.path)
+      : source;
   if (path == '/app' ||
       path.startsWith('/app/') ||
       path == '/mnt' ||

@@ -1,4 +1,4 @@
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -10,9 +10,7 @@ use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use crate::plugins::toolpkg::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout;
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_INPUT;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgChatInputHookRegistration;
-use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 
-static CHAT_INPUT_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatInputHookRegistration>>> = OnceLock::new();
 static CHAT_INPUT_RUNTIME: OnceLock<ToolPkgBridgeRuntime> = OnceLock::new();
 
 pub const CHAT_INPUT_EVENT_INPUT_CHANGED: &str = "input_changed";
@@ -22,14 +20,6 @@ pub const CHAT_INPUT_SUBMIT_ACTION_ALLOW: &str = "Allow";
 pub const CHAT_INPUT_SUBMIT_ACTION_BLOCK: &str = "Block";
 pub const CHAT_INPUT_SUBMIT_ACTION_CONSUME: &str = "Consume";
 pub const CHAT_INPUT_SUBMIT_ACTION_REPLACE: &str = "Replace";
-
-/// Builds the chat-input timeout notice with the exact package and Hook ID.
-fn build_chat_input_timeout_message(hook: &ToolPkgChatInputHookRegistration) -> String {
-    format!(
-        "Chat input hook timed out: {}:{}",
-        hook.containerPackageName, hook.hookId
-    )
-}
 
 #[derive(Clone, Debug)]
 pub struct ChatInputHookContext {
@@ -72,34 +62,6 @@ impl ToolPkgChatInputHookBridge {
         CHAT_INPUT_RUNTIME.get_or_init(|| runtime.clone());
     }
 
-    /// Synchronizes actual input hooks whenever the enabled package catalog changes.
-    #[allow(non_snake_case)]
-    pub fn syncToolPkgRegistrations(activeContainers: &[ToolPkgContainerRuntime]) {
-        let mut hooks = activeContainers
-            .iter()
-            .flat_map(|runtime| {
-                runtime
-                    .chatInputHooks
-                    .iter()
-                    .map(|hook| ToolPkgChatInputHookRegistration {
-                        containerPackageName: runtime.packageName.clone(),
-                        hookId: hook.id.clone(),
-                        functionName: hook.function.clone(),
-                        functionSource: hook.functionSource.clone(),
-                    })
-            })
-            .collect::<Vec<_>>();
-        hooks.sort_by(|left, right| {
-            left.containerPackageName
-                .cmp(&right.containerPackageName)
-                .then(left.hookId.cmp(&right.hookId))
-        });
-        *CHAT_INPUT_HOOKS
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-            .expect("toolpkg chat input hook mutex poisoned") = hooks;
-    }
-
     /// Executes submit handlers strictly; invocation, timeout and invalid-result errors never authorize sending.
     #[allow(non_snake_case)]
     pub async fn dispatchChatInputHooks(
@@ -108,37 +70,45 @@ impl ToolPkgChatInputHookBridge {
     ) -> Result<Option<ChatInputHookResult>, String> {
         validateChatInputContext(&context)?;
         let manager = RuntimePackageManager::readySnapshot(runtime.tool_handler().getOrCreatePackageManager()).await?;
-        let mut activeHooks = manager.getEnabledToolPkgContainerRuntimes().into_iter()
+        let activeHooks = manager.getEnabledToolPkgContainerRuntimes().into_iter()
             .flat_map(|container| container.chatInputHooks.into_iter().map(move |hook| ToolPkgChatInputHookRegistration {
                 containerPackageName: container.packageName.clone(), hookId: hook.id,
                 functionName: hook.function, functionSource: hook.functionSource,
             }))
             .collect::<Vec<_>>();
-        activeHooks.sort_by(|left, right| left.containerPackageName.cmp(&right.containerPackageName).then(left.hookId.cmp(&right.hookId)));
         if activeHooks.is_empty() {
             return Ok(None);
         }
-        let seconds = ApiPreferences::getInstance().getToolPkgPreHookTimeoutSeconds()
-            .map_err(|error| format!("Chat input timeout preference read failed: {error}"))?;
-        let budget = ToolPkgPreHookTimeout::fromSeconds(seconds);
+        let budget = match context.eventName.as_str() {
+            CHAT_INPUT_EVENT_SUBMIT_REQUESTED => {
+                let seconds = ApiPreferences::getInstance()
+                    .getToolPkgPreHookTimeoutSeconds()
+                    .map_err(|error| {
+                        format!("Chat input timeout preference read failed: {error}")
+                    })?;
+                Some(ToolPkgPreHookTimeout::fromSeconds(seconds))
+            }
+            _ => None,
+        };
         let mut current = context;
         let mut finalDecision = None;
         for hook in activeHooks {
-            let timeoutMillis = budget.remainingTimeoutMillis()
-                .ok_or_else(|| build_chat_input_timeout_message(&hook))?;
-            let raw = manager.runToolPkgMainHookWithTimeoutMillis(
-                &hook.containerPackageName, &hook.functionName, TOOLPKG_EVENT_CHAT_INPUT,
-                Some(&current.eventName), Some(&hook.hookId), hook.functionSource.as_deref(),
-                buildChatInputEventPayload(&current), None, None, None, timeoutMillis,
+            let payload = buildChatInputEventPayload(&current);
+            let raw = ToolPkgPreHookTimeout::runHook(
+                budget.as_ref(), &manager, &hook.containerPackageName, &hook.functionName,
+                TOOLPKG_EVENT_CHAT_INPUT, &current.eventName, &hook.hookId,
+                hook.functionSource.as_deref(), payload,
             ).await.map_err(|error| format!("Chat input {} hook failed for {}:{}: {error}",
                 current.eventName, hook.containerPackageName, hook.hookId))?;
-            if budget.hasExpired() {
-                return Err(build_chat_input_timeout_message(&hook));
-            }
-            let parsed = parseChatInputHookResult(raw)
-                .map_err(|error| format!("Chat input {} invalid result for {}:{}: {error}",
-                    current.eventName, hook.containerPackageName, hook.hookId))?;
-            let Some(mut parsed) = parsed else { continue; };
+            let parsed = parseChatInputHookResult(raw).map_err(|error| {
+                format!(
+                    "Chat input {} invalid result for {}:{}: {error}",
+                    current.eventName, hook.containerPackageName, hook.hookId
+                )
+            })?;
+            let Some(mut parsed) = parsed else {
+                continue;
+            };
             if current.eventName != CHAT_INPUT_EVENT_SUBMIT_REQUESTED {
                 continue;
             }

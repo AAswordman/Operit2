@@ -1,18 +1,77 @@
 /**
  * Preserves the copied v1 environment-variable signatures using the canonical v2 host methods.
  * @param {Pick<typeof import('../../../../../../../plugins/types/software_settings').SoftwareSettings, 'readEnvironmentVariable' | 'writeEnvironmentVariable'>} current
+ * @param {() => string} packageName
  * @returns {Pick<typeof import('../../../../../../../plugins/types-v1/software_settings').SoftwareSettings, 'readEnvironmentVariable' | 'writeEnvironmentVariable'>}
  */
-function __operitCreateV1SoftwareSettings(current) {
+function __operitCreateV1SoftwareSettings(current, packageName) {
     return {
         /** Reads the exact configured variable and preserves the host result and rejection. */
         readEnvironmentVariable(key) {
-            return current.readEnvironmentVariable(key);
+            return current.readEnvironmentVariable(packageName(), key);
         },
         /** Writes through the canonical host without changing the legacy optional value contract. */
         writeEnvironmentVariable(key, value) {
-            return current.writeEnvironmentVariable(key, value);
+            return current.writeEnvironmentVariable(packageName(), key, value);
         },
+    };
+}
+
+/**
+ * Adapts historical one-shot system speech to the canonical playback request.
+ * @param {(request: import('../../../../../../../plugins/types/tts').Tts.SpeakRequest) => Promise<import('../../../../../../../plugins/types/results').TtsSpeakResultData>} speak
+ * @returns {typeof import('../../../../../../../plugins/types-v1/software_settings').SoftwareSettings.testTtsPlayback}
+ */
+function __operitCreateV1TtsPlayback(speak) {
+    /** Preserves utterance overrides and reports the actual host start without changing saved settings. */
+    return async function testTtsPlayback(text, options) {
+        if (typeof text !== 'string' || !text.trim()) {
+            throw new TypeError('testTtsPlayback requires nonblank text');
+        }
+        if (options !== undefined && (!options || typeof options !== 'object' || Array.isArray(options))) {
+            throw new TypeError('testTtsPlayback options must be an object');
+        }
+        /** @type {import('../../../../../../../plugins/types/tts').Tts.SpeakRequest} */
+        var request = { text: text };
+        if (options !== undefined) {
+            for (var key of Object.keys(options)) {
+                if (key !== 'interrupt' && key !== 'speech_rate' && key !== 'pitch') {
+                    throw new TypeError('Unknown testTtsPlayback option: ' + key);
+                }
+            }
+            if (options.interrupt !== undefined) {
+                if (typeof options.interrupt !== 'boolean') throw new TypeError('interrupt must be a boolean');
+                request.interrupt = options.interrupt;
+            }
+            if (options.speech_rate !== undefined) {
+                if (!Number.isFinite(options.speech_rate) || options.speech_rate <= 0) {
+                    throw new TypeError('speech_rate must be a finite positive number');
+                }
+                request.speed = options.speech_rate;
+            }
+            if (options.pitch !== undefined) {
+                if (!Number.isFinite(options.pitch) || options.pitch <= 0) {
+                    throw new TypeError('pitch must be a finite positive number');
+                }
+                request.pitch = options.pitch;
+            }
+        }
+        var result = await speak(request);
+        if (result.providerType !== 'SYSTEM_TTS') {
+            throw new Error('Unsupported v1 system speech provider: ' + result.providerType);
+        }
+        return {
+            ttsServiceType: 'SIMPLE_TTS',
+            providerClass: 'TtsPlaybackHost',
+            initialized: true,
+            playbackTriggered: result.started,
+            interrupt: result.interrupt,
+            textLength: text.length,
+            speechRate: result.speed,
+            pitch: result.pitch,
+            /** Formats the historical structured playback receipt. */
+            toString() { return JSON.stringify(this); },
+        };
     };
 }
 
@@ -24,13 +83,36 @@ function installV1Adapters(runtime) {
     var Tools = runtime.Tools;
     var api = runtime.__operitToolPkgApi;
     var currentSettings = Object.assign({}, Tools.SoftwareSettings);
-    var legacySettings = __operitCreateV1SoftwareSettings(currentSettings);
+    /** Resolves the native installation owner retained by the exact active call. */
+    function environmentPackageName() {
+        var state = runtime.__operitGetCallState(api.currentCallId());
+        var owner = state.params.__operit_environment_owner;
+        if (typeof owner !== 'string' || !owner.trim()) {
+            throw new Error('Environment access requires an owning package installation');
+        }
+        return owner;
+    }
+    var legacySettings = __operitCreateV1SoftwareSettings(currentSettings, environmentPackageName);
     for (var [settingsMethod, settingsImplementation] of Object.entries(legacySettings)) {
         Tools.SoftwareSettings[settingsMethod] = api.method()
             .between('1.0.0', '2.0.0', settingsImplementation)
             .since('2.0.0', currentSettings[settingsMethod])
             .build('Tools.SoftwareSettings.' + settingsMethod);
     }
+    var legacyTtsPlayback = api.method()
+        .between('1.0.0', '2.0.0', __operitCreateV1TtsPlayback(
+            /** Uses the shared tool pipeline while preserving the active invocation owner. */
+            function(request) { return runtime.toolCall('tts_speak', { request: request }); },
+        ))
+        .build('Tools.SoftwareSettings.testTtsPlayback');
+    Object.defineProperty(Tools.SoftwareSettings, 'testTtsPlayback', {
+        configurable: true,
+        /** Exposes the historical settings method only to admitted v1 calls. */
+        get: function() {
+            var version = api.currentVersion();
+            return version === '1.0.0' || version === '1.0.1' ? legacyTtsPlayback : undefined;
+        },
+    });
     var currentFiles = Object.assign({}, Tools.Files);
     var legacyFiles = __operitCreateV1Files(currentFiles);
     for (var [method, filesImplementation] of Object.entries(legacyFiles)) {
@@ -111,6 +193,41 @@ function installV1Adapters(runtime) {
         }
         return participant;
     }
+    /**
+     * Registers base64 image bytes and returns the historical link string.
+     * @param {string} base64
+     * @param {string} [mimeType]
+     */
+    function registerImageFromBase64(base64, mimeType) {
+        if (typeof base64 !== 'string' || base64.trim() === '') {
+            throw new Error('registerImageFromBase64 requires image data');
+        }
+        return __operitRegisterV1Image('base64', base64, mimeType);
+    }
+    /**
+     * Registers an Android device image path and returns the historical link string.
+     * @param {string} path
+     */
+    function registerImageFromPath(path) {
+        return __operitRegisterV1Image('path', path, null);
+    }
+    /**
+     * Exposes one historical global only while the active call uses API 1.0.0 or 1.0.1.
+     * @param {string} name
+     * @param {Function} implementation
+     */
+    function exposeLegacyFunction(name, implementation) {
+        var gated = api.method().between('1.0.0', '2.0.0', implementation).build(name);
+        Object.defineProperty(globalThis, name, {
+            configurable: true,
+            get: function() {
+                var version = api.currentVersion();
+                return version === '1.0.0' || version === '1.0.1' ? gated : undefined;
+            },
+        });
+    }
+    exposeLegacyFunction('registerImageFromBase64', registerImageFromBase64);
+    exposeLegacyFunction('registerImageFromPath', registerImageFromPath);
     var legacyGetter = api.method().between('1.0.0', '2.0.0', legacyCallerCardId).build('getCallerCardId');
     Object.defineProperty(globalThis, 'getCallerCardId', {
         configurable: true,

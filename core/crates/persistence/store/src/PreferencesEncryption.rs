@@ -96,7 +96,8 @@ impl PreferencesEncryption {
         Self::decodeKeyBytes(&content)
     }
 
-    fn decodeKeyBytes(content: &[u8]) -> Result<Self, PreferencesDataStoreError> {
+    /// Decodes an existing key without creating secrets or changing storage.
+    pub fn decodeKeyBytes(content: &[u8]) -> Result<Self, PreferencesDataStoreError> {
         let content = String::from_utf8(content.to_vec())
             .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
         let stored: StoredPreferencesEncryptionKey = serde_json::from_str(&content)?;

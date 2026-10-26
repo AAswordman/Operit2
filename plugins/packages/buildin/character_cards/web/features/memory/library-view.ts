@@ -15,9 +15,17 @@ export function memoryPageBody(snapshot: Snapshot, avatarSources: Map<string, st
   }
   let characters = "";
   for (const card of snapshot.cards) {
-    const owner = ownerFor(card), active = isActive(snapshot.active, "card", card.id);
+    const active = isActive(snapshot.active, "card", card.id);
+    const needsRebind = card.memoryBindingMode === "SHARED" && !snapshot.stores.some(store => store.id === card.sharedMemoryId);
+    let actions: string;
+    if (needsRebind) {
+      actions = button("edit-card", "重新绑定记忆库", "edit", `data-id="${escapeHtml(card.id)}"`, "small");
+    } else {
+      const owner = ownerFor(card);
+      actions = iconButton("owner-graph", "记忆图谱", "graph", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`) + iconButton("owner-user", "用户资料 · USER.md", "profile", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`) + iconButton("owner-settings", "记忆设置", "tune", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`);
+    }
     const source = avatarSources.get(card.avatarUri ?? "");
-    characters += `<article class="entity ${active ? "active" : ""}" data-memory-card="${escapeHtml(card.id)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${source ? `<img src="${escapeHtml(source)}" alt="">` : icon("person")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(card.name)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "共享记忆" : "角色记忆"}</span>${active ? '<span class="active-pill">当前使用</span>' : ""}</div></div><div class="entity-actions">${iconButton("owner-graph", "记忆图谱", "graph", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}${iconButton("owner-user", "用户资料 · USER.md", "profile", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}${iconButton("owner-settings", "记忆设置", "tune", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}</div></article>`;
+    characters += `<article class="entity ${active ? "active" : ""}" data-memory-card="${escapeHtml(card.id)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${source ? `<img src="${escapeHtml(source)}" alt="">` : icon("person")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(card.name)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "共享记忆" : "角色记忆"}</span>${needsRebind ? '<span class="badge">需要重新绑定记忆库</span>' : ""}${active ? '<span class="active-pill">当前使用</span>' : ""}</div></div><div class="entity-actions">${actions}</div></article>`;
   }
   return `<section class="section"><div class="section-head">${icon("tune")}<h2>全局记忆设置</h2></div>${globalSwitch("向模型提供用户资料", "聊天执行时提供用户资料；关闭不会删除 USER.md 或改写历史记录。", "userDescriptionEnabled", snapshot.memoryPreferences.userDescriptionEnabled)}${globalSwitch("自动更新记忆库", "允许自动候选入队和定时提取；关闭不会取消手动历史重建。", "autoUpdateEnabled", snapshot.memoryPreferences.autoUpdateEnabled)}</section><section class="section"><div class="section-head">${icon("hub")}<h2>共享记忆库</h2>${button("create-store", "创建", "add", "", "small")}</div>${stores === "" ? '<div class="empty">当前还没有共享记忆库，创建后可被多个角色卡挂载共享。</div>' : stores}</section><section class="section"><div class="section-head">${icon("badge")}<h2>角色记忆库</h2></div>${characters}</section>`;
 }

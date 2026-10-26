@@ -8,9 +8,7 @@ String spaceIdentityDisplayName(String name, AppLocalizations l10n) {
     'Administrator' => l10n.settingsRuntimeControlRoleAdministrator,
     'User' => l10n.settingsRuntimeControlRoleUser,
     'Relay' => l10n.settingsRuntimeControlRoleRelay,
-    'Storage' => l10n.settingsRuntimeControlRoleStorage,
-    'Runner' => l10n.settingsRuntimeControlRoleRunner,
-    'Auditor' => l10n.settingsRuntimeControlRoleAuditor,
+    'Edge' => l10n.settingsRuntimeControlRoleEdge,
     _ => name,
   };
 }
@@ -24,7 +22,6 @@ String spaceCapabilityLabel(String capability, AppLocalizations l10n) {
     'network.relay' => l10n.settingsRuntimeControlCapabilityNetworkRelay,
     'storage.provide' => l10n.settingsRuntimeControlCapabilityStorageProvide,
     'runtime.execute' => l10n.settingsRuntimeControlCapabilityRuntimeExecute,
-    'chat.read' => l10n.settingsRuntimeControlCapabilityChatRead,
     'network.identity.manage' => l10n.settingsRuntimeControlManageIdentities,
     'network.identity.assign' => l10n.settingsRuntimeControlAssignIdentity,
     'network.approval' => l10n.settingsRuntimeControlCapabilityApproval,
@@ -75,10 +72,6 @@ List<SpaceCapabilityChoice> spaceCapabilityChoices(AppLocalizations l10n) {
     SpaceCapabilityChoice(
       label: l10n.settingsRuntimeControlCapabilityRuntimeExecute,
       value: 'runtime.execute',
-    ),
-    SpaceCapabilityChoice(
-      label: l10n.settingsRuntimeControlCapabilityChatRead,
-      value: 'chat.read',
     ),
     SpaceCapabilityChoice(
       label: l10n.settingsRuntimeControlManageIdentities,

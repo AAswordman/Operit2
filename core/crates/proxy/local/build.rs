@@ -18,6 +18,9 @@ fn main() {
         "cargo:rerun-if-changed={}",
         manifest_dir.join("src").display()
     );
+    // Theme and package DTOs also contribute to the generated client contracts.
+    println!("cargo:rerun-if-changed={}", manifest_dir.join("../../plugin/theme/src").display());
+    println!("cargo:rerun-if-changed={}", manifest_dir.join("../../tool/services/src").display());
     // Node facade DTOs/methods are scanned too, not just application objects.
     println!("cargo:rerun-if-changed={}", manifest_dir.join("../../node/runtime/src").display());
     let output = scan_core_proxy(CoreProxyScanConfig::from_proxy_manifest_dir(manifest_dir));

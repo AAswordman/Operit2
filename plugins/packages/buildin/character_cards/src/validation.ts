@@ -1,13 +1,6 @@
-/** Requires a canonical nonnegative i64 domain identity without coercing its value. */
-export function requireDecimal(value: unknown, label: string, positive = false): string {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${label} must be a canonical decimal string`);
-  const integer = BigInt(value);
-  if (integer > 9223372036854775807n || (positive && integer === 0n)) throw new Error(`${label} is outside its i64 range`);
-  return value;
-}
 import type {
-  Card, ConversationGroupRecord, Group, GroupValues, Memory, MemoryGraph, MemorySearchConfig,
-  MemorySearchOptions, MemorySettings, MemoryChatMessage, MemoryValues, Tag, TagValues, ToolAccessConfig,
+  ConversationGroupRecord, Group, GroupValues, Memory, MemoryGraph, MemorySearchConfig,
+  MemorySearchOptions, MemorySettings, MemoryChatMessage, MemoryValues, Tag, TagValues,
 } from "./model";
 
 /** Requires an object before inspecting untrusted UI, import, or host data. */
@@ -69,7 +62,7 @@ export function assertConversationGroupScope(value: unknown): asserts value is s
 
 /** Validates every full manual-group field without synthesizing absent records or metadata. */
 export function assertConversationGroup(value: unknown): asserts value is ConversationGroupRecord {
-  assertObject(value, "conversation group"); requireDecimal(value.id, "conversation group id", true);
+  assertObject(value, "conversation group"); requireId(value.id, "conversation group id");
   assertConversationGroupScope(value.ownerSelection);
   const name = requireName(value.name, "conversation group name");
   if (name !== value.name) throw new Error("Conversation group names must be stored in their trimmed form");
@@ -104,33 +97,6 @@ export function assertConversationGroups(value: unknown): asserts value is Conve
     assertConversationGroup(group);
     const count = scopeCounts.get(group.ownerSelection);
     if (count === undefined || group.displayOrder >= count) throw new Error("Conversation group order must be a complete zero-based scoped sequence");
-  }
-}
-
-/** Validates every tool policy field before a complete character write. */
-export function assertToolAccess(value: unknown): asserts value is ToolAccessConfig {
-  assertObject(value, "工具访问配置");
-  assertBoolean(value.enabled, "工具访问开关");
-  for (const field of ["allowedBuiltinTools", "allowedPackages", "allowedSkills", "allowedMcpServers"] as const) assertStrings(value[field], field);
-}
-
-/** Validates each complete plugin character field, including the required nullable independent theme reference. */
-export function assertCard(value: unknown): asserts value is Card {
-  assertObject(value, "角色卡");
-  for (const field of ["id", "name", "description", "characterSetting", "openingStatement", "otherContentChat", "otherContentVoice", "advancedCustomPrompt", "marks", "chatModelBindingMode", "memoryBindingMode"] as const) assertString(value[field], field);
-  for (const field of ["avatarUri", "chatModelId", "ttsConfigId", "themeConfigId", "sharedMemoryId"] as const) assertNullableString(value[field], field);
-  if (value.themeConfigId !== null) requireId(value.themeConfigId, "角色主题配置");
-  assertStrings(value.attachedTagIds, "角色标签");
-  assertBoolean(value.isDefault, "默认角色标识");
-  assertInteger(value.createdAt, "角色创建时间", 0);
-  assertInteger(value.updatedAt, "角色修改时间", 0);
-  assertToolAccess(value.toolAccessConfig);
-  if (!Array.isArray(value.sharedMemoryMounts)) throw new Error("共享记忆挂载必须是数组");
-  for (const mount of value.sharedMemoryMounts) {
-    assertObject(mount, "共享记忆挂载");
-    requireId(mount.sharedMemoryId, "共享记忆挂载标识");
-    assertBoolean(mount.readable, "共享记忆读取开关");
-    assertBoolean(mount.writable, "共享记忆写入开关");
   }
 }
 
@@ -188,7 +154,7 @@ export function assertMemoryValues(value: unknown): asserts value is MemoryValue
 /** Validates full repository memories rather than accepting a lossy MemoryInfo projection. */
 export function assertMemory(value: unknown): asserts value is Memory {
   assertObject(value, "记忆记录");
-  requireDecimal(value.id, "记忆数据库标识", true);
+  requireId(value.id, "记忆数据库标识");
   requireId(value.uuid, "记忆 UUID");
   for (const field of ["title", "content", "contentType", "source"] as const) assertString(value[field], field);
   assertNumber(value.credibility, "可信度", 0, 1);
@@ -199,12 +165,12 @@ export function assertMemory(value: unknown): asserts value is Memory {
   if (!Array.isArray(value.tags) || !Array.isArray(value.properties)) throw new Error("记忆标签和属性必须是数组");
   for (const tag of value.tags) {
     assertObject(tag, "记忆标签");
-    requireDecimal(tag.id, "记忆标签标识");
+    requireId(tag.id, "记忆标签标识");
     assertString(tag.name, "记忆标签名称");
   }
   for (const property of value.properties) {
     assertObject(property, "记忆属性");
-    requireDecimal(property.id, "记忆属性标识");
+    requireId(property.id, "记忆属性标识");
     assertString(property.key, "记忆属性键");
     assertString(property.value, "记忆属性值");
   }
@@ -231,7 +197,7 @@ export function assertGraph(value: unknown): asserts value is MemoryGraph {
   }
   for (const edge of value.edges) {
     assertObject(edge, "记忆图谱关系");
-    requireDecimal(edge.id, "图谱关系标识", true);
+    requireId(edge.id, "图谱关系标识");
     requireId(edge.sourceId, "图谱源节点 UUID");
     requireId(edge.targetId, "图谱目标节点 UUID");
     assertNullableString(edge.label, "图谱关系标题");
@@ -250,6 +216,8 @@ function assertMetadata(value: unknown): asserts value is Record<string, string>
 /** Validates explicit search filters before passing them to the scoped repository. */
 export function assertSearchOptions(value: unknown): asserts value is MemorySearchOptions {
   assertObject(value, "记忆搜索参数");
+  if (value.limit !== undefined) { assertInteger(value.limit, "search limit", 1); if (value.limit > 1000) throw new Error("Memory search limit exceeds 1000"); }
+  if (value.excludeIds !== undefined) assertStrings(value.excludeIds, "excluded memory ids");
   assertString(value.ownerKey, "记忆库标识");
   assertString(value.query, "搜索文本");
   assertNullableString(value.folderPath, "搜索文件夹");

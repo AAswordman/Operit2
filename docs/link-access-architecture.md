@@ -1,6 +1,6 @@
 # Link / Peer / Transport / Space Architecture
 
-本文按 2026-10-13 的源码描述当前链路。Link 的三个基础操作是 **Call、Watch、Push**。
+Link 的三个基础操作是 **Call、Watch、Push**。
 传输统一和路由行为合规是两个独立结论：当前五种 transport 已统一承载标准 Link
 消息，共享客户端具备完整三个操作族；路由行为和 Host 边界仍有待清理项，见第 9 节。
 
@@ -43,7 +43,8 @@ Router 负责目标选择、Space 权限和转发。Peer runtime 负责身份、
 
 `operit-proxy-edge` 提供类型化服务投影，地址由 `operit-edge-contract` 共享。
 完整 CoreNode 拥有身份、Space、持久化及 Agent/Chat 运行时；Edge 提供设备服务及
-相应的 Space 控制能力，不等同于完整 CoreNode。
+相应的 Space 控制能力，不等同于完整 CoreNode。设备原生业务、配置与宿主插件的
+职责见 [Edge 架构](edge-architecture.md)。
 
 ## 2. 标准 Link 的三个操作族
 
@@ -74,8 +75,9 @@ CoreLinkResponse::Push(Opened | ItemAccepted | Closed，或错误)
 服务输入方法使用 `Target` 路由，因此上传等服务保留自身标准对象地址和权限检查。
 `NodeClient` 使用明确目标节点的相同 Push 路径。
 
-当前 Edge 服务没有声明输入流方法，其 Push 返回标准 method-not-found 错误。
-这是服务能力限制；transport 本身可以承载 Push。
+Edge 应用可以通过原生端点声明 Watch / Stream 和 Push / ReverseStream，
+当前固件与模拟器使用 `withStreamHandlers` 注册设备语音协议。没有注册对应输入端点时，
+Push 返回标准 method-not-found 错误；不能从某个服务不支持 Push 推断 transport 不支持。
 
 ## 3. 配对和会话控制
 
@@ -95,7 +97,22 @@ args 发送。接收侧检查序号和认证标签，解密并恢复原始 Call�
 
 匿名连接不能进入普通业务 dispatch。认证后每个业务入口仍重校授权。
 配对授权方向、Space 成员准入、业务权限分别检查，单向配对不产生反向授权。
-当前握手使用 `PeerStateStore::PAIRING_SERVICE_VERSION = 1`。
+
+握手包含两个独立版本：
+
+* `PeerStateStore::PAIRING_SERVICE_VERSION = 1` 是持久化凭据格式
+  （`StoredInbound` / `StoredOutbound`），保持不变；已有配对继续有效。
+* `Hello.pairingProtocol` / `HelloReply.pairingProtocol` 协商新配对流程，当前为 `2`。
+  新建配对要求双方都支持 `2`；旧版本会收到 `PAIRING_PROTOCOL_UPGRADE_REQUIRED`，
+  需要先升级，而不是静默退回旧确认方式。
+
+`start` 阶段仍以 X25519 + transcript 绑定交换临时密钥并把 root 存入 pending。
+`finish` 阶段不再发送可用 root 离线校验的 `HMAC(root, id||code)`，而是把六位配对码
+作为 SPAKE2（Ed25519 group）口令：PAKE 消息通过 transcript 派生的身份串绑定到本次
+交换，PAKE 输出再与 start root、finish transcript 一起 HKDF 出长期 session secret。
+因此主动中间人即使分别与两端完成 X25519 交换，也必须通过完整在线交换逐次猜测配对码，
+无法离线验证。确认次数同时受单个 pending 的 5 次上限和跨会话令牌桶（按来源与全局
+两层）限制；`start` 也受创建速率限制，避免通过轮换会话放大猜测窗口。
 
 HTTP 承载统一的 Link 消息。配对、认证和会话管理使用相同的 Call 消息入口，
 由 Peer runtime 校验身份和权限。
@@ -150,6 +167,21 @@ HTTP 在同一连接标识下用持续 GET 响应体接收字节、用 POST 发�
 `PeerConnection` 对外提供 `send`、`receive`、`close`；`PeerLink` 提供 `connect`、
 `listen`。三个基础操作是这些 I/O 接口承载的协议，不是五种 transport 各自实现
 三套业务方法。
+
+### 载体自动识别（配对拨号）
+
+用户只输入 `ip:port` 时，`startPairing` 以 `transport = null` 表示"由地址自行判定"：
+
+* 地址带 URL scheme 时直接映射载体（`http://`/`ws://`/`tcp://`），不做网络探测。
+* 裸 `ip:port` 用一次一次性 TCP 探测连接分类（`operit_peer_link::detectTransport`）：
+  发送一个 WebSocket 升级请求，按首个响应判定——`HTTP/… 101` 为 WebSocket、
+  任何其他 `HTTP/…` 状态为 HTTP、无字节即断开（长度帧接收方丢弃了不可读的帧头）
+  为 TCP。探测连接随即关闭，正式连接用判定出的载体重新建立。
+* 判定后地址按载体规范化（HTTP/WS 补全 `scheme://…/link`），pending 配对记录保存
+  规范化后的端点，后续重拨与观测地址刷新使用同一路径。
+* 探测对目标无持久副作用：帧接收方会计一次被丢弃的坏帧；HTTP 服务方只看到一次
+  未完成的升级请求。
+
 
 ## 6. 双向通道和流生命周期
 

@@ -49,8 +49,8 @@ class CoreSession:
                 raise TimeoutError('Core response deadline reached; session stopped without retry')
             if isinstance(value, dict) and set(value) == {'error'} and value['error']: raise RuntimeError(value['error'])
             return value
-    def plugin(self, node, plugin, action, argument=''):
-        return self.command(['edge-plugin', node, 'invoke', plugin, action,
+    def service(self, node, target, action, argument=''):
+        return self.command(['edge-call', node, target, action,
             json.dumps({'argument': argument}, ensure_ascii=False)])
     def close(self):
         if self.process.poll() is None:
@@ -83,9 +83,9 @@ def make_handler(session, node):
                     action = body.get('operation')
                     if action not in ('screen', 'tree', 'tap', 'swipe', 'draft', 'chat', 'health', 'status'):
                         raise ValueError('Unsupported operation')
-                    plugin = 'device.status' if action in ('health', 'status') else 'device.ui'
+                    target = 'edge.status' if action in ('health', 'status') else 'edge.ui'
                     action = 'read' if action == 'status' else action
-                    value = session.plugin(node, plugin, action, body.get('argument', ''))
+                    value = session.service(node, target, action, body.get('argument', ''))
                     result = {'source': 'device-link-serial', 'nodeId': node, 'result': value}
                 elif self.path == '/command':
                     args = body.get('args')

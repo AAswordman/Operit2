@@ -6,12 +6,11 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
 import java.io.File
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicInteger
 
 class AndroidRuntimeHost(context: Context) {
     private companion object {
@@ -23,11 +22,7 @@ class AndroidRuntimeHost(context: Context) {
     // Main-thread callbacks share only the short-lived state lock.
     private val runtimeLock = Any()
     private val runtimeCreationLock = Any()
-    private val runtimeThreadIndex = AtomicInteger(0)
-    private val runtimeExecutor: ExecutorService =
-        Executors.newFixedThreadPool(8) { runnable ->
-            Thread(runnable, "operit-runtime-${runtimeThreadIndex.incrementAndGet()}")
-        }
+    private val runtimeExecutor: ExecutorService = HostTaskExecutor()
     private var runtimeHandle: Long = 0
     private var runtimeStarting = false
     private val pendingRuntimeEvents = ArrayDeque<String>()
@@ -60,6 +55,31 @@ class AndroidRuntimeHost(context: Context) {
         }
     }
 
+    /** Publishes Core-owned work revisions even when no Flutter engine is attached. */
+    fun publishBackgroundWork(encoded: String) {
+        mainHandler.post {
+            try {
+                app.operit.keep_alive.KeepAliveServiceHost.publishWorkSnapshot(encoded)
+            } catch (error: RuntimeException) {
+                Log.e(TAG, "Core work presentation failed", error)
+                app.operit.keep_alive.KeepAliveServiceHost.reportWorkError(error.toString())
+            }
+        }
+    }
+
+    /** Stops the execution selected by an Android notification action. */
+    fun stopBackgroundWork(workId: String) {
+        runBackground {
+            try {
+                val response = JSONObject(OperitRuntimeNative.stopBackgroundWork(ensureRuntimeHandle(), workId))
+                check(response.getBoolean("ok")) { response.getString("error") }
+            } catch (error: Exception) {
+                Log.e(TAG, "Background work stop failed: $workId", error)
+                mainHandler.post { app.operit.keep_alive.KeepAliveServiceHost.reportWorkError(error.toString()) }
+            }
+        }
+    }
+
     /** Returns whether Flutter has installed the roots required by the native Runtime. */
     fun isStorageConfigured(): Boolean {
         synchronized(runtimeLock) {
@@ -87,6 +107,14 @@ class AndroidRuntimeHost(context: Context) {
             updateRuntimeStartupStatus("preparingAssets", "正在准备本地运行时资源")
             Log.i(TAG, "native runtime create start")
             try {
+                val leaseResponse = OperitRuntimeNative.dataRescue(
+                    defaultRuntimeRootPath(),
+                    "{\"operation\":\"runtimeLease\"}",
+                    this,
+                )
+                if (!JSONObject(leaseResponse).optBoolean("ok", false)) {
+                    throw IllegalStateException("Runtime storage lease was not acquired: $leaseResponse")
+                }
                 val paths = prepareAndroidRuntimePaths(storageRoots.first, storageRoots.second)
                 updateRuntimeStartupStatus("initializingCore", "正在初始化本地核心服务")
                 Log.i(

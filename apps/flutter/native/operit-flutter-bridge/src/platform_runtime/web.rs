@@ -67,3 +67,8 @@ impl crate::OperitFlutterBridge {
         })
     }
 }
+
+/// Browser secrets are included by its independent browser rescue Host.
+pub(crate) fn rescue_secret_store(_root: &std::path::Path) -> Result<Option<std::sync::Arc<dyn operit_host_api::HostSecretStore>>, String> {
+    Ok(None)
+}

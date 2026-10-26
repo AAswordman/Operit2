@@ -56,3 +56,20 @@ fn nested_capture_and_unwinding_do_not_leak_transport_context() {
     assert_eq!(outer.len(), 2);
     assert_eq!(encodeLink(&source).unwrap(), vec![0xc4, 2, 1, 2]);
 }
+
+/// Keeps the producer allocation through a typed event, CoreValue conversion and frame attachments.
+#[test]
+fn typed_binary_fields_preserve_shared_ownership_through_proxy_conversion() {
+    #[derive(serde::Serialize)]
+    struct Event { buffer: operit_link::CoreBuffer }
+    let bytes: operit_link::CoreBytes = vec![17u8; 1_048_576].into();
+    let pointer = bytes.as_ptr();
+    let value = operit_link::toCoreValue(Event { buffer: bytes.into() }).unwrap();
+    let operit_link::CoreValue::Map(fields) = &value else { panic!("Expected event map") };
+    let operit_link::CoreValue::Bytes(bytes) = &fields["buffer"] else { panic!("Expected retained bytes") };
+    assert_eq!(bytes.as_ptr(), pointer);
+    let (frame, attachments) = operit_link::codec::captureLinkBuffers(|| operit_link::encodeLink(&value).unwrap());
+    assert!(frame.len() < 128);
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(attachments[0].as_ptr(), pointer);
+}

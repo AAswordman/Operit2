@@ -8,6 +8,7 @@ from pathlib import Path
 
 from common import (
     DIST_DIR,
+    release_asset_name,
     FLUTTER_APP_DIR,
     flutter_command,
     flutter_pub_get,
@@ -20,7 +21,6 @@ from prepare_apple_sherpa import prepare_apple_sherpa
 
 
 IOS_RELEASE_APP_DIR = FLUTTER_APP_DIR / "build" / "ios" / "iphoneos" / "Runner.app"
-IOS_ARCHIVE_PATH = DIST_DIR / "operit2-app-ios-arm64.zip"
 # Packages the unsigned iOS app bundle produced by Flutter.
 def package_ios_app(archive_path: Path) -> Path:
     if not IOS_RELEASE_APP_DIR.is_dir():
@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the Operit2 unsigned iOS Flutter app.")
     parser.add_argument("--build-name")
     parser.add_argument("--build-number")
-    parser.add_argument("--archive-path", type=Path, default=IOS_ARCHIVE_PATH)
+    parser.add_argument("--archive-path", type=Path, default=DIST_DIR / release_asset_name("app", "ios", "arm64", "zip"))
     parser.add_argument("--skip-proxy-generation", action="store_true")
     parser.add_argument("--skip-package", action="store_true")
     parser.add_argument("--enforce-lockfile", action="store_true")

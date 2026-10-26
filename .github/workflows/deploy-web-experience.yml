@@ -5,10 +5,11 @@ on:
 
 permissions:
   contents: write
+  pages: write
 
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -18,11 +19,22 @@ jobs:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
       FVM_VERSION: 4.3.0
-      WASM_BINDGEN_VERSION: 0.2.122
 
     steps:
+      - name: Require main for production deployment
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Production deployment must run from main."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install bootstrap Dart
         uses: dart-lang/setup-dart@v1
@@ -32,12 +44,10 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Check browser JavaScript runtime contracts
+        run: node --test tools/tests/web_javascript_runtime.test.mjs tools/tests/web_runtime_events.test.mjs
 
       - name: Prepare Web build hook dependencies
         run: |
@@ -46,7 +56,17 @@ jobs:
 
       - name: Install built-in workflow plugin dependencies
         working-directory: plugins/packages/buildin/workflow
-        run: corepack pnpm install --frozen-lockfile
+        run: |
+          corepack enable pnpm
+          corepack pnpm install --frozen-lockfile
+
+      - name: Install and check Theme Studio
+        working-directory: tools/theme/studio
+        run: |
+          npm ci --include=optional
+          node -e "require('rollup'); require('esbuild').transformSync('const ready = true')"
+          npm run typecheck
+          npm test
 
       - name: Install FVM
         run: |
@@ -63,34 +83,113 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-bindgen CLI
-        run: cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
+      - name: Generate Dart proxy artifacts
+        run: |
+          cargo check --manifest-path core/crates/proxy/local/Cargo.toml --quiet
+          test -s apps/flutter/app/lib/core/proxy/generated/CoreProxyClients.g.dart
+          test -s apps/flutter/app/lib/core/proxy/generated/CoreProxyModels.g.dart
+
+      - name: Install Flutter bridge locked wasm-bindgen CLI
+        run: |
+          WASM_BINDGEN_VERSION="$(python3 -c 'import pathlib, tomllib; lock = tomllib.loads(pathlib.Path("apps/flutter/native/operit-flutter-bridge/Cargo.lock").read_text("utf-8")); print(next(p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"))')"
+          cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
+
+      - name: Check Flutter startup regressions
+        working-directory: apps/flutter/app
+        run: fvm flutter test test/theme_render_stack_test.dart test/compose_dsl_execution_owner_test.dart test/theme_startup_colors_test.dart test/data_rescue_app_test.dart ../packages/operit_ui/test
 
       - name: Build Flutter Web experience
         working-directory: apps/flutter/app
-        run: fvm flutter build web --release --no-wasm-dry-run --base-href /
+        run: fvm flutter build web --release --no-wasm-dry-run --no-web-resources-cdn --base-href /
 
-      - name: Verify Flutter Web output
+      - name: Install Theme Studio locked wasm-bindgen CLI
         run: |
+          WASM_BINDGEN_VERSION="$(python3 -c 'import pathlib, tomllib; lock = tomllib.loads(pathlib.Path("core/Cargo.lock").read_text("utf-8")); print(next(p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"))')"
+          cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
+
+      - name: Build Theme Studio (/theme/)
+        run: |
+          RELEASE_ID="ci-${GITHUB_SHA::12}"
+          FLUTTER_SDK_DIR="$(cd apps/flutter/app && fvm flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["flutterRoot"])')"
+          python3 tools/theme/build_preview.py \
+            --renderer-release-id "${RELEASE_ID}" \
+            --flutter-sdk "${FLUTTER_SDK_DIR}" \
+            --wasm-bindgen "$(command -v wasm-bindgen)" \
+            --base-prefix "/theme"
+          cd tools/theme/studio
+          OPERIT_THEME_RENDERER_RELEASE_ID="${RELEASE_ID}" \
+          OPERIT_STUDIO_BASE_PREFIX="/theme" \
+          npm run build
+          mkdir -p ../../../apps/flutter/app/build/web/theme
+          cp -a dist/. ../../../apps/flutter/app/build/web/theme/
+
+      - name: Install browser verification dependencies
+        run: |
+          npm install --prefix .ci-tools/browser --no-audit --no-fund playwright@1.64.1
+          node .ci-tools/browser/node_modules/playwright/cli.js install --with-deps chromium
+
+      - name: Verify configured startup, plugin execution and theme export
+        run: node tools/tests/web_experience.browser.mjs
+
+      - name: Upload browser verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-experience-browser
+          include-hidden-files: true
+          path: .ci-artifacts/web-experience
+          if-no-files-found: ignore
+
+      - name: Verify Flutter Web and Theme Studio output
+        run: |
+          RELEASE_ID="ci-${GITHUB_SHA::12}"
           test -s apps/flutter/app/build/web/index.html
           test -s apps/flutter/app/build/web/main.dart.js
+          test -s apps/flutter/app/build/web/fonts/font-resources.json
+          test -s apps/flutter/app/build/web/canvaskit/canvaskit.js
+          test -s apps/flutter/app/build/web/canvaskit/canvaskit.wasm
+          test -s apps/flutter/app/build/web/canvaskit/chromium/canvaskit.js
+          test -s apps/flutter/app/build/web/canvaskit/chromium/canvaskit.wasm
           test -s apps/flutter/app/build/web/assets/assets/model_logos/DEEPSEEK.svg
           test -s apps/flutter/app/build/web/runtime/generated/operit_runtime_worker.js
+          test -s apps/flutter/app/build/web/runtime/generated/operit_javascript_runtime.js
+          test -s apps/flutter/app/build/web/runtime/generated/operit_javascript_transport.js
+          test -s apps/flutter/app/build/web/runtime/generated/operit_javascript_worker.js
+          test -s apps/flutter/app/build/web/theme/index.html
+          test -s apps/flutter/app/build/web/theme/theme-studio-config.json
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/index.html"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/main.dart.js"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/fonts/font-resources.json"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/canvaskit/canvaskit.js"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/canvaskit/canvaskit.wasm"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/canvaskit/chromium/canvaskit.js"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/canvaskit/chromium/canvaskit.wasm"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/theme_contract_client.js"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/theme_contract_worker.js"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/validator/operit_plugin_theme.js"
+          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/validator/operit_plugin_theme_bg.wasm"
 
       - name: Configure Web custom domain
-        run: printf 'web.operit.app\n' > apps/flutter/app/build/web/CNAME
+        run: |
+          printf 'web.operit.app\n' > apps/flutter/app/build/web/CNAME
+          touch apps/flutter/app/build/web/.nojekyll
 
       - name: Publish to gh-pages branch
         run: |
-          staging_dir="$RUNNER_TEMP/operit-gh-pages"
-          rm -rf "$staging_dir"
-          mkdir -p "$staging_dir"
-          cp -a apps/flutter/app/build/web/. "$staging_dir/"
-          git checkout -B gh-pages "$GITHUB_SHA"
-          git rm -rf .
-          cp -a "$staging_dir/." .
-          git add --all
-          git -c user.name='github-actions[bot]' \
-            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m "deploy: $GITHUB_SHA"
-          git push origin HEAD:gh-pages --force
+          git fetch --no-tags --depth=1 origin refs/heads/gh-pages
+          publish_dir="$(mktemp -d "$RUNNER_TEMP/operit-gh-pages.XXXXXX")"
+          git worktree add --detach "$publish_dir" FETCH_HEAD
+          git -C "$publish_dir" rm -r --ignore-unmatch -- .
+          cp -a apps/flutter/app/build/web/. "$publish_dir/"
+          git -C "$publish_dir" add --all
+          if ! git -C "$publish_dir" diff --cached --quiet; then
+            git -C "$publish_dir" -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "deploy: $GITHUB_SHA"
+            git -C "$publish_dir" push origin HEAD:refs/heads/gh-pages
+          fi
+
+      - name: Request GitHub Pages build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds"

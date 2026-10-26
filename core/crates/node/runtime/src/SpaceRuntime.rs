@@ -62,6 +62,13 @@ impl SpaceRuntime {
         let (result, attachments) = operit_link::withCoreStreamCapture({
             let holder = self.chatRuntimeHolder.clone();
             async move {
+                if matches!(request.methodName.as_str(), "callToolPkgRoute" | "watchToolPkgRoute" | "pushToolPkgRoute") {
+                    let handler = {
+                        let mut holder = holder.lock().await;
+                        holder.getCore(ChatRuntimeSlot::MAIN).toolPkgRouteHost()
+                    };
+                    return operit_tools::tools::packTool::ToolPkgRouteRuntime::dispatch(handler, &request.methodName, request.args).await;
+                }
                 let mut holder = holder.lock().await;
                 let core = holder.getCore(ChatRuntimeSlot::MAIN);
                 crate::generated_space_call_on_chat_core(core, request).await
@@ -199,14 +206,37 @@ impl operit_link::CoreLinkSharedClient for SpaceRuntime {
         SpaceRuntime::watch(self, request).await
     }
 
-    /// Rejects input-stream routes because current Space annotations declare none.
+    /// Opens an annotated plugin consumer after the router has authorized its Binding.
     async fn openPush(
         &self,
         request: operit_link::CorePushRequest,
     ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
-        Err(CoreLinkError::new(
-            "SPACE_PUSH_NOT_REGISTERED",
-            format!("Space push route is not registered: {}", request.methodName),
-        ))
+        let route = crate::generated_space_push_route(&request)
+            .ok_or_else(|| CoreLinkError::methodNotFound(&format!("{}::{}", request.target, request.methodName)))?;
+        if route.methodName != "pushToolPkgRoute" {
+            return Err(CoreLinkError::new("SPACE_PUSH_NOT_REGISTERED", "Space Push route is not registered"));
+        }
+        let args = operit_tools::tools::packTool::ToolPkgRouteRuntime::decode(request.args)?;
+        operit_tools::tools::packTool::ToolPkgRouteRuntime::requireSpacePackage(&args.package_name).map_err(CoreLinkError::internal)?;
+        let input = args.input_index.ok_or_else(|| CoreLinkError::new("INVALID_ARGS", "Push input index is required"))?;
+        let handler = {
+            let mut holder = self.chatRuntimeHolder.lock().await;
+            holder.getCore(ChatRuntimeSlot::MAIN).toolPkgRouteHost()
+        };
+        let (sender, values) = operit_rslink_runtime::core_reverse_stream_channel::<serde_json::Value>();
+        let (mut completion, result) = tokio::sync::oneshot::channel();
+        let payload = serde_json::json!({ "op":"pushOpen", "bindingKey":args.binding_key, "methodName":args.method_name, "arguments":args.arguments, "inputIndex":input });
+        operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
+            operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(),
+            "operit-plugin-reverse-stream", Box::new(move || Box::pin(async move {
+                let outcome = tokio::select! {
+                    biased;
+                    _ = completion.closed() => return,
+                    outcome = operit_tools::tools::packTool::ToolPkgRouteRuntime::consume(handler, args.package_name, payload, values) => outcome.map_err(CoreLinkError::internal),
+                };
+                let _ = completion.send(outcome);
+            })),
+        ).map_err(|error| CoreLinkError::internal(error.to_string()))?;
+        Ok(Box::new(operit_rslink_runtime::CoreReverseStreamSession::new(sender, result)))
     }
 }

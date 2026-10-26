@@ -6,16 +6,19 @@ use super::JsFuture;
 pub trait SoftwareSettingsHost: Send + Sync {
     ///
     ///Read current value of an environment variable.
+    ///@param package_name - Installed package or subpackage name
     ///@param key - Environment variable key
     ///
-    fn readEnvironmentVariable(&self, key: String) -> JsFuture<EnvironmentVariableReadResultData>;
+    fn readEnvironmentVariable(&self, package_name: String, key: String) -> JsFuture<EnvironmentVariableReadResultData>;
     ///
     ///Write an environment variable; empty value clears the variable.
+    ///@param package_name - Installed package or subpackage name
     ///@param key - Environment variable key
     ///@param value - Variable value (empty string clears)
     ///
     fn writeEnvironmentVariable(
         &self,
+        package_name: String,
         key: String,
         value: Option<String>,
     ) -> JsFuture<EnvironmentVariableWriteResultData>;

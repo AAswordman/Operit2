@@ -114,7 +114,9 @@ impl Default for LinuxBluetoothHost {
 
 impl BluetoothHost for LinuxBluetoothHost {
     /// Declares whether this Host implements inbound classic Bluetooth sessions.
-    fn supportsClassicListening(&self) -> bool { true }
+    fn supportsClassicListening(&self) -> bool {
+        true
+    }
 
     fn requestBluetoothPermission(&self) -> HostResult<String> {
         Ok("linux_bluetooth_permission_not_required".to_string())
@@ -616,16 +618,26 @@ impl BluetoothHost for LinuxBluetoothHost {
                 let characteristicUuid = request.characteristicUuid.clone();
                 let workerPath = path.clone();
                 let workerStop = stop.clone();
-                thread::spawn(move || {
-                    if let Err(error) = linux_ble_notification_worker(
-                        workerPath,
-                        characteristicUuid,
-                        notifications,
-                        workerStop,
-                    ) {
-                        eprintln!("Linux BLE notification worker stopped: {error}");
-                    }
-                });
+                if let Err(error) = operit_host_native_common::scheduleNativeServiceTask(
+                    "linux-ble-notify",
+                    move || {
+                        if let Err(error) = linux_ble_notification_worker(
+                            workerPath,
+                            characteristicUuid,
+                            notifications,
+                            workerStop,
+                        ) {
+                            eprintln!("Linux BLE notification worker stopped: {error}");
+                        }
+                    },
+                ) {
+                    let characteristic =
+                        bluez_proxy(&connection, &path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE)?;
+                    let _: () = characteristic.call("StopNotify", &()).map_err(|error| {
+                        bluez_call_error("stop rejected Linux BLE notification", error)
+                    })?;
+                    return Err(error);
+                }
                 session
                     .subscriptions
                     .lock()

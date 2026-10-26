@@ -268,10 +268,10 @@ impl SystemPromptConfig {
             )
             .replace("WORKSPACE_GUIDELINES_SECTION", &workspace_guidelines);
 
-        let available_tools_en =
+        let available_tools =
             if options.use_tool_call_api || options.tool_exposure_mode == ToolExposureMode::CLI {
                 String::new()
-            } else {
+            } else if options.use_english {
                 SystemToolPrompts::generateToolsPromptEnForHost(
                     options.chat_id.clone(),
                     options.has_image_recognition,
@@ -286,10 +286,6 @@ impl SystemPromptConfig {
                     options.hook_metadata.clone(),
                 )
                 .await?
-            };
-        let available_tools_cn =
-            if options.use_tool_call_api || options.tool_exposure_mode == ToolExposureMode::CLI {
-                String::new()
             } else {
                 SystemToolPrompts::generateToolsPromptCnForHost(
                     options.chat_id.clone(),
@@ -358,11 +354,7 @@ impl SystemPromptConfig {
                     )
                     .replace(
                         "AVAILABLE_TOOLS_SECTION",
-                        if options.use_english {
-                            &available_tools_en
-                        } else {
-                            &available_tools_cn
-                        },
+                        &available_tools,
                     );
             }
         } else {
@@ -489,9 +481,8 @@ impl SystemPromptConfig {
                 model_parameters: Vec::new(),
                 available_tools: Vec::new(),
                 metadata,
-                on_hook_timeout: None,
             })
-            .await;
+            .await?;
 
         let base_prompt = match before_context.system_prompt.clone() {
             Some(prompt) => prompt,
@@ -505,7 +496,7 @@ impl SystemPromptConfig {
                 system_prompt: Some(composed_prompt),
                 ..before_context
             })
-            .await;
+            .await?;
         let after_compose_prompt = compose_context.system_prompt.clone().unwrap_or_default();
         let after_context =
             PromptHookRegistry::dispatchSystemPromptComposeHooks(PromptHookContext {
@@ -513,7 +504,7 @@ impl SystemPromptConfig {
                 system_prompt: Some(after_compose_prompt),
                 ..compose_context
             })
-            .await;
+            .await?;
         Ok(after_context.system_prompt.unwrap_or_default())
     }
 }
@@ -578,11 +569,11 @@ fn getWorkspaceGuidelines(
         .join("\n");
     let base_guidelines = if use_english {
         format!(
-            "WORKSPACE GUIDELINES:\n- The current workspace root is `{workspace_path}`.\n- This workspace contains these mounted folders; every listed path belongs to the same workspace:\n{mounted_folders}\n- Treat every listed VFS path as an allowed workspace root; do not limit workspace operations to the first path.\n- File tools accept VFS paths only. Use absolute paths rooted at the relevant listed workspace folder.\n- The workspace collection is under `/app/workspaces`; each workspace must be addressed by its full VFS path.\n- Within the same Space, ordinary files in the workspace body under `/app/workspaces/<workspace-id>/...` are automatically replicated bidirectionally between devices running supported Core versions. Synchronization is eventual and needs connectivity; membership, pairing, or an identical path does not prove a file has arrived. Verify availability on the execution node.\n- External mounted folders (such as `/mnt/...` and `/data/...`), symlinks, and temporary attachments are not automatically included in workspace synchronization. To retain and share such a file, copy it into the workspace body; a mount or symlink alone is not enough.\n- Root listing always shows `/app`; `/mnt` is listed when this host has mounted external entries.\n- `/sdcard` and `/data` are hidden Android aliases that can be opened directly on Android hosts.\n- Relative paths are allowed in project-internal references and terminal commands after selecting the working directory, but not in file-tool path parameters.\n- **Best Practice for Code Modifications**: Before modifying any file, use `grep_code` and `grep_context` to locate and understand relevant code with surrounding context. This ensures you understand the codebase structure before making changes."
+            "WORKSPACE GUIDELINES:\n- The current workspace root is `{workspace_path}`.\n- This workspace contains these mounted folders; every listed path belongs to the same workspace:\n{mounted_folders}\n- Treat every listed VFS path as an allowed workspace root; do not limit workspace operations to the first path.\n- File tools accept VFS paths only. Use absolute paths rooted at the relevant listed workspace folder.\n- Within the device space, `nodeName:path` (names from `list_core_nodes`) addresses files on another device; the operation runs on that device. `copy_file` and `move_file` stream files between devices directly with SHA-256 verification, which may take time for large files.\n- The workspace collection is under `/app/workspaces`; each workspace must be addressed by its full VFS path.\n- Within the same Space, ordinary files in the workspace body under `/app/workspaces/<workspace-id>/...` are automatically replicated bidirectionally between devices running supported Core versions. Synchronization is eventual and needs connectivity; membership, pairing, or an identical path does not prove a file has arrived. Verify availability on the execution node.\n- External mounted folders (such as `/mnt/...` and `/data/...`), symlinks, and temporary attachments are not automatically included in workspace synchronization. To retain and share such a file, copy it into the workspace body; a mount or symlink alone is not enough.\n- Root listing always shows `/app`; `/mnt` is listed when this host has mounted external entries.\n- `/sdcard` and `/data` are hidden Android aliases that can be opened directly on Android hosts.\n- Relative paths are allowed in project-internal references and terminal commands after selecting the working directory, but not in file-tool path parameters.\n- **Best Practice for Code Modifications**: Before modifying any file, use `grep_code` and `grep_context` to locate and understand relevant code with surrounding context. This ensures you understand the codebase structure before making changes."
         )
     } else {
         format!(
-            "工作区指南：\n- 当前工作区根目录是 `{workspace_path}`。\n- 当前工作区包含以下挂载文件夹，所有列出的路径都属于同一个工作区：\n{mounted_folders}\n- 每个列出的 VFS 路径都是允许访问的工作区根目录，不能只使用第一个路径。\n- 文件工具只接受 VFS 路径；操作文件时，请使用以对应工作区文件夹为根的绝对路径。\n- 工作区集合位于 `/app/workspaces`；每个工作区都必须用完整 VFS 路径访问。\n- 同一 Space 内，`/app/workspaces/<workspace-id>/...` 工作区本体中的普通文件，会在运行支持版本 Core 的设备间自动双向复制。同步是最终一致的，需要设备连通；仅配对、成员关系或路径相同不代表文件已到达，使用前应确认当前执行节点的文件已就绪。\n- 外部挂载目录（如 `/mnt/...`、`/data/...`）、软链接和临时附件，不会自动纳入工作区文件同步。需要长期保留并跨端共享的文件，应实际复制进工作区本体；只挂载目录或创建软链接不够。\n- 根目录列表固定展示 `/app`；当前 Host 存在外部挂载项时才展示 `/mnt`。\n- `/sdcard` 和 `/data` 是 Android 隐藏别名，只在 Android Host 上可直接访问。\n- 项目内部引用和已切换工作目录的终端命令可以使用相对路径，但文件工具的路径参数必须使用 VFS 绝对路径。\n- **代码修改最佳实践**：修改任何文件之前，建议组合使用 `grep_code` 与 `grep_context` 定位并理解相关代码及其上下文，避免在未理解项目结构时盲改。"
+            "工作区指南：\n- 当前工作区根目录是 `{workspace_path}`。\n- 当前工作区包含以下挂载文件夹，所有列出的路径都属于同一个工作区：\n{mounted_folders}\n- 每个列出的 VFS 路径都是允许访问的工作区根目录，不能只使用第一个路径。\n- 文件工具只接受 VFS 路径；操作文件时，请使用以对应工作区文件夹为根的绝对路径。\n- 在设备空间内，`nodeName:path`（名字来自 `list_core_nodes`）指向其他设备上的文件，操作在该设备上执行。`copy_file` 与 `move_file` 会在设备间直接流式传输文件并做 SHA-256 校验，大文件可能耗时较长。\n- 工作区集合位于 `/app/workspaces`；每个工作区都必须用完整 VFS 路径访问。\n- 同一 Space 内，`/app/workspaces/<workspace-id>/...` 工作区本体中的普通文件，会在运行支持版本 Core 的设备间自动双向复制。同步是最终一致的，需要设备连通；仅配对、成员关系或路径相同不代表文件已到达，使用前应确认当前执行节点的文件已就绪。\n- 外部挂载目录（如 `/mnt/...`、`/data/...`）、软链接和临时附件，不会自动纳入工作区文件同步。需要长期保留并跨端共享的文件，应实际复制进工作区本体；只挂载目录或创建软链接不够。\n- 根目录列表固定展示 `/app`；当前 Host 存在外部挂载项时才展示 `/mnt`。\n- `/sdcard` 和 `/data` 是 Android 隐藏别名，只在 Android Host 上可直接访问。\n- 项目内部引用和已切换工作目录的终端命令可以使用相对路径，但文件工具的路径参数必须使用 VFS 绝对路径。\n- **代码修改最佳实践**：修改任何文件之前，建议组合使用 `grep_code` 与 `grep_context` 定位并理解相关代码及其上下文，避免在未理解项目结构时盲改。"
         )
     };
     let terminal_section =
@@ -883,4 +874,55 @@ mod tests {
         let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
         assert!(prompt.contains("Terminal absolute path: `D:/My Projects/main`"));
     }
+
+    struct LanguageHookProbe {
+        expected: bool,
+        events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl crate::chat::hooks::PromptHookRegistry::ToolPromptComposeHook for LanguageHookProbe {
+        /// Identifies the isolated language-selection regression hook.
+        fn id(&self) -> &str { "test.system-prompt.selected-language" }
+
+        /// Rejects construction in the unused language before the prompt can be returned.
+        fn on_event_async<'a>(
+            &'a self,
+            context: &'a crate::chat::hooks::PromptHookRegistry::PromptHookContext,
+        ) -> crate::chat::hooks::PromptHookRegistry::ToolPromptHookFuture<'a> {
+            Box::pin(async move {
+                if context.chat_id.as_deref() != Some("selected-language-test") {
+                    return Ok(None);
+                }
+                if context.use_english != Some(self.expected) {
+                    return Err("The unused tool-prompt language was dispatched".into());
+                }
+                self.events.lock().unwrap().push(context.stage.clone());
+                Ok(None)
+            })
+        }
+    }
+
+    /// Generates exactly one four-stage tool prompt and never invokes policies in the other language.
+    #[tokio::test(flavor = "current_thread")]
+    async fn get_system_prompt_dispatches_only_selected_language() {
+        use crate::chat::hooks::PromptHookRegistry::PromptHookRegistry;
+        for use_english in [false, true] {
+            let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            PromptHookRegistry::registerToolPromptComposeHook(std::sync::Arc::new(LanguageHookProbe {
+                expected: use_english, events: events.clone(),
+            }));
+            let result = SystemPromptConfig::getSystemPrompt(SystemPromptOptions {
+                chat_id: Some("selected-language-test".into()),
+                use_english,
+                ..SystemPromptOptions::default()
+            }).await;
+            PromptHookRegistry::unregisterToolPromptComposeHook("test.system-prompt.selected-language");
+            result.expect("Only the selected language may run tool-prompt policies");
+            assert_eq!(*events.lock().unwrap(), [
+                "build_tool_prompt", "before_compose_tool_prompt",
+                "filter_tool_prompt_items", "after_compose_tool_prompt",
+            ]);
+        }
+    }
+
 }

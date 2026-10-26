@@ -166,6 +166,10 @@ impl RuntimeStorageHost for Esp32RuntimeStorageHost {
             Ok(())
         })
     }
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        // writeBytes publishes the complete NVS snapshot through the alternate bank.
+        self.writeBytes(path, content)
+    }
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.update(|files| {
             let previous = files
@@ -186,6 +190,18 @@ impl RuntimeStorageHost for Esp32RuntimeStorageHost {
             Ok(())
         })
     }
+    /// Confirms the file already belongs to the synchronously committed NVS snapshot.
+    fn flushFile(&self, path: &str) -> HostResult<()> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| HostError::new("runtime NVS lock poisoned"))?;
+        if !state.files.contains_key(path) {
+            return Err(HostError::new("runtime storage entry not found"));
+        }
+        Ok(())
+    }
+
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         self.update(|files| {
             let prefix = format!("{path}/");

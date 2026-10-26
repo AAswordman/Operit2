@@ -255,8 +255,8 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
     }
 
     #if os(macOS)
-      webView.underPageBackgroundColor = NSColor(
-        calibratedRed: red, green: green, blue: blue, alpha: alpha)
+      webView.operitSetBackgroundColor(
+        NSColor(calibratedRed: red, green: green, blue: blue, alpha: alpha))
       result(nil)
     #else
       result(

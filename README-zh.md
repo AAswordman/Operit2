@@ -99,7 +99,7 @@ operit2 cli backup restore <snapshot.zip>
 | Web Access | 访问某个已运行 CoreNode 的浏览器入口 | 不是自动加入 Space 的浏览器节点，也不是中心化 Agent Server |
 | WebAssembly/browser Host | 浏览器运行时的本地能力边界 | 与 Web Access 访问面分开，具体能力取决于浏览器和当前 Web 构建模式 |
 | Linux 云端设备 | Space 中的普通 CoreNode | 长期在线可以承担更多任务，但不因此拥有中心身份 |
-| ESP32 Edge Node | 设备侧 Edge Service 能力节点 | 不是完整 CoreNode；仅保存节点身份、配对与设备空间控制状态，不运行 Chat/Store 业务，也不复制业务数据 |
+| [ESP32 Edge Node](docs/edge-architecture.md) | 设备原生业务与 Edge Service 能力节点 | 保存身份、配对、空间控制及自身配置；支持有界独立运行和按需使用 Core，不保存完整业务副本 |
 | Server | 未来的部署形态和 Host 方向 | 当前仓库还没有可以直接发布的完整 Server 产品 |
 
 仓库包含多平台 Host 适配路径，但“能够构建”不等于“已经完成跨设备互操作验证”。平台构建、签名和发布条件请以 [`BUILDING.md`](BUILDING.md) 与对应 workflow 为准。
@@ -241,7 +241,7 @@ docs/                    架构、权限、Link、迁移和版本文档
 - [Web Access 前端与部署要求](apps/flutter/app/web/README.md)
 - [插件作者文档](plugins/docs/README.md)
 - [版本、tag、渠道与发布资产](docs/release-versioning.md)
-- [当前 crate 拆分与迁移计划](docs/core-module-crate-layout.md)
+- [完整文档目录](docs/README.md)
 
 架构文档中标注为“目标”“计划”或“演进方向”的内容，不代表所有平台已经实现。判断当前实际行为时，请以源码、命令帮助输出、构建结果和目标平台运行结果为准。
 

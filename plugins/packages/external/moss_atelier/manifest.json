@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.moss_atelier",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "display_name": {
+    "zh": "苔庭",
+    "en": "Moss Atelier"
+  },
+  "description": {
+    "zh": "苔绿与暖砂两套外观模板，配有完整明暗配色、柔和背景与悬浮输入框。",
+    "en": "Two calm appearance templates: moss green and warm sand, with complete light and dark palettes, matte backgrounds and a floating composer."
+  },
+  "author": [
+    "Operit"
+  ],
+  "enabled_by_default": false,
+  "logo": "package_logo",
+  "resources": [
+    {
+      "key": "package_logo",
+      "path": "resources/logo.svg",
+      "mime": "image/svg+xml"
+    }
+  ],
+  "themes": [
+    {
+      "id": "moss",
+      "path": "templates/moss/theme.json",
+      "preview": "templates/moss/preview.png",
+      "files": [
+        {
+          "path": "theme.json",
+          "mediaType": "application/json"
+        },
+        {
+          "path": "preview.png",
+          "mediaType": "image/png"
+        },
+        {
+          "path": "assets/images/ambient.png",
+          "mediaType": "image/png"
+        }
+      ]
+    },
+    {
+      "id": "dune",
+      "path": "templates/dune/theme.json",
+      "preview": "templates/dune/preview.png",
+      "files": [
+        {
+          "path": "theme.json",
+          "mediaType": "application/json"
+        },
+        {
+          "path": "preview.png",
+          "mediaType": "image/png"
+        },
+        {
+          "path": "assets/images/ambient.png",
+          "mediaType": "image/png"
+        }
+      ]
+    }
+  ]
+}

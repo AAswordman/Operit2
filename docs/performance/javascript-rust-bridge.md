@@ -8,7 +8,7 @@
 
 `HostJavaScriptRuntime` 必须实现：
 
-- `registerHostJavaScriptJsonFunction`：同步传递拥有所有权的结构化参数和结果。
+- `registerHostJavaScriptFunction`：同步传递结构化参数或拥有所有权的二进制缓冲区，返回结构化结果。
 - `registerHostJavaScriptAsyncJsonFunction`：创建由 host 持有完成句柄的 scoped Promise。
 - `settleHostJavaScriptPromise`：在所属执行器完成 Promise，释放 resolve / reject 句柄。
 - `cancelHostJavaScriptPromises`：释放指定 scope 的待完成句柄。
@@ -20,8 +20,9 @@
 
 ## Promise 调用过程
 
-1. SDK 验证公共调用形式，保留所属执行会话的引用。
-2. Host 将参数转换成拥有所有权的 `serde_json::Value`，分配 request id，
+1. SDK 验证公共调用形式，通过必须存在的 `__operitHostSnapshotJsonObject`
+   同步取得工具参数快照，保留所属执行会话的引用。
+2. Host 接收拥有所有权的 `serde_json::Value`，分配 request id，
    在 runtime 所属执行器保留 Promise 完成句柄。
 3. 运行时处理工具、跨上下文 IPC、依赖、图片、资源、WASM、Compose 或包管理请求。
 4. 结果队列携带 request id 和结构化值，在所属执行器完成 Promise。
@@ -40,7 +41,7 @@ executor，cooperative continuation 使用 host 明确实现的非阻塞 executo
 
 ## Host 边界与生命周期
 
-- Native host 使用 rquickjs 的值转换、Promise 和 Persistent 完成句柄。
+- Native host 使用 V8 的值转换及 Promise 句柄；Compose 的 Uint8Array 脱离 JS 后转交 backing-store 所有权，不再递归转换布局对象。
 - Web host 的值快照和 Promise 注册表位于 `hosts/web/src/javascript_promises.js`，
   Rust host 通过函数调用和对象属性 API 传递数据。转换捕获原始内建函数，
   不依赖插件可修改的 JSON、Map 或 Array 方法。
@@ -49,8 +50,15 @@ executor，cooperative continuation 使用 host 明确实现的非阻塞 executo
 - 脚本执行入口通过 `callHostJavaScriptFunction` 传递结构化参数，不把参数嵌入调用源码。
 - 最终脚本结果和外部 listener 的文本协议在 Rust 边界序列化一次，不在 JS / Rust 之间反复编码。
 
-转换保留对象属性、数组空位、`toJSON`、日期、包装值与有限数值的 JSON 值语义。
-不可表示的顶层值、BigInt、循环、getter 错误和超出限制的数据明确报错。
+转换有两个明确的输入契约：
+
+- 公共工具参数只接受普通 JSON 数据：拒绝访问器、隐藏属性、symbol、数组空位和额外属性、
+  非有限数值、非普通对象和循环。读取自有属性描述符，拒绝访问器时不执行 getter。
+- 生命周期函数返回值和其他通用绑定保留 JSON 的 `toJSON`、日期、包装值及数组空位语义。
+  不可表示的顶层值、BigInt、循环、getter 错误和超出限制的数据明确报错。
+
+通用转换识别并取走已经验证的工具参数快照，不再遍历其中的字段。这两个契约分别服务工具
+参数和通用绑定，不使用策略开关选择转换路径。
 Host 对象写入使用 own data properties，`__proto__` 不触发原型 setter。
 待完成 Promise 上限为 4096；转换最大深度为 128，单次参数列表节点预算为 1,000,000。
 转换结束后再次检查 Promise 数量，防止 getter 重入绕过上限。
@@ -58,6 +66,42 @@ Host 对象写入使用 own data properties，`__proto__` 不触发原型 setter
 重复完成或已取消 request id 不重新调用完成函数；取消只释放指定 scope 的句柄。
 定时器使用独立 scope，支持 `clearTimeout`、`clearInterval` 和所属会话清理。
 清理 interval 的待完成 timeout 同时移除 interval 状态，不创建全局定时器 callback。
+
+## Native 所有权与实现边界
+
+```text
+SDK toolCall / Tools.*
+  → 必须存在的 host 快照函数：在 host 边界严格读取参数
+  → 私有 OwnedJson：持有最终 Rust 树，绑定只取走一次
+  → JsEngine / 工具宿主：移动参数，宿主任务调度到常驻 worker
+  → 结果队列：移动结果到原 QuickJS 所属线程
+  → writer：立即创建完整的普通 JS 对象和数组
+  → 完成 Promise，回收 Rust 结果中的可复用分配
+```
+
+普通 `toolCall` 的工具参数在 Native 边界严格读取一次。部分生成的严格 SDK 方法仍会先
+调用 JS 版 `__operitSnapshotJsonObject` 做参数预校验；Chat 延迟流也会提前快照，防止首次
+拉取前调用者修改请求。JS 版还服务 Web host，因此需要保留。SDK 预校验会带来一次额外
+遍历，不应将 Native 边界的优化表述为所有公共 API 都只遍历一次。
+
+QuickJS 句柄和原始地址只在所属线程使用；跨 worker 的是拥有所有权的 Rust 值。
+返回值在 Promise 完成前已完全构造，后续字段读取直接访问普通 JS 对象。
+工具的业务执行沿用 `ToolExecutionPolicy::Direct`；上述会话引用和 Promise 清理
+属于运行时资源管理，不会触发 AI 工具生命周期钩子。AI 发起的工具调用仍走其正常流程。
+
+Native 代码职责分布：
+
+- `javascript_runtime.rs`：唯一构造入口、绑定注册、Promise 句柄、所属线程与任务投递。
+  创建时捕获 intrinsics 并安装快照函数；测试使用同一构造入口。
+- `javascript_values.rs`：通用 JSON 值语义、共享深度和节点预算、识别已验证的快照。
+- `javascript_values/snapshot.rs`：严格快照、一次性所有权交接和 Rust 缓冲复用。
+- `javascript_values/writer.rs`：立即将 Rust 值构造成 JS 对象，处理 own property 和句柄释放。
+- `javascript_allocator.rs`：QuickJS 运行时内的小块分配复用，不替换全局 Rust 分配器。
+
+Rust 缓冲池每个引擎的保留预算为 1 MiB；QuickJS 小块空闲池的总上限为 512 KiB
+（含块头），单类保留的 payload 上限为 128 KiB。这些限制针对空闲复用内存，
+不是引擎的总内存上限。缓冲复用不作为业务结果缓存，每次调用均重新读取并覆盖数据。
+通用转换、严格快照及输出构造都保留显式深度和节点限制。
 
 ## 模块资源与明确失败
 
@@ -106,4 +150,20 @@ cargo test --release --manifest-path core/Cargo.toml -p operit-js-bridge \
 ```
 
 基准涵盖 engine owner、工具调度、Promise jobs 与 SDK 包装，不包含真实业务 I/O。
-历史协议比较不再是可执行测试路径，也不能当作本次修改的性能结论。
+该基准仅衡量结构化链路，不能用于比较已移除的历史协议。
+
+固定结构记录的基准可分别观察额外 Rust 深拷贝、所有权转移和完整读取：
+
+```sh
+OPERIT_JS_BRIDGE_BENCH_ITERATIONS=2000 \
+OPERIT_JS_BRIDGE_BENCH_ROWS=256 \
+OPERIT_JS_BRIDGE_BENCH_MODES=host,hostOwned,hostReadAll \
+cargo test --release --manifest-path core/Cargo.toml -p operit-js-bridge \
+  bridge_payload_benchmark -- --ignored --nocapture --test-threads=1
+```
+
+每条记录包含 id、name、enabled 及嵌套的 prompt、tags。`host` 包含测试 echo 工具的
+额外 Rust 深拷贝；`hostOwned` 移动所有权返回；`hostReadAll` 在后者基础上每次校验全部
+字段。输出是去掉一轮预热后五轮「每次调用平均耗时」的中位数，不是单次调用的 p95。
+Native 值转换单元测试另有忽略的 `owned_value_codec_benchmark`，用于分离输入、输出和
+Rust 深拷贝成本；它不模拟完整调用中的缓冲池回收过程，不能替代整条链路的基准。

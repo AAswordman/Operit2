@@ -12,7 +12,7 @@ root_dir="$work_dir/root"
 
 root_url="https://github.com/ish-app/roots/releases/download/g00712ff0a54b2839c5aa1a8ed758003ca65357dc/appstore-apk.tar.gz"
 root_sha256="776b16416894e5a8bec220b8d4726c46bb993289e8e48fdac54a519396e40a93"
-repository_base="https://dl-cdn.alpinelinux.org/alpine/v3.19"
+repository_base="https://dl-cdn.alpinelinux.org/alpine/v3.23"
 repository_arch="x86"
 host_arch="x86_64"
 uv_version="0.12.1"
@@ -28,7 +28,7 @@ packages=(
     bash
     python3
     py3-pip
-    nodejs
+    "nodejs~24"
     npm
     ca-certificates
 )
@@ -163,6 +163,7 @@ build_rootfs() {
 
     env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
         "$apk_static_dir/sbin/apk.static" \
+        --usermode \
         --root "$root_dir" \
         --arch "$repository_arch" \
         --keys-dir "$root_dir/etc/apk/keys" \
@@ -171,6 +172,7 @@ build_rootfs() {
         --no-scripts \
         --initdb \
         add "${packages[@]}"
+    python3 "$repo_dir/tools/runtime/verify_alpine_node24.py" "$root_dir/lib/apk/db/installed"
     install_uv
     install_pnpm
 

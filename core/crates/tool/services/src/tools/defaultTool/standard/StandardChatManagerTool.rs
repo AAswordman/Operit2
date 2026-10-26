@@ -112,7 +112,7 @@ impl StandardChatManagerTool {
     #[allow(non_snake_case)]
     pub async fn createNewChat(&self, tool: &AITool) -> ToolResult {
         if let Err(error) =
-            validateChatParameterNames(tool, &["set_as_current_chat", "source_chat_id", "input"])
+            validateChatParameterNames(tool, &["set_as_current_chat", "source_chat_id", "parent_chat_id", "input"])
         {
             return toolError(tool, error);
         }
@@ -123,6 +123,11 @@ impl StandardChatManagerTool {
                 return toolError(tool, "source_chat_id must not be blank".to_string())
             }
             Some(value) => Some(value),
+        };
+        let parentChatId = match optionalParameterValue(tool, "parent_chat_id") {
+            Some(value) if value == "null" => None,
+            Some(value) if value.trim().is_empty() => return toolError(tool, "parent_chat_id must not be blank".to_string()),
+            value => value,
         };
         let input = match optionalParameterValue(tool, "input") {
             None => None,
@@ -140,7 +145,7 @@ impl StandardChatManagerTool {
         };
         match self
             .runtimeSupport
-            .createChatRuntime(setAsCurrentChat, sourceChatId, input)
+            .createChatRuntime(setAsCurrentChat, sourceChatId, parentChatId, input)
             .await
         {
             Ok(chatId) => successData(
@@ -768,8 +773,11 @@ impl AsyncToolExecutor for ChatManagerToolExecutor {
         let request = tool.clone();
         let context = ToolExecutionManager::currentToolRuntimeContext();
         let (sender, receiver) = tokio::sync::oneshot::channel();
+        // Chat operations read the conversation database synchronously, so they
+        // must never occupy the coordination workers that drive JS deadlines and
+        // promise pumps.
         let scheduled = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()
-            .scheduleHostRuntimeAsyncTask("chat-tool-invocation", Box::new(move || {
+            .scheduleHostRuntimeBlockingAsyncTask("chat-tool-invocation", Box::new(move || {
                 Box::pin(async move {
                     let invocation = async move {
                         let tool = request;
@@ -1290,6 +1298,7 @@ fn parseTurnOptions(tool: &AITool) -> Result<ChatTurnOptions, String> {
         nativeExecutionId: None,
         outputObserver: None,
         deferSequenceCompletion: false,
+        deferSummary: false,
     })
 }
 

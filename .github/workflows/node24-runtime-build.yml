@@ -1,0 +1,126 @@
+name: Node 24 Runtime Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'codex/node24-runtime-build-*'
+
+permissions:
+  contents: read
+
+jobs:
+  rootfs:
+    name: ${{ matrix.platform }} Node 24 rootfs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ios-ish
+            script: tools/ios-runtime/ish/build_alpine_rootfs_linux.sh
+            archive: apps/flutter/app/ios/Runner/ish-root.tar.gz
+            architecture: x86
+            package_layout: preinstalled
+          - platform: android
+            script: tools/android-runtime/build_alpine_rootfs_wsl.sh
+            archive: apps/flutter/app/android/app/src/main/assets/android-runtime/arm64-v8a/rootfs.tar.gz.bin
+            architecture: aarch64
+            package_layout: preinstalled
+          - platform: ohos
+            script: tools/ohos-runtime/build_alpine_rootfs_linux.sh
+            archive: apps/flutter/app/ohos/entry/src/main/resources/rawfile/ohos-vroot/alpine-minirootfs-3.23.6-aarch64.tar.gz
+            architecture: aarch64
+            package_layout: offline
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl gawk python3 qemu-user-static
+      - name: Build runtime rootfs
+        if: matrix.platform != 'ohos'
+        env:
+          BUILD_SCRIPT: ${{ matrix.script }}
+        run: bash "$BUILD_SCRIPT"
+      - name: Build OHOS runtime rootfs with preserved ownership
+        if: matrix.platform == 'ohos'
+        env:
+          BUILD_SCRIPT: ${{ matrix.script }}
+        run: sudo bash "$BUILD_SCRIPT"
+      - name: Verify packaged Node 24 and SQLite
+        env:
+          RUNTIME_ARCHIVE: ${{ matrix.archive }}
+          RUNTIME_ARCHITECTURE: ${{ matrix.architecture }}
+          RUNTIME_PLATFORM: ${{ matrix.platform }}
+          RUNTIME_PACKAGE_LAYOUT: ${{ matrix.package_layout }}
+        run: |
+          bash tools/runtime/smoke_alpine_node24.sh "$RUNTIME_ARCHIVE" "$RUNTIME_ARCHITECTURE" "$RUNTIME_PACKAGE_LAYOUT" | tee node24-smoke.log
+          mkdir -p runtime-artifacts
+          cp "$RUNTIME_ARCHIVE" runtime-artifacts/
+          cp node24-smoke.log runtime-artifacts/
+          (cd runtime-artifacts && sha256sum "$(basename "$RUNTIME_ARCHIVE")" > "$(basename "$RUNTIME_ARCHIVE").sha256")
+          echo "### ${RUNTIME_PLATFORM}" >> "$GITHUB_STEP_SUMMARY"
+          cat node24-smoke.log >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node24-${{ matrix.platform }}-${{ github.sha }}
+          path: runtime-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+  web:
+    name: Web V86 Node 24 runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install i686 build tools
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib libc6-dev-i386 \
+            libssl-dev:i386 libsqlite3-dev:i386 zlib1g-dev:i386 \
+            libffi-dev:i386 liblzma-dev:i386 libbz2-dev:i386 \
+            libreadline-dev:i386 libncurses-dev:i386 \
+            pax-utils python3-pyelftools patchelf cpio zip unzip curl
+      - name: Build V86 runtime
+        run: bash tools/web-runtime/build_v86_runtime_wsl.sh
+      - name: Prepare pinned V86 emulator and BIOS
+        run: |
+          npm install --prefix apps/flutter/app/.dart_tool/web-build-deps --no-audit --no-fund v86@0.5.424
+          python3 tools/web-runtime/prepare_smoke_bios.py
+      - name: Boot V86 and verify Node, SQLite, child processes, and Python
+        run: timeout 300 node tools/web-runtime/v86_runtime_smoke.mjs | tee v86-smoke.log
+      - name: Stage verified runtime
+        run: |
+          mkdir -p runtime-artifacts
+          cp apps/flutter/app/web/runtime/generated/v86/operit-runtime-* runtime-artifacts/
+          cp v86-smoke.log runtime-artifacts/
+          (cd runtime-artifacts && sha256sum operit-runtime-bzimage.bin operit-runtime-initrd.cpio.gz > SHA256SUMS)
+          echo '### Web V86' >> "$GITHUB_STEP_SUMMARY"
+          tail -c 4000 v86-smoke.log >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node24-web-${{ github.sha }}
+          path: runtime-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload diagnostic logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node24-web-diagnostics-${{ github.sha }}
+          path: v86-smoke.log
+          if-no-files-found: ignore
+          retention-days: 14

@@ -25,10 +25,8 @@ pub struct CoreRouteResumeContext {
     pub enableThinking: bool,
     /// Identifies the participant selected by the authenticated configuration descriptor.
     pub participantId: String,
-    /// Identifies the registered snapshot owner, injected solely by the runtime.
+    /// Identifies the registered configuration owner, injected solely by the runtime.
     pub extensionOwner: String,
-    /// Preserves the opaque actor, voice, and profile snapshot for this continuation.
-    pub messageExtension: serde_json::Map<String, serde_json::Value>,
     pub proxySenderName: Option<String>,
     pub notifyReplyOverride: Option<bool>,
     pub chatProviderIdOverride: Option<String>,
@@ -182,6 +180,8 @@ pub struct RuntimeCoreNodeStatus {
     pub platform: String,
     pub model: String,
     pub reachable: bool,
+    /// Whether this device can be selected to host Core execution.
+    pub canExecute: bool,
     /// Peer Links one routed request traverses, reported only for multi-hop members.
     pub relayHops: Option<u32>,
     /// Hop node ids from the first hop through the member, reported only for multi-hop members.
@@ -253,6 +253,89 @@ impl RuntimeCoreNodeRouteState {
     }
 }
 
+/// Outcome of resolving one path argument that may carry a `node:` prefix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(non_snake_case)]
+pub enum QualifiedVfsResolution<'a> {
+    /// The path has no resolvable node prefix and stays on this device.
+    LocalPath(&'a str),
+    /// The prefix resolved to another space member; operations target `nodeId`.
+    RemoteTarget {
+        node: &'a RuntimeCoreNodeStatus,
+        /// The reference exactly as typed, so echoed paths round-trip.
+        pathPrefix: &'a str,
+        innerPath: &'a str,
+    },
+}
+
+/// Splits one `node:path` reference typed by a model or user into its node
+/// prefix and inner path, without resolving the prefix against live state.
+///
+/// Returns `None` for every string that must keep local path semantics:
+/// unqualified paths, prefixes containing separators, and single-letter
+/// prefixes, which reserve the Windows drive syntax (`C:/Users`).
+#[allow(non_snake_case)]
+pub fn splitQualifiedVfsPath(text: &str) -> Option<(&str, &str)> {
+    let text = text.trim();
+    let (prefix, innerPath) = text.split_once(':')?;
+    if prefix.is_empty() || prefix.len() == 1 {
+        return None;
+    }
+    if prefix.chars().any(|c| c == '/' || c == '\\') {
+        return None;
+    }
+    Some((prefix, innerPath))
+}
+
+/// Formats every space member as a copyable candidate list.
+#[allow(non_snake_case)]
+fn formatSpaceMembers(state: &RuntimeCoreNodeRouteState) -> String {
+    let members = state.nodes.iter().map(|node| coreNodeReferenceLabel(node)).collect::<Vec<_>>();
+    if members.is_empty() {
+        "the device space has no other members".to_string()
+    } else {
+        members.join(", ")
+    }
+}
+
+impl RuntimeCoreNodeRouteState {
+    /// Resolves one path argument against live route state.
+    ///
+    /// A prefix matching this device short-circuits to its inner local path.
+    /// Unknown or ambiguous prefixes fail with the member candidate list
+    /// instead of guessing; offline members still resolve so callers can
+    /// report the device state explicitly.
+    #[allow(non_snake_case)]
+    pub fn resolveQualifiedVfsPath<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> Result<QualifiedVfsResolution<'a>, String> {
+        let Some((prefix, innerPath)) = splitQualifiedVfsPath(text) else {
+            return Ok(QualifiedVfsResolution::LocalPath(text.trim()));
+        };
+        match self.resolveNodeReference(prefix) {
+            CoreNodeReferenceMatch::Resolved(node) => {
+                if node.nodeId == self.currentNodeId {
+                    return Ok(QualifiedVfsResolution::LocalPath(innerPath));
+                }
+                Ok(QualifiedVfsResolution::RemoteTarget {
+                    node,
+                    pathPrefix: prefix,
+                    innerPath,
+                })
+            }
+            CoreNodeReferenceMatch::Unknown => Err(format!(
+                "'{prefix}' is not a member of the current device space; members: {}",
+                formatSpaceMembers(self)
+            )),
+            CoreNodeReferenceMatch::Ambiguous(candidates) => Err(format!(
+                "'{prefix}' matches multiple devices; candidates: {}",
+                formatCoreNodeReferenceCandidates(&candidates)
+            )),
+        }
+    }
+}
+
 /// Selects how one matching stage compares member names.
 #[derive(Clone, Copy)]
 enum RuntimeCoreNodeNameMatch {
@@ -306,8 +389,9 @@ pub trait ToolRuntimeSupport: Send + Sync {
     fn bindDeviceToolRuntime(&self, _runtime: Arc<dyn crate::tools::DeviceTools::DeviceToolRuntime>) -> Result<(), String> {
         Err("Device tool routing is not supported by this runtime".into())
     }
-    fn executeDeviceTool(&self, _request: operit_plugin_sdk::javascript::JsToolCallRequest,
-        _preflight: Option<crate::tools::DeviceTools::DeviceToolPreflight>)
+    fn closeDeviceTransports(&self, _owner: &str) {}
+
+    fn executeDeviceTool(&self, _request: operit_plugin_sdk::javascript::JsToolCallRequest)
         -> operit_plugin_sdk::javascript::JsExecutionCompletion<operit_plugin_sdk::javascript::JsToolCallResult> {
         Box::pin(async { crate::tools::DeviceTools::failure("Device tool routing is not initialized") })
     }
@@ -338,6 +422,20 @@ pub trait ToolRuntimeSupport: Send + Sync {
     fn listModelSummaries(
         &self,
     ) -> Result<Vec<operit_plugin_sdk::js_sdk::models::ModelsSummary>, String>;
+    /// Synthesizes encoded audio through the configured provider on this host.
+    fn synthesizeSpeech(&self, _request: operit_plugin_sdk::js_sdk::tts::TtsSynthesizeRequest)
+        -> Result<operit_plugin_sdk::js_sdk::results::TtsSynthesizeResultData, String> {
+        Err("Speech synthesis is unavailable on this host".into())
+    }
+    /// Starts system speech through this runtime's shared playback host.
+    #[allow(non_snake_case)]
+    fn speakSpeech(&self, request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest)
+        -> Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String>;
+    /// Recognizes supplied audio through the configured provider on this host.
+    fn transcribeSpeech(&self, _request: operit_plugin_sdk::js_sdk::stt::SttTranscribeRequest)
+        -> Result<operit_plugin_sdk::js_sdk::results::SttTranscribeResultData, String> {
+        Err("Speech recognition is unavailable on this host".into())
+    }
     /// Reads complete configured speech records directly from the canonical configuration manager.
     #[allow(non_snake_case)]
     fn listTtsConfigs(
@@ -391,15 +489,15 @@ pub trait ToolRuntimeSupport: Send + Sync {
 
     /// Reads one stored environment variable.
     #[allow(non_snake_case)]
-    fn readEnvironmentVariable(&self, key: &str) -> Result<Option<String>, String>;
+    fn readEnvironmentVariable(&self, packageName: &str, key: &str) -> Result<Option<String>, String>;
 
     /// Writes one stored environment variable.
     #[allow(non_snake_case)]
-    fn writeEnvironmentVariable(&self, key: &str, value: &str) -> Result<(), String>;
+    fn writeEnvironmentVariable(&self, packageName: &str, key: &str, value: &str) -> Result<(), String>;
 
     /// Removes one stored environment variable.
     #[allow(non_snake_case)]
-    fn removeEnvironmentVariable(&self, key: &str) -> Result<(), String>;
+    fn removeEnvironmentVariable(&self, packageName: &str, key: &str) -> Result<(), String>;
 
     /// Returns built-in and internal tool prompt categories for hidden catalog search.
     #[allow(non_snake_case)]
@@ -478,6 +576,7 @@ pub trait ToolRuntimeSupport: Send + Sync {
         &'a self,
         setAsCurrentChat: bool,
         sourceChatId: Option<String>,
+        parentChatId: Option<String>,
         input: Option<serde_json::Value>,
     ) -> ToolRuntimeSupportFuture<'a, Result<String, String>>;
 
@@ -592,6 +691,7 @@ mod tests {
             platform: "android".to_string(),
             model: "M2007J1SC".to_string(),
             reachable,
+            canExecute: true,
             relayHops: None,
             relayPath: None,
         }
@@ -699,5 +799,90 @@ mod tests {
         assert_eq!(coreNodeReferenceLabel(&status("core-1", "cas", "", true)), "cas (core-1)");
         assert_eq!(coreNodeReferenceLabel(&status("core-1", "", "", true)), "core-1");
         assert_eq!(coreNodeReferenceLabel(&status("core-1", "core-1", "", true)), "core-1");
+    }
+
+    /// Only bare prefixes without separators split as qualified paths; local
+    /// VFS paths and Windows drive syntax keep local semantics.
+    #[test]
+    fn qualifiedPathSplittingKeepsLocalPathsIntact() {
+        assert_eq!(splitQualifiedVfsPath("cas:/mnt/nas/data"), Some(("cas", "/mnt/nas/data")));
+        assert_eq!(splitQualifiedVfsPath("cas:C:/Users/report.docx"), Some(("cas", "C:/Users/report.docx")));
+        assert_eq!(splitQualifiedVfsPath("  cas:x/y "), Some(("cas", "x/y")));
+        // Display names may contain spaces; the colon split runs first.
+        assert_eq!(
+            splitQualifiedVfsPath("EliteMini Series:/Users/x"),
+            Some(("EliteMini Series", "/Users/x"))
+        );
+        for local in ["/app/workspaces/chat-a", "/mnt/linux/home", "", "relative/path"] {
+            assert_eq!(splitQualifiedVfsPath(local), None, "{local}");
+        }
+        // Single-letter prefixes reserve the Windows drive syntax.
+        assert_eq!(splitQualifiedVfsPath("C:/Users"), None);
+        assert_eq!(splitQualifiedVfsPath("c:data"), None);
+        // Prefixes with separators are path text, not node references.
+        assert_eq!(splitQualifiedVfsPath("/mnt/linux/foo:bar"), None);
+        assert_eq!(splitQualifiedVfsPath(":no-prefix"), None);
+    }
+
+    /// Qualified paths resolve through the shared node reference stages and
+    /// never guess on unknown or ambiguous prefixes.
+    #[test]
+    fn qualifiedPathResolutionMatchesSpaceMembers() {
+        let state = state(vec![
+            status("core-2-local", "desk", "harmoon", true),
+            status("core-1-cas", "cas", "harmoon", true),
+        ]);
+        match state.resolveQualifiedVfsPath("cas:/mnt/nas/data").unwrap() {
+            QualifiedVfsResolution::RemoteTarget { node, pathPrefix, innerPath } => {
+                assert_eq!(node.nodeId, "core-1-cas");
+                assert_eq!(pathPrefix, "cas");
+                assert_eq!(innerPath, "/mnt/nas/data");
+            }
+            other => panic!("expected a remote target, got {other:?}"),
+        }
+        // This device's own name short-circuits to the inner local path.
+        match state.resolveQualifiedVfsPath("desk:/mnt/linux/home").unwrap() {
+            QualifiedVfsResolution::LocalPath(inner) => assert_eq!(inner, "/mnt/linux/home"),
+            other => panic!("expected a local path, got {other:?}"),
+        }
+        // The exact node id and a unique id prefix resolve like switch_core.
+        match state.resolveQualifiedVfsPath("core-1:/sdcard/Download").unwrap() {
+            QualifiedVfsResolution::RemoteTarget { node, .. } => assert_eq!(node.nodeId, "core-1-cas"),
+            other => panic!("expected a remote target, got {other:?}"),
+        }
+        // Unqualified input passes through unchanged.
+        assert_eq!(
+            state.resolveQualifiedVfsPath("/app/workspaces/chat-a").unwrap(),
+            QualifiedVfsResolution::LocalPath("/app/workspaces/chat-a")
+        );
+    }
+
+    /// Unknown and ambiguous path prefixes fail with candidate lists.
+    #[test]
+    fn qualifiedPathFailuresListCandidates() {
+        let state = state(vec![
+            status("core-1", "cas", "harmoon", true),
+            status("core-2", "cas", "harmoon", true),
+        ]);
+        let unknown = state.resolveQualifiedVfsPath("lighthouse:/mnt/nas").unwrap_err();
+        assert!(unknown.contains("'lighthouse' is not a member"), "{unknown}");
+        assert!(unknown.contains("cas (core-1)"), "{unknown}");
+        let ambiguous = state.resolveQualifiedVfsPath("harmoon:/sdcard").unwrap_err();
+        assert!(ambiguous.contains("matches multiple devices"), "{ambiguous}");
+        assert!(ambiguous.contains("cas (core-1), cas (core-2)"), "{ambiguous}");
+    }
+
+    /// Offline members still resolve so callers can report the device state
+    /// explicitly instead of treating the device as unknown.
+    #[test]
+    fn offlineMembersResolveForExplicitOfflineErrors() {
+        let state = state(vec![
+            status("core-1-local", "desk", "harmoon", true),
+            status("core-2-off", "phone", "harmoon", false),
+        ]);
+        match state.resolveQualifiedVfsPath("phone:/sdcard/Download").unwrap() {
+            QualifiedVfsResolution::RemoteTarget { node, .. } => assert!(!node.reachable),
+            other => panic!("expected a remote target, got {other:?}"),
+        }
     }
 }

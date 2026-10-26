@@ -133,6 +133,41 @@ class FileSelectorIOS extends FileSelectorPlatform {
     );
   }
 
+  /// Opens a scoped file reference so Flutter can count its reads without an opaque import copy.
+  @override
+  Future<XFile?> openFileWithProgress({
+    required void Function(int completed, int? total) onProgress,
+    List<XTypeGroup>? acceptedTypeGroups,
+  }) async {
+    final path = await _saveChannel.invokeMethod<String>('openFileReference', {
+      'utis': _allowedUtiListFromTypeGroups(acceptedTypeGroups),
+    });
+    return path == null ? null : XFile(path);
+  }
+
+  /// Selects a scoped output folder so the storage Host can report each written chunk.
+  @override
+  Future<FileSaveLocation?> saveGeneratedFileWithProgress({
+    required Future<XFile> Function() generate,
+    required void Function() onChooseDestination,
+    required Future<void> Function(XFile file, String destination) write,
+    required void Function(int completed, int total) onProgress,
+    List<XTypeGroup>? acceptedTypeGroups,
+    SaveDialogOptions options = const SaveDialogOptions(),
+  }) async {
+    final directory = await getDirectoryPath(
+      initialDirectory: options.initialDirectory,
+    );
+    if (directory == null) return null;
+    final file = await generate();
+    final destination = Uri.directory(directory)
+        .resolveUri(Uri(pathSegments: [options.suggestedName ?? file.name]))
+        .toFilePath();
+    onProgress(0, await file.length());
+    await write(file, destination);
+    return FileSaveLocation(destination);
+  }
+
   /// Saves a host file through the native picker without reading its bytes in Dart.
   @override
   Future<FileSaveLocation?> saveFileReference({

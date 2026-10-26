@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { stripTypeScriptTypes } from 'node:module';
+import { Worker as NodeWorker } from 'node:worker_threads';
+import test from 'node:test';
+
+const root = new URL('../../', import.meta.url);
+
+/** Exercises the production worker and transport in real isolated threads. */
+test('browser JavaScript host preserves runtime contracts', { timeout: 20_000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'operit-javascript-'));
+  const originalWorker = globalThis.Worker;
+  const originalHost = globalThis.__operitHost;
+  const runtimes = [];
+  try {
+    await writeFile(join(directory, 'package.json'), '{"type":"module"}');
+    for (const name of ['operit_javascript_transport', 'operit_javascript_runtime', 'operit_javascript_worker']) {
+      const source = await readFile(new URL(`apps/flutter/app/web/runtime/src/${name}.ts`, root), 'utf8');
+      await writeFile(join(directory, `${name}.js`), stripTypeScriptTypes(source, { mode: 'transform' }));
+    }
+    const codec = await readFile(new URL('apps/flutter/app/web/runtime/vendor/msgpack.min.js', root), 'utf8');
+    await writeFile(join(directory, 'operit_messagepack.js'), `const module={exports:{}};const exports=module.exports;\n${codec}\nexport const MessagePack=module.exports;`);
+    await writeFile(join(directory, 'thread.mjs'), `
+import {parentPort,workerData} from 'node:worker_threads';
+let listener;const pending=[];
+parentPort.on('message',data=>{if(listener)listener({data});else pending.push(data);});
+globalThis.addEventListener=(type,callback)=>{if(type!=='message')throw new Error(type);listener=callback;for(const data of pending)callback({data});};
+globalThis.postMessage=value=>parentPort.postMessage(value);
+await import(workerData);
+`);
+    /** Adapts only browser worker construction; all execution and framing use production code. */
+    globalThis.Worker = class {
+      /** Starts the production guest module with the Node test event adapter. */
+      constructor(url) {
+        this.worker = new NodeWorker(pathToFileURL(join(directory, 'thread.mjs')), { workerData: url.href });
+        this.listeners = new Map();
+      }
+      /** Delivers worker-ready events through the production owner's browser event API. */
+      addEventListener(type, listener) {
+        const wrapped = type === 'message' ? data => listener({ data }) : error => listener({ message: error.message });
+        this.listeners.set(listener, wrapped);
+        this.worker.on(type, wrapped);
+      }
+      /** Releases startup-only worker readiness listeners. */
+      removeEventListener(type, listener) {
+        this.worker.off(type, this.listeners.get(listener));
+        this.listeners.delete(listener);
+      }
+      /** Delivers the original browser command without modifying its payload. */
+      postMessage(value) { this.worker.postMessage(value); }
+      /** Releases the guest thread after disposal or timeout. */
+      terminate() { this.worker.terminate(); }
+    };
+    const { createBrowserJavaScriptHost } = await import(pathToFileURL(join(directory, 'operit_javascript_runtime.js')).href);
+    const broker = createBrowserJavaScriptHost();
+    let preparedId;
+    globalThis.__operitHost = { javaScriptRuntime: { ...broker, create: () => preparedId } };
+    const bootstrap = await readFile(new URL('hosts/web/src/javascript_promises.js', root), 'utf8');
+    /** Creates one production runtime with its trusted bridge initialized. */
+    async function create() {
+      preparedId = await broker.create();
+      const runtime = globalThis.__operitCreateJavaScriptRuntime();
+      runtimes.push(runtime);
+      call(runtime, { operation: 'initialize', source: bootstrap });
+      return runtime;
+    }
+    /** Gives every command a bounded test interrupt to catch transport deadlocks. */
+    function call(runtime, command, callback = () => { throw new Error('Unexpected host callback'); }) {
+      const started = Date.now();
+      return runtime.execute(command, callback, () => Date.now() - started > 3000);
+    }
+    const runtime = await create();
+    await t.test('keeps independent global state and compiles generator for-of syntax', async () => {
+      call(runtime, { operation: 'evaluateVoid', name: 'syntax.js', source: 'globalThis.marker=17;globalThis.lifecycle=()=>marker;(function*(){for(const item of yield [1,2])if(item)throw new Error("expected");});' });
+      assert.equal(call(runtime, { operation: 'call', name: 'lifecycle', args: [] }), 17);
+      const other = await create();
+      assert.equal(call(other, { operation: 'evaluateString', name: 'isolation.js', source: 'typeof marker' }), 'undefined');
+    });
+    await t.test('preserves synchronous callbacks and multi-frame Unicode values', () => {
+      call(runtime, { operation: 'binding', name: 'hostEcho', factory: 'syncBinding' });
+      const text = '角色卡🙂'.repeat(150_000);
+      call(runtime, { operation: 'evaluateVoid', name: 'echo.js', source: 'globalThis.echo=value=>hostEcho(value);' });
+      const result = call(runtime, { operation: 'call', name: 'echo', args: [{ text, values: [null, false, 42], nested: { enabled: true } }] }, (name, args) => {
+        assert.equal(name, 'hostEcho');
+        assert.equal(args[0].text, text);
+        return args[0];
+      });
+      assert.deepEqual(result, { text, values: [null, false, 42], nested: { enabled: true } });
+    });
+    await t.test('drains native Promise continuations before releasing command ownership', () => {
+      const requests = [];
+      call(runtime, { operation: 'binding', name: 'hostAsync', factory: 'binding' });
+      call(runtime, { operation: 'evaluateVoid', name: 'promise.js', source: 'globalThis.answer=null;hostAsync("scope",21).then(value=>Promise.resolve(value*2)).then(value=>{answer=value;});' }, (name, args) => {
+        requests.push([name, args]);
+        return null;
+      });
+      assert.deepEqual(requests, [['hostAsync', [1, 21]]]);
+      call(runtime, { operation: 'settle', args: [1, 21, false] });
+      assert.equal(call(runtime, { operation: 'evaluateString', name: 'answer.js', source: 'String(answer)' }), '42');
+    });
+    await t.test('cancels scoped completions and preserves the realm after script errors', () => {
+      call(runtime, { operation: 'evaluateVoid', name: 'cancel.js', source: 'globalThis.cancelCleanup=0;globalThis.cancelReason=null;hostAsync("cancelled").then(()=>{answer=99;},reason=>{cancelReason=reason;}).finally(()=>{cancelCleanup++;});' }, () => null);
+      call(runtime, { operation: 'cancel', args: ['cancelled'] });
+      assert.equal(call(runtime, { operation: 'evaluateString', name: 'cleanup.js', source: 'String(cancelCleanup)' }), '1');
+      assert.equal(call(runtime, { operation: 'evaluateString', name: 'reason.js', source: 'cancelReason' }), 'JavaScript execution was cancelled');
+      call(runtime, { operation: 'settle', args: [2, 99, false] });
+      assert.equal(call(runtime, { operation: 'evaluateString', name: 'unchanged.js', source: 'String(answer)' }), '42');
+      assert.throws(() => call(runtime, { operation: 'evaluateVoid', name: 'throw.js', source: 'throw new Error("script exception");' }), /script exception/);
+      assert.equal(call(runtime, { operation: 'evaluateString', name: 'alive.js', source: 'String(marker)' }), '17');
+    });
+    await t.test('terminates a busy engine through the host interrupt predicate', () => {
+      const started = Date.now();
+      assert.throws(() => runtime.execute({ operation: 'evaluateVoid', name: 'loop.js', source: 'for(;;){}' }, () => null, () => Date.now() - started > 100), /interrupted/);
+      assert.ok(Date.now() - started < 1000);
+      assert.throws(() => call(runtime, { operation: 'jobs' }), /destroyed/);
+    });
+  } finally {
+    for (const runtime of runtimes) runtime.dispose();
+    globalThis.Worker = originalWorker;
+    globalThis.__operitHost = originalHost;
+    delete globalThis.__operitCreateJavaScriptRuntime;
+    await rm(directory, { recursive: true, force: true });
+  }
+});

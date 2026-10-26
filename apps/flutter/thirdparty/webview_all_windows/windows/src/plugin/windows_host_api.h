@@ -33,6 +33,7 @@ private:
 
   WNDCLASS window_class_ = {};
   FlutterDesktopViewRef view_;
+  HWND focus_host_window_ = nullptr;
   flutter::BinaryMessenger *messenger_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> theme_channel_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> resource_channel_;

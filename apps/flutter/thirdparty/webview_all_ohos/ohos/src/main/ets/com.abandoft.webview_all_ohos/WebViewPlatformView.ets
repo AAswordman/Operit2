@@ -78,11 +78,17 @@ class OhosSslAuthHandler implements SslAuthHandler {
 
 /** Completes registration when the ArkUI Web component binds its script host. */
 class DocumentStartScriptHostWaiter {
+  readonly resolve: (host: (scripts: Array<ScriptItem>) => Promise<void>) => void;
+  readonly reject: (error: Error) => void;
+
   /** Retains promise callbacks until the platform component attaches. */
   constructor(
-    readonly resolve: (host: (scripts: Array<ScriptItem>) => Promise<void>) => void,
-    readonly reject: (error: Error) => void,
-  ) {}
+    resolve: (host: (scripts: Array<ScriptItem>) => Promise<void>) => void,
+    reject: (error: Error) => void,
+  ) {
+    this.resolve = resolve;
+    this.reject = reject;
+  }
 }
 
 export class WebViewPlatformView extends PlatformView {

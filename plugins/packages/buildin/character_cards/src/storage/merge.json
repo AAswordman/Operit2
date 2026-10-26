@@ -1,0 +1,378 @@
+{
+  "cards": {
+    "version": 1,
+    "catalog": {
+      "keyPrefix": "record_",
+      "keySuffix": "",
+      "identityField": "id",
+      "nameField": "name",
+      "ignoredFields": [
+        "id",
+        "createdAt",
+        "updatedAt"
+      ],
+      "retiredKeys": []
+    },
+    "references": [
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "chatProviderId"
+          }
+        ],
+        "target": "runtime/config/preferences/model_configs.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "ttsConfigId"
+          }
+        ],
+        "target": "runtime/config/preferences/tts_configs.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "themeConfigId"
+          }
+        ],
+        "target": "runtime/config/preferences/user_preferences.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "sharedMemoryId"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "attachedTagIds"
+          },
+          {
+            "kind": "array_values"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/tags.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "sharedMemoryMounts"
+          },
+          {
+            "kind": "array_values"
+          },
+          {
+            "kind": "field",
+            "name": "sharedMemoryId"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+      }
+    ],
+    "projection": null
+  },
+  "groups": {
+    "version": 1,
+    "catalog": {
+      "keyPrefix": "record_",
+      "keySuffix": "",
+      "identityField": "id",
+      "nameField": "name",
+      "ignoredFields": [
+        "id",
+        "createdAt",
+        "updatedAt"
+      ],
+      "retiredKeys": []
+    },
+    "references": [
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "themeConfigId"
+          }
+        ],
+        "target": "runtime/config/preferences/user_preferences.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "members"
+          },
+          {
+            "kind": "array_values"
+          },
+          {
+            "kind": "field",
+            "name": "characterCardId"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      }
+    ],
+    "projection": null
+  },
+  "tags": {
+    "version": 1,
+    "catalog": {
+      "keyPrefix": "record_",
+      "keySuffix": "",
+      "identityField": "id",
+      "nameField": "name",
+      "ignoredFields": [
+        "id",
+        "createdAt",
+        "updatedAt"
+      ],
+      "retiredKeys": []
+    },
+    "references": [],
+    "projection": null
+  },
+  "stores": {
+    "version": 1,
+    "catalog": {
+      "keyPrefix": "record_",
+      "keySuffix": "",
+      "identityField": "id",
+      "nameField": "name",
+      "ignoredFields": [
+        "id",
+        "createdAt",
+        "updatedAt"
+      ],
+      "retiredKeys": []
+    },
+    "references": [],
+    "projection": null
+  },
+  "conversationGroups": {
+    "version": 1,
+    "catalog": null,
+    "references": [
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "ownerSelection"
+          },
+          {
+            "kind": "identity",
+            "prefix": "card:",
+            "suffix": ""
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "record_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "ownerSelection"
+          },
+          {
+            "kind": "identity",
+            "prefix": "group:",
+            "suffix": ""
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
+      }
+    ],
+    "projection": null
+  },
+  "meta": {
+    "version": 1,
+    "catalog": null,
+    "references": [
+      {
+        "key": {
+          "kind": "exact",
+          "key": "state"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "active"
+          },
+          {
+            "kind": "variant",
+            "name": "CharacterCard"
+          },
+          {
+            "kind": "field",
+            "name": "id"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "exact",
+          "key": "state"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "active"
+          },
+          {
+            "kind": "variant",
+            "name": "CharacterGroup"
+          },
+          {
+            "kind": "field",
+            "name": "id"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
+      }
+    ],
+    "projection": null
+  },
+  "chats": {
+    "version": 1,
+    "catalog": null,
+    "references": [
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "binding_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "selection"
+          },
+          {
+            "kind": "identity",
+            "prefix": "card:",
+            "suffix": ""
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "draft_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "selection"
+          },
+          {
+            "kind": "identity",
+            "prefix": "card:",
+            "suffix": ""
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "binding_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "selection"
+          },
+          {
+            "kind": "identity",
+            "prefix": "group:",
+            "suffix": ""
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "records",
+          "prefix": "draft_",
+          "suffix": ""
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "selection"
+          },
+          {
+            "kind": "identity",
+            "prefix": "group:",
+            "suffix": ""
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
+      }
+    ],
+    "projection": null
+  }
+}

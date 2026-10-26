@@ -62,8 +62,6 @@ pub struct ChatConfigurationRequest {
     pub chatId: Option<String>,
     /// Contains this configuration owner's conversation extension, read from the canonical record.
     pub chatExtension: Option<JsonObject>,
-    /// Contains the exact historical message revision snapshot supplied by the owning runtime.
-    pub messageExtension: Option<JsonObject>,
     pub participantId: Option<String>,
     pub promptFunctionType: PromptFunctionType,
     pub defaultModelBinding: ProviderFunctionModelBinding,
@@ -77,8 +75,8 @@ impl ChatConfigurationRequest {
             return Err(format!("Chat configuration purpose mismatch: expected {purpose:?}, received {:?}", self.purpose));
         }
         if purpose == ChatConfigurationPurpose::Display
-            && (self.participantId.is_some() || self.messageExtension.is_some()) {
-            return Err("Display configuration cannot request an execution participant or message snapshot".to_string());
+            && self.participantId.is_some() {
+            return Err("Display configuration cannot request an execution participant".to_string());
         }
         Ok(())
     }
@@ -110,7 +108,7 @@ pub struct ChatDisplayParticipant {
 pub struct ChatInitialMessage {
     pub content: String,
     pub displayName: String,
-    pub messageExtension: Option<JsonObject>,
+    pub participantId: Option<String>,
 }
 
 /// Contains only display data and explicit ordered initialization messages, never an executable profile.
@@ -155,6 +153,13 @@ impl ChatConfigurationDisplayResult {
                 return Err(format!("Duplicate display participant: {}",participant.id));
             }
         }
+        for message in &self.initialMessages {
+            if let Some(id) = &message.participantId {
+                if !ids.contains(id) {
+                    return Err(format!("Initial message author is not a display participant: {id}"));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -197,16 +202,26 @@ pub struct ChatParticipantProfile {
     pub resources: Vec<ChatResourceRoute>,
 }
 
+/// Declares generic history ownership independently from the plugin's domain entities.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct ChatHistoryPolicy {
+    pub isolateParticipants: bool,
+    pub labelUserMessages: bool,
+}
+
 /// Returns one execution participant and its plugin-owned conversation context.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 #[serde(deny_unknown_fields)]
 pub struct ChatConfigurationResult {
     pub contextKey: String,
+    pub historyPolicy: ChatHistoryPolicy,
     pub profile: ChatParticipantProfile,
     pub participants: Vec<ChatParticipantProfile>,
-    /// Contains the plugin-authored opaque execution snapshot persisted with this generation.
-    pub messageExtension: JsonObject,
+    /// Contains owner-isolated data for the current execution only; never persisted on messages.
+    pub executionData: JsonObject,
     /// Identifies the actual registered owner injected by Rust after authenticated dispatch.
     #[serde(skip)]
     pub extensionOwner: String,
@@ -224,8 +239,8 @@ impl ChatConfigurationResult {
         if self.participants.is_empty() {
             return Err("Chat configuration participants are empty".to_string());
         }
-        if self.messageExtension.is_empty() {
-            return Err("Chat execution message snapshot is empty".to_string());
+        if self.executionData.is_empty() {
+            return Err("Chat execution data is empty".to_string());
         }
         let mut ids = std::collections::BTreeSet::new();
         for participant in &self.participants {
@@ -264,6 +279,12 @@ impl ChatConfigurationResult {
 
 /// Supplies runtime-owned data and plugin operations to provider code.
 pub trait ProviderRuntimeSupport: Send + Sync {
+    /// Executes a local model on the device selected by its inference Binding.
+    fn generateLocalLlm(&self, _bindingKey: String, _modelBinding: String, _request: Value, _settings: Value)
+        -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
+        Box::pin(async { Err("Local LLM runtime support is unavailable".to_string()) })
+    }
+
     /// Returns the root directory used by provider runtime data.
     fn dataDir(&self) -> Result<PathBuf, String>;
 
@@ -407,7 +428,7 @@ mod chat_configuration_descriptor_tests {
             "toolAccess": { "enabled": true, "allowedBuiltinTools": ["explicit"], "allowedPackages": [], "allowedSkills": [], "allowedMcpServers": [] },
             "resources": [{ "key": "opaque/resource", "readable": true, "writable": false }]
         });
-        json!({ "contextKey": "opaque/conversation", "profile": profile, "participants": [profile], "messageExtension": { "actor": "participant-1", "voice": "voice", "profileRevision": "7" } })
+        json!({ "contextKey": "opaque/conversation", "historyPolicy":{"isolateParticipants":false,"labelUserMessages":false},"profile": profile, "participants": [profile], "executionData": { "actor": "participant-1", "voice": "voice", "profileRevision": "7" } })
     }
 
     /// Attaches an explicit native fixture owner before testing descriptor-specific validation errors.
@@ -428,15 +449,29 @@ mod chat_configuration_descriptor_tests {
         assert_eq!(serde_json::to_value(descriptor).unwrap(), raw);
     }
 
+    /// Requires an explicit complete history policy instead of inferring participant isolation from domain identifiers.
+    #[test]
+    fn rejects_missing_or_incomplete_history_policy() {
+        let mut raw = descriptor_json();
+        raw.as_object_mut().unwrap().remove("historyPolicy");
+        assert!(serde_json::from_value::<ChatConfigurationResult>(raw).is_err());
+        for policy in [json!(null), json!({}), json!({"isolateParticipants":true}),
+            json!({"isolateParticipants":true,"labelUserMessages":true,"group":true})] {
+            let mut raw = descriptor_json();
+            raw["historyPolicy"] = policy;
+            assert!(serde_json::from_value::<ChatConfigurationResult>(raw).is_err());
+        }
+    }
+
     /// Rejects missing or non-object execution snapshots before runtime owner injection.
     #[test]
-    fn rejects_invalid_message_snapshots() {
+    fn rejects_invalid_execution_data() {
         let mut raw = descriptor_json();
-        raw.as_object_mut().unwrap().remove("messageExtension");
+        raw.as_object_mut().unwrap().remove("executionData");
         assert!(serde_json::from_value::<ChatConfigurationResult>(raw).is_err());
         for value in [json!(null), json!([]), json!("snapshot")] {
             let mut raw = descriptor_json();
-            raw["messageExtension"] = value;
+            raw["executionData"] = value;
             assert!(serde_json::from_value::<ChatConfigurationResult>(raw).is_err());
         }
     }
@@ -486,14 +521,10 @@ mod chat_configuration_descriptor_tests {
         assert!(authenticated_descriptor(raw).validate().is_err());
     }
 
-    /// Serializes owner-scoped conversation and historical snapshots without a second association token.
+    /// Serializes owner-scoped current configuration requests without a second association token.
     #[test]
     fn configuration_request_rejects_legacy_selection() {
         let chatExtension = json!({"selection":{"kind":"opaque","id":"identity"}})
-            .as_object()
-            .unwrap()
-            .clone();
-        let messageExtension = json!({"actor":"historical","voice":"stored-voice"})
             .as_object()
             .unwrap()
             .clone();
@@ -501,7 +532,6 @@ mod chat_configuration_descriptor_tests {
             purpose: ChatConfigurationPurpose::Execution,
             chatId: Some("chat-a".to_string()),
             chatExtension: Some(chatExtension.clone()),
-            messageExtension: Some(messageExtension.clone()),
             participantId: Some("participant-a".to_string()),
             promptFunctionType: PromptFunctionType::CHAT,
             defaultModelBinding: ProviderFunctionModelBinding {
@@ -513,7 +543,9 @@ mod chat_configuration_descriptor_tests {
         let mut raw = serde_json::to_value(request).unwrap();
         let decoded: ChatConfigurationRequest = serde_json::from_value(raw.clone()).unwrap();
         assert_eq!(decoded.chatExtension, Some(chatExtension));
-        assert_eq!(decoded.messageExtension, Some(messageExtension));
+        assert!(raw.get("executionData").is_none());
+        let mut historical = raw.clone(); historical["executionData"] = json!({"profile": {"id":"old"}});
+        assert!(serde_json::from_value::<ChatConfigurationRequest>(historical).is_err());
         assert!(raw.get("selection").is_none());
         raw["selection"] = json!("legacy-token");
         assert!(serde_json::from_value::<ChatConfigurationRequest>(raw).is_err());
@@ -523,20 +555,20 @@ mod chat_configuration_descriptor_tests {
     fn display_json() -> Value {
         json!({"contextKey":"opaque/display", "identity":{"title":"Conversation","avatarUri":null},
             "participants":[{"id":"b","name":"Second","avatarUri":null},{"id":"a","name":"First","avatarUri":null}],
-            "initialMessages":[{"content":"Explicit first","displayName":"Opening B","messageExtension":null},
-                {"content":"Explicit second","displayName":"Opening A","messageExtension":{"opaque":"fresh"}}]})
+            "initialMessages":[{"content":"Explicit first","displayName":"Opening B","participantId":"b"},
+                {"content":"Explicit second","displayName":"Opening A","participantId":"a"}]})
     }
 
     /// Preserves plugin-declared participant and message order without requiring an execution snapshot.
     #[test]
-    fn display_preserves_explicit_order_and_nullable_initial_snapshots() {
+    fn display_preserves_explicit_order_and_author_identities() {
         let raw=display_json();
         let mut display: ChatConfigurationDisplayResult=serde_json::from_value(raw.clone()).unwrap();
         display.extensionOwner="arbitrary.owner".into();
         display.validate().unwrap();
         assert_eq!(display.participants[0].id,"b");
         assert_eq!(display.initialMessages[0].content,"Explicit first");
-        assert!(display.initialMessages[0].messageExtension.is_none());
+        assert_eq!(display.initialMessages[0].participantId.as_deref(),Some("b"));
         assert_eq!(serde_json::to_value(&display).unwrap(),raw);
         assert!(serde_json::from_value::<ChatConfigurationResult>(raw).is_err());
         assert!(serde_json::from_value::<ChatConfigurationDisplayResult>(descriptor_json()).is_err());
@@ -568,23 +600,21 @@ mod chat_configuration_descriptor_tests {
         assert!(serde_json::from_value::<ChatConfigurationDisplayResult>(raw).is_err());
     }
 
-    /// Requires an exact explicit purpose and rejects display calls carrying execution identities or snapshots.
+    /// Requires an exact explicit purpose and rejects display calls carrying execution identities or historical configuration.
     #[test]
     fn request_purpose_is_required_and_cross_purpose_calls_are_errors() {
-        let raw=json!({"purpose":"display","chatId":"actual-chat","chatExtension":null,"messageExtension":null,
+        let raw=json!({"purpose":"display","chatId":"actual-chat","chatExtension":null,
             "participantId":null,"promptFunctionType":"CHAT","defaultModelBinding":{"providerId":"provider","modelId":"model"},"defaultTtsConfigId":"voice"});
         let mut request: ChatConfigurationRequest=serde_json::from_value(raw.clone()).unwrap();
         request.requirePurpose(ChatConfigurationPurpose::Display).unwrap();
         assert!(request.requirePurpose(ChatConfigurationPurpose::Execution).is_err());
         request.participantId=Some("opaque".into());
         assert!(request.requirePurpose(ChatConfigurationPurpose::Display).is_err());
-        request.participantId=None;request.messageExtension=Some(serde_json::Map::new());
-        assert!(request.requirePurpose(ChatConfigurationPurpose::Display).is_err());
         let mut missing=raw.clone();missing.as_object_mut().unwrap().remove("purpose");
         assert!(serde_json::from_value::<ChatConfigurationRequest>(missing).is_err());
         let mut wrong=raw;wrong["purpose"]=json!("unknown");
         assert!(serde_json::from_value::<ChatConfigurationRequest>(wrong).is_err());
-        let mut empty=authenticated_descriptor(descriptor_json());empty.messageExtension.clear();
+        let mut empty=authenticated_descriptor(descriptor_json());empty.executionData.clear();
         assert!(empty.validate().is_err());
     }
 

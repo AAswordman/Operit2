@@ -1,6 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_platform_interface/webview_platform_interface.dart';
 
@@ -21,14 +24,23 @@ class LinuxWebViewWidget extends PlatformWebViewWidget {
   Widget build(BuildContext context) {
     final LinuxWebViewController controller =
         params.controller as LinuxWebViewController;
-    return _LinuxPlatformWebView(controller: controller, key: params.key);
+    return _LinuxPlatformWebView(
+      controller: controller,
+      gestureRecognizers: params.gestureRecognizers,
+      key: params.key,
+    );
   }
 }
 
 class _LinuxPlatformWebView extends StatefulWidget {
-  const _LinuxPlatformWebView({super.key, required this.controller});
+  const _LinuxPlatformWebView({
+    super.key,
+    required this.controller,
+    required this.gestureRecognizers,
+  });
 
   final LinuxWebViewController controller;
+  final Set<Factory<OneSequenceGestureRecognizer>> gestureRecognizers;
 
   @override
   State<_LinuxPlatformWebView> createState() => _LinuxPlatformWebViewState();
@@ -70,10 +82,16 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
   bool _geometryVisible = false;
   bool _applicationVisible = true;
   bool _visibilityCheckScheduled = false;
+  int? _nativeViewId;
+  _LinuxInputController? _inputController;
+  int _mouseButtons = 0;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'Linux WebView');
+  final GlobalKey _geometryKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
+    unawaited(_initializeComposition(widget.controller));
     WidgetsBinding.instance.addObserver(this);
     _applicationVisible = _isApplicationVisible(
       WidgetsBinding.instance.lifecycleState,
@@ -113,6 +131,10 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
       return;
     }
 
+    _nativeViewId = null;
+    _inputController = null;
+    _mouseButtons = 0;
+    unawaited(_initializeComposition(widget.controller));
     final _LinuxViewGeometry currentGeometry = _lastGeometry;
     _setFrameSafely(
       oldWidget.controller,
@@ -131,6 +153,7 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _focusNode.dispose();
     _setFrameSafely(
       widget.controller,
       _LinuxViewGeometry.hidden,
@@ -159,7 +182,7 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
     if (!mounted) {
       return;
     }
-    context.findRenderObject()?.markNeedsPaint();
+    _geometryKey.currentContext?.findRenderObject()?.markNeedsPaint();
     // A lifecycle transition does not guarantee another Flutter frame. Make
     // sure the native view is restored without waiting for unrelated UI work.
     WidgetsBinding.instance.ensureVisualUpdate();
@@ -175,7 +198,8 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
       if (!mounted || !_applicationVisible) {
         return;
       }
-      final RenderObject? renderObject = context.findRenderObject();
+      final RenderObject? renderObject = _geometryKey.currentContext
+          ?.findRenderObject();
       if (renderObject is _LinuxGeometryRenderBox) {
         renderObject.syncGeometry();
       }
@@ -202,7 +226,7 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
           visible: visible,
         );
       } on StateError catch (error) {
-        if (!error.toString().contains('disposed')) {
+        if (!controller.isDisposed) {
           debugPrint(
             'webview_all_linux: failed to update the WebView frame: $error',
           );
@@ -225,30 +249,263 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
     }
   }
 
+  /// Connects the native controller identifier to the engine platform layer.
+  Future<void> _initializeComposition(LinuxWebViewController controller) async {
+    final int id;
+    try {
+      id = await controller.nativeViewIdentifier;
+    } on StateError {
+      if (controller.isDisposed) {
+        return;
+      }
+      rethrow;
+    }
+    if (mounted && identical(widget.controller, controller)) {
+      setState(() {
+        _nativeViewId = id;
+        _inputController = _LinuxInputController(
+          viewId: id,
+          forward: _forwardPointer,
+          releaseFocus: controller.releaseFocus,
+        );
+      });
+    }
+  }
+
+  /// Reports asynchronous native input errors without hiding failed operations.
+  void _dispatchInput(Future<void> operation) {
+    final LinuxWebViewController controller = widget.controller;
+    unawaited(
+      operation.catchError((Object error, StackTrace stack) {
+        if (!controller.isDisposed) {
+          FlutterError.reportError(
+            FlutterErrorDetails(
+              exception: error,
+              stack: stack,
+              library: 'webview_all_linux',
+              context: ErrorDescription('while forwarding WebView input'),
+            ),
+          );
+        }
+      }),
+    );
+  }
+
+  /// Encodes keyboard and mouse state using GDK modifier constants.
+  int _modifiers(int buttons) {
+    final HardwareKeyboard keyboard = HardwareKeyboard.instance;
+    return (keyboard.isShiftPressed ? 1 : 0) |
+        (keyboard.isControlPressed ? 4 : 0) |
+        (keyboard.isAltPressed ? 8 : 0) |
+        (keyboard.isMetaPressed ? 1 << 28 : 0) |
+        (buttons & kPrimaryMouseButton != 0 ? 1 << 8 : 0) |
+        (buttons & kMiddleMouseButton != 0 ? 1 << 9 : 0) |
+        (buttons & kSecondaryMouseButton != 0 ? 1 << 10 : 0);
+  }
+
+  /// Sends a single event using coordinates local to the full WebKit layout.
+  void _sendPointer(
+    PointerEvent event,
+    LinuxWebViewPointerEventType type, {
+    int button = 0,
+    int? buttons,
+    Offset scrollDelta = Offset.zero,
+  }) {
+    _dispatchInput(
+      widget.controller.dispatchPointerEvent(
+        type: type,
+        position: event.localPosition,
+        pointer: event.pointer,
+        time: event.timeStamp.inMilliseconds,
+        modifiers: _modifiers(buttons ?? event.buttons),
+        button: button,
+        scrollDelta: scrollDelta,
+      ),
+    );
+  }
+
+  /// Routes browser pointer events only after Flutter accepts the hit test.
+  void _forwardPointer(PointerEvent event) {
+    if (_nativeViewId == null || widget.controller.isDisposed) {
+      return;
+    }
+    if (event is PointerDownEvent) {
+      _focusNode.requestFocus();
+    }
+    if (event.kind == PointerDeviceKind.touch) {
+      final LinuxWebViewPointerEventType type = switch (event) {
+        PointerDownEvent() => LinuxWebViewPointerEventType.touchBegin,
+        PointerMoveEvent() => LinuxWebViewPointerEventType.touchUpdate,
+        PointerUpEvent() => LinuxWebViewPointerEventType.touchEnd,
+        PointerCancelEvent() => LinuxWebViewPointerEventType.touchCancel,
+        _ => LinuxWebViewPointerEventType.motion,
+      };
+      _sendPointer(event, type);
+      return;
+    }
+    if (event is PointerEnterEvent) {
+      _sendPointer(event, LinuxWebViewPointerEventType.enter);
+      return;
+    }
+    if (event is PointerExitEvent) {
+      _sendPointer(event, LinuxWebViewPointerEventType.leave);
+      return;
+    }
+    const Map<int, int> nativeButtons = <int, int>{
+      kPrimaryMouseButton: 1,
+      kSecondaryMouseButton: 3,
+      kMiddleMouseButton: 2,
+      kBackMouseButton: 8,
+      kForwardMouseButton: 9,
+    };
+    final int buttons = event is PointerCancelEvent ? 0 : event.buttons;
+    for (final MapEntry<int, int> entry in nativeButtons.entries) {
+      if ((_mouseButtons ^ buttons) & entry.key == 0) {
+        continue;
+      }
+      _sendPointer(
+        event,
+        buttons & entry.key != 0
+            ? LinuxWebViewPointerEventType.buttonPress
+            : LinuxWebViewPointerEventType.buttonRelease,
+        button: entry.value,
+        buttons: _mouseButtons,
+      );
+    }
+    _mouseButtons = buttons;
+    if (event is PointerMoveEvent || event is PointerHoverEvent) {
+      _sendPointer(event, LinuxWebViewPointerEventType.motion);
+    }
+  }
+
+  /// Resolves wheel ownership through Flutter before scrolling the browser.
+  void _forwardSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent && _nativeViewId != null) {
+      GestureBinding.instance.pointerSignalResolver.register(event, (event) {
+        final PointerScrollEvent scroll = event as PointerScrollEvent;
+        _sendPointer(
+          scroll,
+          LinuxWebViewPointerEventType.scroll,
+          scrollDelta: scroll.scrollDelta,
+        );
+      });
+    }
+  }
+
+  /// Releases native keyboard focus when a Flutter route takes focus.
+  void _handleFocusChanged(bool focused) {
+    if (!focused && !widget.controller.isDisposed) {
+      _dispatchInput(widget.controller.releaseFocus());
+    }
+  }
+
+  /// Builds the engine platform layer and the Flutter-owned input surface.
   @override
   Widget build(BuildContext context) {
-    return _LinuxGeometryObserver(
-      onGeometryChanged: _handleGeometryChanged,
-      onDetached: () =>
-          _pushGeometry(_LinuxViewGeometry.hidden, visible: false),
-      child: const SizedBox.expand(),
+    return Focus(
+      focusNode: _focusNode,
+      onFocusChange: _handleFocusChanged,
+      child: MouseRegion(
+        onEnter: _forwardPointer,
+        onExit: _forwardPointer,
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerSignal: _forwardSignal,
+          child: _LinuxGeometryObserver(
+            key: _geometryKey,
+            nativeViewId: _nativeViewId,
+            onGeometryChanged: _handleGeometryChanged,
+            onDetached: () =>
+                _pushGeometry(_LinuxViewGeometry.hidden, visible: false),
+            child: _inputController == null
+                ? const SizedBox.expand()
+                : _LinuxInputSurface(
+                    key: ValueKey(_nativeViewId),
+                    controller: _inputController!,
+                    gestureRecognizers: widget.gestureRecognizers,
+                  ),
+          ),
+        ),
+      ),
     );
   }
 }
 
+/// Adapts native WebKit input to Flutter's platform-view gesture arbitration.
+class _LinuxInputController extends PlatformViewController {
+  /// Retains the native identity while the widget owns the browser lifecycle.
+  _LinuxInputController({
+    required this.viewId,
+    required this.forward,
+    required this.releaseFocus,
+  });
+
+  @override
+  final int viewId;
+  final ValueChanged<PointerEvent> forward;
+  final Future<void> Function() releaseFocus;
+
+  /// Forwards only pointer sequences accepted by Flutter's gesture arena.
+  @override
+  Future<void> dispatchPointerEvent(PointerEvent event) async => forward(event);
+
+  /// Returns native focus when Flutter requests it through the platform API.
+  @override
+  Future<void> clearFocus() => releaseFocus();
+
+  /// Leaves browser disposal to its owning WebView controller.
+  @override
+  Future<void> dispose() async {}
+}
+
+/// Uses Flutter's standard gesture recognizers with the clipped scene marker.
+class _LinuxInputSurface extends PlatformViewSurface {
+  /// Configures gesture competition with scrollable and draggable ancestors.
+  const _LinuxInputSurface({
+    super.key,
+    required super.controller,
+    required super.gestureRecognizers,
+  }) : super(hitTestBehavior: PlatformViewHitTestBehavior.opaque);
+
+  /// Creates the standard platform input surface without a duplicate layer.
+  @override
+  PlatformViewRenderBox createRenderObject(BuildContext context) =>
+      _LinuxInputRenderBox(
+        controller: controller,
+        gestureRecognizers: gestureRecognizers,
+      );
+}
+
+/// Keeps Flutter's platform-view input and semantics behavior in one place.
+class _LinuxInputRenderBox extends PlatformViewRenderBox {
+  /// Initializes Flutter's platform-view gesture arena participant.
+  _LinuxInputRenderBox({
+    required super.controller,
+    required super.gestureRecognizers,
+  }) : super(hitTestBehavior: PlatformViewHitTestBehavior.opaque);
+
+  /// The enclosing geometry observer emits the clipped platform-view marker.
+  @override
+  void paint(PaintingContext context, Offset offset) {}
+}
+
 class _LinuxGeometryObserver extends SingleChildRenderObjectWidget {
   const _LinuxGeometryObserver({
+    super.key,
+    required this.nativeViewId,
     required this.onGeometryChanged,
     required this.onDetached,
     required Widget child,
   }) : super(child: child);
 
+  final int? nativeViewId;
   final ValueChanged<_LinuxViewGeometry> onGeometryChanged;
   final VoidCallback onDetached;
 
   @override
   RenderObject createRenderObject(BuildContext context) {
     return _LinuxGeometryRenderBox(
+      nativeViewId: nativeViewId,
       onGeometryChanged: onGeometryChanged,
       onDetached: onDetached,
     );
@@ -260,6 +517,7 @@ class _LinuxGeometryObserver extends SingleChildRenderObjectWidget {
     covariant _LinuxGeometryRenderBox renderObject,
   ) {
     renderObject
+      ..nativeViewId = nativeViewId
       ..onGeometryChanged = onGeometryChanged
       ..onDetached = onDetached;
   }
@@ -267,15 +525,33 @@ class _LinuxGeometryObserver extends SingleChildRenderObjectWidget {
 
 class _LinuxGeometryRenderBox extends RenderProxyBox {
   _LinuxGeometryRenderBox({
+    required int? nativeViewId,
     required ValueChanged<_LinuxViewGeometry> onGeometryChanged,
     required VoidCallback onDetached,
-  }) : _onGeometryChanged = onGeometryChanged,
+  }) : _nativeViewId = nativeViewId,
+       _onGeometryChanged = onGeometryChanged,
        _onDetached = onDetached;
 
   ValueChanged<_LinuxViewGeometry> _onGeometryChanged;
   VoidCallback _onDetached;
   bool _reportedUnsupportedTransform = false;
   bool _reportedUnsupportedClip = false;
+  int? _nativeViewId;
+  _LinuxViewGeometry _paintGeometry = _LinuxViewGeometry.hidden;
+
+  /// Makes the platform-view marker participate in the composited scene.
+  @override
+  bool get alwaysNeedsCompositing => _nativeViewId != null;
+
+  /// Invalidates the scene when a native controller is attached or replaced.
+  set nativeViewId(int? value) {
+    if (_nativeViewId == value) {
+      return;
+    }
+    _nativeViewId = value;
+    markNeedsCompositingBitsUpdate();
+    markNeedsPaint();
+  }
 
   bool get isEffectivelyPainted {
     RenderObject child = this;
@@ -320,6 +596,7 @@ class _LinuxGeometryRenderBox extends RenderProxyBox {
   /// native overlay keeps tracking composited movement during sliver scrolling
   /// and can detect when a previously clipped child re-enters the viewport.
   void syncGeometry() {
+    _paintGeometry = _LinuxViewGeometry.hidden;
     if (!attached) {
       _onGeometryChanged(_LinuxViewGeometry.hidden);
       return;
@@ -406,7 +683,8 @@ class _LinuxGeometryRenderBox extends RenderProxyBox {
       ancestor = ancestor.parent;
     }
 
-    _onGeometryChanged(_LinuxViewGeometry(frame: frame, clip: clip));
+    _paintGeometry = _LinuxViewGeometry(frame: frame, clip: clip);
+    _onGeometryChanged(_paintGeometry);
   }
 
   bool _hasNonRectangularClip(RenderObject ancestor) {
@@ -476,5 +754,21 @@ class _LinuxGeometryRenderBox extends RenderProxyBox {
   void paint(PaintingContext context, Offset offset) {
     super.paint(context, offset);
     syncGeometry();
+    final int? nativeViewId = _nativeViewId;
+    if (nativeViewId != null && _paintGeometry.isVisible) {
+      final Rect viewport = _paintGeometry.clip.shift(
+        offset - _paintGeometry.frame.topLeft,
+      );
+      // Platform-view preroll takes placement from the scene transform stack.
+      // Keep the marker at its local origin and translate its containing layer.
+      final OffsetLayer placement = OffsetLayer(offset: viewport.topLeft);
+      placement.append(
+        PlatformViewLayer(
+          rect: Offset.zero & viewport.size,
+          viewId: nativeViewId,
+        ),
+      );
+      context.addLayer(placement);
+    }
   }
 }

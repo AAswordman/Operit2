@@ -128,6 +128,35 @@ abstract class FileSelectorPlatform extends PlatformInterface {
     return location;
   }
 
+  /// Opens a source and reports platform-owned staging before the caller reads it.
+  Future<XFile?> openFileWithProgress({
+    required void Function(int completed, int? total) onProgress,
+    List<XTypeGroup>? acceptedTypeGroups,
+  }) => openFile(acceptedTypeGroups: acceptedTypeGroups);
+
+  /// Releases picker-owned resources from openFileWithProgress; direct file references own no copy.
+  Future<void> releaseFile(XFile file) async {}
+
+  /// Selects an output and saves through a Host writer with measured progress.
+  Future<FileSaveLocation?> saveGeneratedFileWithProgress({
+    required Future<XFile> Function() generate,
+    required void Function() onChooseDestination,
+    required Future<void> Function(XFile file, String destination) write,
+    required void Function(int completed, int total) onProgress,
+    List<XTypeGroup>? acceptedTypeGroups,
+    SaveDialogOptions options = const SaveDialogOptions(),
+  }) async {
+    final location = await getSaveLocation(
+      acceptedTypeGroups: acceptedTypeGroups,
+      options: options,
+    );
+    if (location == null) return null;
+    final file = await generate();
+    onProgress(0, await file.length());
+    await write(file, location.path);
+    return location;
+  }
+
   /// Saves a generated file while allowing the platform to acquire its output before generation.
   Future<FileSaveLocation?> saveGeneratedFile({
     required Future<XFile> Function() generate,

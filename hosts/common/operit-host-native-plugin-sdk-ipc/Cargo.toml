@@ -8,3 +8,4 @@ description = "Native Plugin SDK IPC carriers for Operit hosts."
 
 [dependencies]
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
+operit-host-native-scheduler = { path = "../operit-host-native-scheduler", default-features = false }

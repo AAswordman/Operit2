@@ -20,6 +20,8 @@ PODS:
     - FlutterMacOS
   - operit_folder_access (0.1.0):
     - FlutterMacOS
+  - operit_keep_alive (0.1.0):
+    - FlutterMacOS
   - package_info_plus (0.0.1):
     - FlutterMacOS
   - printing (1.0.0):
@@ -46,6 +48,7 @@ DEPENDENCIES:
   - geolocator_apple (from `Flutter/ephemeral/.symlinks/plugins/geolocator_apple/darwin`)
   - image_picker_macos (from `Flutter/ephemeral/.symlinks/plugins/image_picker_macos/macos`)
   - operit_folder_access (from `Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos`)
+  - operit_keep_alive (from `Flutter/ephemeral/.symlinks/plugins/operit_keep_alive/macos`)
   - package_info_plus (from `Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos`)
   - printing (from `Flutter/ephemeral/.symlinks/plugins/printing/macos`)
   - record_macos (from `Flutter/ephemeral/.symlinks/plugins/record_macos/macos`)
@@ -74,6 +77,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/image_picker_macos/macos
   operit_folder_access:
     :path: Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos
+  operit_keep_alive:
+    :path: Flutter/ephemeral/.symlinks/plugins/operit_keep_alive/macos
   package_info_plus:
     :path: Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos
   printing:
@@ -98,12 +103,13 @@ SPEC CHECKSUMS:
   geolocator_apple: 66b711889fd333205763b83c9dcf0a57a28c7afd
   image_picker_macos: 2506ff19cb68903beebc6327ce4024277de6faa8
   operit_folder_access: e49c215aae854e85a2c736a3105f8992373a9768
+  operit_keep_alive: b2583e0fe8e3963dd038afd796a8067863e6a474
   package_info_plus: 12f1c5c2cfe8727ca46cbd0b26677728972d9a5b
   printing: 1dd6a1fce2209ec240698e2439a4adbb9b427637
   record_macos: ccd7864c9922136e50c2937b21384f0b175922f2
   url_launcher_macos: 175a54c831f4375a6cf895875f716ee5af3888ce
   video_player_avfoundation: e54d03b3b19f64f2c557354f72ce538387541ba6
-  webview_flutter_wkwebview: 29eb20d43355b48fe7d07113835b9128f84e3af4
+  webview_flutter_wkwebview: 08f7e3ddafd07a1c7319987f5af4ddb173964b24
 
 PODFILE CHECKSUM: e2fc82dac137dd48666364415e889af5af164465
 

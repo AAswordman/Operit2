@@ -1,5 +1,6 @@
 import type { CharacterChanges, CharacterRecord, DomainInput, DomainOperation, DomainOutput, GroupChanges, GroupRecord, MemoryRecord, TagChanges, TagRecord } from "./api";
 import { jsonValue, parseCharacterChanges, parseDomainPayload, parseGroupChanges, parseJsonObject, parseMemoryIdentifier, parseTagChanges, record } from "./domain";
+import { parseImportSource, readImportSource } from "./import-source";
 import { dispatchDomain } from "./service-runtime";
 import { ACTIVE_PROMPT_USAGE, CHARACTER_MEMORY_USAGE, CHARACTER_USAGE, GROUP_USAGE, ITEM_USAGE, LINK_USAGE, MEMORY_USAGE, MOUNT_USAGE, SHARED_MEMORY_USAGE, TAG_USAGE, UNMOUNT_USAGE, USER_USAGE } from "./command-spec";
 import type { CommandFamily } from "./command-spec";
@@ -11,9 +12,14 @@ export interface DomainInvocation {
   payload: DomainInput<DomainOperation>;
   execute: () => Promise<ToolPkg.CoreCommandResult>;
 }
+/** Describes an invocation whose file argument is read only when the command executes. */
+export interface DeferredInvocation {
+  kind: "deferred";
+  execute: () => Promise<ToolPkg.CoreCommandResult>;
+}
 /** Describes explicit help output without touching stored domain data. */
 export interface UsageInvocation { kind: "usage"; usage: readonly string[] }
-export type CommandInvocation = DomainInvocation | UsageInvocation;
+export type CommandInvocation = DomainInvocation | DeferredInvocation | UsageInvocation;
 
 /** Produces host text and structured JSON from the same successful domain result. */
 function result(stdout: string, json: unknown): ToolPkg.CoreCommandResult { return { stdout, json: jsonValue(json) }; }
@@ -75,10 +81,9 @@ function characterField(field: string, raw: string): CharacterChanges {
   switch (field) {
     case "name": case "description": case "characterSetting": case "openingStatement": case "otherContentChat":
     case "otherContentVoice": case "advancedCustomPrompt": case "marks": case "chatModelBindingMode": case "memoryBindingMode": value = raw; break;
-    case "avatarUri": case "chatModelId": case "ttsConfigId": case "sharedMemoryId": value = optionalIdentifier(raw); break;
+    case "avatarUri": case "chatProviderId": case "chatModelId": case "ttsConfigId": case "sharedMemoryId": value = optionalIdentifier(raw); break;
     case "attachedTagIds": value = csv(raw); break;
     case "sharedMemoryMounts": case "toolAccessConfig": value = json(raw, field); break;
-    case "isDefault": value = bool(raw, field); break;
     case "createdAt": case "updatedAt": value = integer(raw, field); break;
     default: throw new Error(`unsupported character field: ${field}`);
   }
@@ -138,7 +143,7 @@ function characterText(card: CharacterRecord): string {
     `Tags: ${card.attachedTagIds.join(", ")}`, `Advanced prompt: ${card.advancedCustomPrompt}`, `Marks: ${card.marks}`,
     `Chat model binding: ${card.chatModelBindingMode}`, `Chat model id: ${displayOptional(card.chatModelId)}`,
     `Shared memory mounts: ${card.sharedMemoryMounts.length}`, `Tool access enabled: ${card.toolAccessConfig.enabled}`,
-    `Default: ${card.isDefault}`, `Created at: ${card.createdAt}`, `Updated at: ${card.updatedAt}`,
+    `Created at: ${card.createdAt}`, `Updated at: ${card.updatedAt}`,
   ]);
 }
 /** Reproduces the original detailed group text. */
@@ -158,7 +163,7 @@ export function parseCharacterCommand(args: readonly string[]): CommandInvocatio
       /** Formats the original complete character list and summary lines. */
       return invocation("character.list", {}, cards => result(lines([`Characters: ${cards.length}`, ...cards.map(
         /** Formats one stored character's legacy summary. */
-        card => `- ${card.id} | ${card.name} | default: ${card.isDefault} | tags: ${card.attachedTagIds.join(", ")} | ${card.description}`,
+        card => `- ${card.id} | ${card.name} | tags: ${card.attachedTagIds.join(", ")} | ${card.description}`,
       )]), cards));
     }
     case "show": {
@@ -203,30 +208,25 @@ export function parseCharacterCommand(args: readonly string[]): CommandInvocatio
       /** Prints the exact composed prompt without appending a newline. */
       return invocation("character.combine", parseDomainPayload("character.combine", payload), value => result(value.prompt, value));
     }
-    case "reset-default": {
-      arity(args, 1, 1, CHARACTER_USAGE[10]);
-      /** Returns the actual reset operation status. */
-      return invocation("character.resetDefault", {}, value => result(lines(["Default character reset"]), value));
-    }
     case "export": {
-      arity(args, 3, 3, CHARACTER_USAGE[11]);
+      arity(args, 3, 3, CHARACTER_USAGE[10]);
       const payload = parseDomainPayload("character.export", { id: args[1], format: args[2] });
       /** Prints the domain's original interchange content. */
       return invocation("character.export", payload, value => result(value.content, value));
     }
     case "import": {
-      arity(args, 3, 3, CHARACTER_USAGE[12]);
+      arity(args, 3, 3, CHARACTER_USAGE[11]);
       const payload = parseDomainPayload("character.import", { format: args[1], content: args[2] });
       /** Returns the full character created by the importer. */
       return invocation("character.import", payload, value => result(characterText(value), value));
     }
     case "export-backup": {
-      arity(args, 1, 1, CHARACTER_USAGE[13]);
+      arity(args, 1, 1, CHARACTER_USAGE[12]);
       /** Prints the manager's complete character and prompt-tag backup. */
       return invocation("character.exportBackup", {}, value => result(value.content, value));
     }
     case "import-backup": {
-      arity(args, 2, 2, CHARACTER_USAGE[14]);
+      arity(args, 2, 2, CHARACTER_USAGE[13]);
       /** Returns the manager's actual import counts. */
       return invocation("character.importBackup", { content: args[1] }, value => result(lines([`Imported characters: ${value.new}; updated: ${value.updated}; skipped: ${value.skipped}; total: ${value.total}`]), value));
     }
@@ -551,6 +551,12 @@ function parseLinks(ownerKey: string, args: readonly string[]): CommandInvocatio
     default: throw new Error(`unknown memory link action: ${args[0]}; use memory <owner> link help`);
   }
 }
+/** Builds one validated memory import invocation once its document is available. */
+function memoryImportInvocation(ownerKey: string, strategy: string, content: string): DomainInvocation {
+  const payload = parseDomainPayload("memory.import", { ownerKey, strategy, content });
+  /** Returns the repository's real memory and link import counts. */
+  return invocation("memory.import", payload, value => result(lines([`Imported memory backup for ${ownerKey}`]), value));
+}
 /** Parses an owner subtree after namespace and identifier validation. */
 function parseOwner(ownerKey: string, args: readonly string[], usage: readonly string[]): CommandInvocation {
   parseDomainPayload("memory.graph", { ownerKey });
@@ -570,10 +576,18 @@ function parseOwner(ownerKey: string, args: readonly string[], usage: readonly s
       return invocation("memory.export", { ownerKey }, value => result(value.content, value));
     }
     case "import": {
-      arity(args, 3, 3, "operit2 memory <owner> import <SKIP|UPDATE|CREATE_NEW> <json-content>");
-      const payload = parseDomainPayload("memory.import", { ownerKey, strategy: args[1], content: args[2] });
-      /** Returns the repository's real memory and link import counts. */
-      return invocation("memory.import", payload, value => result(lines([`Imported memory backup for ${ownerKey}`]), value));
+      arity(args, 3, 3, "operit2 memory <owner> import <SKIP|UPDATE|CREATE_NEW> <json-content|file-path>");
+      const source = parseImportSource(args[2]), strategy = args[1];
+      if (source.kind === "inline") return memoryImportInvocation(ownerKey, strategy, source.content);
+      /** Rejects an invalid strategy before reading a potentially large file. */
+      if (strategy !== "SKIP" && strategy !== "UPDATE" && strategy !== "CREATE_NEW") throw new Error("memory.import.strategy must be SKIP | UPDATE | CREATE_NEW");
+      /** Reads the path only after argument validation and before domain dispatch. */
+      return {
+        kind: "deferred",
+        async execute(): Promise<ToolPkg.CoreCommandResult> {
+          return memoryImportInvocation(ownerKey, strategy, await readImportSource(source)).execute();
+        },
+      };
     }
     case "settings": {
       const help = ["operit2 memory <owner> settings show", "operit2 memory <owner> settings write <settings-json>"];

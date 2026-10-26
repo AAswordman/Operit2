@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PLAN_FILE_NAME = exports.PLAN_FILE_DIRECTORY_NAME = exports.COMPLETE_PLAN_TOOL_NAME = exports.GET_PLAN_TOOL_NAME = exports.SUBPACKAGE_ID = exports.PLANASK_XML_TAG = exports.PLANASK_XML_RENDER_HOOK_ID = exports.XML_TAG = exports.XML_RENDER_HOOK_ID = exports.PROMPT_ESTIMATE_FINALIZE_HOOK_ID = exports.PROMPT_FINALIZE_HOOK_ID = exports.TOOL_PROMPT_HOOK_ID = exports.PROMPT_HOOK_ID = exports.CHAT_VIEW_HOOK_ID = exports.MENU_HOOK_ID = exports.TOGGLE_ICON = exports.TOGGLE_ID = void 0;
+exports.COMPLETE_PLAN_TOOL_NAME = exports.GET_PLAN_TOOL_NAME = exports.SUBPACKAGE_ID = exports.PLANASK_XML_TAG = exports.PLANASK_XML_RENDER_HOOK_ID = exports.XML_TAG = exports.XML_RENDER_HOOK_ID = exports.PROMPT_ESTIMATE_FINALIZE_HOOK_ID = exports.PROMPT_FINALIZE_HOOK_ID = exports.TOOL_PROMPT_HOOK_ID = exports.PROMPT_HOOK_ID = exports.CHAT_VIEW_HOOK_ID = exports.MENU_HOOK_ID = exports.TOGGLE_ICON = exports.TOGGLE_ID = void 0;
 exports.TOGGLE_ID = "plan_mode";
 exports.TOGGLE_ICON = Icons.Assignment;
 exports.MENU_HOOK_ID = "plan_mode_menu";
@@ -16,5 +16,3 @@ exports.PLANASK_XML_TAG = "planask";
 exports.SUBPACKAGE_ID = "plan_mode_tools";
 exports.GET_PLAN_TOOL_NAME = "get_plan";
 exports.COMPLETE_PLAN_TOOL_NAME = "complete_plan";
-exports.PLAN_FILE_DIRECTORY_NAME = ".operit";
-exports.PLAN_FILE_NAME = "planmode.md";

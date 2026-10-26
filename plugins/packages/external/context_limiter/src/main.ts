@@ -34,11 +34,12 @@ function readLimiterEnabled(): boolean {
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
+/** Writes a setting through the owning package environment. */
 async function writeEnvValue(
   key: (typeof ENV_KEYS)[keyof typeof ENV_KEYS],
   value: string
 ): Promise<void> {
-  await Tools.SoftwareSettings.writeEnvironmentVariable(key, value);
+  await Tools.SoftwareSettings.writeEnvironmentVariable("com.operit.context_limiter", key, value);
 }
 
 async function writeFloorLimit(nextLimit: number): Promise<void> {

@@ -10,6 +10,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "build_scripts"))
 import build_flutter_android as android_build
+import release_artifacts
 
 
 class AndroidRuntimeAssetsTests(unittest.TestCase):
@@ -97,8 +98,10 @@ class AndroidRuntimeAssetsTests(unittest.TestCase):
                 patch.object(android_build, "flutter_command", return_value="flutter-test"),
                 patch.object(android_build, "configure_android_flutter_sdk"),
                 patch.object(android_build, "flutter_pub_get"),
+                patch.object(android_build, "generate_dart_proxy_artifacts"),
+                patch.object(android_build, "require_command"),
                 patch.object(android_build, "run") as run,
-                patch.object(android_build, "copy_required_file") as publish,
+                patch.object(android_build, "publish_android_apk") as publish,
             ):
                 with self.assertRaisesRegex(RuntimeError, "ABIs must be exactly arm64-v8a"):
                     android_build.main()
@@ -119,11 +122,44 @@ class AndroidRuntimeAssetsTests(unittest.TestCase):
                 patch.object(android_build, "flutter_command", return_value="flutter-test"),
                 patch.object(android_build, "configure_android_flutter_sdk"),
                 patch.object(android_build, "flutter_pub_get"),
+                patch.object(android_build, "generate_dart_proxy_artifacts"),
+                patch.object(android_build, "require_command"),
                 patch.object(android_build, "run"),
-                patch.object(android_build, "copy_required_file") as publish,
+                patch.object(android_build, "publish_android_apk") as publish,
             ):
                 self.assertEqual(android_build.main(), 0)
                 self.assertEqual(publish.call_args.args[0], apk)
+
+    # Publishes only the versioned APK and never creates a checksum sidecar.
+    def test_publishes_full_release_version_without_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            apk = self.make_apk(root, self.runtime_assets())
+            for version in ("2.0.0-preview.16", "2.0.0"):
+                with self.subTest(version=version):
+                    for relative_path in release_artifacts.RELEASE_MANIFESTS:
+                        manifest = root / relative_path
+                        manifest.parent.mkdir(parents=True, exist_ok=True)
+                        manifest.write_text(
+                            f'[package]\nversion = "{version}"\n', encoding="utf-8"
+                        )
+                    with patch.object(release_artifacts, "REPO_ROOT", root):
+                        target = android_build.publish_android_apk(apk, root / "dist")
+                    self.assertEqual(
+                        target.name, f"operit2-app-android-arm64-v8a-{version}.apk"
+                    )
+                    self.assertEqual(target.read_bytes(), apk.read_bytes())
+                    self.assertFalse(list(target.parent.glob("*.sha256")))
+
+    # Rejects a missing version source before copying or publishing any package.
+    def test_rejects_missing_release_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            apk = self.make_apk(root, self.runtime_assets())
+            with patch.object(release_artifacts, "REPO_ROOT", root):
+                with self.assertRaises(FileNotFoundError):
+                    android_build.publish_android_apk(apk, root / "dist")
+            self.assertFalse((root / "dist").exists())
 
 
 if __name__ == "__main__":

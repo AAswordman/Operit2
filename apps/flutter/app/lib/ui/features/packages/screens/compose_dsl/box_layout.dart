@@ -11,7 +11,7 @@ class _ComposeBox extends MultiChildRenderObjectWidget {
     required super.children,
   });
 
-  final List<_ComposeDslNode> nodes;
+  final List<_ComposeProgramNode> nodes;
   final Alignment alignment;
 
   /// Creates the Compose-aware stacking layout.
@@ -37,29 +37,29 @@ class _ComposeBoxRenderObject extends RenderBox
         ContainerRenderObjectMixin<RenderBox, _ComposeBoxParentData>,
         RenderBoxContainerDefaultsMixin<RenderBox, _ComposeBoxParentData> {
   /// Stores child layout and drawing metadata supplied by the renderer.
-  _ComposeBoxRenderObject(List<_ComposeDslNode> nodes, Alignment alignment)
+  _ComposeBoxRenderObject(List<_ComposeProgramNode> nodes, Alignment alignment)
     : _nodes = nodes,
       _alignmentValue = alignment {
-    for (final node in _nodes) {
-      node.addListener(_nodeChanged);
+    for (final source in _nodes.map((node) => node.source).toSet()) {
+      source.addListener(_nodeChanged);
     }
   }
 
-  List<_ComposeDslNode> _nodes;
+  List<_ComposeProgramNode> _nodes;
   List<RenderBox>? _paintChildren;
 
-  List<_ComposeDslNode> get nodes => _nodes;
+  List<_ComposeProgramNode> get nodes => _nodes;
 
   /// Observes scoped child properties even when the parent node is unchanged.
-  set nodes(List<_ComposeDslNode> value) {
+  set nodes(List<_ComposeProgramNode> value) {
     if (listEquals(_nodes, value)) return;
-    for (final node in _nodes) {
-      node.removeListener(_nodeChanged);
+    for (final source in _nodes.map((node) => node.source).toSet()) {
+      source.removeListener(_nodeChanged);
     }
     _nodes = value;
     _paintChildren = null;
-    for (final node in _nodes) {
-      node.addListener(_nodeChanged);
+    for (final source in _nodes.map((node) => node.source).toSet()) {
+      source.addListener(_nodeChanged);
     }
     markNeedsLayout();
   }
@@ -72,8 +72,8 @@ class _ComposeBoxRenderObject extends RenderBox
 
   @override
   void dispose() {
-    for (final node in _nodes) {
-      node.removeListener(_nodeChanged);
+    for (final source in _nodes.map((node) => node.source).toSet()) {
+      source.removeListener(_nodeChanged);
     }
     super.dispose();
   }

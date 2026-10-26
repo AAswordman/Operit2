@@ -8,7 +8,7 @@ use serde_json::Value;
 /// Defines the complete wire value and ordinary preference encoding for one theme field.
 #[derive(Clone, Copy)]
 pub(crate) struct SnapshotField {
-    json_key: &'static str,
+    pub(crate) json_key: &'static str,
     pub(crate) preference_key: &'static str,
     pub(crate) kind: FieldKind,
 }
@@ -19,6 +19,7 @@ pub(crate) enum FieldKind {
     Boolean,
     OptionalColor,
     OptionalString,
+    OptionalPalette,
     Enum(&'static [&'static str]),
     OptionalEnum(&'static [&'static str]),
     Number { min: f64, max: f64 },
@@ -488,12 +489,47 @@ pub(crate) const SNAPSHOT_FIELDS: &[SnapshotField] = &[
     },
 ];
 
+/// Input appearance fields added after the released saved-theme snapshot contract.
+/// Older saved configurations do not own fields they never declared.
+pub(crate) const EXTENDED_SNAPSHOT_FIELDS: &[SnapshotField] = &[
+    SnapshotField { json_key: "themePaletteJson", preference_key: "theme_palette_json", kind: FieldKind::OptionalPalette },
+    SnapshotField { json_key: "inputBackgroundColor", preference_key: "input_background_color", kind: FieldKind::OptionalColor },
+    SnapshotField { json_key: "inputRoundedCornersEnabled", preference_key: "input_rounded_corners_enabled", kind: FieldKind::Boolean },
+    SnapshotField { json_key: "inputUseImage", preference_key: "input_use_image", kind: FieldKind::Boolean },
+    SnapshotField { json_key: "inputImageUri", preference_key: "input_image_uri", kind: FieldKind::OptionalString },
+    SnapshotField { json_key: "inputImageRenderMode", preference_key: "input_image_render_mode", kind: FieldKind::Enum(&["tiled_nine_slice", "nine_patch"]) },
+    SnapshotField { json_key: "inputImageCropLeft", preference_key: "input_image_crop_left", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    SnapshotField { json_key: "inputImageCropTop", preference_key: "input_image_crop_top", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    SnapshotField { json_key: "inputImageCropRight", preference_key: "input_image_crop_right", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    SnapshotField { json_key: "inputImageCropBottom", preference_key: "input_image_crop_bottom", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    SnapshotField { json_key: "inputImageRepeatStart", preference_key: "input_image_repeat_start", kind: FieldKind::Number { min: 0.0, max: 1.0 } },
+    SnapshotField { json_key: "inputImageRepeatEnd", preference_key: "input_image_repeat_end", kind: FieldKind::Number { min: 0.0, max: 1.0 } },
+    SnapshotField { json_key: "inputImageRepeatYStart", preference_key: "input_image_repeat_y_start", kind: FieldKind::Number { min: 0.0, max: 1.0 } },
+    SnapshotField { json_key: "inputImageRepeatYEnd", preference_key: "input_image_repeat_y_end", kind: FieldKind::Number { min: 0.0, max: 1.0 } },
+    SnapshotField { json_key: "inputImageScale", preference_key: "input_image_scale", kind: FieldKind::Number { min: 0.01, max: f64::MAX } },
+    SnapshotField { json_key: "inputSettingsAsset", preference_key: "input_settings_asset", kind: FieldKind::OptionalString },
+    SnapshotField { json_key: "inputSettingsAssetSize", preference_key: "input_settings_asset_size", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    SnapshotField { json_key: "inputAttachmentAsset", preference_key: "input_attachment_asset", kind: FieldKind::OptionalString },
+    SnapshotField { json_key: "inputAttachmentAssetSize", preference_key: "input_attachment_asset_size", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    SnapshotField { json_key: "inputMicAsset", preference_key: "input_mic_asset", kind: FieldKind::OptionalString },
+    SnapshotField { json_key: "inputMicAssetSize", preference_key: "input_mic_asset_size", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    SnapshotField { json_key: "inputSendAsset", preference_key: "input_send_asset", kind: FieldKind::OptionalString },
+    SnapshotField { json_key: "inputSendAssetSize", preference_key: "input_send_asset_size", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    SnapshotField { json_key: "inputStopAsset", preference_key: "input_stop_asset", kind: FieldKind::OptionalString },
+    SnapshotField { json_key: "inputStopAssetSize", preference_key: "input_stop_asset_size", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+];
+
+/// Enumerates the declared ordinary appearance fields without inferring key names.
+pub(crate) fn snapshotFields() -> impl Iterator<Item = &'static SnapshotField> {
+    SNAPSHOT_FIELDS.iter().chain(EXTENDED_SNAPSHOT_FIELDS.iter())
+}
+
 /// Rejects missing, unknown, mistyped, out-of-range and inconsistent snapshot values.
 pub fn validateThemePreferenceSnapshot(
     snapshot: &BTreeMap<String, Value>,
 ) -> Result<(), PreferencesDataStoreError> {
     for key in snapshot.keys() {
-        if !SNAPSHOT_FIELDS.iter().any(|field| field.json_key == key) {
+        if !snapshotFields().any(|field| field.json_key == key) {
             return Err(invalidSnapshot(key, "unknown field"));
         }
     }
@@ -502,6 +538,11 @@ pub fn validateThemePreferenceSnapshot(
             .get(field.json_key)
             .ok_or_else(|| invalidSnapshot(field.json_key, "missing field"))?;
         validateField(field, value)?;
+    }
+    for field in EXTENDED_SNAPSHOT_FIELDS {
+        if let Some(value) = snapshot.get(field.json_key) {
+            validateField(field, value)?;
+        }
     }
     for (start, end) in [
         ("bubbleUserImageRepeatStart", "bubbleUserImageRepeatEnd"),
@@ -528,7 +569,7 @@ pub(crate) fn readThemePreferenceSnapshot(
 ) -> Result<BTreeMap<String, Value>, PreferencesDataStoreError> {
     validateThemePreferenceSnapshot(initialSnapshot)?;
     let mut snapshot = initialSnapshot.clone();
-    for field in SNAPSHOT_FIELDS {
+    for field in snapshotFields() {
         if let Some(text) = preferences.get(&stringPreferencesKey(field.preference_key)) {
             let value = text.clone();
             validateField(field, &value)?;
@@ -545,39 +586,103 @@ pub(crate) fn readThemePreferenceSnapshot(
     Ok(snapshot)
 }
 
-/// Projects the released role-scoped keys and global user avatar into the ordinary snapshot codec.
+/// Converts released string scalars and signed ARGB integers through the current field schema.
+pub(crate) fn decodeLegacyThemePreference(
+    field: &SnapshotField,
+    value: Value,
+) -> Result<Value, PreferencesDataStoreError> {
+    let mut decoded = match (field.kind, value) {
+        (
+            FieldKind::Boolean | FieldKind::OptionalColor | FieldKind::Number { .. },
+            Value::String(encoded),
+        ) => serde_json::from_str::<Value>(&encoded)?,
+        (_, value) => value,
+    };
+    if matches!(field.kind, FieldKind::OptionalColor) && !decoded.is_null() {
+        let number = decoded.as_i64().ok_or_else(|| {
+            invalidSnapshot(
+                field.json_key,
+                &format!("invalid legacy ARGB value: {decoded}"),
+            )
+        })?;
+        if number < i32::MIN as i64 || number > u32::MAX as i64 {
+            return Err(invalidSnapshot(
+                field.json_key,
+                &format!("legacy ARGB value outside 32-bit range: {decoded}"),
+            ));
+        }
+        decoded = Value::from(number as u32);
+    }
+    validateField(field, &decoded)?;
+    Ok(decoded)
+}
+
+/// Converts ordinary appearance preferences before publishing the new user schema version.
+pub(crate) fn migrateLegacyThemePreferences(
+    preferences: &mut Preferences,
+) -> Result<(), PreferencesDataStoreError> {
+    for field in snapshotFields() {
+        let key = stringPreferencesKey(field.preference_key);
+        if let Some(value) = preferences.get(&key).cloned() {
+            preferences.set(&key, decodeLegacyThemePreference(field, value)?);
+        }
+    }
+    Ok(())
+}
+
+/// Converts historical snapshots at the migration boundary and removes fields the current schema no longer owns.
+pub(crate) fn migrateLegacyThemeSnapshot(
+    snapshot: &mut BTreeMap<String, Value>,
+) -> Result<(), PreferencesDataStoreError> {
+    snapshot.retain(|key, _| snapshotFields().any(|field| field.json_key == key));
+    for field in snapshotFields() {
+        if let Some(value) = snapshot.get_mut(field.json_key) {
+            *value = decodeLegacyThemePreference(field, value.clone())?;
+        }
+    }
+    validateThemePreferenceSnapshot(snapshot)
+}
+
+/// Collects exact cleanup inputs and converts only legacy settings supported by the current theme schema.
 pub(crate) fn readLegacyCharacterThemeSnapshot(
     preferences: &Preferences,
     prefix: &str,
-) -> Result<(BTreeMap<String, Value>, Vec<(String, String)>), PreferencesDataStoreError> {
+) -> Result<(BTreeMap<String, Value>, Vec<(String, Value)>), PreferencesDataStoreError> {
     let mut scoped = operit_store::PreferencesDataStore::emptyPreferences();
     let mut source_entries = Vec::new();
     for (key, value) in preferences.iterEntries() {
         if let Some(field) = key.strip_prefix(prefix) {
-            if !SNAPSHOT_FIELDS.iter().any(|entry| entry.preference_key == field)
-                && !matches!(field, "use_system_theme" | "custom_ai_avatar_uri")
-            {
-                return Err(invalidSnapshot(key, "unknown legacy role appearance preference"));
+            source_entries.push((key.to_string(), value.clone()));
+            // The released resolver reads the user avatar globally and does not apply scoped AI avatars.
+            if matches!(field, "custom_user_avatar_uri" | "custom_ai_avatar_uri") {
+                continue;
             }
-            let encoded = serde_json::from_value::<String>(value.clone())?;
-            source_entries.push((key.to_string(), encoded.clone()));
-            // The released resolver always reads the user avatar globally, even when a scoped key exists.
-            if field != "custom_user_avatar_uri" && field != "custom_ai_avatar_uri" {
-                let descriptor = SNAPSHOT_FIELDS.iter().find(|entry| entry.preference_key == field);
-                let decoded = match descriptor.map(|entry| entry.kind) {
-                    Some(FieldKind::Boolean | FieldKind::OptionalColor | FieldKind::Number { .. }) => serde_json::from_str::<Value>(&encoded)?,
-                    _ if field == "use_system_theme" => serde_json::to_value(serde_json::from_str::<bool>(&encoded)?)?,
-                    _ => Value::String(encoded),
-                };
-                scoped.set(&stringPreferencesKey(field), decoded);
-            }
+            let descriptor = match field {
+                "use_system_theme" => SnapshotField {
+                    json_key: "useSystemTheme",
+                    preference_key: "use_system_theme",
+                    kind: FieldKind::Boolean,
+                },
+                _ => {
+                    let Some(descriptor) = snapshotFields().find(|entry| entry.preference_key == field) else {
+                        continue;
+                    };
+                    *descriptor
+                }
+            };
+            let decoded = decodeLegacyThemePreference(&descriptor, value.clone())?;
+            scoped.set(&stringPreferencesKey(field), decoded);
         }
     }
     if let Some(avatar) = preferences.get(&stringPreferencesKey("custom_user_avatar_uri")) {
-        scoped.set(&stringPreferencesKey("custom_user_avatar_uri"), avatar.clone());
+        scoped.set(
+            &stringPreferencesKey("custom_user_avatar_uri"),
+            avatar.clone(),
+        );
     }
     // These are the released resolver's declared initial fields, independent of current global appearance.
-    let initial: BTreeMap<String, Value> = serde_json::from_str(r#"{
+    let initial: BTreeMap<String, Value> = serde_json::from_str(
+        r#"{
   "themeMode": "system",
   "useCustomColors": false,
   "customPrimaryColor": null,
@@ -656,8 +761,12 @@ pub(crate) fn readLegacyCharacterThemeSnapshot(
   "showMessageTimingStats": false,
   "showMessageTimestamp": false,
   "showInputProcessingStatus": true
-}"#)?;
-    Ok((readThemePreferenceSnapshot(&scoped, &initial)?, source_entries))
+}"#,
+    )?;
+    Ok((
+        readThemePreferenceSnapshot(&scoped, &initial)?,
+        source_entries,
+    ))
 }
 
 /// Validates exact ordinary appearance keys before staging a partial configuration edit.
@@ -665,9 +774,7 @@ pub(crate) fn validateThemePreferenceKeys<'a>(
     keys: impl Iterator<Item = &'a str>,
 ) -> Result<(), PreferencesDataStoreError> {
     for key in keys {
-        if !SNAPSHOT_FIELDS
-            .iter()
-            .any(|field| field.preference_key == key)
+        if !snapshotFields().any(|field| field.preference_key == key)
         {
             return Err(invalidSnapshot(key, "unknown appearance preference"));
         }
@@ -681,11 +788,13 @@ pub(crate) fn writeThemePreferenceSnapshot(
     snapshot: &BTreeMap<String, Value>,
 ) -> Result<(), PreferencesDataStoreError> {
     validateThemePreferenceSnapshot(snapshot)?;
-    for field in SNAPSHOT_FIELDS {
-        let value = snapshot
-            .get(field.json_key)
-            .ok_or_else(|| invalidSnapshot(field.json_key, "missing field"))?;
+    for field in snapshotFields() {
         let key = stringPreferencesKey(field.preference_key);
+        let Some(value) = snapshot.get(field.json_key) else {
+            // An older configuration declares none of the extended appearance values.
+            preferences.remove(&key);
+            continue;
+        };
         match value {
             Value::Null => preferences.remove(&key),
             Value::String(value) => preferences.set(&key, value.clone()),
@@ -709,10 +818,10 @@ pub(crate) fn assertThemePreferenceSnapshot(
     snapshot: &BTreeMap<String, Value>,
 ) -> Result<(), PreferencesDataStoreError> {
     validateThemePreferenceSnapshot(snapshot)?;
-    for field in SNAPSHOT_FIELDS {
-        let expected = snapshot
-            .get(field.json_key)
-            .ok_or_else(|| invalidSnapshot(field.json_key, "missing field"))?;
+    for field in snapshotFields() {
+        let Some(expected) = snapshot.get(field.json_key) else {
+            continue;
+        };
         let key = stringPreferencesKey(field.preference_key);
         let actual = match (expected, preferences.get(&key)) {
             (Value::Null, None) => Value::Null,
@@ -761,6 +870,10 @@ fn validateField(field: &SnapshotField, value: &Value) -> Result<(), Preferences
             value.is_null() || value.as_u64().is_some_and(|color| color <= u32::MAX as u64)
         }
         FieldKind::OptionalString => value.is_null() || value.is_string(),
+        FieldKind::OptionalPalette => value.is_null() || value.as_str().is_some_and(|text| {
+            serde_json::from_str::<Value>(text).is_ok_and(|palette|
+                operit_plugin_theme::validate_palette(&palette).is_ok())
+        }),
         FieldKind::Enum(allowed) => value
             .as_str()
             .is_some_and(|text| allowed.iter().any(|candidate| *candidate == text)),

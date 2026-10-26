@@ -1,15 +1,15 @@
 #![allow(non_snake_case)]
 
 pub mod PeerRouter;
+pub mod peer;
 
-use std::sync::Arc;
 use operit_node_runtime::NodeServices::NodeServices;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 pub use operit_edge_contract::{
     EDGE_DEVICE_IO_OBJECT_ID, EDGE_DEVICE_IO_STATE_PROPERTY, EDGE_ROBOT_FACE_OBJECT_ID,
     EDGE_ROBOT_FACE_STATE_PROPERTY, EDGE_SCREEN_OBJECT_ID, EDGE_SCREEN_STATE_PROPERTY,
-    EDGE_PLUGIN_TARGET,
 };
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::RobotFaceExpressionRequest;
@@ -20,11 +20,8 @@ use operit_link::{
 use serde::Deserialize;
 
 pub mod service;
-pub mod plugin;
-pub mod events;
 
-pub use plugin::EdgePlugin;
-pub use operit_edge_contract::{EdgePluginManifest, EdgeScreenSnapshot, EdgeScreenInputRequest, EdgeScreenInputState};
+pub use operit_edge_contract::{EdgeScreenInputRequest, EdgeScreenInputState, EdgeScreenSnapshot};
 
 pub use service::{
     createDeviceIoService, createRobotFaceService, DeviceIoService, DeviceIoStateStream,
@@ -41,13 +38,42 @@ pub trait ScreenService: Send + Sync {
     ) -> Result<EdgeScreenInputState, EdgeServiceError>;
 }
 
+/// Native service dispatch supplied by the device application. Returning None
+/// leaves built-in services to the node. There is no plugin registry or manifest.
+pub type EdgeCallHandler = dyn Fn(
+        CoreCallRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<CoreCallResponse>>>>
+    + Send
+    + Sync;
+
+/// Native output stream supplied by the device application (Stream / Watch).
+pub type EdgeWatchHandler = dyn Fn(
+        CoreWatchRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<CoreEventStream, CoreLinkError>>>,
+    > + Send
+    + Sync;
+/// Native input stream supplied by the device application (ReverseStream / Push).
+pub type EdgePushHandler = dyn Fn(
+        operit_link::CorePushRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                Output = Result<Box<dyn operit_link::CoreLinkPushSession>, CoreLinkError>,
+            >,
+        >,
+    > + Send
+    + Sync;
+
 /// Owns the lightweight device-side Core services for one Edge Node.
 #[derive(Clone)]
 pub struct EdgeNode {
     deviceIoService: Arc<dyn DeviceIoService>,
     robotFaceService: Option<Arc<dyn RobotFaceService>>,
     screenService: Option<Arc<dyn ScreenService>>,
-    plugins: Vec<Arc<dyn EdgePlugin>>,
+    callHandler: Option<Arc<EdgeCallHandler>>,
+    watchHandler: Option<Arc<EdgeWatchHandler>>,
+    pushHandler: Option<Arc<EdgePushHandler>>,
     nodeServices: Option<NodeServices>,
 }
 
@@ -58,7 +84,9 @@ impl EdgeNode {
             deviceIoService,
             robotFaceService: None,
             screenService: None,
-            plugins: Vec::new(),
+            callHandler: None,
+            watchHandler: None,
+            pushHandler: None,
             nodeServices: None,
         }
     }
@@ -70,7 +98,9 @@ impl EdgeNode {
     }
 
     pub fn nodeServices(&self) -> Result<NodeServices, EdgeServiceError> {
-        self.nodeServices.clone().ok_or_else(|| EdgeServiceError::new("RuntimePeerService has not been installed"))
+        self.nodeServices
+            .clone()
+            .ok_or_else(|| EdgeServiceError::new("RuntimePeerService has not been installed"))
     }
 
     /// Creates an Edge Node with device services supplied by one Host Manager.
@@ -90,14 +120,21 @@ impl EdgeNode {
         self
     }
 
-    /// Registers a firmware-owned plugin with a unique stable id.
-    pub fn withPlugin(mut self, plugin: Arc<dyn EdgePlugin>) -> Result<Self, EdgeServiceError> {
-        let id = plugin.manifest().id;
-        if id.is_empty() || self.plugins.iter().any(|entry| entry.manifest().id == id) {
-            return Err(EdgeServiceError::new("invalid or duplicate Edge plugin id"));
-        }
-        self.plugins.push(plugin);
-        Ok(self)
+    /// Installs native request dispatch owned by this device application.
+    pub fn withCallHandler(mut self, handler: Arc<EdgeCallHandler>) -> Self {
+        self.callHandler = Some(handler);
+        self
+    }
+
+    /// Installs the device application's generic Stream and ReverseStream endpoints.
+    pub fn withStreamHandlers(
+        mut self,
+        output: Arc<EdgeWatchHandler>,
+        input: Arc<EdgePushHandler>,
+    ) -> Self {
+        self.watchHandler = Some(output);
+        self.pushHandler = Some(input);
+        self
     }
 
     /// Dispatches one Link call to the registered Edge Service.
@@ -119,11 +156,7 @@ impl EdgeNode {
                 "sendScreenInput" => self.sendScreenInput(request.args),
                 _ => Err(CoreLinkError::methodNotFound(&request.registryKey())),
             },
-            EDGE_PLUGIN_TARGET => match request.methodName.as_str() {
-                "list" => self.listPlugins(),
-                "invoke" => self.invokePlugin(request.args),
-                _ => Err(CoreLinkError::methodNotFound(&request.registryKey())),
-            },
+
             _ => Err(CoreLinkError::methodNotFound(&request.registryKey())),
         };
         match result {
@@ -197,35 +230,21 @@ impl EdgeNode {
             .deviceIoService
             .watchDigitalOutput(pin)
             .map_err(serviceError)?;
-        let sourceClose = source.closeHandle();
         let requestId = request.requestId;
         let target = request.target.clone();
         let propertyName = request.propertyName;
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        std::thread::spawn(move || {
-            let mut kind = CoreEventKind::Snapshot;
-            while let Ok(state) = source.recv() {
-                let value = match toCoreValue(state) {
-                    Ok(value) => value,
-                    Err(_) => break,
-                };
-                if sender
-                    .send(CoreEvent {
-                        requestId: Some(requestId.clone()),
-                        target: target.clone(),
-                        propertyName: propertyName.clone(),
-                        kind: kind.clone(),
-                        value,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-                kind = CoreEventKind::Changed;
-            }
-        });
-        Ok(CoreEventStream::new(receiver).withOnClose(move || {
-            sourceClose.close();
+        let mut kind = CoreEventKind::Snapshot;
+        Ok(source.intoEventStream(move |state| {
+            let value = toCoreValue(state).ok()?;
+            let event = CoreEvent {
+                requestId: Some(requestId.clone()),
+                target: target.clone(),
+                propertyName: propertyName.clone(),
+                kind: kind.clone(),
+                value,
+            };
+            kind = CoreEventKind::Changed;
+            Some(event)
         }))
     }
 
@@ -249,35 +268,21 @@ impl EdgeNode {
             .robotFaceService(&request.registryKey())?
             .watchExpression()
             .map_err(serviceError)?;
-        let sourceClose = source.closeHandle();
         let requestId = request.requestId;
         let target = request.target.clone();
         let propertyName = request.propertyName;
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        std::thread::spawn(move || {
-            let mut kind = CoreEventKind::Snapshot;
-            while let Ok(state) = source.recv() {
-                let value = match toCoreValue(state) {
-                    Ok(value) => value,
-                    Err(_) => break,
-                };
-                if sender
-                    .send(CoreEvent {
-                        requestId: Some(requestId.clone()),
-                        target: target.clone(),
-                        propertyName: propertyName.clone(),
-                        kind: kind.clone(),
-                        value,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-                kind = CoreEventKind::Changed;
-            }
-        });
-        Ok(CoreEventStream::new(receiver).withOnClose(move || {
-            sourceClose.close();
+        let mut kind = CoreEventKind::Snapshot;
+        Ok(source.intoEventStream(move |state| {
+            let value = toCoreValue(state).ok()?;
+            let event = CoreEvent {
+                requestId: Some(requestId.clone()),
+                target: target.clone(),
+                propertyName: propertyName.clone(),
+                kind: kind.clone(),
+                value,
+            };
+            kind = CoreEventKind::Changed;
+            Some(event)
         }))
     }
 
@@ -348,35 +353,13 @@ impl EdgeNode {
         encodeValue(service.getScreenSnapshot().map_err(serviceError)?)
     }
 
-    fn listPlugins(&self) -> Result<CoreValue, CoreLinkError> {
-        encodeValue(self.plugins.iter().map(|plugin| plugin.manifest()).collect::<Vec<_>>())
-    }
-
-    fn invokePlugin(&self, args: CoreValue) -> Result<CoreValue, CoreLinkError> {
-        let request: plugin::EdgePluginCall = decodeValue(args)?;
-        let plugin = self.plugins.iter().find(|plugin| plugin.manifest().id == request.pluginId)
-            .ok_or_else(|| CoreLinkError::new("EDGE_PLUGIN_NOT_FOUND", "Edge plugin is not installed"))?;
-        if !plugin.manifest().actions.iter().any(|action| *action == request.action) {
-            return Err(CoreLinkError::new("EDGE_PLUGIN_ACTION_NOT_FOUND", "Edge plugin action is not declared"));
-        }
-        plugin.invoke(&request.action, request.args).map_err(serviceError)
-    }
-
-    async fn invokePluginAsync(&self, args: CoreValue) -> Result<CoreValue, CoreLinkError> {
-        let request: plugin::EdgePluginCall = decodeValue(args)?;
-        let plugin = self.plugins.iter().find(|plugin| plugin.manifest().id == request.pluginId)
-            .ok_or_else(|| CoreLinkError::new("EDGE_PLUGIN_NOT_FOUND", "Edge plugin is not installed"))?;
-        if !plugin.manifest().actions.iter().any(|action| *action == request.action) {
-            return Err(CoreLinkError::new("EDGE_PLUGIN_ACTION_NOT_FOUND", "Edge plugin action is not declared"));
-        }
-        plugin.invokeAsync(&request.action, request.args).await.map_err(serviceError)
-    }
-
     async fn dispatchAsyncCall(&self, request: CoreCallRequest) -> CoreCallResponse {
-        if request.target == EDGE_PLUGIN_TARGET && request.methodName == "invoke" {
-            let id = request.requestId.clone();
-            CoreCallResponse { requestId: id, result: self.invokePluginAsync(request.args).await }
-        } else { self.dispatchCall(request) }
+        if let Some(handler) = &self.callHandler {
+            if let Some(response) = handler(request.clone()).await {
+                return response;
+            }
+        }
+        self.dispatchCall(request)
     }
 
     fn sendScreenInput(&self, args: CoreValue) -> Result<CoreValue, CoreLinkError> {
@@ -403,15 +386,29 @@ impl CoreLinkSharedClient for EdgeNode {
 
     /// Opens one local Edge Core watch through the shared Link interface.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        if let Some(handler) = &self.watchHandler {
+            if !matches!(
+                request.target.as_str(),
+                EDGE_DEVICE_IO_OBJECT_ID | EDGE_ROBOT_FACE_OBJECT_ID | EDGE_SCREEN_OBJECT_ID
+            ) {
+                return handler(request).await;
+            }
+        }
         self.dispatchWatch(request)
     }
 
-    /// Rejects input-stream methods because current Edge services declare none.
+    /// Opens the native application's ReverseStream endpoint.
     async fn openPush(
         &self,
         request: operit_link::CorePushRequest,
     ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
-        Err(CoreLinkError::methodNotFound(&format!("{}.{}", request.target, request.methodName)))
+        match &self.pushHandler {
+            Some(handler) => handler(request).await,
+            None => Err(CoreLinkError::methodNotFound(&format!(
+                "{}.{}",
+                request.target, request.methodName
+            ))),
+        }
     }
 }
 
@@ -422,15 +419,20 @@ impl operit_link::CoreLinkClient for EdgeNode {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
         self.dispatchAsyncCall(request).await
     }
-    async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
         self.dispatchWatchSnapshot(request)
     }
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        self.dispatchWatch(request)
+        CoreLinkSharedClient::watch(self, request).await
     }
     /// Opens an input stream through the shared Edge service capability boundary.
-    async fn openPush(&mut self, request: operit_link::CorePushRequest)
-        -> Result<Box<dyn operit_link::CoreLinkPushSession>, CoreLinkError> {
+    async fn openPush(
+        &mut self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, CoreLinkError> {
         CoreLinkSharedClient::openPush(self, request).await
     }
 }
@@ -475,78 +477,165 @@ mod tests {
     use operit_host_api::RobotFaceState;
 
     #[tokio::test]
-    async fn asynchronous_plugin_wait_does_not_use_the_blocking_entrypoint() {
-        struct AsyncPlugin;
-        #[async_trait(?Send)]
-        impl EdgePlugin for AsyncPlugin {
-            fn manifest(&self) -> EdgePluginManifest { EdgePluginManifest { id: "ui".into(), name: "UI".into(), actions:vec!["screen".into()] } }
-            fn invoke(&self, _: &str, _: CoreValue) -> Result<CoreValue,EdgeServiceError> { panic!("Must not block the runtime") }
-            async fn invokeAsync(&self, _: &str, _: CoreValue) -> Result<CoreValue,EdgeServiceError> {
+    async fn native_service_dispatch_is_async_and_has_no_plugin_envelope() {
+        let node = testNodeWithRobotFace().withCallHandler(Arc::new(|request| {
+            Box::pin(async move {
+                if request.target != "edge.ui" {
+                    return None;
+                }
                 tokio::task::yield_now().await;
-                Ok(CoreValue::String("main-thread-snapshot".into()))
-            }
-        }
-        let node = testNode().withPlugin(Arc::new(AsyncPlugin)).unwrap();
-        let request = |action:&str| CoreCallRequest::new("ui-test",EDGE_PLUGIN_TARGET,"invoke",CoreValue::Map(std::collections::BTreeMap::from([
-            ("pluginId".into(),CoreValue::String("ui".into())),
-            ("action".into(),CoreValue::String(action.into())),("args".into(),CoreValue::emptyMap())
-        ])));
-        let response = CoreLinkSharedClient::call(&node,request("screen")).await;
-        assert_eq!(response.result.unwrap(),CoreValue::String("main-thread-snapshot".into()));
-        let response = CoreLinkSharedClient::call(&node,request("undeclared")).await;
-        assert_eq!(response.result.unwrap_err().code,"EDGE_PLUGIN_ACTION_NOT_FOUND");
+                Some(if request.methodName == "screen" {
+                    CoreCallResponse::ok(request.requestId, request.args)
+                } else {
+                    CoreCallResponse::err(
+                        request.requestId.clone(),
+                        CoreLinkError::methodNotFound(&request.registryKey()),
+                    )
+                })
+            })
+        }));
+        let value = CoreValue::String("main-thread-snapshot".into());
+        let response = CoreLinkSharedClient::call(
+            &node,
+            CoreCallRequest::new("native", "edge.ui", "screen", value.clone()),
+        )
+        .await;
+        assert_eq!(response.result.unwrap(), value);
+        let response = CoreLinkSharedClient::call(
+            &node,
+            CoreCallRequest::new("native", "edge.ui", "unknown", CoreValue::Null),
+        )
+        .await;
+        assert!(response.result.is_err());
+        let response = CoreLinkSharedClient::call(
+            &node,
+            CoreCallRequest::new("old", "edge.plugins", "list", CoreValue::Null),
+        )
+        .await;
+        assert!(response.result.is_err());
+        let response = CoreLinkSharedClient::call(
+            &node,
+            CoreCallRequest::new(
+                "built-in",
+                EDGE_ROBOT_FACE_OBJECT_ID,
+                "getExpression",
+                CoreValue::Null,
+            ),
+        )
+        .await;
+        assert!(
+            response.result.is_ok(),
+            "native dispatch must leave built-in services available"
+        );
     }
 
     #[tokio::test]
     async fn standard_link_dispatches_to_board_host_and_publishes_watch() {
-        use operit_host_api::{DeviceDigitalOutputRequest, DeviceDigitalOutputState, DeviceIoHost, HostResult};
+        use operit_host_api::{
+            DeviceDigitalOutputRequest, DeviceDigitalOutputState, DeviceIoHost, HostResult,
+        };
         struct Board(std::sync::Mutex<bool>);
         impl DeviceIoHost for Board {
-            fn setDigitalOutput(&self, request: DeviceDigitalOutputRequest) -> HostResult<DeviceDigitalOutputState> {
+            fn setDigitalOutput(
+                &self,
+                request: DeviceDigitalOutputRequest,
+            ) -> HostResult<DeviceDigitalOutputState> {
                 *self.0.lock().unwrap() = request.level;
-                Ok(DeviceDigitalOutputState { pin: request.pin, level: request.level })
+                Ok(DeviceDigitalOutputState {
+                    pin: request.pin,
+                    level: request.level,
+                })
             }
             fn getDigitalOutput(&self, pin: u8) -> HostResult<DeviceDigitalOutputState> {
-                Ok(DeviceDigitalOutputState { pin, level: *self.0.lock().unwrap() })
+                Ok(DeviceDigitalOutputState {
+                    pin,
+                    level: *self.0.lock().unwrap(),
+                })
             }
         }
         let board = Arc::new(Board(std::sync::Mutex::new(false)));
-        let mut node = EdgeNode::fromHostManager(HostManager::new().withDeviceIoHost(board.clone()));
-        let args = || toCoreValue(DeviceDigitalOutputRequest { pin: 2, level: true }).unwrap();
-        let mut watch = operit_link::CoreLinkClient::watch(&mut node,
-            CoreWatchRequest::new("watch", EDGE_DEVICE_IO_OBJECT_ID, EDGE_DEVICE_IO_STATE_PROPERTY, args()))
-            .await.unwrap();
+        let mut node =
+            EdgeNode::fromHostManager(HostManager::new().withDeviceIoHost(board.clone()));
+        let args = || {
+            toCoreValue(DeviceDigitalOutputRequest {
+                pin: 2,
+                level: true,
+            })
+            .unwrap()
+        };
+        let mut watch = operit_link::CoreLinkClient::watch(
+            &mut node,
+            CoreWatchRequest::new(
+                "watch",
+                EDGE_DEVICE_IO_OBJECT_ID,
+                EDGE_DEVICE_IO_STATE_PROPERTY,
+                args(),
+            ),
+        )
+        .await
+        .unwrap();
         assert_eq!(watch.recv().await.unwrap().kind, CoreEventKind::Snapshot);
-        let response = operit_link::CoreLinkClient::call(&mut node,
-            CoreCallRequest::new("write", EDGE_DEVICE_IO_OBJECT_ID, "setDigitalOutput", args())).await;
+        let response = operit_link::CoreLinkClient::call(
+            &mut node,
+            CoreCallRequest::new(
+                "write",
+                EDGE_DEVICE_IO_OBJECT_ID,
+                "setDigitalOutput",
+                args(),
+            ),
+        )
+        .await;
         assert!(response.result.is_ok());
         assert!(*board.0.lock().unwrap());
         let event = watch.recv().await.unwrap();
         assert_eq!(event.kind, CoreEventKind::Changed);
-        assert!(operit_link::fromCoreValue::<DeviceDigitalOutputState>(event.value).unwrap().level);
+        assert!(
+            operit_link::fromCoreValue::<DeviceDigitalOutputState>(event.value)
+                .unwrap()
+                .level
+        );
         drop(watch);
-        let push = operit_link::CoreLinkClient::openPush(&mut node,
-            operit_link::CorePushRequest::new("push", EDGE_DEVICE_IO_OBJECT_ID, "notDeclared")).await;
+        let push = operit_link::CoreLinkClient::openPush(
+            &mut node,
+            operit_link::CorePushRequest::new("push", EDGE_DEVICE_IO_OBJECT_ID, "notDeclared"),
+        )
+        .await;
         assert!(push.is_err());
     }
 
     /// Executes the existing Edge service and Host path through standard Link ingress.
     #[tokio::test]
     async fn standard_wire_session_executes_edge_service_and_host() {
-        use operit_host_api::{DeviceDigitalOutputRequest, DeviceDigitalOutputState, DeviceIoHost, HostResult};
-        use operit_link::{CoreLinkSession, CoreLinkRequest, CoreLinkResponse, CoreLinkWatchRequest,
-            CoreLinkWatchResponse, CoreLinkPushRequestMessage, CorePushRequest, encodeLink, decodeLink};
+        use operit_host_api::{
+            DeviceDigitalOutputRequest, DeviceDigitalOutputState, DeviceIoHost, HostResult,
+        };
+        use operit_link::{
+            decodeLink, encodeLink, CoreLinkPushRequestMessage, CoreLinkRequest, CoreLinkResponse,
+            CoreLinkSession, CoreLinkWatchRequest, CoreLinkWatchResponse, CorePushRequest,
+        };
         struct Board(std::sync::Mutex<bool>);
         impl DeviceIoHost for Board {
-            fn setDigitalOutput(&self, request: DeviceDigitalOutputRequest) -> HostResult<DeviceDigitalOutputState> {
+            fn setDigitalOutput(
+                &self,
+                request: DeviceDigitalOutputRequest,
+            ) -> HostResult<DeviceDigitalOutputState> {
                 *self.0.lock().unwrap() = request.level;
-                Ok(DeviceDigitalOutputState { pin: request.pin, level: request.level })
+                Ok(DeviceDigitalOutputState {
+                    pin: request.pin,
+                    level: request.level,
+                })
             }
             fn getDigitalOutput(&self, pin: u8) -> HostResult<DeviceDigitalOutputState> {
-                Ok(DeviceDigitalOutputState { pin, level: *self.0.lock().unwrap() })
+                Ok(DeviceDigitalOutputState {
+                    pin,
+                    level: *self.0.lock().unwrap(),
+                })
             }
         }
-        async fn exchange(session: &mut CoreLinkSession<EdgeNode>, request: CoreLinkRequest) -> CoreLinkResponse {
+        async fn exchange(
+            session: &mut CoreLinkSession<EdgeNode>,
+            request: CoreLinkRequest,
+        ) -> CoreLinkResponse {
             let request = decodeLink(&encodeLink(&request).unwrap()).unwrap();
             let response = session.dispatch(request).await;
             decodeLink(&encodeLink(&response).unwrap()).unwrap()
@@ -554,30 +643,93 @@ mod tests {
         let board = Arc::new(Board(std::sync::Mutex::new(false)));
         let node = EdgeNode::fromHostManager(HostManager::new().withDeviceIoHost(board.clone()));
         let mut session = CoreLinkSession::new(node, 4);
-        let args = || toCoreValue(DeviceDigitalOutputRequest { pin: 2, level: true }).unwrap();
-        let watch = || CoreWatchRequest::new("watch", EDGE_DEVICE_IO_OBJECT_ID, EDGE_DEVICE_IO_STATE_PROPERTY, args());
-        assert!(matches!(exchange(&mut session, CoreLinkRequest::Watch(CoreLinkWatchRequest::Open(watch()))).await,
-            CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Opened), .. }));
-        assert!(matches!(session.nextWatchEvent().await,
-            Some(CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Event(CoreEvent { kind: CoreEventKind::Snapshot, .. })), .. })));
-        assert!(matches!(exchange(&mut session, CoreLinkRequest::Call(CoreCallRequest::new(
-            "write", EDGE_DEVICE_IO_OBJECT_ID, "setDigitalOutput", args()))).await,
-            CoreLinkResponse::Call(CoreCallResponse { result: Ok(_), .. })));
+        let args = || {
+            toCoreValue(DeviceDigitalOutputRequest {
+                pin: 2,
+                level: true,
+            })
+            .unwrap()
+        };
+        let watch = || {
+            CoreWatchRequest::new(
+                "watch",
+                EDGE_DEVICE_IO_OBJECT_ID,
+                EDGE_DEVICE_IO_STATE_PROPERTY,
+                args(),
+            )
+        };
+        assert!(matches!(
+            exchange(
+                &mut session,
+                CoreLinkRequest::Watch(CoreLinkWatchRequest::Open(watch()))
+            )
+            .await,
+            CoreLinkResponse::Watch {
+                result: Ok(CoreLinkWatchResponse::Opened),
+                ..
+            }
+        ));
+        assert!(matches!(
+            session.nextWatchEvent().await,
+            Some(CoreLinkResponse::Watch {
+                result: Ok(CoreLinkWatchResponse::Event(CoreEvent {
+                    kind: CoreEventKind::Snapshot,
+                    ..
+                })),
+                ..
+            })
+        ));
+        assert!(matches!(
+            exchange(
+                &mut session,
+                CoreLinkRequest::Call(CoreCallRequest::new(
+                    "write",
+                    EDGE_DEVICE_IO_OBJECT_ID,
+                    "setDigitalOutput",
+                    args()
+                ))
+            )
+            .await,
+            CoreLinkResponse::Call(CoreCallResponse { result: Ok(_), .. })
+        ));
         assert!(*board.0.lock().unwrap());
-        let Some(CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Event(event)), .. }) = session.nextWatchEvent().await else {
+        let Some(CoreLinkResponse::Watch {
+            result: Ok(CoreLinkWatchResponse::Event(event)),
+            ..
+        }) = session.nextWatchEvent().await
+        else {
             panic!("Expected service event after Host write");
         };
         assert_eq!(event.kind, CoreEventKind::Changed);
-        assert!(operit_link::fromCoreValue::<DeviceDigitalOutputState>(event.value).unwrap().level);
-        assert!(matches!(exchange(&mut session, CoreLinkRequest::Watch(CoreLinkWatchRequest::Snapshot(watch()))).await,
-            CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Snapshot(_)), .. }));
+        assert!(
+            operit_link::fromCoreValue::<DeviceDigitalOutputState>(event.value)
+                .unwrap()
+                .level
+        );
+        assert!(matches!(
+            exchange(
+                &mut session,
+                CoreLinkRequest::Watch(CoreLinkWatchRequest::Snapshot(watch()))
+            )
+            .await,
+            CoreLinkResponse::Watch {
+                result: Ok(CoreLinkWatchResponse::Snapshot(_)),
+                ..
+            }
+        ));
         let expected = operit_link::CoreLinkError::methodNotFound("unused").code;
-        assert!(matches!(exchange(&mut session, CoreLinkRequest::Push(CoreLinkPushRequestMessage::Open(
+        assert!(
+            matches!(exchange(&mut session, CoreLinkRequest::Push(CoreLinkPushRequestMessage::Open(
             CorePushRequest::new("push", EDGE_DEVICE_IO_OBJECT_ID, "notDeclared")))).await,
-            CoreLinkResponse::Push { pushId, result: Err(error) } if pushId == "push" && error.code == expected));
-        exchange(&mut session, CoreLinkRequest::Watch(CoreLinkWatchRequest::Close {
-            requestId: operit_link::CoreRequestId::new("watch"),
-        })).await;
+            CoreLinkResponse::Push { pushId, result: Err(error) } if pushId == "push" && error.code == expected)
+        );
+        exchange(
+            &mut session,
+            CoreLinkRequest::Watch(CoreLinkWatchRequest::Close {
+                requestId: operit_link::CoreRequestId::new("watch"),
+            }),
+        )
+        .await;
         assert!(!session.hasWatches());
     }
 
@@ -727,7 +879,7 @@ mod tests {
 
         /// Opens a typed stream with one deterministic snapshot.
         fn watchDigitalOutput(&self, pin: u8) -> Result<DeviceIoStateStream, EdgeServiceError> {
-            let (sender, receiver) = std::sync::mpsc::channel();
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
             sender
                 .send(operit_host_api::DeviceDigitalOutputState { pin, level: false })
                 .expect("test state receiver must be alive");
@@ -758,7 +910,7 @@ mod tests {
 
         /// Opens a typed robot face stream with one deterministic snapshot.
         fn watchExpression(&self) -> Result<RobotFaceStateStream, EdgeServiceError> {
-            let (sender, receiver) = std::sync::mpsc::channel();
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
             sender
                 .send(RobotFaceState {
                     expression: "neutral".to_string(),

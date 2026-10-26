@@ -1,14 +1,12 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
-import 'package:liquid_glass_widgets/widgets/shared/glass_effect.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import '../../../../../../../core/logging/ClientLogger.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
@@ -23,6 +21,7 @@ import '../../../ChatLayoutMetrics.dart';
 import '../common/ChatAttachmentImagePreview.dart';
 import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSlotHost.dart';
+import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
 import 'AgentInputMenuPopup.dart';
@@ -33,6 +32,7 @@ class AgentChatInputSection extends StatefulWidget {
   const AgentChatInputSection({
     super.key,
     this.hintSuffix = '',
+    this.hostMissing = false,
     required this.controller,
     required this.focusNode,
     required this.isLoading,
@@ -70,6 +70,7 @@ class AgentChatInputSection extends StatefulWidget {
   });
 
   final String hintSuffix;
+  final bool hostMissing;
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isLoading;
@@ -549,6 +550,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     widget.onAttachPackage?.call(packageName);
   }
 
+  /// Places popups using the anchor and dimensions of their owning Overlay.
   _PopupPlacement _popupPlacement(
     BuildContext context, {
     required GlobalKey targetKey,
@@ -556,19 +558,19 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     required double maxWidth,
   }) {
     final mediaQuery = MediaQuery.of(context);
-    final screenSize = mediaQuery.size;
+    final overlaySize = overlaySizeOf(context);
     final horizontalPadding = 12.0 + mediaQuery.padding.left;
     final rightPadding = 12.0 + mediaQuery.padding.right;
-    final availableWidth = screenSize.width - horizontalPadding - rightPadding;
+    final availableWidth = overlaySize.width - horizontalPadding - rightPadding;
     final width = availableWidth < maxWidth ? availableWidth : maxWidth;
     final targetRect = _targetRect(targetKey);
     final targetLeft = targetRect.left;
     final targetRight = targetRect.right;
     final desiredLeft = alignEnd ? targetRight - width : targetLeft;
-    final maxLeft = screenSize.width - rightPadding - width;
+    final maxLeft = overlaySize.width - rightPadding - width;
     final left = desiredLeft.clamp(horizontalPadding, maxLeft).toDouble();
     final targetTop = targetRect.top;
-    final bottom = screenSize.height - targetTop + 8;
+    final bottom = overlaySize.height - targetTop + 8;
     final maxHeight = (targetTop - mediaQuery.padding.top - 20).clamp(
       96.0,
       420.0,
@@ -633,8 +635,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     final themePreferenceSnapshot = OperitTheme.of(
       context,
     ).themePreferenceSnapshot;
@@ -643,12 +643,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     final canSendMessage = hasDraftText || widget.attachments.isNotEmpty;
     final showCancelAction = processing && !hasDraftText;
     final showQueueAction = processing && hasDraftText;
-    final inputCardBorderRadius = _agentInputSurfaceBorderRadius(
-      themePreferenceSnapshot.chatInputFloating,
-    );
-    final inputCardShape = RoundedRectangleBorder(
-      borderRadius: inputCardBorderRadius,
-    );
 
     return Material(
       color: Colors.transparent,
@@ -671,70 +665,68 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                   pendingQueueCount: widget.pendingQueueMessages.length,
                 ),
               if (widget.pendingQueueMessages.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                  child: _PendingMessageQueuePanel(
-                    queuedMessages: widget.pendingQueueMessages,
-                    expanded: widget.isPendingQueueExpanded,
-                    onExpandedChange: widget.onPendingQueueExpandedChange,
-                    onDeleteMessage: widget.onDeletePendingQueueMessage,
-                    onEditMessage: widget.onEditPendingQueueMessage,
-                    onSendMessage: widget.onSendPendingQueueMessage,
-                  ),
+                ChatPendingMessageQueuePanel(
+                  queuedMessages: widget.pendingQueueMessages,
+                  expanded: widget.isPendingQueueExpanded,
+                  onExpandedChange: widget.onPendingQueueExpandedChange,
+                  onDeleteMessage: widget.onDeletePendingQueueMessage,
+                  onEditMessage: widget.onEditPendingQueueMessage,
+                  onSendMessage: widget.onSendPendingQueueMessage,
                 ),
               KeyedSubtree(
                 key: _mentionPopupTargetKey,
-                child: _InputSurface(
-                  color: colorScheme.surfaceContainer,
+                child: ThemeComposerCard(
+                  inputStyle: ThemePreferenceDefaults.INPUT_STYLE_AGENT,
                   floating: themePreferenceSnapshot.chatInputFloating,
-                  shape: inputCardShape,
-                  borderRadius: inputCardBorderRadius,
                   transparentSurface:
                       themePreferenceSnapshot.transparentSurfaceEnabled,
-                  width: double.infinity,
-                  margin: _agentInputSurfaceMargin(
-                    themePreferenceSnapshot.chatInputFloating,
+                  backgroundColor:
+                      themePreferenceSnapshot.inputBackgroundColor != null
+                      ? Color(themePreferenceSnapshot.inputBackgroundColor!)
+                      : null,
+                  roundedCorners:
+                      themePreferenceSnapshot.inputRoundedCornersEnabled,
+                  imageStyle: buildThemeInputImageStyle(
+                    themePreferenceSnapshot,
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
-                    child: _InputBody(
-                      hintSuffix: widget.hintSuffix,
-                      controller: widget.controller,
-                      focusNode: widget.focusNode,
-                      inputState: widget.inputState,
-                      modelLabel: _modelLabel,
-                      modelProviderTypeId: _modelProviderTypeId,
-                      modelProviderName: _modelProviderName,
-                      modelSelectorOpen: _modelPopupEntry != null,
-                      modelSelectorLink: _modelPopupLink,
-                      modelSelectorKey: _modelPopupTargetKey,
-                      settingsLink: _inputMenuPopupLink,
-                      settingsKey: _inputMenuPopupTargetKey,
-                      attachmentKey: _attachmentPopupTargetKey,
-                      processing: processing,
-                      hasDraftText: hasDraftText,
-                      canSendMessage: canSendMessage,
-                      showCancelAction: showCancelAction,
-                      showQueueAction: showQueueAction,
-                      onSendMessage: widget.onSendMessage,
-                      onQueueMessage: widget.onQueueMessage,
-                      onCancelMessage: widget.onCancelMessage,
-                      isSpeechRecording: widget.isSpeechRecording,
-                      isSpeechTranscribing: widget.isSpeechTranscribing,
-                      onSpeechInput: widget.onSpeechInput,
-                      inputExpanded: _inputExpanded,
-                      onToggleInputExpansion: _toggleInputExpansion,
-                      attachments: widget.attachments,
-                      onRemoveAttachment: widget.onRemoveAttachment,
-                      onInsertAttachment: widget.onInsertAttachment,
-                      onAttachFiles: widget.onAttachFiles,
-                      onPasteImages: widget.onPasteImages,
-                      draggingFiles: _draggingFiles,
-                      onDraggingFilesChanged: _setDraggingFiles,
-                      onAttach: _openAttachmentPopup,
-                      onSettings: _openInputMenuPopup,
-                      onModelSelector: _toggleSettingsPopup,
-                    ),
+                  child: _InputBody(
+                    hintSuffix: widget.hintSuffix,
+                    controller: widget.controller,
+                    focusNode: widget.focusNode,
+                    inputState: widget.inputState,
+                    modelLabel: _modelLabel,
+                    modelProviderTypeId: _modelProviderTypeId,
+                    modelProviderName: _modelProviderName,
+                    modelSelectorOpen: _modelPopupEntry != null,
+                    modelSelectorLink: _modelPopupLink,
+                    modelSelectorKey: _modelPopupTargetKey,
+                    settingsLink: _inputMenuPopupLink,
+                    settingsKey: _inputMenuPopupTargetKey,
+                    attachmentKey: _attachmentPopupTargetKey,
+                    processing: processing,
+                    hasDraftText: hasDraftText,
+                    canSendMessage: canSendMessage,
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    hostMissing: widget.hostMissing,
+                    onSendMessage: widget.onSendMessage,
+                    onQueueMessage: widget.onQueueMessage,
+                    onCancelMessage: widget.onCancelMessage,
+                    isSpeechRecording: widget.isSpeechRecording,
+                    isSpeechTranscribing: widget.isSpeechTranscribing,
+                    onSpeechInput: widget.onSpeechInput,
+                    inputExpanded: _inputExpanded,
+                    onToggleInputExpansion: _toggleInputExpansion,
+                    attachments: widget.attachments,
+                    onRemoveAttachment: widget.onRemoveAttachment,
+                    onInsertAttachment: widget.onInsertAttachment,
+                    onAttachFiles: widget.onAttachFiles,
+                    onPasteImages: widget.onPasteImages,
+                    draggingFiles: _draggingFiles,
+                    onDraggingFilesChanged: _setDraggingFiles,
+                    onAttach: _openAttachmentPopup,
+                    onSettings: _openInputMenuPopup,
+                    onModelSelector: _toggleSettingsPopup,
                   ),
                 ),
               ),
@@ -747,99 +739,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
 }
 
 const double _modelSelectorLogoSize = 14;
-const double _modelSelectorLogoGap = 4;
-const BorderRadius _modelSelectorChipRadius = BorderRadius.all(
-  Radius.circular(12),
-);
-
-class _ModelTypeMetrics {
-  const _ModelTypeMetrics({
-    required this.lineHeight,
-    required this.xCenter,
-    required this.markSize,
-  });
-
-  final double lineHeight;
-  final double xCenter;
-  final double markSize;
-
-  Alignment get markAlignment {
-    final extra = lineHeight - markSize;
-    if (extra.abs() < 0.001) {
-      return Alignment.center;
-    }
-    final childTop = xCenter - markSize / 2;
-    return Alignment(0, 2 * childTop / extra - 1);
-  }
-}
-
-ui.TextBox? _glyphBox(TextPainter painter) {
-  final boxes = painter.getBoxesForSelection(
-    const TextSelection(baseOffset: 0, extentOffset: 1),
-  );
-  return boxes.isEmpty ? null : boxes.first;
-}
-
-TextPainter _probePainter(
-  String glyph,
-  TextStyle style,
-  TextDirection direction,
-) {
-  return TextPainter(
-    text: TextSpan(text: glyph, style: style),
-    textDirection: direction,
-    maxLines: 1,
-    strutStyle: StrutStyle.fromTextStyle(
-      style,
-      forceStrutHeight: true,
-      height: 1,
-    ),
-  )..layout();
-}
-
-/// Measures the lowercase x-height band so marks can share the text ink center.
-_ModelTypeMetrics _fallbackModelTypeMetrics(double fontSize) {
-  final lineHeight = fontSize;
-  final markSize = fontSize * 0.72;
-  return _ModelTypeMetrics(
-    lineHeight: lineHeight,
-    xCenter: lineHeight * 0.45,
-    markSize: markSize.clamp(1.0, lineHeight).toDouble(),
-  );
-}
-
-_ModelTypeMetrics _modelTypeMetrics(TextStyle style, TextDirection direction) {
-  final fontSize = style.fontSize ?? _modelSelectorLogoSize;
-  try {
-    final line = _probePainter('Hg', style, direction);
-    final xProbe = _probePainter('x', style, direction);
-    final capProbe = _probePainter('H', style, direction);
-    final lineHeight = line.height;
-    final xBox = _glyphBox(xProbe);
-    final capBox = _glyphBox(capProbe);
-    line.dispose();
-    xProbe.dispose();
-    capProbe.dispose();
-    if (lineHeight <= 0 || !lineHeight.isFinite) {
-      return _fallbackModelTypeMetrics(fontSize);
-    }
-    final xCenter = xBox == null
-        ? lineHeight * 0.45
-        : (xBox.top + xBox.bottom) / 2;
-    final capHeight = capBox == null
-        ? fontSize * 0.72
-        : (capBox.bottom - capBox.top);
-    final maxMark = lineHeight < 1 ? 1.0 : lineHeight;
-    final markSize = capHeight.clamp(1.0, maxMark).toDouble();
-    return _ModelTypeMetrics(
-      lineHeight: lineHeight,
-      xCenter: xCenter.isFinite ? xCenter : lineHeight * 0.45,
-      markSize: markSize,
-    );
-  } catch (_) {
-    return _fallbackModelTypeMetrics(fontSize);
-  }
-}
 
 class _ModelSelectorIdentity extends StatelessWidget {
   const _ModelSelectorIdentity({
@@ -850,232 +749,26 @@ class _ModelSelectorIdentity extends StatelessWidget {
     required this.chevronColor,
     required this.expanded,
   });
-
   final String label;
   final TextStyle style;
   final String providerTypeId;
   final String fallbackName;
   final Color chevronColor;
   final bool expanded;
-
   @override
-  Widget build(BuildContext context) {
-    final metrics = _modelTypeMetrics(style, Directionality.of(context));
-    Widget mark(Widget child) {
-      return SizedBox(
-        width: metrics.markSize,
-        height: metrics.lineHeight,
-        child: Align(
-          alignment: metrics.markAlignment,
-          child: SizedBox(
-            width: metrics.markSize,
-            height: metrics.markSize,
-            child: child,
-          ),
-        ),
-      );
-    }
-
-    final showLogo = providerTypeId.isNotEmpty || label.isNotEmpty;
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final reserved =
-            (showLogo ? metrics.markSize + _modelSelectorLogoGap : 0) +
-            4 +
-            metrics.markSize;
-        final maxWidth = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : 220.0;
-        final textMax = (maxWidth - reserved).clamp(24.0, 220.0).toDouble();
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            if (showLogo) ...<Widget>[
-              ExcludeSemantics(
-                child: mark(
-                  ProviderLogo(
-                    providerTypeId: providerTypeId,
-                    fallbackName: fallbackName,
-                    size: metrics.markSize,
-                    showBackdrop: false,
-                  ),
-                ),
-              ),
-              const SizedBox(width: _modelSelectorLogoGap),
-            ],
-            ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: textMax),
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: style,
-                strutStyle: StrutStyle.fromTextStyle(
-                  style,
-                  forceStrutHeight: true,
-                  height: 1,
-                ),
-              ),
-            ),
-            const SizedBox(width: 4),
-            mark(
-              AnimatedRotation(
-                turns: expanded ? 0.5 : 0,
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                child: Icon(
-                  Icons.keyboard_arrow_down,
-                  size: metrics.markSize,
-                  color: chevronColor,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// Resolves the Agent input surface radius for the current float setting.
-BorderRadius _agentInputSurfaceBorderRadius(bool floating) {
-  return floating
-      ? BorderRadius.circular(22)
-      : const BorderRadius.vertical(top: Radius.circular(20));
-}
-
-/// Resolves the Agent input surface margin for the current float setting.
-EdgeInsetsGeometry _agentInputSurfaceMargin(bool floating) {
-  return floating
-      ? const EdgeInsets.fromLTRB(8, 4, 8, 6)
-      : const EdgeInsets.only(top: 4);
-}
-
-class _InputSurface extends StatelessWidget {
-  /// Creates a surface with inset content or an inset floating card.
-  const _InputSurface({
-    required this.color,
-    required this.floating,
-    required this.shape,
-    required this.borderRadius,
-    required this.child,
-    required this.width,
-    required this.margin,
-    required this.transparentSurface,
-  });
-
-  final Color color;
-  final bool floating;
-  final ShapeBorder shape;
-  final BorderRadius borderRadius;
-  final Widget child;
-  final double width;
-  final EdgeInsetsGeometry margin;
-  final bool transparentSurface;
-
-  /// Retains the input surface paint while keyboard motion changes its position.
-  @override
-  Widget build(BuildContext context) {
-    final effectiveColor = transparentSurface ? Colors.transparent : color;
-    final decorated = RepaintBoundary(
-      child: SizedBox(
-        width: width,
-        child: DecoratedBox(
-          key: const ValueKey<String>('chat.input.surface'),
-          decoration: ShapeDecoration(
-            color: effectiveColor,
-            shape: shape,
-            shadows: transparentSurface
-                ? const <BoxShadow>[]
-                : <BoxShadow>[
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      blurRadius: 18,
-                      spreadRadius: 1,
-                      offset: const Offset(0, -4),
-                    ),
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.035),
-                      blurRadius: 5,
-                      spreadRadius: 0,
-                      offset: const Offset(0, -1),
-                    ),
-                  ],
-          ),
-          child: SafeArea(
-            top: false,
-            left: false,
-            right: false,
-            bottom: !floating,
-            child: child,
-          ),
-        ),
-      ),
-    );
-    final Widget surface;
-    if (transparentSurface) {
-      final settings = _inputTransparentGlassSettings(context);
-      surface = ClipPath(
-        clipper: ShapeBorderClipper(shape: shape),
-        child: Stack(
-          children: <Widget>[
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(
-                  sigmaX: settings.blur,
-                  sigmaY: settings.blur,
-                ),
-                child: const ColoredBox(color: Colors.transparent),
-              ),
-            ),
-            Positioned.fill(
-              child: GlassEffect(
-                quality: GlassQuality.standard,
-                shape: LiquidRoundedSuperellipse(
-                  borderRadius: borderRadius.topLeft.x,
-                ),
-                settings: settings,
-                interactionIntensity: 0.85,
-                ambientRim: 0.11,
-                baseAlphaMultiplier: 0.75,
-                edgeAlphaMultiplier: 0.75,
-                rimThickness: 1.48,
-                rimSmoothing: 8,
-                child: const SizedBox.expand(),
-              ),
-            ),
-            decorated,
-          ],
-        ),
-      );
-    } else {
-      surface = decorated;
-    }
-    return SafeArea(
-      top: false,
-      left: false,
-      right: false,
-      bottom: floating,
-      child: Padding(padding: margin, child: surface),
-    );
-  }
-}
-
-LiquidGlassSettings _inputTransparentGlassSettings(BuildContext context) {
-  final dark = Theme.of(context).brightness == Brightness.dark;
-  return LiquidGlassSettings(
-    glassColor: dark ? const Color(0x08FFFFFF) : const Color(0x07FFFFFF),
-    thickness: 80,
-    blur: 8,
-    chromaticAberration: 0.18,
-    lightIntensity: 0.42,
-    ambientStrength: 0.2,
-    refractiveIndex: 1.16,
-    saturation: 1.04,
-    glowIntensity: 0.17,
-    specularSharpness: GlassSpecularSharpness.soft,
-    standardOpacityMultiplier: 0.12,
+  Widget build(BuildContext context) => ThemeComposerModelIdentity(
+    label: label,
+    style: style,
+    chevronColor: chevronColor,
+    expanded: expanded,
+    logoBuilder: providerTypeId.isNotEmpty || label.isNotEmpty
+        ? (size) => ProviderLogo(
+            providerTypeId: providerTypeId,
+            fallbackName: fallbackName,
+            size: size,
+            showBackdrop: false,
+          )
+        : null,
   );
 }
 
@@ -1099,6 +792,7 @@ class _InputBody extends StatelessWidget {
     required this.canSendMessage,
     required this.showCancelAction,
     required this.showQueueAction,
+    required this.hostMissing,
     required this.onSendMessage,
     required this.onQueueMessage,
     required this.onCancelMessage,
@@ -1137,6 +831,7 @@ class _InputBody extends StatelessWidget {
   final bool canSendMessage;
   final bool showCancelAction;
   final bool showQueueAction;
+  final bool hostMissing;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
   final VoidCallback onCancelMessage;
@@ -1162,6 +857,12 @@ class _InputBody extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
+    final showMissingHost =
+        hostMissing &&
+        !showCancelAction &&
+        !showQueueAction &&
+        !isSpeechRecording &&
+        !isSpeechTranscribing;
     final modelLabelStyle =
         theme.textTheme.bodyMedium?.copyWith(
           color: colorScheme.onSurface,
@@ -1174,217 +875,165 @@ class _InputBody extends StatelessWidget {
           height: 1,
           leadingDistribution: TextLeadingDistribution.even,
         );
-    final inputContent = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
+    final inputContent = ThemeAgentComposerBody(
+      attachments: <Widget>[
         if (attachments.isNotEmpty)
           _AttachmentStrip(
             attachments: attachments,
             onRemoveAttachment: onRemoveAttachment,
             onInsertAttachment: onInsertAttachment,
           ),
-        _DesktopEnterSendShortcuts(
-          controller: controller,
-          canSendMessage: canSendMessage,
-          onSendMessage: onSendMessage,
-          child: ChatPastedImageHandler(
+      ],
+      editor: _DesktopEnterSendShortcuts(
+        controller: controller,
+        canSendMessage: canSendMessage,
+        onSendMessage: onSendMessage,
+        child: ChatPastedImageHandler(
+          focusNode: focusNode,
+          enabled: !isSpeechRecording && !isSpeechTranscribing,
+          onPasteImages: onPasteImages,
+          child: ThemeComposerTextEditor(
+            controller: controller,
             focusNode: focusNode,
-            enabled: !isSpeechRecording && !isSpeechTranscribing,
-            onPasteImages: onPasteImages,
-            child: AnimatedSize(
-              duration: const Duration(milliseconds: 340),
-              reverseDuration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOutCubicEmphasized,
-              alignment: Alignment.bottomCenter,
-              child: Stack(
-                children: <Widget>[
-                  TextField(
-                    key: const ValueKey<String>('chat.input'),
-                    controller: controller,
-                    focusNode: focusNode,
-                    minLines: inputExpanded ? 10 : 1,
-                    maxLines: inputExpanded ? 16 : 6,
-                    enabled: true,
-                    readOnly: isSpeechRecording || isSpeechTranscribing,
-                    textInputAction: TextInputAction.newline,
-                    contentInsertionConfiguration:
-                        chatPastedImageContentInsertionConfiguration(
-                          onPasteImages: onPasteImages,
-                        ),
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      height: 20 / 14,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: '${l10n.askOperitHint}$hintSuffix',
-                      hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                      filled: false,
-                      fillColor: Colors.transparent,
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      contentPadding: const EdgeInsets.fromLTRB(16, 10, 48, 8),
-                    ),
-                    onSubmitted: (_) {
-                      if (canSendMessage) {
-                        onSendMessage();
-                      }
-                    },
-                  ),
-                  PositionedDirectional(
-                    top: 0,
-                    end: 4,
-                    child: _IconTapTarget(
-                      icon: inputExpanded
-                          ? Icons.fullscreen_exit
-                          : Icons.fullscreen,
-                      color: colorScheme.onSurfaceVariant,
-                      onTap: onToggleInputExpansion,
-                      tooltip: inputExpanded
-                          ? l10n.collapseInput
-                          : l10n.expandInput,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            hintText: '${l10n.askOperitHint}$hintSuffix',
+            inputExpanded: inputExpanded,
+            readOnly: isSpeechRecording || isSpeechTranscribing,
+            contentInsertionConfiguration:
+                chatPastedImageContentInsertionConfiguration(
+                  onPasteImages: onPasteImages,
+                ),
+            onSubmitted: (_) {
+              if (canSendMessage) {
+                onSendMessage();
+              }
+            },
+            onToggleExpansion: onToggleInputExpansion,
+            expandTooltip: l10n.expandInput,
+            collapseTooltip: l10n.collapseInput,
           ),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: CompositedTransformTarget(
-                  key: modelSelectorKey,
-                  link: modelSelectorLink,
-                  child: Material(
-                    color: modelSelectorOpen
-                        ? colorScheme.onSurface.withValues(alpha: 0.08)
-                        : Colors.transparent,
-                    borderRadius: _modelSelectorChipRadius,
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      borderRadius: _modelSelectorChipRadius,
-                      splashFactory: NoSplash.splashFactory,
-                      overlayColor: WidgetStateProperty.resolveWith((
-                        Set<WidgetState> states,
-                      ) {
-                        if (states.contains(WidgetState.pressed)) {
-                          return colorScheme.onSurface.withValues(alpha: 0.12);
-                        }
-                        if (states.contains(WidgetState.hovered) ||
-                            states.contains(WidgetState.focused)) {
-                          return colorScheme.onSurface.withValues(alpha: 0.08);
-                        }
-                        return Colors.transparent;
-                      }),
-                      onTap: onModelSelector,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 220),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          child: _ModelSelectorIdentity(
-                            label: modelLabel,
-                            style: modelLabelStyle,
-                            providerTypeId: modelProviderTypeId,
-                            fallbackName: modelProviderName.isNotEmpty
-                                ? modelProviderName
-                                : modelLabel,
-                            chevronColor: colorScheme.onSurfaceVariant,
-                            expanded: modelSelectorOpen,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            CompositedTransformTarget(
-              key: settingsKey,
-              link: settingsLink,
-              child: _IconTapTarget(
-                icon: Icons.tune_outlined,
-                color: colorScheme.onSurfaceVariant,
-                onTap: onSettings,
-                targetSize: 34,
-                tooltip: l10n.settings,
-              ),
-            ),
-            const SizedBox(width: 8),
-            KeyedSubtree(
-              key: attachmentKey,
-              child: _IconTapTarget(
-                icon: Icons.add,
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.9),
-                onTap: onAttach,
-                size: 24,
-                tooltip: l10n.addAttachment,
-              ),
-            ),
-            const SizedBox(width: 6),
-            _ActionButton(
-              key: const ValueKey<String>('chat.send'),
-              processing: processing || isSpeechTranscribing,
-              progress: isSpeechTranscribing ? null : _progressFor(inputState),
-              background: isSpeechRecording
-                  ? colorScheme.error
-                  : _actionBackground(
-                      colorScheme,
-                      showCancelAction: showCancelAction,
-                      showQueueAction: showQueueAction,
-                      canSend: canSendMessage,
-                    ),
-              foreground: isSpeechRecording
-                  ? colorScheme.onError
-                  : _actionForeground(
-                      colorScheme,
-                      showCancelAction: showCancelAction,
-                      showQueueAction: showQueueAction,
-                      canSend: canSendMessage,
-                    ),
-              icon: isSpeechRecording
-                  ? Icons.stop
-                  : isSpeechTranscribing
-                  ? Icons.graphic_eq
-                  : _actionIcon(
-                      showCancelAction: showCancelAction,
-                      showQueueAction: showQueueAction,
-                      canSend: canSendMessage,
-                    ),
-              tooltip: isSpeechRecording
-                  ? '停止录音'
-                  : isSpeechTranscribing
-                  ? '正在识别'
-                  : showCancelAction
-                  ? l10n.cancel
-                  : showQueueAction
-                  ? l10n.chatQueueAddMessage
-                  : (canSendMessage ? l10n.send : ''),
-              onPressed: isSpeechTranscribing
-                  ? null
-                  : () {
-                      if (showCancelAction) {
-                        onCancelMessage();
-                      } else if (showQueueAction) {
-                        onQueueMessage();
-                      } else if (canSendMessage) {
-                        onSendMessage();
-                      } else {
-                        onSpeechInput();
-                      }
-                    },
-            ),
-          ],
+      ),
+      modelSelector: CompositedTransformTarget(
+        key: modelSelectorKey,
+        link: modelSelectorLink,
+        child: ThemeComposerModelSelector(
+          expanded: modelSelectorOpen,
+          onTap: onModelSelector,
+          identity: _ModelSelectorIdentity(
+            label: modelLabel,
+            style: modelLabelStyle,
+            providerTypeId: modelProviderTypeId,
+            fallbackName: modelProviderName.isNotEmpty
+                ? modelProviderName
+                : modelLabel,
+            chevronColor: colorScheme.onSurfaceVariant,
+            expanded: modelSelectorOpen,
+          ),
         ),
-      ],
+      ),
+      settings: CompositedTransformTarget(
+        key: settingsKey,
+        link: settingsLink,
+        child: _IconTapTarget(
+          icon: Icons.tune_outlined,
+          color: colorScheme.onSurfaceVariant,
+          onTap: onSettings,
+          imageAsset: OperitTheme.of(
+            context,
+          ).themePreferenceSnapshot.inputSettingsAsset,
+          imageSize: OperitTheme.of(
+            context,
+          ).themePreferenceSnapshot.inputSettingsAssetSize,
+          targetSize: 34,
+          tooltip: l10n.settings,
+        ),
+      ),
+      attachment: KeyedSubtree(
+        key: attachmentKey,
+        child: _IconTapTarget(
+          icon: Icons.add,
+          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.9),
+          onTap: onAttach,
+          imageAsset: OperitTheme.of(
+            context,
+          ).themePreferenceSnapshot.inputAttachmentAsset,
+          imageSize: OperitTheme.of(
+            context,
+          ).themePreferenceSnapshot.inputAttachmentAssetSize,
+          size: 24,
+          tooltip: l10n.addAttachment,
+        ),
+      ),
+      action: _ActionButton(
+        key: const ValueKey<String>('chat.send'),
+        imageAsset: showMissingHost
+            ? null
+            : resolveThemeInputActionAsset(
+                OperitTheme.of(context).themePreferenceSnapshot,
+                isStop: isSpeechRecording || showCancelAction,
+                isSend: showQueueAction || canSendMessage,
+              ),
+        imageSize: showMissingHost
+            ? null
+            : resolveThemeInputActionAssetSize(
+                OperitTheme.of(context).themePreferenceSnapshot,
+                isStop: isSpeechRecording || showCancelAction,
+                isSend: showQueueAction || canSendMessage,
+              ),
+        processing: processing || isSpeechTranscribing,
+        progress: isSpeechTranscribing ? null : _progressFor(inputState),
+        background: isSpeechRecording
+            ? colorScheme.error
+            : _actionBackground(
+                colorScheme,
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: canSendMessage,
+              ),
+        foreground: isSpeechRecording
+            ? colorScheme.onError
+            : _actionForeground(
+                colorScheme,
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: canSendMessage,
+              ),
+        icon: isSpeechRecording
+            ? Icons.stop
+            : isSpeechTranscribing
+            ? Icons.graphic_eq
+            : showMissingHost
+            ? Icons.device_unknown
+            : _actionIcon(
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: canSendMessage,
+              ),
+        tooltip: isSpeechRecording
+            ? '停止录音'
+            : isSpeechTranscribing
+            ? '正在识别'
+            : showCancelAction
+            ? l10n.cancel
+            : showQueueAction
+            ? l10n.chatQueueAddMessage
+            : showMissingHost
+            ? l10n.chatRouteClaimHostPrompt
+            : (canSendMessage ? l10n.send : ''),
+        onPressed: isSpeechTranscribing
+            ? null
+            : () {
+                if (showCancelAction) {
+                  onCancelMessage();
+                } else if (showQueueAction) {
+                  onQueueMessage();
+                } else if (showMissingHost || canSendMessage) {
+                  onSendMessage();
+                } else {
+                  onSpeechInput();
+                }
+              },
+      ),
     );
     return DropTarget(
       enable: onAttachFiles != null,
@@ -1751,159 +1400,6 @@ String _buildAttachmentPackageSubtitle(
   return '$typeLabel · ${option.description}';
 }
 
-class _PendingMessageQueuePanel extends StatelessWidget {
-  const _PendingMessageQueuePanel({
-    required this.queuedMessages,
-    required this.expanded,
-    required this.onExpandedChange,
-    required this.onDeleteMessage,
-    required this.onEditMessage,
-    required this.onSendMessage,
-  });
-
-  final List<PendingQueueMessageItem> queuedMessages;
-  final bool expanded;
-  final ValueChanged<bool>? onExpandedChange;
-  final ValueChanged<int>? onDeleteMessage;
-  final ValueChanged<int>? onEditMessage;
-  final ValueChanged<int>? onSendMessage;
-
-  @override
-  Widget build(BuildContext context) {
-    if (queuedMessages.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final l10n = AppLocalizations.of(context)!;
-    return Material(
-      color: colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(8),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          InkWell(
-            onTap: onExpandedChange == null
-                ? null
-                : () => onExpandedChange!(!expanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      l10n.chatPendingQueueTitle(queuedMessages.length),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    expanded
-                        ? Icons.keyboard_arrow_up
-                        : Icons.keyboard_arrow_down,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (expanded)
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 220),
-              child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                shrinkWrap: true,
-                itemCount: queuedMessages.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 8),
-                itemBuilder: (context, index) {
-                  final item = queuedMessages[index];
-                  return _PendingQueueMessageTile(
-                    item: item,
-                    onDeleteMessage: onDeleteMessage,
-                    onEditMessage: onEditMessage,
-                    onSendMessage: onSendMessage,
-                  );
-                },
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PendingQueueMessageTile extends StatelessWidget {
-  const _PendingQueueMessageTile({
-    required this.item,
-    required this.onDeleteMessage,
-    required this.onEditMessage,
-    required this.onSendMessage,
-  });
-
-  final PendingQueueMessageItem item;
-  final ValueChanged<int>? onDeleteMessage;
-  final ValueChanged<int>? onEditMessage;
-  final ValueChanged<int>? onSendMessage;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final l10n = AppLocalizations.of(context)!;
-    final actionColor = colorScheme.onSurfaceVariant.withValues(alpha: 0.9);
-    return Material(
-      color: colorScheme.surface,
-      borderRadius: BorderRadius.circular(8),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        child: Row(
-          children: <Widget>[
-            _QueueIconAction(
-              icon: Icons.edit,
-              tooltip: l10n.edit,
-              color: actionColor,
-              onTap: onEditMessage == null
-                  ? null
-                  : () => onEditMessage!(item.id),
-            ),
-            Expanded(
-              child: Text(
-                item.text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurface,
-                ),
-              ),
-            ),
-            _QueueIconAction(
-              icon: Icons.send,
-              tooltip: l10n.send,
-              color: actionColor,
-              onTap: onSendMessage == null
-                  ? null
-                  : () => onSendMessage!(item.id),
-            ),
-            _QueueIconAction(
-              icon: Icons.delete,
-              tooltip: l10n.delete,
-              color: actionColor,
-              onTap: onDeleteMessage == null
-                  ? null
-                  : () => onDeleteMessage!(item.id),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _AttachmentStrip extends StatelessWidget {
   const _AttachmentStrip({
     required this.attachments,
@@ -2114,36 +1610,6 @@ class _AttachmentImageRemoveButton extends StatelessWidget {
   }
 }
 
-class _QueueIconAction extends StatelessWidget {
-  const _QueueIconAction({
-    required this.icon,
-    required this.tooltip,
-    required this.color,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final Color color;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkResponse(
-        onTap: onTap,
-        radius: 16,
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: Icon(icon, size: 16, color: color),
-        ),
-      ),
-    );
-  }
-}
-
 /// Returns whether one attachment MIME type represents an image.
 bool _isAttachmentImage(String mimeType) {
   return mimeType.startsWith('image/');
@@ -2234,6 +1700,8 @@ class _IconTapTarget extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.tooltip,
+    this.imageAsset,
+    this.imageSize,
     this.size = 20,
     this.targetSize = 36,
   });
@@ -2242,22 +1710,22 @@ class _IconTapTarget extends StatelessWidget {
   final Color color;
   final VoidCallback? onTap;
   final String tooltip;
+  final String? imageAsset;
+  final double? imageSize;
   final double size;
   final double targetSize;
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkResponse(
-        onTap: onTap,
-        radius: 20,
-        child: SizedBox(
-          width: targetSize,
-          height: targetSize,
-          child: Icon(icon, size: size, color: color),
-        ),
-      ),
+    return ThemeComposerIconTarget(
+      icon: icon,
+      color: color,
+      onTap: onTap,
+      tooltip: tooltip,
+      imageAsset: imageAsset,
+      imageSize: imageSize,
+      size: size,
+      targetSize: targetSize,
     );
   }
 }
@@ -2272,6 +1740,8 @@ class _ActionButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onPressed,
+    this.imageAsset,
+    this.imageSize,
   });
 
   final bool processing;
@@ -2281,46 +1751,22 @@ class _ActionButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback? onPressed;
+  final String? imageAsset;
+  final double? imageSize;
 
   @override
   Widget build(BuildContext context) {
-    final button = SizedBox(
-      width: 40,
-      height: 40,
-      child: Stack(
-        alignment: Alignment.center,
-        children: <Widget>[
-          Material(
-            color: background,
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: onPressed,
-              child: SizedBox(
-                width: 36,
-                height: 36,
-                child: Icon(icon, size: 18, color: foreground),
-              ),
-            ),
-          ),
-          if (processing)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CircularProgressIndicator(
-                  value: progress,
-                  strokeWidth: 2.4,
-                  color: foreground.withValues(alpha: 0.9),
-                  backgroundColor: foreground.withValues(alpha: 0.24),
-                ),
-              ),
-            ),
-        ],
-      ),
+    return ThemeComposerActionButton(
+      processing: processing,
+      progress: progress,
+      background: background,
+      foreground: foreground,
+      icon: icon,
+      tooltip: tooltip,
+      imageAsset: imageAsset,
+      imageSize: imageSize,
+      onPressed: onPressed,
     );
-    if (tooltip.isEmpty) {
-      return button;
-    }
-    return Tooltip(message: tooltip, child: button);
   }
 }
 

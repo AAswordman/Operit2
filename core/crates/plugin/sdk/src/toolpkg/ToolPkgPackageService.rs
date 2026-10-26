@@ -50,10 +50,6 @@ pub trait ToolPkgPackageHost: Send + Sync {
     #[allow(non_snake_case)]
     fn getEnabledPackageNameSetInternal(&self) -> BTreeSet<String>;
 
-    /// Returns enabled package names in stable order.
-    #[allow(non_snake_case)]
-    fn getEnabledPackageNames(&self) -> Vec<String>;
-
     /// Returns persisted ToolPkg subpackage enabled states.
     #[allow(non_snake_case)]
     fn getToolPkgSubpackageStatesInternal(&self) -> BTreeMap<String, bool>;
@@ -61,10 +57,6 @@ pub trait ToolPkgPackageHost: Send + Sync {
     /// Returns the filesystem capability owned by the embedding runtime.
     #[allow(non_snake_case)]
     fn fileSystemHost(&self) -> std::sync::Arc<dyn FileSystemHost>;
-
-    /// Persists the complete enabled package name list.
-    #[allow(non_snake_case)]
-    fn saveEnabledPackageNames(&self, packageNames: &[String]) -> Result<(), String>;
 
     /// Persists the complete ToolPkg subpackage state map.
     #[allow(non_snake_case)]
@@ -653,61 +645,17 @@ impl<'a> ToolPkgPackageService<'a> {
         })
     }
 
-    /// Updates and persists the enabled state of one ToolPkg subpackage.
+    /// Persists one child's preference without independently rewriting effective activation.
     #[allow(non_snake_case)]
     pub fn setToolPkgSubpackageEnabled(&self, subpackagePackageName: &str, enabled: bool) -> bool {
         self.packageManager.ensureInitialized();
-        let normalizedPackageName = self
-            .packageManager
-            .normalizePackageName(subpackagePackageName);
-        let subpackageRuntime = self
-            .packageManager
-            .toolPkgSubpackageByPackageNameInternal()
-            .get(&normalizedPackageName)
-            .cloned();
-        let Some(subpackageRuntime) = subpackageRuntime else {
-            return false;
-        };
-        let mut enabledPackageNames =
-            std::collections::BTreeSet::from_iter(self.packageManager.getEnabledPackageNames());
-        let mut subpackageStates = self.packageManager.getToolPkgSubpackageStatesInternal();
-        let containerEnabled =
-            enabledPackageNames.contains(&subpackageRuntime.containerPackageName);
-        subpackageStates.insert(normalizedPackageName.clone(), enabled);
-        if containerEnabled && enabled {
-            enabledPackageNames.insert(normalizedPackageName.clone());
-        } else {
-            enabledPackageNames.remove(&normalizedPackageName);
-        }
-        let names = enabledPackageNames.into_iter().collect::<Vec<_>>();
-        if self.packageManager.saveEnabledPackageNames(&names).is_err() {
+        let name = self.packageManager.normalizePackageName(subpackagePackageName);
+        if !self.packageManager.toolPkgSubpackageByPackageNameInternal().contains_key(&name) {
             return false;
         }
-        if self
-            .packageManager
-            .saveToolPkgSubpackageStates(&subpackageStates)
-            .is_err()
-        {
-            return false;
-        }
-        let stateSaved = self
-            .packageManager
-            .getToolPkgSubpackageStatesInternal()
-            .get(&normalizedPackageName)
-            .copied()
-            == Some(enabled);
-        let importedMatches = if containerEnabled {
-            self.packageManager
-                .getEnabledPackageNames()
-                .contains(&normalizedPackageName)
-                == enabled
-        } else {
-            !self
-                .packageManager
-                .getEnabledPackageNames()
-                .contains(&normalizedPackageName)
-        };
-        stateSaved && importedMatches
+        let mut states = self.packageManager.getToolPkgSubpackageStatesInternal();
+        states.insert(name, enabled);
+        self.packageManager.saveToolPkgSubpackageStates(&states).is_ok()
     }
 
     /// Resolves a subpackage id to a concrete package name.

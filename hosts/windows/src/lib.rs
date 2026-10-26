@@ -1,3 +1,6 @@
+#[cfg(feature = "daemon")]
+pub mod daemon;
+
 pub mod bridge;
 #[path = "../../common/chromium_browser.rs"]
 pub mod chromium_browser;
@@ -5,6 +8,7 @@ pub mod chromium_browser;
 pub mod host_runtime_event;
 #[path = "plugin_sdk_ipc.rs"]
 pub mod plugin_sdk_ipc;
+mod process;
 pub mod registry;
 pub mod tools;
 
@@ -33,12 +37,8 @@ pub fn createRuntimeHostManager(
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
-    let runtimeStorageWriteHost =
-        Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-            runtimeRoot.clone(),
-            workspaceRoot.clone(),
-        ));
     let runtimeStorageHost = Arc::new(WindowsRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
+    let runtimeStorageWriteHost = runtimeStorageHost.clone();
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
     HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(

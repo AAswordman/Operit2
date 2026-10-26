@@ -7,7 +7,7 @@ import { interfaceMembers } from "./runtime.mjs";
 
 /** Checks real file bytes and the existing SDK result shapes without claiming repository or host integration. */
 test("disk IO harness writes and reads real temporary plugin files with current SDK result fields", async t => {
-  const disk = await createDiskHarness(t), file = path.join(disk.directory, "records.json");
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), file = path.join(disk.directory, "records.json");
   const absent = await disk.files.exists(file);
   assert.equal(absent.exists, false);
   assert.deepEqual(Object.keys(absent).sort(), interfaceMembers("../../../../types/results.d.ts", "FileExistsData").sort());
@@ -25,7 +25,7 @@ test("disk IO harness writes and reads real temporary plugin files with current 
 
 /** Requires injected and native IO failures to leave real bytes untouched and remain explicit. */
 test("disk IO harness exposes original failures and never repairs bad JSON or creates missing parents", async t => {
-  const disk = await createDiskHarness(t), file = path.join(disk.directory, "records.json");
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), file = path.join(disk.directory, "records.json");
   await writeFile(file, "{broken", "utf8");
   const failure = new Error("TEST_DISK_WRITE_REJECTED"); disk.failNext("write", failure);
   await assert.rejects(disk.files.write(file, "{}"),
@@ -40,7 +40,7 @@ test("disk IO harness exposes original failures and never repairs bad JSON or cr
 
 /** Verifies rename and confinement with actual files without implementing domain commit policy. */
 test("disk IO harness moves real bytes and rejects escapes and non-IO production dependencies", async t => {
-  const disk = await createDiskHarness(t), source = path.join(disk.directory, "staged.json"), destination = path.join(disk.directory, "records.json");
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), source = path.join(disk.directory, "staged.json"), destination = path.join(disk.directory, "records.json");
   await disk.files.write(source, "published"); await disk.files.move(source, destination);
   assert.equal((await disk.files.exists(source)).exists, false);
   assert.equal(await readFile(destination, "utf8"), "published");

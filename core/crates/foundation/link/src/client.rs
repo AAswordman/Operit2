@@ -39,6 +39,11 @@ pub trait CoreLinkClient {
 
 #[async_trait(?Send)]
 pub trait CoreLinkSharedClient {
+    /// Nominal capacity of a known constrained carrier, before framing/ACK overhead.
+    /// Unknown/network capacity is None; callers still handle runtime backpressure.
+    #[allow(non_snake_case)]
+    fn nominalBytesPerSecond(&self) -> Option<u32> { None }
+
     /// Executes a one-shot core method call through a shared client.
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse;
 

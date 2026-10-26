@@ -67,3 +67,17 @@ MCP and skill are part of this crate. Provider APIs are not tools and belong in
 the top-level runtime injects an SDK `JsExecutionProvider`.
 
 See `core/CRATE_BOUNDARIES.md` for the full dependency direction.
+
+## Finalized AI Tool Results
+
+`ToolExecutionManager` retains serial invocation ordering and aggregates each
+invocation's execution steps into one final result. `ToolExecutionBatch` formats
+those results once; the same finalized `message` is published to the chat stream
+and inserted into the next model request. Presentation adds only line boundaries.
+
+`MAX_SINGLE_TOOL_RESULT_MESSAGE_CHARS` bounds each serialized result, including
+its XML wrapper and explicit truncation marker, to 64,000 Unicode scalar values.
+Payload, wrapper, and marker use the same unit; UTF-8 byte lengths are diagnostic
+only. A batch retains every result in invocation order, including repeated tool
+names. There is no batch-wide truncation that can remove result slots. Request
+context-window admission remains the responsibility of conversation orchestration.

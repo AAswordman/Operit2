@@ -461,6 +461,18 @@ Widget _withDirectModifierProps(
   if (boxVisuals) {
     final animation = _stringMap(props['animation']);
     final durationMillis = _int(animation['durationMillis']) ?? 0;
+    final duration = Duration(
+      milliseconds: durationMillis < 0 ? 0 : durationMillis,
+    );
+    final curve = switch (_normalizeToken(_string(animation['curve']))) {
+      'easeoutcubic' => Curves.easeOutCubic,
+      'easeinout' => Curves.easeInOut,
+      'easeout' => Curves.easeOut,
+      _ => Curves.linear,
+    };
+    if (_bool(animation['animateContentSize'])) {
+      current = AnimatedSize(duration: duration, curve: curve, child: current);
+    }
     final decoration = BoxDecoration(
       color: _color(
         context,
@@ -477,13 +489,8 @@ Widget _withDirectModifierProps(
       ),
     );
     current = AnimatedContainer(
-      duration: Duration(milliseconds: durationMillis < 0 ? 0 : durationMillis),
-      curve: switch (_normalizeToken(_string(animation['curve']))) {
-        'easeoutcubic' => Curves.easeOutCubic,
-        'easeinout' => Curves.easeInOut,
-        'easeout' => Curves.easeOut,
-        _ => Curves.linear,
-      },
+      duration: duration,
+      curve: curve,
       width: width,
       height: height,
       decoration: decoration,

@@ -33,6 +33,8 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
   final Set<String> _activeOperations = <String>{};
   final Set<String> _pausedOperations = <String>{};
   Timer? _progressTimer;
+  String _catalogQuery = '';
+  bool _installedOnly = false;
   List<core_proxy.LocalModelInstallStatus>? _installStatuses;
   bool _statusRefreshRunning = false;
 
@@ -150,9 +152,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
   }
 
   /// Updates the preferred model download source.
-  Future<void> _setPreferredSource(
-    core_proxy.LocalModelSourceKind sourceKind,
-  ) {
+  Future<void> _setPreferredSource(core_proxy.LocalModelSourceKind sourceKind) {
     return _runOperation('source:${sourceKind.value}', () async {
       await widget.clients.servicesLocalModelService.setPreferredSource(
         sourceKind: sourceKind,
@@ -174,7 +174,9 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
   }
 
   /// Removes one custom imported model from the catalog and filesystem.
-  Future<void> _removeCustomModel(core_proxy.LocalModelManifest manifest) async {
+  Future<void> _removeCustomModel(
+    core_proxy.LocalModelManifest manifest,
+  ) async {
     final l10n = AppLocalizations.of(context)!;
     final confirmed = await _confirmDelete(
       title: l10n.localModelsRemoveFromCatalog,
@@ -266,6 +268,9 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
       }
     }
     await _runOperation('delete:${manifest.id}@${manifest.version}', () async {
+      if (manifest.kind == core_proxy.LocalModelKind.chat) {
+        await widget.clients.servicesLocalModelService.unloadChatModel();
+      }
       await widget.clients.servicesLocalModelService.deleteModel(
         modelId: manifest.id,
         version: manifest.version,
@@ -338,6 +343,16 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
     return result == true;
   }
 
+  Future<void> _openChatInference(
+    core_proxy.LocalModelCatalogStatus status,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) =>
+          _LocalChatInferenceDialog(clients: widget.clients, status: status),
+    );
+  }
+
   /// Builds local model management content for the current runtime target.
   @override
   Widget build(BuildContext context) {
@@ -361,13 +376,65 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
         final preferredSource =
             data.registry.preferredSourceKind ??
             core_proxy.LocalModelSourceKind.huggingFace;
-        final modelKinds = data.catalog
+        final visibleCatalog = data.catalog.where((status) {
+          final name =
+              '${status.manifest.displayName} ${status.manifest.engine.value}'
+                  .toLowerCase();
+          return (!_installedOnly || status.installedModel != null) &&
+              name.contains(_catalogQuery.toLowerCase());
+        }).toList();
+        final modelKinds = visibleCatalog
             .map((status) => status.manifest.kind)
             .toSet();
         return ListView(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
           children: <Widget>[
             _buildHeader(context, data.target, preferredSource),
+            const SizedBox(height: 12),
+            Card.outlined(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        const Icon(Icons.phonelink_lock_outlined),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            l10n.localModelsDeviceOnly,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(l10n.localModelsDeviceOnlyDescription),
+                    const SizedBox(height: 8),
+                    Text(l10n.localModelsLlmDescription),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              onChanged: (value) => setState(() => _catalogQuery = value),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: l10n.localModelsSearchCatalog,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilterChip(
+                label: Text(l10n.localModelsFilterInstalled),
+                selected: _installedOnly,
+                onSelected: (value) => setState(() => _installedOnly = value),
+              ),
+            ),
             const SizedBox(height: 20),
             Row(
               children: <Widget>[
@@ -377,13 +444,18 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
-                    '${data.catalog.length}',
+                    '${visibleCatalog.length}',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -392,9 +464,12 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
               ],
             ),
             const SizedBox(height: 12),
-            for (final kind in core_proxy.LocalModelKind.values.where(
-              modelKinds.contains,
-            )) ...<Widget>[
+            for (final kind in <core_proxy.LocalModelKind>[
+              core_proxy.LocalModelKind.chat,
+              core_proxy.LocalModelKind.speechToText,
+              core_proxy.LocalModelKind.textToSpeech,
+              core_proxy.LocalModelKind.embedding,
+            ].where(modelKinds.contains)) ...<Widget>[
               Padding(
                 padding: const EdgeInsets.only(top: 6, bottom: 8),
                 child: Row(
@@ -414,7 +489,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                   ],
                 ),
               ),
-              for (final status in data.catalog.where(
+              for (final status in visibleCatalog.where(
                 (status) => status.manifest.kind == kind,
               )) ...<Widget>[
                 _buildModelItem(
@@ -434,11 +509,15 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
             const SizedBox(height: 10),
             if (data.registry.installedEngines.isEmpty)
               OperitGlassSurface(
-                color: Theme.of(context).colorScheme.surfaceContainerLow.withValues(alpha: 0.6),
+                color: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerLow.withValues(alpha: 0.6),
                 layer: OperitGlassSurfaceLayer.control,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.outlineVariant.withValues(alpha: 0.3),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -489,7 +568,11 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                     color: colors.primary.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(Icons.memory_outlined, color: colors.primary, size: 24),
+                  child: Icon(
+                    Icons.memory_outlined,
+                    color: colors.primary,
+                    size: 24,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -498,9 +581,8 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                     children: <Widget>[
                       Text(
                         l10n.settingsModelProviderTypeLocalModel,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 4),
                       Wrap(
@@ -577,7 +659,8 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                 ),
                 const SizedBox(width: 4),
                 FilledButton.tonalIcon(
-                  onPressed: () => _openHubExploreDialog(context, preferredSource),
+                  onPressed: () =>
+                      _openHubExploreDialog(context, preferredSource),
                   icon: const Icon(Icons.travel_explore_outlined, size: 18),
                   label: Text(l10n.localModelsExploreHub),
                 ),
@@ -637,7 +720,11 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                     color: colors.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(_modelKindIcon(manifest.kind), color: colors.primary, size: 20),
+                  child: Icon(
+                    _modelKindIcon(manifest.kind),
+                    color: colors.primary,
+                    size: 20,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -649,26 +736,29 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                           Flexible(
                             child: Text(
                               manifest.displayName,
-                              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w700),
                             ),
                           ),
                           if (isCustomModel) ...<Widget>[
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 1.5,
+                              ),
                               decoration: BoxDecoration(
                                 color: colors.secondaryContainer,
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
                                 l10n.localModelsCustomBadge,
-                                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                  color: colors.onSecondaryContainer,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: colors.onSecondaryContainer,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                               ),
                             ),
                           ],
@@ -703,7 +793,9 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                 decoration: BoxDecoration(
                   color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.2)),
+                  border: Border.all(
+                    color: colors.outlineVariant.withValues(alpha: 0.2),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -714,7 +806,8 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                         minHeight: 5,
                         value: installStatus.totalBytes == 0
                             ? null
-                            : installStatus.downloadedBytes / installStatus.totalBytes,
+                            : installStatus.downloadedBytes /
+                                  installStatus.totalBytes,
                       ),
                     ),
                     const SizedBox(height: 6),
@@ -729,24 +822,25 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                                     _formatBytes(installStatus.downloadedBytes),
                                     _formatBytes(installStatus.totalBytes),
                                   )
-                                : installStatus.downloadedBytes == installStatus.totalBytes
+                                : installStatus.downloadedBytes ==
+                                      installStatus.totalBytes
                                 ? l10n.localModelsDownloadInstalling
                                 : l10n.localModelsDownloading(
                                     _formatBytes(installStatus.downloadedBytes),
                                     _formatBytes(installStatus.totalBytes),
                                   ),
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: colors.onSurfaceVariant,
-                            ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: colors.onSurfaceVariant),
                           ),
                         ),
                         if (installStatus.totalBytes > 0)
                           Text(
                             '${((installStatus.downloadedBytes / installStatus.totalBytes) * 100).clamp(0, 100).toStringAsFixed(1)}%',
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: colors.primary,
-                            ),
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: colors.primary,
+                                ),
                           ),
                       ],
                     ),
@@ -780,6 +874,23 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                   label: _modelSourcesLabel(l10n, manifest.sources),
                   color: colors.primary,
                 ),
+                if (manifest.kind == core_proxy.LocalModelKind.chat)
+                  _buildTagChip(
+                    context,
+                    icon: Icons.memory,
+                    label:
+                        manifest.engine == core_proxy.LocalEngineKind.llamaCpp
+                        ? 'llama.cpp · GGUF'
+                        : 'MNN',
+                    color: colors.primary,
+                  ),
+                if (installed &&
+                    manifest.kind == core_proxy.LocalModelKind.chat)
+                  _buildTagChip(
+                    context,
+                    icon: Icons.phonelink_lock_outlined,
+                    label: l10n.localModelsDeviceOnly,
+                  ),
                 if (installed)
                   SettingsActivePill(label: l10n.localModelsModelInstalled)
                 else
@@ -805,9 +916,20 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
               ],
             ),
             const SizedBox(height: 10),
-            Row(
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 4,
+              runSpacing: 8,
               children: <Widget>[
-                const Spacer(),
+                if (installed &&
+                    manifest.kind == core_proxy.LocalModelKind.chat)
+                  FilledButton.tonalIcon(
+                    onPressed: !isBusy && status.platformCompatible
+                        ? () => _openChatInference(status)
+                        : null,
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text(l10n.localModelsRunChat),
+                  ),
                 if (installed) ...<Widget>[
                   IconButton(
                     onPressed: !isBusy ? () => _verify(manifest) : null,
@@ -821,14 +943,18 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                   ),
                   if (isCustomModel)
                     IconButton(
-                      onPressed: !isBusy ? () => _removeCustomModel(manifest) : null,
+                      onPressed: !isBusy
+                          ? () => _removeCustomModel(manifest)
+                          : null,
                       icon: const Icon(Icons.bookmark_remove_outlined),
                       tooltip: l10n.localModelsRemoveFromCatalog,
                     ),
                 ] else ...<Widget>[
                   if (isCustomModel && !hasDownloadTask)
                     IconButton(
-                      onPressed: !isBusy ? () => _removeCustomModel(manifest) : null,
+                      onPressed: !isBusy
+                          ? () => _removeCustomModel(manifest)
+                          : null,
                       icon: const Icon(Icons.bookmark_remove_outlined),
                       tooltip: l10n.localModelsRemoveFromCatalog,
                     ),
@@ -897,7 +1023,11 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                 color: colors.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(Icons.developer_board_outlined, color: colors.primary, size: 20),
+              child: Icon(
+                Icons.developer_board_outlined,
+                color: colors.primary,
+                size: 20,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -971,10 +1101,9 @@ Widget _buildTagChip(
         const SizedBox(width: 4),
         Text(
           label,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: effectiveColor,
-            fontSize: 11,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: effectiveColor, fontSize: 11),
         ),
       ],
     ),
@@ -1016,8 +1145,7 @@ String _sourceKindTitle(
       l10n.localModelsSourceHuggingFace,
     core_proxy.LocalModelSourceKind.modelScope =>
       l10n.localModelsSourceModelScope,
-    core_proxy.LocalModelSourceKind.hfMirror =>
-      l10n.localModelsSourceHfMirror,
+    core_proxy.LocalModelSourceKind.hfMirror => l10n.localModelsSourceHfMirror,
     core_proxy.LocalModelSourceKind.directHttp =>
       l10n.localModelsSourceDirectHttp,
   };
@@ -1056,7 +1184,10 @@ String _localModelDescription(
       l10n.localModelDescriptionSherpaOnnxWebParaformer,
     'sherpa-onnx-web-vits-piper-en-us-libritts-r-medium' =>
       l10n.localModelDescriptionSherpaOnnxWebVitsPiper,
-    _ => manifest.description.isNotEmpty ? manifest.description : manifest.displayName,
+    _ =>
+      manifest.description.isNotEmpty
+          ? manifest.description
+          : manifest.displayName,
   };
 }
 
@@ -1219,9 +1350,9 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
       }
       widget.onImportSuccess();
       final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.localModelsHubImportSuccess)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.localModelsHubImportSuccess)));
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) {
@@ -1337,7 +1468,9 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
                       hintText: l10n.localModelsHubSearchHint,
                       isDense: true,
                       prefixIcon: const Icon(Icons.search, size: 20),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                     onSubmitted: (_) => _doSearch(),
                   ),
@@ -1357,7 +1490,9 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
               color: colors.surfaceContainerLow.withValues(alpha: 0.65),
               layer: OperitGlassSurfaceLayer.control,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.3)),
+              border: Border.all(
+                color: colors.outlineVariant.withValues(alpha: 0.3),
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -1373,10 +1508,13 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
                     TextField(
                       controller: _directRepoController,
                       decoration: InputDecoration(
-                        hintText: 'owner/repo / https://modelscope.cn/models/...',
+                        hintText:
+                            'owner/repo / https://modelscope.cn/models/...',
                         isDense: true,
                         prefixIcon: const Icon(Icons.folder_outlined, size: 18),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -1386,7 +1524,9 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
                         hintText: 'main / master',
                         isDense: true,
                         prefixIcon: const Icon(Icons.commit_outlined, size: 18),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -1396,16 +1536,21 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
                         onPressed: _isImporting
                             ? null
                             : () => _doImport(
-                                  _directRepoController.text,
-                                  _directRevController.text,
-                                ),
+                                _directRepoController.text,
+                                _directRevController.text,
+                              ),
                         icon: _isImporting
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
-                            : const Icon(Icons.download_for_offline_outlined, size: 18),
+                            : const Icon(
+                                Icons.download_for_offline_outlined,
+                                size: 18,
+                              ),
                         label: Text(
                           _isImporting
                               ? l10n.localModelsHubImporting
@@ -1444,9 +1589,9 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
       return Center(
         child: Text(
           l10n.localModelsHubDirectImportPrompt,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: colors.onSurfaceVariant,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
           textAlign: TextAlign.center,
         ),
       );
@@ -1455,9 +1600,9 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
       return Center(
         child: Text(
           l10n.localModelsHubNoResults,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: colors.onSurfaceVariant,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
         ),
       );
     }
@@ -1466,12 +1611,15 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
       separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final item = results[index];
-        final isThisImporting = _isImporting && _importingRepo == item.repository;
+        final isThisImporting =
+            _isImporting && _importingRepo == item.repository;
         return OperitGlassSurface(
           color: colors.surfaceContainerLow.withValues(alpha: 0.65),
           layer: OperitGlassSurfaceLayer.control,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.25)),
+          border: Border.all(
+            color: colors.outlineVariant.withValues(alpha: 0.25),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Row(
@@ -1481,7 +1629,9 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
-                        item.displayName.isNotEmpty ? item.displayName : item.repository,
+                        item.displayName.isNotEmpty
+                            ? item.displayName
+                            : item.repository,
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
@@ -1521,7 +1671,9 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
                 ),
                 const SizedBox(width: 12),
                 FilledButton.tonal(
-                  onPressed: _isImporting ? null : () => _doImport(item.repository, item.revision),
+                  onPressed: _isImporting
+                      ? null
+                      : () => _doImport(item.repository, item.revision),
                   child: isThisImporting
                       ? const SizedBox(
                           width: 16,
@@ -1535,6 +1687,280 @@ class _LocalModelHubDialogState extends State<_LocalModelHubDialog> {
           ),
         );
       },
+    );
+  }
+}
+
+class _LocalChatInferenceDialog extends StatefulWidget {
+  const _LocalChatInferenceDialog({
+    required this.clients,
+    required this.status,
+  });
+  final GeneratedCoreProxyClients clients;
+  final core_proxy.LocalModelCatalogStatus status;
+  @override
+  State<_LocalChatInferenceDialog> createState() =>
+      _LocalChatInferenceDialogState();
+}
+
+class _LocalChatInferenceDialogState extends State<_LocalChatInferenceDialog> {
+  final _prompt = TextEditingController();
+  final _threads = TextEditingController(text: '4');
+  final _context = TextEditingController(text: '2048');
+  final _batch = TextEditingController(text: '512');
+  bool _busy = false;
+  bool _loading = true;
+  String? _error;
+  String? _output;
+  core_proxy.LocalModelRuntimeSettings? _saved;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final model = await widget.clients.preferencesModelConfigManager
+          .getModelProfile(providerId: 'LOCAL_MODEL', modelId: _binding);
+      if (!mounted) return;
+      _saved = model.localRuntime;
+      _threads.text =
+          '${_isMnn ? _saved!.mnnThreadCount : _saved!.llamaThreadCount}';
+      _context.text = '${_saved!.llamaContextSize}';
+      _batch.text = '${_saved!.llamaBatchSize}';
+    } catch (error) {
+      if (mounted) _error = '$error';
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String get _binding =>
+      '${widget.status.manifest.id}@${widget.status.manifest.version}';
+  bool get _isMnn =>
+      widget.status.manifest.engine == core_proxy.LocalEngineKind.mnn;
+
+  core_proxy.LocalModelRuntimeSettings _settings() {
+    final threads = int.tryParse(_threads.text);
+    final contextSize = int.tryParse(_context.text);
+    final batch = int.tryParse(_batch.text);
+    if (threads == null ||
+        threads < 1 ||
+        threads > 256 ||
+        contextSize == null ||
+        contextSize < 128 ||
+        contextSize > 1048576 ||
+        batch == null ||
+        batch < 1 ||
+        batch > 65536) {
+      throw FormatException(
+        AppLocalizations.of(context)!.localModelsInvalidSettings,
+      );
+    }
+    return core_proxy.LocalModelRuntimeSettings.fromJson(<String, Object?>{
+      ...?_saved?.toJson(),
+      'inferenceBindingKey': widget.status.inferenceBindingKey ?? '',
+      'mnnForwardType': 0,
+      'mnnThreadCount': threads,
+      'llamaThreadCount': threads,
+      'llamaContextSize': contextSize,
+      'llamaBatchSize': batch,
+      'llamaUBatchSize': batch,
+      'llamaGpuLayers': 0,
+      'llamaUseMmap': true,
+      'llamaFlashAttention': false,
+      'llamaKvUnified': true,
+      'llamaOffloadKqv': false,
+    });
+  }
+
+  Future<void> _run() async {
+    if (_prompt.text.trim().isEmpty) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _output = null;
+    });
+    try {
+      final result = await widget.clients.servicesLocalModelService
+          .runChatInference(
+            modelId: widget.status.manifest.id,
+            version: widget.status.manifest.version,
+            prompt: _prompt.text,
+            settings: _settings(),
+          );
+      if (mounted) setState(() => _output = result.text);
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _useForChat() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final settings = _settings();
+      final profile = await widget.clients.preferencesModelConfigManager
+          .getModelProfile(providerId: 'LOCAL_MODEL', modelId: _binding);
+      await widget.clients.preferencesModelConfigManager.updateModelProfile(
+        providerId: 'LOCAL_MODEL',
+        model: core_proxy.ModelProfile.fromJson(<String, Object?>{
+          ...profile.toJson(),
+          'localRuntime': settings.toJson(),
+          'contextOverride': <String, Object?>{
+            'maxContextLength': settings.llamaContextSize / 1000,
+          },
+        }),
+      );
+      await widget.clients.preferencesFunctionalConfigManager
+          .setModelForFunction(
+            functionType: core_proxy.FunctionType.chat,
+            providerId: 'LOCAL_MODEL',
+            modelId: _binding,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.localModelsChatActivated),
+        ),
+      );
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _unload() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.clients.servicesLocalModelService.unloadChatModel();
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _prompt.dispose();
+    _threads.dispose();
+    _context.dispose();
+    _batch.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(widget.status.manifest.displayName),
+      content: SizedBox(
+        width: 640,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(l10n.localModelsCpuBackend),
+              const SizedBox(height: 8),
+              Text(
+                l10n.localModelsDeviceOnlyDescription,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _threads,
+                enabled: !_busy && !_loading,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: l10n.localModelsThreads,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              if (!_isMnn) ...<Widget>[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _context,
+                  enabled: !_busy && !_loading,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: l10n.localModelsContextSize,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _batch,
+                  enabled: !_busy && !_loading,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: l10n.localModelsBatchSize,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              TextField(
+                controller: _prompt,
+                enabled: !_busy && !_loading,
+                minLines: 3,
+                maxLines: 6,
+                decoration: InputDecoration(
+                  labelText: l10n.localModelsPrompt,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              if (_busy || _loading) ...<Widget>[
+                const SizedBox(height: 16),
+                const LinearProgressIndicator(),
+                const SizedBox(height: 8),
+                Text(l10n.localModelsGenerating),
+              ],
+              if (_error != null) ...<Widget>[
+                const SizedBox(height: 16),
+                SelectableText(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              if (_output != null) ...<Widget>[
+                const SizedBox(height: 16),
+                SelectableText(_output!),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: _busy || _loading ? null : _unload,
+          child: Text(l10n.localModelsUnload),
+        ),
+        TextButton(
+          onPressed: _busy || _loading ? null : _useForChat,
+          child: Text(l10n.localModelsUseForChat),
+        ),
+        FilledButton.icon(
+          onPressed: _busy || _loading ? null : _run,
+          icon: const Icon(Icons.play_arrow),
+          label: Text(l10n.localModelsGenerate),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.close),
+        ),
+      ],
     );
   }
 }

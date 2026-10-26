@@ -26,7 +26,7 @@ pub(crate) use execution::PlatformBridgeState;
 pub(crate) enum StartupMetadata {
     HostProvided,
     AndroidDevice { model: String },
-    OpenHarmonyLanguage { code: String },
+    OpenHarmonyDevice { model: String, systemLanguageCode: String },
 }
 
 /// Carries immutable storage roots and owner-provided startup information.
@@ -42,12 +42,14 @@ pub(crate) fn startBridge(startup: BridgeStartup) -> Result<OperitFlutterBridge,
         return Err("Runtime and workspace storage roots must be explicit".to_string());
     }
     let mut context = platform::create_host_context(&startup)?;
+    let composeDslHost =
+        FlutterComposeDslWebViewBridge::new(&context).map_err(|error| error.to_string())?;
     context = context
         .withBrowserAutomationHostFactory(Arc::new(|files| {
             Arc::new(FlutterBrowserAutomationBridge::new(files))
         }))
         .withBrowserSessionHost(Arc::new(FlutterBrowserSessionBridge::new()))
-        .withComposeDslWebViewHost(Arc::new(FlutterComposeDslWebViewBridge::new()))
+        .withComposeDslWebViewHost(Arc::new(composeDslHost))
         .withToastHost(Arc::new(
             crate::FlutterOwnerCapabilities::presentFlutterToast,
         ));
@@ -135,4 +137,9 @@ mod event_tests {
             .unwrap()
             .starts_with("Runtime event is invalid JSON:"));
     }
+}
+
+/// Builds the selected platform secret adapter for the independent maintenance boundary.
+pub(crate) fn rescue_secret_store(root: &std::path::Path) -> Result<Option<std::sync::Arc<dyn operit_host_api::HostSecretStore>>, String> {
+    platform::rescue_secret_store(root)
 }

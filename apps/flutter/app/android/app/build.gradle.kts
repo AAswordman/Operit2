@@ -71,6 +71,7 @@ data class OperitRustTarget(
     val abi: String,
     val rustTarget: String,
     val envTarget: String,
+    val compilerRuntimeArch: String,
 )
 
 // Reads Flutter's requested Android target platforms from Gradle properties.
@@ -99,9 +100,9 @@ fun selectedOperitRustTargets(targets: List<OperitRustTarget>): List<OperitRustT
 }
 
 val operitRustTargets = listOf(
-    OperitRustTarget("android-arm64", "arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
-    OperitRustTarget("android-x64", "x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
-    OperitRustTarget("android-arm", "armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI"),
+    OperitRustTarget("android-arm64", "arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID", "aarch64"),
+    OperitRustTarget("android-x64", "x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID", "x86_64"),
+    OperitRustTarget("android-arm", "armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI", "arm"),
 )
 val selectedOperitRustTargets = selectedOperitRustTargets(operitRustTargets)
 
@@ -195,6 +196,10 @@ dependencies {
     implementation("com.github.topjohnwu.libsu:core:6.0.0")
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:5.23.0")
+    // Real org.json for JVM unit tests; shadows the "not mocked" android.jar stubs.
+    testImplementation("org.json:json:20240303")
 }
 
 val operitBridgeCrate = project.layout.projectDirectory
@@ -224,6 +229,51 @@ val operitLibclangDir = when {
 // Converts a file path into the clang-compatible slash format.
 fun File.clangPath(): String = absolutePath.replace('\\', '/')
 
+// Android has no prebuilt rusty_v8 artifacts; the crate's default GitHub
+// download 404s for every Android target. Prepare a source-built V8 library,
+// snapshot and bindings instead, and feed them to Cargo via RUSTY_V8_* values.
+val operitV8PrepareScript = operitRepoRoot
+    .resolve("tools/build_scripts/prepare_android_v8.py")
+val operitV8BridgeLock = operitBridgeCrate.resolve("Cargo.lock")
+
+fun operitV8EnvFile(rustTarget: String): File =
+    operitBridgeCrate.resolve("target/operit-v8/$rustTarget.v8.env")
+
+// Parses the shell env file written by prepare_android_v8.py.
+fun parseOperitV8EnvFile(file: File): Map<String, String> = file.readLines()
+    .filter { it.startsWith("export ") }
+    .associate { line ->
+        val entry = line.removePrefix("export ")
+        val separator = entry.indexOf('=')
+        require(separator > 0) { "Invalid V8 environment entry in $file: $line" }
+        var value = entry.substring(separator + 1)
+        if (value.length >= 2 && value.first() == '\'' && value.last() == '\'') {
+            value = value.substring(1, value.length - 1).replace("'\\''", "'")
+        }
+        entry.substring(0, separator) to value
+    }
+
+val prepareOperitAndroidV8Tasks = selectedOperitRustTargets.associateWith { target ->
+    val abiTaskSuffix = target.abi.replace("-", "").replace("_", "")
+    tasks.register<Exec>("prepareOperitAndroidV8$abiTaskSuffix") {
+        description = "Builds the source-built V8 library and bindings required by the Rust bridge"
+        group = "operit"
+        val envFile = operitV8EnvFile(target.rustTarget)
+        inputs.files(operitV8PrepareScript, operitV8BridgeLock)
+        outputs.file(envFile)
+        workingDir = operitRepoRoot
+        commandLine(
+            operitPluginSyncPython.absolutePath,
+            operitV8PrepareScript.absolutePath,
+            "--target",
+            target.rustTarget,
+            "--env-file",
+            envFile.absolutePath,
+        )
+        // Windows source builds locate libclang for the bindings generation.
+        environment("OPERIT_LIBCLANG_DIR", operitLibclangDir.absolutePath)
+    }
+}
 
 val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
     workingDir = operitRepoRoot
@@ -251,8 +301,10 @@ androidComponents {
             )
             tasks.register<Exec>("cargoBuildOperitFlutterBridge$variantTaskSuffix$abiTaskSuffix") {
                 dependsOn(syncOperitPlugins)
+                dependsOn(prepareOperitAndroidV8Tasks.getValue(target))
                 val clangPrefix = target.rustTarget
-                val apiLevel = 23
+                val apiLevel = android.defaultConfig.minSdk
+                    ?: throw GradleException("Android minSdk is required for the Rust toolchain")
                 val ndkToolchain = android.ndkDirectory
                     .resolve("toolchains")
                     .resolve("llvm")
@@ -273,19 +325,35 @@ androidComponents {
                     .listFiles()
                     ?.single { it.isDirectory }
                     ?: throw GradleException("Android NDK clang resource dir not found")
+                val compilerRuntime = clangResourceDir.resolve(
+                    "lib/linux/libclang_rt.builtins-${target.compilerRuntimeArch}-android.a",
+                )
+                if (!compilerRuntime.isFile) {
+                    throw GradleException("Android compiler runtime not found: $compilerRuntime")
+                }
                 val bindgenClangArgs =
                     "--target=${target.rustTarget} --sysroot=${ndkToolchain.parentFile.resolve("sysroot").clangPath()} -resource-dir=${clangResourceDir.clangPath()}"
                 val ccEnvTarget = target.rustTarget.replace("-", "_")
+                environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
                 environment("CC_$ccEnvTarget", linker.absolutePath)
+                environment("CXX_$ccEnvTarget", ndkToolchain.resolve("${linkerPrefix}${apiLevel}-clang++${if (operitIsWindows) ".cmd" else ""}").absolutePath)
                 environment("AR_$ccEnvTarget", ar.absolutePath)
                 environment("CARGO_TARGET_${target.envTarget}_LINKER", linker.absolutePath)
                 environment("CARGO_TARGET_${target.envTarget}_AR", ar.absolutePath)
                 environment("LIBCLANG_PATH", operitLibclangDir.absolutePath)
                 environment("BINDGEN_EXTRA_CLANG_ARGS_$ccEnvTarget", bindgenClangArgs)
                 environment("RUSTFLAGS", "-Awarnings")
+                // Applies the source-built V8 library and bindings prepared by
+                // prepareOperitAndroidV8; upstream publishes no Android artifacts.
+                doFirst {
+                    parseOperitV8EnvFile(operitV8EnvFile(target.rustTarget)).forEach { (name, value) ->
+                        environment(name, value)
+                    }
+                }
                 val cargoArguments = mutableListOf(
                     "cargo",
-                    "build",
+                    "rustc",
+                    "--lib",
                     "--manifest-path",
                     operitBridgeCrate.resolve("Cargo.toml").absolutePath,
                     "--target",
@@ -294,10 +362,22 @@ androidComponents {
                 if (rustProfile == "release") {
                     cargoArguments.add("--release")
                 }
+                // Rust disables default compiler libraries; V8 needs the NDK's cache flush builtin.
+                cargoArguments.addAll(listOf(
+                    "--",
+                    "-C", "link-arg=${compilerRuntime.absolutePath}",
+                    "-C", "link-arg=-Wl,--no-undefined",
+                ))
                 commandLine(cargoArguments)
                 doLast {
-                    if (!bridgeLibrary.isFile) {
-                        throw GradleException("Missing Android Rust $rustProfile bridge: $bridgeLibrary")
+                    val nativeLibraries = listOf(
+                        bridgeLibrary,
+                        bridgeLibrary.parentFile.resolve("liboperit_local_llm.so"),
+                    )
+                    nativeLibraries.forEach { library ->
+                        if (!library.isFile) {
+                            throw GradleException("Missing Android Rust $rustProfile library: $library")
+                        }
                     }
                 }
             }
@@ -309,11 +389,13 @@ androidComponents {
             selectedOperitRustTargets.forEach { target ->
                 into(target.abi) {
                     from(operitBridgeJniLibs.resolve(target.abi)) {
-                        exclude("liboperit_flutter_bridge.so")
+                        exclude("liboperit_flutter_bridge.so", "liboperit_local_llm.so")
                     }
                     from(operitBridgeCrate.resolve(
-                        "target/${target.rustTarget}/$rustProfile/liboperit_flutter_bridge.so",
-                    ))
+                        "target/${target.rustTarget}/$rustProfile",
+                    )) {
+                        include("liboperit_flutter_bridge.so", "liboperit_local_llm.so")
+                    }
                 }
             }
             into(outputDirectory)

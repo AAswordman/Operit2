@@ -5,6 +5,7 @@ from pathlib import Path
 
 from common import (
     DIST_DIR,
+    release_asset_name,
     FLUTTER_APP_DIR,
     compress_zip,
     flutter_command,
@@ -35,7 +36,7 @@ def main() -> int:
         command.extend(["--build-number", args.build_number])
     run(command, cwd=FLUTTER_APP_DIR)
     release_dir = FLUTTER_APP_DIR / "build" / "windows" / "x64" / "runner" / "Release"
-    archive_path = args.archive_path or DIST_DIR / f"operit2-app-windows-{host_arch()}.zip"
+    archive_path = args.archive_path or DIST_DIR / release_asset_name("app", "windows", host_arch(), "zip")
     compress_zip(release_dir, archive_path)
     print(f"Windows archive: {archive_path}", flush=True)
     return 0

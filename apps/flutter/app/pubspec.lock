@@ -478,10 +478,10 @@ packages:
     dependency: transitive
     description:
       name: geolocator_apple
-      sha256: "853803d6bb1713c094e935b4a5ae5f19c0308acf81da13fa9ff84fb4c70c0b73"
+      sha256: "3b3189beba8b59b2a0eee970b466e991e4ac1564a9034f82a825a3c45c4be1fa"
       url: "https://pub.dev"
     source: hosted
-    version: "2.3.14"
+    version: "2.3.15"
   geolocator_linux:
     dependency: transitive
     description:
@@ -749,6 +749,20 @@ packages:
     dependency: "direct main"
     description:
       path: "../thirdparty/operit_folder_access"
+      relative: true
+    source: path
+    version: "0.1.0"
+  operit_keep_alive:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/operit_keep_alive"
+      relative: true
+    source: path
+    version: "0.1.0"
+  operit_ui:
+    dependency: "direct main"
+    description:
+      path: "../packages/operit_ui"
       relative: true
     source: path
     version: "0.1.0"

@@ -9,22 +9,31 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 
 import '../interactions/MessagePressShield.dart';
-import 'MarkdownLink.dart';
+import '../../features/packages/screens/ComposeDslImageSource.dart';
+import 'MarkdownImagePreview.dart';
 
 class MarkdownRemoteImage extends StatelessWidget {
-  /// Creates a Markdown image backed by the runtime HTTP host.
+  /// Creates a Markdown image backed by the runtime file or HTTP service.
   const MarkdownRemoteImage({
     super.key,
     required this.url,
     this.alt = '',
     this.fit = BoxFit.contain,
-    this.onOpenLink,
+    this.enablePreview = true,
+    this.decodeAtFullResolution = false,
+    this.clients = _imageClients,
   });
 
+  final GeneratedCoreProxyClients clients;
   final String url;
   final String alt;
   final BoxFit fit;
-  final void Function(String url)? onOpenLink;
+  final bool enablePreview;
+  final bool decodeAtFullResolution;
+
+  /// Reads virtual image bytes through this renderer's owning Core connection.
+  Future<Uint8List> _readVfsBytes(String path) =>
+      readComposeDslVfsBytes(clients, path);
 
   /// Builds the image and its link interaction within the layout constraints.
   @override
@@ -36,16 +45,16 @@ class MarkdownRemoteImage extends StatelessWidget {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cacheWidth = _markdownImageCacheExtent(
-          context,
-          constraints.maxWidth,
-        );
-        final cacheHeight = cacheWidth == null
+        final cacheWidth = decodeAtFullResolution
+            ? null
+            : _markdownImageCacheExtent(context, constraints.maxWidth);
+        final cacheHeight = !decodeAtFullResolution && cacheWidth == null
             ? _markdownImageCacheExtent(context, constraints.maxHeight)
             : null;
         final trimmed = url.trim();
         final isDataImage = trimmed.toLowerCase().startsWith('data:image/');
         final dataBytes = markdownDataImageBytes(trimmed);
+        final vfsPath = composeDslVfsImagePath(trimmed);
         final Widget image;
         if (isDataImage) {
           image = dataBytes == null
@@ -58,8 +67,24 @@ class MarkdownRemoteImage extends StatelessWidget {
                   semanticLabel: alt.trim().isEmpty ? null : alt.trim(),
                   errorBuilder: (context, failure, stackTrace) => error,
                 );
+        } else if (vfsPath != null) {
+          image = Image(
+            image: ResizeImage.resizeIfNeeded(
+              cacheWidth,
+              cacheHeight,
+              ComposeDslVfsImage(
+                path: vfsPath,
+                owner: clients.bridge,
+                readBytes: _readVfsBytes,
+              ),
+            ),
+            fit: fit,
+            semanticLabel: alt.trim().isEmpty ? null : alt.trim(),
+            errorBuilder: (context, failure, stackTrace) => error,
+          );
         } else {
           image = _RuntimeImage(
+            clients: clients,
             url: trimmed,
             alt: alt,
             fit: fit,
@@ -68,13 +93,26 @@ class MarkdownRemoteImage extends StatelessWidget {
             error: error,
           );
         }
-        if (isDataImage) {
+        if (!enablePreview) {
           return image;
         }
         return MessagePressShieldRegion(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => activateMarkdownLink(url, onOpenLink),
+            onTap: () => showDialog<void>(
+              context: context,
+              useSafeArea: false,
+              builder: (_) => MarkdownImagePreview(
+                alt: alt,
+                image: MarkdownRemoteImage(
+                  url: url,
+                  alt: alt,
+                  clients: clients,
+                  enablePreview: false,
+                  decodeAtFullResolution: true,
+                ),
+              ),
+            ),
             child: image,
           ),
         );
@@ -91,6 +129,7 @@ const _imageClients = GeneratedCoreProxyClients(
 class _RuntimeImage extends StatefulWidget {
   /// Creates a renderer with the requested decode dimensions.
   const _RuntimeImage({
+    required this.clients,
     required this.url,
     required this.alt,
     required this.fit,
@@ -99,6 +138,7 @@ class _RuntimeImage extends StatefulWidget {
     required this.error,
   });
 
+  final GeneratedCoreProxyClients clients;
   final String url;
   final String alt;
   final BoxFit fit;
@@ -125,14 +165,15 @@ class _RuntimeImageState extends State<_RuntimeImage> {
   @override
   void didUpdateWidget(covariant _RuntimeImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url) {
+    if (oldWidget.url != widget.url ||
+        oldWidget.clients.bridge != widget.clients.bridge) {
       _load();
     }
   }
 
   /// Creates the cold proxy stream owned by the image subscription.
   void _load() {
-    _request = _imageClients.servicesRuntimeHostInteractionService.imageBytes(
+    _request = widget.clients.servicesRuntimeHostInteractionService.imageBytes(
       url: widget.url,
     );
   }

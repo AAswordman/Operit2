@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
@@ -12,12 +13,73 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/main/components/CollapsedDrawerContent.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatSelectionTransition.dart';
 import 'package:operit2/ui/main/components/DrawerContent.dart';
+import 'package:operit2/ui/main/components/ChatHistoryTree.dart';
 import 'package:operit2/ui/main/components/NavigationDrawerAppearance.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
 
 /// Verifies independent previews preserve conversation context and workspace isolation.
 void main() {
+  setUpAll(ClientLogger.initialize);
+  test(
+    'conversation tree keeps surviving orphans visible and rejects cycles',
+    () {
+      final parent = _history('A', 0),
+          child = _history('A', 1, parentChatId: 'A-0');
+      final orphan = _history('A', 2, parentChatId: 'deleted-parent');
+      final tree = ChatHistoryTree([child, parent, orphan]);
+      expect(tree.roots.map((chat) => chat.id), ['A-0', 'A-2']);
+      expect(tree.children['A-0'], [child]);
+      expect(() => ChatHistoryTree([parent, parent]), throwsStateError);
+      expect(
+        () => ChatHistoryTree([_history('A', 0, parentChatId: 'A-1'), child]),
+        throwsStateError,
+      );
+    },
+  );
+
+  testWidgets(
+    'child conversations stay collapsed while running and search reveals their ancestors',
+    (tester) async {
+      final bridge = _DrawerBridge();
+      final histories = [
+        _history('A', 0),
+        _history('A', 1, parentChatId: 'A-0'),
+        _history('A', 2, parentChatId: 'A-1'),
+      ];
+      await _pumpDrawer(tester, bridge, histories, streamingIds: {'A-1'});
+      expect(_visibleIds(tester), ['A-0']);
+      await tester.tap(find.byKey(const ValueKey('workspace-children:A-0')));
+      await _pumpSidebar(tester);
+      expect(_visibleIds(tester), ['A-0', 'A-1']);
+      final parent = tester.getTopLeft(
+        find.byKey(const ValueKey('workspace-chat:A-0')),
+      );
+      final child = tester.getTopLeft(
+        find.byKey(const ValueKey('workspace-chat:A-1')),
+      );
+      expect(child.dx - parent.dx, 16);
+      await tester.tap(find.byKey(const ValueKey('workspace-children:A-0')));
+      await _pumpSidebar(tester);
+      await _pumpDrawer(
+        tester,
+        bridge,
+        histories,
+        streamingIds: {'A-1', 'A-2'},
+      );
+      expect(_visibleIds(tester), ['A-0']);
+      await tester.tap(find.byTooltip('搜索对话'));
+      await _pumpSidebar(tester);
+      await tester.enterText(find.byType(TextField), 'A-2');
+      await _pumpSidebar(tester);
+      expect(_visibleIds(tester), ['A-0', 'A-1', 'A-2']);
+      await tester.enterText(find.byType(TextField), '');
+      await _pumpSidebar(tester);
+      expect(_visibleIds(tester), ['A-0']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'chat activation submits Core work without waiting for another frame',
     (tester) async {
@@ -733,7 +795,9 @@ core.ChatHistoryListItem _history(
   String group,
   int index, {
   bool pinned = false,
+  String? parentChatId,
 }) => core.ChatHistoryListItem(
+  parentChatId: parentChatId,
   group: null,
   id: '$group-$index',
   title: '$group-$index',

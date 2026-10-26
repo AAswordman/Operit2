@@ -6,8 +6,8 @@ import { assertBoolean, assertNullableString, assertObject, assertString, requir
 
 /** Carries the plugin's selection in its authenticated chat namespace, never in plugin files. */
 export interface ChatMarker { version: 1; selection: string }
-/** Freezes the complete identity, model, voice, prompt and permission profiles used for one send. */
-export interface MessageMarker {
+/** Carries current resolved identity and permissions only for the active execution. */
+export interface ExecutionData {
   version: 1;
   selection: string;
   promptFunctionType: "CHAT" | "VOICE";
@@ -96,39 +96,39 @@ function markerProfile(value: unknown): ChatParticipantProfile {
   return { id, name, avatarUri: value.avatarUri, introPrompt: value.introPrompt, userPreferencesText: value.userPreferencesText,
     openingStatement: value.openingStatement, modelBinding: { providerId, modelId }, ttsConfigId, toolAccess, resources };
 }
-/** Decodes one complete historical send snapshot without replacing missing identity with current state. */
-export function decodeMessageMarker(value: unknown): MessageMarker {
-  const extension = markerObject(value, "message extension"); markerVersion(extension, "message marker");
-  const selection = requireId(extension.selection, "message marker selection"), parsed = parseChatSelection(selection);
-  if (extension.promptFunctionType !== "CHAT" && extension.promptFunctionType !== "VOICE") throw new Error("Invalid message marker prompt function");
+/** Decodes one complete current execution data without replacing missing identity with current state. */
+export function decodeExecutionData(value: unknown): ExecutionData {
+  const extension = markerObject(value, "message extension"); markerVersion(extension, "execution data");
+  const selection = requireId(extension.selection, "execution data selection"), parsed = parseChatSelection(selection);
+  if (extension.promptFunctionType !== "CHAT" && extension.promptFunctionType !== "VOICE") throw new Error("Invalid execution data prompt function");
   if (!Array.isArray(extension.participants) || extension.participants.length === 0) throw new Error("Message marker requires complete participants");
   const participants = extension.participants.map(
-    /** Constructs each complete saved participant independently from current domain records. */
+    /** Constructs each complete resolved participant independently from current domain records. */
     item => markerProfile(item),
   ), ids = new Set<string>();
   for (const participant of participants) {
     if (ids.has(participant.id)) throw new Error("Duplicate message participant: " + participant.id); ids.add(participant.id);
   }
   const profile = markerProfile(extension.profile), matches = participants.filter(
-    /** Requires the original execution participant to be one exact complete saved participant. */
+    /** Requires the original execution participant to be one exact complete resolved participant. */
     participant => participant.id === profile.id,
   );
-  if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(profile)) throw new Error("Message execution profile does not match its saved participant snapshot");
-  if (parsed.kind === "card" && (participants.length !== 1 || profile.id !== parsed.id)) throw new Error("Message card selection does not match its saved participant");
+  if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(profile)) throw new Error("Message execution profile does not match its resolved participant data");
+  if (parsed.kind === "card" && (participants.length !== 1 || profile.id !== parsed.id)) throw new Error("Message card selection does not match its resolved participant");
   if (parsed.kind === "model") {
-    if (participants.length !== 1 || profile.id !== "model:chat" || profile.name !== profile.modelBinding.modelId || extension.primaryOwnerKey !== "" || profile.resources.length !== 0 || profile.introPrompt !== "" || profile.userPreferencesText !== "" || profile.openingStatement !== "") throw new Error("Invalid model-only message snapshot");
+    if (participants.length !== 1 || profile.id !== "model:chat" || profile.name !== profile.modelBinding.modelId || extension.primaryOwnerKey !== "" || profile.resources.length !== 0 || profile.introPrompt !== "" || profile.userPreferencesText !== "" || profile.openingStatement !== "") throw new Error("Invalid model-only execution data");
     return { version: 1, selection, promptFunctionType: extension.promptFunctionType, primaryOwnerKey: "", profile, participants };
   }
   const primaryOwnerKey = requireId(extension.primaryOwnerKey, "message primary memory owner");
   if (!/^(character|shared):[^:\s]+$/u.test(primaryOwnerKey)) throw new Error("Invalid message primary memory owner");
   if (!profile.resources.some(
-    /** Requires the primary memory destination to be permitted by this exact saved execution profile. */
+    /** Requires the primary memory destination to be permitted by this exact current execution profile. */
     resource => resource.key === primaryOwnerKey && resource.writable,
   )) throw new Error("Message primary memory owner is not writable in its saved profile");
   return { version: 1, selection, promptFunctionType: extension.promptFunctionType, primaryOwnerKey, profile, participants };
 }
-/** Encodes a validated full send snapshot for host-owned message or variant extension persistence. */
-export function encodeMessageMarker(marker: MessageMarker): ToolPkgTypes.JsonObject {
-  const validated = decodeMessageMarker(marker);
+/** Encodes a validated current execution data for the active in-memory execution. */
+export function encodeExecutionData(marker: ExecutionData): ToolPkgTypes.JsonObject {
+  const validated = decodeExecutionData(marker);
   return markerObject(validated, "message extension");
 }

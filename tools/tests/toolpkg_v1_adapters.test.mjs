@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import test from 'node:test';
 import { installScopedHostRuntime } from './fixtures/scoped_host_runtime.mjs';
+import { composeContextScript } from '../runtime/compose_scripts.mjs';
 import { createDiskHarness } from '../../plugins/packages/buildin/character_cards/tests/disk-files.mjs';
 import { loadModule } from '../../plugins/packages/buildin/character_cards/tests/runtime.mjs';
 
@@ -46,9 +47,9 @@ function engine(version = '1.0.0') {
     Files: files,
     SoftwareSettings: {
       /** Returns the exact current host result for the versioned legacy variable reader. */
-      async readEnvironmentVariable(key) { calls.push({ name: 'readEnvironmentVariable', args: [key] }); return { key, value: 'configured', exists: true, toString() { return this.value; } }; },
+      async readEnvironmentVariable(packageName, key) { calls.push({ name: 'readEnvironmentVariable', args: [packageName, key] }); return { key, value: 'configured', exists: true, toString() { return this.value; } }; },
       /** Preserves the optional value argument and reports the actual modeled write. */
-      async writeEnvironmentVariable(key, value) { calls.push({ name: 'writeEnvironmentVariable', args: [key, value] }); return { key, requestedValue: value, value, exists: value !== undefined, cleared: value === undefined, toString() { return this.key; } }; },
+      async writeEnvironmentVariable(packageName, key, value) { calls.push({ name: 'writeEnvironmentVariable', args: [packageName, key, value] }); return { key, requestedValue: value, value, exists: value !== undefined, cleared: value === undefined, toString() { return this.key; } }; },
     },
     Chat: {
       /** Captures the current object-based creation contract. */
@@ -72,7 +73,7 @@ function engine(version = '1.0.0') {
     },
   };
   const context = vm.createContext({
-    version, params: {}, Tools: tools, __operitCurrentCallId: 'call',
+    version, params: { __operit_environment_owner: 'test.package' }, Tools: tools, __operitCurrentCallId: 'call',
     /** Retains the actual owner call while the production dependency callback is outstanding. */
     __operitRetainCallReference(callId) { assert.equal(callId, 'call'); },
     /** Releases the same retained dependency call after native completion. */
@@ -112,7 +113,7 @@ function engine(version = '1.0.0') {
   const rust = source('core/crates/plugin/sdk/src/toolpkg/ToolPkgApiRuntimeScript.rs');
   const start = rust.indexOf('r#"') + 3;
   vm.runInContext(rust.slice(start, rust.indexOf('"#', start)), context);
-  for (const file of ['files.js', 'chat.js', 'workflow.js', 'characters.js', 'memory.js', 'install.js']) vm.runInContext(source(adapterRoot + file), context);
+  for (const file of ['files.js', 'media.js', 'chat.js', 'workflow.js', 'characters.js', 'memory.js', 'install.js']) vm.runInContext(source(adapterRoot + file), context);
   return { context, tools, calls };
 }
 
@@ -272,12 +273,130 @@ test('legacy caller IDs are provider-scoped and absent from the current contract
   assert.equal(context.getCallerCardId(), undefined);
 });
 
+/** Checks the historical image globals stay synchronous and disappear on API 2. */
+test('v1 image registration returns a link and maps Android paths', () => {
+  const { context } = engine();
+  const requests = [];
+  context.__operitNativeRegisterMedia = request => {
+    requests.push(JSON.parse(request));
+    return JSON.stringify({ id: 'img', mimeType: 'image/png', link: '<link type="image" id="img"></link>', width: 2, height: 3 });
+  };
+  assert.equal(context.registerImageFromBase64('abc', 'image/png'), '<link type="image" id="img"></link>');
+  assert.equal(context.registerImageFromPath('/storage/emulated/0/photo.png'), '<link type="image" id="img"></link>');
+  assert.deepEqual(requests, [
+    { type: 'image', source: 'base64', base64: 'abc', mimeType: 'image/png' },
+    { type: 'image', source: 'path', path: '/sdcard/photo.png' },
+  ]);
+  assert.throws(() => context.registerImageFromBase64('  '), /requires image data/);
+  assert.throws(() => context.registerImageFromPath('/unsupported/photo.png'), /no VFS mapping/);
+  context.version = '2.0.0';
+  assert.equal(context.registerImageFromBase64, undefined);
+  assert.equal(context.registerImageFromPath, undefined);
+});
+
 /** Ensures this task never registers the legacy settings-management methods. */
 test('legacy role compatibility leaves SoftwareSettings unchanged', () => {
   const { tools } = engine();
   assert.deepEqual(Object.keys(tools.SoftwareSettings), ['readEnvironmentVariable', 'writeEnvironmentVariable']);
   assert.doesNotMatch(source('plugins/types/index.d.ts'), /function getCallerCardId\(/);
   assert.match(source('plugins/types/index.d.ts'), /function getCallerParticipantId\(\): string \| undefined/);
+});
+
+/** Verifies both historical API versions preserve one-shot speech controls and host receipts. */
+test('v1 TTS playback reaches the shared host tool with exact utterance overrides', async () => {
+  for (const version of ['1.0.0', '1.0.1']) {
+    const { context, tools, calls } = engine(version);
+    /** Models the native speech receipt without replacing the production transport. */
+    context.invokeTool = async (name, params) => {
+      assert.equal(name, 'tts_speak');
+      return { providerType: 'SYSTEM_TTS', started: false, interrupt: false, speed: 1.1, pitch: 1.2 };
+    };
+    const options = Object.freeze({ interrupt: false, speech_rate: 1.1, pitch: 1.2 });
+    const result = await tools.SoftwareSettings.testTtsPlayback('你好 👋', options);
+    assert.deepEqual(plain(calls), [{ name: 'tts_speak', args: [{ request: { text: '你好 👋', interrupt: false, speed: 1.1, pitch: 1.2 } }] }]);
+    assert.deepEqual(plain(result), {
+      ttsServiceType: 'SIMPLE_TTS', providerClass: 'TtsPlaybackHost', initialized: true,
+      playbackTriggered: false, interrupt: false, textLength: '你好 👋'.length, speechRate: 1.1, pitch: 1.2,
+    });
+    assert.deepEqual(JSON.parse(result.toString()), plain(result));
+    calls.length = 0;
+    await tools.SoftwareSettings.testTtsPlayback('Use configured speed');
+    assert.deepEqual(plain(calls), [{ name: 'tts_speak', args: [{ request: { text: 'Use configured speed' } }] }]);
+    const retained = tools.SoftwareSettings.testTtsPlayback;
+    context.version = '2.0.0';
+    assert.equal(tools.SoftwareSettings.testTtsPlayback, undefined);
+    assert.throws(() => retained('Wrong version'), /has no implementation for ToolPkg API 2\.0\.0/);
+    assert.equal(calls.length, 1);
+  }
+});
+
+/** Rejects invalid legacy requests before native speech or settings writes can occur. */
+test('v1 TTS playback rejects malformed options without invoking the host', async () => {
+  const { tools, calls } = engine();
+  const invalid = [
+    ['', undefined], ['   ', undefined], [null, undefined],
+    ['text', null], ['text', []], ['text', 'options'],
+    ['text', { interrupt: 'true' }], ['text', { speech_rate: 0 }],
+    ['text', { speech_rate: NaN }], ['text', { speech_rate: Infinity }],
+    ['text', { pitch: -1 }], ['text', { pitch: NaN }],
+    ['text', { speed: 1.1 }],
+  ];
+  for (const [text, options] of invalid) {
+    await assert.rejects(tools.SoftwareSettings.testTtsPlayback(text, options));
+  }
+  assert.equal(calls.length, 0);
+});
+
+/** Preserves native failure messages and never reports an unsuccessful host request as playback. */
+test('v1 TTS playback propagates host failures once', async () => {
+  const { context, tools, calls } = engine();
+  /** Rejects the real structured transport completion from the modeled host. */
+  context.invokeTool = async () => { throw new Error('TtsPlaybackHost is unavailable'); };
+  await assert.rejects(tools.SoftwareSettings.testTtsPlayback('Speak'), /TtsPlaybackHost is unavailable/);
+  assert.equal(calls.length, 1);
+  const original = new Error('Original speech error');
+  /** Rejects the direct typed adapter dependency with its original error object. */
+  const playback = context.__operitCreateV1TtsPlayback(async () => { throw original; });
+  await assert.rejects(playback('Speak'), error => error === original);
+});
+
+/** Exercises the marketplace bubble's unawaited click through the production compiler and owner lifecycle. */
+test('VoiceBar v1 clicks retain the host speech request after the synchronous UI action ends', async () => {
+  const { context, tools, calls } = engine();
+  const completion = Promise.withResolvers();
+  /** Keeps the native host operation pending beyond the synchronous click callback. */
+  context.invokeTool = () => completion.promise;
+  vm.runInContext(composeContextScript(), context);
+  context.exports = {};
+  const source = `
+    /** Reproduces the released bubble's synchronous click and unawaited legacy speech call. */
+    exports.default = function Screen(ctx) {
+      var state = ctx.useState('_playing', 'false');
+      return ctx.UI.Row({
+        /** Starts speech before updating the bubble's local playback indicator. */
+        onClick: function() {
+          if (Tools.SoftwareSettings.testTtsPlayback) {
+            Tools.SoftwareSettings.testTtsPlayback('VoiceBar test', { interrupt: true });
+          }
+          state[1]('true');
+        }
+      }, []);
+    };
+  `;
+  vm.runInContext(context.OperitComposeCompiler.prepare(source, 'voicebar-v1'), context);
+  const runtime = context.OperitComposeDslRuntime.createContext({});
+  const tree = context.exports.default(runtime.ctx);
+  runtime.composition.finish(tree);
+  assert.equal(typeof tools.SoftwareSettings.testTtsPlayback, 'function');
+  assert.equal(runtime.invokeAction(tree.props.onClick.__actionId), undefined);
+  assert.equal(runtime.stateStore._playing, 'true');
+  await new Promise(setImmediate);
+  assert.deepEqual(plain(calls), [{ name: 'tts_speak', args: [{ request: { text: 'VoiceBar test', interrupt: true } }] }]);
+  assert.equal(context.refs, 1);
+  completion.resolve({ providerType: 'SYSTEM_TTS', started: true, interrupt: true, speed: 1, pitch: 1 });
+  await new Promise(setImmediate);
+  assert.equal(context.refs, 0);
+  assert.equal(calls.length, 1);
 });
 
 /** Exercises genuine public API handlers and memory tool IPC against the existing disk-backed plugin. */
@@ -452,6 +571,38 @@ test('legacy chat streaming projects growing snapshots and preserves completion'
   assert.deepEqual(events.slice(1).map(event => event.chunkIndex), [0, 1]);
 });
 
+/** Keeps declared legacy send controls on the existing native tool and preserves its actual receipt and failure. */
+test('legacy chat streaming retains declared controls through native ordinary send', async () => {
+  const { context } = engine();
+  for (const controls of [{}, { persist_turn: false }, { hide_user_message: true }, { disable_warning: true }, { timeout_ms: 4321 }]) {
+    const events = [], requests = [], roles = [];
+    const receipt = { chatId: 'current-chat', message: 'hello', aiResponse: '真实回复', sentAt: 12 };
+    const options = Object.freeze({ ...controls, runtime: 'main', notify_reply: true,
+      onIntermediateResult(event) { events.push(plain(event)); } });
+    const sender = Object.keys(controls).length === 0 ? 'Speaker' : undefined;
+    let failure;
+    const adapter = context.__operitCreateV1Chat({
+      async listAll() { return { currentChatId: 'current-chat' }; },
+      async *sendMessageStreaming() { throw new Error('Unexpected structured streaming'); },
+    }, async id => { roles.push(id); }, async params => {
+      requests.push(plain(params));
+      if (failure) throw failure;
+      return receipt;
+    }, async () => {});
+    assert.equal(await adapter.sendMessageStreaming('hello', undefined, 'role-one', sender, options), receipt);
+    assert.deepEqual(roles, ['role-one']);
+    assert.deepEqual(requests[0], { ...controls, runtime: 'main', notify_reply: true, message: 'hello',
+      chat_id: 'current-chat', participant_id: 'role-one', ...(sender === undefined ? {} : { sender_name: sender }) });
+    assert.deepEqual(events.map(event => [event.type, event.chunk, event.receivedChars]),
+      [['start', undefined, 0], ['chunk', '真实回复', 4]]);
+    assert.equal(Object.hasOwn(options, 'onIntermediateResult'), true);
+    failure = new Error('native send failed');
+    events.length = 0;
+    await assert.rejects(adapter.sendMessageStreaming('hello', undefined, 'role-one', sender, options), caught => caught === failure);
+    assert.deepEqual(events.map(event => event.type), ['start']);
+  }
+});
+
 /** Ensures malformed large identities, real host failures and rewritten snapshots never become successful empty results. */
 test('legacy adapters reject precision loss and propagate original provider failures', async t => {
   const runtime = await roleProvider(t);
@@ -511,13 +662,27 @@ test('legacy role callers keep the actual shared memory binding', async t => {
 test('V1 environment adapters preserve exact host results and optional write arguments', async () => {
   for (const version of ['1.0.0', '1.0.1', '2.0.0']) {
     const { context, tools, calls } = engine(version);
-    const result = await tools.SoftwareSettings.readEnvironmentVariable('EXACT_KEY');
+    const args = version === '2.0.0' ? ['test.package', 'EXACT_KEY'] : ['EXACT_KEY'];
+    const result = await tools.SoftwareSettings.readEnvironmentVariable(...args);
     assert.equal(result.key, 'EXACT_KEY'); assert.equal(result.value, 'configured'); assert.equal(result.toString(), 'configured');
-    await tools.SoftwareSettings.writeEnvironmentVariable('EXACT_KEY');
-    assert.deepEqual(calls.map(call => call.args), [['EXACT_KEY'], ['EXACT_KEY', undefined]]);
+    await tools.SoftwareSettings.writeEnvironmentVariable(...args);
+    assert.deepEqual(calls.map(call => call.args), [['test.package', 'EXACT_KEY'], ['test.package', 'EXACT_KEY', undefined]]);
     const original = new Error('EXACT_HOST_REJECTION');
-    const adapter = context.__operitCreateV1SoftwareSettings({ readEnvironmentVariable: async () => { throw original; }, writeEnvironmentVariable: async () => { throw original; } });
+    const adapter = context.__operitCreateV1SoftwareSettings({ readEnvironmentVariable: async () => { throw original; }, writeEnvironmentVariable: async () => { throw original; } }, () => 'test.package');
     await assert.rejects(adapter.readEnvironmentVariable('EXACT_KEY'), error => error === original);
     await assert.rejects(adapter.writeEnvironmentVariable('EXACT_KEY'), error => error === original);
   }
+});
+
+/** Keeps each legacy environment call bound to the native installation of its current call. */
+test('V1 environment adapters use the current native installation and reject unowned calls', async () => {
+  const { context, tools, calls } = engine('1.0.0');
+  context.params.__operit_environment_owner = 'first.package';
+  await tools.SoftwareSettings.readEnvironmentVariable('TOKEN');
+  context.params.__operit_environment_owner = 'second.package';
+  await tools.SoftwareSettings.writeEnvironmentVariable('TOKEN', 'value');
+  assert.deepEqual(calls.map(call => call.args), [['first.package', 'TOKEN'], ['second.package', 'TOKEN', 'value']]);
+  delete context.params.__operit_environment_owner;
+  assert.throws(() => tools.SoftwareSettings.readEnvironmentVariable('TOKEN'), /Environment access requires an owning package installation/);
+  assert.equal(calls.length, 2);
 });

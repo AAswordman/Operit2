@@ -33,6 +33,7 @@ impl ToolPkgMainRegistrationScriptParser {
             toolPkgId,
             mainScriptPath,
             crate::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION,
+            &[],
             ToolPkgConfigScope::Device,
             jsEngine,
             None,
@@ -46,6 +47,7 @@ impl ToolPkgMainRegistrationScriptParser {
         toolPkgId: &str,
         mainScriptPath: &str,
         apiVersion: &str,
+        environmentNames: &[String],
         configScope: ToolPkgConfigScope,
         jsEngine: &dyn JsExecutionEngine,
         textResources: Option<Arc<BTreeMap<String, String>>>,
@@ -64,6 +66,8 @@ impl ToolPkgMainRegistrationScriptParser {
             Value::String(format!("registerToolPkg:{toolPkgId}")),
         );
         params.insert("__operit_registration_mode".to_string(), Value::Bool(true));
+        params.insert("__operit_registration_environment_names".to_string(),
+            Value::Array(environmentNames.iter().cloned().map(Value::String).collect()));
         // The scope is fixed before module evaluation, not looked up through the loading manager.
         params.insert(
             "__operit_registration_config_scope".to_string(),
@@ -194,6 +198,11 @@ fn parseCapturedRegistration(
         chatMessageMenuItems: parseRegisteredItems(
             &captured.chatMessageMenuItems,
             TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM,
+            toolPkgId,
+        )?,
+        chatResponseHooks: parseRegisteredItems(
+            &captured.chatResponseHooks,
+            TOOLPKG_REGISTRATION_CHAT_RESPONSE_HOOK,
             toolPkgId,
         )?,
         chatRuntimeHooks: parseRegisteredItems(

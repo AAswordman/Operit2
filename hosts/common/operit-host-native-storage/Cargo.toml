@@ -2,10 +2,12 @@
 name = "operit-host-native-storage"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.89"
 license = "MIT"
 publish = false
 
 [dependencies]
+fs2 = "0.4"
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }

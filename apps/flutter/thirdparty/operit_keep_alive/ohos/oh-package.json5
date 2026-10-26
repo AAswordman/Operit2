@@ -1,0 +1,1 @@
+{"name":"operit_keep_alive","version":"0.1.0","description":"Explicit Core execution leases","main":"index.ets","license":"MIT","dependencies":{"@ohos/flutter_ohos":"file:./har/flutter.har"}}

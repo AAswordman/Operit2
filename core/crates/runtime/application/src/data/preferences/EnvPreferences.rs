@@ -1,101 +1,55 @@
-use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, CoreNodeStateStore, PreferencesDataStoreError,
-};
-use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
-use operit_util::OperitPaths;
+use operit_store::ExtensionStore::{ExtensionStore, PackageEnvironment};
 use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub struct EnvPreferences {
-    dataStore: CoreNodeStateStore,
+    store: ExtensionStore,
 }
 
 impl EnvPreferences {
-    const PREFS_FILE_NAME: &'static str = "env_preferences.preferences.json";
-
-    #[allow(non_snake_case)]
-    /// Opens the persistent environment preference store.
+    /// Opens package environments through the common installation ownership store.
     pub fn getInstance() -> Self {
         Self {
-            dataStore: CoreNodeStateStore::newWithStorage(
-                defaultRuntimeStorageHost(),
-                OperitPaths::ENV_PREFERENCES_PATH,
-            ),
+            store: ExtensionStore::default(),
         }
     }
 
-    #[allow(non_snake_case)]
-    /// Reads an environment value from persistent preferences or the process environment.
-    pub fn getEnv(&self, key: &str) -> Result<Option<String>, PreferencesDataStoreError> {
-        let name = key.trim();
-        if name.is_empty() {
-            return Ok(None);
-        }
-
-        let fromPrefs = self
-            .dataStore
-            .data()?
-            .getTyped::<String>(&stringPreferencesKey(name))?;
-        if fromPrefs.as_ref().is_some_and(|value| !value.is_empty()) {
-            return Ok(fromPrefs);
-        }
-
-        Ok(std::env::var(name).ok())
+    /// Reads the environment shared by an installation and its subpackages.
+    pub fn getPackageEnvironment(&self, packageName: &str) -> Result<PackageEnvironment, String> {
+        self.store.packageEnvironment(packageName)
     }
 
-    #[allow(non_snake_case)]
-    /// Stores an environment value in persistent preferences.
-    pub fn setEnv(&self, key: &str, value: &str) -> Result<(), PreferencesDataStoreError> {
-        let name = key.trim();
-        if name.is_empty() {
-            return Ok(());
-        }
-        self.dataStore
-            .edit(|preferences| preferences.set(&stringPreferencesKey(name), value.to_string()))
-    }
-
-    #[allow(non_snake_case)]
-    /// Removes a persisted environment value by key.
-    pub fn removeEnv(&self, key: &str) -> Result<(), PreferencesDataStoreError> {
-        let name = key.trim();
-        if name.is_empty() {
-            return Ok(());
-        }
-        self.dataStore
-            .edit(|preferences| preferences.remove(&stringPreferencesKey(name)))
-    }
-
-    #[allow(non_snake_case)]
-    /// Returns all persisted environment values keyed by variable name.
-    pub fn getAllEnv(&self) -> Result<BTreeMap<String, String>, PreferencesDataStoreError> {
-        Ok(self
-            .dataStore
-            .data()?
-            .entries()
-            .into_iter()
-            .map(|(key, value)| Ok((key, serde_json::from_value::<String>(value)?)))
-            .collect::<Result<Vec<_>, PreferencesDataStoreError>>()?
-            .into_iter()
-            .filter(|(key, value)| !key.trim().is_empty() && !value.is_empty())
-            .collect())
-    }
-
-    #[allow(non_snake_case)]
-    /// Replaces the persisted environment values with the provided map.
-    pub fn setAllEnv(
+    /// Updates explicitly edited keys without replacing unrelated package environment values.
+    pub fn editPackageEnvironment(
         &self,
-        variables: BTreeMap<String, String>,
-    ) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.edit(|preferences| {
-            for (key, _) in preferences.entries() {
-                preferences.remove(&stringPreferencesKey(&key));
-            }
-            for (key, value) in variables {
-                let name = key.trim();
-                if !name.is_empty() {
-                    preferences.set(&stringPreferencesKey(name), value);
-                }
-            }
-        })
+        packageName: &str,
+        changes: BTreeMap<String, Option<String>>,
+    ) -> Result<(), String> {
+        self.store.editPackageEnvironment(packageName, changes)
+    }
+
+    /// Reads a persisted variable from its explicitly selected package installation.
+    pub fn getEnv(&self, packageName: &str, key: &str) -> Result<Option<String>, String> {
+        let environment = self.store.packageEnvironment(packageName)?;
+        Ok(environment.variables.get(key.trim()).cloned())
+    }
+
+    /// Writes a variable to its package installation and removes explicitly empty values.
+    pub fn setEnv(&self, packageName: &str, key: &str, value: &str) -> Result<(), String> {
+        self.store.editPackageEnvironment(
+            packageName,
+            BTreeMap::from([(
+                key.trim().to_string(),
+                (!value.is_empty()).then(|| value.to_string()),
+            )]),
+        )
+    }
+
+    /// Removes a variable from its explicitly selected package installation.
+    pub fn removeEnv(&self, packageName: &str, key: &str) -> Result<(), String> {
+        self.store.editPackageEnvironment(
+            packageName,
+            BTreeMap::from([(key.trim().to_string(), None)]),
+        )
     }
 }

@@ -18,6 +18,7 @@ pub struct LlmRequestTraceContext {
 /// Concrete provider implementation selected for a resolved model config.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderServiceKind {
+    LocalModelProvider,
     OpenAIProvider,
     OpenAIResponsesProvider,
     OpenCodeProvider,
@@ -49,6 +50,7 @@ pub enum ApiKeyProviderSpec {
 /// Provider-specific constructor parameters emitted by the service factory.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProviderCreateParams {
+    LocalModelProvider { model_binding: String, settings: operit_model::ModelConfigData::LocalModelRuntimeSettings },
     OpenAIProvider {
         api_endpoint: String,
         api_key_provider: ApiKeyProviderSpec,
@@ -376,11 +378,10 @@ impl AIServiceFactory {
                 supports_video,
                 enable_tool_call,
             ),
-            ApiProviderType::LOCAL_MODEL => {
-                return Err(AiServiceError::ProviderNotImplemented(
-                    "LOCAL_MODEL chat inference".to_string(),
-                ));
-            }
+            ApiProviderType::LOCAL_MODEL => Ok(ProviderServiceSpec {
+                kind: ProviderServiceKind::LocalModelProvider,
+                params: ProviderCreateParams::LocalModelProvider { model_binding: model_name, settings: config.localRuntime.clone() },
+            }),
             ApiProviderType::ALIYUN => Self::qwen_provider(
                 api_endpoint,
                 api_key_provider,
@@ -396,7 +397,6 @@ impl AIServiceFactory {
             | ApiProviderType::XUNFEI
             | ApiProviderType::ZHIPU
             | ApiProviderType::BAICHUAN
-            | ApiProviderType::IFLOW
             | ApiProviderType::INFINIAI
             | ApiProviderType::ALIPAY_BAILING
             | ApiProviderType::PPINFRA

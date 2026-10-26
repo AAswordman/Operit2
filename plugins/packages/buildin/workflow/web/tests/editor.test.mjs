@@ -113,6 +113,8 @@ test(
       });
       await page.addInitScript((theme) => { window.workflowTheme = theme; }, hostTheme);
       await page.goto(`http://127.0.0.1:${server.address().port}`);
+      await page.getByRole("button", { name: "模板", exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgba(0, 0, 0, 0)");
       await page.getByRole("button", { name: "模板", exact: true }).click();
       assert.equal(await page.locator(".template-option").count(), 6);
       await page
@@ -136,6 +138,7 @@ test(
         .getPropertyValue("--operit-primary").trim() === "#008800");
       assert.equal(await page.getByLabel("名称", { exact: true }).inputValue(), "浏览器验证");
       assert.equal(await page.evaluate(() => window.themeTestDocument), documentId);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgba(0, 0, 0, 0)");
       await verifyDialogExit(page, "关闭");
       await page.getByRole("button", { name: "新建工作流", exact: true }).click();
       await page.getByLabel("名称", { exact: true }).fill("浏览器验证");

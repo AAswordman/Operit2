@@ -725,8 +725,6 @@ mod tests {
         let mut state = ChatState {
             currentChatId: "handoff-chat".to_string(),
             currentChatTitle: "title".to_string(),
-            currentCharacterCardName: None,
-            currentCharacterCardAvatarUri: None,
             currentWorkspacePath: None,
             isLoading: false,
             inputProcessingState: InputProcessingState::Completed,
@@ -1202,7 +1200,7 @@ mod tests {
     fn tui_route_permission_error_keeps_structured_diagnostics() {
         let error = CoreLinkError::withDetails(
             "ROUTE_PERMISSION_DENIED",
-            "Space route chatMessagesFlow requires capability chat.read on caller tui-client",
+            "Space route switch_core target tui-client lacks runtime.execute",
             CoreValue::Map(BTreeMap::from([
                 (
                     "subject".to_string(),
@@ -1210,7 +1208,7 @@ mod tests {
                 ),
                 (
                     "requiredCapability".to_string(),
-                    CoreValue::String("chat.read".to_string()),
+                    CoreValue::String("runtime.execute".to_string()),
                 ),
                 (
                     "callerNodeId".to_string(),
@@ -1222,7 +1220,7 @@ mod tests {
         assert!(error.isRoutePermissionDenied());
         assert!(message.contains("ROUTE_PERMISSION_DENIED"));
         assert!(message.contains("caller"));
-        assert!(message.contains("chat.read"));
+        assert!(message.contains("runtime.execute"));
         assert!(message.contains("tui-client"));
     }
 

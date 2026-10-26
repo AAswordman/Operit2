@@ -16,10 +16,12 @@ class PackageListItem extends StatefulWidget {
     required this.enabled,
     required this.onEnabledChanged,
     this.onDetails,
+    this.primaryAction,
     this.showEnabledSwitch = true,
     this.trailingActions = const <Widget>[],
     this.hasError = false,
     this.errorMessage,
+    this.statusLabel,
   });
 
   final IconData icon;
@@ -29,10 +31,12 @@ class PackageListItem extends StatefulWidget {
   final bool enabled;
   final ValueChanged<bool> onEnabledChanged;
   final VoidCallback? onDetails;
+  final Widget? primaryAction;
   final bool showEnabledSwitch;
   final List<Widget> trailingActions;
   final bool hasError;
   final String? errorMessage;
+  final String? statusLabel;
 
   /// Creates the state for an expandable package card.
   @override
@@ -86,6 +90,8 @@ class _PackageListItemState extends State<PackageListItem> {
               ]
             : const <BoxShadow>[],
         material: true,
+        // One blur per card rasterizes the whole list on tab switches and scrolls.
+        enableBackdropFilter: false,
         child: InkWell(
           borderRadius: borderRadius,
           onTap: widget.onDetails,
@@ -114,13 +120,24 @@ class _PackageListItemState extends State<PackageListItem> {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
-                          Text(
-                            widget.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                          Row(
+                            children: <Widget>[
+                              Flexible(
+                                child: Text(
+                                  widget.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              if (widget.statusLabel
+                                  case final String label) ...<Widget>[
+                                SizedBox(width: 6 * scale),
+                                _MetadataChip(text: label),
+                              ],
+                            ],
                           ),
                           if (widget.subtitle.isNotEmpty)
                             Padding(
@@ -149,6 +166,11 @@ class _PackageListItemState extends State<PackageListItem> {
                           ),
                         ),
                       ),
+                    if (widget.primaryAction
+                        case final Widget action) ...<Widget>[
+                      SizedBox(width: 6 * scale),
+                      action,
+                    ],
                     if (widget.showEnabledSwitch) ...<Widget>[
                       SizedBox(width: 6 * scale),
                       Switch(

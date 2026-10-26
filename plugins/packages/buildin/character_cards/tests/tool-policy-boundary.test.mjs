@@ -9,6 +9,7 @@ const paths = {
   handler: "core/crates/tool/services/src/tools/AIToolHandler.rs",
   terminal: "core/crates/tool/services/src/tools/ToolJsRuntime.rs",
   lifecycle: "core/crates/runtime/application/src/plugins/toolpkg/ToolPkgToolLifecycleBridge.rs",
+  timeout: "core/crates/runtime/application/src/plugins/toolpkg/ToolPkgPreHookTimeout.rs",
   prompt: "core/crates/runtime/application/src/plugins/toolpkg/ToolPkgPromptHookBridge.rs",
   registry: "core/crates/provider/services/src/chat/hooks/PromptHookRegistry.rs",
   enhanced: "core/crates/provider/services/src/chat/EnhancedAIService.rs",
@@ -39,23 +40,26 @@ function region(source, start, end) {
 /** Reports missing owner isolation and invoked-error propagation in the exact current Rust call paths. */
 function violations(input) {
   const failures = [];
-  const owner = region(input.lifecycle, "fn requireExecutionOwner(", "/// Validates the native configuration snapshot");
+  const owner = region(input.lifecycle, "fn requireExecutionOwner(", "/// Validates the native execution data");
   if (!/getToolPkgContainerRuntime\(owner\)/.test(owner) || !/runtime\.packageName\s*!=\s*owner/.test(owner)
     || !/getEnabledToolPkgContainerRuntimes\(\)/.test(owner) || !/0\s*=>\s*Err\(/.test(owner)) failures.push("enabled exact registered owner");
   const projection = region(input.lifecycle, "pub fn executionContextForOwner(", "/// Registers tool lifecycle hooks");
   if (!/requireExecutionOwner\(manager,\s*registeredOwner\)\?/.test(projection)
-    || !/validateExecutionSnapshot\(manager,\s*context\)\?/.test(projection)
+    || !/validateExecutionContext\(manager,\s*context\)\?/.test(projection)
     || !/context\.extensionOwner\s*==\s*registeredOwner/.test(projection)
-    || !/Value::Object\(context\.messageExtension\.clone\(\)\)/.test(projection)
+    || !/Value::Object\(context\.executionData\.clone\(\)\)/.test(projection)
     || !/Value::Null/.test(projection)) failures.push("owner-only message object or explicit null");
   const intercept = region(input.lifecycle, "fn onToolCallInterceptAsync<'a>(", "fn onToolPermissionChecked");
   const prompt = region(input.prompt, "impl ToolPromptComposeHook for ToolPromptComposeBridge", "/// Strictly decodes an invoked tool policy");
+  const timeout = region(input.timeout, "pub async fn runHook(", "/// Returns the timeout milliseconds");
+  if (!/remainingForHook\([\s\S]*?\?;/.test(timeout)
+    || !/runToolPkgMainHookWithTimeoutMillis\([\s\S]*?\)\s*\.await\?/.test(timeout)
+    || !/hasExpired\(\)[\s\S]*?return Err\(/.test(timeout)) failures.push("shared pre-hook deadline and failure propagation");
   for (const [name, text] of [["intercept", intercept], ["prompt", prompt]]) {
-    if (!/currentToolRuntimeContext\(\)/.test(text) || !/readySnapshot\([\s\S]*?\)\.await\?/.test(text)
-      || !/validateExecutionSnapshot\([\s\S]*?\)\?/.test(text)
+    if (!/currentToolRuntimeContext\(\)/.test(text) || !/readySnapshot\([\s\S]*?\)\s*\.await\?/.test(text)
+      || !/validateExecutionContext\([\s\S]*?\)\?/.test(text)
       || !/executionContextForOwner\([\s\S]*?\)\?/.test(text)
-      || !/runToolPkgMainHookWithTimeoutMillis\([\s\S]*?\)\.await\?/.test(text)
-      || !/remainingTimeoutMillis\(\)\.ok_or_else\(/.test(text) || !/hasExpired\(\)[\s\S]*?return Err\(/.test(text)) failures.push(name + " awaited isolated handler failure/timeout");
+      || !/ToolPkgPreHookTimeout::runHook\(\s*(?:Some\(&budget\)|budget\.as_ref\(\)),[\s\S]*?\)\s*\.await\?/.test(text)) failures.push(name + " awaited isolated handler failure/timeout");
   }
   if (!/Future<Output\s*=\s*Result<AIToolHookDecision,\s*String>>/.test(input.hook)
     || !/executeToolInvocation\([\s\S]*?ToolExecutionPolicy::Ai[\s\S]*?\)\s*\.await\?/.test(input.manager)
@@ -68,7 +72,7 @@ function violations(input) {
     if (!/toolRuntimeContextForConfiguration\(/.test(text) || !/scopeToolRuntimeContext\(toolContext,/.test(text)) failures.push(name + " independent configuration scope");
   }
   if (!/scopeToolRuntimeContext\(\s*toolRuntimeContext,/.test(input.enhanced)
-    || !/messageExtension:\s*configuration\.messageExtension\.clone\(\)/.test(input.enhanced)
+    || !/executionData:\s*configuration\.executionData\.clone\(\)/.test(input.enhanced)
     || !/extensionOwner:\s*configuration\.extensionOwner\.clone\(\)/.test(input.enhanced)) failures.push("scheduled turn captures resolved configuration");
   const catalog = region(input.lifecycle, "pub async fn filterToolCatalog(", "/// Accepts only a unique subset");
   if (!/decode_tool_prompt_policy_result\(raw\)\?/.test(catalog)
@@ -86,9 +90,23 @@ test("static: three real tool policy entries retain isolated awaited snapshots a
 test("static negative: removing batch failure propagation is a red item", () => {
   const input = sources();
   const before = input.manager;
-  input.manager = input.manager.replace(".await?;\n            AppLogger::d(", ".await.unwrap_or_default();\n            AppLogger::d(");
+  input.manager = input.manager.replace(".await?;\n            AppLogger::v_with_level(", ".await.unwrap_or_default();\n            AppLogger::v_with_level(");
   assert.notEqual(input.manager, before, "The negative case must change the real awaited tool invocation");
   assert.ok(violations(input).indexOf("batch aborts original policy error") !== -1);
+});
+
+/** Rejects removal of either shared deadline enforcement or propagation of the invoked handler failure. */
+test("static negative: shared pre-hook execution must enforce its deadline and propagate errors", () => {
+  for (const [before, after] of [
+    ["budget.remainingForHook(manager, packageName, hookId, stage)?", "unboundedTimeout()"],
+    [".await?;", ".await;"],
+    ["if budget.hasExpired()", "if false"],
+  ]) {
+    const input = sources(), original = input.timeout;
+    input.timeout = input.timeout.replace(before, after);
+    assert.notEqual(input.timeout, original, "Expected to change the real shared timeout handler");
+    assert.ok(violations(input).indexOf("shared pre-hook deadline and failure propagation") !== -1);
+  }
 });
 
 /** Proves a policy registry cannot return unfiltered context by concealing the invoked Result. */
@@ -126,10 +144,10 @@ test("static: participant metadata has one generic reserved transport key and no
 test("static: SDK tool snapshot is typed separately from ordinary prompt metadata", () => {
   const sdk = sources().sdk;
   const ordinary = region(sdk, "pub struct ToolPkgExecutionContext {", "/// Exposes only the receiving registered package");
-  assert.doesNotMatch(ordinary, /messageExtension|extensionOwner/);
-  const tool = region(sdk, "pub struct ToolPkgToolExecutionContext {", "/// Carries a required isolated snapshot");
+  assert.doesNotMatch(ordinary, /executionData|extensionOwner/);
+  const tool = region(sdk, "pub struct ToolPkgToolExecutionContext {", "/// Carries a required isolated execution context");
   assert.match(tool, /extensionOwner:\s*String/);
-  assert.match(tool, /messageExtension:\s*super::JsNullable<ToolPkgJsonObject>/);
+  assert.match(tool, /executionData:\s*super::JsNullable<ToolPkgJsonObject>/);
   assert.match(sdk, /runtimeContext:\s*super::JsNullable<ToolPkgToolExecutionContext>/);
   assert.match(sdk, /ToolPkgHookEventBase<ToolPkgToolPromptComposeEventName,\s*ToolPkgToolPromptHookEventPayload>/);
 });

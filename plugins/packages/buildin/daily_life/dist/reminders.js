@@ -3,9 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseDueDate = parseDueDate;
 exports.receiveReminder = receiveReminder;
 exports.deliverReminders = deliverReminders;
-let database = null;
-let ownerQueue = Promise.resolve();
+const reminderKeyPrefix = "reminder_";
+const interruptedDeliveryError = "Notification delivery was interrupted; its outcome is unknown. It has not been resent.";
+/** Holds the native preference owner shared by reminder operations. */
+let store = null;
 let persistenceFailure = null;
+let ownerQueue = Promise.resolve();
 /** Requires non-empty reminder input without rewriting its content. */
 function requireText(value, field) {
     if (typeof value !== "string" || value.trim() === "") {
@@ -39,13 +42,12 @@ function parseDueDate(value) {
     return timestamp;
 }
 /** Validates persistent records rather than silently replacing corrupt plugin storage. */
-function validateDatabase(db) {
-    if (db.version !== 1 || !Array.isArray(db.reminders))
-        throw new Error("Invalid daily_life reminder database");
+function validateReminders(reminders) {
     const ids = new Set();
-    for (const reminder of db.reminders) {
-        if (reminder === null || typeof reminder !== "object")
+    for (const record of reminders) {
+        if (record === null || typeof record !== "object")
             throw new Error("Invalid reminder record");
+        const reminder = record;
         requireText(reminder.id, "reminder.id");
         requireText(reminder.title, "reminder.title");
         requireText(reminder.description, "reminder.description");
@@ -59,58 +61,53 @@ function validateDatabase(db) {
         ids.add(reminder.id);
     }
 }
-/** Opens plugin-owned storage and records interrupted deliveries as explicit unknown outcomes. */
-async function initialize() {
-    const db = await PluginConfig.use("reminders", { version: 1, reminders: [] });
-    validateDatabase(db);
-    const interrupted = db.reminders.some(reminder => reminder.status === "delivering");
-    if (interrupted) {
-        db.reminders = db.reminders.map(reminder => reminder.status === "delivering" ? {
-            ...reminder, status: "failed",
-            error: "Notification delivery was interrupted; its outcome is unknown. It has not been resent.",
-        } : reminder);
-        await persist(db);
+/** Validates stored reminders and records interrupted deliveries before the first read. */
+async function initialize(opened) {
+    const reminders = (await opened.data()).entries()
+        .filter(([key]) => key.startsWith(reminderKeyPrefix))
+        .map(([, value]) => value);
+    validateReminders(reminders);
+    for (const reminder of reminders) {
+        if (reminder.status === "delivering") {
+            await opened.edit(preferences => {
+                preferences.set(reminderKeyPrefix + reminder.id, {
+                    ...reminder, status: "failed", error: interruptedDeliveryError,
+                });
+            });
+        }
     }
-    return db;
+    return opened;
 }
-/** Shares the one storage owner across tool calls and Host event callbacks. */
+/** Opens the plugin's native preference store exactly once per runtime. */
 function load() {
     if (persistenceFailure !== null)
         return Promise.reject(persistenceFailure);
-    if (database === null)
-        database = initialize();
-    return database;
+    if (store === null) {
+        store = Tools.Storage.dataStore.open({ path: `${ToolPkg.getSpaceDataDir()}/reminders.preferences.json` })
+            .then(opened => opened.withSchema(1, () => { }))
+            .then(initialize);
+    }
+    return store;
 }
 /** Stops this owner after a storage failure instead of delivering uncommitted reminders. */
-async function persist(db) {
+async function persistRecord(opened, reminder) {
     try {
-        await PluginConfig.flush(db);
+        await opened.edit(preferences => {
+            preferences.set(reminderKeyPrefix + reminder.id, reminder);
+        });
     }
     catch (error) {
         persistenceFailure = new Error(`Reminder storage failed; this runtime has stopped delivery: ${String(error)}`);
         throw persistenceFailure;
     }
 }
-/** Releases queue ownership without changing the original caller's success or failure. */
-function releaseOwnerQueue() { }
-/** Serializes tool mutations and scheduled delivery without retrying failed operations. */
-function owned(operation) {
-    const result = ownerQueue.then(operation);
-    ownerQueue = result.then(releaseOwnerQueue, releaseOwnerQueue);
-    return result;
-}
 /** Returns a detached reminder record so callers cannot mutate plugin storage. */
 function copy(reminder) {
     return { ...reminder };
 }
-/** Commits one exact reminder update before reporting success. */
-async function update(db, reminder) {
-    db.reminders = db.reminders.map(item => item.id === reminder.id ? reminder : item);
-    await persist(db);
-}
 /** Executes validated reminder operations inside the main-runtime owner. */
 async function dispatch(request) {
-    const db = await load();
+    const opened = await load();
     switch (request.action) {
         case "create": {
             const title = requireText(request.title, "title");
@@ -125,23 +122,32 @@ async function dispatch(request) {
                 due_timestamp: dueTimestamp, created_at: new Date(now).toISOString(),
                 status: "pending", delivered_at: null, error: null,
             };
-            if (db.reminders.some(item => item.id === reminder.id))
+            const existing = (await opened.data()).contains(reminderKeyPrefix + reminder.id);
+            if (existing)
                 throw new Error("Reminder ID collision");
-            db.reminders = [...db.reminders, reminder];
-            await persist(db);
+            await persistRecord(opened, reminder);
             return copy(reminder);
         }
-        case "list":
-            return db.reminders.map(copy).sort((left, right) => left.due_timestamp - right.due_timestamp);
+        case "list": {
+            const snapshot = await opened.data();
+            const reminders = snapshot.entries()
+                .filter(([key]) => key.startsWith(reminderKeyPrefix))
+                .map(([, value]) => value);
+            validateReminders(reminders);
+            return reminders.map(copy).sort((left, right) => left.due_timestamp - right.due_timestamp);
+        }
         case "cancel": {
             const id = requireText(request.id, "id");
-            const reminder = db.reminders.find(item => item.id === id);
-            if (reminder === undefined)
+            const snapshot = await opened.data();
+            const stored = snapshot.entries().find(([key]) => key === reminderKeyPrefix + id);
+            if (stored === undefined)
                 throw new Error(`Reminder not found: ${id}`);
+            const reminder = stored[1];
+            validateReminders([reminder]);
             if (reminder.status !== "pending")
                 throw new Error(`Cannot cancel reminder in ${reminder.status} state: ${id}`);
             const cancelled = { ...reminder, status: "cancelled" };
-            await update(db, cancelled);
+            await persistRecord(opened, cancelled);
             return copy(cancelled);
         }
         default:
@@ -154,22 +160,27 @@ function receiveReminder(request) {
 }
 /** Claims due reminders durably and records the actual notification outcome once. */
 async function deliver() {
-    const db = await load();
-    const due = db.reminders.filter(reminder => reminder.status === "pending" && reminder.due_timestamp <= Date.now());
+    const opened = await load();
+    const snapshot = await opened.data();
+    const stored = snapshot.entries()
+        .filter(([key]) => key.startsWith(reminderKeyPrefix))
+        .map(([, value]) => value);
+    validateReminders(stored);
+    const due = stored.filter(reminder => reminder.status === "pending" && reminder.due_timestamp <= Date.now());
     const failures = [];
     for (const reminder of due) {
         const delivering = { ...reminder, status: "delivering" };
-        await update(db, delivering);
+        await persistRecord(opened, delivering);
         try {
-            await Tools.System.sendNotification(reminder.description, reminder.title);
+            await Tools.System.sendNotification(delivering.description, delivering.title);
         }
         catch (error) {
             const message = String(error);
-            await update(db, { ...delivering, status: "failed", error: message });
-            failures.push(`${reminder.id}: ${message}`);
+            await persistRecord(opened, { ...delivering, status: "failed", error: message });
+            failures.push(`${delivering.id}: ${message}`);
             continue;
         }
-        await update(db, { ...delivering, status: "delivered", delivered_at: new Date().toISOString() });
+        await persistRecord(opened, { ...delivering, status: "delivered", delivered_at: new Date().toISOString() });
     }
     if (failures.length > 0)
         throw new Error(`Reminder delivery failed: ${failures.join("; ")}`);
@@ -177,4 +188,10 @@ async function deliver() {
 /** Processes persisted due reminders when the existing Host emits a lifecycle or clock event. */
 function deliverReminders() {
     return owned(deliver);
+}
+/** Serializes tool mutations and scheduled delivery without retrying failed operations. */
+function owned(operation) {
+    const result = ownerQueue.then(operation);
+    ownerQueue = result.then(() => undefined, () => undefined);
+    return result;
 }

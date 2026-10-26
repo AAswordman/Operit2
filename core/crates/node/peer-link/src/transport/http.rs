@@ -1,6 +1,7 @@
 //! HTTP 全双工承载：一个持续响应体接收消息，POST 发送消息；不是 WS 回退。
 //! 连接标识仅用于关联 HTTP 请求，不作为节点身份或配对授权。
 use super::{
+    http_outbox::HttpOutbox,
     inbox::{hostTask, Inbox},
     stream::{ByteConnection, FramedPeerConnection},
 };
@@ -43,36 +44,54 @@ fn request(url: String, method: &str, id: &str, body: Vec<u8>) -> HttpRequestDat
 }
 struct Client {
     host: Arc<dyn HttpHost>,
-    scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
     id: String,
     url: String,
     inbox: Arc<Inbox>,
+    outbox: Arc<HttpOutbox>,
 }
 impl Drop for Client {
+    /// Stops the sender and releases its streaming GET when the connection is dropped.
     fn drop(&mut self) {
+        self.outbox.finish(Ok(()));
         let _ = self.host.closeHttpByteStream(&self.id);
     }
 }
 #[async_trait]
 impl ByteConnection for Client {
+    /// Queues ordered frames for the connection's single clocked HTTP sender.
     async fn write(&self, bytes: &[u8]) -> Result<(), String> {
-        self.inbox.status()?;
-        let host = self.host.clone();
-        let request = request(self.url.clone(), "POST", &self.id, bytes.to_vec());
-        let result = hostTask(&self.scheduler, move || host.executeHttpRequest(request)).await?;
-        if result.statusCode != 204 {
-            return Err(format!("HTTP Link send failed: {}", result.statusCode));
-        }
-        Ok(())
+        self.outbox.write(bytes).await
     }
     async fn read(&self) -> Result<Option<Vec<u8>>, String> {
         self.inbox.read().await
     }
+    /// Stops queued writes and wakes the receiver when this connection is explicitly closed.
     async fn close(&self) {
-        self.inbox.finish(Ok(()));
+        self.outbox.finish(Ok(()));
         let _ = self.host.closeHttpByteStream(&self.id);
     }
 }
+
+/// Sends one frozen batch at a time, allowing subsequent frames to accumulate during HTTP I/O.
+async fn sendBatches(
+    outbox: &HttpOutbox,
+    scheduler: &Arc<dyn HostRuntimeTaskSchedulerHost>,
+    host: &Arc<dyn HttpHost>,
+    id: &str,
+    url: &str,
+) -> Result<(), String> {
+    while let Some(bytes) = outbox.nextBatch(scheduler.as_ref()).await? {
+        let host = host.clone();
+        let request = request(url.to_owned(), "POST", id, bytes);
+        let result = hostTask(scheduler, move || host.executeHttpRequest(request)).await?;
+        if result.statusCode != 204 {
+            return Err(format!("HTTP Link send failed: {}", result.statusCode));
+        }
+    }
+    Ok(())
+}
+
+/// Opens the receiving GET and installs one Host-owned sender for ordered POST batches.
 pub(super) async fn connect(
     host: &HostManager,
     source: PeerEndpoint,
@@ -85,12 +104,13 @@ pub(super) async fn connect(
         .clone()
         .ok_or("Host task scheduler is not installed")?;
     let inbox = Inbox::new(maxMessageBytes);
+    let outbox = HttpOutbox::new(maxMessageBytes + 4, inbox.clone());
     let client = Arc::new(Client {
         host: provider.clone(),
-        scheduler,
         id: uuid::Uuid::new_v4().to_string(),
         url: target.address.clone(),
         inbox: inbox.clone(),
+        outbox: outbox.clone(),
     });
     let (tx, rx) = oneshot::channel();
     let opened = Arc::new(StdMutex::new(Some(tx)));
@@ -114,12 +134,27 @@ pub(super) async fn connect(
                         .err()
                         .unwrap_or("HTTP stream closed before opening".into())));
                 }
-                inbox.finish(result);
+                outbox.finish(result);
             }),
         )
         .map_err(|e| e.to_string())?;
     rx.await
         .map_err(|_| "HTTP opening cancelled".to_string())??;
+    let http = client.host.clone();
+    let tasks = scheduler.clone();
+    let id = client.id.clone();
+    let url = client.url.clone();
+    let outbox = client.outbox.clone();
+    scheduler
+        .scheduleHostRuntimeAsyncTask(
+            "peer-http-sender",
+            Box::new(move || Box::pin(async move {
+                let result = sendBatches(&outbox, &tasks, &http, &id, &url).await;
+                outbox.finish(result);
+                let _ = http.closeHttpByteStream(&id);
+            })),
+        )
+        .map_err(|error| error.to_string())?;
     Ok(FramedPeerConnection::new(
         source,
         target,

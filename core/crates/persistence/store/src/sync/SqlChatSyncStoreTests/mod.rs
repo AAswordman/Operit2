@@ -57,6 +57,12 @@ impl TestRuntimeHost {
 }
 
 impl RuntimeStorageHost for TestRuntimeHost {
+    /// Flushes the existing test file through its backing filesystem.
+    fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+        std::fs::OpenOptions::new().write(true).open(self.resolve(path)?)?.sync_all()?;
+        Ok(())
+    }
+
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         Some(self.root.clone())
     }
@@ -82,6 +88,12 @@ impl RuntimeStorageHost for TestRuntimeHost {
             .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
             .min(content.len());
         Ok(content[start..end].to_vec())
+    }
+
+    /// Uses the production atomic writer for filesystem-backed persistence tests.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        operit_host_native_storage::NativeRuntimeStorageHost::new(self.root.join("runtime"), self.root.join("workspaces"))
+            .writeBytesAtomically(path, content)
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
@@ -1406,6 +1418,86 @@ fn stress_ultra_many_messages_roundtrip_with_stream_compaction() {
             .unwrap()
             .sequenceFor(&operations[0].originDeviceId),
         (messageCount * updateRounds) as i64
+    );
+    AppDatabase::closeDatabase();
+}
+
+/// Applies an earlier independent SQL entity after a later sequence and exports the exact missing gap.
+#[test]
+fn sparse_sql_receipts_do_not_hide_earlier_independent_entities() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, syncStore) = openTestStore("sparse-sql-receipts");
+    let earlier = upsertOperation(1, "earlier");
+    let mut later = upsertOperation(2, "later");
+    let mut payload: ChatSyncPayload = serde_json::from_value(later.payload.clone()).unwrap();
+    payload.messageRows[0].timestamp = 2001;
+    payload.partRows[0].messageTimestamp = 2001;
+    later.entityId = "chat-remote:2001".into();
+    later.payload = serde_json::to_value(payload).unwrap();
+    syncStore.applyOperation(&later).unwrap();
+    syncStore.applyOperation(&earlier).unwrap();
+    assert!(
+        database
+            .messageDao()
+            .getMessageByTimestamp("chat-remote", 2000)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        database
+            .messageDao()
+            .getMessageByTimestamp("chat-remote", 2001)
+            .unwrap()
+            .is_some()
+    );
+    let mut receipt = SyncReceipt::default();
+    receipt.observe("remote-sql", 2);
+    let exported = syncStore
+        .operationsSince(&receipt, &[CHAT_SYNC_DOMAIN.into()], 1)
+        .unwrap();
+    assert_eq!(exported.len(), 1);
+    assert_eq!(exported[0].opId, earlier.opId);
+    assert_eq!(
+        syncStore.receipt().unwrap().ranges["remote-sql"],
+        vec![[1, 2]]
+    );
+    AppDatabase::closeDatabase();
+}
+
+/// Keeps accepted sequence membership after SQL deliberately compacts an older entity snapshot.
+#[test]
+fn native_sql_compaction_does_not_erase_durable_receipts() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, syncStore) = openTestStore("compacted-sql-receipts");
+    let earlier = upsertOperation(1, "earlier");
+    let later = upsertOperation(2, "later");
+    let operations = vec![earlier, later];
+    syncStore
+        .syncOperationStore
+        .receiveOperations(&operations)
+        .unwrap();
+    for operation in &operations {
+        syncStore.applyOperation(operation).unwrap();
+        syncStore
+            .syncOperationStore
+            .completeOperations(std::slice::from_ref(operation))
+            .unwrap();
+    }
+    assert_eq!(sqlOperationCount(&database), 1);
+    assert_eq!(
+        syncStore.receipt().unwrap().ranges["remote-sql"],
+        vec![[2, 2]]
+    );
+    assert_eq!(
+        syncStore.syncOperationStore.receipt().unwrap().ranges["remote-sql"],
+        vec![[1, 2]]
+    );
+    assert!(
+        syncStore
+            .syncOperationStore
+            .pendingOperations()
+            .unwrap()
+            .is_empty()
     );
     AppDatabase::closeDatabase();
 }

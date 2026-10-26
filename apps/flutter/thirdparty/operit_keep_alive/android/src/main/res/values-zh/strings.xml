@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="operit_work_channel">后台工作</string>
+    <string name="operit_work_running">正在运行</string>
+    <string name="operit_work_waiting">等待你确认</string>
+    <string name="operit_work_completed">已完成</string>
+    <string name="operit_work_failed">执行失败，打开查看详情</string>
+    <string name="operit_work_cancelled">已停止</string>
+    <string name="operit_work_processing">正在准备</string>
+    <string name="operit_work_connecting">正在连接</string>
+    <string name="operit_work_receiving">正在生成回复</string>
+    <string name="operit_work_executing_tool">正在执行工具</string>
+    <string name="operit_work_processing_tool_result">正在处理工具结果</string>
+    <string name="operit_work_summarizing">正在整理上下文</string>
+    <string name="operit_work_executing_plan">正在执行计划</string>
+    <string name="operit_work_open">查看工作</string>
+    <string name="operit_work_review">查看并确认</string>
+    <string name="operit_work_stop">停止</string>
+    <string name="operit_work_summary">%1$d 项正在运行 · %2$d 项待确认</string>
+    <string name="operit_work_chip_running">运行中</string>
+    <string name="operit_work_chip_waiting">待确认</string>
+</resources>

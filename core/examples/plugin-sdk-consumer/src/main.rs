@@ -31,7 +31,6 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         _env_overrides: &BTreeMap<String, String>,
         _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
         _dispatch_intermediate_on_main: bool,
-        _timeout_sec: u64,
     ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsExecutionResult<Option<String>>>
     {
         let result = (|| Ok(Some(format!("executed:{function_name}"))))();
@@ -63,7 +62,6 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         _env_overrides: BTreeMap<String, String>,
         _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
         _dispatch_intermediate_on_main: bool,
-        _timeout_millis: u64,
     ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
         Box::pin(async move { Ok(Some(format!("executed:{function_name}"))) })
     }

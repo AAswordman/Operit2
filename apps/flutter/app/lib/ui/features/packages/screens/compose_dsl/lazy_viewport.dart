@@ -29,6 +29,7 @@ class ComposeDslLazyListView extends ListView {
     offset: offset,
     slivers: slivers,
     shrinkWrap: shrinkWrap,
+    itemCacheExtent: cacheExtent,
     clipBehavior: clipBehavior,
     paintOrder: paintOrder,
   );
@@ -42,11 +43,13 @@ class _ComposeLazyViewport extends ShrinkWrappingViewport {
     required super.offset,
     required super.slivers,
     required this.shrinkWrap,
+    required this.itemCacheExtent,
     required super.clipBehavior,
     required super.paintOrder,
   });
 
   final bool shrinkWrap;
+  final double? itemCacheExtent;
 
   /// Creates the sliver viewport without requiring a bounded cross axis.
   @override
@@ -59,6 +62,7 @@ class _ComposeLazyViewport extends ShrinkWrappingViewport {
         ),
         offset: offset,
         shrinkWrap: shrinkWrap,
+        itemCacheExtent: itemCacheExtent,
         clipBehavior: clipBehavior,
         paintOrder: paintOrder,
       );
@@ -70,7 +74,9 @@ class _ComposeLazyViewport extends ShrinkWrappingViewport {
     _RenderComposeLazyViewport renderObject,
   ) {
     super.updateRenderObject(context, renderObject);
-    renderObject.shrinkWrap = shrinkWrap;
+    renderObject
+      ..shrinkWrap = shrinkWrap
+      ..cacheExtent = itemCacheExtent;
   }
 }
 
@@ -84,7 +90,10 @@ class _RenderComposeLazyViewport extends RenderShrinkWrappingViewport {
     required super.clipBehavior,
     required super.paintOrder,
     required bool shrinkWrap,
-  }) : _shrinkWrap = shrinkWrap;
+    required double? itemCacheExtent,
+  }) : _shrinkWrap = shrinkWrap {
+    cacheExtent = itemCacheExtent;
+  }
 
   bool _shrinkWrap;
   double _availableCrossAxisExtent = 0;

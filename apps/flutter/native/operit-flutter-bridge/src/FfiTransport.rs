@@ -1,15 +1,16 @@
-//! Direct Dart transport, selected only by the platform host dispatcher.
-//! Each connection retains the host runtime and owns its subscriptions.
+//! Direct Dart transport with one connection-owned Push/Watch session.
+//! ABI v3 delivers batches through a single VM port with shared binary ownership.
 
 use crate::BridgeCodec::*;
 use crate::BridgeExports;
+use crate::BridgeTransport::{BridgeStreams, StreamAction, StreamReply, WATCH_BATCH_CAPACITY};
 use crate::OperitFlutterBridge;
 use futures_util::FutureExt;
 use operit_host_native_common::DartPort::{DartPort, PostCObject};
-use operit_host_native_common::SharedBuffer::{SharedBuffer, shared_allocate, shared_data, shared_seal, shared_release, shared_retain};
-use operit_link::{CoreEventKind, CoreLinkError, CoreLinkSharedClient};
-use std::collections::HashSet;
-use std::collections::{hash_map::Entry, HashMap};
+use operit_host_native_common::SharedBuffer::{
+    shared_allocate, shared_data, shared_release, shared_retain, shared_seal, SharedBuffer,
+};
+use operit_link::{CoreLinkError, CoreLinkSharedClient};
 use std::ffi::{c_char, c_void, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -18,226 +19,176 @@ pub struct FfiSession {
     bridge: Arc<OperitFlutterBridge>,
     port: OnceLock<DartPort>,
     delivery: Mutex<()>,
-    watches: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
-    pushes: Mutex<HashSet<String>>,
+    streams: OnceLock<BridgeStreams>,
     closed: AtomicBool,
 }
 
 impl FfiSession {
-    /// Shares the existing ABI byte frame with the VM while retaining its wire layout.
+    /// Delivers one ordinary response using the same batch envelope as watch events.
     fn post(&self, frame: NativeFrame) {
+        self.postBatch(vec![frame]);
+    }
+
+    /// Transfers ready frames together while preserving each frame's binary attachment scope.
+    fn postBatch(&self, frames: Vec<NativeFrame>) {
         let delivery = self.delivery.lock().expect("FFI delivery lock");
         if self.closed.load(Ordering::Acquire) {
             return;
         }
-        let (bytes, buffers) = frame.into_parts();
         if !self
             .port
             .get()
             .expect("FFI session must be connected")
-            .send(bytes, buffers)
+            .sendBatch(frames.into_iter().map(NativeFrame::into_parts).collect())
         {
             drop(delivery);
             self.close();
         }
     }
 
-    /// Cancels this connection's streams while leaving the host runtime alive.
+    /// Cancels every source and pending stream operation belonging to this connection.
     fn close(&self) {
         let _delivery = self.delivery.lock().expect("FFI delivery lock");
         self.closed.store(true, Ordering::Release);
-        self.watches.lock().expect("FFI watches lock").clear();
+        if let Some(streams) = self.streams.get() {
+            streams.close();
+        }
     }
 
-    /// Opens a watch on the host scheduler and reports source errors to Dart.
-    fn watch(self: &Arc<Self>, request_id: i64, bytes: &[u8], buffers: Arc<[operit_link::CoreBytes]>) -> NativeFrame {
-        let result = (|| {
-            let (id, request) = operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_watch_stream_request(bytes))?;
-            let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
-            {
-                let mut watches = self.watches.lock().expect("FFI watches lock");
-                if self.closed.load(Ordering::Acquire) {
-                    return Err(CoreLinkError::new("FFI_CLOSED", "FFI connection is closed"));
-                }
-                match watches.entry(id.clone()) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(cancel);
-                    }
-                    Entry::Occupied(_) => {
-                        return Err(CoreLinkError::new(
-                            "WATCH_ALREADY_EXISTS",
-                            "watch subscription already exists",
-                        ))
-                    }
-                }
-            }
-            let weak = Arc::downgrade(self);
-            let core = self.bridge.localCore.clone();
-            let task_id = id.clone();
-            let scheduled = self
-                .bridge
-                .runtimeTaskScheduler()
-                .scheduleHostRuntimeAsyncTask(
-                    "operit-ffi-watch",
-                    Box::new(move || {
-                        Box::pin(async move {
-                            let outcome = std::panic::AssertUnwindSafe(async {
-                        let source = tokio::select! {
-                            _ = &mut cancelled => return,
-                            result = CoreLinkSharedClient::watch(core.as_ref(), request) => result,
+    /// Starts one multiplexing owner and one batched delivery task for this Dart connection.
+    fn attach(self: &Arc<Self>, post: PostCObject, port: i64) -> bool {
+        if self.port.set(DartPort::new(post, port)).is_err() {
+            return false;
+        }
+        let scheduler = self.bridge.runtimeTaskScheduler();
+        let (streams, mut events) =
+            match BridgeStreams::start(self.bridge.localCore.clone(), scheduler.as_ref()) {
+                Ok(connection) => connection,
+                Err(_) => return false,
+            };
+        if self.streams.set(streams).is_err() {
+            return false;
+        }
+        let weak = Arc::downgrade(self);
+        let result = scheduler.scheduleHostRuntimeAsyncTask(
+            "operit-ffi-stream-delivery",
+            Box::new(move || {
+                Box::pin(async move {
+                    let mut batch = Vec::with_capacity(WATCH_BATCH_CAPACITY);
+                    while events.recv_many(&mut batch, WATCH_BATCH_CAPACITY).await != 0 {
+                        let Some(session) = weak.upgrade() else {
+                            return;
                         };
-                        match source {
-                            Ok(mut events) => loop {
-                                let event = tokio::select! {
-                                    _ = &mut cancelled => break,
-                                    event = events.recv() => event,
-                                };
-                                let Some(event) = event else {
-                                    break;
-                                };
-                                let completed = event.kind == CoreEventKind::Completed;
-                                let Some(session) = weak.upgrade() else {
-                                    break;
-                                };
-                                session.post(NativeFrame::watch(request_id, &task_id, event));
-                                if completed {
-                                    break;
-                                }
-                            },
-                            Err(error) => {
-                                if let Some(session) = weak.upgrade() {
-                                    session.post(NativeFrame::result(2, request_id, Err::<(), _>(error)));
-                                }
-                            }
-                        }
-                        }).catch_unwind().await;
-                            if let Err(payload) = outcome {
-                                if let Some(session) = weak.upgrade() {
-                                    session.post(NativeFrame::error(2, request_id,
-                                            "FATAL_CORE_PANIC",
-                                            BridgeExports::panic_payload_message(payload.as_ref()),
-                                    ));
-                                }
-                            }
-                            if let Some(session) = weak.upgrade() {
-                                session
-                                    .watches
-                                    .lock()
-                                    .expect("FFI watches lock")
-                                    .remove(&task_id);
-                                session.post(NativeFrame::empty(3, request_id));
-                            }
-                        })
-                    }),
-                );
-            if let Err(error) = scheduled {
-                self.watches.lock().expect("FFI watches lock").remove(&id);
-                return Err(CoreLinkError::internal(error.to_string()));
-            }
-            Ok(id)
-        })();
-        NativeFrame::result(0, request_id, result)
+                        session.postBatch(
+                            batch
+                                .drain(..)
+                                .flat_map(|delivery| match delivery.event {
+                                    Ok(Some(event)) => {
+                                        vec![NativeFrame::watch(delivery.tag, &delivery.id, event)]
+                                    }
+                                    Ok(None) => vec![NativeFrame::empty(3, delivery.tag)],
+                                    Err(error) => vec![
+                                        NativeFrame::result(2, delivery.tag, Err::<(), _>(error)),
+                                        NativeFrame::empty(3, delivery.tag),
+                                    ],
+                                })
+                                .collect(),
+                        );
+                    }
+                })
+            }),
+        );
+        if result.is_err() {
+            self.close();
+            return false;
+        }
+        true
     }
 
-    /// Executes one protocol operation using shared references to the retained runtime.
-    async fn dispatch(self: &Arc<Self>, operation: u32, request: i64, bytes: &[u8], buffers: Arc<[operit_link::CoreBytes]>) -> NativeFrame {
+    /// Decodes and enqueues stream commands in Dart submission order before scheduling replies.
+    fn submitStream(
+        &self,
+        operation: u32,
+        request: i64,
+        bytes: &[u8],
+        buffers: Arc<[operit_link::CoreBytes]>,
+    ) -> Result<StreamReply, CoreLinkError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(CoreLinkError::new("FFI_CLOSED", "FFI connection is closed"));
+        }
+        let action = operit_link::codec::withLinkBuffers(buffers, || match operation {
+            1 => decode_native_push_open_request(bytes).map(StreamAction::OpenPush),
+            2 => decode_native_push_item(bytes).map(StreamAction::PushItem),
+            3 => std::str::from_utf8(bytes)
+                .map_err(|error| CoreLinkError::internal(error.to_string()))
+                .map(|id| StreamAction::ClosePush(id.to_string())),
+            6 => operit_link::decodeLink::<(String, i64)>(bytes)
+                .map(|(id, tag)| StreamAction::CloseWatch { id, tag })
+                .map_err(|error| CoreLinkError::internal(error.to_string())),
+            5 => decode_native_watch_stream_request(bytes).map(|(id, watch)| {
+                StreamAction::OpenWatch {
+                    id,
+                    request: watch,
+                    tag: request,
+                }
+            }),
+            _ => Err(CoreLinkError::new(
+                "FFI_OPERATION",
+                "Unknown stream operation",
+            )),
+        })?;
+        self.streams
+            .get()
+            .expect("FFI stream session must be attached")
+            .submit(action)
+    }
+
+    /// Executes independent calls and snapshots without blocking the stream owner's mailbox.
+    async fn dispatch(
+        &self,
+        operation: u32,
+        request: i64,
+        bytes: &[u8],
+        buffers: Arc<[operit_link::CoreBytes]>,
+    ) -> NativeFrame {
         if self.closed.load(Ordering::Acquire) {
             return NativeFrame::error(0, request, "FFI_CLOSED", "FFI connection is closed");
         }
         match operation {
             0 => {
-                let result = match operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_call_request(bytes)) {
+                let result = match operit_link::codec::withLinkBuffers(buffers, || {
+                    decode_native_call_request(bytes)
+                }) {
                     Ok(request) => self.bridge.prepareCall(request).execute().await.result,
                     Err(error) => Err(error),
                 };
                 NativeFrame::result(0, request, result)
             }
-            1 => {
-                let result = operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_push_open_request(bytes)).and_then(|request| {
-                    let id = self.bridge.pushOpen(request)?;
-                    self.pushes
-                        .lock()
-                        .expect("FFI pushes lock")
-                        .insert(id.clone());
-                    Ok(id)
-                });
-                NativeFrame::result(0, request, result)
-            }
-            2 => {
-                let item = match operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_push_item(bytes)) {
-                    Ok(item) => item,
-                    Err(error) => return NativeFrame::result(0, request, Err::<(), _>(error)),
-                };
-                if !self
-                    .pushes
-                    .lock()
-                    .expect("FFI pushes lock")
-                    .contains(&item.pushId)
-                {
-                    return NativeFrame::error(
-                        0,
-                        request,
-                        "PUSH_NOT_FOUND",
-                        "push is not owned by this connection",
-                    );
-                }
-                let result = match self.bridge.preparePushItem(item) {
-                    Ok(task) => task.execute().await,
-                    Err(error) => Err(error),
-                };
-                NativeFrame::result(0, request, result)
-            }
-            3 => {
-                let result = async {
-                    let id = std::str::from_utf8(bytes)
-                        .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-                    if !self.pushes.lock().expect("FFI pushes lock").remove(id) {
-                        return Err(CoreLinkError::new(
-                            "PUSH_NOT_FOUND",
-                            "push is not owned by this connection",
-                        ));
-                    }
-                    self.bridge.preparePushClose(id)?.execute().await
-                }
-                .await;
-                NativeFrame::result(0, request, result)
-            }
             4 => {
-                let result = match operit_link::codec::withLinkBuffers(buffers.clone(), || decode_native_watch_snapshot_request(bytes)) {
-                    Ok(request) => self.bridge.prepareWatchSnapshot(request).execute().await,
+                let result = match operit_link::codec::withLinkBuffers(buffers, || {
+                    decode_native_watch_snapshot_request(bytes)
+                }) {
+                    Ok(request) => {
+                        CoreLinkSharedClient::watchSnapshot(self.bridge.localCore.as_ref(), request)
+                            .await
+                    }
                     Err(error) => Err(error),
                 };
                 NativeFrame::result(0, request, result.map(native_watch_event_payload))
             }
-            5 => self.watch(request, bytes, buffers),
-            6 => NativeFrame::result(
-                0,
-                request,
-                std::str::from_utf8(bytes)
-                    .map_err(|error| CoreLinkError::internal(error.to_string()))
-                    .map(|id| {
-                        self.watches.lock().expect("FFI watches lock").remove(id);
-                    }),
-            ),
-            _ => NativeFrame::error(0, request, "FFI_OPERATION", "unknown FFI operation"),
+            _ => NativeFrame::error(0, request, "FFI_OPERATION", "Unknown FFI operation"),
         }
     }
 }
 
 impl Drop for FfiSession {
-    /// Releases only resources created by this Dart connection.
+    /// Releases the connection's stream owner while preserving the platform Runtime.
     fn drop(&mut self) {
         self.close();
-        let owned = self.pushes.get_mut().expect("FFI pushes lock");
-        let mut streams = self.bridge.pushStreams.lock().expect("push streams lock");
-        for id in owned.drain() {
-            streams.remove(&id);
-        }
     }
 }
 
-/// Creates a retained connection and returns its versioned function table to the host.
-/// The host must pass a live handle returned by the bridge creation exports.
+/// Creates a retained ABI-v3 connection from the live runtime owned by the platform host.
 #[no_mangle]
 pub unsafe extern "C" fn operit_flutter_bridge_ffi_connect(
     handle: *const OperitFlutterBridge,
@@ -248,14 +199,12 @@ pub unsafe extern "C" fn operit_flutter_bridge_ffi_connect(
         bridge: Arc::from_raw(handle),
         port: OnceLock::new(),
         delivery: Mutex::new(()),
-        watches: Mutex::new(HashMap::new()),
-        pushes: Mutex::new(HashSet::new()),
+        streams: OnceLock::new(),
         closed: AtomicBool::new(false),
     });
     let descriptor = serde_json::json!({
-        "version": 2,
-        // Addresses cross JSON as strings because JSON numbers cannot represent every
-        // 64-bit pointer exactly on Dart's decoder.
+        "version": 3,
+        // Pointer addresses must remain strings across JSON's numeric precision boundary.
         "session": (Arc::into_raw(session) as usize).to_string(),
         "attach": (ffi_attach as *const () as usize).to_string(),
         "submit": (ffi_submit as *const () as usize).to_string(),
@@ -273,9 +222,10 @@ pub unsafe extern "C" fn operit_flutter_bridge_ffi_connect(
         .into_raw()
 }
 
-/// Installs a VM-owned send port exactly once for this connection.
-unsafe extern "C" fn ffi_attach(session: *const FfiSession, post: PostCObject, port: i64) -> bool {
-    (*session).port.set(DartPort::new(post, port)).is_ok()
+/// Installs the VM port and initializes this connection's shared stream owner exactly once.
+unsafe extern "C" fn ffi_attach(pointer: *const FfiSession, post: PostCObject, port: i64) -> bool {
+    Arc::increment_strong_count(pointer);
+    Arc::from_raw(pointer).attach(post, port)
 }
 
 /// Allocates request storage that Dart completely initializes before submitting it.
@@ -286,11 +236,12 @@ unsafe extern "C" fn ffi_allocate(length: usize) -> *mut u8 {
 /// Releases exactly one buffer allocated by the connection's allocator.
 unsafe extern "C" fn ffi_free(pointer: *mut u8, length: usize) {
     drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-        pointer.cast::<std::mem::MaybeUninit<u8>>(), length,
+        pointer.cast::<std::mem::MaybeUninit<u8>>(),
+        length,
     )));
 }
 
-/// Takes ownership of an allocated request and schedules it off the calling Dart isolate.
+/// Preserves stream ingress order while executing calls and awaiting replies on the Host scheduler.
 unsafe extern "C" fn ffi_submit(
     pointer: *const FfiSession,
     operation: u32,
@@ -306,7 +257,14 @@ unsafe extern "C" fn ffi_submit(
     let allocation_length = (length + width - 1) / width * width + handle_count * width;
     let bytes = Box::from_raw(std::ptr::slice_from_raw_parts_mut(bytes, allocation_length));
     let buffers: Arc<[operit_link::CoreBytes]> = (0..handle_count)
-        .map(|index| SharedBuffer::retain(*handles.add(index))).collect();
+        .map(|index| SharedBuffer::retain(*handles.add(index)))
+        .collect();
+    let stream = match operation {
+        1 | 2 | 3 | 5 | 6 => {
+            Some(session.submitStream(operation, request, &bytes[..length], buffers.clone()))
+        }
+        _ => None,
+    };
     let worker_session = session.clone();
     let result = session
         .bridge
@@ -315,13 +273,32 @@ unsafe extern "C" fn ffi_submit(
             "operit-ffi-request",
             Box::new(move || {
                 Box::pin(async move {
-                    let response = std::panic::AssertUnwindSafe(
-                        worker_session.dispatch(operation, request, &bytes[..length], buffers),
-                    )
+                    let response = std::panic::AssertUnwindSafe(async {
+                        match stream {
+                            Some(reply) => {
+                                let result = match reply {
+                                    Ok(reply) => reply.await.map_err(|_| {
+                                        CoreLinkError::new(
+                                            "STREAM_CLOSED",
+                                            "Connection stream owner stopped",
+                                        )
+                                    })?,
+                                    Err(error) => Err(error),
+                                };
+                                Ok(NativeFrame::result(0, request, result))
+                            }
+                            None => Ok(worker_session
+                                .dispatch(operation, request, &bytes[..length], buffers)
+                                .await),
+                        }
+                    })
                     .catch_unwind()
                     .await;
                     let response = match response {
-                        Ok(response) => response,
+                        Ok(Ok(frame)) => frame,
+                        Ok(Err(error)) => {
+                            NativeFrame::result(0, request, Err::<(), CoreLinkError>(error))
+                        }
                         Err(payload) => NativeFrame::error(
                             0,
                             request,
@@ -343,7 +320,7 @@ unsafe extern "C" fn ffi_submit(
     }
 }
 
-/// Detaches Dart and releases its retained runtime reference after in-flight work ends.
+/// Detaches Dart and cancels all streams without destroying the platform runtime.
 unsafe extern "C" fn ffi_release(pointer: *mut c_void) {
     let session = Arc::from_raw(pointer.cast::<FfiSession>());
     session.close();

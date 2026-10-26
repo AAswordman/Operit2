@@ -1,0 +1,43 @@
+{
+  "formatVersion": 1,
+  "fonts": [
+    {
+      "id": "noto-sans-sc",
+      "asset": "assets/fonts/noto-sans-sc.ttf",
+      "bytes": 10596456,
+      "sha256": "45d1271fcbee90c6e13ed3f479e7561c5c242edc68a03320db610f4f291f0399",
+      "license": "OFL-1.1",
+      "licenseAsset": "assets/licenses/noto-sans-sc.txt",
+      "licenseSha256": "8b29d392042aee124c91d0bcf3bf8c16bc3ed804a419ff73b5139cb8e0346b31",
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf",
+      "sourceSha256": "d68bafcb48a2707749396aa12bbbd833cb70401f3a9a689fd2902c7e0d295964",
+      "sourceFontVersion": "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603",
+      "recipe": {
+        "fontTools": "4.61.1",
+        "axes": {
+          "wght": 400
+        },
+        "family": "Operit Theme Sans SC"
+      }
+    },
+    {
+      "id": "cascadia-mono",
+      "asset": "assets/fonts/cascadia-mono.ttf",
+      "bytes": 218004,
+      "sha256": "f5f2db0e79c0e44eb037672b8910fd3eb87788725fe2be09e542c1429b2bee6a",
+      "license": "OFL-1.1",
+      "licenseAsset": "assets/licenses/cascadia-mono.txt",
+      "licenseSha256": "96d6ea024172aaaa67686eda7e9c6ce5d577b20b45bc80631114fa2b52a27f94",
+      "source": "repository:apps/flutter/app/assets/fonts/CascadiaMono.ttf",
+      "sourceSha256": "0e141cb99609f6f10ad05313fd1807d5cc9e28658dcbb35ab162e52ff67dc718",
+      "sourceFontVersion": "Version 2102.025",
+      "recipe": {
+        "fontTools": "4.61.1",
+        "axes": {
+          "wght": 400
+        },
+        "family": "Operit Theme Mono"
+      }
+    }
+  ]
+}

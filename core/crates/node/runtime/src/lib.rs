@@ -95,6 +95,8 @@ pub mod PeerStateStore;
 pub mod RuntimeRemoteLinkService;
 #[cfg(feature = "full")]
 pub mod SpacePersistenceSyncService;
+#[cfg(feature = "full")]
+pub mod SpaceSyncProgress;
 pub mod SpaceDoctor;
 #[cfg(feature = "full")]
 mod PeerSync;

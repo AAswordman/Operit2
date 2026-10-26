@@ -46,6 +46,12 @@ pub trait CoreRouteRuntime: Send + Sync {
         request: CoreWatchRequest,
     ) -> Pin<Box<dyn Future<Output = Result<CoreEventStream, CoreLinkError>>>>;
 
+    /// Opens an annotation-addressed input stream using the same Binding and permission rules.
+    #[allow(non_snake_case)]
+    fn openPush(&self, _request: crate::CorePushRequest) -> Pin<Box<dyn Future<Output = Result<Box<dyn crate::CoreLinkPushSession>, CoreLinkError>>>> {
+        Box::pin(async { Err(CoreLinkError::new("ROUTE_PUSH_UNAVAILABLE", "This route runtime does not expose Push")) })
+    }
+
     /// Routes one annotated StateFlow watch while carrying a local source opened by the wrapper.
     #[allow(non_snake_case)]
     fn watchWithLocalSource(

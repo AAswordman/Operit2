@@ -7,12 +7,9 @@ exports.restoreGoal = restoreGoal;
 exports.setGoalStatus = setGoalStatus;
 exports.markGoalMessageReviewed = markGoalMessageReviewed;
 exports.clearGoal = clearGoal;
-exports.isGoalInputSlotEnabled = isGoalInputSlotEnabled;
-exports.setGoalInputSlotEnabled = setGoalInputSlotEnabled;
 exports.upsertTrackedChatView = upsertTrackedChatView;
 exports.removeTrackedChatView = removeTrackedChatView;
 exports.readTrackedChatViewByChatId = readTrackedChatViewByChatId;
-exports.resolveGoalWorkspace = resolveGoalWorkspace;
 exports.readSingleActiveChatView = readSingleActiveChatView;
 /** Checks whether a value identifies one supported chat runtime surface. */
 function isGoalRuntime(value) {
@@ -20,7 +17,6 @@ function isGoalRuntime(value) {
 }
 const goalsByChatId = {};
 const trackedViewsByChatId = {};
-const inputSlotEnabledByChatId = {};
 /** Returns an isolated copy of one goal record. */
 function cloneGoal(goal) {
     return {
@@ -40,8 +36,6 @@ function cloneTrackedView(view) {
         viewId: view.viewId,
         runtime: view.runtime,
         chatId: view.chatId,
-        workspacePath: view.workspacePath,
-        workspaceEnv: view.workspaceEnv,
         title: view.title,
         updatedAt: view.updatedAt,
     };
@@ -111,18 +105,6 @@ function markGoalMessageReviewed(chatId, timestamp) {
 function clearGoal(chatId) {
     delete goalsByChatId[chatId];
 }
-/** Reports whether the next submitted message should become this chat's goal. */
-function isGoalInputSlotEnabled(chatId) {
-    return inputSlotEnabledByChatId[chatId] === true;
-}
-/** Opens or closes the one-message goal input slot for a chat. */
-function setGoalInputSlotEnabled(chatId, enabled) {
-    if (enabled) {
-        inputSlotEnabledByChatId[chatId] = true;
-        return;
-    }
-    delete inputSlotEnabledByChatId[chatId];
-}
 /** Records the currently active chat view. */
 function upsertTrackedChatView(view) {
     trackedViewsByChatId[view.chatId] = cloneTrackedView(view);
@@ -135,20 +117,10 @@ function removeTrackedChatView(runtime, viewId) {
         }
     });
 }
-/** Reads the tracked workspace binding associated with a chat. */
+/** Reads the tracked chat view associated with a chat. */
 function readTrackedChatViewByChatId(chatId) {
     const view = trackedViewsByChatId[chatId];
     return view ? cloneTrackedView(view) : null;
-}
-/** Resolves a workspace binding for a chat and optional runtime. */
-function resolveGoalWorkspace(chatId, runtime) {
-    if (runtime) {
-        const runtimeView = Object.values(trackedViewsByChatId).find((view) => view.runtime === runtime && view.chatId === chatId);
-        if (runtimeView) {
-            return cloneTrackedView(runtimeView);
-        }
-    }
-    return readTrackedChatViewByChatId(chatId);
 }
 /** Reads the most recently updated tracked chat view. */
 function readSingleActiveChatView() {

@@ -13,7 +13,6 @@ export const CHARACTER_USAGE = [
   "operit2 character delete <id>",
   "operit2 character set-active <id>",
   "operit2 character combine <id> [CHAT|VOICE] [tag-id-csv]",
-  "operit2 character reset-default",
   "operit2 character export <id> <operit|tavern>",
   "operit2 character import <operit|tavern> <json-content>",
   "operit2 character export-backup",
@@ -53,7 +52,7 @@ export const CHARACTER_MEMORY_USAGE = [
   "operit2 memory character <character-id> settings <show|write>",
   "operit2 memory character <character-id> search-config <show|write>",
   "operit2 memory character <character-id> export",
-  "operit2 memory character <character-id> import <SKIP|UPDATE|CREATE_NEW> <json-content>",
+  "operit2 memory character <character-id> import <SKIP|UPDATE|CREATE_NEW> <json-content|file-path>",
 ];
 /** Documents shared library management and its owner-scoped subtrees. */
 export const SHARED_MEMORY_USAGE = [
@@ -65,7 +64,7 @@ export const SHARED_MEMORY_USAGE = [
   "operit2 memory shared <shared-id> settings <show|write>",
   "operit2 memory shared <shared-id> search-config <show|write>",
   "operit2 memory shared <shared-id> export",
-  "operit2 memory shared <shared-id> import <SKIP|UPDATE|CREATE_NEW> <json-content>",
+  "operit2 memory shared <shared-id> import <SKIP|UPDATE|CREATE_NEW> <json-content|file-path>",
 ];
 /** Documents USER.md operations with the original content argument semantics. */
 export const USER_USAGE = [

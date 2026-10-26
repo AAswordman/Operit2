@@ -10,9 +10,17 @@ const SHERPA_ONNX_WEB_ASSET_BASE_URL: &str = "https://models.operit.app/sherpa-o
 pub struct LocalEngineCatalog;
 
 impl LocalEngineCatalog {
+    pub fn llamaCpp() -> LocalEngineManifest {
+        embeddedLlmEngine("llama-cpp", "b11829", "llama.cpp", "MIT")
+    }
+
+    pub fn mnn() -> LocalEngineManifest {
+        embeddedLlmEngine("mnn", "3.6.1", "MNN", "Apache-2.0")
+    }
+
     /// Returns every built-in local inference engine package.
     pub fn manifests() -> Vec<LocalEngineManifest> {
-        vec![Self::sherpaOnnx()]
+        vec![Self::sherpaOnnx(), Self::llamaCpp(), Self::mnn()]
     }
 
     /// Returns the Sherpa ONNX engine package for desktop, Android, and OHOS targets.
@@ -269,5 +277,30 @@ mod tests {
                 .filter(|artifact| artifact.target.platform == platform)
                 .all(|artifact| artifact.delivery == LocalEngineDelivery::Embedded));
         }
+    }
+}
+
+/// Native LLM engines are linked into the application; only weights are downloaded.
+fn embeddedLlmEngine(id: &str, version: &str, name: &str, license: &str) -> LocalEngineManifest {
+    let artifacts = if cfg!(feature = "native-llm") {
+        [LocalPlatform::Windows, LocalPlatform::Linux, LocalPlatform::Macos,
+         LocalPlatform::Android, LocalPlatform::Ohos, LocalPlatform::Ios].into_iter()
+        .flat_map(|platform| [LocalArchitecture::X86_64, LocalArchitecture::Aarch64,
+            LocalArchitecture::Armv7, LocalArchitecture::X86].into_iter().map(move |architecture| {
+            LocalEngineArtifact {
+                target: LocalPlatformTarget { platform: platform.clone(), architecture },
+                delivery: LocalEngineDelivery::Embedded,
+                url: String::new(), sha256: String::new(), byteSize: 0,
+                archiveFormat: LocalEngineArchiveFormat::TarBz2,
+                archiveRoot: ".".to_string(), sttExecutable: None, ttsExecutable: None,
+                androidLibraryDir: None, ohosLibraryDir: None, iosFrameworkDir: None, webRuntimeDir: None,
+            }
+        })).collect()
+    } else { Vec::new() };
+    LocalEngineManifest {
+        id: id.to_string(), version: version.to_string(), displayName: name.to_string(),
+        description: format!("Embedded {name} local chat inference"), license: license.to_string(),
+        homepage: if id == "mnn" { "https://github.com/alibaba/MNN" } else { "https://github.com/ggml-org/llama.cpp" }.to_string(),
+        artifacts,
     }
 }

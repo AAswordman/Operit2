@@ -113,6 +113,11 @@ class ConversationActionDialog extends StatelessWidget {
     return OperitDialogScaffold(
       title: l10n.chatHistory,
       maxWidth: 420,
+      // A finite height puts the action list in a loose [Flexible]. The list
+      // then scrolls on a short window instead of pushing Cancel past the
+      // dialog's max height.
+      maxHeight: MediaQuery.sizeOf(context).height,
+      expandContent: false,
       contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
       actions: <Widget>[
         TextButton(
@@ -120,73 +125,76 @@ class ConversationActionDialog extends StatelessWidget {
           child: Text(l10n.cancel),
         ),
       ],
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(
-              history.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                history.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
-          ),
-          if (canOpenInWindow)
+            if (canOpenInWindow)
+              _ConversationActionTile(
+                icon: Icons.open_in_new,
+                label: '在新窗口打开',
+                onTap: () =>
+                    Navigator.of(context).pop(ConversationAction.openInWindow),
+              ),
             _ConversationActionTile(
-              icon: Icons.open_in_new,
-              label: '在新窗口打开',
-              onTap: () =>
-                  Navigator.of(context).pop(ConversationAction.openInWindow),
+              icon: Icons.edit,
+              label: l10n.editTitle,
+              onTap: () => Navigator.of(context).pop(ConversationAction.rename),
             ),
-          _ConversationActionTile(
-            icon: Icons.edit,
-            label: l10n.editTitle,
-            onTap: () => Navigator.of(context).pop(ConversationAction.rename),
-          ),
-          _ConversationActionTile(
-            icon: Icons.keyboard_arrow_up,
-            label: l10n.moveUp,
-            onTap: canMoveUp
-                ? () => Navigator.of(context).pop(ConversationAction.moveUp)
-                : null,
-          ),
-          _ConversationActionTile(
-            icon: Icons.keyboard_arrow_down,
-            label: l10n.moveDown,
-            onTap: canMoveDown
-                ? () => Navigator.of(context).pop(ConversationAction.moveDown)
-                : null,
-          ),
-          _ConversationActionTile(
-            icon: Icons.push_pin,
-            label: history.pinned ? l10n.unpin : l10n.pin,
-            onTap: () =>
-                Navigator.of(context).pop(ConversationAction.togglePinned),
-          ),
-          _ConversationActionTile(
-            icon: history.locked ? Icons.lock_open : Icons.lock,
-            label: history.locked ? l10n.unlock : l10n.lock,
-            onTap: () =>
-                Navigator.of(context).pop(ConversationAction.toggleLocked),
-          ),
-          if (history.workspaceId?.trim().isNotEmpty == true)
             _ConversationActionTile(
-              icon: Icons.link_off,
-              label: l10n.workspaceUnbindTitle,
-              onTap: () =>
-                  Navigator.of(context).pop(ConversationAction.unbindWorkspace),
+              icon: Icons.keyboard_arrow_up,
+              label: l10n.moveUp,
+              onTap: canMoveUp
+                  ? () => Navigator.of(context).pop(ConversationAction.moveUp)
+                  : null,
             ),
-          _ConversationActionTile(
-            icon: Icons.delete_outline,
-            label: l10n.delete,
-            danger: true,
-            onTap: () => Navigator.of(context).pop(ConversationAction.delete),
-          ),
-        ],
+            _ConversationActionTile(
+              icon: Icons.keyboard_arrow_down,
+              label: l10n.moveDown,
+              onTap: canMoveDown
+                  ? () => Navigator.of(context).pop(ConversationAction.moveDown)
+                  : null,
+            ),
+            _ConversationActionTile(
+              icon: Icons.push_pin,
+              label: history.pinned ? l10n.unpin : l10n.pin,
+              onTap: () =>
+                  Navigator.of(context).pop(ConversationAction.togglePinned),
+            ),
+            _ConversationActionTile(
+              icon: history.locked ? Icons.lock_open : Icons.lock,
+              label: history.locked ? l10n.unlock : l10n.lock,
+              onTap: () =>
+                  Navigator.of(context).pop(ConversationAction.toggleLocked),
+            ),
+            if (history.workspaceId?.trim().isNotEmpty == true)
+              _ConversationActionTile(
+                icon: Icons.link_off,
+                label: l10n.workspaceUnbindTitle,
+                onTap: () => Navigator.of(
+                  context,
+                ).pop(ConversationAction.unbindWorkspace),
+              ),
+            _ConversationActionTile(
+              icon: Icons.delete_outline,
+              label: l10n.delete,
+              danger: true,
+              onTap: () => Navigator.of(context).pop(ConversationAction.delete),
+            ),
+          ],
+        ),
       ),
     );
   }

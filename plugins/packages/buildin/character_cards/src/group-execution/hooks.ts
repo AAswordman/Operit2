@@ -47,7 +47,7 @@ function observe(execution: InputExecution, work: Promise<GroupExecutionOutcome>
   );
 }
 
-/** Consumes host-origin group input without awaiting planning or generation inside the submit hook. */
+/** Consumes input only after native persistence, leaving planning and generation outside the submit hook. */
 export async function onGroupInputSubmit(event: ToolPkgTypes.ChatInputHookEvent): Promise<ToolPkgTypes.ChatInputHookObjectResult | null> {
   if (event.eventName !== "submit_requested") return null;
   const payload = event.eventPayload;
@@ -69,6 +69,13 @@ export async function onGroupInputSubmit(event: ToolPkgTypes.ChatInputHookEvent)
   const execution: InputExecution = { input, status: "running", outcome: null, failure: null };
   executions.set(chatId, execution);
   observe(execution, work);
+  const admitted = await controller.waitForInput(chatId, input.submissionId);
+  if (admitted.type === "consumed") return { action: "Consume", clearInput: true, metadata: admitted.metadata };
+  if (admitted.type === "blocked") return { action: "Block", clearInput: false,
+    message: admitted.message === null ? undefined : admitted.message };
+  if (admitted.type !== "committed" || admitted.receipt.userMessageTimestamp === null) {
+    return { action: "Block", clearInput: false, message: "Group input was not persisted" };
+  }
   return { action: "Consume", clearInput: true, metadata: { submissionId: input.submissionId, chatId, selection: input.selection, runtime: input.runtime } };
 }
 

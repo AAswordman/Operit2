@@ -353,6 +353,13 @@ impl HostManager {
         }
     }
 
+    /// Installs HTTP independently of the full desktop runtime.
+    #[allow(non_snake_case)]
+    pub fn withHttpHost(mut self, host: Arc<dyn HttpHost>) -> Self {
+        self.httpHost = Some(host);
+        self
+    }
+
     /// Creates the standard full runtime context used by managed desktop and mobile hosts.
     #[allow(non_snake_case)]
     pub fn withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(

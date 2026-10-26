@@ -60,10 +60,10 @@ fn parseVersionPart(part: &str, source: &str) -> Result<u32, String> {
         .map_err(|_| format!("ToolPkg API version contains an out-of-range component: '{source}'"))
 }
 
-/// Returns the ToolPkg API version text used for manifest defaults.
+/// Returns the original API contract for manifests that omit api_version.
 #[allow(non_snake_case)]
-pub fn currentToolPkgApiVersionText() -> String {
-    CURRENT_TOOLPKG_API_VERSION.to_string()
+pub fn defaultToolPkgApiVersionText() -> String {
+    TOOLPKG_API_VERSION_1_0_0.to_string()
 }
 
 /// Lists the ToolPkg API versions accepted by this runtime.

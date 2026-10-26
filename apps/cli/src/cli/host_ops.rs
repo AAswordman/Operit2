@@ -1,6 +1,13 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+pub(super) const WINDOWS_CLI_RUNTIME_LIBRARIES: &[&str] = &["operit_local_llm.dll"];
+
+/// Returns the runtime libraries installed beside this host's CLI executable.
+pub(super) fn cli_runtime_libraries() -> &'static [&'static str] {
+    platform_host().runtime_libraries()
+}
+
 pub(super) fn schedule_cli_update(
     source: &Path,
     operit: &Path,
@@ -19,6 +26,9 @@ pub(super) fn schedule_cli_uninstall(
 }
 
 trait CliHostOperations {
+    /// Describes the native runtime files required by this host's CLI.
+    fn runtime_libraries(&self) -> &'static [&'static str];
+
     fn schedule_cli_update(
         &self,
         source: &Path,
@@ -53,6 +63,11 @@ fn platform_host() -> UnixCliHostOperations {
 
 #[cfg(windows)]
 impl CliHostOperations for WindowsCliHostOperations {
+    /// Keeps the native inference DLL next to both installed Windows commands.
+    fn runtime_libraries(&self) -> &'static [&'static str] {
+        WINDOWS_CLI_RUNTIME_LIBRARIES
+    }
+
     fn schedule_cli_update(
         &self,
         source: &Path,
@@ -75,6 +90,11 @@ impl CliHostOperations for WindowsCliHostOperations {
 
 #[cfg(not(windows))]
 impl CliHostOperations for UnixCliHostOperations {
+    /// Unix CLI builds embed the native inference implementation statically.
+    fn runtime_libraries(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     fn schedule_cli_update(
         &self,
         source: &Path,
@@ -95,6 +115,7 @@ impl CliHostOperations for UnixCliHostOperations {
     }
 }
 
+/// Schedules replacement of the Windows commands and their native runtime.
 #[cfg(windows)]
 fn schedule_windows_cli_update(
     source: &Path,
@@ -102,13 +123,23 @@ fn schedule_windows_cli_update(
     operit2: &Path,
     install_dir: &Path,
 ) -> Result<(), String> {
+    let runtime_copies = WINDOWS_CLI_RUNTIME_LIBRARIES
+        .iter()
+        .map(|name| {
+            format!(
+                "Copy-OperitFile '{}' '{}'\n",
+                ps_single_quote(&source.with_file_name(name)),
+                ps_single_quote(&install_dir.join(name))
+            )
+        })
+        .collect::<String>();
     let script = format!(
         r#"$ErrorActionPreference = "Stop"
 Start-Sleep -Milliseconds 800
 Stop-OperitProcesses
 Copy-OperitFile '{}' '{}'
 Copy-OperitFile '{}' '{}'
-[Environment]::SetEnvironmentVariable('Path', (Update-OperitPath [Environment]::GetEnvironmentVariable('Path', 'User') '{}'), 'User')
+{runtime_copies}[Environment]::SetEnvironmentVariable('Path', (Update-OperitPath [Environment]::GetEnvironmentVariable('Path', 'User') '{}'), 'User')
 "#,
         ps_single_quote(source),
         ps_single_quote(operit),
@@ -120,19 +151,29 @@ Copy-OperitFile '{}' '{}'
     spawn_detached_powershell_script(&helper)
 }
 
+/// Schedules removal of Windows commands and their native runtime after exit.
 #[cfg(windows)]
 fn schedule_windows_cli_uninstall(
     operit: &Path,
     operit2: &Path,
     install_dir: &Path,
 ) -> Result<(), String> {
+    let runtime_removals = WINDOWS_CLI_RUNTIME_LIBRARIES
+        .iter()
+        .map(|name| {
+            format!(
+                "Remove-OperitFile '{}'\n",
+                ps_single_quote(&install_dir.join(name))
+            )
+        })
+        .collect::<String>();
     let script = format!(
         r#"$ErrorActionPreference = "Stop"
 Start-Sleep -Milliseconds 800
 Stop-OperitProcesses
 Remove-OperitFile '{}'
 Remove-OperitFile '{}'
-[Environment]::SetEnvironmentVariable('Path', (Remove-OperitPath [Environment]::GetEnvironmentVariable('Path', 'User') '{}'), 'User')
+{runtime_removals}[Environment]::SetEnvironmentVariable('Path', (Remove-OperitPath [Environment]::GetEnvironmentVariable('Path', 'User') '{}'), 'User')
 "#,
         ps_single_quote(operit),
         ps_single_quote(operit2),

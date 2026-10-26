@@ -74,7 +74,7 @@ impl KimiProvider {
             object.insert(
                 "messages".to_string(),
                 build_messages_with_reasoning(
-                    &providerReadyHistory,
+                    providerReadyHistory,
                     request.preserve_think_in_history,
                     useToolCall,
                 )?,
@@ -134,17 +134,15 @@ impl AIService for KimiProvider {
 }
 
 fn build_messages_with_reasoning(
-    effective_history: &[operit_model::PromptTurn::PromptTurn],
+    effective_history: Vec<operit_model::PromptTurn::PromptTurn>,
     preserve_think_in_history: bool,
     use_tool_call: bool,
 ) -> Result<Value, AiServiceError> {
-    let structuredMessages: Value =
-        serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
-            effective_history,
-            preserve_think_in_history,
-            use_tool_call,
-        ))
-        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+    let structuredMessages: Value = StructuredToolCallBridge::buildMessagesValueFromCompiled(
+        effective_history,
+        preserve_think_in_history,
+        use_tool_call,
+    );
     let mut messagesArray = Vec::new();
     let Some(messages) = structuredMessages.as_array() else {
         return Ok(Value::Array(messagesArray));

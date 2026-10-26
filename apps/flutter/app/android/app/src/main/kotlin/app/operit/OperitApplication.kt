@@ -23,11 +23,21 @@ class OperitApplication : Application() {
         processName == "$packageName:crash"
     }
 
+    private val isMaintenanceProcess: Boolean by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Application.getProcessName() == "$packageName:maintenance"
+        } else {
+            val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            manager.runningAppProcesses?.firstOrNull { it.pid == Process.myPid() }?.processName == "$packageName:maintenance"
+        }
+    }
+
     /** Installs the process-wide Android uncaught-exception handler. */
     override fun onCreate() {
         super.onCreate()
         // The diagnostic process must not relaunch itself or initialize the Core host.
         if (isCrashProcess) return
+        if (isMaintenanceProcess) return
 
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             Log.e("OperitApplication", "Unhandled Android exception on ${thread.name}", error)
@@ -94,6 +104,7 @@ class OperitApplication : Application() {
 
     private fun emitLifecycleEvent(topic: String, payload: JSONObject) {
         if (isCrashProcess) return
+        if (isMaintenanceProcess) return
         AndroidCoreRuntime
             .get(applicationContext)
             .emitRuntimeEvent(RuntimeEvents.androidLifecycle(topic, payload))

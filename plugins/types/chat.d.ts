@@ -25,6 +25,10 @@ export namespace Chat {
      */
     sourceChatId?: string | null;
     /**
+     * Places the new conversation beneath an existing parent without cloning its history.
+     */
+    parentChatId?: string | null;
+    /**
      * Supplies opaque creation input interpreted solely by registered plugins.
      */
     input?: JsonObject | null;
@@ -199,9 +203,14 @@ export namespace Chat {
   export type InitialTurn = { kind: "record_only"; } | { kind: "execute"; participantId?: string; };
 
   /**
+   * Controls summary scheduling for an explicitly continued user turn.
+   */
+  export type SummaryPolicy = "defer" | "after_reply";
+
+  /**
    * Sends original input once or generates a reply to an explicitly identified persisted user message.
    */
-  export type SendRequest = { kind: "submit"; chatId: string; runtime: Runtime; input: TurnInput; turn: InitialTurn; notifyReply: boolean; } | { kind: "continue"; chatId: string; runtime: Runtime; userMessageTimestamp: number; participantId: string; notifyReply: boolean; };
+  export type SendRequest = { kind: "submit"; chatId: string; runtime: Runtime; input: TurnInput; turn: InitialTurn; notifyReply: boolean; } | { kind: "continue"; chatId: string; runtime: Runtime; userMessageTimestamp: number; participantId: string; notifyReply: boolean; summaryPolicy: SummaryPolicy; };
 
   /**
    * Describes one already parsed semantic message block, including its structured tool fields.

@@ -10,6 +10,7 @@ repository = "https://github.com/AAswordman/Operit2"
 documentation = "https://docs.rs/operit-host-api"
 
 [dependencies]
+chrono.workspace = true
 bytes = "1"
 http = "1"
 http-body-util = "0.1"

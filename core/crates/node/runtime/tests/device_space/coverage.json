@@ -115,7 +115,7 @@
       "file": "transports.rs",
       "level": "real-host-transports",
       "cases": [
-        "real_tcp_single_pairing_admission_enables_scoped_return_channel",
+        "real_tcp_single_pairing_uses_one_bidirectional_channel",
         "outbound_only_hosts_pair_over_http_and_websocket",
         "listener_capabilities_validate_all_transports_before_binding",
         "core_discovery_returns_only_unpaired_devices_for_all_callers"

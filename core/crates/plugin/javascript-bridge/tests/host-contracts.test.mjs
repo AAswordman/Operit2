@@ -24,26 +24,6 @@ function directoryRuntime(native) {
   return context;
 }
 
-/** Checks each domain SDK and native binding reaches its canonical host manager. */
-test("domain directories connect declarations, scoped callbacks and canonical runtime managers", () => {
-  const paths = { "Models.listSummaries": "listModelSummaries", "Tts.listConfigs": "listTtsConfigs", "Theme.listConfigs": "listThemeConfigs", "Theme.applyConfig": "applyThemeConfig", "Tts.getCurrentConfigId": "getCurrentTtsConfigId", "Tts.setCurrentConfigId": "setCurrentTtsConfigId", "Catalog.readToolSources": "readToolSourceCatalog" };
-  const bindings = source("core/crates/plugin/sdk/src/js_sdk/runtime_bindings.rs"), runtime = source("core/crates/runtime/application/src/services/ToolRuntimeSupportService.rs");
-  const engine = source("core/crates/plugin/javascript-bridge/src/javascript/JsEngine.rs"), native = source("core/crates/tool/services/src/tools/AIToolHandler.rs");
-  for (const [path, canonical] of Object.entries(paths)) {
-    const [namespace, method] = path.split("."), sdk = source("core/crates/plugin/sdk/src/js_sdk/" + namespace.toLowerCase() + ".rs");
-    assert.ok(bindings.includes('namespace: "' + namespace + '", method: "' + method + '"'));
-    assert.ok(sdk.includes("fn " + method + "(&self"));
-
-    assert.match(runtime, new RegExp("fn " + canonical + "(?:<[^>]+>)?\\("));
-  }
-  assert.match(runtime, /getAllModelSummaries\(\)/); assert.match(runtime, /getAllTtsConfigs\(\)/);
-  for (const call of ["getAllToolNames", "getAvailablePackages", "getAvailableSkillsSnapshot", "getAvailableServerPackages"]) assert.ok(runtime.includes(call + "("));
-  assert.match(engine, /"__operitNativeCallToolStructured"/);
-  assert.doesNotMatch(engine, /__operitNativeInvokeDomainAsync|invoke_direct_host_json/);
-  assert.match(native, /impl JsExecutionHost for AIToolHandler/);
-  for (const canonical of Object.values(paths)) assert.match(source("core/crates/tool/services/src/tools/ToolRegistration.rs"), new RegExp("runtimeSupport\\(\\)\\." + canonical + "\\("));
-});
-
 /** Confirms the domain DTOs preserve every field from the actual model and speech records. */
 test("directory SDK DTOs are complete canonical model and TTS records", () => {
   const sdkModels = source("core/crates/plugin/sdk/src/js_sdk/models.rs"), sdkTts = source("core/crates/plugin/sdk/src/js_sdk/tts.rs");

@@ -5,9 +5,16 @@ PODS:
   - file_selector_ios (0.0.1):
     - Flutter
   - Flutter (1.0.0)
+  - geolocator_apple (1.2.0):
+    - Flutter
+    - FlutterMacOS
   - image_picker_ios (0.0.1):
     - Flutter
   - integration_test (0.0.1):
+    - Flutter
+  - operit_keep_alive (0.1.0):
+    - Flutter
+  - package_info_plus (0.4.5):
     - Flutter
   - printing (1.0.0):
     - Flutter
@@ -26,8 +33,11 @@ DEPENDENCIES:
   - audioplayers_darwin (from `.symlinks/plugins/audioplayers_darwin/darwin`)
   - file_selector_ios (from `.symlinks/plugins/file_selector_ios/ios`)
   - Flutter (from `Flutter`)
+  - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
   - integration_test (from `.symlinks/plugins/integration_test/ios`)
+  - operit_keep_alive (from `.symlinks/plugins/operit_keep_alive/ios`)
+  - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
   - printing (from `.symlinks/plugins/printing/ios`)
   - record_ios (from `.symlinks/plugins/record_ios/ios`)
   - url_launcher_ios (from `.symlinks/plugins/url_launcher_ios/ios`)
@@ -41,10 +51,16 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/file_selector_ios/ios"
   Flutter:
     :path: Flutter
+  geolocator_apple:
+    :path: ".symlinks/plugins/geolocator_apple/darwin"
   image_picker_ios:
     :path: ".symlinks/plugins/image_picker_ios/ios"
   integration_test:
     :path: ".symlinks/plugins/integration_test/ios"
+  operit_keep_alive:
+    :path: ".symlinks/plugins/operit_keep_alive/ios"
+  package_info_plus:
+    :path: ".symlinks/plugins/package_info_plus/ios"
   printing:
     :path: ".symlinks/plugins/printing/ios"
   record_ios:
@@ -60,13 +76,16 @@ SPEC CHECKSUMS:
   audioplayers_darwin: f15e209a3e856d1a7edcf98dc029f484fead2242
   file_selector_ios: 80c12e90ad3f2045ed6819d03742f1a4c5ec3f93
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  geolocator_apple: 66b711889fd333205763b83c9dcf0a57a28c7afd
   image_picker_ios: 4f2f91b01abdb52842a8e277617df877e40f905b
   integration_test: 252f60fa39af5e17c3aa9899d35d908a0721b573
+  operit_keep_alive: a08349ef11bc1577dd06fb7396e520682ff09acc
+  package_info_plus: c0502532a26c7662a62a356cebe2692ec5fe4ec4
   printing: 233e1b73bd1f4a05615548e9b5a324c98588640b
   record_ios: 3b171007ae5de51221a3a76d2b379a7105ca98b5
   url_launcher_ios: bb13df5870e8c4234ca12609d04010a21be43dfa
   video_player_avfoundation: e54d03b3b19f64f2c557354f72ce538387541ba6
-  webview_flutter_wkwebview: 29eb20d43355b48fe7d07113835b9128f84e3af4
+  webview_flutter_wkwebview: 08f7e3ddafd07a1c7319987f5af4ddb173964b24
 
 PODFILE CHECKSUM: c3e2fd0b8ba159429b3132aec1be7ffad37086e9
 

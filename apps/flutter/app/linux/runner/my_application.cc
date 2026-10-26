@@ -2,6 +2,7 @@
 
 #include <flutter_linux/flutter_linux.h>
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
+#include <file_selector_linux/file_selector_plugin.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
@@ -16,6 +17,34 @@ struct _MyApplication {
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+/// Quotes one executable path according to the freedesktop desktop-entry Exec grammar.
+static gchar* quote_desktop_exec_argument(const gchar* executable) {
+  GString* quoted = g_string_new("\"");
+  for (const gchar* character = executable; *character != '\0'; ++character) {
+    switch (*character) {
+      case '\\': g_string_append(quoted, "\\\\"); break;
+      case '"': case '`': case '$':
+        g_string_append(quoted, "\\\\");
+        g_string_append_c(quoted, *character);
+        break;
+      case '%': g_string_append(quoted, "%%"); break;
+      case '\n': g_string_append(quoted, "\\n"); break;
+      case '\r': g_string_append(quoted, "\\r"); break;
+      case '\t': g_string_append(quoted, "\\t"); break;
+      default: g_string_append_c(quoted, *character);
+    }
+  }
+  g_string_append_c(quoted, '"');
+  return g_string_free(quoted, FALSE);
+}
+
+/// Registers only the file picker needed by the standalone rescue Flutter screen.
+static void register_data_rescue_plugins(FlPluginRegistry* registry) {
+  g_autoptr(FlPluginRegistrar) registrar =
+      fl_plugin_registry_get_registrar_for_plugin(registry, "FileSelectorPlugin");
+  file_selector_plugin_register_with_registrar(registrar);
+}
 
 /// Publishes the app preference through the GTK appearance consumed by WebKit.
 static void handle_webview_theme(FlMethodChannel*, FlMethodCall* call, gpointer) {
@@ -66,6 +95,38 @@ static void register_plugin_sdk_activation() {
   if (!g_file_set_contents(path, content, -1, &error)) {
     g_error("Cannot register Operit D-Bus activation: %s", error->message);
   }
+}
+
+/// Publishes a desktop entry that starts the standalone data rescue route.
+static void register_data_rescue_desktop_entry() {
+  g_autoptr(GError) error = nullptr;
+  g_autofree gchar* executable = g_file_read_link("/proc/self/exe", &error);
+  if (executable == nullptr) {
+    g_error("Cannot resolve Operit data rescue executable: %s", error->message);
+  }
+  g_autofree gchar* directory = g_build_filename(
+      g_get_user_data_dir(), "applications", nullptr);
+  if (g_mkdir_with_parents(directory, 0700) != 0) {
+    g_error("Cannot create Operit desktop entry directory");
+  }
+  g_autofree gchar* quoted = quote_desktop_exec_argument(executable);
+  g_autofree gchar* content = g_strdup_printf(
+      "[Desktop Entry]\nType=Application\nName=Operit2 Data Rescue\nExec=%s --data-rescue\nTerminal=false\nCategories=Utility;\n",
+      quoted);
+  g_autofree gchar* path = g_build_filename(
+      directory, "operit2-data-rescue.desktop", nullptr);
+  if (!g_file_set_contents(path, content, -1, &error)) {
+    g_error("Cannot register Operit data rescue desktop entry: %s", error->message);
+  }
+}
+
+/// Checks the runner arguments before any normal activation registration.
+static gboolean has_data_rescue_argument(MyApplication* self) {
+  for (gchar** argument = self->dart_entrypoint_arguments;
+       argument != nullptr && *argument != nullptr; ++argument) {
+    if (g_strcmp0(*argument, "--data-rescue") == 0) return TRUE;
+  }
+  return FALSE;
 }
 
 // Called when first Flutter frame received.
@@ -127,17 +188,23 @@ static void my_application_activate(GApplication* application) {
                            self);
   gtk_widget_realize(GTK_WIDGET(view));
 
-  fl_register_plugins(FL_PLUGIN_REGISTRY(view));
-  desktop_multi_window_plugin_set_window_created_callback(
+  if (has_data_rescue_argument(self)) {
+    register_data_rescue_plugins(FL_PLUGIN_REGISTRY(view));
+  } else {
+    fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  }
+  if (!has_data_rescue_argument(self)) {
+    desktop_multi_window_plugin_set_window_created_callback(
       [](FlPluginRegistry* registry) {
         fl_register_plugins(registry);
         register_operit_crash_channel(FL_VIEW(registry));
         register_operit_runtime_channel(FL_VIEW(registry));
         register_webview_theme(FL_VIEW(registry));
       });
-  register_operit_crash_channel(view);
+    register_operit_crash_channel(view);
+    register_webview_theme(view);
+  }
   register_operit_runtime_channel(view);
-  register_webview_theme(view);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
@@ -165,7 +232,11 @@ static gboolean my_application_local_command_line(GApplication* application,
 
 // Implements GApplication::startup.
 static void my_application_startup(GApplication* application) {
-  register_plugin_sdk_activation();
+  MyApplication* self = MY_APPLICATION(application);
+  if (!has_data_rescue_argument(self)) {
+    register_plugin_sdk_activation();
+    register_data_rescue_desktop_entry();
+  }
   // MyApplication* self = MY_APPLICATION(object);
 
   // Perform any actions required at application startup.

@@ -51,7 +51,7 @@ impl MediaPoolManager {
                 .lock()
                 .expect("MediaPool mutex poisoned")
                 .max_pool_size = value;
-            AppLogger::d(TAG, &format!("pool size limit updated: {value}"));
+            AppLogger::v_with_level(TAG, &format!("pool size limit updated: {value}"), crate::AppLogger::VERBOSE_LEVEL_4);
         }
     }
 

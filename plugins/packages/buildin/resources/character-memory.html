@@ -1,0 +1,2582 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; font-src 'none'"><title>角色卡</title><style>/* Material sizes follow the original Flutter settings cards and editor dialogs. */
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{font:14px/1.45 "Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;color:var(--onSurface);background:var(--surface)}button,input,textarea,select{font:inherit}button{cursor:pointer;user-select:none}button:disabled{cursor:not-allowed;opacity:.45}button,input,textarea,select{outline:none}button:focus-visible{outline:2px solid var(--primary);outline-offset:3px}button svg{flex:none}svg{vertical-align:middle}.icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.page{height:100%;display:flex;flex-direction:column}.appbar{height:58px;flex:none;display:flex;align-items:center;padding:0 18px;gap:12px;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 25%,transparent)}.appbar h1{margin:0;font-size:20px;font-weight:500;flex:1}.scroll{flex:1;min-height:0;overflow:auto;padding:12px 16px 20px;scrollbar-gutter:stable}.section{border:1px solid color-mix(in srgb,var(--outlineVariant) 36%,transparent);border-radius:16px;background:color-mix(in srgb,var(--surfaceContainer) 65%,transparent);padding:14px;margin-bottom:14px}.section-head{display:flex;align-items:center;gap:10px;min-height:32px;margin-bottom:12px}.section-head h2{font-size:16px;font-weight:700;margin:0;flex:1}.section-icon{color:var(--primary)}.actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.button{min-height:38px;display:inline-flex;gap:7px;align-items:center;justify-content:center;border:0;border-radius:20px;padding:8px 16px;background:transparent;color:var(--primary);font-weight:600}.button.small{min-height:32px;padding:4px 8px;font-size:13px}.button.filled{color:var(--onPrimary);background:var(--primary)}.button.tonal{background:var(--primaryContainer);color:var(--onPrimaryContainer)}.button.danger{color:var(--error)}.button:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 10%,transparent)}.button.filled:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 90%,var(--onPrimary))}.icon-button{width:32px;height:32px;padding:6px;border:0;border-radius:50%;background:transparent;color:var(--onSurfaceVariant);display:inline-grid;place-items:center}.icon-button:hover:not(:disabled){background:color-mix(in srgb,var(--onSurface) 9%,transparent)}.entity{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;border-radius:12px;border:1px solid color-mix(in srgb,var(--outlineVariant) 28%,transparent);background:color-mix(in srgb,var(--surfaceContainerHighest) 28%,transparent);min-height:76px}.entity.active{border-color:color-mix(in srgb,var(--primary) 45%,transparent);background:color-mix(in srgb,var(--primaryContainer) 16%,transparent)}.entity:last-child{margin-bottom:0}.entity-main{border:0;text-align:left;padding:0;display:flex;gap:12px;align-items:center;min-width:0;flex:1;color:inherit;background:none}.entity-copy{min-width:0;flex:1}.entity-title{font-size:14px;font-weight:700}.entity-subtitle{font-size:12px;color:var(--onSurfaceVariant);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}.badge{font-size:11px;line-height:20px;padding:0 7px;border-radius:6px;background:color-mix(in srgb,var(--onSurfaceVariant) 8%,transparent);color:var(--onSurfaceVariant)}.avatar{width:40px;height:40px;flex:none;border-radius:50%;display:grid;place-items:center;background:var(--surfaceContainerHighest);color:var(--onSurfaceVariant);position:relative;overflow:hidden}.avatar .icon{width:24px;height:24px}.active .avatar{color:var(--primary);background:var(--primaryContainer)}.avatar img{width:100%;height:100%;object-fit:cover}.active-pill{width:78px;height:28px;font-size:11px;border:1px solid color-mix(in srgb,var(--primary) 32%,transparent);border-radius:20px;background:color-mix(in srgb,var(--primary) 8%,var(--surfaceContainerHigh));color:var(--primary);display:grid;place-items:center;font-weight:700}.entity-actions{display:flex;align-items:center;gap:4px;max-width:190px;flex-wrap:wrap;justify-content:flex-end}.empty{padding:14px 4px;color:var(--onSurfaceVariant);font-size:13px}.loading{height:100%;display:grid;place-items:center;font-size:14px}.error-banner{padding:12px 16px;border:1px solid var(--error);border-radius:10px;color:var(--error);margin-bottom:12px;white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:var(--onSurfaceVariant);font-size:12px}.hint{padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--primaryContainer) 42%,transparent);color:var(--onSurfaceVariant);font-size:12px;margin:8px 0 16px;display:flex;gap:8px;align-items:flex-start}.hint .icon{width:16px;height:16px;flex:none;margin-top:1px}.row{display:flex;align-items:center;gap:12px}.row .grow{flex:1;min-width:0}.switch-row{display:flex;align-items:center;gap:16px;padding:10px 0}.switch-row .grow{flex:1}.switch-label{font-size:14px;font-weight:500}.switch-description{color:var(--onSurfaceVariant);font-size:12px;margin-top:3px}.switch{appearance:none;width:48px;height:28px;border:2px solid var(--outline);border-radius:18px;background:var(--surfaceContainerHighest);position:relative;flex:none;margin:0;cursor:pointer}.switch:before{content:"";position:absolute;width:16px;height:16px;top:4px;left:4px;border-radius:50%;background:var(--outline);transition:transform .15s}.switch:checked{border-color:var(--primary);background:var(--primary)}.switch:checked:before{background:var(--onPrimary);transform:translateX(20px)}.switch:disabled{opacity:.45;cursor:not-allowed}.switch:focus-visible{outline:2px solid var(--primary);outline-offset:3px}.binding{padding:10px 0 14px;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 45%,transparent);margin-bottom:6px}.binding:last-child{border-bottom:0}.binding-fields{padding:5px 0 0}.binding-fields[hidden]{display:none}.field{display:block;position:relative;margin:12px 0 18px}.field-label{position:absolute;left:10px;top:-9px;padding:0 4px;background:var(--surfaceContainer);font-size:12px;color:var(--onSurfaceVariant);z-index:1}.field input:not([type=checkbox]),.field textarea,.field select{display:block;width:100%;border:1px solid var(--outline);background:transparent;border-radius:8px;padding:14px 12px;color:var(--onSurface);min-height:48px}.field textarea{resize:vertical;line-height:1.55;min-height:76px}.field:focus-within .field-label{color:var(--primary)}.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}.field input:disabled,.field select:disabled,.field textarea:disabled{opacity:.58;border-color:var(--outlineVariant)}.field select{appearance:none;-webkit-appearance:none;height:56px;min-height:56px;padding:0 44px 0 12px;line-height:24px;text-overflow:ellipsis}.select-arrow{position:absolute;top:0;right:12px;height:56px;display:flex;align-items:center;pointer-events:none;color:var(--onSurfaceVariant)}.field select:disabled+.select-arrow{opacity:.58}.field select option{color:var(--onSurface);background:var(--surfaceContainer)}.field textarea.code{font-family:Consolas,"SFMono-Regular",monospace;font-size:13px;min-height:300px}.field-action{position:absolute;right:6px;top:4px}.field.expandable textarea{padding-right:36px}.field-caption{font-size:11px;color:var(--onSurfaceVariant);margin-top:5px}.tag-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px;font-weight:500}.chips{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 16px}.chip{padding:5px 10px;border:1px solid var(--outlineVariant);color:var(--onSurfaceVariant);border-radius:8px;background:none;font-size:12px;display:flex;align-items:center;gap:5px}.chip.selected{border-color:var(--primary);color:var(--onPrimaryContainer);background:var(--primaryContainer)}.chip .icon{width:14px;height:14px}.avatar-editor{display:flex;gap:16px;align-items:center;padding:4px 0 6px}.avatar-editor .avatar{width:64px;height:64px}.avatar-editor .avatar .icon{width:36px;height:36px}.avatar-editor .field{flex:1;margin:8px 0}.dialog{border:1px solid color-mix(in srgb,var(--outlineVariant) 30%,transparent);border-radius:24px;padding:0;background:var(--surfaceContainer);color:var(--onSurface);box-shadow:0 12px 48px #0003;width:min(760px,calc(100vw - 48px));max-width:none;max-height:calc(100dvh - 48px);overflow:hidden;margin:auto}.dialog::backdrop{background:#0006}.dialog.large{height:min(820px,calc(100dvh - 48px))}.dialog.compact{width:min(500px,calc(100vw - 48px))}.dialog.graph-dialog{width:calc(100vw - 48px);height:calc(100dvh - 48px);max-width:1400px;border-radius:16px}.dialog-layout{height:100%;max-height:calc(100dvh - 48px);display:flex;flex-direction:column}.dialog-header{padding:18px 22px 12px;display:flex;align-items:center;gap:12px;flex:none}.dialog-header h2{flex:1;min-width:0;font-size:20px;line-height:1.35;font-weight:500;margin:0}.tabs{display:flex;flex:none;border-bottom:1px solid color-mix(in srgb,var(--outlineVariant) 50%,transparent)}.tab{position:relative;flex:1;min-height:48px;border:0;color:var(--onSurfaceVariant);font-weight:500;background:none}.tab[aria-selected=true]{color:var(--primary)}.tab[aria-selected=true]:after{content:"";height:3px;position:absolute;bottom:0;left:26%;right:26%;background:var(--primary);border-radius:4px 4px 0 0}.dialog-body{padding:10px 18px;overflow:auto;flex:1;min-height:0;scrollbar-gutter:stable}.dialog-body>.field:first-child{margin-top:14px}.dialog-footer{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:12px 18px 18px;flex:none}.dialog-footer .spacer{flex:1}.dialog-footer .button{min-height:38px}.dialog-error{margin:10px 18px 0;padding:10px 12px;border-radius:10px;color:var(--error);background:color-mix(in srgb,var(--error) 8%,transparent);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.dialog-error[hidden]{display:none}.memory-entry{padding:12px;border:1px solid var(--outlineVariant);border-radius:12px;margin:10px 0}.memory-entry h3{font-size:14px;margin:0 0 4px}.memory-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.checkbox-row{padding:9px 0;display:flex;align-items:center;gap:10px}.checkbox-row input{accent-color:var(--primary);width:18px;height:18px}.checkbox-row .avatar{width:32px;height:32px}.members-list{border:1px solid var(--outlineVariant);border-radius:10px;padding:0 12px;margin:10px 0}.graph-toolbar{padding:8px 18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--outlineVariant)}.graph-toolbar .search{flex:1;min-width:140px;border:1px solid var(--outline);border-radius:24px;background:none;color:var(--onSurface);padding:9px 14px}.graph-layout{display:flex;flex:1;min-height:0}.graph-canvas{flex:1;min-width:0;overflow:hidden;position:relative;touch-action:none;background:radial-gradient(color-mix(in srgb,var(--outline) 25%,transparent) 1px,transparent 1px);background-size:20px 20px}.graph-canvas>svg{width:100%;height:100%;touch-action:none}.graph-canvas .graph-empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;gap:10px;pointer-events:none;color:var(--onSurfaceVariant)}.graph-node{cursor:pointer}.graph-node circle{fill:var(--primaryContainer);stroke:var(--primary);stroke-width:1.5}.graph-node.selected circle{stroke-width:3;fill:var(--primary)}.graph-node text{fill:var(--onPrimaryContainer);font-size:12px;pointer-events:none}.graph-node.selected text{fill:var(--onPrimary)}.graph-edge{stroke:var(--outline);stroke-width:1.5;opacity:.7}.graph-sidebar{width:290px;flex:none;overflow:auto;padding:12px;border-left:1px solid var(--outlineVariant);background:color-mix(in srgb,var(--surfaceContainerHigh) 50%,transparent)}.graph-sidebar h3{font-size:14px;margin:4px 0 10px}.memory-item{border:0;border-radius:8px;text-align:left;padding:10px;width:100%;background:none;color:var(--onSurface);margin:2px 0}.memory-item:hover:not(.selected){background:color-mix(in srgb,var(--onSurface) 8%,transparent)}.memory-item.selected{background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:inset 3px 0 0 var(--primary)}.memory-item strong{display:block;font-size:13px}.memory-item small{font-size:11px;opacity:.75;display:block;margin-top:4px}.graph-detail{padding:10px;margin-top:10px;border-top:1px solid var(--outlineVariant)}.graph-detail pre{font:12px/1.6 inherit;white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto}.graph-tools{position:absolute;bottom:14px;left:14px;display:flex;gap:3px;padding:4px;border-radius:24px;border:1px solid var(--outlineVariant);background:var(--surfaceContainer)}.busy .button,.busy .icon-button{pointer-events:none}.busy-bar{height:2px;background:var(--primary);animation:busy 1s infinite;flex:none}.notice{padding:12px;border-radius:12px;border:1px solid var(--outlineVariant);color:var(--onSurfaceVariant);font-size:12px}.notice strong{color:var(--onSurface);font-weight:600}.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.unwired{opacity:.65}.unwired input[type=range]{width:100%;accent-color:var(--primary)}#snackbar{position:fixed;z-index:10000;left:50%;bottom:20px;transform:translateX(-50%);border-radius:8px;background:var(--onSurface);color:var(--surface);padding:12px 18px;max-width:calc(100vw - 32px);font-size:13px;display:none}#snackbar.visible{display:block}.step-row{display:flex;gap:4px;align-items:center}.step-row .grow{flex:1}.section-description{color:var(--onSurfaceVariant);font-size:12px;margin:4px 0 12px}.dirty-dot{width:7px;height:7px;display:inline-block;background:var(--primary);border-radius:50%;margin-left:6px}.divider{height:1px;background:var(--outlineVariant);opacity:.5;margin:12px 0}@keyframes busy{50%{opacity:.3}}@media(max-width:600px){.scroll{padding:12px 12px 20px}.appbar{padding:0 12px}.section{padding:12px}.dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px);border-radius:20px}.dialog.large,.dialog.graph-dialog{height:calc(100dvh - 24px)}.dialog-layout{max-height:calc(100dvh - 24px)}.dialog.graph-dialog{width:calc(100vw - 24px)}.dialog-header{padding:16px 18px 10px}.dialog-header h2{font-size:18px}.dialog-body{padding:10px 16px}.dialog-footer{padding:10px 12px 14px;gap:2px}.dialog-footer .button{padding:8px 12px}.graph-sidebar{width:210px}.settings-grid{grid-template-columns:1fr}.section-head{flex-wrap:wrap}.section-head .actions{margin-left:auto}}@media(max-width:440px){.entity{flex-wrap:wrap}.entity-actions{width:100%;max-width:none;justify-content:flex-end}.graph-layout{flex-direction:column}.graph-canvas{min-height:220px}.graph-sidebar{width:100%;height:190px;border-left:0;border-top:1px solid var(--outlineVariant)}.graph-toolbar{padding:8px 12px}.avatar-editor{gap:10px}.avatar-editor .avatar{width:48px;height:48px}.appbar h1{font-size:18px}.button{font-size:13px}.tabs .tab{font-size:13px}.dialog-header .actions{gap:0}}
+
+.tag-prompt{white-space:pre-wrap;margin:6px 0;color:var(--onSurfaceVariant);font:inherit}.score-field{display:flex;flex-direction:column;gap:8px;margin:12px 0}.score-field span{display:flex;justify-content:space-between}.score-field input{width:100%;accent-color:var(--primary)}
+
+.graph-node rect{stroke:var(--outline);stroke-width:1.1}.graph-node.selected rect,.graph-node.link-source rect{stroke:var(--primary);stroke-width:2.2}.graph-node text,.graph-node.selected text{fill:var(--onSurface);font-size:12px;line-height:1.2}.graph-edge-action{cursor:pointer}.graph-edge-hit{stroke:transparent;stroke-width:16;pointer-events:stroke}.graph-edge{pointer-events:none;opacity:.55}.graph-edge.selected{stroke:var(--error);opacity:1}.edge-label{text-anchor:middle;font-size:10px;fill:var(--onSurfaceVariant);stroke:var(--surface);stroke-width:5;paint-order:stroke;stroke-linejoin:round;pointer-events:none}.memory-metadata{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;color:var(--onSurfaceVariant)}
+
+/* Source parity: old _SettingsEntityTile / _SettingsListAvatar / avatar input. */
+.entity{gap:8px;min-height:0}.entity-main{gap:10px}.entity .avatar{width:32px;height:32px;margin-right:2px;overflow:visible}.avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}.avatar-check{position:absolute;right:-1px;bottom:-1px;width:14px;height:14px;border:1.5px solid var(--surface);border-radius:50%;background:var(--primary);color:var(--onPrimary);display:grid;place-items:center}.avatar-check svg{width:9px;height:9px}.section-head .actions{gap:6px}.avatar-editor{border:1px solid var(--outline);border-radius:8px;padding:8px 12px;margin:0 0 12px;gap:12px}.avatar-editor legend{font-size:12px;padding:0 4px;color:var(--onSurfaceVariant)}.avatar-editor .avatar{width:44px;height:44px}.avatar-path{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.entity-title{line-height:20px}.entity-subtitle{line-height:1.25}.entity .badges{gap:6px;margin-top:5px}@media(max-width:430px){.entity{flex-wrap:wrap}.entity-actions{width:100%;max-width:none;margin-top:6px}}
+
+/* Full-height native WebView document; only page content, not its header, scrolls. */
+#app{height:100%;min-height:0;display:flex;flex-direction:column}.page{flex:1;min-height:0}.avatar-editor .avatar-path{flex:1;min-width:0}.avatar-editor .button{flex:none}.avatar-editor{min-width:0}.avatar-editor .avatar{flex:none}
+
+/* Explicit picker dimensions keep its scrolling body visible in embedded WebViews. */
+.dialog.chooser{width:min(500px,calc(100vw - 48px));height:min(560px,calc(100dvh - 48px))}
+.picker-status{padding:24px 0;color:var(--onSurfaceVariant)}
+.picker-row{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:12px;border:0;border-radius:12px;background:transparent;color:var(--onSurface);text-align:left;overflow-wrap:anywhere}
+.picker-row:hover,.picker-row:focus-visible{background:var(--primaryContainer);color:var(--onPrimaryContainer)}
+.picker-row .icon{flex:none;color:var(--primary)}
+.picker-row>span{min-width:0;flex:1}
+@media(max-width:600px){.dialog.chooser{width:calc(100vw - 24px);height:min(560px,calc(100dvh - 24px))}}
+
+/* Real retrieval-debug scores remain readable and keyboard-scrollable on narrow screens. */
+.memory-search-scores{max-width:100%;overflow-x:auto;border:1px solid var(--outlineVariant);border-radius:12px}
+.memory-search-table{width:100%;min-width:520px;border-collapse:collapse;font-size:12px;text-align:left;font-variant-numeric:tabular-nums}
+.memory-search-table th,.memory-search-table td{padding:10px 12px;border-bottom:1px solid var(--outlineVariant);white-space:nowrap}
+.memory-search-table th{font-weight:600;background:var(--surfaceContainerHigh);color:var(--onSurfaceVariant)}
+.memory-search-table td:first-child{min-width:100px;max-width:200px;white-space:normal;overflow-wrap:anywhere}
+.memory-search-table tbody tr:last-child td{border-bottom:0}
+.memory-search-scores:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+
+/* Presentation views reuse the manager's host-provided Material palette and offline icons. */
+.presentation-page{min-width:0;max-width:100%;background:var(--surface)}
+.selection-toolbar{flex:none;padding:8px 16px 0}.selection-toolbar .field{margin:4px 0 8px}
+.selection-categories{margin-bottom:10px}.selection-check{display:grid;place-items:center;width:24px;flex:none;color:var(--primary)}
+.entity.selected{border-color:var(--primary);background:color-mix(in srgb,var(--primaryContainer) 24%,var(--surfaceContainer))}
+.presentation-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:none;padding:12px 18px;border-top:1px solid var(--outlineVariant);background:var(--surface)}
+.attachment-body{position:relative}.attachment-body>.loading{min-height:120px}
+.picker-row{display:flex;align-items:center;gap:16px;width:100%;min-height:56px;border:0;border-radius:8px;text-align:left;padding:12px 16px;color:var(--onSurface);background:transparent}
+.picker-row>.icon{color:var(--onSurfaceVariant);flex:none}.picker-row>span{overflow-wrap:anywhere}
+.picker-row:hover:not(:disabled){background:color-mix(in srgb,var(--onSurface) 8%,transparent)}
+.attachment-content{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:8px 0;user-select:text}
+@media(max-width:600px){.selection-toolbar{padding:8px 12px 0}.presentation-footer{padding:10px 12px}.picker-row{padding:12px 8px}}
+</style></head><body><main id="app" aria-label="角色卡"><div class="loading" role="status">正在加载角色卡…</div></main><div id="dialogs"></div><div id="snackbar" role="status" aria-live="polite"></div><script>"use strict";
+(() => {
+  // web/shared/dom.ts
+  function requireElement(element, constructor) {
+    if (!(element instanceof constructor)) throw new Error("\u7F16\u8F91\u5668 DOM \u7ED3\u6784\u65E0\u6548");
+    return element;
+  }
+  function dataValue(element, key) {
+    const value = element.dataset[key];
+    if (value === void 0) throw new Error(`\u754C\u9762\u64CD\u4F5C\u7F3A\u5C11\u5B57\u6BB5\uFF1A${key}`);
+    return value;
+  }
+  function isKey(value, keys) {
+    return keys.some(
+      /** Compares only complete declared field names. */
+      (key) => value === key
+    );
+  }
+
+  // web/bridge/transport.ts
+  function host() {
+    const bridge = window.CharacterMemoryHost;
+    if (bridge === void 0) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C");
+    const methods = ["loadScreen", "completeScreen", "cancelScreen", "request", "exportFile", "avatarImage", "openEntity"];
+    for (const method of methods) if (typeof bridge[method] !== "function") throw new Error(`CharacterMemoryHost.${method} \u5C1A\u672A\u6CE8\u518C`);
+    return bridge;
+  }
+  async function waitForHost() {
+    const deadline = performance.now() + 5e3;
+    while (window.CharacterMemoryHost === void 0) {
+      if (performance.now() >= deadline) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C\uFF0C\u8BF7\u4ECE\u5E94\u7528\u4E2D\u7684\u89D2\u8272\u5361\u63D2\u4EF6\u6253\u5F00\u6B64\u9875\u9762\u3002");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    host();
+  }
+
+  // web/features/characters/data.ts
+  function getCard(snapshot, id) {
+    for (const card of snapshot.cards) if (card.id === id) return card;
+    throw new Error("\u89D2\u8272\u5361\u4E0D\u5B58\u5728");
+  }
+  function ownerFor(card) {
+    switch (card.memoryBindingMode) {
+      case "CHARACTER":
+        return `character:${card.id}`;
+      case "SHARED":
+        if (typeof card.sharedMemoryId !== "string" || card.sharedMemoryId === "") throw new Error("\u89D2\u8272\u7684\u5171\u4EAB\u8BB0\u5FC6\u7ED1\u5B9A\u4E0D\u5B8C\u6574");
+        return `shared:${card.sharedMemoryId}`;
+      default:
+        throw new Error("\u4E0D\u652F\u6301\u7684\u89D2\u8272\u8BB0\u5FC6\u7ED1\u5B9A\u7C7B\u578B");
+    }
+  }
+  function isActive(active, type, id) {
+    if (type === "card") return "CharacterCard" in active && active.CharacterCard.id === id;
+    if (type === "group") return "CharacterGroup" in active && active.CharacterGroup.id === id;
+    throw new Error("Invalid active profile type");
+  }
+
+  // web/features/characters/actions.ts
+  function createCharactersActionsFeature(context) {
+    const { snapshot, state, request, renderMain, toast, openUser, openGraph } = context;
+    async function handleAction(action, element) {
+      switch (action) {
+        case "create-card":
+          await host().openEntity("create", "card", "");
+          return;
+        case "edit-card":
+          await host().openEntity("edit", "card", getCard(snapshot(), dataValue(element, "id")).id);
+          return;
+        case "activate-card":
+          state.snapshot = await request({ action: "activate", type: "card", id: dataValue(element, "id") });
+          renderMain();
+          toast("\u5DF2\u5207\u6362\u89D2\u8272\u5361");
+          return;
+        case "card-user": {
+          const card = getCard(snapshot(), dataValue(element, "id"));
+          await openUser(ownerFor(card), card.name);
+          return;
+        }
+        case "card-graph": {
+          const card = getCard(snapshot(), dataValue(element, "id"));
+          await openGraph(ownerFor(card), card.name);
+          return;
+        }
+        default:
+          throw new Error(`Unknown characters action: ${action}`);
+      }
+    }
+    return { names: ["create-card", "edit-card", "activate-card", "card-user", "card-graph"], handleAction };
+  }
+
+  // web/shared/ui/icons.ts
+  var ICONS = {
+    person: '<circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/>',
+    badge: '<rect x="4" y="4" width="16" height="17" rx="2"/><path d="M9 4V2h6v2M8 16h8"/><circle cx="12" cy="10" r="2"/>',
+    groups: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 5"/>',
+    add: '<path d="M12 5v14M5 12h14"/>',
+    close: '<path d="m6 6 12 12M18 6 6 18"/>',
+    edit: '<path d="m14 4 6 6M4 20l4-1 12-12-5-5L3 14z"/>',
+    graph: '<rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M12 8v4M5 16v-4h14v4"/>',
+    profile: '<rect x="4" y="3" width="16" height="19" rx="2"/><circle cx="12" cy="9" r="3"/><path d="M7 18v-1a5 5 0 0 1 10 0v1"/>',
+    tune: '<path d="M4 6h7M15 6h5M4 12h2M10 12h10M4 18h10M18 18h2"/><circle cx="13" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/>',
+    hub: '<circle cx="12" cy="12" r="3"/><circle cx="4" cy="4" r="2"/><circle cx="20" cy="4" r="2"/><circle cx="4" cy="20" r="2"/><circle cx="20" cy="20" r="2"/><path d="m6 6 4 4m4 4 4 4m-12 0 4-4m4-4 4-4"/>',
+    refresh: '<path d="M20 10a8 8 0 1 0 0 5M20 4v6h-6"/>',
+    upload: '<path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/>',
+    download: '<path d="M12 3v13m-5-5 5 5 5-5M4 15v5h16v-5"/>',
+    check: '<path d="m5 12 4 4 10-10"/>',
+    trash: '<path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/>',
+    expand: '<path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.5"/>',
+    tools: '<path d="m15 4 3 3 3-3a6 6 0 0 1-7 8L6 21l-3-3 9-8a6 6 0 0 1 3-6"/>',
+    search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',
+    memory: '<path d="M4 5h16v14H4zM8 1v4m8-4v4M8 19v4m8-4v4M1 9h3m-3 6h3m16-6h3m-3 6h3"/><rect x="8" y="9" width="8" height="6" rx="1"/>',
+    folder: '<path d="M3 6h7l2 3h9v12H3z"/>',
+    link: '<path d="m9 15 6-6M8 16l-1 1a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m0 12a4 4 0 0 0 6 0l5-5a4 4 0 0 0-6-6l-1 1"/>',
+    up: '<path d="m6 14 6-6 6 6"/>',
+    down: '<path d="m6 10 6 6 6-6"/>',
+    minus: '<path d="M5 12h14"/>',
+    back: '<path d="M19 12H5m7-7-7 7 7 7"/>',
+    pin: '<path d="m8 3 8 0-1 7 3 4H6l3-4zM12 14v8"/>',
+    lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3"/>',
+    move: '<path d="M3 12h18m-4-4 4 4-4 4M7 8l-4 4 4 4"/>',
+    chat: '<path d="M4 3h16v14H9l-5 4zM8 7h8M8 11h5"/>',
+    more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>'
+  };
+  function icon(name) {
+    if (!Object.hasOwn(ICONS, name)) throw new Error(`Unknown icon: ${name}`);
+    return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+  }
+
+  // web/shared/ui/html.ts
+  function escapeHtml(value) {
+    return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+  }
+  function button(action, label, iconName, attrs = "", style = "") {
+    const image = iconName === "" ? "" : icon(iconName);
+    return `<button type="button" class="button ${style}" data-action="${action}" ${attrs}>${image}${escapeHtml(label)}</button>`;
+  }
+  function iconButton(action, label, name, attrs = "") {
+    return `<button type="button" class="icon-button" data-action="${action}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${attrs}>${icon(name)}</button>`;
+  }
+  function field(label, key, value, rows = 0, disabled = false, caption = "", inputOptions = {}) {
+    const attrs = `data-field="${key}" aria-label="${escapeHtml(label)}" ${disabled ? "disabled" : ""}`;
+    const text2 = value === null ? "" : escapeHtml(value);
+    const inputAttrs = `${inputOptions.type === void 0 ? "" : `type="${inputOptions.type}"`} ${inputOptions.min === void 0 ? "" : `min="${inputOptions.min}"`} ${inputOptions.max === void 0 ? "" : `max="${inputOptions.max}"`} ${inputOptions.step === void 0 ? "" : `step="${inputOptions.step}"`} ${inputOptions.required ? "required" : ""}`;
+    const control = rows === 0 ? `<input ${attrs} ${inputAttrs} value="${text2}">` : `<textarea ${attrs} rows="${rows}">${text2}</textarea>`;
+    const expand = rows > 0 && !disabled ? `<span class="field-action">${iconButton("expand-field", "\u5C55\u5F00\u7F16\u8F91", "expand", `data-key="${key}"`)}</span>` : "";
+    return `<label class="field ${rows > 0 ? "expandable" : ""}"><span class="field-label">${escapeHtml(label)}</span>${control}${expand}${caption === "" ? "" : `<div class="field-caption">${escapeHtml(caption)}</div>`}</label>`;
+  }
+  function selectField(label, key, selected, options, disabled) {
+    let html = `<label class="field select-field"><span class="field-label">${escapeHtml(label)}</span><select data-field="${key}" aria-label="${escapeHtml(label)}" ${disabled ? "disabled" : ""}><option value="">\u8BF7\u9009\u62E9</option>`;
+    for (const item of options) html += `<option value="${escapeHtml(item.id)}" ${item.id === selected ? "selected" : ""}>${escapeHtml(item.label)}</option>`;
+    return html + `</select><span class="select-arrow" aria-hidden="true">${icon("down")}</span></label>`;
+  }
+  function switchRow(title, description, key, checked, disabled) {
+    return `<div class="switch-row"><div class="grow"><div class="switch-label">${escapeHtml(title)}</div><div class="switch-description">${escapeHtml(description)}</div></div><input class="switch" type="checkbox" role="switch" aria-label="${escapeHtml(title)}" data-field="${key}" ${checked === true ? "checked" : ""} ${disabled ? "disabled" : ""}></div>`;
+  }
+  function notice(text2) {
+    return `<div class="hint">${icon("info")}<span>${escapeHtml(text2)}</span></div>`;
+  }
+  function copy(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  // web/features/groups/tiles.ts
+  function groupTile(group, snapshot) {
+    let names = "";
+    for (const member of group.members) names += `${names === "" ? "" : "\u3001"}${getCard(snapshot, member.characterCardId).name}`;
+    const active = isActive(snapshot.active, "group", group.id);
+    return `<article class="entity ${active ? "active" : ""}"><button type="button" class="entity-main" data-action="edit-group" data-id="${escapeHtml(group.id)}" aria-label="\u7F16\u8F91\u7FA4\u7EC4 ${escapeHtml(group.name)}"><span class="avatar">${icon("groups")}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(group.name)}</span>${names === "" ? "" : `<div class="entity-subtitle">${escapeHtml(names)}</div>`}<span class="badges"><span class="badge">${group.members.length} \u4E2A\u89D2\u8272</span></span></span></button><div class="entity-actions">${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : button("activate-group", "\u4F7F\u7528", "", `data-id="${escapeHtml(group.id)}"`, "small")}</div></article>`;
+  }
+
+  // web/features/characters/tiles.ts
+  function cardTile(card, snapshot, avatarSources) {
+    let tags = "";
+    for (const id of card.attachedTagIds) for (const tag of snapshot.tags) if (tag.id === id) tags += `<span class="badge">${escapeHtml(tag.name)}</span>`;
+    const active = isActive(snapshot.active, "card", card.id);
+    const binding = card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6";
+    return `<article class="entity ${active ? "active" : ""}"><button type="button" class="entity-main" data-action="edit-card" data-id="${escapeHtml(card.id)}" aria-label="\u7F16\u8F91 ${escapeHtml(card.name)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${avatarSources.has(card.avatarUri ?? "") ? `<img src="${escapeHtml(avatarSources.get(card.avatarUri ?? ""))}" alt="">` : icon("person")}${active ? `<span class="avatar-check">${icon("check")}</span>` : ""}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(card.name)}</span>${card.description === "" ? "" : `<div class="entity-subtitle">${escapeHtml(card.description)}</div>`}<span class="badges"><span class="badge">${card.chatModelBindingMode === "FIXED_MODEL" ? "\u56FA\u5B9A\u6A21\u578B\u914D\u7F6E" : "\u8DDF\u968F\u5168\u5C40\u6A21\u578B"}</span><span class="badge">${binding}</span>${tags}</span></span></button><div class="entity-actions">${iconButton("card-graph", "\u6253\u5F00\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-id="${escapeHtml(card.id)}"`)}${iconButton("card-user", "\u7F16\u8F91\u7528\u6237\u8D44\u6599", "profile", `data-id="${escapeHtml(card.id)}"`)}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : button("activate-card", "\u4F7F\u7528", "", `data-id="${escapeHtml(card.id)}"`, "small")}</div></article>`;
+  }
+
+  // web/features/memory/library-view.ts
+  function globalSwitch(title, description, key, checked) {
+    return switchRow(title, description, key, checked, false).replace(`data-field="${key}"`, `data-action="toggle-memory-preference" data-key="${key}"`);
+  }
+  function memoryPageBody(snapshot, avatarSources) {
+    let stores = "";
+    for (const store of snapshot.stores) {
+      let count = 0;
+      for (const card of snapshot.cards) if (card.memoryBindingMode === "SHARED" && card.sharedMemoryId === store.id) count++;
+      stores += `<div class="entity"><span class="avatar">${icon("hub")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(store.name)}</div><div class="badges"><span class="badge">${count} \u4E2A\u89D2\u8272\u7ED1\u5B9A</span></div></div><div class="entity-actions">${iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("owner-user", "\u7528\u6237\u8D44\u6599", "profile", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("edit-store", "\u7F16\u8F91\u5171\u4EAB\u8BB0\u5FC6\u5E93", "edit", `data-id="${escapeHtml(store.id)}"`)}${iconButton("delete-store", "\u5220\u9664\u5171\u4EAB\u8BB0\u5FC6\u5E93", "trash", `data-id="${escapeHtml(store.id)}"`)}</div></div>`;
+    }
+    let characters = "";
+    for (const card of snapshot.cards) {
+      const owner = ownerFor(card), active = isActive(snapshot.active, "card", card.id);
+      const source = avatarSources.get(card.avatarUri ?? "");
+      characters += `<article class="entity ${active ? "active" : ""}" data-memory-card="${escapeHtml(card.id)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${source ? `<img src="${escapeHtml(source)}" alt="">` : icon("person")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(card.name)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6"}</span>${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : ""}</div></div><div class="entity-actions">${iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}${iconButton("owner-user", "\u7528\u6237\u8D44\u6599 \xB7 USER.md", "profile", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}${iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`)}</div></article>`;
+    }
+    return `<section class="section"><div class="section-head">${icon("tune")}<h2>\u5168\u5C40\u8BB0\u5FC6\u8BBE\u7F6E</h2></div>${globalSwitch("\u5411\u6A21\u578B\u63D0\u4F9B\u7528\u6237\u8D44\u6599", "\u804A\u5929\u6267\u884C\u65F6\u63D0\u4F9B\u7528\u6237\u8D44\u6599\uFF1B\u5173\u95ED\u4E0D\u4F1A\u5220\u9664 USER.md \u6216\u6539\u5199\u5386\u53F2\u8BB0\u5F55\u3002", "userDescriptionEnabled", snapshot.memoryPreferences.userDescriptionEnabled)}${globalSwitch("\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93", "\u5141\u8BB8\u81EA\u52A8\u5019\u9009\u5165\u961F\u548C\u5B9A\u65F6\u63D0\u53D6\uFF1B\u5173\u95ED\u4E0D\u4F1A\u53D6\u6D88\u624B\u52A8\u5386\u53F2\u91CD\u5EFA\u3002", "autoUpdateEnabled", snapshot.memoryPreferences.autoUpdateEnabled)}</section><section class="section"><div class="section-head">${icon("hub")}<h2>\u5171\u4EAB\u8BB0\u5FC6\u5E93</h2>${button("create-store", "\u521B\u5EFA", "add", "", "small")}</div>${stores === "" ? '<div class="empty">\u5F53\u524D\u8FD8\u6CA1\u6709\u5171\u4EAB\u8BB0\u5FC6\u5E93\uFF0C\u521B\u5EFA\u540E\u53EF\u88AB\u591A\u4E2A\u89D2\u8272\u5361\u6302\u8F7D\u5171\u4EAB\u3002</div>' : stores}</section><section class="section"><div class="section-head">${icon("badge")}<h2>\u89D2\u8272\u8BB0\u5FC6\u5E93</h2></div>${characters}</section>`;
+  }
+
+  // web/features/characters/page.ts
+  function createPageRenderer(context) {
+    const { state, app, snapshot } = context;
+    function renderMain() {
+      if (state.snapshot === null) return;
+      if (state.managementView === "memory") {
+        app.innerHTML = `<div class="page"><div class="scroll">${state.error === "" ? "" : `<div class="error-banner" role="alert">${escapeHtml(state.error)}</div>`}${memoryPageBody(snapshot(), state.avatarSources)}</div></div>`;
+        return;
+      }
+      let cards = "", groups = "";
+      for (const card of snapshot().cards) cards += cardTile(card, snapshot(), state.avatarSources);
+      for (const group of snapshot().groups) groups += groupTile(group, snapshot());
+      app.innerHTML = `<div class="page"><div class="scroll">${state.error === "" ? "" : `<div class="error-banner" role="alert">${escapeHtml(state.error)}</div>`}<section class="section"><div class="section-head"><span class="section-icon">${icon("badge")}</span><h2>\u89D2\u8272\u5361</h2><div class="actions">${button("import-card", "\u5BFC\u5165", "upload", "", "small")}${button("create-card", "\u521B\u5EFA", "add", "", "small")}</div></div>${cards === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u89D2\u8272\u5361\uFF0C\u70B9\u51FB\u521B\u5EFA\u6DFB\u52A0\u89D2\u8272\u3002</div>' : cards}</section><section class="section"><div class="section-head"><span class="section-icon">${icon("groups")}</span><h2>\u7FA4\u7EC4</h2><div class="actions">${button("import-group", "\u5BFC\u5165 JSON", "upload", "", "small")}${button("create-group", "\u521B\u5EFA", "add", "", "small")}</div></div>${groups === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u7FA4\u7EC4\uFF0C\u521B\u5EFA\u540E\u53EF\u7F16\u6392\u591A\u4E2A\u89D2\u8272\u53C2\u4E0E\u5BF9\u8BDD\u3002</div>' : groups}</section></div></div>`;
+    }
+    return { renderMain };
+  }
+
+  // web/features/groups/data.ts
+  function getGroup(snapshot, id) {
+    for (const group of snapshot.groups) if (group.id === id) return group;
+    throw new Error("\u7FA4\u7EC4\u4E0D\u5B58\u5728");
+  }
+
+  // web/features/characters/preview-actions.ts
+  function createPreviewFeature(context) {
+    async function handleAction(action, element) {
+      const id = dataValue(element, "id");
+      if (action === "preview-card") {
+        await host().openEntity("preview", "card", getCard(context.snapshot(), id).id);
+        return;
+      }
+      if (action === "preview-group") {
+        await host().openEntity("preview", "group", getGroup(context.snapshot(), id).id);
+        return;
+      }
+      throw new Error(`Unknown preview action: ${action}`);
+    }
+    return { names: ["preview-card", "preview-group"], handleAction };
+  }
+
+  // web/features/characters/transfers.ts
+  function createCharactersTransfersFeature(context) {
+    const { state, topDialog, pushDialog, popDialog, request, renderMain, toast, owningGraph } = context;
+    async function handleAction(action, _element) {
+      switch (action) {
+        case "save-export": {
+          const dialog = topDialog("export");
+          const result = await host().exportFile(dialog.name, dialog.content);
+          if (result.cancelled) return;
+          popDialog();
+          toast("\u6587\u4EF6\u5DF2\u5BFC\u51FA");
+          return;
+        }
+        case "import-card":
+        case "import-group":
+          pushDialog({ type: "import", target: action === "import-card" ? "card" : "group", ownerKey: null, format: "operit", strategy: "SKIP", content: "" });
+          return;
+        case "read-import": {
+          const dialog = topDialog("import");
+          if (dialog.target === "card") state.snapshot = await request({ action: "importCharacter", format: dialog.format, content: dialog.content });
+          else if (dialog.target === "group") state.snapshot = await request({ action: "importGroup", content: dialog.content });
+          else {
+            if (dialog.ownerKey === null) throw new Error("\u7F3A\u5C11\u5BFC\u5165\u8BB0\u5FC6\u5E93\u6807\u8BC6");
+            const imported = await request({ action: "importMemory", ownerKey: dialog.ownerKey, content: dialog.content, strategy: dialog.strategy });
+            const graph = owningGraph(dialog.ownerKey);
+            graph.data = await request({ action: "graph", ownerKey: dialog.ownerKey });
+            graph.searchIds = null;
+            graph.query = "";
+            graph.appliedQuery = "";
+            graph.selected = null;
+            graph.selectedEdge = null;
+            popDialog();
+            toast(`\u8BB0\u5FC6\u5BFC\u5165\u5B8C\u6210\uFF1A\u65B0\u589E ${imported.result.newMemories}\uFF0C\u66F4\u65B0 ${imported.result.updatedMemories}\uFF0C\u8DF3\u8FC7 ${imported.result.skippedMemories}\uFF0C\u5173\u7CFB ${imported.result.newLinks}`);
+            return;
+          }
+          popDialog();
+          renderMain();
+          toast("\u5BFC\u5165\u5B8C\u6210");
+          return;
+        }
+        default:
+          throw new Error(`Unknown characters/transfers action: ${action}`);
+      }
+    }
+    return { names: ["save-export", "import-card", "import-group", "read-import"], handleAction };
+  }
+
+  // web/features/graph/camera.ts
+  var cameraFrames = /* @__PURE__ */ new WeakMap();
+  function cancelGraphCameraAnimation(dialog) {
+    const frame = cameraFrames.get(dialog);
+    if (frame === void 0) return;
+    cancelAnimationFrame(frame);
+    cameraFrames.delete(dialog);
+  }
+  function animateGraphCamera(dialog, target, root, finish) {
+    cancelGraphCameraAnimation(dialog);
+    const start = { ...dialog.camera }, started = performance.now(), duration = 320;
+    function tick(now) {
+      const surface = root.querySelector("dialog[open] [data-graph-surface]");
+      if (surface === null || surface.dataset.owner !== dialog.ownerKey) {
+        cancelGraphCameraAnimation(dialog);
+        return;
+      }
+      const progress = Math.min(1, Math.max(0, (now - started) / duration));
+      const eased = progress * progress * (3 - 2 * progress);
+      dialog.camera = progress === 1 ? { ...target } : {
+        x: start.x + (target.x - start.x) * eased,
+        y: start.y + (target.y - start.y) * eased,
+        scale: start.scale * Math.pow(target.scale / start.scale, eased)
+      };
+      requireElement(surface.firstElementChild, SVGGElement).setAttribute("transform", `translate(${dialog.camera.x},${dialog.camera.y}) scale(${dialog.camera.scale})`);
+      if (progress === 1) {
+        cameraFrames.delete(dialog);
+        finish();
+      } else cameraFrames.set(dialog, requestAnimationFrame(tick));
+    }
+    cameraFrames.set(dialog, requestAnimationFrame(tick));
+  }
+
+  // web/features/graph/data.ts
+  function graphData(dialog) {
+    if (dialog.data === null) throw new Error("\u8BB0\u5FC6\u56FE\u8C31\u5C1A\u672A\u52A0\u8F7D");
+    return dialog.data;
+  }
+  function graphViewport(dialog) {
+    if (dialog.viewport === null) throw new Error("\u8BB0\u5FC6\u56FE\u8C31\u753B\u5E03\u5C1A\u672A\u5C31\u7EEA");
+    return dialog.viewport;
+  }
+  function graphItems(dialog) {
+    const items = [];
+    for (const item of graphData(dialog).items) {
+      const folder = item.folderPath === null ? "" : item.folderPath;
+      if (dialog.folder !== "*" && dialog.folder !== "" && dialog.folder !== folder && !folder.startsWith(dialog.folder + "/")) continue;
+      if (dialog.folder === "" && folder !== "") continue;
+      if (dialog.searchIds !== null && !dialog.searchIds.has(item.uuid)) continue;
+      items.push(item);
+    }
+    return items;
+  }
+  function selectedMemory(dialog) {
+    for (const item of graphData(dialog).items) if (item.uuid === dialog.selected) return item;
+    return null;
+  }
+
+  // web/features/graph/layout.ts
+  function graphEntry(map, id) {
+    const value = map.get(id);
+    if (value === void 0) throw new Error(`Missing graph entry: ${id}`);
+    return value;
+  }
+  function measureMemoryNode(label) {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (context === null) throw new Error("Graph text measurement is unavailable");
+    context.font = `12px ${getComputedStyle(document.body).fontFamily}`;
+    const lines = [""];
+    for (const character of label) {
+      const index = lines.length - 1;
+      if (context.measureText(lines[index] + character).width > 240 && lines[index] !== "") {
+        if (lines.length === 2) {
+          while (context.measureText(lines[index] + "\u2026").width > 240) lines[index] = lines[index].slice(0, -1);
+          lines[index] += "\u2026";
+          break;
+        }
+        lines.push(character);
+      } else lines[index] += character;
+    }
+    let width = 0;
+    for (const line of lines) width = Math.max(width, context.measureText(line).width);
+    return { width: Math.max(56, width + 28), height: Math.max(28, lines.length * 14.4 + 12), lines };
+  }
+  function layoutMemoryGraph(nodes, edges, measure) {
+    const adjacency = /* @__PURE__ */ new Map(), sizes = /* @__PURE__ */ new Map();
+    for (const node of nodes) {
+      adjacency.set(node.id, []);
+      sizes.set(node.id, measure(node.label));
+    }
+    for (const edge of edges) {
+      if (edge.isCrossFolderLink) continue;
+      if (!adjacency.has(edge.sourceId) || !adjacency.has(edge.targetId)) throw new Error("Invalid graph relationship endpoint");
+      graphEntry(adjacency, edge.sourceId).push(edge.targetId);
+      graphEntry(adjacency, edge.targetId).push(edge.sourceId);
+    }
+    const visited = /* @__PURE__ */ new Set(), clusters = [];
+    for (const node of nodes) {
+      if (visited.has(node.id)) continue;
+      visited.add(node.id);
+      const cluster = [node.id];
+      for (let index = 0; index < cluster.length; index++) {
+        for (const neighbor of graphEntry(adjacency, cluster[index])) {
+          if (!visited.has(neighbor)) {
+            visited.add(neighbor);
+            cluster.push(neighbor);
+          }
+        }
+      }
+      cluster.sort((a, b) => graphEntry(adjacency, b).length - graphEntry(adjacency, a).length || (a < b ? -1 : a > b ? 1 : 0));
+      clusters.push(cluster);
+    }
+    clusters.sort((a, b) => b.length - a.length);
+    const columns = Math.max(1, Math.ceil(Math.sqrt(clusters.length))), positions = /* @__PURE__ */ new Map();
+    let x = 0, y = 0, rowHeight = 0;
+    for (let index = 0; index < clusters.length; index++) {
+      const ids = clusters[index], local = /* @__PURE__ */ new Map([[ids[0], { x: 0, y: 0 }]]);
+      let diameter = 0;
+      for (const id of ids) {
+        const size = graphEntry(sizes, id);
+        diameter = Math.max(diameter, Math.hypot(size.width, size.height));
+      }
+      diameter += 32;
+      let placed = 1, radius = diameter;
+      while (placed < ids.length) {
+        const clearance = diameter * 1.12;
+        const capacity = Math.max(2, Math.floor(Math.PI / Math.asin(Math.max(0, Math.min(1, clearance / (2 * radius))))));
+        const count = Math.min(capacity, ids.length - placed);
+        for (let j = 0; j < count; j++) {
+          const angle = -Math.PI / 2 + 2 * Math.PI * j / count;
+          local.set(ids[placed + j], { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+        }
+        placed += count;
+        radius += clearance;
+      }
+      const bounds = memoryGraphBounds(local, sizes);
+      if (index % columns === 0 && index > 0) {
+        x = 0;
+        y += rowHeight + 56;
+        rowHeight = 0;
+      }
+      for (const id of ids) {
+        const point = graphEntry(local, id);
+        positions.set(id, { x: point.x + x - bounds.left, y: point.y + y - bounds.top });
+      }
+      x += bounds.width + 56;
+      rowHeight = Math.max(rowHeight, bounds.height);
+    }
+    return { positions, sizes, bounds: memoryGraphBounds(positions, sizes) };
+  }
+  function memoryGraphBounds(positions, sizes) {
+    if (positions.size === 0) return { left: 0, top: 0, width: 1, height: 1 };
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    for (const [id, point] of positions) {
+      const size = graphEntry(sizes, id);
+      left = Math.min(left, point.x - size.width / 2);
+      top = Math.min(top, point.y - size.height / 2);
+      right = Math.max(right, point.x + size.width / 2);
+      bottom = Math.max(bottom, point.y + size.height / 2);
+    }
+    return { left, top, width: right - left, height: bottom - top };
+  }
+  function fitMemoryGraph(bounds, width, height) {
+    const scale = Math.max(0.1, Math.min(1, Math.max(1, width - 80) / bounds.width, Math.max(1, height - 80) / bounds.height));
+    return { scale, x: width / 2 - (bounds.left + bounds.width / 2) * scale, y: height / 2 - (bounds.top + bounds.height / 2) * scale };
+  }
+  function zoomMemoryGraph(camera, focal, factor) {
+    const anchor = { x: (focal.x - camera.x) / camera.scale, y: (focal.y - camera.y) / camera.scale };
+    const scale = Math.max(0.1, Math.min(5, camera.scale * factor));
+    return { scale, x: focal.x - anchor.x * scale, y: focal.y - anchor.y * scale };
+  }
+
+  // web/features/graph/actions.ts
+  function createGraphActionsFeature(context) {
+    const { topDialog, pushDialog, request, renderDialogs, updateGraphSurface: updateGraphSurface2, dialogsRoot } = context;
+    async function openGraph(ownerKey, name) {
+      const dialog = pushDialog({ type: "graph", ownerKey, name, loading: true, data: null, selected: null, selectedEdge: null, linkMode: false, linkSource: null, viewport: null, layoutSignature: null, sizes: /* @__PURE__ */ new Map(), query: "", appliedQuery: "", searchIds: null, folder: "*", positions: /* @__PURE__ */ new Map(), camera: { x: 0, y: 0, scale: 1 } });
+      try {
+        dialog.data = await request({ action: "graph", ownerKey });
+        dialog.loading = false;
+        renderDialogs();
+      } catch (error) {
+        dialog.loading = false;
+        dialog.error = String(error);
+        renderDialogs();
+      }
+    }
+    async function handleAction(action, element) {
+      switch (action) {
+        case "owner-graph":
+          await openGraph(dataValue(element, "owner"), dataValue(element, "name"));
+          return;
+        case "refresh-graph": {
+          const dialog = topDialog("graph");
+          dialog.data = await request({ action: "graph", ownerKey: dialog.ownerKey });
+          renderDialogs();
+          return;
+        }
+        case "search-graph": {
+          const graph = topDialog("graph"), query = graph.query.trim();
+          if (query === "") graph.searchIds = null;
+          else {
+            const items = await request({ action: "searchMemory", ownerKey: graph.ownerKey, query });
+            graph.searchIds = /* @__PURE__ */ new Set();
+            for (const item of items) graph.searchIds.add(item.uuid);
+          }
+          graph.appliedQuery = query;
+          graph.selected = null;
+          updateGraphSurface2(graph);
+          return;
+        }
+        case "clear-search": {
+          const graph = topDialog("graph");
+          graph.query = "";
+          graph.appliedQuery = "";
+          graph.searchIds = null;
+          renderDialogs();
+          return;
+        }
+        case "select-edge": {
+          const graph = topDialog("graph"), linkId = dataValue(element, "link");
+          const edge = graphData(graph).graph.edges.find(
+            /** Preserves the lossless string identity from the plugin's graph contract. */
+            (item) => item.id === linkId
+          );
+          if (edge === void 0) throw new Error("\u8BB0\u5FC6\u5173\u7CFB\u4E0D\u5B58\u5728");
+          graph.selected = null;
+          graph.selectedEdge = edge.id;
+          updateGraphSurface2(graph);
+          return;
+        }
+        case "select-memory":
+        case "locate-memory": {
+          const graph = topDialog("graph");
+          graph.selected = dataValue(element, "id");
+          graph.selectedEdge = null;
+          if (graph.linkMode) {
+            if (graph.linkSource === null) graph.linkSource = graph.selected;
+            else if (graph.linkSource !== graph.selected) {
+              const source = graphData(graph).items.find(
+                /** Resolves the selected source node to the exact memory UUID. */
+                (item) => item.uuid === graph.linkSource
+              );
+              const target = selectedMemory(graph);
+              if (source === void 0 || target === null) throw new Error("\u65E0\u6CD5\u5B9A\u4F4D\u8BB0\u5FC6\u8282\u70B9");
+              pushDialog({ type: "link", ownerKey: graph.ownerKey, items: graphData(graph).items, draft: { sourceTitle: source.title, targetTitle: target.title, linkType: "related", weight: 1, description: "" } });
+              return;
+            }
+          }
+          updateGraphSurface2(graph);
+          if (action === "locate-memory") {
+            const position = graphEntry(graph.positions, graph.selected), viewport = graphViewport(graph);
+            const scale = Math.max(1, graph.camera.scale);
+            animateGraphCamera(
+              graph,
+              { scale, x: viewport.width / 2 - position.x * scale, y: viewport.height / 2 - position.y * scale },
+              dialogsRoot,
+              /** Refreshes scale-dependent labels after navigation has settled. */
+              () => updateGraphSurface2(graph)
+            );
+          }
+          return;
+        }
+        case "zoom-in":
+        case "zoom-out": {
+          const graph = topDialog("graph");
+          graph.camera = zoomMemoryGraph(graph.camera, { x: graphViewport(graph).width / 2, y: graphViewport(graph).height / 2 }, action === "zoom-in" ? 1.25 : 1 / 1.25);
+          updateGraphSurface2(graph);
+          return;
+        }
+        case "fit-graph": {
+          const graph = topDialog("graph");
+          graph.camera = fitMemoryGraph(memoryGraphBounds(graph.positions, graph.sizes), graphViewport(graph).width, graphViewport(graph).height);
+          updateGraphSurface2(graph);
+          return;
+        }
+        case "export-graph": {
+          const graph = topDialog("graph"), backup = await request({ action: "exportMemory", ownerKey: graph.ownerKey });
+          pushDialog({ type: "export", name: "memory-backup.json", content: backup.content, typeName: "memory" });
+          return;
+        }
+        case "import-graph": {
+          const graph = topDialog("graph");
+          pushDialog({ type: "import", target: "memory", ownerKey: graph.ownerKey, format: "operit", strategy: "SKIP", content: "" });
+          return;
+        }
+        default:
+          throw new Error(`Unknown graph/actions action: ${action}`);
+      }
+    }
+    return { names: ["owner-graph", "refresh-graph", "search-graph", "clear-search", "select-edge", "select-memory", "locate-memory", "zoom-in", "zoom-out", "fit-graph", "export-graph", "import-graph"], handleAction, openGraph };
+  }
+
+  // web/features/graph/inspector.ts
+  function graphInspector(dialog) {
+    let list = "";
+    const items = graphItems(dialog);
+    for (const item of items) list += `<button type="button" class="memory-item ${dialog.selected === item.uuid ? "selected" : ""}" data-action="locate-memory" data-id="${escapeHtml(item.uuid)}"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.content.slice(0, 70))}</small></button>`;
+    const selected = selectedMemory(dialog);
+    let detail = "";
+    if (selected !== null) {
+      let relationships = "";
+      for (const edge of graphData(dialog).graph.edges) {
+        if (edge.sourceId !== selected.uuid && edge.targetId !== selected.uuid) continue;
+        relationships += `<div class="row"><span class="grow muted">${escapeHtml(edge.label === null ? "" : edge.label)} \xB7 ${edge.weight.toFixed(2)}</span>${iconButton("delete-link", "\u5220\u9664\u5173\u7CFB", "trash", `data-link="${escapeHtml(edge.id)}"`)}</div>`;
+      }
+      detail = `<div class="graph-detail"><h3>${escapeHtml(selected.title)}</h3><div class="memory-metadata"><span>\u7C7B\u578B ${escapeHtml(selected.contentType)}</span><span>\u6765\u6E90 ${escapeHtml(selected.source)}</span><span>\u53EF\u4FE1\u5EA6 ${selected.credibility.toFixed(2)}</span><span>\u91CD\u8981\u6027 ${selected.importance.toFixed(2)}</span></div><pre>${escapeHtml(selected.content)}</pre><div class="actions">${button("edit-memory", "\u7F16\u8F91", "edit", "", "small")}${button("delete-memory", "\u5220\u9664", "trash", "", "small danger")}</div>${relationships}</div>`;
+    }
+    if (dialog.selectedEdge !== null) {
+      const edge = graphData(dialog).graph.edges.find(
+        /** Resolves the selected relationship by its exact persisted link id. */
+        (item) => item.id === dialog.selectedEdge
+      );
+      if (edge !== void 0) {
+        const completeRecord = edge.label !== null && typeof edge.metadata.description === "string";
+        const stage = completeRecord ? `<pre>${escapeHtml(edge.metadata.description)}</pre>` : "";
+        detail = `<div class="graph-detail"><h3>\u8BB0\u5FC6\u5173\u7CFB</h3><p>${escapeHtml(edge.label === null ? "" : edge.label)}</p><p>\u5F3A\u5EA6 ${edge.weight.toFixed(2)}</p>${stage}${button("edit-link", "\u7F16\u8F91\u5173\u7CFB", "edit", `data-link="${escapeHtml(edge.id)}"`, "small")}${button("delete-link", "\u5220\u9664\u5173\u7CFB", "trash", `data-link="${escapeHtml(edge.id)}"`, "danger")}</div>`;
+      }
+    }
+    return `<h3>\u8BB0\u5FC6 \xB7 ${items.length}</h3>${list === "" ? '<div class="empty">\u6CA1\u6709\u5339\u914D\u7684\u8BB0\u5FC6</div>' : list}${detail}`;
+  }
+
+  // web/features/graph/canvas.ts
+  function initializePositions(dialog) {
+    const visible = /* @__PURE__ */ new Set();
+    for (const item of graphItems(dialog)) visible.add(item.uuid);
+    if (dialog.appliedQuery !== "") {
+      const matched = new Set(visible);
+      for (const edge of graphData(dialog).graph.edges) {
+        if (matched.has(edge.sourceId)) visible.add(edge.targetId);
+        if (matched.has(edge.targetId)) visible.add(edge.sourceId);
+      }
+    }
+    const nodes = graphData(dialog).graph.nodes.filter(
+      /** Retains exactly the original native graph's filtered node scope. */
+      (node) => visible.has(node.id)
+    );
+    const edges = graphData(dialog).graph.edges.filter(
+      /** Retains relationships whose endpoints survive the current filter. */
+      (edge) => visible.has(edge.sourceId) && visible.has(edge.targetId)
+    );
+    const signature = JSON.stringify({ nodes, edges });
+    if (dialog.layoutSignature === signature) return;
+    cancelGraphCameraAnimation(dialog);
+    const scene = layoutMemoryGraph(nodes, edges, measureMemoryNode);
+    dialog.positions = scene.positions;
+    dialog.sizes = scene.sizes;
+    dialog.layoutSignature = signature;
+    dialog.viewport = null;
+  }
+  function setGraphViewport(dialog, surface) {
+    const bounds = surface.getBoundingClientRect(), width = bounds.width, height = bounds.height;
+    surface.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    if (dialog.viewport !== null && dialog.viewport.width === width && dialog.viewport.height === height) return;
+    cancelGraphCameraAnimation(dialog);
+    if (dialog.viewport === null) dialog.camera = fitMemoryGraph(memoryGraphBounds(dialog.positions, dialog.sizes), width, height);
+    else {
+      dialog.camera.x += (width - graphViewport(dialog).width) / 2;
+      dialog.camera.y += (height - graphViewport(dialog).height) / 2;
+    }
+    dialog.viewport = { width, height };
+    surface.innerHTML = graphSvg(dialog);
+  }
+  function graphSvg(dialog) {
+    initializePositions(dialog);
+    const visible = /* @__PURE__ */ new Set();
+    for (const item of graphItems(dialog)) visible.add(item.uuid);
+    if (dialog.appliedQuery !== "") {
+      const matched = new Set(visible);
+      for (const edge of graphData(dialog).graph.edges) {
+        if (matched.has(edge.sourceId)) visible.add(edge.targetId);
+        if (matched.has(edge.targetId)) visible.add(edge.sourceId);
+      }
+    }
+    let edges = "", nodes = "";
+    for (const edge of graphData(dialog).graph.edges) {
+      if (!visible.has(edge.sourceId) || !visible.has(edge.targetId)) continue;
+      if (!dialog.positions.has(edge.sourceId) || !dialog.positions.has(edge.targetId)) throw new Error("\u8BB0\u5FC6\u56FE\u8C31\u5B58\u5728\u65E0\u6548\u7684\u5173\u7CFB\u7AEF\u70B9");
+      const source = graphEntry(dialog.positions, edge.sourceId), target = graphEntry(dialog.positions, edge.targetId);
+      const width = Math.max(0.7, Math.min(4, edge.weight * (edge.isCrossFolderLink ? 1.6 : 2.4)));
+      edges += `<g class="graph-edge-action" data-action="select-edge" data-link="${escapeHtml(edge.id)}" role="button" tabindex="0" aria-label="\u5173\u7CFB ${escapeHtml(edge.label === null ? "" : edge.label)}"><line class="graph-edge-hit" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"/><line class="graph-edge ${dialog.selectedEdge === edge.id ? "selected" : ""}" style="stroke-width:${width};${edge.isCrossFolderLink ? "stroke-dasharray:8 6" : ""}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}"/><title>${escapeHtml(edge.label === null ? "" : edge.label)}</title>${edge.label !== null && dialog.camera.scale >= 0.55 ? `<text class="edge-label" x="${(source.x + target.x) / 2}" y="${(source.y + target.y) / 2 - 8}">${escapeHtml(edge.label)}</text>` : ""}</g>`;
+    }
+    for (const node of graphData(dialog).graph.nodes) {
+      if (!visible.has(node.id)) continue;
+      const position = graphEntry(dialog.positions, node.id);
+      const size = graphEntry(dialog.sizes, node.id), color = `#${(node.color >>> 0).toString(16).padStart(8, "0").slice(2)}`;
+      let lines = "";
+      for (let index = 0; index < size.lines.length; index++) lines += `<tspan x="0" y="${(index - (size.lines.length - 1) / 2) * 14.4 + 4}">${escapeHtml(size.lines[index])}</tspan>`;
+      nodes += `<g class="graph-node ${dialog.selected === node.id ? "selected" : ""} ${dialog.linkSource === node.id ? "link-source" : ""}" transform="translate(${position.x},${position.y})" data-action="select-memory" data-id="${escapeHtml(node.id)}" role="button" tabindex="0" aria-label="${escapeHtml(node.label)}"><rect x="${-size.width / 2}" y="${-size.height / 2}" width="${size.width}" height="${size.height}" rx="${Math.min(14, size.height / 2)}" style="fill:color-mix(in srgb,${color} 18%,var(--surfaceContainerHigh))"/><text text-anchor="middle">${lines}</text><title>${escapeHtml(node.label)}</title></g>`;
+    }
+    return `<g transform="translate(${dialog.camera.x},${dialog.camera.y}) scale(${dialog.camera.scale})">${edges}${nodes}</g>`;
+  }
+  function updateGraphSurface(dialog, dialogsRoot) {
+    const surface = dialogsRoot.querySelector("dialog:last-child [data-graph-surface]");
+    const inspector = dialogsRoot.querySelector("dialog:last-child .graph-sidebar");
+    if (surface !== null) {
+      initializePositions(dialog);
+      setGraphViewport(dialog, surface);
+      surface.innerHTML = graphSvg(dialog);
+    }
+    if (inspector !== null) inspector.innerHTML = graphInspector(dialog);
+  }
+
+  // web/features/graph/gestures.ts
+  function createGraphGestures(context) {
+    const { state, topDialog, updateGraphSurface: updateGraphSurface2, dialogsRoot, onClick } = context;
+    function pointerById(id) {
+      const pointer = state.pointers.get(id);
+      if (pointer === void 0) throw new Error("\u56FE\u8C31\u6307\u9488\u72B6\u6001\u4E0D\u4E00\u81F4");
+      return pointer;
+    }
+    function onPointerDown(event) {
+      if (!(event.target instanceof Element) || state.dialogs.length === 0 || state.busy) return;
+      const surface = event.target.closest("[data-graph-surface]");
+      if (surface === null || event.button !== 0) return;
+      const action = event.target.closest("[data-action]");
+      if (action !== null && action.dataset.action !== "select-memory" && action.dataset.action !== "select-edge") return;
+      const dialog = topDialog("graph"), nodeId = action !== null && action.dataset.action === "select-memory" ? dataValue(action, "id") : null;
+      cancelGraphCameraAnimation(dialog);
+      const nodePosition = nodeId === null ? null : graphEntry(dialog.positions, nodeId);
+      if (nodeId !== null && nodePosition === void 0) throw new Error("\u65E0\u6CD5\u5B9A\u4F4D\u62D6\u52A8\u7684\u8BB0\u5FC6\u8282\u70B9");
+      if (state.pointers.size === 0) state.gestureMoved = false;
+      state.pointers.set(event.pointerId, {
+        surface,
+        node: nodeId === null || nodePosition === null ? null : { id: nodeId, start: { x: nodePosition.x, y: nodePosition.y } },
+        startX: event.clientX,
+        startY: event.clientY,
+        x: event.clientX,
+        y: event.clientY
+      });
+    }
+    function onPointerMove(event) {
+      if (!state.pointers.has(event.pointerId)) return;
+      const pointer = pointerById(event.pointerId), previous = [...state.pointers.values()];
+      const before = previous.map(
+        /** Captures previous screen coordinates before updating the current pointer. */
+        (point) => ({ x: point.x, y: point.y })
+      );
+      pointer.x = event.clientX;
+      pointer.y = event.clientY;
+      const after = [...state.pointers.values()], dialog = topDialog("graph"), wasMoved = state.gestureMoved;
+      if (after.length === 1 && !wasMoved && Math.hypot(pointer.x - pointer.startX, pointer.y - pointer.startY) <= 6) return;
+      state.gestureMoved = true;
+      for (const [pointerId, active] of state.pointers) {
+        if (!active.surface.hasPointerCapture(pointerId)) active.surface.setPointerCapture(pointerId);
+      }
+      event.preventDefault();
+      if (after.length === 1) {
+        if (pointer.node !== null) {
+          dialog.positions.set(pointer.node.id, {
+            x: pointer.node.start.x + (pointer.x - pointer.startX) / dialog.camera.scale,
+            y: pointer.node.start.y + (pointer.y - pointer.startY) / dialog.camera.scale
+          });
+        } else {
+          dialog.camera.x += pointer.x - (wasMoved ? before[0].x : pointer.startX);
+          dialog.camera.y += pointer.y - (wasMoved ? before[0].y : pointer.startY);
+        }
+      } else {
+        const start = { x: (before[0].x + before[1].x) / 2, y: (before[0].y + before[1].y) / 2 };
+        const end = { x: (after[0].x + after[1].x) / 2, y: (after[0].y + after[1].y) / 2 };
+        const distance = Math.hypot(before[0].x - before[1].x, before[0].y - before[1].y);
+        const currentDistance = Math.hypot(after[0].x - after[1].x, after[0].y - after[1].y);
+        dialog.camera.x += end.x - start.x;
+        dialog.camera.y += end.y - start.y;
+        if (distance > 0 && currentDistance > 0) {
+          const bounds = pointer.surface.getBoundingClientRect();
+          dialog.camera = zoomMemoryGraph(dialog.camera, { x: end.x - bounds.left, y: end.y - bounds.top }, currentDistance / distance);
+        }
+      }
+      updateGraphSurface2(dialog);
+    }
+    function onPointerUp(event) {
+      if (!state.pointers.has(event.pointerId)) return;
+      const pointer = pointerById(event.pointerId);
+      state.pointers.delete(event.pointerId);
+      if (pointer.surface.hasPointerCapture(event.pointerId)) pointer.surface.releasePointerCapture(event.pointerId);
+      for (const active of state.pointers.values()) {
+        active.startX = active.x;
+        active.startY = active.y;
+        if (active.node !== null) {
+          const position = graphEntry(topDialog("graph").positions, active.node.id);
+          active.node.start = { x: position.x, y: position.y };
+        }
+      }
+    }
+    function onWheel(event) {
+      if (!(event.target instanceof Element) || event.target.closest("[data-graph-surface]") === null) return;
+      event.preventDefault();
+      const dialog = topDialog("graph"), bounds = requireElement(event.target.closest("[data-graph-surface]"), SVGSVGElement).getBoundingClientRect();
+      cancelGraphCameraAnimation(dialog);
+      const deltaMode = event.deltaMode;
+      let delta = event.deltaY;
+      switch (deltaMode) {
+        case WheelEvent.DOM_DELTA_PIXEL:
+          break;
+        case WheelEvent.DOM_DELTA_LINE:
+          delta *= 16;
+          break;
+        case WheelEvent.DOM_DELTA_PAGE:
+          delta *= bounds.height;
+          break;
+        default:
+          throw new Error(`Unsupported wheel delta mode: ${deltaMode}`);
+      }
+      dialog.camera = zoomMemoryGraph(dialog.camera, { x: event.clientX - bounds.left, y: event.clientY - bounds.top }, Math.exp(-delta * 15e-4));
+      updateGraphSurface2(dialog);
+    }
+    function onKeyDown(event) {
+      if (event.key === "Enter" && event.target instanceof Element && event.target.matches("[data-graph-search]")) {
+        event.preventDefault();
+        requireElement(dialogsRoot.querySelector("dialog:last-child [data-action=search-graph]"), HTMLButtonElement).click();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && event.target instanceof Element && event.target.matches(".graph-node,.graph-edge-action")) {
+        event.preventDefault();
+        onClick(event);
+      }
+    }
+    return { onPointerDown, onPointerMove, onPointerUp, onWheel, onKeyDown };
+  }
+  function discardGraphPointers(state) {
+    for (const [pointerId, pointer] of state.pointers) {
+      if (pointer.surface.hasPointerCapture(pointerId)) pointer.surface.releasePointerCapture(pointerId);
+    }
+    state.pointers.clear();
+    state.gestureMoved = false;
+  }
+
+  // web/features/groups/actions.ts
+  function createGroupsActionsFeature(context) {
+    const { snapshot, state, request, renderMain, toast } = context;
+    async function handleAction(action, element) {
+      switch (action) {
+        case "activate-group":
+          state.snapshot = await request({ action: "activate", type: "group", id: dataValue(element, "id") });
+          renderMain();
+          toast("\u5DF2\u5207\u6362\u7FA4\u7EC4");
+          return;
+        case "create-group":
+          await host().openEntity("create", "group", "");
+          return;
+        case "edit-group":
+          await host().openEntity("edit", "group", getGroup(snapshot(), dataValue(element, "id")).id);
+          return;
+        default:
+          throw new Error(`Unknown groups action: ${action}`);
+      }
+    }
+    return { names: ["activate-group", "create-group", "edit-group"], handleAction };
+  }
+
+  // src/validation.ts
+  function assertObject(value, label) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
+  }
+  function assertString(value, label) {
+    if (typeof value !== "string") throw new Error(`${label} \u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  }
+  function assertBoolean(value, label) {
+    if (typeof value !== "boolean") throw new Error(`${label} \u5FC5\u987B\u662F\u5E03\u5C14\u503C`);
+  }
+  function assertNumber(value, label, min, max) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new Error(`${label} \u5FC5\u987B\u5728 ${min} \u5230 ${max} \u4E4B\u95F4`);
+  }
+  function assertInteger(value, label, min) {
+    assertNumber(value, label, min, Number.MAX_SAFE_INTEGER);
+    if (!Number.isSafeInteger(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5B89\u5168\u6574\u6570`);
+  }
+  function assertMemorySettings(value) {
+    assertObject(value, "\u8BB0\u5FC6\u8BBE\u7F6E");
+    assertInteger(value.autoSaveIntervalMinutes, "\u81EA\u52A8\u4FDD\u5B58\u95F4\u9694", 1);
+    if (value.autoSaveIntervalMinutes > 30) throw new Error("\u81EA\u52A8\u4FDD\u5B58\u95F4\u9694\u5FC5\u987B\u5728 1 \u5230 30 \u5206\u949F\u4E4B\u95F4");
+    assertInteger(value.nextAutoSaveRunAtMs, "\u4E0B\u6B21\u81EA\u52A8\u4FDD\u5B58\u65F6\u95F4", 0);
+    for (const field2 of ["memoryExtractionCustomRules", "cloudEmbeddingEndpoint", "cloudEmbeddingApiKey", "cloudEmbeddingModel"]) assertString(value[field2], field2);
+    for (const field2 of ["profileAutoUpdateEnabled", "profileAutoUpdateLocked", "cloudEmbeddingEnabled"]) assertBoolean(value[field2], field2);
+  }
+  function assertSearchConfig(value) {
+    assertObject(value, "\u8BB0\u5FC6\u641C\u7D22\u8BBE\u7F6E");
+    if (value.scoreMode !== "BALANCED" && value.scoreMode !== "KEYWORD_FIRST" && value.scoreMode !== "SEMANTIC_FIRST") throw new Error("\u8BB0\u5FC6\u8BC4\u5206\u6A21\u5F0F\u65E0\u6548");
+    for (const field2 of ["keywordWeight", "tagWeight", "vectorWeight", "edgeWeight"]) assertNumber(value[field2], field2, 0, Number.MAX_VALUE);
+  }
+
+  // web/features/memory/controls-view.ts
+  function searchResults(dialog) {
+    const result = dialog.searchResult;
+    if (result === null) return "";
+    const rows = result.candidates.map((hit) => `<tr><td>${escapeHtml(hit.memory.title)}</td><td>${hit.score.toFixed(4)}</td><td>${hit.keywordScore.toFixed(4)}</td><td>${hit.tagScore.toFixed(4)}</td><td>${hit.vectorScore.toFixed(4)}</td><td>${hit.edgeScore.toFixed(4)}</td><td>${hit.passedThreshold ? "\u547D\u4E2D" : "\u672A\u8FC7\u9608\u503C"}</td></tr>`).join("");
+    return `<section data-search-results><h3>\u67E5\u8BE2\uFF1A${escapeHtml(result.query)}</h3><p class="muted">\u8303\u56F4 ${result.memoriesInScopeCount} \u6761 \xB7 \u547D\u4E2D ${result.candidates.filter((hit) => hit.passedThreshold).length} \u6761 \xB7 \u9608\u503C ${result.relevanceThreshold}</p><div class="memory-search-scores" tabindex="0" role="region" aria-label="\u68C0\u7D22\u771F\u5B9E\u8BC4\u5206"><table class="memory-search-table"><thead><tr><th>\u8BB0\u5FC6</th><th>\u603B\u5206</th><th>\u5173\u952E\u8BCD</th><th>\u6807\u7B7E</th><th>\u5411\u91CF</th><th>\u5173\u7CFB</th><th>\u7ED3\u679C</th></tr></thead><tbody>${rows}</tbody></table></div>${rows === "" ? '<p class="muted">\u5F53\u524D\u8BB0\u5FC6\u5E93\u6CA1\u6709\u5019\u9009\u8BB0\u5F55</p>' : ""}</section>`;
+  }
+  function memoryRebuilding(dialog) {
+    return dialog.progress !== null && (dialog.progress.status === "preparing" || dialog.progress.status === "running");
+  }
+  function memoryQueueStatus(dialog) {
+    const queue = dialog.queue;
+    if (queue === null) return '<p class="muted">\u6B63\u5728\u8BFB\u53D6\u81EA\u52A8\u63D0\u53D6\u961F\u5217\u2026</p>';
+    return `<div class="muted">\u5F85\u5904\u7406 ${queue.pendingCandidates} \u6761 / ${queue.pendingChats} \u4E2A\u804A\u5929 \xB7 \u5904\u7406\u4E2D ${queue.processingCandidates} \xB7 \u5931\u8D25 ${queue.failedCandidates}</div><div class="muted">${queue.nextRunAtMs === 0 ? "\u5C1A\u672A\u5B89\u6392\u4E0B\u6B21\u68C0\u67E5" : `\u4E0B\u6B21\u68C0\u67E5\uFF1A\u7EA6 ${queue.minutesUntilNextRun} \u5206\u949F\u540E`}</div>${queue.lastError === "" ? "" : `<p class="error-banner">${escapeHtml(queue.lastError)}</p>`}`;
+  }
+  function memoryRebuildStatus(dialog) {
+    const progress = dialog.progress;
+    if (progress === null) return '<p class="muted">\u6B63\u5728\u8BFB\u53D6\u91CD\u5EFA\u8FDB\u5EA6\u2026</p>';
+    const names = { idle: "\u672A\u5F00\u59CB", preparing: "\u51C6\u5907\u4E2D", running: "\u91CD\u5EFA\u4E2D", completed: "\u5DF2\u5B8C\u6210", cancelled: "\u5DF2\u53D6\u6D88", failed: "\u5931\u8D25" };
+    return `<p>${escapeHtml(names[progress.status] ?? progress.status)} \xB7 \u804A\u5929 ${progress.completedChats}/${progress.totalChats} \xB7 \u7A97\u53E3 ${progress.completedWindows}/${progress.totalWindows} \xB7 \u5931\u8D25 ${progress.failedWindows}</p><p class="muted">\u5DF2\u5904\u7406\u6E90\u6D88\u606F ${progress.processedSourceMessages}/${progress.totalSourceMessages}${progress.currentChatTitle === "" ? "" : ` \xB7 ${escapeHtml(progress.currentChatTitle)}`}</p>${memoryRebuilding(dialog) ? `<progress aria-label="\u91CD\u5EFA\u8FDB\u5EA6" max="${Math.max(1, progress.totalWindows)}" value="${progress.completedWindows}"></progress><p class="muted">\u5173\u95ED\u6B64\u7A97\u53E3\u4E0D\u4F1A\u7EC8\u6B62\u540E\u53F0\u91CD\u5EFA\uFF1B\u53D6\u6D88\u4F1A\u5728\u5F53\u524D\u7A97\u53E3\u7ED3\u675F\u540E\u751F\u6548\u3002</p>` : ""}${progress.lastError === "" ? "" : `<p class="error-banner">${escapeHtml(progress.lastError)}</p>`}`;
+  }
+  function numericField(label, key, value, min, max, step = 1) {
+    return field(label, key, value, 0, false, "", { type: "number", min, max, step, required: true });
+  }
+  function ownerSettingsBody(dialog) {
+    const header = `<div class="muted">\u6240\u5C5E\u8BB0\u5FC6\u5E93\uFF1A${escapeHtml(dialog.ownerKey)}</div>`;
+    if (dialog.loading) return header + '<div class="loading" role="status">\u6B63\u5728\u8BFB\u53D6\u8BB0\u5FC6\u8BBE\u7F6E\u2026</div>';
+    const settings = dialog.settings, config = dialog.config;
+    if (settings === null || config === null || dialog.chats === null) return header + button("reload-memory-settings", "\u91CD\u8BD5", "refresh");
+    const statusError = `<div data-memory-status-error class="error-banner" role="alert" ${dialog.statusError === "" ? "hidden" : ""}>${escapeHtml(dialog.statusError)}</div>`;
+    switch (dialog.tab) {
+      case 0:
+        return header + statusError + `<div data-memory-queue>${memoryQueueStatus(dialog)}</div>` + notice("\u81F3\u5C11\u79EF\u7D2F 5 \u4E2A\u5019\u9009\u540E\u81EA\u52A8\u63D0\u53D6\uFF1B\u63D0\u53D6\u7ED3\u679C\u5199\u5165\u6B64\u8BB0\u5FC6\u5E93\u3002") + numericField("\u68C0\u67E5\u95F4\u9694\uFF08\u5206\u949F\uFF09", "interval", settings.autoSaveIntervalMinutes, 1, 30) + field("\u8BB0\u5FC6\u63D0\u53D6\u81EA\u5B9A\u4E49\u89C4\u5219", "extractionRules", settings.memoryExtractionCustomRules, 5) + switchRow("\u81EA\u52A8\u66F4\u65B0 USER.md", "\u63D0\u53D6\u8BB0\u5FC6\u65F6\u66F4\u65B0\u6B64\u8BB0\u5FC6\u5E93\u7684\u7528\u6237\u8D44\u6599\u3002", "profileAuto", settings.profileAutoUpdateEnabled, false) + switchRow("\u9501\u5B9A USER.md", "\u7981\u6B62\u6A21\u578B\u8986\u76D6\u7528\u6237\u8D44\u6599\u3002", "profileLocked", settings.profileAutoUpdateLocked, false);
+      case 1:
+        return header + statusError + numericField("\u5173\u952E\u8BCD\u6743\u91CD", "keywordWeight", config.keywordWeight, 0, void 0, "any") + numericField("\u6807\u7B7E\u6743\u91CD", "tagWeight", config.tagWeight, 0, void 0, "any") + numericField("\u5411\u91CF\u6743\u91CD", "vectorWeight", config.vectorWeight, 0, void 0, "any") + numericField("\u5173\u7CFB\u6743\u91CD", "edgeWeight", config.edgeWeight, 0, void 0, "any") + switchRow("\u4E91\u7AEF Embedding", "\u542F\u7528\u540E\uFF0C\u641C\u7D22\u6587\u672C\u548C\u8BB0\u5FC6\u6587\u672C\u4F1A\u53D1\u9001\u81F3\u6307\u5B9A\u670D\u52A1\u3002", "embedding", settings.cloudEmbeddingEnabled, false) + (settings.cloudEmbeddingEnabled ? field("Embedding \u5B8C\u6574\u8BF7\u6C42\u5730\u5740", "endpoint", settings.cloudEmbeddingEndpoint) + field("Embedding \u6A21\u578B", "embeddingModel", settings.cloudEmbeddingModel) + field("API Key", "apiKey", settings.cloudEmbeddingApiKey, 0, false, "", { type: "password" }) + notice("\u91CD\u5EFA\u4F7F\u7528\u5DF2\u4FDD\u5B58\u7684\u914D\u7F6E\u3002\u4FEE\u6539\u670D\u52A1\u5730\u5740\u3001\u6A21\u578B\u6216\u5BC6\u94A5\u540E\uFF0C\u8BF7\u5148\u4FDD\u5B58\u8BBE\u7F6E\u3002") + button("rebuild-memory-embeddings", "\u91CD\u5EFA Embedding", "refresh", "", "tonal") : "") + "<h3>\u68C0\u7D22\u8C03\u8BD5</h3>" + field("\u68C0\u7D22\u67E5\u8BE2", "searchQuery", dialog.searchQuery) + numericField("\u76F8\u5173\u6027\u9608\u503C", "searchThreshold", dialog.searchThreshold, 0, 1, "any") + notice("\u4F7F\u7528\u5F53\u524D\u6743\u91CD\u6267\u884C\u771F\u5B9E\u68C0\u7D22\uFF0C\u4E0D\u4FDD\u5B58\u6743\u91CD\uFF1B\u5411\u91CF\u68C0\u7D22\u4F7F\u7528\u5DF2\u4FDD\u5B58\u7684 Embedding \u670D\u52A1\u914D\u7F6E\u3002\u5404\u901A\u9053\u663E\u793A\u5BF9\u603B\u5206\u7684\u5B9E\u9645\u8D21\u732E\u3002") + button("search-memory-debug", "\u4F7F\u7528\u5F53\u524D\u6743\u91CD\u68C0\u7D22", "search", "", "tonal") + searchResults(dialog);
+      case 2: {
+        const rebuilding = memoryRebuilding(dialog);
+        let chats = "";
+        for (const chat of dialog.chats) chats += `<label class="checkbox-row"><input type="checkbox" data-memory-chat="${escapeHtml(chat.id)}" aria-label="${escapeHtml(chat.title)}" ${dialog.selectedChatIds.includes(chat.id) ? "checked" : ""} ${rebuilding ? "disabled" : ""}><span>${escapeHtml(chat.title)}<span class="muted"> \xB7 ${chat.messageCount} \u6761\u6D88\u606F</span></span></label>`;
+        return header + statusError + notice("\u4ECE\u804A\u5929\u5386\u53F2\u91CD\u5EFA\u8BB0\u5FC6\uFF08\u8FFD\u52A0\uFF0F\u66F4\u65B0\uFF0C\u4E0D\u5220\u9664\u73B0\u6709\u8BB0\u5FC6\uFF09\u3002") + numericField("\u7A97\u53E3\u6D88\u606F\u6570", "windowMessageCount", dialog.windowMessageCount, 1) + `<div class="settings-grid">${field("\u5F00\u59CB\u65F6\u95F4", "from", dialog.from, 0, false, "\u5305\u542B\u6240\u9009\u65E5\u671F", { type: "date" })}${field("\u7ED3\u675F\u65F6\u95F4", "to", dialog.to, 0, false, "\u5305\u542B\u6240\u9009\u65E5\u671F", { type: "date" })}</div><h3>\u9009\u62E9\u804A\u5929</h3>` + (chats === "" ? '<p class="muted">\u6B64\u8BB0\u5FC6\u5E93\u6682\u65E0\u7ED1\u5B9A\u804A\u5929</p>' : chats) + `<div class="actions">${button("start-memory-rebuild", "\u5F00\u59CB\u91CD\u5EFA", "refresh", rebuilding || dialog.selectedChatIds.length === 0 ? "disabled" : "", "filled")}${button("cancel-memory-rebuild", "\u53D6\u6D88\u91CD\u5EFA", "", rebuilding ? "" : "disabled", "tonal")}${button("refresh-memory-status", "\u5237\u65B0\u72B6\u6001", "refresh")}</div><div data-memory-rebuild>${memoryRebuildStatus(dialog)}</div>`;
+      }
+      default:
+        throw new Error("Invalid memory settings tab");
+    }
+  }
+  function ownerSettingsFooter(dialog) {
+    return button("close-dialog", "\u5173\u95ED", "") + button("save-memory-settings", "\u4FDD\u5B58", "", dialog.loading || dialog.settings === null || dialog.config === null ? "disabled" : "", "filled");
+  }
+  function updateMemoryStatus(dialog, root) {
+    const queue = root.querySelector("[data-memory-queue]");
+    if (queue !== null) queue.innerHTML = memoryQueueStatus(dialog);
+    const rebuild = root.querySelector("[data-memory-rebuild]");
+    if (rebuild !== null) rebuild.innerHTML = memoryRebuildStatus(dialog);
+    const error = root.querySelector("[data-memory-status-error]");
+    if (error !== null) {
+      error.textContent = dialog.statusError;
+      error.hidden = dialog.statusError === "";
+    }
+    const start = root.querySelector('[data-action="start-memory-rebuild"]');
+    if (start !== null) start.disabled = dialog.busy || memoryRebuilding(dialog) || dialog.selectedChatIds.length === 0;
+    const cancel = root.querySelector('[data-action="cancel-memory-rebuild"]');
+    if (cancel !== null) cancel.disabled = dialog.busy || !memoryRebuilding(dialog);
+    for (const checkbox of root.querySelectorAll("[data-memory-chat]")) checkbox.disabled = dialog.busy || memoryRebuilding(dialog);
+  }
+
+  // web/features/memory/controls-actions.ts
+  function memoryDateBoundary(value, end) {
+    if (value === "") return null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("\u91CD\u5EFA\u65E5\u671F\u65E0\u6548");
+    const [year, month, day] = value.split("-").map(Number), date = new Date(year, month - 1, day);
+    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date.getTime() < 0) throw new Error("\u91CD\u5EFA\u65E5\u671F\u65E0\u6548");
+    if (!end) return date.getTime();
+    date.setDate(date.getDate() + 1);
+    return date.getTime() - 1;
+  }
+  function createMemoryControlsFeature(context) {
+    const { state, openUser, pushDialog, topDialog, request, renderDialogs, toast } = context;
+    function exists(dialog) {
+      return state.dialogs.includes(dialog);
+    }
+    async function poll(dialog) {
+      const [queue, progress] = await Promise.all([
+        request({ action: "readMemoryAutoSaveStatus", ownerKey: dialog.ownerKey }, { background: true }),
+        request({ action: "readMemoryRebuildProgress", ownerKey: dialog.ownerKey }, { background: true })
+      ]);
+      if (!exists(dialog)) return;
+      dialog.queue = queue;
+      dialog.progress = progress;
+      dialog.statusError = "";
+      if (topDialog() === dialog) updateMemoryStatus(dialog, context.dialogsRoot);
+    }
+    function startPolling(dialog) {
+      dialog.dispose?.();
+      let stopped = false, timer;
+      dialog.dispose = () => {
+        stopped = true;
+        clearTimeout(timer);
+      };
+      async function tick() {
+        if (stopped || !exists(dialog)) return;
+        try {
+          if (!state.busy && !dialog.busy && topDialog() === dialog) await poll(dialog);
+        } catch (error) {
+          if (exists(dialog)) {
+            dialog.statusError = `\u72B6\u6001\u8BFB\u53D6\u5931\u8D25\uFF1A${String(error)}`;
+            if (topDialog() === dialog) updateMemoryStatus(dialog, context.dialogsRoot);
+          }
+        } finally {
+          if (!stopped && exists(dialog)) timer = setTimeout(tick, 3e3);
+        }
+      }
+      timer = setTimeout(tick, 3e3);
+    }
+    async function load(dialog) {
+      dialog.loading = true;
+      dialog.error = "";
+      renderDialogs();
+      try {
+        const [settings, config, chats, queue, progress] = await Promise.all([
+          request({ action: "readMemorySettings", ownerKey: dialog.ownerKey }, { background: true }),
+          request({ action: "readMemorySearchConfig", ownerKey: dialog.ownerKey }, { background: true }),
+          request({ action: "listMemoryChats", ownerKey: dialog.ownerKey }, { background: true }),
+          request({ action: "readMemoryAutoSaveStatus", ownerKey: dialog.ownerKey }, { background: true }),
+          request({ action: "readMemoryRebuildProgress", ownerKey: dialog.ownerKey }, { background: true })
+        ]);
+        assertMemorySettings(settings);
+        assertSearchConfig(config);
+        if (!exists(dialog)) return;
+        dialog.settings = settings;
+        dialog.config = config;
+        dialog.chats = chats;
+        dialog.queue = queue;
+        dialog.progress = progress;
+        dialog.statusError = "";
+        startPolling(dialog);
+      } finally {
+        if (exists(dialog)) {
+          dialog.loading = false;
+          renderDialogs();
+        }
+      }
+    }
+    async function handleAction(action, element) {
+      if (action === "owner-user") {
+        await openUser(dataValue(element, "owner"), dataValue(element, "name"));
+        return;
+      }
+      if (action === "owner-settings") {
+        const dialog2 = pushDialog({
+          type: "owner-settings",
+          ownerKey: dataValue(element, "owner"),
+          name: dataValue(element, "name"),
+          tab: 0,
+          loading: true,
+          settings: null,
+          config: null,
+          chats: null,
+          queue: null,
+          progress: null,
+          statusError: "",
+          searchQuery: "",
+          searchThreshold: 0,
+          searchResult: null,
+          selectedChatIds: [],
+          windowMessageCount: 32,
+          from: "",
+          to: ""
+        });
+        await load(dialog2);
+        return;
+      }
+      const dialog = topDialog("owner-settings"), ownerKey = dialog.ownerKey;
+      switch (action) {
+        case "search-memory-debug": {
+          if (dialog.config === null) throw new Error("\u68C0\u7D22\u914D\u7F6E\u5C1A\u672A\u8BFB\u53D6\u6210\u529F");
+          for (const input of context.dialogsRoot.querySelectorAll("input[type=number]")) if (!input.reportValidity()) throw new Error("\u8BF7\u68C0\u67E5\u6570\u5B57\u8BBE\u7F6E\u7684\u8303\u56F4\u4E0E\u683C\u5F0F");
+          assertSearchConfig(dialog.config);
+          dialog.searchResult = null;
+          dialog.searchResult = await request({ action: "searchMemoryDebug", ownerKey, query: dialog.searchQuery, config: dialog.config, relevanceThreshold: dialog.searchThreshold });
+          renderDialogs();
+          const results = context.dialogsRoot.querySelector("[data-search-results]");
+          results?.scrollIntoView({ block: "nearest" });
+          const body = results?.closest(".dialog-body");
+          if (body !== null && body !== void 0) dialog.scroll = body.scrollTop;
+          return;
+        }
+        case "reload-memory-settings":
+          await load(dialog);
+          return;
+        case "refresh-memory-status":
+          await poll(dialog);
+          return;
+        case "save-memory-settings": {
+          if (dialog.settings === null || dialog.config === null || dialog.loading) throw new Error("\u8BB0\u5FC6\u8BBE\u7F6E\u5C1A\u672A\u8BFB\u53D6\u6210\u529F");
+          for (const input of context.dialogsRoot.querySelectorAll("input[type=number]")) if (!input.reportValidity()) throw new Error("\u8BF7\u68C0\u67E5\u6570\u5B57\u8BBE\u7F6E\u7684\u8303\u56F4\u4E0E\u683C\u5F0F");
+          assertMemorySettings(dialog.settings);
+          assertSearchConfig(dialog.config);
+          const saved = await request({ action: "writeMemoryOwnerSettings", ownerKey, settings: dialog.settings, config: dialog.config });
+          dialog.settings = saved.settings;
+          dialog.config = saved.config;
+          toast("\u8BB0\u5FC6\u8BBE\u7F6E\u5DF2\u4FDD\u5B58");
+          await poll(dialog);
+          return;
+        }
+        case "rebuild-memory-embeddings": {
+          const count = await request({ action: "rebuildMemoryEmbeddings", ownerKey });
+          toast(`\u5DF2\u91CD\u5EFA ${count} \u6761\u8BB0\u5FC6\u7684 Embedding`);
+          return;
+        }
+        case "start-memory-rebuild": {
+          if (memoryRebuilding(dialog)) throw new Error("\u8BB0\u5FC6\u91CD\u5EFA\u5DF2\u5728\u8FD0\u884C");
+          const fromInclusive = memoryDateBoundary(dialog.from, false), toInclusive = memoryDateBoundary(dialog.to, true);
+          if (fromInclusive !== null && toInclusive !== null && fromInclusive > toInclusive) throw new Error("\u5F00\u59CB\u65F6\u95F4\u4E0D\u80FD\u665A\u4E8E\u7ED3\u675F\u65F6\u95F4");
+          dialog.progress = await request({ action: "startMemoryRebuild", ownerKey, rebuild: { chatIds: [...dialog.selectedChatIds], windowMessageCount: dialog.windowMessageCount, fromInclusive, toInclusive } });
+          toast("\u540E\u53F0\u91CD\u5EFA\u4EFB\u52A1\u5DF2\u63D0\u4EA4");
+          return;
+        }
+        case "cancel-memory-rebuild":
+          dialog.progress = await request({ action: "cancelMemoryRebuild", ownerKey });
+          toast("\u91CD\u5EFA\u5DF2\u53D6\u6D88");
+          return;
+        default:
+          throw new Error(`Unknown memory controls action: ${action}`);
+      }
+    }
+    return { names: ["search-memory-debug", "owner-user", "owner-settings", "reload-memory-settings", "refresh-memory-status", "save-memory-settings", "rebuild-memory-embeddings", "start-memory-rebuild", "cancel-memory-rebuild"], handleAction };
+  }
+
+  // web/features/memory/item-actions.ts
+  function createMemoryItemActionsFeature(context) {
+    const { topDialog, pushDialog, popDialog, request, toast, owningGraph } = context;
+    async function handleAction(action, _element) {
+      switch (action) {
+        case "create-memory": {
+          const graph = topDialog("graph");
+          pushDialog({ type: "memory-edit", ownerKey: graph.ownerKey, originalTitle: null, draft: { title: "", content: "", contentType: "text/plain", source: "manual", credibility: 0.5, importance: 0.5, folderPath: graph.folder === "*" ? "" : graph.folder, tags: "" } });
+          return;
+        }
+        case "edit-memory": {
+          const graph = topDialog("graph"), item = selectedMemory(graph);
+          if (item === null) throw new Error("\u8BF7\u5148\u9009\u62E9\u4E00\u6761\u8BB0\u5FC6");
+          let tags = "";
+          for (const tag of item.tags) tags += `${tags === "" ? "" : ","}${tag.name}`;
+          pushDialog({ type: "memory-edit", ownerKey: graph.ownerKey, originalTitle: item.title, draft: { title: item.title, content: item.content, contentType: item.contentType, source: item.source, credibility: item.credibility, importance: item.importance, folderPath: item.folderPath === null ? "" : item.folderPath, tags } });
+          return;
+        }
+        case "save-memory": {
+          const dialog = topDialog("memory-edit");
+          const data = await request({ action: "saveMemory", ownerKey: dialog.ownerKey, originalTitle: dialog.originalTitle, ...dialog.draft });
+          owningGraph(dialog.ownerKey).data = data;
+          popDialog();
+          toast("\u8BB0\u5FC6\u5DF2\u4FDD\u5B58");
+          return;
+        }
+        case "delete-memory": {
+          const graph = topDialog("graph"), item = selectedMemory(graph);
+          if (item === null) throw new Error("\u8BF7\u5148\u9009\u62E9\u4E00\u6761\u8BB0\u5FC6");
+          pushDialog({ type: "confirm", title: "\u5220\u9664\u8BB0\u5FC6", message: `\u786E\u5B9A\u5220\u9664\u201C${item.title}\u201D\uFF1F`, operation: { action: "deleteMemory", ownerKey: graph.ownerKey, title: item.title }, closeParent: false });
+          return;
+        }
+        default:
+          throw new Error(`Unknown memory/item-actions action: ${action}`);
+      }
+    }
+    return { names: ["create-memory", "edit-memory", "save-memory", "delete-memory"], handleAction };
+  }
+
+  // web/features/memory/library-actions.ts
+  function createMemoryLibraryActionsFeature(context) {
+    const { snapshot, state, topDialog, pushDialog, popDialog, request, renderMain, toast } = context;
+    async function handleAction(action, element) {
+      const id = element.dataset.id;
+      switch (action) {
+        case "toggle-memory-preference": {
+          const key = dataValue(element, "key");
+          if (key !== "userDescriptionEnabled" && key !== "autoUpdateEnabled") throw new Error("\u5168\u5C40\u8BB0\u5FC6\u8BBE\u7F6E\u5B57\u6BB5\u65E0\u6548");
+          snapshot().memoryPreferences = await request({ action: "writeGlobalMemoryPreference", key, value: !snapshot().memoryPreferences[key] });
+          toast("\u5168\u5C40\u8BB0\u5FC6\u8BBE\u7F6E\u5DF2\u4FDD\u5B58");
+          return;
+        }
+        case "create-store":
+          pushDialog({ type: "store", create: true, store: { id: "", name: "" } });
+          return;
+        case "edit-store": {
+          for (const store of snapshot().stores) if (store.id === id) {
+            pushDialog({ type: "store", create: false, store: copy(store) });
+            return;
+          }
+          throw new Error("\u5171\u4EAB\u8BB0\u5FC6\u5E93\u4E0D\u5B58\u5728");
+        }
+        case "save-store": {
+          const dialog = topDialog("store");
+          state.snapshot = await request({ action: "saveStore", store: dialog.store, create: dialog.create });
+          popDialog();
+          renderMain();
+          toast("\u5171\u4EAB\u8BB0\u5FC6\u5E93\u5DF2\u4FDD\u5B58");
+          return;
+        }
+        case "delete-store":
+          pushDialog({ type: "confirm", title: "\u5220\u9664\u5171\u4EAB\u8BB0\u5FC6\u5E93", message: "\u786E\u5B9A\u5220\u9664\u8FD9\u4E2A\u5171\u4EAB\u8BB0\u5FC6\u5E93\uFF1F\u6B64\u64CD\u4F5C\u4F1A\u5F71\u54CD\u5173\u8054\u89D2\u8272\u3002", operation: { action: "deleteStore", id: dataValue(element, "id") }, closeParent: false });
+          return;
+        default:
+          throw new Error(`Unknown memory/library-actions action: ${action}`);
+      }
+    }
+    return { names: ["toggle-memory-preference", "create-store", "edit-store", "save-store", "delete-store"], handleAction };
+  }
+
+  // web/features/memory/link-actions.ts
+  function createMemoryLinkActionsFeature(context) {
+    const { topDialog, pushDialog, popDialog, request, renderDialogs, toast, owningGraph } = context;
+    async function handleAction(action, element) {
+      switch (action) {
+        case "create-link": {
+          const graph = topDialog("graph");
+          graph.linkMode = !graph.linkMode;
+          graph.linkSource = null;
+          renderDialogs();
+          toast(graph.linkMode ? "\u5148\u9009\u62E9\u6E90\u8BB0\u5FC6\uFF0C\u518D\u9009\u62E9\u76EE\u6807\u8BB0\u5FC6" : "\u5DF2\u9000\u51FA\u94FE\u63A5\u6A21\u5F0F");
+          return;
+        }
+        case "save-link": {
+          const dialog = topDialog("link"), weight = Number(dialog.draft.weight);
+          dialog.draft.linkType = dialog.draft.linkType.trim();
+          dialog.draft.description = dialog.draft.description.trim();
+          if (dialog.draft.linkType === "") throw new Error("\u8BF7\u8F93\u5165\u5173\u7CFB\u7C7B\u578B");
+          if (dialog.draft.sourceTitle === "" || dialog.draft.targetTitle === "" || dialog.draft.sourceTitle === dialog.draft.targetTitle) throw new Error("\u8BF7\u9009\u62E9\u4E24\u6761\u4E0D\u540C\u7684\u8BB0\u5FC6");
+          if (!Number.isFinite(weight) || weight < 0 || weight > 1) throw new Error("\u5173\u7CFB\u5F3A\u5EA6\u5FC5\u987B\u5728 0 \u5230 1 \u4E4B\u95F4");
+          const graph = owningGraph(dialog.ownerKey);
+          graph.data = await request({ action: "createLink", ownerKey: dialog.ownerKey, ...dialog.draft, weight });
+          graph.linkSource = null;
+          popDialog();
+          toast("\u5173\u7CFB\u5DF2\u521B\u5EFA");
+          return;
+        }
+        case "edit-link": {
+          const graph = topDialog("graph"), edge = graphData(graph).graph.edges.find(
+            /** Resolves the selected persisted relationship by its stable id. */
+            (item) => item.id === dataValue(element, "link")
+          );
+          if (edge === void 0) throw new Error("\u8BB0\u5FC6\u5173\u7CFB\u4E0D\u5B58\u5728");
+          const link = await request({ action: "readMemoryLink", ownerKey: graph.ownerKey, linkId: edge.id });
+          const source = graphData(graph).items.find(
+            /** Resolves the relationship source title from its UUID endpoint. */
+            (item) => item.id === link.sourceMemoryId
+          );
+          const target = graphData(graph).items.find(
+            /** Resolves the relationship target title from its UUID endpoint. */
+            (item) => item.id === link.targetMemoryId
+          );
+          if (source === void 0 || target === void 0) throw new Error("\u8BB0\u5FC6\u5173\u7CFB\u7AEF\u70B9\u4E0D\u5B58\u5728");
+          pushDialog({ type: "link-edit", ownerKey: graph.ownerKey, linkId: edge.id, draft: { sourceTitle: source.title, targetTitle: target.title, linkType: link.type_, weight: link.weight, description: link.description } });
+          return;
+        }
+        case "save-link-edit": {
+          const dialog = topDialog("link-edit"), weight = Number(dialog.draft.weight);
+          if (dialog.draft.linkType.trim() === "" || !Number.isFinite(weight) || weight < 0 || weight > 1) throw new Error("\u8BF7\u8F93\u5165\u5173\u7CFB\u7C7B\u578B\u548C\u6709\u6548\u7684\u5173\u7CFB\u5F3A\u5EA6");
+          const graph = owningGraph(dialog.ownerKey);
+          graph.data = await request({ action: "updateLink", ownerKey: dialog.ownerKey, linkId: dialog.linkId, linkType: dialog.draft.linkType.trim(), weight, description: dialog.draft.description });
+          popDialog();
+          toast("\u5173\u7CFB\u5DF2\u4FDD\u5B58");
+          return;
+        }
+        case "delete-link":
+          pushDialog({ type: "confirm", title: "\u5220\u9664\u5173\u7CFB", message: "\u786E\u5B9A\u5220\u9664\u8FD9\u6761\u8BB0\u5FC6\u5173\u7CFB\uFF1F", operation: { action: "deleteLink", ownerKey: topDialog("graph").ownerKey, linkId: dataValue(element, "link") }, closeParent: false });
+          return;
+        default:
+          throw new Error(`Unknown memory/link-actions action: ${action}`);
+      }
+    }
+    return { names: ["create-link", "save-link", "edit-link", "save-link-edit", "delete-link"], handleAction };
+  }
+
+  // web/features/memory/profile.ts
+  function createProfileFeature(context) {
+    const { pushDialog, request, renderDialogs, topDialog, toast, popDialog } = context;
+    async function openUser(ownerKey, name) {
+      const dialog = pushDialog({ type: "user", ownerKey, name, content: "", loading: true, loaded: false });
+      try {
+        const result = await request({ action: "readUser", ownerKey });
+        if (typeof result.content !== "string") throw new Error("USER.md \u8FD4\u56DE\u683C\u5F0F\u4E0D\u6B63\u786E");
+        dialog.content = result.content;
+        dialog.loaded = true;
+        dialog.loading = false;
+        renderDialogs();
+      } catch (error) {
+        dialog.loading = false;
+        dialog.error = String(error);
+        renderDialogs();
+      }
+    }
+    async function handleAction(action) {
+      if (action !== "save-user") throw new Error("Unknown profile action");
+      const dialog = topDialog("user");
+      if (!dialog.loaded) throw new Error("\u7528\u6237\u8D44\u6599\u5C1A\u672A\u8BFB\u53D6\u6210\u529F\uFF0C\u4E0D\u80FD\u4FDD\u5B58");
+      await request({ action: "writeUser", ownerKey: dialog.ownerKey, content: dialog.content });
+      popDialog();
+      toast("\u7528\u6237\u8D44\u6599\u5DF2\u4FDD\u5B58");
+    }
+    return { openUser, names: ["save-user"], handleAction };
+  }
+
+  // web/shared/edits.ts
+  function editableDialog(dialog) {
+    switch (dialog.type) {
+      case "store":
+      case "memory-edit":
+      case "link":
+      case "link-edit":
+      case "user":
+      case "import":
+      case "export":
+      case "owner-settings":
+        return dialog;
+      default:
+        throw new Error("\u5F53\u524D\u9875\u9762\u4E0D\u80FD\u7F16\u8F91\u6587\u5B57\u5B57\u6BB5");
+    }
+  }
+  function setEditableValue(dialog, key, value) {
+    switch (dialog.type) {
+      case "store":
+        if (key === "name") {
+          dialog.store.name = value;
+          return;
+        }
+        break;
+      case "memory-edit":
+        if (isKey(key, ["credibility", "importance"])) {
+          dialog.draft[key] = Number(value);
+          return;
+        }
+        if (isKey(key, ["title", "content", "contentType", "source", "folderPath", "tags"])) {
+          dialog.draft[key] = value;
+          return;
+        }
+        break;
+      case "link":
+      case "link-edit":
+        if (isKey(key, ["sourceTitle", "targetTitle", "linkType", "description", "weight"])) {
+          dialog.draft[key] = value;
+          return;
+        }
+        break;
+      case "owner-settings": {
+        if (key === "searchQuery") {
+          dialog.searchQuery = value;
+          dialog.searchResult = null;
+          return;
+        }
+        if (key === "searchThreshold") {
+          dialog.searchThreshold = Number(value);
+          dialog.searchResult = null;
+          return;
+        }
+        if (key === "from" || key === "to") {
+          dialog[key] = value;
+          return;
+        }
+        if (key === "windowMessageCount") {
+          dialog.windowMessageCount = Number(value);
+          return;
+        }
+        if (dialog.settings === null || dialog.config === null) throw new Error("\u8BB0\u5FC6\u8BBE\u7F6E\u5C1A\u672A\u8BFB\u53D6\u6210\u529F");
+        if (key === "interval") {
+          dialog.settings.autoSaveIntervalMinutes = Number(value);
+          return;
+        }
+        if (isKey(key, ["keywordWeight", "tagWeight", "vectorWeight", "edgeWeight"])) {
+          dialog.config[key] = Number(value);
+          dialog.searchResult = null;
+          return;
+        }
+        const fields2 = { extractionRules: "memoryExtractionCustomRules", endpoint: "cloudEmbeddingEndpoint", embeddingModel: "cloudEmbeddingModel", apiKey: "cloudEmbeddingApiKey" };
+        if (isKey(key, ["extractionRules", "endpoint", "embeddingModel", "apiKey"])) {
+          dialog.settings[fields2[key]] = value;
+          return;
+        }
+        break;
+      }
+      case "import":
+        if (key === "format" && (value === "operit" || value === "tavern")) {
+          dialog.format = value;
+          return;
+        }
+        if (key === "strategy" && (value === "SKIP" || value === "UPDATE" || value === "CREATE_NEW")) {
+          dialog.strategy = value;
+          return;
+        }
+        if (key === "content") {
+          dialog.content = value;
+          return;
+        }
+        break;
+      case "user":
+        if (key === "content") {
+          dialog.content = value;
+          return;
+        }
+        break;
+    }
+    throw new Error(`\u6B64\u9875\u9762\u4E0D\u80FD\u7F16\u8F91\u5B57\u6BB5\uFF1A${key}`);
+  }
+  function editableValue(dialog, key) {
+    let record;
+    switch (dialog.type) {
+      case "store":
+        record = dialog.store;
+        break;
+      case "memory-edit":
+      case "link":
+      case "link-edit":
+        record = dialog.draft;
+        break;
+      case "user":
+      case "import":
+      case "export":
+        record = dialog;
+        break;
+      case "owner-settings":
+        if (dialog.settings === null || key !== "extractionRules") throw new Error("\u5C55\u5F00\u7F16\u8F91\u5B57\u6BB5\u4E0D\u662F\u6587\u5B57");
+        return dialog.settings.memoryExtractionCustomRules;
+    }
+    const value = Reflect.get(record, key);
+    if (typeof value !== "string") throw new Error("\u5C55\u5F00\u7F16\u8F91\u5B57\u6BB5\u4E0D\u662F\u6587\u5B57");
+    return value;
+  }
+
+  // web/bridge/actions.ts
+  function createDialogActions(context) {
+    const { state, topDialog, pushDialog, popDialog, request, renderMain, renderDialogs, toast, owningGraph } = context;
+    async function handleAction(action, element) {
+      switch (action) {
+        case "refresh":
+          state.snapshot = await request({ action: "snapshot" });
+          state.error = "";
+          renderMain();
+          return;
+        case "select-tab": {
+          const dialog = topDialog();
+          if (!("tab" in dialog)) throw new Error("\u6B64\u9875\u9762\u6CA1\u6709\u7F16\u8F91\u9875\u7B7E");
+          dialog.tab = Number(dataValue(element, "tab"));
+          renderDialogs();
+          return;
+        }
+        case "close-dialog":
+          if (topDialog().busy) return;
+          await context.dismissDialog();
+          return;
+        case "expand-field": {
+          const parent = editableDialog(topDialog()), key = dataValue(element, "key");
+          const field2 = requireElement(element.closest(".field"), HTMLElement);
+          const labelElement = requireElement(field2.querySelector(".field-label"), HTMLElement);
+          if (labelElement.textContent === null) throw new Error("\u6587\u5B57\u5B57\u6BB5\u6807\u9898\u4E0D\u5B58\u5728");
+          pushDialog({ type: "text", key, value: editableValue(parent, key), label: labelElement.textContent, parent });
+          return;
+        }
+        case "save-text": {
+          const dialog = topDialog("text");
+          setEditableValue(dialog.parent, dialog.key, dialog.value);
+          popDialog();
+          return;
+        }
+        case "confirm-operation": {
+          const dialog = topDialog("confirm"), operation = dialog.operation;
+          if (operation.action === "deleteMemory" || operation.action === "deleteLink") owningGraph(operation.ownerKey).data = await request(operation);
+          else {
+            state.snapshot = await request(operation);
+            renderMain();
+          }
+          state.dialogs.pop();
+          if (dialog.closeParent) state.dialogs.pop();
+          renderDialogs();
+          toast("\u5DF2\u5220\u9664");
+          return;
+        }
+        default:
+          throw new Error(`Unknown editor action: ${action}`);
+      }
+    }
+    return { names: ["refresh", "select-tab", "close-dialog", "expand-field", "save-text", "confirm-operation"], handleAction };
+  }
+
+  // web/features/characters/import-export-view.ts
+  function importSpec(dialog) {
+    const format = dialog.target === "card" ? selectField("\u89D2\u8272\u683C\u5F0F", "format", dialog.format, [{ id: "operit", label: "Operit JSON" }, { id: "tavern", label: "Tavern JSON" }], false) : "";
+    const strategy = dialog.target === "memory" ? selectField("\u76F8\u540C UUID \u8BB0\u5FC6\u5904\u7406", "strategy", dialog.strategy, [{ id: "SKIP", label: "\u8DF3\u8FC7" }, { id: "UPDATE", label: "\u66F4\u65B0" }, { id: "CREATE_NEW", label: "\u521B\u5EFA\u65B0\u8BB0\u5FC6" }], false) : "";
+    return { title: dialog.target === "card" ? "\u5BFC\u5165\u89D2\u8272 JSON" : dialog.target === "memory" ? "\u5BFC\u5165\u8BB0\u5FC6 JSON" : "\u5BFC\u5165\u7FA4\u7EC4 JSON", style: "large", tabs: [], body: format + strategy + field(dialog.target === "memory" ? "\u7C98\u8D34\u8BB0\u5FC6 JSON" : dialog.target === "card" && dialog.format === "tavern" ? "\u7C98\u8D34 Tavern JSON" : "\u7C98\u8D34 Operit JSON", "content", dialog.content, 18) + notice(dialog.target === "memory" ? "\u5BFC\u5165\u5B8C\u6574\u8BB0\u5FC6\u3001\u5173\u7CFB\u3001\u6587\u6863\u5206\u5757\u53CA USER.md\u3002\u5BFC\u5165\u524D\u5EFA\u8BAE\u5148\u5BFC\u51FA\u5907\u4EFD\uFF1B\u53EA\u4FEE\u6539\u5F53\u524D\u8BB0\u5FC6\u5E93\u3002" : "\u89D2\u8272\u5361\u652F\u6301 Operit \u548C Tavern JSON\uFF1B\u7FA4\u7EC4\u4F7F\u7528 Operit JSON\u3002"), footer: button("close-dialog", "\u53D6\u6D88", "") + button("read-import", "\u5BFC\u5165", "", "", "filled") };
+  }
+  function exportSpec(dialog) {
+    return { title: "\u5BFC\u51FA JSON", style: "large", tabs: [], body: field("JSON \u5185\u5BB9", "content", dialog.content, 16, true) + notice(dialog.typeName === "memory" ? "\u5305\u542B\u5F53\u524D\u8BB0\u5FC6\u5E93\u7684\u5B8C\u6574\u8BB0\u5F55\u4E0E USER.md\u3002\u70B9\u51FB\u4FDD\u5B58\u6587\u4EF6\u9009\u62E9\u4FDD\u5B58\u4F4D\u7F6E\u3002" : "\u5185\u5BB9\u6765\u81EA\u6240\u9009\u683C\u5F0F\u7684\u771F\u5B9E\u5BFC\u51FA\u63A5\u53E3\u3002\u70B9\u51FB\u4FDD\u5B58\u6587\u4EF6\u9009\u62E9\u4FDD\u5B58\u4F4D\u7F6E\u3002"), footer: button("close-dialog", "\u53D6\u6D88", "") + button("save-export", "\u4FDD\u5B58\u6587\u4EF6", "", "", "filled") };
+  }
+
+  // web/features/graph/view.ts
+  function graphHeader(dialog) {
+    return `<div class="actions">${iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(dialog.ownerKey)}" data-name="${escapeHtml(dialog.name)}"`)}${iconButton("export-graph", "\u5BFC\u51FA\u8BB0\u5FC6 JSON", "download", dialog.loading ? "disabled" : "")}${iconButton("import-graph", "\u5BFC\u5165\u8BB0\u5FC6 JSON", "upload", dialog.loading ? "disabled" : "")}${iconButton("refresh-graph", "\u5237\u65B0", "refresh", dialog.loading ? "disabled" : "")}</div>`;
+  }
+  function graphSpec(dialog) {
+    if (dialog.data === null) return { title: `${dialog.name} \u7684\u8BB0\u5FC6\u56FE\u8C31`, style: "graph-dialog", tabs: [], body: dialog.loading ? '<div class="loading">\u6B63\u5728\u8BFB\u53D6\u8BB0\u5FC6\u56FE\u8C31\u2026</div>' : notice("\u8BB0\u5FC6\u56FE\u8C31\u672A\u52A0\u8F7D\u6210\u529F\uFF0C\u672A\u5F00\u653E\u5199\u5165\u3002"), footer: "" };
+    const folders = /* @__PURE__ */ new Set([""]);
+    for (const item of graphData(dialog).items) folders.add(item.folderPath === null ? "" : item.folderPath);
+    let folderOptions = `<option value="*" ${dialog.folder === "*" ? "selected" : ""}>\u5168\u90E8\u6587\u4EF6\u5939</option>`;
+    for (const folder of folders) folderOptions += `<option value="${escapeHtml(folder)}" ${dialog.folder === folder ? "selected" : ""}>${escapeHtml(folder === "" ? "\u6839\u76EE\u5F55" : folder)}</option>`;
+    return { title: `${dialog.name} \u7684\u8BB0\u5FC6\u56FE\u8C31`, style: "graph-dialog", tabs: [], body: `<div class="graph-toolbar"><input class="search" aria-label="\u641C\u7D22\u8BB0\u5FC6" data-graph-search value="${escapeHtml(dialog.query)}" placeholder="\u641C\u7D22\u8BB0\u5FC6\u2026">${iconButton("search-graph", "\u641C\u7D22", "search")}${iconButton("clear-search", "\u6E05\u9664\u641C\u7D22", "close")}<select class="search" style="flex:0;min-width:140px" data-graph-folder aria-label="\u6587\u4EF6\u5939">${folderOptions}</select>${button("create-link", "\u94FE\u63A5", "link", graphData(dialog).items.length < 2 ? "disabled" : "", dialog.linkMode ? "small tonal" : "small")}${button("create-memory", "\u521B\u5EFA\u8BB0\u5FC6", "add", "", "small tonal")}</div><div class="graph-layout"><div class="graph-canvas"><svg viewBox="-400 -260 800 520" data-graph-surface aria-label="\u8BB0\u5FC6\u56FE\u8C31\u753B\u5E03">${graphSvg(dialog)}</svg>${graphData(dialog).items.length === 0 ? '<div class="graph-empty"><span>\u6682\u65E0\u8BB0\u5FC6</span><span class="muted">\u521B\u5EFA\u8BB0\u5FC6\u540E\uFF0C\u53EF\u5728\u8FD9\u91CC\u67E5\u770B\u548C\u8FDE\u63A5\u8282\u70B9\u3002</span></div>' : ""}<div class="graph-tools">${iconButton("zoom-in", "\u653E\u5927", "add")}${iconButton("zoom-out", "\u7F29\u5C0F", "minus")}${iconButton("fit-graph", "\u9002\u5E94\u753B\u5E03", "expand")}</div></div><aside class="graph-sidebar">${graphInspector(dialog)}</aside></div>`, footer: "" };
+  }
+
+  // web/features/memory/item-view.ts
+  function scoreField(label, key, value) {
+    return `<label class="score-field"><span>${escapeHtml(label)} <output>${Number(value).toFixed(2)}</output></span><input type="range" data-field="${key}" aria-label="${escapeHtml(label)}" min="0" max="1" step="0.01" value="${value}"></label>`;
+  }
+  function memoryEditorSpec(dialog) {
+    return { title: dialog.originalTitle === null ? "\u521B\u5EFA\u8BB0\u5FC6" : "\u7F16\u8F91\u8BB0\u5FC6", style: "large", tabs: [], body: field("\u6807\u9898 *", "title", dialog.draft.title) + field("\u5185\u5BB9", "content", dialog.draft.content, 12) + field("\u5185\u5BB9\u7C7B\u578B", "contentType", dialog.draft.contentType) + field("\u6765\u6E90", "source", dialog.draft.source) + scoreField("\u53EF\u4FE1\u5EA6", "credibility", dialog.draft.credibility) + scoreField("\u91CD\u8981\u6027", "importance", dialog.draft.importance) + field("\u6587\u4EF6\u5939", "folderPath", dialog.draft.folderPath) + field("\u6807\u7B7E\uFF08\u9017\u53F7\u5206\u9694\uFF09", "tags", dialog.draft.tags), footer: button("close-dialog", "\u53D6\u6D88", "") + button("save-memory", "\u4FDD\u5B58", "", "", "filled") };
+  }
+
+  // web/features/memory/links-view.ts
+  function linkSpec(dialog) {
+    {
+      const options = [];
+      for (const item of dialog.items) options.push({ id: item.title, label: item.title });
+      return { title: "\u521B\u5EFA\u8BB0\u5FC6\u94FE\u63A5", style: "compact", tabs: [], body: selectField("\u6E90\u8BB0\u5FC6", "sourceTitle", dialog.draft.sourceTitle, options, false) + selectField("\u76EE\u6807\u8BB0\u5FC6", "targetTitle", dialog.draft.targetTitle, options, false) + field("\u5173\u7CFB\u7C7B\u578B", "linkType", dialog.draft.linkType) + field("\u5F3A\u5EA6\uFF080\u20131\uFF09", "weight", dialog.draft.weight) + field("\u63CF\u8FF0", "description", dialog.draft.description, 3), footer: button("close-dialog", "\u53D6\u6D88", "") + button("save-link", "\u521B\u5EFA", "", "", "filled") };
+    }
+  }
+  function linkEditSpec(dialog) {
+    return { title: "\u7F16\u8F91\u8BB0\u5FC6\u5173\u7CFB", style: "compact", tabs: [], body: field("\u6E90\u8BB0\u5FC6", "sourceTitle", dialog.draft.sourceTitle, 0, true) + field("\u76EE\u6807\u8BB0\u5FC6", "targetTitle", dialog.draft.targetTitle, 0, true) + field("\u5173\u7CFB\u7C7B\u578B", "linkType", dialog.draft.linkType) + field("\u5F3A\u5EA6\uFF080\u20131\uFF09", "weight", dialog.draft.weight) + field("\u63CF\u8FF0", "description", dialog.draft.description, 3), footer: button("close-dialog", "\u53D6\u6D88", "") + button("save-link-edit", "\u4FDD\u5B58", "", "", "filled") };
+  }
+
+  // web/bridge/dialogs.ts
+  function createDialogRenderer(context) {
+    const { state, dialogsRoot } = context;
+    const graphResizeObserver = new ResizeObserver(
+      /** Applies the same center-preserving resize behavior as the native graph canvas. */
+      (entries) => {
+        for (const entry of entries) {
+          const surface = requireElement(entry.target, SVGSVGElement);
+          const dialog = state.dialogs.find(
+            /** Matches the rendered graph to its exact owner reference. */
+            (item) => item.type === "graph" && item.ownerKey === surface.dataset.owner
+          );
+          if (dialog !== void 0) setGraphViewport(dialog, surface);
+        }
+      }
+    );
+    function dialogSpec(dialog) {
+      switch (dialog.type) {
+        case "owner-settings":
+          return { title: "\u8BB0\u5FC6\u8BBE\u7F6E", style: "large", tabs: ["\u81EA\u52A8\u63D0\u53D6", "\u68C0\u7D22", "\u5386\u53F2\u91CD\u5EFA"], body: ownerSettingsBody(dialog), footer: ownerSettingsFooter(dialog) };
+        case "store":
+          return { title: dialog.create ? "\u521B\u5EFA\u5171\u4EAB\u8BB0\u5FC6\u5E93" : "\u7F16\u8F91\u5171\u4EAB\u8BB0\u5FC6\u5E93", style: "compact", tabs: [], body: field("\u540D\u79F0 *", "name", dialog.store.name), footer: button("close-dialog", "\u53D6\u6D88", "") + button("save-store", "\u4FDD\u5B58", "", "", "filled") };
+        case "user":
+          return { title: `${dialog.name} \u7684\u7528\u6237\u8D44\u6599`, style: "large", tabs: [], body: dialog.loading ? '<div class="loading">\u6B63\u5728\u8BFB\u53D6 USER.md\u2026</div>' : `<div class="muted">${escapeHtml(dialog.ownerKey)} \xB7 USER.md</div>${field("\u7528\u6237\u8D44\u6599", "content", dialog.content, 18)}${notice("\u4FDD\u5B58\u4F1A\u66F4\u65B0\u5F53\u524D\u7ED1\u5B9A\u8BB0\u5FC6\u5E93\u7684 USER.md\u3002")}`, footer: button("close-dialog", "\u53D6\u6D88", "") + button("save-user", "\u4FDD\u5B58", "", !dialog.loaded ? "disabled" : "", "filled") };
+        case "memory-edit":
+          return memoryEditorSpec(dialog);
+        case "link-edit":
+          return linkEditSpec(dialog);
+        case "link":
+          return linkSpec(dialog);
+        case "confirm":
+          return { title: dialog.title, style: "compact", tabs: [], body: `<p>${escapeHtml(dialog.message)}</p>`, footer: button("close-dialog", "\u53D6\u6D88", "") + button("confirm-operation", "\u5220\u9664", "", "", "danger") };
+        case "export":
+          return exportSpec(dialog);
+        case "import":
+          return importSpec(dialog);
+        case "text":
+          return { title: dialog.label, style: "large", tabs: [], body: field(dialog.label, "value", dialog.value, 22), footer: button("close-dialog", "\u53D6\u6D88", "") + button("save-text", "\u786E\u5B9A", "", "", "filled") };
+        case "info":
+          return { title: dialog.title, style: "large", tabs: [], body: `<pre class="notice">${escapeHtml(dialog.content)}</pre>`, footer: button("close-dialog", "\u5173\u95ED", "") };
+        case "graph":
+          return graphSpec(dialog);
+        default: {
+          const unknown = dialog;
+          throw new Error(`Unknown dialog: ${JSON.stringify(unknown)}`);
+        }
+      }
+    }
+    const surfaces = /* @__PURE__ */ new Map();
+    const markup = /* @__PURE__ */ new WeakMap();
+    function renderDialogs() {
+      const active = state.dialogs[state.dialogs.length - 1];
+      for (const [dialog2, element2] of surfaces) {
+        if (dialog2 !== active && dialog2.type === "graph") cancelGraphCameraAnimation(dialog2);
+        if (element2.open) {
+          const body2 = element2.querySelector(".dialog-body");
+          if (body2 !== null) dialog2.scroll = body2.scrollTop;
+        }
+        if (dialog2 !== active && element2.open) element2.close();
+        if (!state.dialogs.includes(dialog2)) {
+          dialog2.dispose?.();
+          element2.remove();
+          surfaces.delete(dialog2);
+        }
+      }
+      graphResizeObserver.disconnect();
+      if (active === void 0) return;
+      const dialog = active, index = state.dialogs.length - 1, spec = dialogSpec(dialog);
+      let element = surfaces.get(dialog);
+      if (element === void 0) {
+        element = document.createElement("dialog");
+        surfaces.set(dialog, element);
+        dialogsRoot.append(element);
+      }
+      element.className = `dialog ${spec.style} ${dialog.busy ? "busy" : ""}`;
+      element.setAttribute("aria-label", spec.title);
+      let tabs = "";
+      for (let i = 0; i < spec.tabs.length; i++) tabs += `<button type="button" class="tab" role="tab" aria-selected="${"tab" in dialog && dialog.tab === i}" data-action="select-tab" data-tab="${i}">${escapeHtml(spec.tabs[i])}</button>`;
+      const content = `<div class="dialog-layout"><header class="dialog-header"><h2>${escapeHtml(spec.title)}</h2>${dialog.type === "graph" ? graphHeader(dialog) : ""}${iconButton("close-dialog", "\u5173\u95ED", "close", dialog.busy ? "disabled" : "")}</header>${tabs === "" ? "" : `<div class="tabs" role="tablist">${tabs}</div>`}${dialog.busy ? '<div class="busy-bar"></div>' : ""}<div class="dialog-error" role="alert" ${dialog.error === "" ? "hidden" : ""}>${escapeHtml(dialog.error)}</div>${dialog.type === "graph" ? spec.body : `<div class="dialog-body" data-index="${index}">${spec.body}</div>`}${spec.footer === "" ? "" : `<footer class="dialog-footer">${spec.footer}</footer>`}</div>`;
+      if (markup.get(element) !== content) {
+        element.innerHTML = content;
+        markup.set(element, content);
+      }
+      for (const control of element.querySelectorAll("button,input,textarea,select")) {
+        if (dialog.busy) control.disabled = true;
+      }
+      if (dialog.busy) element.setAttribute("aria-busy", "true");
+      else element.removeAttribute("aria-busy");
+      if (!element.open) element.showModal();
+      const surface = element.querySelector("[data-graph-surface]");
+      if (surface !== null && dialog.type === "graph") {
+        surface.dataset.owner = dialog.ownerKey;
+        setGraphViewport(dialog, surface);
+        graphResizeObserver.observe(surface);
+      }
+      const body = element.querySelector(".dialog-body");
+      if (body !== null) body.scrollTop = dialog.scroll;
+    }
+    return { renderDialogs };
+  }
+
+  // web/features/memory/controls-events.ts
+  function changeMemoryControls(context, element) {
+    const dialog = context.state.dialogs[context.state.dialogs.length - 1];
+    if (dialog?.type !== "owner-settings") return false;
+    if (element.hasAttribute("data-memory-chat")) {
+      if (memoryRebuilding(dialog)) throw new Error("\u91CD\u5EFA\u671F\u95F4\u4E0D\u80FD\u6539\u53D8\u5DF2\u63D0\u4EA4\u7684\u804A\u5929");
+      const id = element.getAttribute("data-memory-chat");
+      if (id === null || dialog.chats === null || !dialog.chats.some((chat) => chat.id === id)) throw new Error("\u804A\u5929\u4E0D\u5C5E\u4E8E\u6B64\u8BB0\u5FC6\u5E93");
+      dialog.selectedChatIds = dialog.selectedChatIds.filter((value) => value !== id);
+      if (element.checked) dialog.selectedChatIds.push(id);
+      updateMemoryStatus(dialog, context.dialogsRoot);
+      return true;
+    }
+    if (element.type !== "checkbox" || dialog.settings === null) return false;
+    switch (element.dataset.field) {
+      case "profileAuto":
+        dialog.settings.profileAutoUpdateEnabled = element.checked;
+        break;
+      case "profileLocked":
+        dialog.settings.profileAutoUpdateLocked = element.checked;
+        break;
+      case "embedding":
+        dialog.settings.cloudEmbeddingEnabled = element.checked;
+        break;
+      default:
+        return false;
+    }
+    context.renderDialogs();
+    return true;
+  }
+
+  // web/features/memory/item-events.ts
+  function updateScoreOutput(element) {
+    const field2 = requireElement(element.closest(".score-field"), HTMLElement);
+    requireElement(field2.querySelector("output"), HTMLOutputElement).textContent = Number(element.value).toFixed(2);
+  }
+
+  // web/bridge/events.ts
+  function createEditorEvents(context, features) {
+    const { state, topDialog, renderDialogs, renderMain, dismissDialog, updateGraphSurface: updateGraphSurface2 } = context;
+    const registry = /* @__PURE__ */ new Map();
+    for (const feature of features) for (const name of feature.names) {
+      if (registry.has(name)) throw new Error(`Duplicate UI action owner: ${name}`);
+      registry.set(name, feature);
+    }
+    async function handleAction(action, element) {
+      const feature = registry.get(action);
+      if (feature === void 0) throw new Error(`Unknown UI action: ${action}`);
+      await feature.handleAction(action, element);
+    }
+    async function onClick(event) {
+      if (!(event.target instanceof Element)) return;
+      if (event.type === "click" && event.detail !== 0 && state.gestureMoved && event.target.closest("[data-graph-surface]") !== null) {
+        event.preventDefault();
+        return;
+      }
+      const element = event.target.closest("[data-action]");
+      if (element === null || element instanceof HTMLButtonElement && element.disabled || state.busy) return;
+      event.preventDefault();
+      state.busy = true;
+      const owner = state.dialogs.length === 0 ? null : topDialog();
+      if (owner !== null && owner.type === "graph") cancelGraphCameraAnimation(owner);
+      if (owner !== null) owner.error = "";
+      else state.error = "";
+      try {
+        await handleAction(dataValue(element, "action"), element);
+      } catch (error) {
+        if (state.dialogs.length !== 0) {
+          topDialog().error = String(error);
+          renderDialogs();
+        } else {
+          state.error = String(error);
+          renderMain();
+        }
+      } finally {
+        state.busy = false;
+        renderDialogs();
+        if (state.dialogs.length === 0) renderMain();
+      }
+    }
+    function onInput(event) {
+      if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement)) return;
+      const element = event.target;
+      if (element.disabled) return;
+      if (element instanceof HTMLInputElement && context.onScreenInput(element)) return;
+      if (element instanceof HTMLInputElement && element.type === "checkbox") return;
+      if (element.hasAttribute("data-graph-search")) {
+        topDialog("graph").query = element.value;
+        return;
+      }
+      if (!element.hasAttribute("data-field") || element.disabled) return;
+      const dialog = topDialog(), key = dataValue(element, "field");
+      if (key === "fixedModel") return;
+      if (dialog.type === "text") {
+        if (key !== "value") throw new Error("\u5C55\u5F00\u7F16\u8F91\u5B57\u6BB5\u65E0\u6548");
+        dialog.value = element.value;
+        return;
+      }
+      setEditableValue(editableDialog(dialog), key, element.value);
+      if (dialog.type === "import" && key === "format") renderDialogs();
+      if (dialog.type === "owner-settings" && dialog.searchResult === null) context.dialogsRoot.querySelector("[data-search-results]")?.remove();
+      if (dialog.type === "memory-edit" && element instanceof HTMLInputElement && element.type === "range") {
+        updateScoreOutput(element);
+      }
+    }
+    function onChange(event) {
+      if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement)) return;
+      const element = event.target;
+      if (element.disabled) return;
+      if (element.hasAttribute("data-graph-folder")) {
+        topDialog("graph").folder = element.value;
+        updateGraphSurface2(topDialog("graph"));
+        return;
+      }
+      if (element instanceof HTMLInputElement && changeMemoryControls(context, element)) return;
+    }
+    async function onCancel(event) {
+      event.preventDefault();
+      if (state.busy || state.dialogs.length === 0) return;
+      state.busy = true;
+      try {
+        await dismissDialog();
+      } catch (error) {
+        if (state.dialogs.length !== 0) topDialog().error = String(error);
+        else state.error = String(error);
+      } finally {
+        state.busy = false;
+        renderDialogs();
+        if (state.dialogs.length === 0) renderMain();
+      }
+    }
+    return { onClick, onInput, onChange, onCancel };
+  }
+
+  // web/bridge/state.ts
+  function createState() {
+    return { managementView: "characters", avatarSources: /* @__PURE__ */ new Map(), snapshot: null, dialogs: [], busy: false, error: "", toastTimer: null, pointers: /* @__PURE__ */ new Map(), gestureMoved: false };
+  }
+
+  // web/bridge/avatar-sources.ts
+  function createAvatarSources(sources, resolve) {
+    const pending = /* @__PURE__ */ new Map();
+    function source(path) {
+      const key = path ?? "";
+      const existing = sources.get(key);
+      if (existing !== void 0) return Promise.resolve(existing);
+      const active = pending.get(key);
+      if (active !== void 0) return active;
+      const request = Promise.resolve().then(() => resolve(path)).then((value) => {
+        sources.set(key, value);
+        if (pending.get(key) === request) pending.delete(key);
+        return value;
+      }, (error) => {
+        if (pending.get(key) === request) pending.delete(key);
+        throw error;
+      });
+      pending.set(key, request);
+      return request;
+    }
+    async function load(paths) {
+      await Promise.all([...new Set(paths)].map(source));
+    }
+    return { source, load };
+  }
+
+  // web/bridge/avatar-loader.ts
+  function createAvatarLoader(root, sources, resolve) {
+    const avatars = createAvatarSources(sources, resolve);
+    let scheduled = false;
+    let paths = [];
+    function display(path, source) {
+      for (const element of root.querySelectorAll("[data-avatar-uri]")) {
+        if (element.dataset.avatarUri !== (path ?? "")) continue;
+        const existing = element.querySelector("img");
+        if (existing !== null) {
+          if (existing.getAttribute("src") !== source) existing.src = source;
+          continue;
+        }
+        const image = document.createElement("img");
+        image.alt = "";
+        image.onload = () => {
+          if (!element.isConnected || element.dataset.avatarUri !== (path ?? "")) return;
+          if (element.querySelector("img") !== null) return;
+          const placeholder = element.querySelector(":scope > svg");
+          if (placeholder !== null) placeholder.replaceWith(image);
+          else element.prepend(image);
+        };
+        image.src = source;
+      }
+    }
+    function load(next) {
+      paths = next;
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => setTimeout(() => {
+        scheduled = false;
+        for (const path of new Set(paths)) {
+          void avatars.source(path).then((source) => display(path, source), () => {
+          });
+        }
+      }, 0));
+    }
+    return { load };
+  }
+
+  // web/features/memory/attachments.ts
+  function createAttachmentState(input) {
+    return { mode: "memory-attachment", input, step: "owners", owner: null, folders: null, folder: null, items: null, loading: false };
+  }
+  function canAttachmentGoBack(state) {
+    switch (state.step) {
+      case "owners":
+        return false;
+      case "folders":
+        return state.input.ownerKey === null;
+      case "content":
+        return state.input.folderPath === null;
+    }
+  }
+  function attachmentOwners(snapshot) {
+    const owners = [];
+    for (const card of snapshot.cards) owners.push({ key: `character:${card.id}`, name: card.name, kind: "CHARACTER" });
+    for (const store of snapshot.stores) owners.push({ key: `shared:${store.id}`, name: store.name, kind: "SHARED" });
+    return owners;
+  }
+  function attachmentOwner(snapshot, ownerKey) {
+    for (const owner of attachmentOwners(snapshot)) if (owner.key === ownerKey) return owner;
+    throw new Error(`\u8BB0\u5FC6\u5E93\u4E0D\u5B58\u5728\uFF1A${ownerKey}`);
+  }
+  function attachmentFolders(folders) {
+    const paths = /* @__PURE__ */ new Set([""]);
+    for (const folder of folders) {
+      if (typeof folder !== "string") throw new Error("\u8BB0\u5FC6\u5E93\u8FD4\u56DE\u4E86\u65E0\u6548\u7684\u6587\u4EF6\u5939\u8DEF\u5F84");
+      paths.add(folder);
+    }
+    return [...paths].sort();
+  }
+  function memoryFolder(memory) {
+    return memory.folderPath === null ? "" : memory.folderPath;
+  }
+  function attachmentItems(items, folderPath) {
+    const selected = [];
+    for (const memory of items) if (memoryFolder(memory) === folderPath) selected.push(memory);
+    return selected;
+  }
+  function attachmentContent(owner, folderPath, items) {
+    if (items.length === 0) return "";
+    const sections = [];
+    for (const item of items) sections.push(`## ${item.title}
+
+${item.content}`);
+    return `# ${owner.name} / ${folderPath === "" ? "/" : folderPath}
+
+${sections.join("\n\n")}`;
+  }
+  function createAttachmentFeature(context) {
+    const { editor: editor2, screen, render, complete } = context;
+    async function loadFolders(owner) {
+      const state = screen("memory-attachment");
+      if (state.input.ownerKey !== null && state.input.ownerKey !== owner.key) throw new Error("\u4E0D\u80FD\u66F4\u6539\u8C03\u7528\u65B9\u6307\u5B9A\u7684\u8BB0\u5FC6\u5E93");
+      state.owner = owner;
+      state.step = "folders";
+      state.folders = null;
+      state.folder = null;
+      state.items = null;
+      state.loading = true;
+      editor2.state.error = "";
+      render();
+      try {
+        state.folders = attachmentFolders(await editor2.request({ action: "listMemoryFolders", ownerKey: owner.key }));
+      } catch (error) {
+        editor2.state.error = String(error);
+        throw error;
+      } finally {
+        state.loading = false;
+        render();
+      }
+    }
+    async function loadContent(folder) {
+      const state = screen("memory-attachment");
+      if (state.owner === null || state.folders === null) throw new Error("\u8BF7\u5148\u9009\u62E9\u8BB0\u5FC6\u5E93");
+      if (state.input.folderPath !== null && state.input.folderPath !== folder) throw new Error("\u4E0D\u80FD\u66F4\u6539\u8C03\u7528\u65B9\u6307\u5B9A\u7684\u8BB0\u5FC6\u6587\u4EF6\u5939");
+      if (state.folders.indexOf(folder) < 0) throw new Error("\u9009\u62E9\u7684\u8BB0\u5FC6\u6587\u4EF6\u5939\u4E0D\u5B58\u5728");
+      state.folder = folder;
+      state.items = null;
+      state.step = "content";
+      state.loading = true;
+      editor2.state.error = "";
+      render();
+      try {
+        state.items = attachmentItems(await editor2.request({ action: "listMemories", ownerKey: state.owner.key }), folder);
+      } catch (error) {
+        editor2.state.error = String(error);
+        throw error;
+      } finally {
+        state.loading = false;
+        render();
+      }
+    }
+    async function initialize2() {
+      const state = screen("memory-attachment"), input = state.input;
+      if (input.ownerKey === null) return;
+      try {
+        await loadFolders(attachmentOwner(editor2.snapshot(), input.ownerKey));
+        if (input.folderPath !== null) await loadContent(input.folderPath);
+      } catch (error) {
+        editor2.state.error = String(error);
+        render();
+      }
+    }
+    async function handleAction(action, element) {
+      const state = screen("memory-attachment");
+      switch (action) {
+        case "attachment-owner":
+          if (state.step !== "owners") throw new Error("\u5F53\u524D\u4E0D\u662F\u8BB0\u5FC6\u5E93\u9009\u62E9\u6B65\u9AA4");
+          await loadFolders(attachmentOwner(editor2.snapshot(), dataValue(element, "owner")));
+          return;
+        case "attachment-folder":
+          if (state.step !== "folders") throw new Error("\u5F53\u524D\u4E0D\u662F\u8BB0\u5FC6\u6587\u4EF6\u5939\u9009\u62E9\u6B65\u9AA4");
+          await loadContent(dataValue(element, "folder"));
+          return;
+        case "attachment-back":
+          if (!canAttachmentGoBack(state)) throw new Error("\u4E0D\u80FD\u9000\u51FA\u8C03\u7528\u65B9\u6307\u5B9A\u7684\u8BB0\u5FC6\u9644\u4EF6\u8303\u56F4");
+          editor2.state.error = "";
+          if (state.step === "content") {
+            state.step = "folders";
+            state.folder = null;
+            state.items = null;
+          } else {
+            state.step = "owners";
+            state.owner = null;
+            state.folders = null;
+          }
+          render();
+          return;
+        case "attachment-retry":
+          if (state.input.ownerKey !== null && (state.folders === null || state.step === "folders" && state.input.folderPath !== null)) {
+            await initialize2();
+            return;
+          }
+          if (state.step === "content" && state.folder !== null) {
+            await loadContent(state.folder);
+            return;
+          }
+          if (state.step === "folders" && state.owner !== null) {
+            await loadFolders(state.owner);
+            return;
+          }
+          throw new Error("\u5F53\u524D\u6CA1\u6709\u53EF\u91CD\u8BD5\u7684\u8BB0\u5FC6\u8BFB\u53D6");
+        case "confirm-attachment": {
+          if (state.owner === null || state.folder === null || state.items === null) throw new Error("\u8BB0\u5FC6\u9644\u4EF6\u6B63\u6587\u5C1A\u672A\u8BFB\u53D6");
+          if (state.loading || editor2.state.error !== "") throw new Error("\u8BB0\u5FC6\u9644\u4EF6\u5C1A\u672A\u6210\u529F\u8BFB\u53D6");
+          const content = attachmentContent(state.owner, state.folder, state.items);
+          if (content === "") throw new Error("\u5F53\u524D\u6587\u4EF6\u5939\u6CA1\u6709\u53EF\u6DFB\u52A0\u7684\u8BB0\u5FC6");
+          await complete({ mode: "memory-attachment", ownerKey: state.owner.key, folderPath: state.folder, content });
+          return;
+        }
+        default:
+          throw new Error(`Unknown memory attachment action: ${action}`);
+      }
+    }
+    return { names: ["attachment-owner", "attachment-folder", "attachment-back", "attachment-retry", "confirm-attachment"], handleAction, initialize: initialize2 };
+  }
+  function attachmentPage(state, snapshot, error, disabled) {
+    const title = state.owner === null ? "\u8BB0\u5FC6\u9644\u4EF6" : state.owner.name;
+    let body = "", content = "";
+    if (state.loading) body = '<div class="loading" role="status">\u6B63\u5728\u8BFB\u53D6\u8BB0\u5FC6\u5E93\u2026</div>';
+    else if (error !== "") body = `<div class="error-banner" role="alert">${escapeHtml(error)}</div>${button("attachment-retry", "\u91CD\u8BD5", "refresh", disabled ? "disabled" : "")}`;
+    else switch (state.step) {
+      case "owners":
+        for (const owner of attachmentOwners(snapshot)) body += `<button type="button" class="picker-row" data-action="attachment-owner" data-owner="${escapeHtml(owner.key)}" ${disabled ? "disabled" : ""}>${icon(owner.kind === "SHARED" ? "groups" : "person")}<span>${escapeHtml(owner.name)}</span></button>`;
+        if (body === "") body = '<div class="empty">\u6CA1\u6709\u53EF\u9009\u7684\u8BB0\u5FC6\u5E93\u3002</div>';
+        break;
+      case "folders":
+        if (state.folders === null) throw new Error("\u8BB0\u5FC6\u6587\u4EF6\u5939\u5C1A\u672A\u8BFB\u53D6");
+        for (const folder of state.folders) body += `<button type="button" class="picker-row" data-action="attachment-folder" data-folder="${escapeHtml(folder)}" ${disabled ? "disabled" : ""}>${icon("folder")}<span>${escapeHtml(folder === "" ? "/" : folder)}</span></button>`;
+        break;
+      case "content":
+        if (state.owner === null || state.folder === null || state.items === null) throw new Error("\u8BB0\u5FC6\u9644\u4EF6\u6B63\u6587\u5C1A\u672A\u8BFB\u53D6");
+        content = attachmentContent(state.owner, state.folder, state.items);
+        body = content === "" ? '<div class="empty">\u5F53\u524D\u6587\u4EF6\u5939\u6CA1\u6709\u8BB0\u5FC6\u3002</div>' : `<pre class="attachment-content" tabindex="0" aria-label="\u8BB0\u5FC6\u9644\u4EF6\u6B63\u6587">${escapeHtml(content)}</pre>`;
+        break;
+    }
+    const back = canAttachmentGoBack(state) ? iconButton("attachment-back", "\u8FD4\u56DE", "back", state.loading || disabled ? "disabled" : "") : "";
+    return `<div class="page presentation-page attachment-page"><header class="appbar">${back}<h1>${escapeHtml(title)}</h1></header><div class="scroll attachment-body">${body}</div><footer class="presentation-footer">${button("screen-cancel", "\u53D6\u6D88", "", disabled || state.loading ? "disabled" : "")}${content === "" ? "" : button("confirm-attachment", "\u6DFB\u52A0\u8BB0\u5FC6\u9644\u4EF6", "add", disabled || state.loading ? "disabled" : "", "filled")}</footer></div>`;
+  }
+
+  // web/features/groups/selection.ts
+  function groupSelectionTile(group, selection2, snapshot) {
+    const selected = selectedEntity(selection2, "group", group.id), names = groupMemberNames(group, snapshot).join("\u3001");
+    return `<article class="entity ${selected ? "selected" : ""}" data-selection-entity="group"><button type="button" class="entity-main" role="radio" aria-checked="${selected}" aria-label="\u9009\u62E9\u7FA4\u7EC4 ${escapeHtml(group.name)}" data-action="select-group" data-id="${escapeHtml(group.id)}"><span class="avatar">${icon("groups")}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(group.name)}</span><span class="entity-subtitle">${escapeHtml(group.description)}</span><span class="badges"><span class="badge">${group.members.length} \u4E2A\u89D2\u8272</span><span class="badge">${escapeHtml(names)}</span>${isActive(snapshot.active, "group", group.id) ? '<span class="badge">\u5F53\u524D\u4F7F\u7528</span>' : ""}</span></span><span class="selection-check">${selected ? icon("check") : ""}</span></button><div class="entity-actions">${iconButton("preview-group", `\u9884\u89C8\u7FA4\u7EC4 ${group.name}`, "info", `data-id="${escapeHtml(group.id)}"`)}</div></article>`;
+  }
+
+  // web/features/characters/selection.ts
+  function createSelectionState(input) {
+    return { mode: "select", input, query: "", category: input.kind, selected: input.selected };
+  }
+  function matchesSelectionQuery(query, fields2) {
+    const text2 = query.trim().toLocaleLowerCase();
+    if (text2 === "") return true;
+    for (const field2 of fields2) if (field2.toLocaleLowerCase().indexOf(text2) >= 0) return true;
+    return false;
+  }
+  function groupMemberNames(group, snapshot) {
+    const members = [...group.members].sort(
+      /** Orders canonical members without mutating the loaded aggregate. */
+      (left, right) => left.orderIndex - right.orderIndex
+    );
+    const names = [];
+    for (const member of members) names.push(getCard(snapshot, member.characterCardId).name);
+    return names;
+  }
+  function cardMatchesQuery(card, query, snapshot) {
+    const fields2 = [card.name, card.description];
+    for (const id of card.attachedTagIds) for (const tag of snapshot.tags) if (tag.id === id) fields2.push(tag.name);
+    return matchesSelectionQuery(query, fields2);
+  }
+  function selectedEntity(selection2, kind, id) {
+    if (selection2 === null) return false;
+    switch (kind) {
+      case "card":
+        return "CharacterCard" in selection2 && selection2.CharacterCard.id === id;
+      case "group":
+        return "CharacterGroup" in selection2 && selection2.CharacterGroup.id === id;
+    }
+  }
+  function validateSelection(selection2, kind, snapshot) {
+    if (selection2 === null) return;
+    if ("Model" in selection2) {
+      if (kind === "group" || selection2.Model.id !== "chat") throw new Error("Invalid model-only selection");
+      return;
+    }
+    if ("CharacterCard" in selection2) {
+      if (kind === "group") throw new Error("\u7FA4\u7EC4\u9009\u62E9\u5668\u4E0D\u80FD\u9009\u62E9\u89D2\u8272\u5361");
+      getCard(snapshot, selection2.CharacterCard.id);
+    } else {
+      if (kind === "card") throw new Error("\u89D2\u8272\u9009\u62E9\u5668\u4E0D\u80FD\u9009\u62E9\u7FA4\u7EC4");
+      getGroup(snapshot, selection2.CharacterGroup.id);
+    }
+  }
+  function createSelectionFeature(context) {
+    const { editor: editor2, screen, render, complete } = context;
+    async function handleAction(action, element) {
+      const state = screen("select");
+      switch (action) {
+        case "select-character": {
+          if (state.input.kind === "group") throw new Error("\u5F53\u524D\u89C6\u56FE\u53EA\u5141\u8BB8\u9009\u62E9\u7FA4\u7EC4");
+          const card = getCard(editor2.snapshot(), dataValue(element, "id"));
+          state.selected = { CharacterCard: { id: card.id } };
+          render();
+          return;
+        }
+        case "select-group": {
+          if (state.input.kind === "card") throw new Error("\u5F53\u524D\u89C6\u56FE\u53EA\u5141\u8BB8\u9009\u62E9\u89D2\u8272\u5361");
+          const group = getGroup(editor2.snapshot(), dataValue(element, "id"));
+          state.selected = { CharacterGroup: { id: group.id } };
+          render();
+          return;
+        }
+        case "selection-category": {
+          if (state.input.kind !== "all") throw new Error("\u5F53\u524D\u89C6\u56FE\u4E0D\u80FD\u5207\u6362\u9009\u62E9\u7C7B\u578B");
+          const category = dataValue(element, "category");
+          if (category !== "all" && category !== "card" && category !== "group") throw new Error("\u9009\u62E9\u7C7B\u578B\u65E0\u6548");
+          state.category = category;
+          render();
+          return;
+        }
+        case "confirm-selection":
+          if (state.selected === null) throw new Error("\u8BF7\u9009\u62E9\u89D2\u8272\u6216\u7FA4\u7EC4");
+          validateSelection(state.selected, state.input.kind, editor2.snapshot());
+          await complete({ mode: "select", selection: state.selected });
+          return;
+        default:
+          throw new Error(`Unknown selector action: ${action}`);
+      }
+    }
+    function onInput(element) {
+      const state = screen("select"), start = element.selectionStart, end = element.selectionEnd;
+      state.query = element.value;
+      render();
+      const input = editor2.app.querySelector("[data-selection-query]");
+      if (input === null) throw new Error("\u89D2\u8272\u9009\u62E9\u641C\u7D22\u6846\u4E0D\u5B58\u5728");
+      input.focus();
+      input.setSelectionRange(start, end);
+    }
+    return { names: ["select-character", "select-group", "selection-category", "confirm-selection"], handleAction, onInput };
+  }
+  function selectionTile(card, state, snapshot) {
+    const selected = selectedEntity(state.selected, "card", card.id);
+    return `<article class="entity ${selected ? "selected" : ""}" data-selection-entity="card"><button type="button" class="entity-main" role="radio" aria-checked="${selected}" aria-label="\u9009\u62E9 ${escapeHtml(card.name)}" data-action="select-character" data-id="${escapeHtml(card.id)}"><span class="avatar">${icon("person")}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(card.name)}</span><span class="entity-subtitle">${escapeHtml(card.description)}</span>${isActive(snapshot.active, "card", card.id) ? '<span class="badges"><span class="badge">\u5F53\u524D\u4F7F\u7528</span></span>' : ""}</span><span class="selection-check">${selected ? icon("check") : ""}</span></button><div class="entity-actions">${iconButton("preview-card", `\u9884\u89C8 ${card.name}`, "info", `data-id="${escapeHtml(card.id)}"`)}</div></article>`;
+  }
+  function selectionPage(state, snapshot, error, disabled) {
+    let cards = "", groups = "";
+    if (state.category !== "group") {
+      for (const card of snapshot.cards) if (cardMatchesQuery(card, state.query, snapshot)) cards += selectionTile(card, state, snapshot);
+    }
+    if (state.category !== "card") for (const group of snapshot.groups) {
+      if (matchesSelectionQuery(state.query, [group.name, group.description, ...groupMemberNames(group, snapshot)])) groups += groupSelectionTile(group, state.selected, snapshot);
+    }
+    const filter = state.input.kind === "all" ? `<div class="chips selection-categories" aria-label="\u9009\u62E9\u7C7B\u578B">${categoryButton("all", "\u5168\u90E8", state)}${categoryButton("card", "\u89D2\u8272\u5361", state)}${categoryButton("group", "\u7FA4\u7EC4", state)}</div>` : "";
+    const list = cards + groups;
+    return `<div class="page presentation-page"><header class="appbar">${icon(state.input.kind === "group" ? "groups" : "badge")}<h1>${state.input.kind === "group" ? "\u9009\u62E9\u7FA4\u7EC4" : "\u9009\u62E9\u89D2\u8272"}</h1></header><div class="selection-toolbar"><label class="field"><span class="field-label">\u641C\u7D22\u89D2\u8272\u6216\u7FA4\u7EC4</span><input data-selection-query aria-label="\u641C\u7D22\u89D2\u8272\u6216\u7FA4\u7EC4" value="${escapeHtml(state.query)}"></label>${filter}</div><div class="scroll">${error === "" ? "" : `<div class="error-banner" role="alert">${escapeHtml(error)}</div>`}<div role="radiogroup" aria-label="\u89D2\u8272\u4E0E\u7FA4\u7EC4">${list === "" ? '<div class="empty">\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u89D2\u8272\u6216\u7FA4\u7EC4\u3002</div>' : list}</div></div><footer class="presentation-footer">${button("screen-cancel", "\u53D6\u6D88", "", disabled ? "disabled" : "")}${button("confirm-selection", "\u786E\u5B9A", "check", disabled || state.selected === null ? "disabled" : "", "filled")}</footer></div>`;
+  }
+  function categoryButton(category, label, state) {
+    return `<button type="button" class="chip ${state.category === category ? "selected" : ""}" data-action="selection-category" data-category="${category}" aria-pressed="${state.category === category}">${escapeHtml(label)}</button>`;
+  }
+
+  // src/presentation.ts
+  function fields(value, keys, path) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path} must be an object`);
+    const object = value, actual = Object.keys(object);
+    if (actual.length !== keys.length || actual.some(
+      /** Compares exact field identities rather than interpreting string fragments. */
+      (key) => keys.indexOf(key) < 0
+    )) throw new Error(`${path} must have exactly ${keys.join(", ")}`);
+    return object;
+  }
+  function text(value, path) {
+    if (typeof value !== "string") throw new Error(`${path} must be a string`);
+    return value;
+  }
+  function identity(value, path) {
+    const result = text(value, path);
+    if (result.trim() === "") throw new Error(`${path} must not be blank`);
+    return result;
+  }
+  function entityKind(value) {
+    if (value !== "card" && value !== "group") throw new Error("screen.entity must be card or group");
+    return value;
+  }
+  function selection(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("screen.selection must be an active prompt object");
+    const keys = Object.keys(value);
+    if (keys.length !== 1) throw new Error("screen.selection must have one active prompt discriminator");
+    const object = value;
+    switch (keys[0]) {
+      case "Model": {
+        const model = fields(object.Model, ["id"], "screen.selection.Model");
+        if (model.id !== "chat") throw new Error("Invalid model selection identity");
+        return { Model: { id: "chat" } };
+      }
+      case "CharacterCard":
+        return { CharacterCard: { id: identity(fields(object.CharacterCard, ["id"], "screen.selection.CharacterCard").id, "screen.selection.id") } };
+      case "CharacterGroup":
+        return { CharacterGroup: { id: identity(fields(object.CharacterGroup, ["id"], "screen.selection.CharacterGroup").id, "screen.selection.id") } };
+      default:
+        throw new Error("screen.selection has an unknown active prompt discriminator");
+    }
+  }
+  function parseScreenInput(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("screen.input must be an object");
+    const object = value;
+    switch (object.mode) {
+      case "manage": {
+        if (object.view === void 0) {
+          fields(object, ["mode"], "screen.input");
+          return { mode: "manage" };
+        }
+        fields(object, ["mode", "view"], "screen.input");
+        if (object.view !== "characters" && object.view !== "memory") throw new Error("screen.view must be characters or memory");
+        return { mode: "manage", view: object.view };
+      }
+      case "select": {
+        fields(object, ["mode", "kind", "selected"], "screen.input");
+        if (object.kind !== "card" && object.kind !== "group" && object.kind !== "all") throw new Error("screen.kind must be card, group, or all");
+        const selected = object.selected === null ? null : selection(object.selected);
+        if (selected !== null && (object.kind === "card" && !("CharacterCard" in selected) && !("Model" in selected) || object.kind === "group" && !("CharacterGroup" in selected))) throw new Error("screen.selected does not match screen.kind");
+        return { mode: "select", kind: object.kind, selected };
+      }
+      case "preview":
+      case "edit":
+        fields(object, ["mode", "entity", "id"], "screen.input");
+        return { mode: object.mode, entity: entityKind(object.entity), id: identity(object.id, "screen.id") };
+      case "memory-attachment": {
+        fields(object, ["mode", "ownerKey", "folderPath"], "screen.input");
+        const ownerKey = object.ownerKey === null ? null : identity(object.ownerKey, "screen.ownerKey");
+        const folderPath = object.folderPath === null ? null : text(object.folderPath, "screen.folderPath");
+        if (ownerKey === null && folderPath !== null) throw new Error("screen.folderPath requires an explicitly selected ownerKey");
+        return { mode: "memory-attachment", ownerKey, folderPath };
+      }
+      default:
+        throw new Error("screen.input has an unknown mode");
+    }
+  }
+  function parseScreenResult(value, input) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("screen.result must be an object");
+    const object = value;
+    if (object.mode !== input.mode) throw new Error("screen.result.mode does not match the active presentation");
+    switch (input.mode) {
+      case "select": {
+        fields(object, ["mode", "selection"], "screen.result");
+        const result = selection(object.selection);
+        if (input.kind === "card" && !("CharacterCard" in result) && !("Model" in result) || input.kind === "group" && !("CharacterGroup" in result)) throw new Error("screen.result.selection does not match screen.kind");
+        return { mode: "select", selection: result };
+      }
+      case "preview":
+      case "edit": {
+        fields(object, input.mode === "edit" ? ["mode", "entity", "id", "operation"] : ["mode", "entity", "id"], "screen.result");
+        if (object.entity !== input.entity || object.id !== input.id) throw new Error("screen.result does not match the presented entity");
+        if (input.mode === "preview") return { mode: "preview", entity: input.entity, id: input.id };
+        if (object.operation !== "saved" && object.operation !== "deleted") throw new Error("screen.result.operation must be saved or deleted");
+        return { mode: "edit", entity: input.entity, id: input.id, operation: object.operation };
+      }
+      case "memory-attachment": {
+        fields(object, ["mode", "ownerKey", "folderPath", "content"], "screen.result");
+        const ownerKey = identity(object.ownerKey, "screen.result.ownerKey"), folderPath = text(object.folderPath, "screen.result.folderPath");
+        if (input.ownerKey !== null && ownerKey !== input.ownerKey || input.folderPath !== null && folderPath !== input.folderPath) throw new Error("screen.result does not match the presented attachment scope");
+        return { mode: "memory-attachment", ownerKey, folderPath, content: text(object.content, "screen.result.content") };
+      }
+    }
+  }
+
+  // web/bridge/screens.ts
+  function parseCurrentScreen(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("currentScreen \u5FC5\u987B\u8FD4\u56DE\u5BF9\u8C61");
+    const record = value, keys = Object.keys(record);
+    if (keys.length !== 2 || !keys.every(
+      /** Accepts only the two fields declared by the plugin's actual host bridge. */
+      (key) => key === "requestId" || key === "input"
+    )) throw new Error("currentScreen \u5FC5\u987B\u53EA\u5305\u542B requestId \u548C input");
+    const input = parseScreenInput(record.input);
+    if (input.mode === "manage") {
+      if (record.requestId !== null) throw new Error("\u7BA1\u7406\u89C6\u56FE\u4E0D\u80FD\u5305\u542B presentation requestId");
+      return { requestId: null, input };
+    }
+    if (typeof record.requestId !== "string" || record.requestId.trim() === "") throw new Error("\u5F39\u7A97\u89C6\u56FE\u7F3A\u5C11\u771F\u5B9E presentation requestId");
+    return { requestId: record.requestId, input };
+  }
+  function createHostScreenReceiver(bridge, requestId, input) {
+    return {
+      /** Completes this exact host request after validating its package-owned result fields. */
+      async complete(result) {
+        const value = parseScreenResult(result, input);
+        const acknowledgement = await bridge.completeScreen(value);
+        if (acknowledgement.type !== "toolpkg.presentation.complete" || acknowledgement.requestId !== requestId) throw new Error("\u5BBF\u4E3B\u672A\u786E\u8BA4\u5F53\u524D presentation \u7684\u5B8C\u6210\u7ED3\u679C");
+      },
+      /** Cancels the real caller-owned request without changing the active actor or returning a selection. */
+      async cancel() {
+        const acknowledgement = await bridge.cancelScreen();
+        if (acknowledgement.type !== "toolpkg.presentation.cancel" || acknowledgement.requestId !== requestId) throw new Error("\u5BBF\u4E3B\u672A\u786E\u8BA4\u5F53\u524D presentation \u7684\u53D6\u6D88\u7ED3\u679C");
+      }
+    };
+  }
+  async function initializeHostScreen(editor2, initial) {
+    const bridge = host(), current = parseCurrentScreen(initial.screen);
+    if (current.input.mode === "manage") {
+      await editor2.initialize(current.input.view, initial.snapshot);
+      return;
+    }
+    if (current.requestId === null) throw new Error("\u5F39\u7A97\u89C6\u56FE\u6CA1\u6709\u771F\u5B9E presentation requestId");
+    await editor2.initializeScreen(current.input, createHostScreenReceiver(bridge, current.requestId, current.input), initial.snapshot);
+  }
+  function createScreenController(editor2, management) {
+    let active = { mode: "manage" };
+    let receiver = null;
+    let finished = false;
+    function screen(mode) {
+      if (active.mode !== mode) throw new Error(`\u5F53\u524D\u63D2\u4EF6\u89C6\u56FE\u4E0D\u662F ${mode}`);
+      return active;
+    }
+    function renderMain() {
+      if (editor2.state.snapshot === null) return;
+      if (finished) {
+        editor2.app.innerHTML = '<div class="loading" role="status">\u5F53\u524D\u89C6\u56FE\u5DF2\u7ED3\u675F\u3002</div>';
+        return;
+      }
+      switch (active.mode) {
+        case "manage":
+          management.renderMain();
+          return;
+        case "select":
+          editor2.app.innerHTML = selectionPage(active, editor2.snapshot(), editor2.state.error, editor2.state.busy);
+          return;
+        case "memory-attachment":
+          editor2.app.innerHTML = attachmentPage(active, editor2.snapshot(), editor2.state.error, editor2.state.busy);
+          return;
+      }
+    }
+    async function complete(result) {
+      if (receiver === null || active.mode === "manage" || finished) throw new Error("\u5F53\u524D\u89C6\u56FE\u6CA1\u6709\u6D3B\u52A8\u7684 presentation \u63A5\u6536\u65B9");
+      if (result.mode !== active.mode) throw new Error("\u89C6\u56FE\u7ED3\u679C\u7C7B\u578B\u4E0E\u5F53\u524D\u89C6\u56FE\u4E0D\u5339\u914D");
+      await receiver.complete(result);
+      finished = true;
+      renderMain();
+    }
+    async function cancel() {
+      if (receiver === null || active.mode === "manage" || finished) throw new Error("\u5F53\u524D\u89C6\u56FE\u6CA1\u6709\u6D3B\u52A8\u7684 presentation \u63A5\u6536\u65B9");
+      await receiver.cancel();
+      finished = true;
+      renderMain();
+    }
+    const context = { editor: editor2, screen, render: renderMain, complete, cancel };
+    const selection2 = createSelectionFeature(context), attachment = createAttachmentFeature(context);
+    async function handleAction(action) {
+      if (action !== "screen-cancel") throw new Error(`Unknown presentation action: ${action}`);
+      await cancel();
+    }
+    const common = { names: ["screen-cancel"], handleAction };
+    async function enter(input, target) {
+      if (active.mode !== "manage" || editor2.state.dialogs.length !== 0) throw new Error("\u5F53\u524D\u63D2\u4EF6\u5B9E\u4F8B\u5DF2\u6709\u6D3B\u52A8\u89C6\u56FE");
+      receiver = target;
+      editor2.state.error = "";
+      switch (input.mode) {
+        case "select":
+          validateSelection(input.selected, input.kind, editor2.snapshot());
+          active = createSelectionState(input);
+          break;
+        case "memory-attachment":
+          active = createAttachmentState(input);
+          break;
+        case "preview":
+        case "edit":
+          throw new Error("Entity presentations are rendered by the native DSL route");
+      }
+      renderMain();
+      switch (active.mode) {
+        case "select":
+          return;
+        case "memory-attachment":
+          await attachment.initialize();
+          return;
+        default: {
+          const unexpected = active;
+          throw new Error(`Unexpected presented view: ${String(unexpected)}`);
+        }
+      }
+    }
+    function onInput(element) {
+      if (!element.hasAttribute("data-selection-query")) return false;
+      selection2.onInput(element);
+      return true;
+    }
+    async function onKeyDown(event) {
+      if (event.key !== "Escape" || active.mode === "manage" || editor2.state.dialogs.length !== 0 || editor2.state.busy || finished) return;
+      event.preventDefault();
+      editor2.state.busy = true;
+      try {
+        await cancel();
+      } catch (error) {
+        editor2.state.error = String(error);
+      } finally {
+        editor2.state.busy = false;
+        renderMain();
+      }
+    }
+    return { renderMain, enter, onInput, onKeyDown, features: [common, selection2, attachment] };
+  }
+
+  // web/bridge/editor.ts
+  function createEditor() {
+    const state = createState();
+    const app = requireElement(document.getElementById("app"), HTMLElement);
+    const avatars = createAvatarLoader(app, state.avatarSources, (path) => host().avatarImage(path));
+    const dialogsRoot = requireElement(document.getElementById("dialogs"), HTMLElement);
+    function topDialog(type) {
+      if (state.dialogs.length === 0) throw new Error("\u5F53\u524D\u6CA1\u6709\u6253\u5F00\u7684\u7F16\u8F91\u5668");
+      const dialog = state.dialogs[state.dialogs.length - 1];
+      if (type !== void 0 && dialog.type !== type) throw new Error(`\u5F53\u524D\u7F16\u8F91\u5668\u4E0D\u662F ${type}`);
+      return dialog;
+    }
+    function pushDialog(draft) {
+      const common = { error: "", scroll: 0, busy: false };
+      const dialog = { ...draft, ...common };
+      state.dialogs.push(dialog);
+      renderDialogs();
+      return dialog;
+    }
+    function popDialog() {
+      if (topDialog().type === "graph") discardGraphPointers(state);
+      state.dialogs.pop();
+      renderDialogs();
+    }
+    function snapshot() {
+      if (state.snapshot === null) throw new Error("\u89D2\u8272\u5361\u76EE\u5F55\u5C1A\u672A\u52A0\u8F7D");
+      return state.snapshot;
+    }
+    function owningGraph(ownerKey) {
+      for (let index = state.dialogs.length - 1; index >= 0; index--) {
+        const dialog = state.dialogs[index];
+        if (dialog.type === "graph" && dialog.ownerKey === ownerKey) return dialog;
+      }
+      throw new Error("\u8BB0\u5FC6\u7F16\u8F91\u5668\u7684\u6240\u5C5E\u56FE\u8C31\u5DF2\u5173\u95ED");
+    }
+    function toast(message) {
+      const element = requireElement(document.getElementById("snackbar"), HTMLElement);
+      element.textContent = message;
+      element.className = "visible";
+      if (state.toastTimer !== null) clearTimeout(state.toastTimer);
+      state.toastTimer = setTimeout(() => {
+        element.className = "";
+      }, 3500);
+    }
+    async function request(operation, options) {
+      const dialog = options?.background || state.dialogs.length === 0 ? null : topDialog();
+      if (dialog !== null) {
+        dialog.busy = true;
+        renderDialogs();
+      }
+      try {
+        return await host().request(operation);
+      } finally {
+        if (dialog !== null) dialog.busy = false;
+      }
+    }
+    function renderMain() {
+      const started = performance.now();
+      screens.renderMain();
+      performance.clearMeasures("character-memory.dom-render");
+      performance.measure("character-memory.dom-render", { start: started, end: performance.now() });
+      if (state.snapshot !== null) avatars.load(state.snapshot.cards.map((card) => card.avatarUri));
+    }
+    function renderDialogs() {
+      dialogs.renderDialogs();
+    }
+    const context = {
+      state,
+      app,
+      dialogsRoot,
+      snapshot,
+      topDialog,
+      pushDialog,
+      popDialog,
+      request,
+      renderMain,
+      renderDialogs,
+      toast,
+      owningGraph,
+      /** Cancels only the presented root before removing the current local dialog. */
+      dismissDialog: async () => {
+        popDialog();
+        renderMain();
+      },
+      /** Delegates exact screen fields to their owning feature. */
+      onScreenInput: (element) => screens.onInput(element),
+      /** Opens the owner's loaded graph through its feature. */
+      openGraph: (owner, name) => graph.openGraph(owner, name),
+      /** Opens the owner's profile through its feature. */
+      openUser: (owner, name) => profile.openUser(owner, name),
+      /** Opens a saved-record export through the transfer feature. */
+      /** Paints a graph without changing the captured SVG root. */
+      updateGraphSurface: (dialog) => updateGraphSurface(dialog, dialogsRoot),
+      /** Shares the exact click dispatcher with keyboard graph activation. */
+      onClick: (event) => events.onClick(event)
+    };
+    const page = createPageRenderer(context), dialogs = createDialogRenderer(context);
+    const screens = createScreenController(context, page);
+    const graph = createGraphActionsFeature(context), profile = createProfileFeature(context), transfers = createCharactersTransfersFeature(context);
+    const events = createEditorEvents(context, [...screens.features, createPreviewFeature(context), createDialogActions(context), createCharactersActionsFeature(context), createGroupsActionsFeature(context), createMemoryLibraryActionsFeature(context), createMemoryItemActionsFeature(context), createMemoryLinkActionsFeature(context), transfers, graph, profile, createMemoryControlsFeature(context)]);
+    const gestures = createGraphGestures(context);
+    function mount() {
+      window.addEventListener("character-entity-closed", () => {
+        void (async () => {
+          try {
+            state.snapshot = await request({ action: "snapshot" });
+          } catch (error) {
+            state.error = String(error);
+          } finally {
+            renderMain();
+          }
+        })();
+      });
+      document.addEventListener("click", events.onClick);
+      document.addEventListener("input", events.onInput);
+      document.addEventListener("change", events.onChange);
+      document.addEventListener("keydown", screens.onKeyDown);
+      dialogsRoot.addEventListener("cancel", events.onCancel, true);
+      dialogsRoot.addEventListener("pointerdown", gestures.onPointerDown);
+      dialogsRoot.addEventListener("pointermove", gestures.onPointerMove);
+      dialogsRoot.addEventListener("pointerup", gestures.onPointerUp);
+      dialogsRoot.addEventListener("pointercancel", gestures.onPointerUp);
+      document.addEventListener("wheel", gestures.onWheel, { passive: false, capture: true });
+      dialogsRoot.addEventListener("keydown", gestures.onKeyDown);
+    }
+    async function initialize2(view = "characters", initial) {
+      state.managementView = view;
+      state.busy = true;
+      try {
+        state.snapshot = initial;
+      } finally {
+        state.busy = false;
+        renderMain();
+      }
+    }
+    function showStartupError(error) {
+      app.innerHTML = `<div class="scroll"><h1>\u89D2\u8272\u5361\u63D2\u4EF6\u672A\u80FD\u52A0\u8F7D</h1><p role="alert">${escapeHtml(String(error))}</p></div>`;
+    }
+    async function initializeScreen(input, receiver, initial) {
+      state.busy = true;
+      try {
+        state.snapshot = initial;
+        await screens.enter(input, receiver);
+      } finally {
+        state.busy = false;
+        renderMain();
+      }
+    }
+    return { state, mount, initialize: initialize2, initializeScreen, showStartupError };
+  }
+
+  // web/shared/ui/material.ts
+  function applyMaterialTheme(theme) {
+    if (theme.brightness !== "light" && theme.brightness !== "dark") throw new Error("\u5BBF\u4E3B\u4E3B\u9898\u4EAE\u5EA6\u65E0\u6548");
+    const roles = ["primary", "onPrimary", "primaryContainer", "onPrimaryContainer", "onSurface", "onSurfaceVariant", "surface", "surfaceContainer", "surfaceContainerHigh", "surfaceContainerHighest", "outline", "outlineVariant", "error"];
+    for (const role of roles) {
+      if (typeof theme.colors[role] !== "string" || !/^#[0-9a-f]{8}$/i.test(theme.colors[role])) throw new Error("\u5BBF\u4E3B\u7F3A\u5C11\u4E3B\u9898\u989C\u8272\uFF1A" + role);
+      document.documentElement.style.setProperty("--" + role, theme.colors[role]);
+    }
+    document.documentElement.style.colorScheme = theme.brightness;
+    document.documentElement.dataset.brightness = theme.brightness;
+  }
+
+  // web/shared/ui/theme.ts
+  function installTheme(state) {
+    window.applyCharacterMemoryTheme = function applyCharacterMemoryTheme(theme) {
+      applyMaterialTheme(theme);
+      for (const dialog of state.dialogs) if (dialog.type === "graph") dialog.layoutSignature = null;
+    };
+  }
+
+  // web/app.ts
+  performance.mark("character-memory.app-start");
+  var editor = createEditor();
+  installTheme(editor.state);
+  editor.mount();
+  async function initialize() {
+    try {
+      await waitForHost();
+      performance.mark("character-memory.host-ready");
+      performance.measure("character-memory.host-wait", "character-memory.app-start", "character-memory.host-ready");
+      const started = performance.now();
+      const initial = await host().loadScreen();
+      performance.measure("character-memory.load-screen", { start: started, end: performance.now() });
+      window.applyCharacterMemoryTheme(initial.theme);
+      await initializeHostScreen(editor, initial);
+      performance.mark("character-memory.content-ready");
+    } catch (error) {
+      editor.showStartupError(error);
+    }
+  }
+  void initialize();
+})();
+</script></body></html>

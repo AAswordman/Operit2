@@ -1,6 +1,6 @@
 [package]
 name = "operit-util"
-version = "2.0.0-preview.15"
+version = "2.0.0-preview.17"
 edition.workspace = true
 license.workspace = true
 publish = true

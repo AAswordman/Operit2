@@ -17,8 +17,7 @@ import 'chrome/WorkspaceBrowserUrlBar.dart';
 import 'downloads/WorkspaceBrowserDownloadSheet.dart';
 import 'history/WorkspaceBrowserHistorySheet.dart';
 import 'permissions/WorkspaceBrowserPermissionSheet.dart';
-import 'surface/WorkspaceBrowserCompositorSurface.dart';
-import 'surface/WorkspaceBrowserNativeSurface.dart';
+import 'surface/WorkspaceBrowserSurface.dart';
 import 'tabs/WorkspaceBrowserTabModels.dart';
 import 'userscripts/WorkspaceUserscriptSheet.dart';
 
@@ -207,13 +206,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
 
   /// Builds the browser viewport for the active session.
   Widget _buildBrowserSurface(WorkspaceBrowserTabState tab) {
-    if (_sessionStore.usesNativeSurface) {
-      return WorkspaceBrowserNativeSurface(
-        key: ValueKey<String>('workspace-browser-native-surface-${tab.id}'),
-        sessionId: tab.id,
-      );
-    }
-    return WorkspaceBrowserCompositorSurface(
+    return WorkspaceBrowserSurface(
       key: ValueKey<String>('workspace-browser-surface-${tab.id}'),
       tab: tab,
       store: _sessionStore,

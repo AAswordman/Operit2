@@ -1,3 +1,5 @@
+import 'support/native_sidebar_bridge.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,12 +7,177 @@ import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/main/MainLayoutController.dart';
 import 'package:operit2/ui/main/TopBarController.dart';
 import 'package:operit2/ui/main/components/AppContent.dart';
+import 'package:operit2/ui/main/components/DrawerConversationState.dart';
+import 'package:operit2/ui/main/layout/AdaptiveMainLayout.dart';
+import 'package:operit2/ui/main/layout/NavigationLayoutMetrics.dart';
+import 'package:operit2/ui/main/layout/PhoneLayout.dart';
+import 'package:operit2/ui/main/layout/TabletLayout.dart';
 import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 import 'package:operit2/ui/main/screens/OperitScreens.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 /// Tests cached main pages through the real navigation and transition host.
 void main() {
+  for (final initialWidth in <double>[420, 900]) {
+    testWidgets(
+      'page cache survives repeated layout changes from $initialWidth',
+      (tester) async {
+        tester.view.physicalSize = Size(initialWidth, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final topBar = TopBarController();
+        final layout = MainLayoutController();
+        final router = AppRouterState(
+          RouteEntry(instanceId: 'settings-fixture', routeId: 'Settings'),
+        );
+        final drawerOpen = ValueNotifier<bool>(false);
+        final conversations = ValueNotifier<DrawerConversationState>(
+          const DrawerConversationState(loading: false),
+        );
+        addTearDown(topBar.dispose);
+        addTearDown(layout.dispose);
+        addTearDown(router.dispose);
+        addTearDown(drawerOpen.dispose);
+        addTearDown(conversations.dispose);
+        final settingsCounts = _PageCounts();
+        final chatCounts = _PageCounts();
+        const settingsKey = ValueKey<String>('resize-settings');
+        const chatKey = ValueKey<String>('resize-chat');
+        final settings = _FixtureScreen(
+          'Settings',
+          _PageProbe(key: settingsKey, counts: settingsCounts),
+        );
+        final chat = _FixtureScreen(
+          'AiChat',
+          _PageProbe(key: chatKey, counts: chatCounts),
+        );
+
+        Future<void> pumpScreen(OperitScreen screen, double width) async {
+          tester.view.physicalSize = Size(width, 900);
+          await tester.pumpWidget(
+            OperitTheme(
+              initialThemePreferenceSnapshot:
+                  UserPreferencesManager.defaultThemePreferenceSnapshot,
+              initialThemeIsReady: false,
+              unconfiguredChildEnabled: true,
+              hostInteractionHostsEnabled: false,
+              child: MainLayoutScope(
+                controller: layout,
+                child: TopBarScope(
+                  controller: topBar,
+                  child: Scaffold(
+                    body: Builder(
+                      builder: (context) => AdaptiveMainLayout(
+                        bridge: NativeSidebarBridge(),
+                        navigationEntries: const <NavigationEntrySpec>[
+                          NavigationEntrySpec(
+                            entryId: 'main.ai_chat',
+                            routeId: 'AiChat',
+                            surface: NavigationSurface.mainSidebarAi,
+                            title: 'Chat',
+                            icon: Icons.chat_bubble_outline,
+                          ),
+                          NavigationEntrySpec(
+                            entryId: 'main.package_manager',
+                            routeId: 'PackageManager',
+                            surface: NavigationSurface.mainSidebarSystem,
+                            title: 'Packages',
+                            icon: Icons.inventory_2_outlined,
+                          ),
+                          NavigationEntrySpec(
+                            entryId: 'main.settings',
+                            routeId: 'Settings',
+                            surface: NavigationSurface.mainSidebarSystem,
+                            title: 'Settings',
+                            icon: Icons.settings_outlined,
+                          ),
+                        ],
+                        pluginSidebarEntries: const [],
+                        selectedRouteId: router.currentEntry.routeId,
+                        drawerConversationState: conversations,
+                        isTabletSidebarExpanded: false,
+                        drawerOpenState: drawerOpen,
+                        enableNavigationAnimation: true,
+                        onOpenDrawer: () => drawerOpen.value = true,
+                        onCloseDrawer: () => drawerOpen.value = false,
+                        onNavigationEntrySelected: (_) {},
+                        onConversationActivated: () {},
+                        content: AppContent(
+                          routerState: router,
+                          currentScreen: screen,
+                          currentRouteEntry: router.currentEntry,
+                          currentRouteTitle: screen.routeTypeName,
+                          useTabletLayout: useTabletLayoutForContext(context),
+                          isTabletSidebarExpanded: false,
+                          canGoBack: false,
+                          enableNavigationAnimation: true,
+                          isNavigatingBack: false,
+                          topBarController: topBar,
+                          appBarEntries: const [],
+                          onGoBack: () {},
+                          onNavigationButtonPressed: () {},
+                          onAppBarEntrySelected: (_) {},
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+        }
+
+        await pumpScreen(settings, initialWidth);
+        final hostState = tester.state(find.byType(AppContent));
+        final settingsFinder = find.byKey(settingsKey, skipOffstage: false);
+        final settingsState = tester.state<_PageProbeState>(settingsFinder);
+        settingsState.controller.text = 'settings draft';
+        router.navigate(routeId: 'AiChat');
+        await pumpScreen(chat, initialWidth);
+        final chatFinder = find.byKey(chatKey, skipOffstage: false);
+        final chatState = tester.state<_PageProbeState>(chatFinder);
+        chatState.controller.value = const TextEditingValue(
+          text: 'unsent chat draft',
+          selection: TextSelection(baseOffset: 2, extentOffset: 8),
+        );
+        chatState.scroll.jumpTo(240);
+        await tester.pump();
+
+        for (var cycle = 0; cycle < 3; cycle++) {
+          for (final width in <double>[599, 600, 900, 420]) {
+            await pumpScreen(chat, width);
+            expect(
+              find.byType(width < 600 ? PhoneLayout : TabletLayout),
+              findsOneWidget,
+            );
+            expect(tester.state(find.byType(AppContent)), same(hostState));
+            expect(tester.state(chatFinder), same(chatState));
+            expect(tester.state(settingsFinder), same(settingsState));
+            expect(chatState.controller.text, 'unsent chat draft');
+            expect(
+              chatState.controller.selection,
+              const TextSelection(baseOffset: 2, extentOffset: 8),
+            );
+            expect(chatState.scroll.offset, 240);
+            expect(chatCounts.disposals, 0);
+            expect(settingsCounts.disposals, 0);
+            expect(tester.takeException(), isNull);
+          }
+        }
+        router.navigate(routeId: 'Settings');
+        await pumpScreen(settings, 900);
+        expect(tester.state(settingsFinder), same(settingsState));
+        expect(settingsState.controller.text, 'settings draft');
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(chatCounts.disposals, 1);
+        expect(settingsCounts.disposals, 1);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('cached settings do no UI work through four keyboard cycles', (
     tester,
   ) async {
@@ -160,6 +327,7 @@ class _PageProbe extends StatefulWidget {
 
 class _PageProbeState extends State<_PageProbe> {
   final controller = TextEditingController();
+  final scroll = ScrollController();
   double lastInset = 0;
 
   /// Exercises both inherited and layout-driven rebuild requests.
@@ -172,9 +340,18 @@ class _PageProbeState extends State<_PageProbe> {
         widget.counts.builds += 1;
         return _PageRenderProbe(
           counts: widget.counts,
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: TextField(controller: controller),
+          child: Column(
+            children: <Widget>[
+              Expanded(
+                child: ListView.builder(
+                  controller: scroll,
+                  itemCount: 100,
+                  itemExtent: 40,
+                  itemBuilder: (context, index) => Text('Message $index'),
+                ),
+              ),
+              TextField(controller: controller),
+            ],
           ),
         );
       },
@@ -186,6 +363,7 @@ class _PageProbeState extends State<_PageProbe> {
   void dispose() {
     widget.counts.disposals += 1;
     controller.dispose();
+    scroll.dispose();
     super.dispose();
   }
 }

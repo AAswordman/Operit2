@@ -3,6 +3,7 @@
 #include <optional>
 
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
+#include <file_selector_windows/file_selector_windows.h>
 
 #include "crash_channel.h"
 #include "engine_channel_lifetime.h"
@@ -11,8 +12,8 @@
 #include "system_audio_input_channel.h"
 
 /// Creates a window that owns one Flutter view controller.
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project, bool data_rescue)
+    : project_(project), data_rescue_(data_rescue) {}
 
 /// Destroys the window after Win32 teardown has released hosted content.
 FlutterWindow::~FlutterWindow() {}
@@ -33,11 +34,17 @@ bool FlutterWindow::OnCreate() {
   if (!flutter_controller_->engine() || !flutter_controller_->view()) {
     return false;
   }
-  RegisterPlugins(flutter_controller_->engine());
-  RegisterOperitCrashChannel(flutter_controller_->engine());
+  if (data_rescue_) {
+    FileSelectorWindowsRegisterWithRegistrar(
+        flutter_controller_->engine()->GetRegistrarForPlugin("FileSelectorWindows"));
+  } else {
+    RegisterPlugins(flutter_controller_->engine());
+  }
   RegisterOperitRuntimeChannel(flutter_controller_->engine(), GetHandle());
-  RegisterSystemAudioInputChannel(flutter_controller_->engine());
-  DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
+  if (!data_rescue_) {
+    RegisterOperitCrashChannel(flutter_controller_->engine());
+    RegisterSystemAudioInputChannel(flutter_controller_->engine());
+    DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
     auto* flutter_view_controller =
         reinterpret_cast<flutter::FlutterViewController*>(controller);
     RegisterPlugins(flutter_view_controller->engine());
@@ -45,7 +52,8 @@ bool FlutterWindow::OnCreate() {
         flutter_view_controller->engine(),
         flutter_view_controller->view()->GetNativeWindow());
     RegisterSystemAudioInputChannel(flutter_view_controller->engine());
-  });
+    });
+  }
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

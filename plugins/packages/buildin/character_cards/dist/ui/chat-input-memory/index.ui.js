@@ -1,4 +1,3 @@
-// @operit-compose-artifact 1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -47,7 +46,26 @@ module.exports = __toCommonJS(index_ui_exports);
 
 // src/validation.ts
 function assertObject(value, label) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} \u5FC5\u987B\u662F\u5BF9\u8C61`);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} 必须是对象`);
+}
+function assertString(value, label) {
+  if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
+}
+function requireId(value, label) {
+  assertString(value, label);
+  if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} 无效`);
+  return value;
+}
+
+// src/chat-bindings.ts
+function parseChatSelection(selection) {
+  requireId(selection, "chat selection");
+  const parsed = /^(card|group|model):([^\s]+)$/u.exec(selection);
+  if (parsed === null) throw new Error("Invalid plugin chat selection: " + selection);
+  const kind = parsed[1];
+  if (kind === "model" && parsed[2] !== "chat") throw new Error("Invalid model selection: " + selection);
+  if (kind !== "card" && kind !== "group" && kind !== "model") throw new Error("Invalid chat selection kind: " + kind);
+  return { kind, id: parsed[2] };
 }
 
 // src/chat-markers.ts
@@ -82,10 +100,8 @@ function nonblank(value, path) {
   text(value, path);
   if (value.trim() === "") throw new Error(`${path} must not be blank`);
 }
-function parseMemoryIdentifier(value, path, positive = true) {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${path} must be a canonical decimal string`);
-  const id2 = BigInt(value);
-  if (id2 > 9223372036854775807n || positive && id2 === 0n) throw new Error(`${path} is outside its declared identity range`);
+function parseMemoryIdentifier(value, path, _positive = true) {
+  if (typeof value !== "string" || value.trim() === "" || value !== value.trim() || value.length > 256) throw new Error(`${path} must be a nonblank identity`);
   return value;
 }
 function memoryIdentifier(value, path) {
@@ -102,6 +118,10 @@ function number(value, path) {
 }
 function integer(value, path) {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${path} must be a safe integer`);
+}
+function nonnegativeInteger(value, path) {
+  integer(value, path);
+  nonnegative(value, path);
 }
 function messageVariant(value, path) {
   integer(value, path);
@@ -174,13 +194,13 @@ var characterFields = {
   marks: optional(text),
   chatModelBindingMode: optional(enumeration("FOLLOW_GLOBAL", "FIXED_MODEL")),
   chatModelId: optional(nullable(text)),
+  chatProviderId: optional(nullable(text)),
   ttsConfigId: optional(nullable(text)),
   themeConfigId: optional(nullable(text)),
   memoryBindingMode: optional(enumeration("CHARACTER", "SHARED")),
   sharedMemoryId: optional(nullable(text)),
   sharedMemoryMounts: optional(array(mount)),
   toolAccessConfig: optional(toolAccess),
-  isDefault: optional(boolean),
   createdAt: optional(integer),
   updatedAt: optional(integer)
 };
@@ -223,8 +243,10 @@ var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
 var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
-  "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
+  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
+  "memory.searchWithOptions": shape({ limit: optional(integer), excludeIds: optional(strings), ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
+  "memory.chat.pruneMissing": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
   "memory.categorize": ownerOnly,
   "memory.rebuild.start": shape({ ownerKey: required(owner), rebuild: required(shape({ chatIds: required(strings), windowMessageCount: required(integer), fromInclusive: required(nullable(integer)), toInclusive: required(nullable(integer)) })) }),
@@ -232,7 +254,10 @@ var validators = {
   "memory.rebuild.cancel": ownerOnly,
   "memory.embeddings.rebuild": ownerOnly,
   "memory.candidate.enqueue": shape({ chatId: required(nonblank), timestamp: required(integer), variantIndex: required(messageVariant), sourceType: required(enumeration("reply_finalized_auto", "selected_user_message")), ownerKey: required(nullable(owner)) }),
+  "memory.candidates.retryFailed": ownerOnly,
+  "memory.candidates.clearFailed": ownerOnly,
   "chat.configuration.resolve": parseChatConfigurationRequest,
+  "chat.configuration.binding.find": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.read": shape({ chatId: required(nonblank) }),
   "chat.configuration.binding.write": shape({ chatId: required(nonblank), selection: required(nonblank) }),
   "chat.configuration.binding.delete": shape({ chatId: required(nonblank) }),
@@ -244,7 +269,6 @@ var validators = {
   "character.delete": id,
   "character.setActive": id,
   "character.combine": shape({ id: required(nonblank), promptFunctionType: optional(enumeration("CHAT", "VOICE")), additionalTagIds: optional(identifiers) }),
-  "character.resetDefault": empty,
   "character.export": shape({ id: required(nonblank), format: required(format) }),
   "character.import": shape({ format: required(format), content: required(nonblank) }),
   "character.exportBackup": empty,
@@ -299,12 +323,16 @@ var validators = {
   "memory.export": ownerOnly,
   "memory.import": shape({ ownerKey: required(owner), content: required(nonblank), strategy: required(enumeration("SKIP", "UPDATE", "CREATE_NEW")) })
 };
+function parseDomainPayload(operation, payload) {
+  if (!Object.prototype.hasOwnProperty.call(validators, operation)) throw new Error(`Unknown character domain operation: ${String(operation)}`);
+  validators[operation](payload, operation);
+  return payload;
+}
 function parseChatConfigurationRequest(value) {
   shape({
     purpose: required(enumeration("display", "execution")),
     chatId: required(nullable(nonblank)),
     chatExtension: required(nullable(markerObject)),
-    messageExtension: required(nullable(markerObject)),
     participantId: required(nullable(nonblank)),
     promptFunctionType: required(enumeration("CHAT", "VOICE")),
     defaultModelBinding: required(shape({ providerId: required(text), modelId: required(text) })),
@@ -312,7 +340,7 @@ function parseChatConfigurationRequest(value) {
   })(value, "chat.configuration.resolve");
   const request2 = value;
   if (request2.purpose === "display") {
-    if (request2.participantId !== null || request2.messageExtension !== null) throw new Error("Display configuration cannot request an execution participant or message snapshot");
+    if (request2.participantId !== null) throw new Error("Display configuration cannot request an execution participant");
   } else {
     nonblank(request2.defaultModelBinding.providerId, "execution default provider");
     nonblank(request2.defaultModelBinding.modelId, "execution default model");
@@ -321,946 +349,14 @@ function parseChatConfigurationRequest(value) {
   return request2;
 }
 
-// src/storage/schema.json
-var collections = {
-  cards: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      characterSetting: {
-        kind: "text"
-      },
-      openingStatement: {
-        kind: "text"
-      },
-      otherContentChat: {
-        kind: "text"
-      },
-      otherContentVoice: {
-        kind: "text"
-      },
-      avatarUri: {
-        kind: "text",
-        nullable: true
-      },
-      attachedTagIds: {
-        kind: "array",
-        item: {
-          kind: "text"
-        }
-      },
-      advancedCustomPrompt: {
-        kind: "text"
-      },
-      marks: {
-        kind: "text"
-      },
-      chatModelBindingMode: {
-        kind: "text"
-      },
-      chatModelId: {
-        kind: "text",
-        nullable: true
-      },
-      ttsConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      themeConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      memoryBindingMode: {
-        kind: "text"
-      },
-      sharedMemoryId: {
-        kind: "text",
-        nullable: true
-      },
-      sharedMemoryMounts: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            sharedMemoryId: {
-              kind: "text"
-            },
-            readable: {
-              kind: "boolean"
-            },
-            writable: {
-              kind: "boolean"
-            }
-          }
-        }
-      },
-      toolAccessConfig: {
-        kind: "object",
-        fields: {
-          enabled: {
-            kind: "boolean"
-          },
-          allowedBuiltinTools: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedPackages: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedSkills: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          },
-          allowedMcpServers: {
-            kind: "array",
-            item: {
-              kind: "text"
-            }
-          }
-        }
-      },
-      isDefault: {
-        kind: "boolean"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  groups: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      members: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            characterCardId: {
-              kind: "text"
-            },
-            orderIndex: {
-              kind: "integer"
-            }
-          }
-        }
-      },
-      themeConfigId: {
-        kind: "text",
-        nullable: true
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  tags: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      description: {
-        kind: "text"
-      },
-      promptContent: {
-        kind: "text"
-      },
-      tagType: {
-        kind: "text"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  stores: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      name: {
-        kind: "text"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  conversationGroups: {
-    kind: "object",
-    fields: {
-      id: {
-        kind: "text"
-      },
-      ownerSelection: {
-        kind: "text",
-        nullable: true
-      },
-      name: {
-        kind: "text"
-      },
-      chatIds: {
-        kind: "array",
-        item: {
-          kind: "text"
-        }
-      },
-      displayOrder: {
-        kind: "integer"
-      },
-      pinned: {
-        kind: "boolean"
-      },
-      createdAt: {
-        kind: "integer"
-      },
-      updatedAt: {
-        kind: "integer"
-      }
-    }
-  },
-  owners: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      settings: {
-        kind: "object",
-        fields: {
-          autoSaveIntervalMinutes: {
-            kind: "integer"
-          },
-          nextAutoSaveRunAtMs: {
-            kind: "integer"
-          },
-          memoryExtractionCustomRules: {
-            kind: "text"
-          },
-          profileAutoUpdateEnabled: {
-            kind: "boolean"
-          },
-          profileAutoUpdateLocked: {
-            kind: "boolean"
-          },
-          cloudEmbeddingEnabled: {
-            kind: "boolean"
-          },
-          cloudEmbeddingEndpoint: {
-            kind: "text"
-          },
-          cloudEmbeddingApiKey: {
-            kind: "text"
-          },
-          cloudEmbeddingModel: {
-            kind: "text"
-          }
-        }
-      },
-      searchConfig: {
-        kind: "object",
-        fields: {
-          scoreMode: {
-            kind: "text"
-          },
-          keywordWeight: {
-            kind: "number"
-          },
-          tagWeight: {
-            kind: "number"
-          },
-          vectorWeight: {
-            kind: "number"
-          },
-          edgeWeight: {
-            kind: "number"
-          }
-        }
-      },
-      userDocumentPath: {
-        kind: "text"
-      },
-      rebuildProgress: {
-        kind: "object",
-        fields: {
-          status: {
-            kind: "text"
-          },
-          totalChats: {
-            kind: "integer"
-          },
-          completedChats: {
-            kind: "integer"
-          },
-          totalWindows: {
-            kind: "integer"
-          },
-          completedWindows: {
-            kind: "integer"
-          },
-          totalSourceMessages: {
-            kind: "integer"
-          },
-          processedSourceMessages: {
-            kind: "integer"
-          },
-          failedWindows: {
-            kind: "integer"
-          },
-          currentChatTitle: {
-            kind: "text"
-          },
-          lastError: {
-            kind: "text"
-          }
-        }
-      },
-      rebuildTask: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          windows: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                chatId: {
-                  kind: "text"
-                },
-                chatTitle: {
-                  kind: "text"
-                },
-                messages: {
-                  kind: "array",
-                  item: {
-                    kind: "object",
-                    fields: {
-                      sender: {
-                        kind: "text"
-                      },
-                      content: {
-                        kind: "text"
-                      },
-                      timestamp: {
-                        kind: "integer"
-                      },
-                      variantIndex: {
-                        kind: "integer"
-                      },
-                      variantCount: {
-                        kind: "integer"
-                      },
-                      provider: {
-                        kind: "text"
-                      },
-                      modelName: {
-                        kind: "text"
-                      }
-                    }
-                  }
-                },
-                sourceMessageCount: {
-                  kind: "integer"
-                }
-              }
-            }
-          },
-          nextWindow: {
-            kind: "integer"
-          }
-        },
-        nullable: true
-      }
-    }
-  },
-  memories: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          uuid: {
-            kind: "text"
-          },
-          title: {
-            kind: "text"
-          },
-          content: {
-            kind: "text"
-          },
-          contentType: {
-            kind: "text"
-          },
-          source: {
-            kind: "text"
-          },
-          credibility: {
-            kind: "number"
-          },
-          importance: {
-            kind: "number"
-          },
-          documentPath: {
-            kind: "text",
-            nullable: true
-          },
-          isDocumentNode: {
-            kind: "boolean"
-          },
-          chunkIndexFilePath: {
-            kind: "text",
-            nullable: true
-          },
-          folderPath: {
-            kind: "text",
-            nullable: true
-          },
-          createdAt: {
-            kind: "integer"
-          },
-          updatedAt: {
-            kind: "integer"
-          },
-          lastAccessedAt: {
-            kind: "integer"
-          },
-          tags: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                id: {
-                  kind: "text"
-                },
-                name: {
-                  kind: "text"
-                }
-              }
-            }
-          },
-          properties: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                id: {
-                  kind: "text"
-                },
-                key: {
-                  kind: "text"
-                },
-                value: {
-                  kind: "text"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  links: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          sourceMemoryId: {
-            kind: "text"
-          },
-          targetMemoryId: {
-            kind: "text"
-          },
-          type_: {
-            kind: "text"
-          },
-          weight: {
-            kind: "number"
-          },
-          description: {
-            kind: "text"
-          }
-        }
-      }
-    }
-  },
-  chunks: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          memoryUuid: {
-            kind: "text"
-          },
-          chunkIndex: {
-            kind: "integer"
-          },
-          content: {
-            kind: "text"
-          }
-        }
-      }
-    }
-  },
-  candidates: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          chatId: {
-            kind: "text"
-          },
-          triggerMessageTimestamp: {
-            kind: "integer"
-          },
-          triggerVariantIndex: {
-            kind: "integer"
-          },
-          createdAt: {
-            kind: "integer"
-          },
-          updatedAt: {
-            kind: "integer"
-          },
-          status: {
-            kind: "text"
-          },
-          attemptCount: {
-            kind: "integer"
-          },
-          lastError: {
-            kind: "text"
-          },
-          sourceType: {
-            kind: "text"
-          }
-        }
-      }
-    }
-  },
-  embeddings: {
-    kind: "object",
-    fields: {
-      ownerKey: {
-        kind: "text"
-      },
-      record: {
-        kind: "object",
-        fields: {
-          endpoint: {
-            kind: "text"
-          },
-          model: {
-            kind: "text"
-          },
-          text: {
-            kind: "text"
-          },
-          vector: {
-            kind: "vector"
-          },
-          updatedAt: {
-            kind: "integer"
-          }
-        }
-      }
-    }
-  },
-  meta: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      nextId: {
-        kind: "text"
-      },
-      active: {
-        kind: "object",
-        nullable: true,
-        fields: {
-          CharacterCard: {
-            kind: "object",
-            optional: true,
-            fields: {
-              id: {
-                kind: "text"
-              }
-            }
-          },
-          CharacterGroup: {
-            kind: "object",
-            optional: true,
-            fields: {
-              id: {
-                kind: "text"
-              }
-            }
-          }
-        }
-      },
-      memoryPreferences: {
-        kind: "object",
-        fields: {
-          userDescriptionEnabled: {
-            kind: "boolean"
-          },
-          autoUpdateEnabled: {
-            kind: "boolean"
-          }
-        },
-        optional: true
-      },
-      migrationStatus: {
-        kind: "text",
-        optional: true
-      },
-      migrationSource: {
-        kind: "text",
-        optional: true
-      }
-    }
-  },
-  chat_bindings: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      }
-    }
-  },
-  chat_drafts: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      }
-    }
-  },
-  message_snapshots: {
-    kind: "object",
-    fields: {
-      version: {
-        kind: "integer"
-      },
-      selection: {
-        kind: "text"
-      },
-      promptFunctionType: {
-        kind: "text"
-      },
-      primaryOwnerKey: {
-        kind: "text"
-      },
-      profile: {
-        kind: "object",
-        fields: {
-          id: {
-            kind: "text"
-          },
-          name: {
-            kind: "text"
-          },
-          avatarUri: {
-            kind: "text",
-            nullable: true
-          },
-          introPrompt: {
-            kind: "text"
-          },
-          userPreferencesText: {
-            kind: "text"
-          },
-          openingStatement: {
-            kind: "text"
-          },
-          modelBinding: {
-            kind: "object",
-            fields: {
-              providerId: {
-                kind: "text"
-              },
-              modelId: {
-                kind: "text"
-              }
-            }
-          },
-          ttsConfigId: {
-            kind: "text"
-          },
-          toolAccess: {
-            kind: "object",
-            fields: {
-              enabled: {
-                kind: "boolean"
-              },
-              allowedBuiltinTools: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedPackages: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedSkills: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              },
-              allowedMcpServers: {
-                kind: "array",
-                item: {
-                  kind: "text"
-                }
-              }
-            }
-          },
-          resources: {
-            kind: "array",
-            item: {
-              kind: "object",
-              fields: {
-                key: {
-                  kind: "text"
-                },
-                readable: {
-                  kind: "boolean"
-                },
-                writable: {
-                  kind: "boolean"
-                }
-              }
-            }
-          }
-        }
-      },
-      participants: {
-        kind: "array",
-        item: {
-          kind: "object",
-          fields: {
-            id: {
-              kind: "text"
-            },
-            name: {
-              kind: "text"
-            },
-            avatarUri: {
-              kind: "text",
-              nullable: true
-            },
-            introPrompt: {
-              kind: "text"
-            },
-            userPreferencesText: {
-              kind: "text"
-            },
-            openingStatement: {
-              kind: "text"
-            },
-            modelBinding: {
-              kind: "object",
-              fields: {
-                providerId: {
-                  kind: "text"
-                },
-                modelId: {
-                  kind: "text"
-                }
-              }
-            },
-            ttsConfigId: {
-              kind: "text"
-            },
-            toolAccess: {
-              kind: "object",
-              fields: {
-                enabled: {
-                  kind: "boolean"
-                },
-                allowedBuiltinTools: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedPackages: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedSkills: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                },
-                allowedMcpServers: {
-                  kind: "array",
-                  item: {
-                    kind: "text"
-                  }
-                }
-              }
-            },
-            resources: {
-              kind: "array",
-              item: {
-                kind: "object",
-                fields: {
-                  key: {
-                    kind: "text"
-                  },
-                  readable: {
-                    kind: "boolean"
-                  },
-                  writable: {
-                    kind: "boolean"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-};
+// src/storage/state.ts
+var MEMORY_RECALL_LIMIT_RANGE = { min: 1, max: 50 };
 
-// src/storage/relational.ts
-var schemas = collections;
-function field(path) {
-  return path === "" ? "_value" : path;
-}
-function layout(name, node, child = false) {
-  const columns = [
-    { name: "_key", affinity: "text", nullable: false },
-    { name: "_revision", affinity: "text", nullable: false }
-  ];
-  if (child)
-    columns.push(
-      { name: "_root", affinity: "text", nullable: false },
-      { name: "_parent", affinity: "text", nullable: false },
-      { name: "_position", affinity: "integer", nullable: false },
-      { name: "_map_key", affinity: "text", nullable: true }
-    );
-  const children = [];
-  function visit(schema, path, absent) {
-    if (schema.optional || schema.nullable)
-      columns.push({
-        name: field(path) + "__state",
-        affinity: "integer",
-        nullable: absent
-      });
-    const nullable2 = absent || schema.optional === true || schema.nullable === true;
-    if (schema.kind === "object") {
-      for (const [key, value] of Object.entries(schema.fields).sort(
-        ([left], [right]) => left < right ? -1 : left > right ? 1 : 0
-      ))
-        visit(value, path === "" ? key : path + "__" + key, nullable2);
-    } else if (schema.kind === "array" || schema.kind === "map") {
-      columns.push({
-        name: field(path) + "__count",
-        affinity: "integer",
-        nullable: nullable2
-      });
-      children.push(layout(name + "_" + field(path), schema.item, true));
-    } else
-      columns.push({
-        name: field(path),
-        affinity: schema.kind === "text" ? "text" : schema.kind === "vector" ? "blob" : schema.kind === "boolean" || schema.kind === "integer" ? "integer" : "real",
-        nullable: nullable2
-      });
-  }
-  visit(node, "", false);
-  return { name, node, table: { name, primaryKey: "_key", columns }, children };
-}
-var layouts = Object.fromEntries(
-  Object.entries(schemas).map(([name, node]) => [name, layout(name, node)])
-);
+// src/memory-jobs/scheduler.ts
+var CANDIDATE_PROCESSING_LEASE_MS = 30 * 60 * 1e3;
 
 // src/definition.ts
-var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
+var definition = { id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 };
 var chatUiRoutes = {
   editor: `toolpkg:${definition.id}:ui:main`,
   selection: `toolpkg:${definition.id}:ui:selection`,
@@ -1268,6 +364,10 @@ var chatUiRoutes = {
 };
 
 // src/ui-contributions.ts
+function callMainDomain(operation, input) {
+  const checked = parseDomainPayload(operation, input);
+  return ToolPkg.ipc.call("character-memory.domain", { operation, input: checked }, { targetRuntime: "main" });
+}
 function chatIdentity(value, label) {
   if (typeof value !== "string" || value.trim() === "") throw new Error(label + " must be a nonblank string");
   return value;
@@ -1278,23 +378,26 @@ function request(input) {
   return ToolPkg.ipc.call("character-memory.request", input, { targetRuntime: "main" });
 }
 function memorySummary(preferences) {
-  if (preferences.userDescriptionEnabled) return preferences.autoUpdateEnabled ? "\u7528\u6237\u8D44\u6599 \xB7 \u8BB0\u5FC6\u5E93\u66F4\u65B0" : "\u7528\u6237\u8D44\u6599";
-  return preferences.autoUpdateEnabled ? "\u8BB0\u5FC6\u5E93\u66F4\u65B0" : "\u5173";
+  if (preferences.userDescriptionEnabled) return preferences.autoUpdateEnabled ? "用户资料 · 记忆库更新" : "用户资料";
+  return preferences.autoUpdateEnabled ? "记忆库更新" : "关";
 }
 function memoryQueueDescription(queue) {
-  if (queue === null) return "\u6682\u65E0\u961F\u5217\u72B6\u6001\u3002\u81EA\u52A8\u63D0\u53D6\u4F1A\u5B9A\u671F\u68C0\u67E5\u5F53\u524D\u8BB0\u5FC6\u5E93\u3002";
-  return `\u5F85\u5904\u7406 ${queue.pendingCandidates} \u6761 \xB7 ${queue.pendingChats} \u4E2A\u804A\u5929
-\u5904\u7406\u4E2D ${queue.processingCandidates} \xB7 \u5931\u8D25 ${queue.failedCandidates}
-\u4E0B\u6B21\u68C0\u67E5\uFF1A\u7EA6 ${queue.minutesUntilNextRun} \u5206\u949F\u540E
+  if (queue === null) return "暂无队列状态。自动提取会定期检查当前记忆库。";
+  return `待处理 ${queue.pendingCandidates} 条 · ${queue.pendingChats} 个聊天
+处理中 ${queue.processingCandidates} · 失败 ${queue.failedCandidates}
+下次检查：约 ${queue.minutesUntilNextRun} 分钟后
 
-\u81EA\u52A8\u68C0\u67E5\u9700\u8981\u81F3\u5C11 5 \u4E2A\u5019\u9009\uFF1B\u4E0D\u8DB3\u65F6\u7EE7\u7EED\u7B49\u5F85\u3002\u624B\u52A8\u66F4\u65B0\u4E0D\u53D7\u6B64\u95E8\u69DB\u9650\u5236\u3002` + (queue.lastError === "" ? "" : "\n\n" + queue.lastError);
+自动检查需要至少 5 个候选；不足时继续等待。手动更新不受此门槛限制。` + (queue.lastError === "" ? "" : "\n\n" + queue.lastError);
 }
 function renderMemoryMenu(ctx) {
   const [chatId] = ctx.useState("chatId", null);
   if (chatId !== null) chatIdentity(chatId, "memory menu chatId");
   const owner2 = ctx.useRef("memory-menu-chat", chatId);
+  const [available, setAvailable] = ctx.useState("memory-menu-available", null);
   const [preferences, setPreferences] = ctx.useState("memory-menu-preferences", null);
-  const [, setQueue] = ctx.useState("memory-menu-queue", null);
+  const [recall, setRecall] = ctx.useState("memory-menu-recall", null);
+  const [limitInput, setLimitInput] = ctx.useState("memory-recall-limit-input", "3");
+  const [queue, setQueue] = ctx.useState("memory-menu-queue", null);
   const [expanded, setExpanded] = ctx.useState("memory-menu-expanded", false);
   const [busy, setBusy] = ctx.useState("memory-menu-busy", false);
   const liveBusy = ctx.useRef("memory-menu-busy-live", false);
@@ -1319,9 +422,20 @@ function renderMemoryMenu(ctx) {
       assertOwner();
       if (started.current) return;
       started.current = true;
+      if (chatId !== null) {
+        const binding = yield callMainDomain("chat.configuration.binding.find", { chatId });
+        assertOwner();
+        const hasCharacter = binding !== null && parseChatSelection(binding.selection).kind === "card";
+        setAvailable(hasCharacter);
+        if (!hasCharacter) return;
+      }
       const value = yield request({ action: "readGlobalMemoryPreferences" });
       assertOwner();
       setPreferences(value);
+      const recallValue = yield request({ action: "readMemoryRecallSettings" });
+      assertOwner();
+      setRecall(recallValue);
+      setLimitInput(String(recallValue.limit));
       yield refreshQueue();
     });
   }
@@ -1343,6 +457,43 @@ function renderMemoryMenu(ctx) {
       setPreferences(value);
     });
   }
+  function writeRecall(settings2) {
+    return __async(this, null, function* () {
+      assertOwner();
+      const value = yield request({ action: "writeMemoryRecallSettings", settings: settings2 });
+      assertOwner();
+      setRecall(value);
+    });
+  }
+  function toggleRecall() {
+    return __async(this, null, function* () {
+      const [current] = ctx.useState("memory-menu-recall", null);
+      if (current === null) throw new Error("Memory recall settings are not loaded");
+      yield writeRecall({ ...current, enabled: !current.enabled });
+    });
+  }
+  function toggleRecallRepeat() {
+    return __async(this, null, function* () {
+      const [current] = ctx.useState("memory-menu-recall", null);
+      if (current === null) throw new Error("Memory recall settings are not loaded");
+      yield writeRecall({ ...current, allowRepeated: !current.allowRepeated });
+    });
+  }
+  function changeRecallLimit(limit) {
+    return __async(this, null, function* () {
+      const [current] = ctx.useState("memory-menu-recall", null);
+      if (current === null) throw new Error("Memory recall settings are not loaded");
+      if (limit === current.limit) return;
+      yield writeRecall({ ...current, limit });
+    });
+  }
+  function changeRecallLimitInput(value) {
+    setLimitInput(value);
+    const limit = Number(value);
+    if (!Number.isInteger(limit) || limit < MEMORY_RECALL_LIMIT_RANGE.min || limit > MEMORY_RECALL_LIMIT_RANGE.max) return;
+    if (recall !== null && limit === recall.limit) return;
+    return changeRecallLimit(limit);
+  }
   function manual() {
     return __async(this, null, function* () {
       assertOwner();
@@ -1353,10 +504,52 @@ function renderMemoryMenu(ctx) {
         yield request({ action: "updateCurrentChatMemory", chatId });
         assertOwner();
         yield refreshQueue();
-        return { type: "toolpkg.ui.message", message: "\u8BB0\u5FC6\u63D0\u53D6\u5B8C\u6210" };
+        return { type: "toolpkg.ui.message", message: "记忆提取完成" };
       } catch (error) {
         assertOwner();
-        return { type: "toolpkg.ui.message", message: "\u8BB0\u5FC6\u63D0\u53D6\u5931\u8D25\uFF1A" + String(error) };
+        return { type: "toolpkg.ui.message", message: "记忆提取失败：" + String(error) };
+      } finally {
+        liveBusy.current = false;
+        assertOwner();
+        setBusy(false);
+      }
+    });
+  }
+  function retryFailed() {
+    return __async(this, null, function* () {
+      assertOwner();
+      if (liveBusy.current || chatId === null) return null;
+      liveBusy.current = true;
+      setBusy(true);
+      try {
+        const result = yield request({ action: "retryFailedCandidates", chatId });
+        assertOwner();
+        yield refreshQueue();
+        return { type: "toolpkg.ui.message", message: "已重新排队 " + result.retried + " 条失败候选" };
+      } catch (error) {
+        assertOwner();
+        return { type: "toolpkg.ui.message", message: "重试失败候选失败：" + String(error) };
+      } finally {
+        liveBusy.current = false;
+        assertOwner();
+        setBusy(false);
+      }
+    });
+  }
+  function clearFailed() {
+    return __async(this, null, function* () {
+      assertOwner();
+      if (liveBusy.current || chatId === null) return null;
+      liveBusy.current = true;
+      setBusy(true);
+      try {
+        const result = yield request({ action: "clearFailedCandidates", chatId });
+        assertOwner();
+        yield refreshQueue();
+        return { type: "toolpkg.ui.message", message: "已清除 " + result.cleared + " 条失败记录" };
+      } catch (error) {
+        assertOwner();
+        return { type: "toolpkg.ui.message", message: "清除失败记录失败：" + String(error) };
       } finally {
         liveBusy.current = false;
         assertOwner();
@@ -1365,29 +558,52 @@ function renderMemoryMenu(ctx) {
     });
   }
   function icon(name, color = colors.onSurfaceVariant) {
-    return OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:40759",[name,color],()=>[{ name, size: 16, tint: color }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs));
+    return ctx.UI.Icon({ name, size: 16, tint: color });
   }
-  function switchRow(key, name, title) {
-    if (preferences === null) throw new Error("Memory preferences are not loaded");
-    const checked = preferences[key];
-    return OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:40983",[{
+  function switchRow(key, name, title, checked, toggleRow) {
+    return ctx.UI.Row({
       key: "memory-" + key,
       fillMaxWidth: true,
       paddingHorizontal: 12,
       verticalAlignment: "center",
       modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
-      onClick: () => toggle(key)
-    },[
+      onClick: () => toggleRow()
+    }, [
       icon(name, checked ? colors.primary : colors.onSurfaceVariant),
-      OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:41290",[],()=>[{ width: 12 }],(...__operitArgs)=>ctx.UI.Spacer(...__operitArgs)),
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:41326",[{ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:41453",[{ text: checked ? "\u5F00" : "\u5173", style: "bodySmall", color: colors.primary, fontWeight: "600" }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
-      OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:41575",[],()=>[{ width: 8 }],(...__operitArgs)=>ctx.UI.Spacer(...__operitArgs)),
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:41610",[{ checked, width: 40, height: 28, onCheckedChange: () => toggle(key) }],(...__operitArgs)=>ctx.UI.Switch(...__operitArgs))
-    ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs));
+      ctx.UI.Spacer({ width: 12 }),
+      ctx.UI.Text({ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }),
+      ctx.UI.Text({ text: checked ? "开" : "关", style: "bodySmall", color: colors.primary, fontWeight: "600" }),
+      ctx.UI.Spacer({ width: 8 }),
+      ctx.UI.Switch({ checked, width: 40, height: 28, onCheckedChange: () => toggleRow() })
+    ]);
   }
-  if (preferences === null) return OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:41743",[load],()=>[{ key: "memory-menu-loading", onLoad: load }],(...__operitArgs)=>ctx.UI.Box(...__operitArgs));
-  const children = [OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:41821",[{
+  function limitInputRow(title) {
+    return ctx.UI.Row({
+      key: "memory-recallLimit",
+      fillMaxWidth: true,
+      paddingHorizontal: 12,
+      verticalAlignment: "center",
+      modifier: ctx.Modifier.heightIn({ minHeight: 32 })
+    }, [
+      icon("Tune"),
+      ctx.UI.Spacer({ width: 12 }),
+      ctx.UI.Text({ text: title, style: "bodySmall", color: colors.onSurface, maxLines: 1, overflow: "ellipsis", weight: 1 }),
+      ctx.UI.Spacer({ width: 8 }),
+      ctx.UI.TextField({
+        key: "memory-recall-limit-input",
+        value: limitInput,
+        singleLine: true,
+        placeholder: "1-" + MEMORY_RECALL_LIMIT_RANGE.max,
+        onValueChange: changeRecallLimitInput,
+        style: { fontSize: 13 },
+        decoration: { isDense: true, contentPadding: { vertical: 8 } },
+        modifier: ctx.Modifier.width(72)
+      })
+    ]);
+  }
+  if (available === false) return ctx.UI.Box({ key: "memory-menu-unavailable" });
+  if (preferences === null) return ctx.UI.Box({ key: "memory-menu-loading", onLoad: load });
+  const children = [ctx.UI.Row({
     key: "memory-section-header",
     fillMaxWidth: true,
     paddingHorizontal: 12,
@@ -1397,48 +613,97 @@ function renderMemoryMenu(ctx) {
       assertOwner();
       setExpanded(!expanded);
     }
-  },[
+  }, [
     icon("DataObjectOutlined", colors.onSurfaceVariant.copy({ alpha: 0.7 })),
-    OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:42175",[],()=>[{ width: 12 }],(...__operitArgs)=>ctx.UI.Spacer(...__operitArgs)),
-    OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:42209",[],()=>[{ text: "\u8BB0\u5FC6", style: "bodySmall" }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
-    OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:42272",[],()=>[{ width: 8 }],(...__operitArgs)=>ctx.UI.Spacer(...__operitArgs)),
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:42305",[{ text: memorySummary(preferences), style: "bodySmall", color: colors.primary, fontWeight: "600", textAlign: "end", maxLines: 1, overflow: "ellipsis", weight: 1 }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs)),
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:42486",[{
+    ctx.UI.Spacer({ width: 12 }),
+    ctx.UI.Text({ text: "记忆", style: "bodySmall" }),
+    ctx.UI.Spacer({ width: 8 }),
+    ctx.UI.Text({ text: memorySummary(preferences), style: "bodySmall", color: colors.primary, fontWeight: "600", textAlign: "end", maxLines: 1, overflow: "ellipsis", weight: 1 }),
+    ctx.UI.IconButton({
       key: "memory-info",
-      tooltip: "\u8BB0\u5FC6\u72B6\u6001\u8BF4\u660E",
+      tooltip: "记忆状态说明",
       width: 24,
       height: 28,
       contentPadding: { horizontal: 0, vertical: 0 },
       onClick: showInfo,
-      content: OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:42716",[{ name: "InfoOutline", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.7 }) }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))
-    }],(...__operitArgs)=>ctx.UI.IconButton(...__operitArgs)),
-    OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:42827",[],()=>[{ width: 6 }],(...__operitArgs)=>ctx.UI.Spacer(...__operitArgs)),
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:42860",[{ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 20, tint: colors.onSurfaceVariant }],(...__operitArgs)=>ctx.UI.Icon(...__operitArgs))
-  ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))];
-  if (expanded) children.push(OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:43012",[{ key: "memory-section-children", modifier: ctx.Modifier.padding(12, 0, 8, 4) },[
-    switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "\u63D0\u4F9B\u7528\u6237\u8D44\u6599"),
-    switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93"),
-    OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:43358",[{
-      key: "memory-manual",
-      fillMaxWidth: true,
-      paddingHorizontal: 12,
-      verticalAlignment: "center",
-      modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
-      onClick: !busy && chatId !== null ? manual : void 0
-    },[
-      icon("SaveOutlined"),
-      OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:43648",[],()=>[{ width: 12 }],(...__operitArgs)=>ctx.UI.Spacer(...__operitArgs)),
-      OperitComposeGeneration.node(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:43684",[{
-        text: busy ? "\u6B63\u5728\u66F4\u65B0\u8BB0\u5FC6\u2026" : "\u624B\u52A8\u66F4\u65B0\u8BB0\u5FC6",
-        style: "bodySmall",
-        maxLines: 2,
-        overflow: "ellipsis",
-        weight: 1,
-        color: !busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })
-      }],(...__operitArgs)=>ctx.UI.Text(...__operitArgs))
-    ]],(...__operitArgs)=>ctx.UI.Row(...__operitArgs))
-  ]],(...__operitArgs)=>ctx.UI.Column(...__operitArgs)));
-  return OperitComposeGeneration.leaf(ctx,"com.operit.character_cards:dist/ui/chat-input-memory/index.ui.js:44043",[children],()=>[{ key: "memory-section", fillMaxWidth: true },children],(...__operitArgs)=>ctx.UI.Column(...__operitArgs));
+      content: ctx.UI.Icon({ name: "InfoOutline", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.7 }) })
+    }),
+    ctx.UI.Spacer({ width: 6 }),
+    ctx.UI.Icon({ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 20, tint: colors.onSurfaceVariant })
+  ])];
+  if (expanded) {
+    const sectionChildren = [
+      switchRow("userDescriptionEnabled", "AssignmentIndOutlined", "提供用户资料", preferences.userDescriptionEnabled, () => toggle("userDescriptionEnabled")),
+      switchRow("autoUpdateEnabled", preferences.autoUpdateEnabled ? "Save" : "SaveOutlined", "自动更新记忆库", preferences.autoUpdateEnabled, () => toggle("autoUpdateEnabled")),
+      switchRow("memoryRecall", "AutoAwesome", "自动检索注入记忆", recall !== null && recall.enabled, toggleRecall),
+      limitInputRow("记忆注入条数"),
+      switchRow("memoryRecallRepeat", "Repeat", "允许重复命中", recall !== null && recall.allowRepeated, toggleRecallRepeat),
+      ctx.UI.Row({
+        key: "memory-manual",
+        fillMaxWidth: true,
+        paddingHorizontal: 12,
+        verticalAlignment: "center",
+        modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
+        ...!busy && chatId !== null ? { onClick: manual } : {}
+      }, [
+        icon("SaveOutlined"),
+        ctx.UI.Spacer({ width: 12 }),
+        ctx.UI.Text({
+          text: busy ? "正在更新记忆…" : "手动更新记忆",
+          style: "bodySmall",
+          maxLines: 2,
+          overflow: "ellipsis",
+          weight: 1,
+          color: !busy && chatId !== null ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })
+        })
+      ])
+    ];
+    if (queue !== null && queue.failedCandidates > 0) {
+      const enabled = !busy && chatId !== null;
+      sectionChildren.push(
+        ctx.UI.Row({
+          key: "memory-retry-failed",
+          fillMaxWidth: true,
+          paddingHorizontal: 12,
+          verticalAlignment: "center",
+          modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
+          ...enabled ? { onClick: retryFailed } : {}
+        }, [
+          icon("Refresh"),
+          ctx.UI.Spacer({ width: 12 }),
+          ctx.UI.Text({
+            text: "重试失败候选（" + queue.failedCandidates + "）",
+            style: "bodySmall",
+            maxLines: 1,
+            overflow: "ellipsis",
+            weight: 1,
+            color: enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })
+          })
+        ]),
+        ctx.UI.Row({
+          key: "memory-clear-failed",
+          fillMaxWidth: true,
+          paddingHorizontal: 12,
+          verticalAlignment: "center",
+          modifier: ctx.Modifier.heightIn({ minHeight: 32 }),
+          ...enabled ? { onClick: clearFailed } : {}
+        }, [
+          icon("DeleteOutline"),
+          ctx.UI.Spacer({ width: 12 }),
+          ctx.UI.Text({
+            text: "清除失败记录（" + queue.failedCandidates + "）",
+            style: "bodySmall",
+            maxLines: 1,
+            overflow: "ellipsis",
+            weight: 1,
+            color: enabled ? colors.onSurface : colors.onSurfaceVariant.copy({ alpha: 0.45 })
+          })
+        ])
+      );
+    }
+    children.push(ctx.UI.Column({ key: "memory-section-children", modifier: ctx.Modifier.padding(12, 0, 8, 4) }, sectionChildren));
+  }
+  return ctx.UI.Column({ key: "memory-section", fillMaxWidth: true }, children);
 }
 
 // src/ui/chat-input-memory/index.ui.ts

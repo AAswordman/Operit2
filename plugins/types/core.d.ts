@@ -272,6 +272,57 @@ export declare const dataUtils: DataUtilsApi;
  */
 export declare var exports: Record<string, any>;
 
+declare global {
+  /**
+   * Represents the standard cancellation signal available in every plugin runtime.
+   */
+  export interface AbortSignal {
+    /**
+     * Indicates whether cancellation has already been requested.
+     */
+    readonly aborted: boolean;
+    /**
+     * Carries the reason passed to AbortController.abort.
+     */
+    readonly reason: any;
+    /**
+     * Registers an abort event listener.
+     */
+    addEventListener(event: string, listener: () => void): void;
+    /**
+     * Removes a registered abort event listener.
+     */
+    removeEventListener(event: string, listener: () => void): void;
+    /**
+     * Throws the cancellation reason when this signal is aborted.
+     */
+    throwIfAborted(): void;
+  }
+
+  /**
+   * Owns one standard cancellation signal.
+   */
+  export interface AbortController {
+    /**
+     * Exposes the signal passed to cancellable SDK operations.
+     */
+    readonly signal: AbortSignal;
+    /**
+     * Cancels the owned signal exactly once with an optional reason.
+     */
+    abort(reason?: any): void;
+  }
+
+  export var AbortController: {
+    prototype: AbortController;
+    /**
+     * Creates an initially active abort controller.
+     */
+    new(): AbortController;
+  };
+
+}
+
 /**
  * Global function to complete tool execution with a result
  * Result values must be JSON-serializable.

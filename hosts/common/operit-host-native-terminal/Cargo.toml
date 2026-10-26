@@ -10,3 +10,4 @@ base64 = "0.22"
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
 portable-pty = "0.9.0"
 uuid = { version = "1", features = ["v4"] }
+operit-host-native-scheduler = { path = "../operit-host-native-scheduler", default-features = false }

@@ -673,3 +673,7 @@ fn xmlEscape(value: &str) -> String {
     }
     output
 }
+
+#[cfg(test)]
+#[path = "HttpVoiceProviderTests.rs"]
+mod tests;

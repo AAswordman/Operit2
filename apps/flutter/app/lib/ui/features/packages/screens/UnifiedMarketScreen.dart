@@ -108,6 +108,7 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
     super.dispose();
   }
 
+  /// Builds market panes and keeps the bottom bar clear of top system insets.
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -164,37 +165,41 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
             ),
           ),
           if (!_hasCategoryScope)
-            NavigationBar(
-              height: 56,
-              selectedIndex: _selectedTab.index,
-              labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
-              onDestinationSelected: (index) {
-                setState(() {
-                  _selectedTab = MarketHomeTab.values[index];
-                  _searchInput = '';
-                  _searchQuery = '';
-                  _searchExpanded = false;
-                  _searchDebounce?.cancel();
-                });
-                _syncTopBar();
-              },
-              destinations: const <NavigationDestination>[
-                NavigationDestination(
-                  icon: Icon(Icons.storefront_outlined),
-                  selectedIcon: Icon(Icons.storefront),
-                  label: '全部',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.category_outlined),
-                  selectedIcon: Icon(Icons.category),
-                  label: '分类',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.person_outline),
-                  selectedIcon: Icon(Icons.person),
-                  label: '我的',
-                ),
-              ],
+            MediaQuery.removePadding(
+              context: context,
+              removeTop: true,
+              child: NavigationBar(
+                height: 56,
+                selectedIndex: _selectedTab.index,
+                labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+                onDestinationSelected: (index) {
+                  setState(() {
+                    _selectedTab = MarketHomeTab.values[index];
+                    _searchInput = '';
+                    _searchQuery = '';
+                    _searchExpanded = false;
+                    _searchDebounce?.cancel();
+                  });
+                  _syncTopBar();
+                },
+                destinations: const <NavigationDestination>[
+                  NavigationDestination(
+                    icon: Icon(Icons.storefront_outlined),
+                    selectedIcon: Icon(Icons.storefront),
+                    label: '全部',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.category_outlined),
+                    selectedIcon: Icon(Icons.category),
+                    label: '分类',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.person_outline),
+                    selectedIcon: Icon(Icons.person),
+                    label: '我的',
+                  ),
+                ],
+              ),
             ),
         ],
       ),
@@ -810,24 +815,31 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       _errorMessage = null;
     });
     try {
-      ClientLogger.i('request=getMyEntries', tag: 'MarketManage');
+      ClientLogger.v(
+        'request=getMyEntries',
+        tag: 'MarketManage',
+        verboseLevel: VerboseLevel.level3,
+      );
       final mine = await _market.getMyEntries();
-      ClientLogger.i(
+      ClientLogger.v(
         'response=getMyEntries entries=${mine.entries.length}',
         tag: 'MarketManage',
+        verboseLevel: VerboseLevel.level3,
       );
-      ClientLogger.i(
+      ClientLogger.v(
         'request=getNotifications limit=50 offset=0 since=<null>',
         tag: 'MarketManage',
+        verboseLevel: VerboseLevel.level3,
       );
       final notifications = await _market.getNotifications(
         limit: 50,
         offset: 0,
         since: null,
       );
-      ClientLogger.i(
+      ClientLogger.v(
         'response=getNotifications items=${notifications.items.length}',
         tag: 'MarketManage',
+        verboseLevel: VerboseLevel.level3,
       );
       if (!mounted) return;
       setState(() {
@@ -961,16 +973,18 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
   ) async {
     const logTag = 'MarketManage';
     final revisionAvailableAt = entry.revisionAvailableAt?.trim();
-    ClientLogger.i(
+    ClientLogger.v(
       'revision_gate click entryId=${entry.id} stateCode=${entry.stateCode} '
       'revisionAvailableAt=${revisionAvailableAt?.isNotEmpty == true ? revisionAvailableAt : '<null>'} '
       'updatedAt=${entry.updatedAt}',
       tag: logTag,
+      verboseLevel: VerboseLevel.level2,
     );
     if (entry.stateCode != 'changes_requested') {
-      ClientLogger.i(
+      ClientLogger.v(
         'revision_gate decision=private_state entryId=${entry.id} stateCode=${entry.stateCode}',
         tag: logTag,
+        verboseLevel: VerboseLevel.level2,
       );
       _showPrivateEntrySummary(entry);
       return;
@@ -979,10 +993,11 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       entry.revisionAvailableAt,
     );
     if (revisionRemaining != null) {
-      ClientLogger.i(
+      ClientLogger.v(
         'revision_gate decision=blocked entryId=${entry.id} '
         'reason=active_revisionAvailableAt remainingSeconds=${revisionRemaining.inSeconds}',
         tag: logTag,
+        verboseLevel: VerboseLevel.level2,
       );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1000,23 +1015,26 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
         : DateTime.tryParse(revisionAvailableAt) == null
         ? 'invalid_revisionAvailableAt'
         : 'expired_revisionAvailableAt';
-    ClientLogger.i(
+    ClientLogger.v(
       'revision_gate decision=allowed entryId=${entry.id} '
       'reason=$revisionDecisionReason next=getMyEntryDetail',
       tag: logTag,
+      verboseLevel: VerboseLevel.level2,
     );
     setState(() {
       _openingEntryId = entry.id;
     });
     try {
-      ClientLogger.i(
+      ClientLogger.v(
         'request=getMyEntryDetail entryId=${entry.id} flow=revision',
         tag: logTag,
+        verboseLevel: VerboseLevel.level3,
       );
       final detail = await _market.getMyEntryDetail(entryId: entry.id);
-      ClientLogger.i(
+      ClientLogger.v(
         'response=getMyEntryDetail entryId=${entry.id} type=${detail.type}',
         tag: logTag,
+        verboseLevel: VerboseLevel.level3,
       );
       if (!mounted) return;
       final canEditEntry = entry.relation == 'owner';

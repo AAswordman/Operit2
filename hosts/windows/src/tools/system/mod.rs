@@ -1,3 +1,5 @@
+use crate::process::background_command;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,7 +61,7 @@ impl SystemOperationHost for WindowsSystemOperationHost {
     }
 
     fn listInstalledApps(&self, includeSystemApps: bool) -> HostResult<AppListData> {
-        let output = Command::new("powershell.exe")
+        let output = background_command("powershell.exe")
             .arg("-NoProfile")
             .arg("-Command")
             .arg("Get-ItemProperty 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Sort-Object DisplayName -Unique | ForEach-Object { $_.DisplayName }")
@@ -96,7 +98,7 @@ impl SystemOperationHost for WindowsSystemOperationHost {
     }
 
     fn stopApp(&self, packageName: &str) -> HostResult<AppOperationData> {
-        let status = Command::new("taskkill")
+        let status = background_command("taskkill")
             .arg("/IM")
             .arg(packageName)
             .arg("/F")
@@ -455,7 +457,7 @@ fn validate_file_path(path: &Path, operation: &str) -> HostResult<String> {
 }
 
 fn run_powershell_command(script: &str, operation: &str) -> HostResult<()> {
-    let output = Command::new("powershell.exe")
+    let output = background_command("powershell.exe")
         .arg("-NoProfile")
         .arg("-Command")
         .arg(script)
@@ -471,7 +473,7 @@ fn run_powershell_command(script: &str, operation: &str) -> HostResult<()> {
 }
 
 fn run_powershell_output(script: &str, operation: &str) -> HostResult<String> {
-    let output = Command::new("powershell.exe")
+    let output = background_command("powershell.exe")
         .arg("-NoProfile")
         .arg("-Command")
         .arg(script)
@@ -776,7 +778,7 @@ fn get_windows_notifications(limit: i32) -> HostResult<NotificationData> {
 
     let script = build_windows_notifications_script(limit);
 
-    let output = Command::new("powershell.exe")
+    let output = background_command("powershell.exe")
         .arg("-NoProfile")
         .arg("-Command")
         .arg(script)
@@ -1161,7 +1163,7 @@ fn parse_device_info_data(value: Value) -> HostResult<DeviceInfoData> {
 }
 
 fn run_powershell_json(script: &str, operation: &str) -> HostResult<Value> {
-    let output = Command::new("powershell.exe")
+    let output = background_command("powershell.exe")
         .arg("-NoProfile")
         .arg("-Command")
         .arg(script)
@@ -1216,7 +1218,7 @@ mod tests {
             r#"$tokens = $null; $errors = $null; [System.Management.Automation.Language.Parser]::ParseFile({}, [ref]$tokens, [ref]$errors) > $null; if ($errors.Count -gt 0) {{ $errors | ForEach-Object {{ $_.Message }}; exit 1 }}"#,
             ps_string_literal(&path.to_string_lossy())
         );
-        let output = Command::new("powershell.exe")
+        let output = background_command("powershell.exe")
             .arg("-NoProfile")
             .arg("-Command")
             .arg(command)

@@ -1,5 +1,5 @@
 use crate::sqliteParams;
-use crate::SqliteStore::{toSqliteValue, SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError};
+use crate::SqliteStore::{toSqliteValue, SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteTransaction};
 
 use operit_model::MessagePart::MessagePartKind;
 use operit_model::MessagePartEntity::MessagePartEntity;
@@ -86,24 +86,46 @@ impl MessagePartDao {
         parts: Vec<MessagePartEntity>,
     ) -> Result<(), SqliteStoreError> {
         self.store.transaction(|transaction| {
-            transaction.execute(
-                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
-                sqliteParams![chatId, messageTimestamp, variantIndex],
-            )?;
-            for part in parts {
-                transaction.execute(
-                    r#"
-                    INSERT INTO message_parts (
-                        chatId, messageTimestamp, variantIndex, partId, sequence, kind, content,
-                        toolCallId, toolName, attributesJson
-                    )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                    "#,
-                    partParams(&part)?,
-                )?;
-            }
-            Ok(())
+            Self::replacePartsInTransaction(
+                transaction,
+                chatId,
+                messageTimestamp,
+                variantIndex,
+                parts,
+            )
         })
+    }
+
+    /// Replaces parts inside the transaction that also writes the owning message revision.
+    pub(crate) fn replacePartsInTransaction(
+        transaction: &mut SqliteTransaction<'_>,
+        chatId: &str,
+        messageTimestamp: i64,
+        variantIndex: i32,
+        parts: Vec<MessagePartEntity>,
+    ) -> Result<(), SqliteStoreError> {
+        if parts.is_empty() {
+            return Err(SqliteStoreError::Message(format!(
+                "Message {chatId}:{messageTimestamp} revision {variantIndex} requires at least one part"
+            )));
+        }
+        transaction.execute(
+            "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+            sqliteParams![chatId, messageTimestamp, variantIndex],
+        )?;
+        for part in parts {
+            transaction.execute(
+                r#"
+                INSERT INTO message_parts (
+                    chatId, messageTimestamp, variantIndex, partId, sequence, kind, content,
+                    toolCallId, toolName, attributesJson
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "#,
+                partParams(&part)?,
+            )?;
+        }
+        Ok(())
     }
 
     /// Copies all selected revision parts into a different chat identifier.

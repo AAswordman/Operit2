@@ -6,12 +6,16 @@ import { WebViewPlatformView } from './WebViewPlatformView';
 /** Per-engine bridge for page zoom, separate from Flutter application paint zoom. */
 export class WebViewZoom implements MethodCallHandler {
   private channel: MethodChannel;
+  private instanceManager: InstanceManager;
 
-  constructor(messenger: BinaryMessenger, private instanceManager: InstanceManager) {
+  /** Registers this engine's method channel and native instance owner. */
+  constructor(messenger: BinaryMessenger, instanceManager: InstanceManager) {
+    this.instanceManager = instanceManager;
     this.channel = new MethodChannel(messenger, 'operit/webview_zoom');
     this.channel.setMethodCallHandler(this);
   }
 
+  /** Dispatches the supported native WebView operation. */
   onMethodCall(call: ESObject, result: MethodResult): void {
     if (call.method !== 'setPageZoom') {
       result.notImplemented();

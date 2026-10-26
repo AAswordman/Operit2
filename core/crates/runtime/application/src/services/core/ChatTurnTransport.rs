@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use operit_plugin_sdk::js_sdk::chat::{ChatInitialTurn, ChatRuntime, ChatSendRequest, ChatTurnInput};
+use operit_plugin_sdk::js_sdk::chat::{ChatInitialTurn, ChatRuntime, ChatSendRequest, ChatSummaryPolicy, ChatTurnInput};
 use operit_plugin_sdk::js_sdk::results::{
     MessageSendOutcome, MessageSendResultData, MessageSendStatus,
 };
@@ -61,7 +61,18 @@ pub(crate) struct AdmittedChatTurn {
 #[derive(Clone)]
 pub(crate) enum AdmittedChatTurnWork {
     Submit { input: ChatTurnInput, turn: ChatInitialTurn },
-    Continue { userMessageTimestamp: i64, participantId: String },
+    Continue { userMessageTimestamp: i64, participantId: String, summaryPolicy: ChatSummaryPolicy },
+}
+
+impl AdmittedChatTurnWork {
+    /// Selects post-reply summary checks only for an explicitly completed persisted reply.
+    pub fn summaryParticipantAfter<'a>(&'a self, outcome: &MessageSendOutcome) -> Option<&'a str> {
+        match (self, outcome) {
+            (Self::Continue { participantId, summaryPolicy: ChatSummaryPolicy::AfterReply, .. },
+                MessageSendOutcome::Committed { status: MessageSendStatus::Completed, assistant: Some(_), .. }) => Some(participantId),
+            _ => None,
+        }
+    }
 }
 
 impl ChatTurnTransport {
@@ -77,14 +88,14 @@ impl ChatTurnTransport {
                 }
                 (chatId, runtime, notifyReply, None, AdmittedChatTurnWork::Submit { input, turn })
             }
-            ChatSendRequest::Continue { chatId, runtime, userMessageTimestamp, participantId, notifyReply } => {
+            ChatSendRequest::Continue { chatId, runtime, userMessageTimestamp, participantId, notifyReply, summaryPolicy } => {
                 let source = manager.loadChatMessageVariant(&chatId, userMessageTimestamp, 0).map_err(|error| error.to_string())?;
                 if source.sender != "user" { return Err("Continuation source is not a committed user message".to_string()); }
                 let messages = manager.loadChatMessages(&chatId).map_err(|error| error.to_string())?;
                 if messages.iter().any(|message| message.sender == "user" && message.timestamp > userMessageTimestamp) {
                     return Err("Continuation source was superseded by another committed user message".to_string());
                 }
-                (chatId, runtime, notifyReply, Some(userMessageTimestamp), AdmittedChatTurnWork::Continue { userMessageTimestamp, participantId })
+                (chatId, runtime, notifyReply, Some(userMessageTimestamp), AdmittedChatTurnWork::Continue { userMessageTimestamp, participantId, summaryPolicy })
             }
         };
         let lease = manager.beginChatExecution(&chatId).map_err(|error| error.to_string())?;
@@ -222,3 +233,35 @@ impl ChatTurnTransport {
 
 /// Shares only native execution coordination; conversation and message data remain in canonical records.
 pub(crate) type SharedChatTurnTransport = Arc<Mutex<ChatTurnTransport>>;
+
+#[cfg(test)]
+mod summary_policy_tests {
+    use super::*;
+    use operit_plugin_sdk::js_sdk::results::ChatCommittedMessage;
+
+    /// Requires final-policy completion and an actual assistant commit before checking summary thresholds.
+    #[test]
+    fn summary_check_requires_completed_final_reply() {
+        let work = AdmittedChatTurnWork::Continue {
+            userMessageTimestamp: 10, participantId: "speaker".into(), summaryPolicy: ChatSummaryPolicy::AfterReply,
+        };
+        let completed = MessageSendOutcome::Committed {
+            status: MessageSendStatus::Completed, userMessageTimestamp: Some(10),
+            assistant: Some(ChatCommittedMessage { messageTimestamp: 20, variantIndex: 0 }),
+        };
+        assert_eq!(work.summaryParticipantAfter(&completed), Some("speaker"));
+        let deferred = AdmittedChatTurnWork::Continue {
+            userMessageTimestamp: 10, participantId: "speaker".into(), summaryPolicy: ChatSummaryPolicy::Defer,
+        };
+        assert_eq!(deferred.summaryParticipantAfter(&completed), None);
+        for outcome in [
+            MessageSendOutcome::Committed { status: MessageSendStatus::Cancelled, userMessageTimestamp: Some(10), assistant: Some(ChatCommittedMessage { messageTimestamp: 20, variantIndex: 0 }) },
+            MessageSendOutcome::Committed { status: MessageSendStatus::Completed, userMessageTimestamp: Some(10), assistant: None },
+            MessageSendOutcome::NotPersisted { status: MessageSendStatus::Completed },
+            MessageSendOutcome::Blocked { message: None },
+            MessageSendOutcome::Consumed { metadata: Default::default() },
+        ] {
+            assert_eq!(work.summaryParticipantAfter(&outcome), None);
+        }
+    }
+}

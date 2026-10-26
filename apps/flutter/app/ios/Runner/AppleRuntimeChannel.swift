@@ -7,10 +7,11 @@ import Flutter
 import Foundation
 import Network
 import UserNotifications
-import Vision
 import UIKit
 
 final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelegate {
+  /// Captures a maintenance launch before Dart starts normal application initialization.
+  static var dataRescueRequested = false
   private static var shared: AppleRuntimeChannel?
   private static var pendingNotificationActivations: [[String: Any]] = []
   private static var notificationActivationReceiverReady = false
@@ -113,6 +114,27 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
       restartApplication(result: result)
     case "localRuntimeStorageDefaults":
       localRuntimeStorageDefaults(result: result)
+    case "dataRescue":
+      guard let request = call.arguments as? String else {
+        result(FlutterError(code: "INVALID_ARGS", message: "dataRescue expects JSON text", details: nil))
+        return
+      }
+      do {
+        let command = try JSONSerialization.jsonObject(with: Data(request.utf8)) as? [String: Any]
+        if command?["operation"] as? String == "launchMode" {
+          let requested = Self.dataRescueRequested || ProcessInfo.processInfo.arguments.contains("--data-rescue")
+          result("{\"ok\":true,\"value\":{\"rescue\":\(requested)}}")
+          return
+        }
+      } catch {
+        result(FlutterError(code: "INVALID_ARGS", message: error.localizedDescription, details: nil))
+        return
+      }
+      let root = defaultStorageRoots().runtime.path
+      workQueue.async {
+        let response = self.takeString(operit_flutter_bridge_data_rescue(root, request))
+        DispatchQueue.main.async { result(response) }
+      }
     case "runtimeBootstrapRead":
       runtimeBootstrapRead(result: result)
     case "runtimeBootstrapWrite":
@@ -560,7 +582,10 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
       let runtimeRoot = try absoluteDirectory(from: arguments["runtimeRoot"] ?? nil, label: "runtimeRoot")
       let workspaceRoot = try absoluteDirectory(from: arguments["workspaceRoot"] ?? nil, label: "workspaceRoot")
       if handle != nil {
-        if configuredRuntimeRoot == runtimeRoot && configuredWorkspaceRoot == workspaceRoot {
+        // URL equality keeps a trailing slash that appears only after the
+        // directory exists, so the same roots look changed on a second apply.
+        if configuredRuntimeRoot?.path == runtimeRoot.path &&
+            configuredWorkspaceRoot?.path == workspaceRoot.path {
           result(nil)
           return
         }
@@ -1172,14 +1197,7 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
   }
 
   private func recognizeText(imagePath: String) throws -> String {
-    let request = VNRecognizeTextRequest()
-    request.recognitionLevel = .accurate
-    let handler = VNImageRequestHandler(url: URL(fileURLWithPath: imagePath), options: [:])
-    try handler.perform([request])
-    guard let results = request.results else {
-      return ""
-    }
-    return results.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    try AppleTextRecognizer().recognizeText(imagePath: imagePath)
   }
 
   private func musicPlayback(command: String, payload: [String: Any]) throws -> [String: Any?] {

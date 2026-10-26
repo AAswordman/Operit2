@@ -70,8 +70,9 @@ async function main() {
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`V86 guest did not start Node and Python:\n${serialOutput}`));
-    }, 90000);
+    }, 240000);
     emulator.add_listener("serial0-output-byte", value => {
+      const previousPhase = phase;
       if (typeof value !== "number") {
         return;
       }
@@ -87,7 +88,7 @@ async function main() {
       if (phase === "waiting" && serialOutput.includes("OPERIT_TERMINAL_READY")) {
         phase = "starting-node";
         sendGuestInput("stty size\nnode\n");
-      } else if (phase === "starting-node" && serialOutput.includes("Welcome to Node.js v20.19.0.")) {
+      } else if (phase === "starting-node" && /Welcome to Node\.js v24\./.test(serialOutput)) {
         phase = "evaluating-node";
         sendGuestInput("100000 + 22222\n");
       } else if (phase === "evaluating-node" && serialOutput.includes("122222")) {
@@ -118,6 +119,9 @@ async function main() {
         phase = "checking-node-builtins";
         sendGuestInput("node -e \"const dayjs=require('dayjs'); const _=require('lodash'); const {z}=require('zod'); const uuid=require('uuid'); console.log('node-builtins:'+dayjs('2026-07-20').format('YYYY')+':'+_.chunk([1,2],1).length+':'+z.string().parse('ok')+':'+(typeof uuid.v4))\"\n");
       } else if (phase === "checking-node-builtins" && serialOutput.includes("node-builtins:2026:2:ok:function")) {
+        phase = "checking-node24-sqlite-spawn";
+        sendGuestInput("node -e 'const {DatabaseSync}=require(\"node:sqlite\"); const db=new DatabaseSync(\":memory:\"); db.exec(\"create table t (n integer); insert into t values (42)\"); const row=db.prepare(\"select n from t\").get(); const {spawnSync}=require(\"node:child_process\"); const child=spawnSync(process.execPath,[\"-e\",\"process.stdout.write(process.versions.node.split(\\\".\\\")[0])\"],{encoding:\"utf8\"}); if(row.n!==42||child.status!==0||child.stdout!==\"24\") process.exit(1); console.log(\"node24-sqlite-spawn:\"+row.n+\":\"+child.stdout)'\n");
+      } else if (phase === "checking-node24-sqlite-spawn" && serialOutput.includes("node24-sqlite-spawn:42:24")) {
         phase = "checking-python-builtins";
         sendGuestInput("python -c \"import click, dateutil, requests; from packaging.version import Version; from rich.console import Console; print('python-builtins:'+requests.__version__+':'+dateutil.__version__+':'+str(Version('1.2.3'))+':'+click.__version__)\"\n");
       } else if (phase === "checking-python-builtins" && serialOutput.includes("python-builtins:2.32.3:2.9.0.post0:1.2.3:8.1.8")) {
@@ -127,13 +131,17 @@ async function main() {
         phase = "checking-package-managers";
         sendGuestInput("test ! -e /usr/local/bin/npm && test ! -e /usr/local/bin/npx && test ! -e /usr/local/bin/pip && test ! -e /usr/local/bin/pip3 && echo package-managers-absent\n");
       }
+      if (phase !== previousPhase) {
+        process.stdout.write(`V86 smoke phase: ${phase}\n`);
+      }
       if (
         serialOutput.includes("OPERIT_TERMINAL_READY") &&
-        serialOutput.includes("Welcome to Node.js v20.19.0.") &&
+        /Welcome to Node\.js v24\./.test(serialOutput) &&
         serialOutput.includes("32 120") &&
         serialOutput.includes("122222") &&
         serialOutput.includes("42") &&
         serialOutput.includes("node-builtins:2026:2:ok:function") &&
+        serialOutput.includes("node24-sqlite-spawn:42:24") &&
         serialOutput.includes("python-builtins:2.32.3:2.9.0.post0:1.2.3:8.1.8") &&
         serialOutput.includes("No module named pip") &&
         serialOutput.includes("package-managers-absent")

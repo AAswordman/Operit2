@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.device_speech_processor",
+  "version": "0.1.0",
+  "main": "dist/main.js",
+  "display_name": "设备语音处理",
+  "description": "可选宿主语音处理器，通过通用双向通道提供 STT 与 TTS。",
+  "enabled_by_default": false,
+  "subpackages": [{"id":"device_speech_processor","entry":"dist/packages/device_speech_processor.js","display_name":"设备语音处理","enabled_by_default":true}],
+  "api_version": "2.0.0"
+}

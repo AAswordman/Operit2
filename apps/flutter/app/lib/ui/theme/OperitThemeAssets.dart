@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -23,7 +24,7 @@ class ThemeAssetImport {
   final String fileName;
 }
 
-class ThemeAssetStore {
+class ThemeAssetStore implements ThemeAssetResolver {
   /// Creates a store backed by the runtime storage repository.
   ThemeAssetStore({
     GeneratedRepositoryRuntimeStorageRepositoryCoreProxy? runtimeStorage,
@@ -63,6 +64,7 @@ class ThemeAssetStore {
   }
 
   /// Reads imported theme asset bytes from runtime storage.
+  @override
   Future<Uint8List> readBytes(String storagePath) async {
     final base64Content = await _runtimeStorage.readBase64(path: storagePath);
     if (base64Content == null) {
@@ -72,7 +74,7 @@ class ThemeAssetStore {
   }
 }
 
-class ThemeAssetImage extends StatefulWidget {
+class ThemeAssetImage extends StatelessWidget {
   /// Creates an image widget backed by a runtime theme asset.
   const ThemeAssetImage({
     super.key,
@@ -83,61 +85,17 @@ class ThemeAssetImage extends StatefulWidget {
   final String storagePath;
   final BoxFit fit;
 
-  /// Creates the image state that owns the byte-loading future.
-  @override
-  State<ThemeAssetImage> createState() => _ThemeAssetImageState();
-}
+  static final ThemeAssetStore _runtimeStore = ThemeAssetStore();
 
-class _ThemeAssetImageState extends State<ThemeAssetImage> {
-  late Future<Uint8List> _bytesFuture;
-
-  /// Starts loading theme asset bytes for the first image frame.
-  @override
-  void initState() {
-    super.initState();
-    _bytesFuture = _loadBytes();
-  }
-
-  /// Restarts byte loading when the referenced theme asset changes.
-  @override
-  void didUpdateWidget(covariant ThemeAssetImage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.storagePath != widget.storagePath) {
-      _bytesFuture = _loadBytes();
-    }
-  }
-
-  /// Builds an image after its runtime storage bytes are available.
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Uint8List>(
-      future: _bytesFuture,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          Error.throwWithStackTrace(
-            snapshot.error!,
-            snapshot.stackTrace ?? StackTrace.current,
-          );
-        }
-        final bytes = snapshot.data;
-        if (bytes == null) {
-          return const SizedBox.expand();
-        }
-        return SizedBox.expand(
-          child: Image.memory(
-            bytes,
-            fit: widget.fit,
-            width: double.infinity,
-            height: double.infinity,
-          ),
-        );
-      },
+    final scoped = ThemeAssetScope.of(context);
+    final resolver = storagePath.startsWith('assets/') ? scoped : _runtimeStore;
+    return ResolvedThemeImage(
+      resolver: resolver,
+      reference: storagePath,
+      fit: fit,
     );
-  }
-
-  /// Reads the referenced bytes through the theme asset store.
-  Future<Uint8List> _loadBytes() {
-    return ThemeAssetStore().readBytes(widget.storagePath);
   }
 }
 
@@ -178,6 +136,7 @@ String _themeAssetExtension(String fileName) {
     'jpg',
     'jpeg',
     'png',
+    'svg',
     'webp',
     'bmp',
     'gif',

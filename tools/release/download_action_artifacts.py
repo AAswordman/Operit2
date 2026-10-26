@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -13,23 +12,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 DIST_DIR = SCRIPT_DIR / "dist"
 WORK_DIR = SCRIPT_DIR / "work" / "github-actions"
-RELEASE_ASSET_RE = re.compile(
-    r"^operit2-(?:"
-    r"cli-(?:"
-    r"windows-(?:x86_64|aarch64)\.zip|"
-    r"linux-(?:x86_64|aarch64)\.tar\.gz|"
-    r"macos-(?:x86_64|aarch64)\.tar\.gz"
-    r")|"
-    r"app-(?:"
-    r"android-arm64-v8a\.apk|"
-    r"ohos-arm64\.hap|"
-    r"windows-x86_64\.zip|"
-    r"linux-x86_64\.tar\.gz|"
-    r"macos-(?:x86_64|aarch64)\.zip|"
-    r"ios-arm64\.zip"
-    r")"
-    r")$"
-)
+sys.path.insert(0, str(SCRIPT_DIR.parent / "build_scripts"))
+from release_artifacts import release_asset_names
 
 
 # Parses command-line options for collecting GitHub Actions artifacts.
@@ -65,10 +49,11 @@ def require_successful_run(run_id: str) -> None:
 
 # Returns every release asset file found under one downloaded run directory.
 def release_assets(download_dir: Path) -> list[Path]:
+    expected = release_asset_names()
     return sorted(
         path
         for path in download_dir.rglob("*")
-        if path.is_file() and RELEASE_ASSET_RE.fullmatch(path.name)
+        if path.is_file() and path.name in expected
     )
 
 

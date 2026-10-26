@@ -359,7 +359,6 @@ import {
   type WorldBookImportParams,
   type WorldBookMutationParams
 } from "../shared/worldbook_service.js";
-import { ensureWorldBookStorage } from "../shared/worldbook_storage.js";
 
 async function wrap<TParams>(handler: (params: TParams) => Promise<unknown>, params: TParams) {
   try {
@@ -431,5 +430,3 @@ exports.toggle_entry = (params: Pick<WorldBookMutationParams, "id">) => wrap(tog
 exports.import_entries = (params: WorldBookImportParams) => wrap(importEntries, params);
 exports.list_character_cards_proxy = (params: never) =>
   wrap(listCharacterCardsProxy as (params: never) => Promise<unknown>, params);
-
-void ensureWorldBookStorage();

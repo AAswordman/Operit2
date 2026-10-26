@@ -152,6 +152,22 @@ impl TerminalHost for AppleTerminalHost {
             })
     }
 
+    fn executeInSessionStreaming(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
+    ) -> HostResult<TerminalCommandOutput> {
+        self.inner
+            .executeInSessionStreaming(sessionId, command, timeoutMs, onOutput)
+            .map(|mut output| {
+                output.platform = PLATFORM.to_string();
+                output.terminal = TERMINAL.to_string();
+                output
+            })
+    }
+
     fn executeHiddenCommand(
         &self,
         command: &str,

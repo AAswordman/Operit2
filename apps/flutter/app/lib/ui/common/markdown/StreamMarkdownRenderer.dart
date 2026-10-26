@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../interactions/MessagePressShield.dart';
 import 'EnhancedCodeBlock.dart';
@@ -18,35 +19,12 @@ import 'MarkdownInlineSpannable.dart';
 import 'MarkdownLatexBlock.dart';
 import 'StreamMarkdownRendererState.dart';
 import '../../features/chat/components/part/CustomXmlRenderer.dart';
+import 'Utf16Text.dart';
 
 part 'CanvasMarkdownNodeRenderer.dart';
 
 typedef MarkdownContentSplitter =
     Future<List<core_proxy.MarkdownStreamEvent>> Function(String content);
-
-/// Replaces unpaired UTF-16 surrogates before text reaches Flutter paragraph layout.
-String sanitizeUtf16(String value) {
-  final units = value.codeUnits;
-  final buffer = StringBuffer();
-  for (var index = 0; index < units.length; index++) {
-    final unit = units[index];
-    if (unit >= 0xD800 && unit <= 0xDBFF) {
-      if (index + 1 < units.length &&
-          units[index + 1] >= 0xDC00 &&
-          units[index + 1] <= 0xDFFF) {
-        buffer.writeCharCode(unit);
-        buffer.writeCharCode(units[++index]);
-      } else {
-        buffer.write('\uFFFD');
-      }
-    } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
-      buffer.write('\uFFFD');
-    } else {
-      buffer.writeCharCode(unit);
-    }
-  }
-  return buffer.toString();
-}
 
 /// Reports whether a Markdown surface is preparing its first content layout.
 class MarkdownLayoutNotification extends Notification {
@@ -194,7 +172,14 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         _notifyContentReady(generation);
         return;
       }
-      _loadStaticContent(sanitizeUtf16(widget.content), generation);
+      _loadStaticContent(sanitizeUtf16(widget.content), generation).catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        if (mounted && generation == _startGeneration) {
+          _handleMarkdownError(error, stackTrace);
+        }
+      });
       return;
     }
 
@@ -244,26 +229,49 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 
   /// Subscribes to Markdown events and schedules incremental node syncs.
   void _subscribe(Stream<Object> stream) {
-    _subscription = stream.listen(
-      (event) {
-        _applyMarkdownEvent(event);
-        if (!_streamDone) {
-          _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
-        }
-      },
-      onDone: () {
-        if (mounted) {
-          setState(_completeLiveStreamRender);
-        } else {
-          _completeLiveStreamRender();
-        }
-        _notifyStreamDone();
-      },
-      onError: (Object _, StackTrace _) {
-        _rendererState.streamParsingCompletedSuccessfully = false;
-        widget.onStreamError?.call();
-      },
+    _subscription = stream
+        .map((event) {
+          // Stream transformations deliver parser exceptions to this subscription's onError.
+          _applyMarkdownEvent(event);
+          return event;
+        })
+        .listen(
+          (_) {
+            if (!_streamDone) {
+              _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
+            }
+          },
+          onDone: () {
+            if (mounted) {
+              setState(_completeLiveStreamRender);
+            } else {
+              _completeLiveStreamRender();
+            }
+            _notifyStreamDone();
+          },
+          onError: _handleMarkdownError,
+        );
+  }
+
+  /// Terminates only the failed surface and retains its parsed nodes for inspection.
+  void _handleMarkdownError(Object error, StackTrace stackTrace) {
+    // Report failure before waiting for transport cancellation to finish.
+    unawaited(_subscription?.cancel());
+    ClientLogger.e(
+      'Markdown parsing failed for $_rendererId',
+      tag: 'StreamMarkdownRenderer',
+      error: error,
+      stackTrace: stackTrace,
     );
+    _renderTimer?.cancel();
+    _renderTimer = null;
+    _streamDone = true;
+    _rendererState.eventBuilder.complete();
+    _rendererState.streamParsingCompletedSuccessfully = false;
+    if (mounted) {
+      setState(() => _synchronizeRenderNodes(isStreaming: false));
+      widget.onStreamError?.call();
+    }
   }
 
   /// Completes live parsing and synchronizes the final render nodes.
@@ -323,88 +331,12 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     _scheduleNodeFadeIn(keysToReveal);
   }
 
-  /// Applies one normalized Markdown stream event to the mutable node builder.
+  /// Applies semantic events; only lifecycle effects belong to the widget.
   void _applyMarkdownEvent(Object event) {
-    final normalized = _NormalizedMarkdownEvent.from(event);
-    final parentBlockId = normalized.parentBlockId;
-    if (parentBlockId != null) {
-      _rendererState.eventBuilder.appendXmlMarkdownEvent(
-        parentBlockId: parentBlockId,
-        event: normalized.asLocalEvent(),
-      );
-      return;
-    }
-    switch (normalized.type) {
+    switch (_rendererState.applyEvent(event)) {
       case 'reset':
-        _rendererState.reset();
         _scheduledVisibleNodeKeys.clear();
         _streamDone = false;
-        break;
-      case 'chunk':
-        final value = normalized.value;
-        if (value != null) {
-          _rendererState.collectedContent.write(value);
-        }
-        break;
-      case 'markdownBlockStart':
-        final blockId = normalized.blockId;
-        if (blockId == null) {
-          throw StateError('markdownBlockStart missing blockId');
-        }
-        _rendererState.eventBuilder.startBlock(
-          blockId: blockId,
-          type: _nodeTypeFromLabel(normalized.nodeType),
-          headerLevel: normalized.headerLevel,
-        );
-        break;
-      case 'markdownBlockChunk':
-        final blockId = normalized.blockId;
-        final value = normalized.value;
-        if (blockId == null || value == null) {
-          throw StateError('markdownBlockChunk missing blockId or value');
-        }
-        _rendererState.eventBuilder.appendBlock(
-          blockId: blockId,
-          content: value,
-          xml: normalized.xml,
-        );
-        break;
-      case 'markdownBlockEnd':
-        final blockId = normalized.blockId;
-        if (blockId == null) {
-          throw StateError('markdownBlockEnd missing blockId');
-        }
-        _rendererState.eventBuilder.completeBlock(
-          blockId: blockId,
-          xml: normalized.xml,
-        );
-        break;
-      case 'markdownInlineStart':
-        final blockId = normalized.blockId;
-        final inlineId = normalized.inlineId;
-        if (blockId == null || inlineId == null) {
-          throw StateError('markdownInlineStart missing blockId or inlineId');
-        }
-        _rendererState.eventBuilder.startInline(
-          blockId: blockId,
-          inlineId: inlineId,
-          type: _nodeTypeFromLabel(normalized.nodeType),
-        );
-        break;
-      case 'markdownInlineChunk':
-        final blockId = normalized.blockId;
-        final inlineId = normalized.inlineId;
-        final value = normalized.value;
-        if (blockId == null || inlineId == null || value == null) {
-          throw StateError(
-            'markdownInlineChunk missing blockId, inlineId, or value',
-          );
-        }
-        _rendererState.eventBuilder.appendInline(
-          blockId: blockId,
-          inlineId: inlineId,
-          content: value,
-        );
         break;
       case 'completed':
         if (mounted) {
@@ -414,22 +346,6 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         }
         _notifyStreamDone();
         break;
-      case 'savepoint':
-        final id = normalized.id;
-        if (id == null) {
-          throw StateError('savepoint missing id');
-        }
-        _rendererState.eventBuilder.savepoint(id);
-        break;
-      case 'rollback':
-        final id = normalized.id;
-        if (id == null) {
-          throw StateError('rollback missing id');
-        }
-        _rendererState.eventBuilder.rollback(id);
-        break;
-      default:
-        throw StateError('Unknown markdown event type ${normalized.type}');
     }
   }
 
@@ -506,7 +422,8 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 }
 
 const double _markdownParagraphBreakHeight = 4;
-const double _markdownLineBlockBottomPadding = 3;
+const double _markdownParagraphBottomPadding = 6;
+const double _markdownListItemBottomPadding = 2;
 const double _markdownCanvasLineHeightMultiplier = 1.3;
 final _StaticMarkdownNodeCache _staticMarkdownNodeCache =
     _StaticMarkdownNodeCache(maxEntries: 48);
@@ -534,121 +451,6 @@ class _StaticMarkdownNodeCache {
       _items.remove(_items.keys.first);
     }
   }
-}
-
-class _NormalizedMarkdownEvent {
-  const _NormalizedMarkdownEvent({
-    required this.type,
-    required this.id,
-    required this.value,
-    required this.blockId,
-    required this.inlineId,
-    required this.parentBlockId,
-    required this.nodeType,
-    required this.headerLevel,
-    required this.xml,
-  });
-
-  factory _NormalizedMarkdownEvent.from(Object event) {
-    if (event is core_proxy.MarkdownStreamEvent) {
-      return _NormalizedMarkdownEvent(
-        type: event.eventType,
-        id: event.id,
-        value: event.value == null ? null : sanitizeUtf16(event.value!),
-        blockId: event.blockId,
-        inlineId: event.inlineId,
-        parentBlockId: event.parentBlockId,
-        nodeType: event.nodeType,
-        headerLevel: event.headerLevel,
-        xml: event.xml,
-      );
-    }
-    if (event is _LocalMarkdownStreamEvent) {
-      return _NormalizedMarkdownEvent(
-        type: event.type,
-        id: event.id,
-        value: event.value == null ? null : sanitizeUtf16(event.value!),
-        blockId: event.blockId,
-        inlineId: event.inlineId,
-        parentBlockId: event.parentBlockId,
-        nodeType: event.nodeType,
-        headerLevel: event.headerLevel,
-        xml: null,
-      );
-    }
-    throw StateError('Unsupported markdown event ${event.runtimeType}');
-  }
-
-  _LocalMarkdownStreamEvent asLocalEvent() {
-    return _LocalMarkdownStreamEvent(
-      type: type,
-      id: id,
-      value: value,
-      blockId: blockId,
-      inlineId: inlineId,
-      nodeType: nodeType,
-      headerLevel: headerLevel,
-      xml: xml,
-    );
-  }
-
-  final String type;
-  final String? id;
-  final String? value;
-  final int? blockId;
-  final int? inlineId;
-  final int? parentBlockId;
-  final String? nodeType;
-  final int? headerLevel;
-  final core_proxy.MarkdownXmlStreamEvent? xml;
-}
-
-class _LocalMarkdownStreamEvent {
-  const _LocalMarkdownStreamEvent({
-    required this.type,
-    required this.id,
-    required this.value,
-    required this.blockId,
-    required this.inlineId,
-    required this.nodeType,
-    required this.headerLevel,
-    required this.xml,
-  });
-
-  final String type;
-  final String? id;
-  final String? value;
-  final int? blockId;
-  final int? inlineId;
-  final String? nodeType;
-  final int? headerLevel;
-  final core_proxy.MarkdownXmlStreamEvent? xml;
-  int? get parentBlockId => null;
-}
-
-MarkdownNodeType _nodeTypeFromLabel(String? label) {
-  return switch (label) {
-    null => MarkdownNodeType.plainText,
-    'Header' => MarkdownNodeType.header,
-    'BlockQuote' => MarkdownNodeType.blockQuote,
-    'CodeBlock' => MarkdownNodeType.codeBlock,
-    'OrderedList' => MarkdownNodeType.orderedList,
-    'UnorderedList' => MarkdownNodeType.unorderedList,
-    'HorizontalRule' => MarkdownNodeType.horizontalRule,
-    'BlockLatex' => MarkdownNodeType.blockLatex,
-    'Table' => MarkdownNodeType.table,
-    'XmlBlock' => MarkdownNodeType.xmlBlock,
-    'Image' => MarkdownNodeType.image,
-    'Bold' => MarkdownNodeType.bold,
-    'Italic' => MarkdownNodeType.italic,
-    'InlineCode' => MarkdownNodeType.inlineCode,
-    'Link' => MarkdownNodeType.link,
-    'Strikethrough' => MarkdownNodeType.strikethrough,
-    'Underline' => MarkdownNodeType.underline,
-    'InlineLatex' => MarkdownNodeType.inlineLatex,
-    'HtmlBreak' => MarkdownNodeType.htmlBreak,
-    _ => throw StateError('Unknown markdown node type $label'),
-  };
 }
 
 class _MarkdownNodeColumn extends StatefulWidget {
@@ -770,6 +572,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         key: ValueKey<String>(_nodeKeyForIndex(widget.rendererId, index)),
         nodeKey: _nodeKeyForIndex(widget.rendererId, index),
         node: node,
+        nestedMarkdownEventStream: widget.xmlMarkdownEventStreams[index],
         textColor: widget.textColor,
         backgroundColor: widget.backgroundColor,
         isLastNode: index == lastRenderableIndex,
@@ -1168,12 +971,17 @@ class _AnimatedMarkdownNodeState extends State<_AnimatedMarkdownNode>
 int _lastRenderableNodeIndex(List<MarkdownNodeStable> nodes) {
   for (var index = nodes.length - 1; index >= 0; index--) {
     final node = nodes[index];
-    if (node.content.trim().isNotEmpty || node.children.isNotEmpty) {
+    if (_hasMarkdownNodeContent(node)) {
       return index;
     }
   }
   return -1;
 }
+
+/// Core may retain separator newlines as inline nodes after a visible block.
+bool _hasMarkdownNodeContent(MarkdownNodeStable node) =>
+    node.content.trim().isNotEmpty ||
+    node.children.any(_hasMarkdownNodeContent);
 
 bool _canTypewriteNode(MarkdownNodeType type) {
   return type == MarkdownNodeType.plainText ||
@@ -1182,78 +990,13 @@ bool _canTypewriteNode(MarkdownNodeType type) {
       type == MarkdownNodeType.unorderedList;
 }
 
-int _typewriterTextLength(String text) {
-  final lines = text.split('\n');
-  final paragraphLines = <String>[];
-  var inCode = false;
+int _markdownVisibleLength(String text, List<MarkdownNodeStable> children) {
+  if (children.isEmpty) return text.characters.length;
   var length = 0;
-  var index = 0;
-
-  void flushParagraph() {
-    if (paragraphLines.isEmpty) {
-      return;
-    }
-    length += paragraphLines.join('\n').characters.length;
-    paragraphLines.clear();
+  for (final child in children) {
+    length += child.type == MarkdownNodeType.inlineLatex
+        ? 1
+        : _markdownVisibleLength(child.content, child.children);
   }
-
-  while (index < lines.length) {
-    final line = lines[index];
-    final trimmed = line.trimRight();
-    if (trimmed.startsWith('```')) {
-      if (!inCode) {
-        flushParagraph();
-      }
-      inCode = !inCode;
-    } else if (inCode) {
-    } else if (_isBlockLatexStart(trimmed)) {
-      flushParagraph();
-      final start = trimmed.trimLeft();
-      final singleLine = start.length > 2 && _isBlockLatexEnd(start, start);
-      while (!singleLine && index + 1 < lines.length) {
-        index++;
-        final nextLine = lines[index].trimRight();
-        if (_isBlockLatexEnd(start, nextLine.trimRight())) {
-          break;
-        }
-      }
-    } else if (_isTableStart(lines, index)) {
-      flushParagraph();
-      while (index < lines.length && lines[index].trim().contains('|')) {
-        index++;
-      }
-      index--;
-    } else if (trimmed.trimLeft().startsWith('>') ||
-        isCompleteImageMarkdown(trimmed.trim()) ||
-        _isHorizontalRule(trimmed) ||
-        trimmed.isEmpty) {
-      flushParagraph();
-    } else if (_headingLevel(trimmed) > 0 ||
-        _isBulletLine(trimmed) ||
-        _isOrderedLine(trimmed)) {
-      flushParagraph();
-      length += _typewriterLineLength(trimmed);
-    } else {
-      paragraphLines.add(trimmed);
-    }
-    index++;
-  }
-  flushParagraph();
   return length;
-}
-
-int _typewriterLineLength(String text) {
-  if (_headingLevel(text) > 0) {
-    return _markdownHeaderText(text).characters.length;
-  }
-  if (_isBulletLine(text)) {
-    return text.substring(2).characters.length;
-  }
-  if (_isOrderedLine(text)) {
-    final match = RegExp(r'^(\d+)\.\s*').firstMatch(text);
-    return match == null
-        ? text.characters.length
-        : text.substring(match.end).characters.length;
-  }
-  return text.characters.length;
 }

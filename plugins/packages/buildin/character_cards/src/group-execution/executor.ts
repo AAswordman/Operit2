@@ -1,9 +1,8 @@
-import type { MessageSendResultData } from "../../../../../types/results";
 import type { ToolPkg as ToolPkgTypes } from "../../../../../types/index";
 import { parseChatSelection } from "../chat-bindings";
 import { jsonValue } from "../domain";
 import { requireId } from "../validation";
-import type { GroupContinuationTurn, GroupExecutionDependencies, GroupExecutionOutcome, GroupInitialTurn, GroupSubmissionAttachment, GroupSendDisposition, GroupSubmission, GroupSelectedTurn, GroupTurnReceipt } from "./contracts";
+import type { GroupContinuationTurn, GroupExecutionDependencies, GroupExecutionOutcome, GroupInitialTurn, GroupSubmissionAttachment, GroupSendDisposition, GroupSubmission, GroupSelectedTurn, GroupTurnReceipt, GroupSendDecision } from "./contracts";
 import { parseGroupResponsePlan } from "./planner";
 import { decodeNativeGroupSendResult } from "./contracts";
 
@@ -11,6 +10,8 @@ import { decodeNativeGroupSendResult } from "./contracts";
 interface Session {
   input: GroupSubmission;
   inputKey: string;
+  inputReady: Promise<GroupSendDecision>;
+  acknowledgeInput: (decision: GroupSendDecision) => void;
   selection: string | null;
   speakers: string[];
   planned: boolean;
@@ -94,7 +95,12 @@ export class GroupExecutionController {
       return existing.retained;
     }
     if (this.chats.has(saved.chatId)) throw new Error("Another group sequence already owns this chat");
-    const session: Session = { input: saved, inputKey, selection: null, speakers: [], planned: false, transportStarted: false, finalizationAttempted: false, cursor: 0, attempt: 0, userMessageTimestamp: null,
+    let acknowledgeInput!: (decision: GroupSendDecision) => void;
+    const inputReady = new Promise<GroupSendDecision>(
+      /** Exposes only an actual validated native input acknowledgement. */
+      resolve => { acknowledgeInput = resolve; },
+    );
+    const session: Session = { input: saved, inputKey, inputReady, acknowledgeInput, selection: null, speakers: [], planned: false, transportStarted: false, finalizationAttempted: false, cursor: 0, attempt: 0, userMessageTimestamp: null,
       receipts: [], disposition: null, phase: "planning", cancelled: false, activeRequestKey: null, cancellation: null, retained: null };
     this.sessions.set(key, session); this.chats.set(saved.chatId, key);
     session.retained = Promise.resolve().then(
@@ -102,6 +108,16 @@ export class GroupExecutionController {
       () => this.run(session, true),
     );
     return session.retained;
+  }
+
+  /** Waits for native input admission while retaining original failures and pre-persistence cancellation. */
+  waitForInput(chatId: string, submissionId: string): Promise<GroupSendDecision> {
+    const session = this.session(chatId, submissionId);
+    if (session.retained === null) throw new Error("Group submission has no retained execution");
+    return Promise.race([session.inputReady, session.retained.then(
+      /** Rejects a completed pre-persistence cancellation instead of clearing an unsaved draft. */
+      () => { throw new Error("Group execution ended before input admission"); },
+    )]);
   }
 
   /** Records cancellation and invokes only the active correlated turn's real cancellation capability. */
@@ -163,13 +179,44 @@ export class GroupExecutionController {
       cursor: session.cursor, plannedTurns: session.speakers.length, userMessageTimestamp: session.userMessageTimestamp, receipts };
   }
 
-  /** Plans once, executes serially, preserves genuine cancellation receipts and propagates every original failure without retry. */
+  /** Persists original input before planning and applies each exact native result once. */
+  private async send(session: Session, requested: GroupInitialTurn | GroupContinuationTurn): Promise<GroupExecutionOutcome | null> {
+    session.activeRequestKey = "kind" in requested ? requested.requestKey : requested.turn.requestKey;
+    session.transportStarted = true;
+    const value = "kind" in requested ? await this.dependencies.transport.submit(requested) : await this.dependencies.transport.continue(requested);
+    const decision = decodeNativeGroupSendResult(value, requested, session.userMessageTimestamp);
+    if ("kind" in requested) session.acknowledgeInput(decision);
+    session.activeRequestKey = null;
+    if (session.cancellation !== null) await session.cancellation;
+    if (decision.type !== "committed") {
+      session.disposition = decision; session.finalizationAttempted = true;
+      await this.dependencies.transport.abandon({ submissionId: session.input.submissionId, chatId: session.input.chatId, runtime: session.input.runtime });
+      session.phase = "stopped"; this.chats.delete(session.input.chatId);
+      return this.outcome(session, decision.type);
+    }
+    const accepted = decision.receipt;
+    if (accepted.userMessageTimestamp !== null) session.userMessageTimestamp = accepted.userMessageTimestamp;
+    session.receipts.push(accepted);
+    if (accepted.status === "completed" && !("kind" in requested)) session.cursor++;
+    if (accepted.status === "cancelled" || session.cancelled) {
+      session.phase = "cancelled"; return this.outcome(session, "cancelled");
+    }
+    return null;
+  }
+
+  /** Records input first, plans once, and defers summary checks until the final acknowledged participant reply. */
   private async run(session: Session, plan: boolean): Promise<GroupExecutionOutcome> {
     try {
       await this.current(session, null);
       if (session.selection === null) throw new Error("Group execution selection is not initialized");
       if (session.cancelled) { session.phase = "cancelled"; return this.outcome(session, "cancelled"); }
+      if (session.userMessageTimestamp === null) {
+        const recorded = await this.send(session, { kind: "record_only", submission: session.input,
+          requestKey: JSON.stringify([session.input.chatId, session.input.submissionId, "input", session.attempt++]) });
+        if (recorded !== null) return recorded;
+      }
       if (plan) {
+        session.phase = "planning";
         const participants = await this.dependencies.readParticipants(session.selection);
         if (session.cancelled) { session.phase = "cancelled"; return this.outcome(session, "cancelled"); }
         const planned = await this.dependencies.plan(participants, session.input.text);
@@ -178,43 +225,23 @@ export class GroupExecutionController {
         session.planned = true;
       }
       session.phase = "running";
-      while (true) {
+      while (session.cursor < session.speakers.length) {
         if (session.cancelled) { session.phase = "cancelled"; return this.outcome(session, "cancelled"); }
-        if (session.cursor >= session.speakers.length && session.userMessageTimestamp !== null) break;
-        const participantId = session.cursor < session.speakers.length ? session.speakers[session.cursor] : null;
+        const participantId = session.speakers[session.cursor];
         await this.current(session, participantId);
-        const requestKey = JSON.stringify([session.input.chatId, session.input.submissionId, session.cursor, session.attempt++]);
-        const selected: GroupSelectedTurn | null = participantId === null ? null : { requestKey, selection: session.selection, participantId, notifyReply: session.input.notifyReply && session.cursor === session.speakers.length - 1 };
         if (session.cancelled) { session.phase = "cancelled"; return this.outcome(session, "cancelled"); }
-        session.activeRequestKey = requestKey;
-        let requested: GroupInitialTurn | GroupContinuationTurn;
-        let value: MessageSendResultData;
-        session.transportStarted = true;
-        if (session.userMessageTimestamp === null) {
-          requested = selected === null ? { kind: "record_only", submission: session.input, requestKey } : { kind: "execute", submission: session.input, turn: selected };
-          value = await this.dependencies.transport.submit(requested);
-        } else {
-          if (selected === null) throw new Error("A group continuation must identify an actual planned speaker");
-          requested = { submissionId: session.input.submissionId, chatId: session.input.chatId, runtime: session.input.runtime,
-            userMessageTimestamp: session.userMessageTimestamp, turn: selected };
-          value = await this.dependencies.transport.continue(requested);
-        }
-        const decision = decodeNativeGroupSendResult(value, requested, session.userMessageTimestamp);
-        session.activeRequestKey = null;
-        if (session.cancellation !== null) await session.cancellation;
-        if (decision.type !== "committed") {
-          session.disposition = decision;
-          session.finalizationAttempted = true;
-          await this.dependencies.transport.abandon({ submissionId: session.input.submissionId, chatId: session.input.chatId, runtime: session.input.runtime });
-          session.phase = "stopped"; this.chats.delete(session.input.chatId);
-          return this.outcome(session, decision.type);
-        }
-        const accepted = decision.receipt;
-        if (accepted.userMessageTimestamp !== null) session.userMessageTimestamp = accepted.userMessageTimestamp;
-        session.receipts.push(accepted);
-        if (accepted.status === "completed" && participantId !== null) session.cursor++;
-        if (accepted.status === "cancelled" || session.cancelled) { session.phase = "cancelled"; return this.outcome(session, "cancelled"); }
+        if (session.userMessageTimestamp === null) throw new Error("Group reply requires its persisted original user message");
+        const final = session.cursor === session.speakers.length - 1;
+        const turn: GroupSelectedTurn = {
+          requestKey: JSON.stringify([session.input.chatId, session.input.submissionId, session.cursor, session.attempt++]),
+          selection: session.selection, participantId, notifyReply: session.input.notifyReply && final,
+          summaryPolicy: final ? "after_reply" : "defer",
+        };
+        const stopped = await this.send(session, { submissionId: session.input.submissionId, chatId: session.input.chatId,
+          runtime: session.input.runtime, userMessageTimestamp: session.userMessageTimestamp, turn });
+        if (stopped !== null) return stopped;
       }
+      if (session.cancelled) { session.phase = "cancelled"; return this.outcome(session, "cancelled"); }
       if (session.userMessageTimestamp === null) throw new Error("Completed group sequence has no actual persisted user message");
       session.phase = "finishing"; session.finalizationAttempted = true;
       await this.dependencies.transport.finish({ submissionId: session.input.submissionId, chatId: session.input.chatId, runtime: session.input.runtime,

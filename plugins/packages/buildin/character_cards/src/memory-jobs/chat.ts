@@ -1,8 +1,8 @@
 import type { CharacterRepository } from "../canonical";
-import type { Card, MemoryChat, MemoryChatMessage, MemoryJobWindow, MemoryRebuild } from "../model";
+import type { Card, MemoryChat, MemoryChatListing, MemoryChatMessage, MemoryJobWindow, MemoryRebuild } from "../model";
 import { requireChatSelection } from "../chat-bindings";
-import type { MessageMarker } from "../chat-markers";
-import { readMessageSnapshot, chatsForMemoryOwner } from "../chat-storage";
+import type { ChatResourceRoute } from "../api";
+import { readMessageAuthor } from "../chat-storage";
 import { assertBoolean, assertInteger, assertMemoryChatMessage, assertObject, assertString, requireId } from "../validation";
 
 /** Requires exact generic chat-summary fields without inventing unavailable history metadata. */
@@ -25,7 +25,7 @@ export async function requireChat(chatId: string): Promise<MemoryChat> {
 
 /** Resolves participants solely from the real persisted plugin chat selection. */
 export async function chatParticipants(chatId: string, repository: CharacterRepository): Promise<Card[]> {
-  const binding = await repository.readChatBinding(chatId), cards = await repository.listCharacters(), groups = await repository.listGroups();
+  const binding = await repository.chatBindings.readChatBinding(chatId), cards = await repository.listCharacters(), groups = await repository.listGroups();
   const selection = requireChatSelection(binding.selection, cards, groups);
   if (selection.kind === "model") return [];
   if (selection.kind === "card") return [await repository.getCharacter(selection.id)];
@@ -53,7 +53,7 @@ export async function primaryOwner(card: Card, repository: CharacterRepository):
 
 /** Requires the selected participants to own or explicitly permit writes to this resource. */
 export async function requireChatOwner(chatId: string, ownerKey: string, repository: CharacterRepository): Promise<void> {
-  await repository.readMemorySpace(ownerKey);
+  await repository.readMemoryJobState(ownerKey);
   const cards = await chatParticipants(chatId, repository);
   for (const card of cards) {
     if (await primaryOwner(card, repository) === ownerKey) return;
@@ -62,48 +62,99 @@ export async function requireChatOwner(chatId: string, ownerKey: string, reposit
   throw new Error("Chat is not writable for this memory owner: " + chatId + " / " + ownerKey);
 }
 
-/** Requires a writable destination from the exact saved message revision, never the current chat selection. */
-export async function requireMessageOwner(chatId: string, message: MemoryChatMessage, ownerKey: string, repository: CharacterRepository): Promise<MessageMarker> {
-  assertMemoryChatMessage(message); await repository.readMemorySpace(ownerKey);
-  const marker = await readMessageSnapshot(chatId, message.timestamp, message.variantIndex);
-  if (!marker.profile.resources.some(
-    /** Checks only this saved participant's explicit writable resource grants. */
-    resource => resource.key === ownerKey && resource.writable,
-  )) throw new Error("Saved message identity is not writable for this memory owner: " + ownerKey);
-  return marker;
+export interface CurrentMessageMemoryAccess { primaryOwnerKey: string; resources: ChatResourceRoute[] }
+
+/** Resolves the message author against current memory bindings and grants. */
+export async function currentMessageMemoryAccess(chatId: string, message: MemoryChatMessage, repository: CharacterRepository): Promise<CurrentMessageMemoryAccess> {
+  assertMemoryChatMessage(message);
+  const participantId = await readMessageAuthor(chatId, message.timestamp, message.variantIndex);
+  if (participantId === "model:chat") return { primaryOwnerKey: "", resources: [] };
+  if (participantId === null) throw new Error("Message has no character author identity");
+  const card = await repository.getCharacter(participantId);
+  const primaryOwnerKey = await primaryOwner(card, repository);
+  const resources: ChatResourceRoute[] = [{ key: primaryOwnerKey, readable: true, writable: true }];
+  for (const mount of card.sharedMemoryMounts) {
+    await repository.getStore(mount.sharedMemoryId);
+    const key = "shared:" + mount.sharedMemoryId;
+    const existing = resources.find(resource => resource.key === key);
+    if (existing) { existing.readable ||= mount.readable; existing.writable ||= mount.writable; }
+    else resources.push({ key, readable: mount.readable, writable: mount.writable });
+  }
+  return { primaryOwnerKey, resources };
 }
-/** Validates historical assistant snapshots before planning or executing an owner-scoped extraction window. */
+
+/** Checks current permissions for the real message author. */
+export async function requireMessageOwner(chatId: string, message: MemoryChatMessage, ownerKey: string, repository: CharacterRepository): Promise<CurrentMessageMemoryAccess> {
+  await repository.readMemoryJobState(ownerKey);
+  const access = await currentMessageMemoryAccess(chatId, message, repository);
+  if (!access.resources.some(resource => resource.key === ownerKey && resource.writable)) throw new Error("Message author is not currently writable for this memory owner: " + ownerKey);
+  return access;
+}
+
+/** Validates extraction against current author permissions. */
 export async function requireMessagesOwner(chatId: string, messages: MemoryChatMessage[], ownerKey: string, repository: CharacterRepository): Promise<void> {
-  await repository.readMemorySpace(ownerKey); let permitted = false;
+  await repository.readMemoryJobState(ownerKey);
   for (const message of messages) {
     if (message.sender !== "ai" && message.sender !== "assistant") continue;
-    const marker = await readMessageSnapshot(chatId, message.timestamp, message.variantIndex);
-    if (marker.profile.resources.some(
-      /** Requires an actual saved writable grant without deriving identity from a display name. */
-      resource => resource.key === ownerKey && resource.writable,
-    )) permitted = true;
+    const access = await currentMessageMemoryAccess(chatId, message, repository);
+    if (access.resources.some(resource => resource.key === ownerKey && resource.writable)) return;
   }
-  if (!permitted) throw new Error("History has no saved assistant identity writable for this memory owner: " + ownerKey);
+  throw new Error("History has no assistant author currently writable for this memory owner: " + ownerKey);
 }
-/** Lists real host summaries under their stored plugin binding, excluding genuinely unbound chats. */
-export async function listMemoryChats(ownerKey: string, repository: Pick<CharacterRepository, "readMemorySettings">): Promise<MemoryChat[]> {
+/** Lists real host summaries under their stored plugin binding, reporting bindings whose Core conversation disappeared instead of failing the whole listing. */
+export async function listMemoryChats(ownerKey: string, repository: Pick<CharacterRepository, "readMemorySettings" | "chatBindings">): Promise<MemoryChatListing> {
   await repository.readMemorySettings(ownerKey);
-  const selected = await chatsForMemoryOwner(ownerKey);
-  const chats: MemoryChat[] = [];
+  const selected = await repository.chatBindings.chatsForMemoryOwner(ownerKey);
+  const chats: MemoryChat[] = [], missingChatIds: string[] = [];
   for (let offset = 0; offset < selected.length; offset += 200) {
     const ids = selected.slice(offset, offset + 200), result = await Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
-    if (result.totalCount !== ids.length || result.chats.length !== ids.length) throw new Error("Stored bindings reference missing Core conversations");
     const remaining = new Set(ids);
     for (const chat of result.chats) { assertChat(chat); if (!remaining.delete(chat.id)) throw new Error("Chat batch returned an unrelated or duplicate identity"); chats.push(chat); }
+    for (const chatId of remaining) missingChatIds.push(chatId);
   }
-  return chats.sort(
-    /** Keeps the host directory's updated-at descending presentation without limiting the bound records. */
-    (left, right) => {
-      const leftTime = Number(left.updatedAt), rightTime = Number(right.updatedAt);
-      assertInteger(leftTime, "chat updated timestamp", 0); assertInteger(rightTime, "chat updated timestamp", 0);
-      return rightTime - leftTime;
-    },
-  );
+  return {
+    chats: chats.sort(
+      /** Keeps the host directory's updated-at descending presentation without limiting the bound records. */
+      (left, right) => {
+        const leftTime = Number(left.updatedAt), rightTime = Number(right.updatedAt);
+        assertInteger(leftTime, "chat updated timestamp", 0); assertInteger(rightTime, "chat updated timestamp", 0);
+        return rightTime - leftTime;
+      },
+    ),
+    missingChatIds: missingChatIds.sort(),
+  };
+}
+
+/** Deletes bindings and extraction candidates whose Core conversation or source message no longer exists. */
+export async function pruneMissingMemoryChats(
+  ownerKey: string,
+  repository: Pick<CharacterRepository, "readMemorySettings" | "chatBindings" | "readMemoryJobState" | "writeMemoryJobState">,
+): Promise<{ removedChatIds: string[]; removedCandidateIds: string[] }> {
+  const { missingChatIds } = await listMemoryChats(ownerKey, repository);
+  const removedChatIds: string[] = [];
+  for (const chatId of missingChatIds) {
+    if ((await repository.chatBindings.deleteChatBinding(chatId)).deleted) removedChatIds.push(chatId);
+  }
+  const space = await repository.readMemoryJobState(ownerKey);
+  const candidateChats = [...new Set(space.candidates.map(candidate => candidate.chatId))];
+  const messagesByChat = new Map<string, MemoryChatMessage[] | null>();
+  for (let offset = 0; offset < candidateChats.length; offset += 200) {
+    const ids = candidateChats.slice(offset, offset + 200), result = await Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
+    const found = new Set(result.chats.map(chat => String(chat.id)));
+    for (const chatId of ids) messagesByChat.set(chatId, found.has(chatId) ? await readMessages(chatId) : null);
+  }
+  const removedCandidateIds: string[] = [];
+  const survivors = space.candidates.filter(candidate => {
+    const messages = messagesByChat.get(candidate.chatId) ?? null;
+    const orphaned = messages === null || !messages.some(
+      /** Matches the exact claimed source revision before keeping the queued extraction. */
+      message => message.timestamp === candidate.triggerMessageTimestamp && message.variantIndex === candidate.triggerVariantIndex,
+    );
+    if (orphaned) removedCandidateIds.push(candidate.id);
+    return !orphaned;
+  });
+  if (survivors.length !== space.candidates.length) { space.candidates = survivors; await repository.writeMemoryJobState(ownerKey, space); }
+  return { removedChatIds, removedCandidateIds };
 }
 
 /** Reads genuine chronological source messages; no rich ChatMessage fields are synthesized. */

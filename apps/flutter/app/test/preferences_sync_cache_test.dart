@@ -124,6 +124,74 @@ void main() {
     },
   );
 
+  test(
+    'released appearance keys and added input fields remain synchronized',
+    () async {
+      final bridge = _PreferenceBridge();
+      final original = <String, Object?>{
+        'theme_mode': 'dark',
+        'use_custom_colors': true,
+        'custom_primary_color': 0xff123456,
+        'background_image_uri': 'host:///backgrounds/custom.png',
+        'use_background_image': true,
+        'custom_font_path': 'host:///fonts/user.ttf',
+        'input_background_color': 0xff223344,
+        'input_send_asset': 'host:///icons/send.svg',
+        'input_send_asset_size': 30.0,
+      };
+      bridge.applyPeerPreferences(_userFile, original);
+      final preferences = UserPreferencesManager(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      final snapshot = await preferences.resolveThemePreferenceSnapshot();
+      expect(snapshot.themeMode, ThemeMode.dark);
+      expect(snapshot.customPrimaryColor, 0xff123456);
+      expect(snapshot.backgroundImageUri, 'host:///backgrounds/custom.png');
+      expect(snapshot.customFontPath, 'host:///fonts/user.ttf');
+      expect(snapshot.inputBackgroundColor, 0xff223344);
+      expect(snapshot.inputSendAsset, 'host:///icons/send.svg');
+      expect(snapshot.inputSendAssetSize, 30);
+      expect(bridge._values[_userFile], original);
+      expect(bridge.preferenceWrites, 0);
+      await preferences.saveAppearanceFields(<String, Object?>{
+        'inputSendAssetSize': 32.0,
+      });
+      expect(bridge._values[_userFile]!['input_send_asset_size'], 32);
+      expect(bridge._values[_userFile]!['custom_primary_color'], 0xff123456);
+    },
+  );
+
+  test(
+    'retired template bindings do not block shared independent appearance',
+    () async {
+      final bridge = _PreferenceBridge();
+      final clients = GeneratedCoreProxyClients(bridge);
+      final controller = OperitThemeController(
+        preferencesManager: UserPreferencesManager(clients: clients),
+        onChanged: () {},
+        saveStartupThemeMode: (_) async {},
+      );
+      addTearDown(controller.dispose);
+      await controller.start();
+      await _drainEvents();
+      final selected = <String, Object?>{
+        'schemaVersion': 1,
+        'themeId': 'dev.example.synced:night',
+        'version': '1.0.0',
+        'archiveSha256': List<String>.filled(64, 'a').join(),
+      };
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'theme_mode': 'dark',
+        'active_toolpkg_theme': selected,
+      });
+      await _drainEvents();
+      expect(controller.themeLoadError, isNull);
+      expect(controller.themeMode, ThemeMode.dark);
+      expect(bridge._values[_userFile]!['active_toolpkg_theme'], selected);
+      expect(bridge.preferenceWrites, 0);
+    },
+  );
+
   test('peer zoom preferences do not change client-local zoom', () async {
     final bridge = _PreferenceBridge();
     final preferences = ApplicationZoomPreferences(
@@ -191,10 +259,12 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      await expectLater(controller.start(), throwsA(isA<FormatException>()));
-      expect(changes, 0);
+      await controller.start();
+      await _drainEvents();
+      expect(controller.themeLoadError, isA<ArgumentError>());
+      expect(changes, greaterThan(0));
       expect(savedModes, isEmpty);
-      expect(bridge.activeWatches, 0);
+      expect(bridge._values[_userFile]!['theme_mode'], 'invalid-mode');
       expect(bridge.preferenceWrites, 0);
     },
   );
@@ -375,6 +445,7 @@ class _PreferenceBridge extends OperitRuntimeBridge {
   Future<void>? nextPreferenceRead;
   Object? watchError;
 
+  /// Reads template selection from the same committed shared preference snapshot.
   /// Reports the number of active physical watches after cancellation.
   int get activeWatches => _watches.length;
 

@@ -6,12 +6,8 @@ import { createDiskHarness } from "./disk-files.mjs";
 const submitted = { submissionId: "submission", chatId: "chat", selection: "group:33", runtime: "main", notifyReply: true,
   text: "Original full input", attachments: [{ filePath: "vfs://a", nodeId: "node", fileName: "a.txt", mimeType: "text/plain", fileSize: 7, content: "payload" }], replyToMessageTimestamp: 9 };
 
-/** Declares a complete frozen native snapshot at the controlled host ABI, not a configured production model. */
-function marker(id) {
-  const profile = { id, name: "Participant " + id, avatarUri: null, introPrompt: "Saved prompt", userPreferencesText: "Saved user", openingStatement: "", modelBinding: { providerId: "provider", modelId: "model" }, ttsConfigId: "voice",
-    toolAccess: { enabled: true, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] }, resources: [{ key: "character:" + id, readable: true, writable: true }] };
-  return { version: 1, selection: "group:33", promptFunctionType: "CHAT", primaryOwnerKey: "character:" + id, profile, participants: [profile] };
-}
+/** Supplies only the author Core attaches to a committed message. */
+function marker(id) { return { participantId: id }; }
 
 /** Supplies one explicit controlled native receipt with no timestamp or latest-history heuristic. */
 function receipt(message, timestamp, status = "completed", user = 10) {
@@ -30,32 +26,34 @@ function transport(chat, globals = {}) {
 }
 
 /** The real plugin transport submits once, continues the precise user row and never asks for native handles or finish methods. */
-test("native send transport: complete input, exact continuations and host-authored snapshots", async t => {
-  const disk = await createDiskHarness(t);
-  const storage = loadModule("src/chat-storage.ts", disk.globals);
+test("native send transport: complete input, exact continuations and host-authored identities", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" });
   const calls = [], snapshots = new Map(); let count = 0;
   const native = transport({
-    /** Acknowledges the explicitly planned send and stores its complete controlled native message snapshot. */
+    /** Acknowledges the explicitly planned send and stores its controlled author identity. */
     async sendMessage(request) {
       const input = plain(request); calls.push(input); count++;
-      const id = input.kind === "submit" ? input.turn.participantId : input.participantId;
-      snapshots.set(20 + count, await storage.storeSnapshot(marker(id)));
-      return receipt(input.kind === "submit" ? input.input.text : "", 20 + count);
+      if (input.kind === "submit") return receipt(input.input.text, null);
+      snapshots.set(20 + count, marker(input.participantId));
+      return receipt("", 20 + count);
     },
     /** Reads only the exact committed message locator, never current character state. */
     async readExtension(target) { assert.deepEqual(Object.keys(target).sort(), ["chatId", "kind", "messageTimestamp", "variantIndex"]); assert.equal(target.kind, "message"); assert.equal(target.chatId, "chat"); assert.equal(target.variantIndex, 0); assert.equal(snapshots.has(target.messageTimestamp), true); return { extension: snapshots.get(target.messageTimestamp) }; },
   }, disk.globals);
-  const first = { kind: "execute", submission: submitted, turn: { requestKey: "local-1", selection: "group:33", participantId: "1", notifyReply: false } };
-  const initial = await native.submit(first);
+  const initial = await native.submit({ kind: "record_only", submission: submitted, requestKey: "local-input" });
+  const first = await native.continue({ submissionId: "submission", chatId: "chat", runtime: "main", userMessageTimestamp: 10,
+    turn: { requestKey: "local-1", selection: "group:33", participantId: "1", notifyReply: false, summaryPolicy: "defer" } });
   const continued = await native.continue({ submissionId: "submission", chatId: "chat", runtime: "main", userMessageTimestamp: 10,
-    turn: { requestKey: "local-2", selection: "group:33", participantId: "2", notifyReply: true } });
+    turn: { requestKey: "local-2", selection: "group:33", participantId: "2", notifyReply: true, summaryPolicy: "after_reply" } });
   assert.deepEqual(calls[0], { kind: "submit", chatId: "chat", runtime: "main", notifyReply: false,
-    input: { text: submitted.text, attachments: submitted.attachments, replyToMessageTimestamp: 9 }, turn: { kind: "execute", participantId: "1" } });
-  assert.deepEqual(calls[1], { kind: "continue", chatId: "chat", runtime: "main", userMessageTimestamp: 10, participantId: "2", notifyReply: true });
+    input: { text: submitted.text, attachments: submitted.attachments, replyToMessageTimestamp: 9 }, turn: { kind: "record_only" } });
+  assert.deepEqual(calls[1], { kind: "continue", chatId: "chat", runtime: "main", userMessageTimestamp: 10, participantId: "1", notifyReply: false, summaryPolicy: "defer" });
+  assert.deepEqual(calls[2], { kind: "continue", chatId: "chat", runtime: "main", userMessageTimestamp: 10, participantId: "2", notifyReply: true, summaryPolicy: "after_reply" });
   await native.finish({ submissionId: "submission", chatId: "chat", runtime: "main", userMessageTimestamp: 10,
-    receipts: [{ status: "completed", chatId: "chat", requestKey: "local-1", userMessageTimestamp: 10, assistant: initial.outcome.assistant },
+    receipts: [{ status: "completed", chatId: "chat", requestKey: "local-input", userMessageTimestamp: 10, assistant: initial.outcome.assistant },
+      { status: "completed", chatId: "chat", requestKey: "local-1", userMessageTimestamp: 10, assistant: first.outcome.assistant },
       { status: "completed", chatId: "chat", requestKey: "local-2", userMessageTimestamp: 10, assistant: continued.outcome.assistant }] });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   await assert.rejects(native.cancel({ chatId: "chat", requestKey: "local-2", runtime: "main" }), /matching active send/);
 });
 

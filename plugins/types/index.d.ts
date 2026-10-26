@@ -6,7 +6,7 @@
  */
 
 // Import types that will be used in global declarations
-import { DeviceEdge, DeviceIo } from './edge';
+import { DeviceEdge, DeviceIo, DeviceTransport } from './edge';
 import { ToolReturnType, ToolCatalogEntry, ToolCatalog, DeviceToolOptions } from './core';
 import {
     JavaBridgeApi as JavaBridgeApiType,
@@ -68,7 +68,6 @@ import {
     ComposeNode as ComposeNodeType,
     ComposeCanvasCommand as ComposeCanvasCommandType
 } from './compose-dsl';
-import { ToolPkg as ToolPkgType } from './toolpkg';
 import {
     OkHttp as OkHttpValue,
     OkHttpClientBuilder as OkHttpClientBuilderClass,
@@ -104,8 +103,10 @@ import { System as SystemType } from './system';
 import { SoftwareSettings as SoftwareSettingsType } from './software_settings';
 import { Models as ModelsType } from './models';
 import { Tts as TtsType } from './tts';
+import { Stt as SttType } from './stt';
 import { Theme as ThemeType } from './theme';
 import { Catalog as CatalogType } from './catalog';
+import { Media as MediaType } from './media';
 import { UI as UIType } from './ui';
 import { Chat as ChatType } from './chat';
 import { Storage as StorageType } from './storage';
@@ -115,13 +116,15 @@ export { System } from './system';
 export { SoftwareSettings } from './software_settings';
 export { Models } from './models';
 export { Tts } from './tts';
+export { Stt } from './stt';
 export { Theme } from './theme';
 export { Catalog } from './catalog';
+export { Media } from './media';
 export { UI, UINode } from './ui';
 export { ToolPkg } from './toolpkg';
 export { Chat } from './chat';
-export { DeviceEdge, DeviceIo } from './edge';
-export type { EdgeInterfaceInfo, IoInterfaceInfo, EdgeActionEvent, EdgeEventBatch, EdgeEventPayload, EdgeEventHookEvent, EdgeEventAck } from './edge';
+export { DeviceEdge, DeviceIo, DeviceTransport } from './edge';
+export type { EdgeInterfaceInfo, IoInterfaceInfo, DeviceTransportEndpoint, DeviceTransportEvent, DeviceTransportChannel } from './edge';
 export * from './storage';
 
 // Export Android utilities
@@ -206,7 +209,6 @@ declare global {
     type EnvironmentVariableReadResultData = _EnvironmentVariableReadResultData;
     type EnvironmentVariableWriteResultData = _EnvironmentVariableWriteResultData;
 
-    export import ToolPkg = ToolPkgType;
 
     // Global interface definitions
     interface ToolParams {
@@ -295,9 +297,12 @@ declare global {
         Chat: typeof ChatType;
         Models: typeof ModelsType;
         Tts: typeof TtsType;
+        Stt: typeof SttType;
         Theme: typeof ThemeType;
         Catalog: typeof CatalogType;
+        Media: typeof MediaType;
         Storage: typeof StorageType;
+        transport: DeviceTransport;
         Edge: DeviceEdge;
         Io: DeviceIo;
         call<T extends string>(name: T, params?: Record<string, unknown>): Promise<ToolReturnType<T>>;
@@ -315,8 +320,10 @@ declare global {
         SoftwareSettings: typeof SoftwareSettingsType;
         Models: typeof ModelsType;
         Tts: typeof TtsType;
+        Stt: typeof SttType;
         Theme: typeof ThemeType;
         Catalog: typeof CatalogType;
+        Media: typeof MediaType;
         UI: typeof UIType;
         Chat: typeof ChatType;
         Storage: typeof StorageType;

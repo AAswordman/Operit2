@@ -1,5 +1,5 @@
 import type { MessageSendResultData } from "../../../../../types/results";
-import { readMessageSnapshot } from "../chat-storage";
+import { readMessageAuthor } from "../chat-storage";
 import { assertBoolean, assertInteger } from "../validation";
 import type { GroupContinuationTurn, GroupInitialTurn, GroupMessageLocator, GroupSelectedTurn, GroupSendDecision, GroupSequenceCompletion, GroupTurnTransport } from "./contracts";
 import { decodeNativeGroupSendResult } from "./contracts";
@@ -10,7 +10,7 @@ type SendRequest = Parameters<typeof Tools.Chat.sendMessage>[0];
 interface Attempt { chatId: string; runtime: "main" | "floating"; active: boolean }
 /** Tracks plugin planning receipts only; the host owns and finalizes every actual native send. */
 interface Sequence {
-  chatId: string; runtime: "main" | "floating"; notifyReply: boolean;
+  chatId: string; runtime: "main" | "floating";
   last: GroupSendDecision | null; userTimestamp: number | null;
   assistants: GroupMessageLocator[]; finished: boolean;
 }
@@ -18,12 +18,10 @@ interface Sequence {
 /** Builds an unambiguous local sequence key without sending it as host authority. */
 function sequenceKey(chatId: string, submissionId: string): string { return JSON.stringify([chatId, submissionId]); }
 
-/** Requires the real persisted assistant snapshot to identify the participant selected by this exact turn. */
-async function verifySnapshot(chatId: string, selected: GroupSelectedTurn, assistant: GroupMessageLocator): Promise<void> {
-  const marker = await readMessageSnapshot(chatId, assistant.messageTimestamp, assistant.variantIndex);
-  if (marker.selection !== selected.selection || marker.profile.id !== selected.participantId || marker.promptFunctionType !== "CHAT") {
-    throw new Error("Committed group assistant snapshot identifies a different participant or selection");
-  }
+/** Checks the actual committed author without loading or persisting execution settings. */
+async function verifyAuthor(chatId: string, selected: GroupSelectedTurn, assistant: GroupMessageLocator): Promise<void> {
+  const participantId = await readMessageAuthor(chatId, assistant.messageTimestamp, assistant.variantIndex);
+  if (participantId !== selected.participantId) throw new Error("Committed group assistant identifies a different participant");
 }
 
 /** Uses only sendMessage and cancel; no native execution handle or separate finalization API reaches this plugin. */
@@ -31,19 +29,19 @@ export class NativeGroupTurnTransport implements GroupTurnTransport {
   private readonly sequences = new Map<string, Sequence>();
   private readonly attempts = new Map<string, Attempt>();
 
-  /** Sends the complete original input once, or explicitly records it without requesting an arbitrary participant. */
+  /** Records the complete original input before planning without selecting any participant. */
   async submit(input: GroupInitialTurn): Promise<MessageSendResultData> {
     const submitted = input.submission, key = sequenceKey(submitted.chatId, submitted.submissionId), prior = this.sequences.get(key);
     if (prior !== undefined && (prior.last === null || prior.last.type !== "committed" || prior.last.receipt.status !== "cancelled" || prior.userTimestamp !== null)) {
       throw new Error("A second initial submit requires explicitly resumed cancellation before user-message persistence");
     }
-    const sequence: Sequence = { chatId: submitted.chatId, runtime: submitted.runtime, notifyReply: submitted.notifyReply,
+    const sequence: Sequence = { chatId: submitted.chatId, runtime: submitted.runtime,
       last: null, userTimestamp: null, assistants: [], finished: false };
     this.sequences.set(key, sequence);
     const request: SendRequest = { kind: "submit", chatId: submitted.chatId, runtime: submitted.runtime,
-      notifyReply: input.kind === "record_only" ? false : input.turn.notifyReply,
+      notifyReply: false,
       input: { text: submitted.text, attachments: submitted.attachments, replyToMessageTimestamp: submitted.replyToMessageTimestamp },
-      turn: input.kind === "record_only" ? { kind: "record_only" } : { kind: "execute", participantId: input.turn.participantId } };
+      turn: { kind: "record_only" } };
     return this.run(sequence, input, request);
   }
 
@@ -52,7 +50,7 @@ export class NativeGroupTurnTransport implements GroupTurnTransport {
     const sequence = this.requireSequence(input.chatId, input.submissionId, input.runtime);
     if (sequence.finished || sequence.userTimestamp !== input.userMessageTimestamp) throw new Error("Group continuation requires its acknowledged user timestamp");
     return this.run(sequence, input, { kind: "continue", chatId: input.chatId, runtime: input.runtime,
-      userMessageTimestamp: input.userMessageTimestamp, participantId: input.turn.participantId, notifyReply: input.turn.notifyReply });
+      userMessageTimestamp: input.userMessageTimestamp, participantId: input.turn.participantId, notifyReply: input.turn.notifyReply, summaryPolicy: input.turn.summaryPolicy });
   }
 
   /** Cancels only a currently correlated local attempt through the host's authenticated owner/chat capture. */
@@ -94,9 +92,9 @@ export class NativeGroupTurnTransport implements GroupTurnTransport {
     return sequence;
   }
 
-  /** Awaits one real finalized send, validates its originating receipt and checks the native-authored snapshot. */
+  /** Awaits one real finalized send, validates its originating receipt and checks the native-authored identity. */
   private async run(sequence: Sequence, input: GroupInitialTurn | GroupContinuationTurn, request: SendRequest): Promise<MessageSendResultData> {
-    const requestKey = "kind" in input && input.kind === "record_only" ? input.requestKey : input.turn.requestKey;
+    const requestKey = "kind" in input ? input.requestKey : input.turn.requestKey;
     if (this.attempts.has(requestKey)) throw new Error("Group request correlation key was already used");
     const attempt: Attempt = { chatId: sequence.chatId, runtime: sequence.runtime, active: true };
     this.attempts.set(requestKey, attempt);
@@ -109,10 +107,9 @@ export class NativeGroupTurnTransport implements GroupTurnTransport {
           assertInteger(decision.receipt.userMessageTimestamp, "native user timestamp", 1);
           sequence.userTimestamp = decision.receipt.userMessageTimestamp;
         }
-        if (decision.receipt.assistant !== null) {
+        if (!("kind" in input) && decision.receipt.assistant !== null) {
           sequence.assistants.push({ ...decision.receipt.assistant });
-          if ("kind" in input && input.kind === "record_only") throw new Error("Record-only native send committed an assistant");
-          await verifySnapshot(sequence.chatId, input.turn, decision.receipt.assistant);
+          await verifyAuthor(sequence.chatId, input.turn, decision.receipt.assistant);
         }
       }
       return actual;

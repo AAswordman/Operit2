@@ -1,6 +1,8 @@
+use super::mci::{mciCommand, mciCommandWithResponse};
+use crate::process::background_command;
+
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use operit_host_api::{
@@ -8,7 +10,6 @@ use operit_host_api::{
     TtsSynthesisHost, TtsSynthesisRequest, TtsSynthesisResponse,
 };
 use uuid::Uuid;
-use windows_sys::Win32::Media::Multimedia::{mciGetErrorStringW, mciSendStringW};
 
 #[derive(Clone, Debug, Default)]
 pub struct WindowsTtsSynthesisHost;
@@ -216,7 +217,7 @@ impl TtsSynthesisHost for WindowsTtsSynthesisHost {
         fs::write(&textPath, text.as_bytes()).map_err(|error| {
             HostError::new(format!("failed to write Windows system TTS text: {error}"))
         })?;
-        let statusResult = Command::new("powershell.exe")
+        let statusResult = background_command("powershell.exe")
             .arg("-NoProfile")
             .arg("-ExecutionPolicy")
             .arg("Bypass")
@@ -413,70 +414,6 @@ fn quotedMciPath(path: &str) -> HostResult<String> {
         return Err(HostError::new("tts path contains invalid quote character"));
     }
     Ok(format!("\"{path}\""))
-}
-
-/// Executes an MCI command without a response payload.
-fn mciCommand(command: &str) -> HostResult<()> {
-    let errorCode = unsafe {
-        mciSendStringW(
-            wideString(command).as_ptr(),
-            std::ptr::null_mut(),
-            0,
-            std::ptr::null_mut(),
-        )
-    };
-    if errorCode == 0 {
-        Ok(())
-    } else {
-        Err(HostError::new(format!(
-            "Windows MCI command failed: {}",
-            mciErrorMessage(errorCode)
-        )))
-    }
-}
-
-/// Executes an MCI command and reads its textual response.
-fn mciCommandWithResponse(command: &str) -> HostResult<String> {
-    let mut buffer = vec![0u16; 256];
-    let errorCode = unsafe {
-        mciSendStringW(
-            wideString(command).as_ptr(),
-            buffer.as_mut_ptr(),
-            buffer.len() as u32,
-            std::ptr::null_mut(),
-        )
-    };
-    if errorCode != 0 {
-        return Err(HostError::new(format!(
-            "Windows MCI command failed: {}",
-            mciErrorMessage(errorCode)
-        )));
-    }
-    let end = buffer
-        .iter()
-        .position(|value| *value == 0)
-        .unwrap_or(buffer.len());
-    Ok(String::from_utf16_lossy(&buffer[..end]))
-}
-
-/// Resolves a Windows MCI error code.
-fn mciErrorMessage(errorCode: u32) -> String {
-    let mut buffer = vec![0u16; 512];
-    let succeeded =
-        unsafe { mciGetErrorStringW(errorCode, buffer.as_mut_ptr(), buffer.len() as u32) };
-    if succeeded == 0 {
-        return format!("MCI error code {errorCode}");
-    }
-    let end = buffer
-        .iter()
-        .position(|value| *value == 0)
-        .unwrap_or(buffer.len());
-    String::from_utf16_lossy(&buffer[..end])
-}
-
-/// Encodes a null-terminated Windows UTF-16 string.
-fn wideString(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// Creates a unique path in the Windows TTS temporary directory.

@@ -1,8 +1,9 @@
 import type { Storage } from "../../../../../types/storage";
 import type { CharacterState } from "../model";
 
+import { readCharacter } from "../drafts";
 import { assertObject, requireId } from "../validation";
-import { assertCharacterState } from "./state";
+import { normalizeMemoryRecallSettings } from "./state";
 
 export const collections = [
   "cards",
@@ -41,6 +42,24 @@ export function clone<T>(value: T): T {
   return value;
 }
 
+/**
+ * Counts the nodes one value occupies on the host structured bridge, where every
+ * object, array and leaf converts as one node and arrays dominate vector records.
+ */
+export function structuredNodes(value: unknown): number {
+  if (Array.isArray(value)) {
+    let nodes = 1;
+    for (const item of value) nodes += structuredNodes(item);
+    return nodes;
+  }
+  if (value !== null && typeof value === "object") {
+    let nodes = 1;
+    for (const item of Object.values(value)) nodes += structuredNodes(item);
+    return nodes;
+  }
+  return 1;
+}
+
 /** Compares structured records without serializing the full character and memory state. */
 export function equal(left: unknown, right: unknown): boolean {
   if (left === right) return true;
@@ -67,23 +86,18 @@ export function equal(left: unknown, right: unknown): boolean {
   );
 }
 
-/** Uses domain identities and bounded ordered slots for derived embeddings whose full input stays in the value. */
-function recordKey(
-  collection: string,
-  value: Storage.Value,
-  index: number,
-): string {
-  if (collection === "embeddings") return String(index).padStart(20, "0");
+/** Uses stable domain identities for every independently persisted memory object. */
+function recordKey(value: Storage.Value): string {
   assertObject(value, "stored record");
   return requireId(value.id, "stored record id");
 }
 
-/** Marks a domain record for the schema codec, which validates every declared field before SQL writes. */
+/** Marks a domain record for the host JSON codec without splitting nested configuration into SQL tables. */
 export function storedValue<T extends object>(record: T): Storage.Value {
   return record as Storage.Value;
 }
 
-/** Projects individual domain records for the typed SQL tables shared with migration. */
+/** Projects individual domain records for the complete JSON documents and independently addressable memory objects. */
 export function records(state: CharacterState): StoredRecord[] {
   const result: StoredRecord[] = [];
   for (const collection of [
@@ -111,13 +125,13 @@ export function records(state: CharacterState): StoredRecord[] {
       version: null,
     });
     for (const collection of ownerCollections)
-      for (const [index, record] of owner[collection].entries())
+      for (const record of owner[collection])
         result.push({
           collection,
           key:
             owner.ownerKey +
             "/" +
-            recordKey(collection, storedValue(record), index),
+            recordKey(storedValue(record)),
           value: storedValue({ ownerKey: owner.ownerKey, record }),
           version: null,
         });
@@ -125,19 +139,22 @@ export function records(state: CharacterState): StoredRecord[] {
   return result;
 }
 
-/** Reconstructs a validated operation snapshot from separately persisted host records. */
-export function stateFromRecords(
+/** Assembles stored records so migrations can repair released references before business validation. */
+export function decodeStateFromRecords(
   metadata: Storage.Value,
   rows: StoredRecord[],
 ): CharacterState {
   assertObject(metadata, "character database metadata");
-  if (metadata.migrationStatus === "writing")
+  if (metadata.version !== 1) throw new Error("Unsupported character database version");
+  if (metadata.migrationStatus === "writing" || metadata.legacyImportPending === true)
     throw new Error("Character migration has not completed");
   const state = {
     version: metadata.version,
-    nextId: metadata.nextId,
     active: metadata.active === null ? { Model: { id: "chat" } } : metadata.active,
     memoryPreferences: metadata.memoryPreferences,
+    // States written by the released plugin or the Core migration predate recall settings; the
+    // released default stays enabled so existing installations keep recalling after the upgrade.
+    memoryRecall: normalizeMemoryRecallSettings(metadata.memoryRecall === undefined ? { enabled: true } : metadata.memoryRecall),
     cards: [] as Storage.Value[],
     groups: [] as Storage.Value[],
     tags: [] as Storage.Value[],
@@ -165,6 +182,8 @@ export function stateFromRecords(
         break;
       }
       case "cards":
+        state.cards.push(readCharacter(row.value, row.key) as unknown as Storage.Value);
+        break;
       case "groups":
       case "tags":
       case "stores":
@@ -188,12 +207,11 @@ export function stateFromRecords(
       row.key !==
       ownerKey +
         "/" +
-        recordKey(row.collection, row.value.record, entries.length)
+        recordKey(row.value.record)
     ) {
       throw new Error("Invalid owner-scoped record: " + row.key);
     }
     entries.push(row.value.record);
   }
-  assertCharacterState(state);
-  return state;
+  return state as unknown as CharacterState;
 }

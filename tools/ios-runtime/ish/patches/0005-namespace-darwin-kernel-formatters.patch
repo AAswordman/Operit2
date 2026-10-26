@@ -1,0 +1,17 @@
+--- a/deps/linux/include/linux/kernel.h
++++ b/deps/linux/include/linux/kernel.h
+@@ -195 +195,13 @@
+-/* lib/printf utilities */
++/* lib/printf utilities */
++
++/* Keep kernel formatters private when embedded in a Darwin application.
++ * They do not implement libc's format language (notably floating point).
++ */
++#ifdef CONFIG_HOST_DARWIN
++#define sprintf operit_ish_linux_sprintf
++#define vsprintf operit_ish_linux_vsprintf
++#define snprintf operit_ish_linux_snprintf
++#define vsnprintf operit_ish_linux_vsnprintf
++#define sscanf operit_ish_linux_sscanf
++#define vsscanf operit_ish_linux_vsscanf
++#endif

@@ -13,6 +13,10 @@ pub use transport::HostPeerLink;
 /// Default resource ceiling for ordinary application embeddings.
 pub const DEFAULT_MAX_PEER_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 
+/// Stable transport failure for one encoded message above the connection ceiling.
+/// Callers classify this as a capacity limit rather than an authentication fault.
+pub const MESSAGE_TOO_LARGE_ERROR: &str = "peer message exceeds limit";
+
 /// Selects a Host transport, not a different application protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,9 +59,6 @@ pub trait PeerConnection: Send + Sync {
     fn source(&self) -> &PeerEndpoint;
     fn target(&self) -> &PeerEndpoint;
     fn transport(&self) -> PeerTransport;
-    /// Exclusive carriers need one reusable authenticated session, not a new
-    /// connection for each operation. This is an I/O property, not permission.
-    fn requiresSessionReuse(&self) -> bool { false }
     /// 实际接入来源；不是客户端自报身份/地址。
     fn remoteAddress(&self) -> Option<std::net::SocketAddr> { None }
 
@@ -82,10 +83,6 @@ pub trait PeerListener: Send + Sync {
 /// 传输契约；I/O 使用显式传入的 Host。
 #[async_trait]
 pub trait PeerLink: Send + Sync {
-    /// Connections sharing this key compete for the same exclusive endpoint.
-    /// None preserves independent connections for ordinary network transports.
-    fn exclusiveEndpointKey(&self, _target: &PeerEndpoint, _transport: PeerTransport) -> Option<String> { None }
-
     async fn connect(
         &self,
         host: Arc<HostManager>,
@@ -105,3 +102,78 @@ pub trait PeerLink: Send + Sync {
 
 /// Valid frames, CRC errors, noise bytes and expired partial UART frames.
 pub fn serialFrameCounters() -> [u32; 4] { transport::serialFrameCounters() }
+
+/// One throwaway TCP connection classifies which Link carrier an endpoint
+/// speaks, so pairing can start from a bare `ip:port` without a user-picked
+/// transport.
+///
+/// A single WebSocket-upgrade probe separates all three carriers: HTTP and
+/// WS listeners answer `HTTP/…` — `101` only when the upgrade is accepted —
+/// while a framed TCP receiver drops the unreadable length header without
+/// writing any bytes. The probe socket is closed before the real transport
+/// connects; a framed receiver only counts one discarded bogus frame.
+pub async fn detectTransport(
+    host: std::sync::Arc<HostManager>,
+    socket: &str,
+) -> Result<PeerTransport, String> {
+    let provider = host.tcpHost.as_ref().ok_or("TCP Host is not installed")?;
+    let probe = provider.connect(socket).await.map_err(|e| e.to_string())?;
+    let verdict = classifyEndpoint(probe.clone(), socket).await;
+    probe.close().await;
+    verdict
+}
+
+/// Reads exactly enough of the probe response to pick a carrier.
+async fn classifyEndpoint(
+    probe: std::sync::Arc<dyn operit_host_api::Tcp::TcpConnection>,
+    socket: &str,
+) -> Result<PeerTransport, String> {
+    // Fixed RFC 6455 sample key: a conforming server treats the probe as an
+    // ordinary handshake candidate; uniqueness is irrelevant here.
+    let hostHeader = socket.split('/').next().unwrap_or(socket);
+    let request = format!(
+        "GET /link HTTP/1.1\r\nHost: {hostHeader}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    probe
+        .write(request.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    let prefix = b"HTTP/";
+    let mut head: Vec<u8> = Vec::new();
+    loop {
+        let chunk = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            probe.read(),
+        )
+        .await
+        {
+            Ok(result) => result.map_err(|e| e.to_string())?,
+            Err(_) => return Err(format!("transport detection on {socket} timed out")),
+        };
+        let Some(bytes) = chunk else {
+            // Closed without a byte: an HTTP server always answers, so this
+            // is a framed receiver discarding the bogus length header.
+            return Ok(PeerTransport::Tcp);
+        };
+        head.extend_from_slice(&bytes);
+        if head.len() < prefix.len() {
+            if head.as_slice() != &prefix[..head.len()] {
+                return Ok(PeerTransport::Tcp);
+            }
+            continue;
+        }
+        if !head.starts_with(prefix) {
+            return Ok(PeerTransport::Tcp);
+        }
+        // "HTTP/1.1 " is nine bytes; three status digits complete the verdict.
+        if head.len() >= 12 {
+            let status = std::str::from_utf8(&head[9..12]).unwrap_or("");
+            return Ok(if status == "101" {
+                PeerTransport::WebSocket
+            } else {
+                PeerTransport::Http
+            });
+        }
+    }
+}

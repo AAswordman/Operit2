@@ -1,8 +1,11 @@
+import 'dart:ui' as ui;
+
 import 'support/native_sidebar_bridge.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit_ui/operit_ui.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/main/MainLayoutController.dart';
 import 'package:operit2/ui/main/TopBarController.dart';
@@ -14,10 +17,53 @@ import 'package:operit2/ui/main/layout/PhoneLayout.dart';
 import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 import 'package:operit2/ui/main/screens/OperitScreens.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'package:operit2/ui/theme/OperitGlassSurface.dart';
 
 /// Verifies drawer snapshots do not hide page transitions or loading frames.
 void main() {
   for (final effects in <bool>[true, false]) {
+    testWidgets(
+      'glass stays blurred during drawer and page motion (effects: $effects)',
+      (tester) async {
+        final host = _PhonePageHarness(transparentSurface: true);
+        addTearDown(host.dispose);
+        await host.pump(tester, effects: effects);
+        await tester.pumpAndSettle();
+        final pageState = tester.state(_page(0));
+        await _expectBlurredPixel(tester, host, const Offset(200, 400));
+
+        for (final open in <bool>[true, false]) {
+          host.drawerOpen.value = open;
+          await tester.pump();
+          for (var frame = 0; frame < 5; frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+            expect(_snapshot(tester, 0).controller.allowSnapshotting, isFalse);
+            expect(_boundary(tester, 0).debugLayer!.parent, isNotNull);
+            // The exposed page must keep sampling the external background.
+            await _expectBlurredPixel(tester, host, const Offset(350, 400));
+            if (open && frame >= 2) {
+              // This sample lies inside the moving drawer, away from controls.
+              await _expectBlurredPixel(tester, host, const Offset(20, 400));
+            }
+          }
+          await tester.pumpAndSettle();
+          expect(tester.state(_page(0)), same(pageState));
+        }
+
+        host.selected.value = 1;
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 128));
+        expect(_snapshot(tester, 0).controller.allowSnapshotting, isFalse);
+        expect(_snapshot(tester, 1).controller.allowSnapshotting, isFalse);
+        expect(_boundary(tester, 1).debugLayer!.parent, isNotNull);
+        await _expectBlurredPixel(tester, host, const Offset(200, 400));
+        await tester.pumpAndSettle();
+        await _expectBlurredPixel(tester, host, const Offset(200, 400));
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets(
       'drawer motion snapshots only the established page (effects: $effects)',
       (tester) async {
@@ -302,7 +348,37 @@ double _opacity(WidgetTester tester, int index) => tester
     .opacity
     .value;
 
+/// Checks actual raster output so an active filter with an empty backdrop fails.
+Future<void> _expectBlurredPixel(
+  WidgetTester tester,
+  _PhonePageHarness host,
+  Offset position,
+) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(host.captureKey),
+  );
+  await tester.runAsync(() async {
+    final image = await boundary.toImage();
+    try {
+      final data = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
+      final offset =
+          (position.dy.toInt() * image.width + position.dx.toInt()) * 4;
+      // Unfiltered black and white stripes have channel values near 0 or 255.
+      expect(data.getUint8(offset), inInclusiveRange(60, 195));
+    } finally {
+      image.dispose();
+    }
+  });
+}
+
 class _PhonePageHarness {
+  /// Creates page probes with either opaque or backdrop-dependent surfaces.
+  _PhonePageHarness({this.transparentSurface = false});
+
+  final bool transparentSurface;
+  final captureKey = GlobalKey();
   final selected = ValueNotifier<int>(0);
   final drawerOpen = ValueNotifier<bool>(false);
   final loadingTick = ValueNotifier<int>(0);
@@ -333,8 +409,10 @@ class _PhonePageHarness {
     );
     await tester.pumpWidget(
       OperitTheme(
-        initialThemePreferenceSnapshot:
-            UserPreferencesManager.defaultThemePreferenceSnapshot,
+        initialThemePreferenceSnapshot: ThemePreferenceSnapshot.fromJson({
+          ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
+          'transparentSurfaceEnabled': transparentSurface,
+        }),
         initialThemeIsReady: false,
         unconfiguredChildEnabled: true,
         hostInteractionHostsEnabled: false,
@@ -342,39 +420,50 @@ class _PhonePageHarness {
           controller: layout,
           child: ValueListenableBuilder<int>(
             valueListenable: selected,
-            builder: (context, index, _) => Scaffold(
-              body: PhoneLayout(
-                bridge: NativeSidebarBridge(),
-                content: AppContent(
-                  routerState: router,
-                  currentScreen: screens[index],
-                  currentRouteEntry: entries[index],
-                  currentRouteTitle: 'Route $index',
-                  useTabletLayout: false,
-                  isTabletSidebarExpanded: false,
-                  canGoBack: false,
-                  enableNavigationAnimation: effects,
-                  isNavigatingBack: false,
-                  topBarController: topBar,
-                  appBarEntries: const [],
-                  onGoBack: () {},
-                  onNavigationButtonPressed: () => drawerOpen.value = true,
-                  onAppBarEntrySelected: (_) {},
-                ),
-                navigationEntries: const [],
-                pluginSidebarEntries: const [],
-                selectedRouteId: entries[index].routeId,
-                drawerConversationState: conversations,
-                drawerWidth: 300,
-                drawerOpenState: drawerOpen,
-                enableNavigationAnimation: effects,
-                onOpenDrawer: () => drawerOpen.value = true,
-                onCloseDrawer: () => drawerOpen.value = false,
-                onNavigationEntrySelected: (_) {
-                  drawerOpen.value = false;
-                  selected.value = 1;
-                },
-                onConversationActivated: () => drawerOpen.value = false,
+            builder: (context, index, _) => RepaintBoundary(
+              key: captureKey,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const CustomPaint(painter: _StripePainter()),
+                  Scaffold(
+                    backgroundColor: Colors.transparent,
+                    body: PhoneLayout(
+                      bridge: NativeSidebarBridge(),
+                      content: AppContent(
+                        routerState: router,
+                        currentScreen: screens[index],
+                        currentRouteEntry: entries[index],
+                        currentRouteTitle: 'Route $index',
+                        useTabletLayout: false,
+                        isTabletSidebarExpanded: false,
+                        canGoBack: false,
+                        enableNavigationAnimation: effects,
+                        isNavigatingBack: false,
+                        topBarController: topBar,
+                        appBarEntries: const [],
+                        onGoBack: () {},
+                        onNavigationButtonPressed: () =>
+                            drawerOpen.value = true,
+                        onAppBarEntrySelected: (_) {},
+                      ),
+                      navigationEntries: const [],
+                      pluginSidebarEntries: const [],
+                      selectedRouteId: entries[index].routeId,
+                      drawerConversationState: conversations,
+                      drawerWidth: 300,
+                      drawerOpenState: drawerOpen,
+                      enableNavigationAnimation: effects,
+                      onOpenDrawer: () => drawerOpen.value = true,
+                      onCloseDrawer: () => drawerOpen.value = false,
+                      onNavigationEntrySelected: (_) {
+                        drawerOpen.value = false;
+                        selected.value = 1;
+                      },
+                      onConversationActivated: () => drawerOpen.value = false,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -437,10 +526,14 @@ class _LoadingPageState extends State<_LoadingPage> {
   @override
   Widget build(BuildContext context) {
     widget.host.builds[widget.index]++;
-    return CustomPaint(
+    final content = CustomPaint(
       painter: _LoadingPainter(widget.index, widget.host),
       child: Center(child: Text('Page ${widget.index}')),
     );
+    if (widget.host.transparentSurface) {
+      return OperitGlassSurface(color: Colors.white, child: content);
+    }
+    return content;
   }
 }
 
@@ -457,7 +550,8 @@ class _LoadingPainter extends CustomPainter {
     host.paints[index]++;
     host.lastPaintedTick[index] = host.loadingTick.value;
     canvas.drawRect(
-      Offset.zero & size,
+      Offset.zero &
+          Size(size.width, host.transparentSurface ? 16 : size.height),
       Paint()
         ..color = host.loadingTick.value.isEven ? Colors.white : Colors.blue,
     );
@@ -466,4 +560,24 @@ class _LoadingPainter extends CustomPainter {
   /// Retains the static delegate while its repaint source drives loading frames.
   @override
   bool shouldRepaint(covariant _LoadingPainter oldDelegate) => false;
+}
+
+class _StripePainter extends CustomPainter {
+  /// Creates a high-contrast background for detecting missing blur in motion.
+  const _StripePainter();
+
+  /// Paints stripes narrow enough to blend to gray under the glass kernel.
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var x = 0.0; x < size.width; x += 4) {
+      canvas.drawRect(
+        Rect.fromLTWH(x, 0, 4, size.height),
+        Paint()..color = (x / 4).toInt().isEven ? Colors.black : Colors.white,
+      );
+    }
+  }
+
+  /// Retains the fixed pattern across page and drawer frames.
+  @override
+  bool shouldRepaint(covariant _StripePainter oldDelegate) => false;
 }

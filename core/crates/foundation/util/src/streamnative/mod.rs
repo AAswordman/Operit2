@@ -1,3 +1,4 @@
+pub mod MarkdownInlineStream;
 pub mod NativeMarkdownSplitter;
 pub mod NativeMarkdownStreamOperators;
 pub mod NativeXmlSplitter;

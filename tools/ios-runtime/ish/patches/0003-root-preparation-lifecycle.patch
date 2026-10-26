@@ -1,0 +1,954 @@
+diff --git a/app/LinuxInterop.c b/app/LinuxInterop.c
+--- a/app/LinuxInterop.c
++++ b/app/LinuxInterop.c
+@@ -35,9 +35,10 @@
+ 
+ extern void run_kernel(void);
+ 
+-void actuate_kernel(const char *cmdline) {
++int actuate_kernel(const char *cmdline) {
+     strcpy(boot_command_line, cmdline);
+     run_kernel();
++    return ish_rootfs_status;
+ }
+ 
+ static int panic_report(struct notifier_block *nb, unsigned long action, void *data) {
+diff --git a/app/LinuxInterop.h b/app/LinuxInterop.h
+--- a/app/LinuxInterop.h
++++ b/app/LinuxInterop.h
+@@ -22,7 +22,10 @@
+ 
+ // call into ios from kernel:
+ 
+-void actuate_kernel(const char *cmdline);
++int actuate_kernel(const char *cmdline);
++#ifdef __KERNEL__
++extern int ish_rootfs_status;
++#endif
+ 
+ void ReportPanic(const char *message);
+ void ConsoleLog(const char *data, unsigned len);
+diff --git a/app/LinuxRoot.c b/app/LinuxRoot.c
+--- a/app/LinuxRoot.c
++++ b/app/LinuxRoot.c
+@@ -11,32 +11,53 @@
+ #include <linux/fs.h>
+ #include <linux/errname.h>
+ #include <linux/device.h>
++#include <linux/completion.h>
++#include <linux/errno.h>
+ #include <uapi/linux/mount.h>
+ #include "LinuxInterop.h"
+ 
+ void FsInitialize(void);
+ 
++int ish_rootfs_status = -EINPROGRESS;
++
++// Reuse run_kernel's startup condition to return a failed boot to the host.
++// PID 1 must stay parked: returning would run Linux's missing-root/init panic.
++// The host retains this failure and never queues sessions or boots Linux again.
++static void __init ish_rootfs_failed(int error) {
++    extern int notify_startup(void);
++    DECLARE_COMPLETION(parked);
++    ish_rootfs_status = error;
++    notify_startup();
++    for (;;)
++        wait_for_completion(&parked);
++}
++
+ static __init int ish_rootfs(void) {
+-    rootfs_mounted = true;
+-
+     const char *fakefs_path = DefaultRootPath();
+     int err = do_mount(fakefs_path, "/root", "fakefs", MS_SILENT, NULL);
+     if (err < 0) {
+-        pr_emerg("ish: failed to mount fakefs root from %s: %s\n", fakefs_path, errname(err));
+-        return err;
++        pr_err("ish: failed to mount fakefs root from %s: %s\n", fakefs_path, errname(err));
++        ish_rootfs_failed(err);
+     }
+-    init_chdir("/root");
+-
+-    devtmpfs_mount();
++    err = init_chdir("/root");
++    if (err < 0)
++        ish_rootfs_failed(err);
++    err = devtmpfs_mount();
++    if (err < 0)
++        ish_rootfs_failed(err);
+     err = do_mount("proc", "proc", "proc", MS_SILENT, NULL);
+-    if (err < 0) {
+-        pr_warn("ish: failed to mount procfs: %s", errname(err));
+-    }
+-
+-    do_mount(".", "/", NULL, MS_MOVE, NULL);
+-    init_chroot(".");
++    if (err < 0)
++        ish_rootfs_failed(err);
++    err = do_mount(".", "/", NULL, MS_MOVE, NULL);
++    if (err < 0)
++        ish_rootfs_failed(err);
++    err = init_chroot(".");
++    if (err < 0)
++        ish_rootfs_failed(err);
+ 
+     FsInitialize();
++    rootfs_mounted = true;
++    ish_rootfs_status = 0;
+     return 0;
+ }
+ 
+diff --git a/fs/fake-db.c b/fs/fake-db.c
+--- a/fs/fake-db.c
++++ b/fs/fake-db.c
+@@ -1,4 +1,5 @@
+ #include <string.h>
++#include <stdlib.h>
+ #include <sys/stat.h>
+ #include "kernel/errno.h"
+ #include "debug.h"
+@@ -16,13 +17,6 @@
+         default:
+             die("sqlite error: %d %#x %s", errcode, sqlite3_extended_errcode(fs->db), sqlite3_errmsg(fs->db));
+     }
+-}
+-
+-static sqlite3_stmt *db_prepare(struct fakefs_db *fs, const char *stmt) {
+-    sqlite3_stmt *statement;
+-    sqlite3_prepare_v2(fs->db, stmt, strlen(stmt) + 1, &statement, NULL);
+-    db_check_error(fs);
+-    return statement;
+ }
+ 
+ bool db_exec(struct fakefs_db *fs, sqlite3_stmt *stmt) {
+@@ -176,94 +170,119 @@
+ }
+ 
+ extern int fakefs_rebuild(struct fakefs_db *fs, int root_fd);
+-extern int fakefs_migrate(struct fakefs_db *fs, int root_fd);
+-
+-int fake_db_init(struct fakefs_db *fs, const char *db_path, int root_fd) {
+-    int err = sqlite3_open_v2(db_path, &fs->db, SQLITE_OPEN_READWRITE, NULL);
+-    if (err != SQLITE_OK) {
+-        printk("error opening database: %s\n", sqlite3_errmsg(fs->db));
+-        sqlite3_close(fs->db);
+-        return _EINVAL;
+-    }
++extern int fakefs_migrate(struct fakefs_db *fs);
++
++// Preparation is called by the host root owner before starting Linux.
++// The migration, inode rebuild and inode marker commit together.
++int fake_db_prepare(const char *db_path, int root_fd, char **error_out) {
++    struct fakefs_db fs = {0};
++    sqlite3_stmt *statement = NULL;
++    int result = _EIO;
++    if (sqlite3_open_v2(db_path, &fs.db, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK)
++        goto out;
++    sqlite3_busy_timeout(fs.db, 1000);
++    if (sqlite3_exec(fs.db, "pragma journal_mode=wal; pragma foreign_keys=on; begin immediate",
++                     NULL, NULL, NULL) != SQLITE_OK)
++        goto out;
++    result = fakefs_migrate(&fs);
++    if (result < 0)
++        goto out;
++    result = _EIO;
++    struct stat statbuf;
++    if (stat(db_path, &statbuf) < 0)
++        goto out;
++    if (sqlite3_prepare_v2(fs.db, "select db_inode from meta", -1, &statement, NULL) != SQLITE_OK ||
++        sqlite3_step(statement) != SQLITE_ROW)
++        goto out;
++    bool rebuild = (uint64_t) sqlite3_column_int64(statement, 0) != (uint64_t) statbuf.st_ino;
++    sqlite3_finalize(statement);
++    statement = NULL;
++    if (rebuild) {
++        result = fakefs_rebuild(&fs, root_fd);
++        if (result < 0)
++            goto out;
++    }
++    result = _EIO;
++    if (sqlite3_prepare_v2(fs.db, "update meta set db_inode = ?", -1, &statement, NULL) != SQLITE_OK ||
++        sqlite3_bind_int64(statement, 1, statbuf.st_ino) != SQLITE_OK ||
++        sqlite3_step(statement) != SQLITE_DONE)
++        goto out;
++    sqlite3_finalize(statement);
++    statement = NULL;
++    if (sqlite3_exec(fs.db,
++            "delete from stats where not exists (select 1 from paths where inode = stats.inode); commit",
++            NULL, NULL, NULL) != SQLITE_OK)
++        goto out;
++    result = 0;
++out:
++    if (result < 0 && error_out != NULL) {
++        const char *message = result == _ENOMEM ? "Out of memory preparing iSH root" :
++            sqlite3_errcode(fs.db) == SQLITE_OK ? "iSH root filesystem preparation failed" : sqlite3_errmsg(fs.db);
++        *error_out = strdup(message);
++    }
++    sqlite3_finalize(statement);
++    if (fs.db != NULL) {
++        if (!sqlite3_get_autocommit(fs.db))
++            sqlite3_exec(fs.db, "rollback", NULL, NULL, NULL);
++        sqlite3_close(fs.db);
++    }
++    return result;
++}
++
++int fake_db_init(struct fakefs_db *fs, const char *db_path) {
++    int err = _EIO;
++    if (sqlite3_open_v2(db_path, &fs->db, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK)
++        goto fail;
+     sqlite3_busy_timeout(fs->db, 1000);
+-    sqlite3_create_function(fs->db, "change_prefix", 3, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, sqlite_func_change_prefix, NULL, NULL);
+-    db_check_error(fs);
+-
+-    // let's do WAL mode
+-    sqlite3_stmt *statement = db_prepare(fs, "pragma journal_mode=wal");
+-    db_check_error(fs);
+-    sqlite3_step(statement);
+-    db_check_error(fs);
+-    sqlite3_finalize(statement);
+-
+-    statement = db_prepare(fs, "pragma foreign_keys=true");
+-    db_check_error(fs);
+-    sqlite3_step(statement);
+-    db_check_error(fs);
+-    sqlite3_finalize(statement);
+-
+-#if DEBUG_sql
+-    sqlite3_trace_v2(mount->db, SQLITE_TRACE_STMT, trace_callback, NULL);
+-#endif
+-
+-    err = fakefs_migrate(fs, root_fd);
+-    if (err < 0)
+-        return err;
+-
+-    // after the filesystem is compressed, transmitted, and uncompressed, the
+-    // inode numbers will be different. to detect this, the inode of the
+-    // database file is stored inside the database and compared with the actual
+-    // database file inode, and if they're different we rebuild the database.
+-    struct stat statbuf;
+-    if (stat(db_path, &statbuf) < 0) ERRNO_DIE("stat database");
+-    ino_t db_inode = statbuf.st_ino;
+-    statement = db_prepare(fs, "select db_inode from meta");
+-    if (sqlite3_step(statement) == SQLITE_ROW) {
+-        if ((uint64_t) sqlite3_column_int64(statement, 0) != db_inode) {
+-            sqlite3_finalize(statement);
+-            statement = NULL;
+-            int err = fakefs_rebuild(fs, root_fd);
+-            if (err < 0) {
+-                return err;
+-            }
+-        }
+-    }
+-    if (statement != NULL)
+-        sqlite3_finalize(statement);
+-
+-    // save current inode
+-    statement = db_prepare(fs, "update meta set db_inode = ?");
+-    sqlite3_bind_int64(statement, 1, (int64_t) db_inode);
+-    db_check_error(fs);
+-    sqlite3_step(statement);
+-    db_check_error(fs);
+-    sqlite3_finalize(statement);
+-
+-    // delete orphaned stats
+-    statement = db_prepare(fs, "delete from stats where not exists (select 1 from paths where inode = stats.inode)");
+-    db_check_error(fs);
+-    sqlite3_step(statement);
+-    db_check_error(fs);
+-    sqlite3_finalize(statement);
+-
++    if (sqlite3_create_function(fs->db, "change_prefix", 3, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
++            NULL, sqlite_func_change_prefix, NULL, NULL) != SQLITE_OK ||
++        sqlite3_exec(fs->db, "pragma foreign_keys=on", NULL, NULL, NULL) != SQLITE_OK)
++        goto fail;
++
++    sqlite3_stmt *prepared = NULL;
++    struct stat st;
++    bool ready = stat(db_path, &st) == 0 &&
++        sqlite3_prepare_v2(fs->db,
++            "select db_inode, (select user_version from pragma_user_version) from meta where id=0",
++            -1, &prepared, NULL) == SQLITE_OK &&
++        sqlite3_step(prepared) == SQLITE_ROW &&
++        (uint64_t) sqlite3_column_int64(prepared, 0) == (uint64_t) st.st_ino &&
++        sqlite3_column_int(prepared, 1) == 3;
++    sqlite3_finalize(prepared);
++    if (!ready)
++        goto fail;
++
++    // Only open prepared runtime statements. No migration/rebuild on a Linux stack.
++#define OPEN_STATEMENT(sql) ({ \
++    sqlite3_stmt *stmt = NULL; \
++    if (sqlite3_prepare_v2(fs->db, sql, -1, &stmt, NULL) != SQLITE_OK) { \
++        sqlite3_finalize(stmt); goto fail; \
++    } \
++    stmt; \
++})
+     fs->lock = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
+-    fs->stmt.begin_deferred = db_prepare(fs, "begin deferred");
+-    fs->stmt.begin_immediate = db_prepare(fs, "begin immediate");
+-    fs->stmt.commit = db_prepare(fs, "commit");
+-    fs->stmt.rollback = db_prepare(fs, "rollback");
+-    fs->stmt.path_get_inode = db_prepare(fs, "select inode from paths where path = ?");
+-    fs->stmt.path_read_stat = db_prepare(fs, "select inode, stat from stats natural join paths where path = ?");
+-    fs->stmt.path_create_stat = db_prepare(fs, "insert into stats (stat) values (?)");
+-    fs->stmt.path_create_path = db_prepare(fs, "insert or replace into paths values (?, last_insert_rowid())");
+-    fs->stmt.inode_read_stat = db_prepare(fs, "select stat from stats where inode = ?");
+-    fs->stmt.inode_write_stat = db_prepare(fs, "update stats set stat = ? where inode = ?");
+-    fs->stmt.path_link = db_prepare(fs, "insert or replace into paths (path, inode) values (?, ?)");
+-    fs->stmt.path_unlink = db_prepare(fs, "delete from paths where path = ?");
+-    fs->stmt.path_rename = db_prepare(fs, "update or replace paths set path = change_prefix(path, ?, ?) "
++    if (fs->lock == NULL) { err = _ENOMEM; goto fail; }
++    fs->stmt.begin_deferred = OPEN_STATEMENT("begin deferred");
++    fs->stmt.begin_immediate = OPEN_STATEMENT("begin immediate");
++    fs->stmt.commit = OPEN_STATEMENT("commit");
++    fs->stmt.rollback = OPEN_STATEMENT("rollback");
++    fs->stmt.path_get_inode = OPEN_STATEMENT("select inode from paths where path = ?");
++    fs->stmt.path_read_stat = OPEN_STATEMENT("select inode, stat from stats natural join paths where path = ?");
++    fs->stmt.path_create_stat = OPEN_STATEMENT("insert into stats (stat) values (?)");
++    fs->stmt.path_create_path = OPEN_STATEMENT("insert or replace into paths values (?, last_insert_rowid())");
++    fs->stmt.inode_read_stat = OPEN_STATEMENT("select stat from stats where inode = ?");
++    fs->stmt.inode_write_stat = OPEN_STATEMENT("update stats set stat = ? where inode = ?");
++    fs->stmt.path_link = OPEN_STATEMENT("insert or replace into paths (path, inode) values (?, ?)");
++    fs->stmt.path_unlink = OPEN_STATEMENT("delete from paths where path = ?");
++    fs->stmt.path_rename = OPEN_STATEMENT("update or replace paths set path = change_prefix(path, ?, ?) "
+             "where (path >= ? and path < ?) or path = ?");
+-    fs->stmt.path_from_inode = db_prepare(fs, "select path from paths where inode = ?");
+-    fs->stmt.try_cleanup_inode = db_prepare(fs, "delete from stats where inode = ? and not exists (select 1 from paths where inode = stats.inode)");
++    fs->stmt.path_from_inode = OPEN_STATEMENT("select path from paths where inode = ?");
++    fs->stmt.try_cleanup_inode = OPEN_STATEMENT("delete from stats where inode = ? and not exists (select 1 from paths where inode = stats.inode)");
++#undef OPEN_STATEMENT
+     return 0;
++fail:
++    fake_db_deinit(fs);
++    return err;
+ }
+ 
+ int fake_db_deinit(struct fakefs_db *fs) {
+@@ -283,7 +302,10 @@
+         sqlite3_finalize(fs->stmt.path_rename);
+         sqlite3_finalize(fs->stmt.path_from_inode);
+         sqlite3_finalize(fs->stmt.try_cleanup_inode);
+-        return sqlite3_close(fs->db);
++        int result = sqlite3_close(fs->db);
++        sqlite3_mutex_free(fs->lock);
++        memset(fs, 0, sizeof(*fs));
++        return result;
+     }
+     return SQLITE_OK;
+ }
+diff --git a/fs/fake-db.h b/fs/fake-db.h
+--- a/fs/fake-db.h
++++ b/fs/fake-db.h
+@@ -27,7 +27,8 @@
+     sqlite3_mutex *lock;
+ };
+ 
+-int fake_db_init(struct fakefs_db *fs, const char *db_path, int root_fd);
++int fake_db_prepare(const char *db_path, int root_fd, char **error_out);
++int fake_db_init(struct fakefs_db *fs, const char *db_path);
+ int fake_db_deinit(struct fakefs_db *fs);
+ 
+ void db_begin_read(struct fakefs_db *fs);
+diff --git a/fs/fake-migrate.c b/fs/fake-migrate.c
+--- a/fs/fake-migrate.c
++++ b/fs/fake-migrate.c
+@@ -1,15 +1,15 @@
++#include <stdio.h>
+ #include "kernel/fs.h"
+ #include "debug.h"
+ #include "kernel/errno.h"
+ #include "fs/fake-db.h"
+-#include "fs/sqlutil.h"
++
+ 
+ // The value of the user_version pragma is used to decide what needs migrating.
+ 
+ #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+ static struct migration {
+     const char *sql;
+-    void (*migrate)(struct fakefs_db *fs);
+ } migrations[] = {
+     // version 1: add another index
+     {
+@@ -34,29 +34,30 @@
+     },
+ };
+ 
+-int fakefs_migrate(struct fakefs_db *fs, int UNUSED(root_fd)) {
++// The host preparation transaction owns commit/rollback. Mounting never migrates.
++int fakefs_migrate(struct fakefs_db *fs) {
+     sqlite3 *db = fs->db;
+-    int err;
+-    sqlite3_stmt *user_version = PREPARE("pragma user_version");
+-    STEP(user_version);
+-    int version = sqlite3_column_int(user_version, 0);
+-    FINALIZE(user_version);
+-
+-    EXEC("begin");
+-    int versions = sizeof(migrations)/sizeof(migrations[0]);
++    sqlite3_stmt *statement = NULL;
++    int err = sqlite3_prepare_v2(db, "pragma user_version", -1, &statement, NULL);
++    if (err != SQLITE_OK)
++        return _EIO;
++    err = sqlite3_step(statement);
++    int version = sqlite3_column_int(statement, 0);
++    sqlite3_finalize(statement);
++    if (err != SQLITE_ROW)
++        return _EIO;
++    int versions = sizeof(migrations) / sizeof(migrations[0]);
++    if (version < 0 || version > versions)
++        return _EINVAL;
+     while (version < versions) {
+-        struct migration m = migrations[version];
+-        if (m.sql != NULL)
+-            EXEC(m.sql);
+-        if (m.migrate != NULL)
+-            m.migrate(fs);
++        err = sqlite3_exec(db, migrations[version].sql, NULL, NULL, NULL);
++        if (err != SQLITE_OK)
++            return _EIO;
+         version++;
+     }
+-    // for some reason placeholders aren't allowed in pragmas
+-    char *pragma_user_version = sqlite3_mprintf("pragma user_version = %d", version);
+-    EXEC(pragma_user_version);
+-    sqlite3_free(pragma_user_version);
+-    EXEC("commit");
+-
++    char pragma[64];
++    snprintf(pragma, sizeof(pragma), "pragma user_version = %d", version);
++    if (sqlite3_exec(db, pragma, NULL, NULL, NULL) != SQLITE_OK)
++        return _EIO;
+     return 0;
+ }
+diff --git a/fs/fake-rebuild.c b/fs/fake-rebuild.c
+--- a/fs/fake-rebuild.c
++++ b/fs/fake-rebuild.c
+@@ -1,122 +1,123 @@
++#include <errno.h>
++#include <fcntl.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+-#include "fs/sqlutil.h"
+ #include "fs/fake-db.h"
+ #include "kernel/errno.h"
+ #include "util/list.h"
+-#include "debug.h"
+ 
+-// rebuild process in pseudocode:
+-//
+-// table = {}
+-// for each path, inode:
+-//     real_inode = stat(path).st_ino
+-//     if inode in table:
+-//         unlink(path)
+-//         link(table[inode], path)
+-//     else:
+-//         table[inode] = path
+-//     stat = db['stat ' + inode]
+-//     new_db['inode ' + path] = real_inode
+-//     new_db['stat ' + real_inode] = stat
+-
+-// ad hoc hashtable
+ struct entry {
+     ino_t inode;
++    ino_t real_inode;
+     char *path;
+     struct list chain;
+ };
+ 
++// Run only during host preparation, inside its database transaction.
++// Files are replaced by a hardlink only after the replacement link exists.
+ int fakefs_rebuild(struct fakefs_db *fs, int root_fd) {
+     sqlite3 *db = fs->db;
+-    int err;
+-
+-    EXEC("begin");
+-    EXEC("create table paths_old (path blob primary key, inode integer)");
+-    EXEC("create table stats_old (inode integer primary key, stat blob)");
+-    EXEC("insert into paths_old select * from paths");
+-    EXEC("insert into stats_old select * from stats");
+-    EXEC("delete from paths");
+-    EXEC("delete from stats");
+-    sqlite3_stmt *get_paths = PREPARE("select path, inode from paths_old");
+-    sqlite3_stmt *read_stat = PREPARE("select stat from stats_old where inode = ?");
+-    sqlite3_stmt *write_path = PREPARE("insert into paths (path, inode) values (?, ?)");
+-    sqlite3_stmt *write_stat = PREPARE("replace into stats (inode, stat) values (?, ?)");
+-
+-    struct list hashtable[2000];
+-#define HASH_SIZE (sizeof(hashtable)/sizeof(hashtable[0]))
++    sqlite3_stmt *paths = NULL, *statements[2] = {NULL, NULL};
++    enum { HASH_SIZE = 2000 };
++    struct list *buckets = calloc(HASH_SIZE, sizeof(*buckets));
++    if (buckets == NULL)
++        return _ENOMEM;
+     for (unsigned i = 0; i < HASH_SIZE; i++)
+-        list_init(&hashtable[i]);
+-
+-    while (STEP(get_paths)) {
+-        const char *path = (const char *) sqlite3_column_text(get_paths, 0);
+-        ino_t inode = sqlite3_column_int64(get_paths, 1);
+-
+-        // grab real inode
+-        struct stat stat;
+-        int err = fstatat(root_fd, fix_path(path), &stat, 0);
+-        if (err < 0)
+-            continue;
+-        ino_t real_inode = stat.st_ino;
+-
+-        // restore hardlinks
+-        struct list *bucket = &hashtable[inode % HASH_SIZE];
+-        struct entry *entry;
+-        bool found = false;
++        list_init(&buckets[i]);
++    int result = _EIO;
++    if (sqlite3_exec(db,
++            "create temp table rebuilt_paths (path blob primary key, inode integer);"
++            "create temp table rebuilt_stats (inode integer primary key, stat blob);",
++            NULL, NULL, NULL) != SQLITE_OK)
++        goto out;
++    if (sqlite3_prepare_v2(db, "select path, inode, stat from paths join stats using(inode)",
++                          -1, &paths, NULL) != SQLITE_OK ||
++        sqlite3_prepare_v2(db, "insert into rebuilt_paths values (?, ?)", -1, &statements[0], NULL) != SQLITE_OK ||
++        sqlite3_prepare_v2(db, "insert or replace into rebuilt_stats values (?, ?)", -1, &statements[1], NULL) != SQLITE_OK)
++        goto out;
++    int step;
++    unsigned long serial = 0;
++    while ((step = sqlite3_step(paths)) == SQLITE_ROW) {
++        const char *path = (const char *) sqlite3_column_text(paths, 0);
++        ino_t inode = sqlite3_column_int64(paths, 1);
++        struct stat st;
++        if (fstatat(root_fd, fix_path(path), &st, 0) < 0) {
++            if (errno == ENOENT)
++                continue;
++            result = _EIO;
++            goto out;
++        }
++        struct list *bucket = &buckets[inode % HASH_SIZE];
++        struct entry *entry, *match = NULL;
+         list_for_each_entry(bucket, entry, chain) {
+             if (entry->inode == inode) {
+-                unlinkat(root_fd, fix_path(path), 0);
+-                linkat(root_fd, fix_path(entry->path), root_fd, fix_path(path), 0);
+-                found = true;
++                match = entry;
+                 break;
+             }
+         }
+-        if (!found) {
+-            entry = malloc(sizeof(struct entry));
++        if (match != NULL && match->real_inode != st.st_ino) {
++            char temporary[96];
++            int linked;
++            do {
++                snprintf(temporary, sizeof(temporary), ".ish-rebuild-%ld-%lu", (long)getpid(), serial++);
++                linked = linkat(root_fd, fix_path(match->path), root_fd, temporary, 0);
++            } while (linked < 0 && errno == EEXIST);
++            if (linked < 0)
++                goto out;
++            if (renameat(root_fd, temporary, root_fd, fix_path(path)) < 0) {
++                unlinkat(root_fd, temporary, 0);
++                goto out;
++            }
++            st.st_ino = match->real_inode;
++        } else if (match == NULL) {
++            entry = calloc(1, sizeof(*entry));
++            if (entry == NULL) {
++                result = _ENOMEM;
++                goto out;
++            }
++            entry->path = strdup(path);
++            if (entry->path == NULL) {
++                free(entry);
++                result = _ENOMEM;
++                goto out;
++            }
+             entry->inode = inode;
+-            entry->path = strdup(path);
++            entry->real_inode = st.st_ino;
+             list_add(bucket, &entry->chain);
+         }
+-
+-        // extract the stat so we can copy it
+-        err = sqlite3_bind_int64(read_stat, 1, inode); CHECK_ERR();
+-        if (STEP(read_stat) == false) {
+-            RESET(read_stat);
+-            continue;
+-        }
+-        const void *stat_data = sqlite3_column_blob(read_stat, 0);
+-        size_t stat_data_size = sqlite3_column_bytes(read_stat, 0);
+-
+-        // store all the information in the new database
+-        err = sqlite3_bind_int64(write_stat, 1, real_inode); CHECK_ERR();
+-        err = sqlite3_bind_blob(write_stat, 2, stat_data, stat_data_size, SQLITE_TRANSIENT); CHECK_ERR();
+-        STEP(write_stat);
+-        RESET(write_stat);
+-        err = sqlite3_bind_blob(write_path, 1, path, strlen(path), SQLITE_TRANSIENT); CHECK_ERR();
+-        err = sqlite3_bind_int64(write_path, 2, real_inode); CHECK_ERR();
+-        STEP(write_path);
+-        RESET(write_path);
+-
+-        RESET(read_stat);
++        if (sqlite3_bind_blob(statements[0], 1, path, sqlite3_column_bytes(paths, 0), SQLITE_TRANSIENT) != SQLITE_OK ||
++            sqlite3_bind_int64(statements[0], 2, st.st_ino) != SQLITE_OK ||
++            sqlite3_step(statements[0]) != SQLITE_DONE || sqlite3_reset(statements[0]) != SQLITE_OK ||
++            sqlite3_bind_int64(statements[1], 1, st.st_ino) != SQLITE_OK ||
++            sqlite3_bind_blob(statements[1], 2, sqlite3_column_blob(paths, 2), sqlite3_column_bytes(paths, 2), SQLITE_TRANSIENT) != SQLITE_OK ||
++            sqlite3_step(statements[1]) != SQLITE_DONE || sqlite3_reset(statements[1]) != SQLITE_OK)
++            goto out;
+     }
+-
++    if (step != SQLITE_DONE)
++        goto out;
++    if (sqlite3_exec(db,
++            "delete from paths; delete from stats;"
++            "insert into stats select * from rebuilt_stats;"
++            "insert into paths select * from rebuilt_paths;"
++            "drop table rebuilt_paths; drop table rebuilt_stats;",
++            NULL, NULL, NULL) != SQLITE_OK)
++        goto out;
++    result = 0;
++out:
++    sqlite3_finalize(paths);
++    sqlite3_finalize(statements[0]);
++    sqlite3_finalize(statements[1]);
+     for (unsigned i = 0; i < HASH_SIZE; i++) {
+-        struct entry *entry, *tmp;
+-        list_for_each_entry_safe(&hashtable[i], entry, tmp, chain) {
++        struct entry *entry, *next;
++        list_for_each_entry_safe(&buckets[i], entry, next, chain) {
+             list_remove(&entry->chain);
+             free(entry->path);
+             free(entry);
+         }
+     }
+-
+-    EXEC("drop table paths_old");
+-    EXEC("drop table stats_old");
+-    EXEC("commit");
+-    FINALIZE(get_paths);
+-    FINALIZE(read_stat);
+-    FINALIZE(write_path);
+-    FINALIZE(write_stat);
+-    return 0;
++    free(buckets);
++    return result;
+ }
+diff --git a/fs/fake.c b/fs/fake.c
+--- a/fs/fake.c
++++ b/fs/fake.c
+@@ -371,7 +371,10 @@
+     if (err < 0)
+         return err;
+ 
+-    err = fake_db_init(&mount->fakefs, db_path, mount->root_fd);
++    err = fake_db_prepare(db_path, mount->root_fd, NULL);
++    if (err < 0)
++        return err;
++    err = fake_db_init(&mount->fakefs, db_path);
+     if (err < 0)
+         return err;
+ 
+diff --git a/linux/fakefs.c b/linux/fakefs.c
+--- a/linux/fakefs.c
++++ b/linux/fakefs.c
+@@ -709,26 +709,45 @@
+     struct fakefs_context *ctx = fc->fs_private;
+ 
+     char *path = kmalloc(strlen(ctx->path) + 10, GFP_KERNEL);
++    if (path == NULL) {
++        kfree(info);
++        fc->s_fs_info = NULL;
++        return -ENOMEM;
++    }
+     strcpy(path, ctx->path);
+     strcat(path, "/data");
+     info->root_fd = host_open(path, O_RDONLY);
+     if (info->root_fd < 0) {
++        int err = info->root_fd;
+         kfree(path);
+-        return info->root_fd;
++        kfree(info);
++        fc->s_fs_info = NULL;
++        return err;
+     }
+ 
+     strcpy(path, ctx->path);
+     strcat(path, "/meta.db");
+-    int err = fake_db_init(&info->db, path, info->root_fd);
++    int err = fake_db_init(&info->db, path);
+     if (err < 0) {
+         kfree(path);
++        host_close(info->root_fd);
++        kfree(info);
++        fc->s_fs_info = NULL;
+         return err;
+     }
+     kfree(path);
+ 
+     err = vfs_get_super(fc, vfs_get_keyed_super, fakefs_fill_super);
+-    if (err < 0)
+-        return err;
++    if (err < 0) {
++        // sget_fc takes ownership only after allocating the superblock.
++        if (fc->s_fs_info != NULL) {
++            fake_db_deinit(&info->db);
++            host_close(info->root_fd);
++            kfree(info);
++            fc->s_fs_info = NULL;
++        }
++        return err;
++    }
+     return 0;
+ }
+ 
+diff --git a/tools/fakefs.c b/tools/fakefs.c
+--- a/tools/fakefs.c
++++ b/tools/fakefs.c
+@@ -77,7 +77,22 @@
+     pragma user_version=3;
+ );
+ 
++#undef FILL_ERR
++#define FILL_ERR(_type, _code, _message) do { \
++    err_out->line = __LINE__; \
++    err_out->type = _type; \
++    err_out->code = _code; \
++    err_out->message = strdup((_message) ? (_message) : "iSH import failed"); \
++    goto out; \
++} while (0)
++
+ bool fakefs_import(const char *archive_path, const char *fs, struct fakefsify_error *err_out, struct progress p) {
++    int root_fd = -1, fd = -1;
++    sqlite3 *db = NULL;
++    struct archive *archive = NULL;
++    sqlite3_stmt *insert_stat = NULL, *insert_path = NULL, *insert_hardlink = NULL;
++    char *entry_path_copy = NULL;
++    bool ok = false;
+     int err = mkdir(fs, 0777);
+     if (err < 0)
+         POSIX_ERR();
+@@ -86,13 +101,12 @@
+     char path_tmp[PATH_MAX];
+     snprintf(path_tmp, sizeof(path_tmp), "%s/data", fs);
+     err = mkdir(path_tmp, 0777);
+-    int root_fd = open(path_tmp, O_RDONLY);
++    root_fd = open(path_tmp, O_RDONLY);
+     if (root_fd < 0)
+         POSIX_ERR();
+ 
+     // open the database
+     snprintf(path_tmp, sizeof(path_tmp), "%s/meta.db", fs);
+-    sqlite3 *db;
+     err = sqlite3_open_v2(path_tmp, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+     CHECK_ERR();
+     EXEC("pragma journal_mode=wal")
+@@ -100,7 +114,7 @@
+     EXEC(schema);
+ 
+     // open the archive
+-    struct archive *archive = archive_read_new();
++    archive = archive_read_new();
+     if (archive == NULL)
+         ARCHIVE_ERR(archive);
+     archive_read_support_filter_gzip(archive);
+@@ -113,9 +127,9 @@
+         POSIX_ERR();
+     size_t archive_bytes = real_stat.st_size;
+ 
+-    sqlite3_stmt *insert_stat = PREPARE("insert into stats (stat) values (?)");
+-    sqlite3_stmt *insert_path = PREPARE("insert or replace into paths values (?, ?)");
+-    sqlite3_stmt *insert_hardlink = PREPARE("insert or replace into paths values (?, (select inode from paths where path = ? limit 1))");
++    insert_stat = PREPARE("insert into stats (stat) values (?)");
++    insert_path = PREPARE("insert or replace into paths values (?, ?)");
++    insert_hardlink = PREPARE("insert or replace into paths values (?, (select inode from paths where path = ? limit 1))");
+ 
+     bool archive_has_root = false;
+ 
+@@ -149,7 +163,8 @@
+         }
+ 
+         // mkdir -p
+-        char *entry_path_copy = strdup(entry_path);
++        entry_path_copy = strdup(entry_path);
++        if (entry_path_copy == NULL) { errno = ENOMEM; POSIX_ERR(); }
+         char *slash = entry_path_copy;
+         while ((slash = strchr(*slash ? slash + 1 : slash, '/')) != NULL) {
+             *slash = '\0';
+@@ -161,8 +176,9 @@
+             }
+         }
+         free(entry_path_copy);
+-
+-        int fd = -1;
++        entry_path_copy = NULL;
++
++        fd = -1;
+         // first, create node
+         switch (archive_entry_filetype(entry)) {
+             case AE_IFREG:
+@@ -211,6 +227,7 @@
+         }
+         if (fd != -1)
+             close(fd);
++        fd = -1;
+ 
+         struct timespec times[2] = {
+             // for utimes, atime is first, mtime is second
+@@ -251,17 +268,36 @@
+         STEP_RESET(insert_path);
+     }
+ 
+-    FINALIZE(insert_stat);
+-    FINALIZE(insert_path);
+-    FINALIZE(insert_hardlink);
+-    EXEC("commit");
+-    sqlite3_close(db);
+-    close(root_fd);
+-
+-    if (archive_read_free(archive) != ARCHIVE_OK)
+-        ARCHIVE_ERR(archive);
+-    return true;
++    err = sqlite3_exec(db, "commit", NULL, NULL, NULL);
++    CHECK_ERR();
++    ok = true;
++out:
++    if (fd != -1)
++        close(fd);
++    free(entry_path_copy);
++    sqlite3_finalize(insert_stat);
++    sqlite3_finalize(insert_path);
++    sqlite3_finalize(insert_hardlink);
++    if (db != NULL) {
++        if (!sqlite3_get_autocommit(db))
++            sqlite3_exec(db, "rollback", NULL, NULL, NULL);
++        sqlite3_close(db);
++    }
++    if (root_fd != -1)
++        close(root_fd);
++    if (archive != NULL)
++        archive_read_free(archive);
++    return ok;
+ }
++
++#undef FILL_ERR
++#define FILL_ERR(_type, _code, _message) do { \
++    err_out->line = __LINE__; \
++    err_out->type = _type; \
++    err_out->code = _code; \
++    err_out->message = strdup(_message); \
++    return false; \
++} while (0)
+ 
+ bool fakefs_export(const char *fs, const char *archive_path, struct fakefsify_error *err_out, struct progress p) {
+     // open the archive
+@@ -387,3 +423,86 @@
+     archive_write_free(archive);
+     return true;
+ }
++
++// Validate legacy roots too: a new marker file is not required for adoption.
++bool fakefs_prepare(const char *fs, struct fakefsify_error *err_out) {
++    char path[PATH_MAX];
++    snprintf(path, sizeof(path), "%s/data", fs);
++    int root_fd = open(path, O_RDONLY | O_DIRECTORY);
++    if (root_fd < 0) {
++        err_out->type = ERR_POSIX;
++        err_out->code = errno;
++        err_out->message = strdup(strerror(errno));
++        return false;
++    }
++    snprintf(path, sizeof(path), "%s/meta.db", fs);
++    sqlite3 *db = NULL;
++    sqlite3_stmt *statement = NULL;
++    bool ok = false;
++    int err = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
++    err_out->type = ERR_SQLITE;
++    if (err != SQLITE_OK)
++        goto out;
++    sqlite3_busy_timeout(db, 1000);
++    err = sqlite3_prepare_v2(db, "pragma user_version", -1, &statement, NULL);
++    if (err != SQLITE_OK || (err = sqlite3_step(statement)) != SQLITE_ROW)
++        goto out;
++    int version = sqlite3_column_int(statement, 0);
++    sqlite3_finalize(statement);
++    statement = NULL;
++    // Only this exact state is known to be an uncommitted legacy import.
++    if (version == 0) {
++        err = sqlite3_prepare_v2(db, "select count(*) from sqlite_master", -1, &statement, NULL);
++        if (err != SQLITE_OK || (err = sqlite3_step(statement)) != SQLITE_ROW)
++            goto out;
++        if (sqlite3_column_int(statement, 0) == 0) {
++            err_out->type = ERR_INCOMPLETE;
++            err_out->message = strdup("Uncommitted iSH root import");
++            goto out;
++        }
++        sqlite3_finalize(statement);
++        statement = NULL;
++    }
++    if (version < 0 || version > 3) {
++        err_out->message = strdup("Unsupported iSH root database version");
++        goto out;
++    }
++    const char *checks[] = {
++        "select id, db_inode from meta",
++        "select path, inode from paths limit 0",
++        "select inode, stat from stats limit 0",
++        "select stat from paths join stats using(inode) where path = x'' and length(stat) = 16",
++    };
++    for (unsigned i = 0; i < sizeof(checks) / sizeof(checks[0]); i++) {
++        err = sqlite3_prepare_v2(db, checks[i], -1, &statement, NULL);
++        if (err != SQLITE_OK)
++            goto out;
++        err = sqlite3_step(statement);
++        if (err != (i == 1 || i == 2 ? SQLITE_DONE : SQLITE_ROW))
++            goto out;
++        if (i == 0 && (sqlite3_column_type(statement, 0) != SQLITE_INTEGER ||
++                       sqlite3_column_int(statement, 0) != 0 ||
++                       sqlite3_column_type(statement, 1) != SQLITE_INTEGER ||
++                       sqlite3_step(statement) != SQLITE_DONE))
++            goto out;
++        sqlite3_finalize(statement);
++        statement = NULL;
++    }
++    ok = true;
++out:
++    if (!ok && err_out->message == NULL)
++        err_out->message = strdup(err == SQLITE_DONE ? "Incomplete iSH root metadata" : sqlite3_errmsg(db));
++    err_out->code = err;
++    sqlite3_finalize(statement);
++    sqlite3_close(db);
++    if (ok) {
++        char *message = NULL;
++        ok = fake_db_prepare(path, root_fd, &message) == 0;
++        if (!ok) {
++            err_out->type = ERR_SQLITE;
++            err_out->message = message;
++        }
++    }
++    close(root_fd);
++    return ok;
++}
+diff --git a/tools/fakefs.h b/tools/fakefs.h
+--- a/tools/fakefs.h
++++ b/tools/fakefs.h
+@@ -9,6 +9,7 @@
+         ERR_SQLITE,
+         ERR_POSIX,
+         ERR_CANCELLED,
++        ERR_INCOMPLETE,
+     } type;
+     int code;
+     char *message;
+@@ -20,6 +21,7 @@
+ };
+ 
+ bool fakefs_import(const char *archive_path, const char *fs, struct fakefsify_error *err_out, struct progress progress);
++bool fakefs_prepare(const char *fs, struct fakefsify_error *err_out);
+ bool fakefs_export(const char *fs, const char *archive_path, struct fakefsify_error *err_out, struct progress progress);
+ 
+ #endif

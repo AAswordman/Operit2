@@ -1,4 +1,7 @@
 declare global {
+    /** Operit2 runtime extension: alias of the standard global object. */
+    var global: typeof globalThis;
+
     interface Console {
         log(...data: any[]): void;
         info(...data: any[]): void;

@@ -59,3 +59,5 @@ pub mod EdgePortTool;
 
 #[path = "DeviceTools.rs"]
 pub mod DeviceTools;
+
+pub mod transfer;

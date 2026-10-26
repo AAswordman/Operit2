@@ -4,7 +4,20 @@
 
 import WebKit
 
-class WebViewImpl: WKWebView {
+#if os(iOS)
+  #if SWIFT_PACKAGE
+    import OperitWebViewSafety
+  #endif
+  typealias OperitPlatformWebView = OperitSafeWebView
+#else
+  typealias OperitPlatformWebView = WKWebView
+#endif
+
+#if os(macOS)
+  import AppKit
+#endif
+
+class WebViewImpl: OperitPlatformWebView {
   let api: PigeonApiProtocolWKWebView
   unowned let registrar: ProxyAPIRegistrar
 
@@ -16,11 +29,12 @@ class WebViewImpl: WKWebView {
     self.registrar = registrar
     configuration.setURLSchemeHandler(registrar.localResources, forURLScheme: "operit-vfs")
     super.init(frame: frame, configuration: configuration)
-    WebViewTheme.register(self)
-    #if os(iOS)
-      scrollView.contentInsetAdjustmentBehavior = .never
-      scrollView.automaticallyAdjustsScrollIndicatorInsets = false
+    #if os(macOS)
+      // Configure the first native frame synchronously, before Dart's background
+      // method-channel request can arrive or the platform view can be mounted.
+      operitSetBackgroundColor(.clear)
     #endif
+    WebViewTheme.register(self)
   }
 
   required init?(coder: NSCoder) {
@@ -35,28 +49,6 @@ class WebViewImpl: WKWebView {
       withApi: (api as! PigeonApiWKWebView).pigeonApiNSObject, registrar: registrar,
       instance: self as NSObject,
       forKeyPath: keyPath, of: object, change: change, context: context)
-  }
-
-  override var frame: CGRect {
-    get {
-      return super.frame
-    }
-    set {
-      super.frame = newValue
-      #if os(iOS)
-        // Prevents the contentInsets from being adjusted by iOS and gives control to Flutter.
-        scrollView.contentInset = .zero
-
-        // Adjust contentInset to compensate the adjustedContentInset so the sum will
-        //  always be 0.
-        if scrollView.adjustedContentInset != .zero {
-          let insetToAdjust = scrollView.adjustedContentInset
-          scrollView.contentInset = UIEdgeInsets(
-            top: -insetToAdjust.top, left: -insetToAdjust.left, bottom: -insetToAdjust.bottom,
-            right: -insetToAdjust.right)
-        }
-      #endif
-    }
   }
 }
 
@@ -388,3 +380,20 @@ class WebViewProxyAPIDelegate: PigeonApiDelegateWKWebView, PigeonApiDelegateUIVi
       pigeonApi: getUIViewWKWebViewAPI(pigeonApi), pigeonInstance: pigeonInstance, allow: allow)
   }
 }
+
+#if os(macOS)
+  extension WKWebView {
+    /// Paints the host background without replacing the document's own CSS.
+    func operitSetBackgroundColor(_ color: NSColor) {
+      // underPageBackgroundColor only covers the area beneath the page (e.g.
+      // overscroll). WebKit's default page canvas must also be disabled, or a
+      // transparent background still flashes white before content is painted.
+      // macOS has no public equivalent of UIKit's isOpaque for WKWebView;
+      // WebKit exposes this switch through the drawsBackground KVC key.
+      setValue(false, forKey: "drawsBackground")
+      wantsLayer = true
+      layer?.backgroundColor = color.cgColor
+      underPageBackgroundColor = color
+    }
+  }
+#endif

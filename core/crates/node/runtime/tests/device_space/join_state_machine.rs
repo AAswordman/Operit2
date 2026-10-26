@@ -41,6 +41,7 @@ fn record(status: SpaceJoinStatus) -> Record {
             deviceProfiles: Vec::new(),
             controlOperations: Vec::new(),
             topology: Vec::new(),
+            departures: Vec::new(),
         },
         accepted: None,
         unavailableSince: None,

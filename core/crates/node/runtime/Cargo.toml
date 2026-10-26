@@ -11,13 +11,18 @@ default = ["full"]
 route-catalog = []
 # Shared pairing/session engine; no ChatServiceCore, Provider or ToolPkg.
 # Networking/execution belongs to Host providers; do not enable native Tokio I/O here.
-peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "tokio/time"]
+peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:spake2", "dep:rand_core", "tokio/time"]
 peer-state = ["dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
-full = ["route-catalog", "peer-runtime", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "tokio/time"]
+full = ["route-catalog", "peer-runtime", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "dep:operit-rslink-runtime", "tokio/time"]
 test-support = []
 
 [dependencies]
 ring = { version = "0.17", features = ["wasm32_unknown_unknown_js", "less-safe-getrandom-espidf"], optional = true }
+# SPAKE2 turns the six-digit pairing code into a password-authenticated
+# exchange: an active man in the middle can no longer verify a guessed code
+# offline. getrandom stays off because the Host owns entropy on ESP32/WASM.
+spake2 = { version = "0.4", default-features = false, optional = true }
+rand_core = { version = "0.6", default-features = false, optional = true }
 uuid = { workspace = true, optional = true }
 
 operit-peer-link = { path = "../peer-link" }
@@ -26,6 +31,7 @@ futures-util = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 operit-host-api = { path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
+operit-rslink-runtime = { path = "../../rslink/runtime", optional = true }
 operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"], optional = true }
 operit-store = { path = "../../persistence/store", default-features = false, features = ["node-state"], optional = true }
 operit-tools = { path = "../../tool/services", default-features = false, optional = true }
@@ -44,4 +50,4 @@ operit-model = { path = "../../foundation/model" }
 operit-rslink-runtime = { path = "../../rslink/runtime" }
 rusqlite.workspace = true
 
-operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", features = ["tcp", "http"] }
+operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", features = ["tcp", "http", "scheduler"] }

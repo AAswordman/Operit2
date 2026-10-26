@@ -11,7 +11,6 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.InputStream
 import java.util.UUID
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Owns document metadata and lazy bounded input streams for snapshots and chat attachments. */
@@ -31,7 +30,7 @@ class DocumentInputChannel(private val activity: MainActivity) {
     )
 
     // Only this worker touches input handles. Reads, closes and teardown are ordered, off-main.
-    private val worker = Executors.newSingleThreadExecutor()
+    private val worker = HostTaskExecutor(serial = true)
     private val closed = AtomicBoolean(false)
     private val openInputs = mutableMapOf<String, OpenDocumentInput>()
     private var pendingPick: PendingPick? = null

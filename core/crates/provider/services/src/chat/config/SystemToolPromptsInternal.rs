@@ -750,39 +750,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
-                    "move_file",
-                    "Move or rename a file or directory.",
-                    "",
-                    vec![
-                        param("source", "string", "source path", true, None),
-                        param("destination", "string", "destination path", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "copy_file",
-                    "Copy a file or directory through VFS paths.",
-                    "",
-                    vec![
-                        param("source", "string", "source path", true, None),
-                        param("destination", "string", "destination path", true, None),
-                        param("recursive", "boolean", "boolean", false, Some("false".to_string()))
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "file_info",
-                    "Get detailed information about a file or directory including type, size, permissions, owner, group, and last modified time.",
-                    "",
-                    vec![
-                        param("path", "string", "target path", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
                     "zip_files",
                     "Compress files or directories.",
                     "",
@@ -1140,9 +1107,10 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
             vec![
                 tool(
                     "read_environment_variable",
-                    "Read current value of an environment variable by key.",
+                    "Read an environment variable from its owning package installation.",
                     "",
                     vec![
+                        param("package_name", "string", "installed package or subpackage name", true, None),
                         param("key", "string", "environment variable key", true, None)
                     ],
                     "",
@@ -1150,9 +1118,10 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "write_environment_variable",
-                    "Write an environment variable by key; empty value clears it.",
+                    "Write a package environment variable in its installation scope; empty value clears it.",
                     "",
                     vec![
+                        param("package_name", "string", "installed package or subpackage name", true, None),
                         param("key", "string", "environment variable key", true, None),
                         param("value", "string", "optional, value to write; empty clears the key", false, None)
                     ],
@@ -2029,39 +1998,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
-                    "move_file",
-                    "移动或重命名文件或目录。",
-                    "",
-                    vec![
-                        param("source", "string", "源路径", true, None),
-                        param("destination", "string", "目标路径", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "copy_file",
-                    "通过 VFS 路径复制文件或目录。",
-                    "",
-                    vec![
-                        param("source", "string", "源路径", true, None),
-                        param("destination", "string", "目标路径", true, None),
-                        param("recursive", "boolean", "布尔值", false, Some("false".to_string()))
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "file_info",
-                    "获取文件或目录的详细信息，包括类型、大小、权限、所有者、组和最后修改时间。",
-                    "",
-                    vec![
-                        param("path", "string", "目标路径", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
                     "zip_files",
                     "压缩文件或目录。",
                     "",
@@ -2419,9 +2355,10 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
             vec![
                 tool(
                     "read_environment_variable",
-                    "按 key 读取环境变量当前值。",
+                    "按包归属读取环境变量当前值。",
                     "",
                     vec![
+                        param("package_name", "string", "已安装的包或子包名称", true, None),
                         param("key", "string", "环境变量名", true, None)
                     ],
                     "",
@@ -2429,9 +2366,10 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "write_environment_variable",
-                    "按 key 写入环境变量；value 为空时清除该变量。",
+                    "按包安装归属写入环境变量；value 为空时清除该变量。",
                     "",
                     vec![
+                        param("package_name", "string", "已安装的包或子包名称", true, None),
                         param("key", "string", "环境变量名", true, None),
                         param("value", "string", "可选，写入值；空值清除该变量", false, None)
                     ],

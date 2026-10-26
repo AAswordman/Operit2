@@ -31,10 +31,13 @@ function runtime(native) {
     __operitReleaseCallReference(id) { refs.set(id, refs.get(id) - 1); },
     __operitActivateCall(id) { context.__operitCurrentCallId = id; },
     __operitNativeCallToolStructured(...args) {
+      // The native bridge consumes the owning call ID before device metadata.
+      args.splice(4, 1);
       requests.push(args);
       return native ? native(args) : Promise.resolve({success: true, data: args[3]});
     },
   });
+  vm.runInContext(readFileSync(new URL('../../hosts/web/src/javascript_promises.js', import.meta.url), 'utf8'), context);
   vm.runInContext(api, context);
   vm.runInContext(bridge, context);
   vm.runInContext(generated, context);
@@ -72,7 +75,7 @@ test('hardware device views use one selected node and remove the old global APIs
   const {context, requests} = runtime();
   assert.equal(context.Tools.Edge, undefined);
   assert.equal(context.Tools.Io, undefined);
-  await vm.runInContext(`Tools.device('edge-node').Edge.execute({pluginId:'device.status',action:'read'}, {value:1})`, context);
+  await vm.runInContext(`Tools.device('edge-node').Edge.execute({target:'edge.status',method:'read'}, {value:1})`, context);
   await vm.runInContext(`Tools.device('io-node').Io.execute({port:'gpio',operation:'read'}, {pin:2})`, context);
   assert.equal(requests[0][4].nodeId, 'edge-node');
   assert.equal(requests[1][4].nodeId, 'io-node');
@@ -172,4 +175,60 @@ test('device.cancel cancels only its view and permits later calls without AbortC
   finishes.get(other[4].invocationId)({success:true, data:'unaffected'});
   assert.equal(await unaffected, 'unaffected');
   assert.equal(await vm.runInContext(`first.Files.read('next')`, context), 'ready');
+});
+
+test('generic duplex carries nested bytes, preserves event kinds and finishes input independently', async () => {
+  let stored;
+  const {context, requests, refs} = runtime(args => {
+    const request=args[3];
+    const value=request.op==='open'?{handle:'duplex'}:
+      request.op==='send'?(stored=request.value,null):
+      request.op==='next'?{done:false,kind:'Changed',value:stored}:
+      request.op==='call'?request.args:null;
+    return Promise.resolve({success:true,data:value});
+  });
+  const result=await vm.runInContext(`(async function() {
+    const device=Tools.device('vendor-device');
+    if(device.Edge.openAudioInput!==undefined) throw Error('audio API survived');
+    const transport=device.transport;
+    const original={kind:'bytes',payload:new Uint8Array([0,128,255]),nested:[null,'hello']};
+    const echoed=await transport.call('vendor.service','inspect',original);
+    const channel=await transport.open({target:'vendor.service',method:'input',property:'output',args:{session:'one'}});
+    try {
+      await channel.send(original);
+      await channel.finish();
+      const event=await channel.next();
+      let rejected=false;try {await channel.send('late');} catch {rejected=true;}
+      return {bytes:Array.from(event.value.value.payload),typed:event.value.value.payload instanceof Uint8Array,
+        kind:event.value.kind,vendor:event.value.value.kind,echo:Array.from(echoed.payload),rejected};
+    } finally {await channel.close();await channel.close();}
+  })()`,context);
+  assert.deepEqual(plain(result),{bytes:[0,128,255],typed:true,kind:'Changed',vendor:'bytes',echo:[0,128,255],rejected:true});
+  assert(requests.every(request=>request[4].nodeId==='vendor-device'&&request[4].action==='transport'));
+  assert.equal(requests.filter(request=>request[3].op==='close').length,1);
+  await flush();assert.equal(refs.get('device-tests'),0);
+});
+
+test('duplex receives while sending and rejects concurrent reads; view cancellation closes it', async () => {
+  let deliver;
+  const {context,requests}=runtime(args=> {
+    const p=args[3];
+    if(p.op==='open') return Promise.resolve({success:true,data:{handle:'session'}});
+    if(p.op==='next') return new Promise(resolve=>{deliver=resolve;});
+    if(p.op==='send') deliver({success:true,data:{done:false,kind:'Changed',value:p.value}});
+    if(p.op==='close') deliver?.({success:true,data:{done:true}});
+    return Promise.resolve({success:true,data:null});
+  });
+  const result=await vm.runInContext(`(async function() {
+    const device=Tools.device('board');
+    const channel=await device.transport.open({target:'vendor',method:'input',property:'output'});
+    const waiting=channel.next();let busy=false;
+    try {await channel.next();} catch {busy=true;}
+    await channel.send(new Uint8Array([42]));const event=await waiting;
+    const pending=channel.next();device.cancel();
+    let cancelled=false;try {await pending;} catch(error) {cancelled=/cancelled/.test(error.message);}
+    return {busy,byte:event.value.value[0],cancelled};
+  })()`,context);
+  assert.deepEqual(plain(result),{busy:true,byte:42,cancelled:true});
+  assert.equal(requests.filter(request=>request[3].op==='close').length,1);
 });

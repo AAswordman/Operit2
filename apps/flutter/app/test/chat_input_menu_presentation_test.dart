@@ -93,8 +93,7 @@ void main() {
               ..identityDisplay = {
                 'title': 'Operit',
                 'avatarUri': null,
-                if (field != null)
-                  field: {
+                ?field: {
                     'routeId': 'selector-route',
                     'input': _opaqueInput('example.selector'),
                   },
@@ -1051,6 +1050,8 @@ core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
       manifestExtensions: const {},
       author: const ['Operit'],
       mainEntry: 'dist/main.js',
+      themes: const [],
+      license: null,
       sourceType: core_proxy.ToolPkgSourceType.externalValue,
       sourcePath: 'test',
       subpackages: const [],
@@ -1080,6 +1081,7 @@ core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
       chatInputHooks: const [],
       chatViewHooks: const [],
       chatMessageHooks: const [],
+      chatResponseHooks: const [],
       chatMessageMenuItems: const [],
       chatRuntimeHooks: const [],
       hostEventHooks: const [],

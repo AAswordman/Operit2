@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="data_rescue"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/data_rescue_shortcut_short"
+        android:shortcutLongLabel="@string/data_rescue_shortcut_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="app.operit"
+            android:targetClass="app.operit.DataRescueActivity" />
+    </shortcut>
+</shortcuts>

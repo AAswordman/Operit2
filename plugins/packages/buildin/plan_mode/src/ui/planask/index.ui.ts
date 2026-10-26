@@ -23,13 +23,13 @@ function clipLogText(value: string, maxLength = 80): string {
   return `${normalized.slice(0, maxLength)}...`;
 }
 
-/** Writes a namespaced diagnostic record for the clarification UI. */
-function logPlanaskDebug(message: string, payload?: Record<string, unknown>): void {
+/** Writes per-answer details at the shared V6 diagnostic depth. */
+function logPlanaskVerbose(message: string, payload?: Record<string, unknown>): void {
   if (!payload) {
-    console.log(`${LOG_TAG} ${message}`);
+    console.verbose(6, `${LOG_TAG} ${message}`);
     return;
   }
-  console.log(`${LOG_TAG} ${message} ${JSON.stringify(payload)}`);
+  console.verbose(6, `${LOG_TAG} ${message} ${JSON.stringify(payload)}`);
 }
 
 /** Tests whether a question has an effective selected or custom answer. */
@@ -138,7 +138,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     } else if (nextAnswers[questionId] === "__custom__") {
       delete nextAnswers[questionId];
     }
-    logPlanaskDebug("custom_answer_change", {
+    logPlanaskVerbose("custom_answer_change", {
       questionId,
       valueLength: value.length,
       valuePreview: clipLogText(value),
@@ -191,7 +191,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
         customAnswersState.value
       );
     });
-    logPlanaskDebug("submit_answers", {
+    logPlanaskVerbose("submit_answers", {
       answers: parsed.questions.map((question) => ({
         questionId: question.id,
         answerLength: (answerTexts[question.id] ?? "").length,

@@ -47,7 +47,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install FVM
         shell: pwsh
@@ -77,7 +77,7 @@ jobs:
       - name: Build and package Windows app
         if: inputs.products != 'cli'
         shell: pwsh
-        run: python tools/build_scripts/build_flutter_windows.py --archive-path tools/release/dist/operit2-app-windows-x86_64.zip --enforce-lockfile
+        run: python tools/build_scripts/build_flutter_windows.py --enforce-lockfile
 
       - name: Build and package Windows CLI
         if: inputs.products != 'app'
@@ -89,7 +89,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operit2-windows-app-${{ github.sha }}
-          path: tools/release/dist/operit2-app-windows-x86_64.zip
+          path: tools/release/dist/operit2-app-windows-x86_64-*.zip
           if-no-files-found: error
           retention-days: 14
 

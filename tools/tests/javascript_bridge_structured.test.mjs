@@ -26,6 +26,7 @@ function runtime(native = {}) {
       context.__operitCurrentCallId = id;
     },
   });
+  vm.runInContext(readFileSync(new URL('../../hosts/web/src/javascript_promises.js', import.meta.url), 'utf8'), context);
   vm.runInContext(source, context);
   return { context, references, activations };
 }
@@ -69,7 +70,7 @@ test('structured SDK calls avoid JSON text, preserve data and release after cont
 /** Requires the structured host contract and never dispatches the retired callback ABI. */
 test('missing structured binding rejects and releases its owner without another transport', async () => {
   const { context, references } = runtime();
-  await assert.rejects(context.toolCall('echo', { x: 7 }), /__operitNativeCallToolStructured/);
+  await assert.rejects(vm.runInContext("toolCall('echo', { x: 7 })", context), /__operitNativeCallToolStructured/);
   await flush();
   assert.equal(references.size, 0);
   assert.equal(Object.keys(context).some(key => key.startsWith('__operit_tool_')), false);
@@ -97,7 +98,7 @@ test('malformed host result envelopes reject and release their owner', async () 
       /** Supplies a malformed envelope directly from the test host. */
       __operitNativeCallToolStructured() { return Promise.resolve(value); },
     });
-    await assert.rejects(context.toolCall('echo', {}), /invalid result envelope/);
+    await assert.rejects(vm.runInContext("toolCall('echo', {})", context), /invalid result envelope/);
     await flush();
     assert.equal(references.get('owner'), 0);
   }
@@ -110,7 +111,7 @@ test('unsupported parameters and invalid argument overloads reject before retain
     __operitNativeCallToolStructured() { throw new Error('Invalid submission'); },
   });
   for (const args of [['echo', []], ['echo', null], [], ['default', 'echo', 7]]) {
-    await assert.rejects(context.toolCall(...args), /Tool params|Invalid toolCall/);
+    await assert.rejects(context.toolCall(...args), /Tool parameters|Invalid toolCall/);
   }
   assert.equal(references.size, 0);
 });
@@ -122,7 +123,7 @@ test('business failures, native rejections and synchronous conversion failures r
     () => { throw new TypeError('conversion failure'); },
   ]) {
     const { context, references } = runtime({ __operitNativeCallToolStructured: native });
-    await assert.rejects(context.toolCall('echo', {}), /failure/);
+    await assert.rejects(vm.runInContext("toolCall('echo', {})", context), /failure/);
     await flush();
     assert.equal(references.get('owner'), 0);
   }
@@ -136,9 +137,9 @@ test('out-of-order structured completions reactivate their original call scopes'
     },
   });
   context.__operitCurrentCallId = 'first';
-  const first = context.toolCall('echo', {});
+  const first = vm.runInContext("toolCall('echo', {})", context);
   context.__operitCurrentCallId = 'second';
-  const second = context.toolCall('echo', {});
+  const second = vm.runInContext("toolCall('echo', {})", context);
   const observed = [];
   const firstResult = first.then(value => observed.push([value, context.__operitCurrentCallId]));
   const secondResult = second.then(value => observed.push([value, context.__operitCurrentCallId]));
@@ -152,12 +153,14 @@ test('out-of-order structured completions reactivate their original call scopes'
   assert.deepEqual([...references], [['first', 0], ['second', 0]]);
 });
 
-test('throwing parameter getters reject before acquiring a call reference', async () => {
+test('parameter getters reject without invocation or acquiring a call reference', async () => {
   const { context, references } = runtime({
     __operitNativeCallToolStructured() { throw Error('Should not be submitted'); },
   });
-  await assert.rejects(context.toolCall('echo', {
-    get value() { throw new Error('getter failure'); },
-  }), /getter failure/);
+  context.getterCalled = false;
+  await assert.rejects(vm.runInContext(`toolCall('echo', {
+    get value() { globalThis.getterCalled = true; throw new Error('getter failure'); },
+  })`, context), /non-JSON property/);
+  assert.equal(context.getterCalled, false);
   assert.equal(references.size, 0);
 });

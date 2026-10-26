@@ -117,19 +117,17 @@ test("real lifecycle registration rejects undeclared functions blank ids and mis
   );
 });
 
-/** Rejects owner duplication even with different ids and both official aliases instead of permitting namespace overwrite. */
-test("real lifecycle registration rejects the second same-owner handler through every registration name", () => {
-  for (const name of ["ToolPkg.registerChatLifecycleHook", "registerToolPkgChatLifecycleHook", "registerChatLifecycleHook"]) {
+/** Rejects owner duplication through the sole namespaced registration entry point. */
+test("real lifecycle registration rejects the second same-owner handler", () => {
     const actual = registry("org.example.single");
     actual.evaluate("function beforeCreate() {return {extension:null};}; globalThis.__operitGetActiveModuleExports=function(){return {beforeCreate:beforeCreate};}; ToolPkg.registerChatLifecycleHook({id:'first',function:beforeCreate});");
     assert.throws(
       /** A second valid exported handler with another id is still a duplicate owner and must not be captured. */
-      () => actual.evaluate(name + "({id:'second',function:beforeCreate});"),
+      () => actual.evaluate("ToolPkg.registerChatLifecycleHook({id:'second',function:beforeCreate});"),
       /** Requires the precise owner-level registration error. */
       error => error.message === "Duplicate chat lifecycle hook owner: org.example.single",
     );
     assert.deepEqual(actual.hooks(), [{ id: "first", function: "beforeCreate" }]);
-  }
 });
 
 /** Statically checks all real Rust capture/parser/runtime fields; this is not Rust execution or generated-artifact completion. */
@@ -148,8 +146,8 @@ test("lifecycle Rust registration pipeline preserves capture and runtime handler
 test("lifecycle bridge awaits a real ready catalog snapshot and app installs the current runtime explicitly", () => {
   const bridge = source(bridgePath), snapshot = rustFunction(bridge, "snapshot"), register = rustFunction(bridge, "register");
   assert.match(snapshot, /pub async fn snapshot\(\) -> Result<ToolPkgChatLifecycleDispatchContext, String>/);
-  assert.match(snapshot, /RuntimePackageManager::readySnapshot\(runtime\.tool_handler\(\)\.getOrCreatePackageManager\(\)\)\.await\?/);
-  assert.match(snapshot, /let runtime = \{[\s\S]*?current\.as_ref\(\)\.cloned\(\)\.ok_or_else[\s\S]*?\};\s*let manager = RuntimePackageManager::readySnapshot/);
+  assert.match(snapshot, /RuntimePackageManager::readySnapshot\(\s*runtime\.tool_handler\(\)\.getOrCreatePackageManager\(\),?\s*\)\s*\.await\?/);
+  assert.match(snapshot, /let runtime = \{[\s\S]*?current\s*\.as_ref\(\)\s*\.cloned\(\)\s*\.ok_or_else[\s\S]*?\};\s*let manager = RuntimePackageManager::readySnapshot/);
   assert.match(register, /\*current = Some\(runtime\)/);
   assert.doesNotMatch(register, /get_or_init|\.set\(/);
   assert.match(bridge, /pub fn packageManager\(&self\) -> &RuntimePackageManager/);
@@ -162,11 +160,12 @@ test("lifecycle bridge awaits a real ready catalog snapshot and app installs the
 test("lifecycle dispatch strictly awaits the own handler and validates draft before the no-participant result", () => {
   const bridge = source(bridgePath), dispatch = rustFunction(bridge, "dispatchBeforeCreate");
   assert.ok(dispatch.indexOf("validateCreationDraft(draft)?") < dispatch.indexOf("context.hooks.is_empty()"));
-  assert.match(dispatch, /runToolPkgMainHookWithTimeoutMillis\([\s\S]*?TOOLPKG_EVENT_CHAT_LIFECYCLE,[\s\S]*?Some\(CHAT_LIFECYCLE_BEFORE_CREATE\)[\s\S]*?\.await\.map_err\([\s\S]*?\)\?/);
-  assert.match(dispatch, /remainingTimeoutMillis\(\)[\s\S]*?\.ok_or_else[\s\S]*?\?/);
-  assert.match(dispatch, /if budget\.hasExpired\(\)[\s\S]*?return Err/);
+  assert.match(dispatch, /ToolPkgPreHookTimeout::runHook\(\s*Some\(&budget\),[\s\S]*?&context\.manager,[\s\S]*?TOOLPKG_EVENT_CHAT_LIFECYCLE,\s*CHAT_LIFECYCLE_BEFORE_CREATE,[\s\S]*?\)\s*\.await\?/);
+  const timeout = source("core/crates/runtime/application/src/plugins/toolpkg/ToolPkgPreHookTimeout.rs");
+  assert.match(rustFunction(timeout, "runHook"), /remainingForHook\([\s\S]*?\?;[\s\S]*?runToolPkgMainHookWithTimeoutMillis\([\s\S]*?\.await\?;[\s\S]*?if budget\.hasExpired\(\)[\s\S]*?return Err/);
+  assert.match(rustFunction(timeout, "remainingForHook"), /remainingTimeoutMillis\(\)\s*\.ok_or_else/);
   assert.match(dispatch, /parseCreationResult\(raw\)[\s\S]*?\.map_err[\s\S]*?\?/);
-  assert.match(dispatch, /extensions\.insert\(hook\.containerPackageName\.clone\(\), Value::Object\(value\)\)/);
+  assert.match(dispatch, /extensions\s*\.insert\(hook\.containerPackageName\.clone\(\), Value::Object\(value\)\)/);
   assert.doesNotMatch(dispatch, /decodeToolPkgHookResult|unwrap_or_default|get_or_init|ChatServiceCore|persist|saveChat|continue;/);
   assert.match(source(sdk + "toolpkg/ToolPkgCommonPluginConstants.rs"), /TOOLPKG_EVENT_CHAT_LIFECYCLE: &str = "toolpkg_chat_lifecycle"/);
 });
@@ -181,7 +180,7 @@ test("lifecycle source namespace and strict result decoder expose no sibling map
   assert.match(result, /raw\.ok_or_else/);
   assert.match(result, /let Value::Object\(mut result\) = parsed else[\s\S]*?return Err/);
   assert.match(result, /result\.len\(\) != 1[\s\S]*?return Err/);
-  assert.match(result, /result\.remove\("extension"\)\.ok_or_else/);
+  assert.match(result, /result\s*\.remove\("extension"\)\s*\.ok_or_else/);
   assert.match(result, /Value::Object\(value\) => Ok\(Some\(value\)\)/);
   assert.match(result, /Value::Null => Ok\(None\)/);
   assert.match(result, /_ => Err/);

@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { AppListData, AppOperationData, AppUsageTimeResultData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, DeviceInfoResultData, HiddenTerminalCommandResultData, LocationData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, TerminalStreamEventData, TerminalType } from "./results";
+import type { AppListData, AppOperationData, AppUsageTimeResultData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, DeviceInfoResultData, HiddenTerminalCommandResultData, LocationData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalImplementation, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, TerminalStreamEventData, TerminalType } from "./results";
 
 /**
  * Provides device settings, application control, notifications, usage, and location services.
@@ -271,11 +271,11 @@ export namespace System {
     /**
      * Sets the maximum command execution time in milliseconds.
      */
-    timeout_ms?: TerminalHostExecStreamingOptionsTimeoutMs;
+    timeoutMs?: TerminalHostExecStreamingOptionsTimeoutMs;
     /**
      * Receives output events while the command is still running.
      */
-    on_intermediate_result?: (arg0: TerminalStreamEventData) => void;
+    onIntermediateResult?: (arg0: TerminalStreamEventData) => void;
   }
 
   /**
@@ -605,6 +605,11 @@ export namespace System {
      */
     function exec(sessionId: string, command: string, timeoutMs?: System.TerminalHostExecTimeoutMs): Promise<TerminalCommandResultData>;
     /**
+     * Runs one command as a single-consumer async iterable of live output and completion.
+     * Returning from the iterator interrupts this command while retaining its terminal session.
+     */
+    function execStream(request: TerminalExecRequest): AsyncIterable<TerminalExecEvent>;
+    /**
      * Execute a command in a terminal session and receive incremental output chunks.
      * Final resolution still returns the complete terminal command result.
      * @param sessionId The ID of the session.
@@ -682,3 +687,20 @@ export namespace System {
   }
 
 }
+
+/**
+ * Starts one streamed command in an existing terminal session.
+ */
+export interface TerminalExecRequest {
+  sessionId: string;
+  command: string;
+  /**
+   * Sets the command deadline in milliseconds; omission uses the terminal default.
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * Carries live PTY output followed by the complete execution receipt.
+ */
+export type TerminalExecEvent = { type: "start"; sessionId: string; command: string; platform: string; terminal: TerminalImplementation; terminalType: TerminalType; } | { type: "chunk"; sessionId: string; command: string; platform: string; terminal: TerminalImplementation; terminalType: TerminalType; chunk: string; chunkIndex: number; receivedChars: number; } | { type: "completed"; result: TerminalCommandResultData; };

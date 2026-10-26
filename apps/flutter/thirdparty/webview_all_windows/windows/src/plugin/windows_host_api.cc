@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 
+#include "plugin/flutter_view_focus.h"
 #include "util/string_converter.h"
 
 #pragma comment(lib, "dxgi.lib")
@@ -132,6 +133,10 @@ WindowsHostApi::~WindowsHostApi() {
   // changed here, including the theme channel handler.
   *alive_ = false;
   instances_.clear();
+  if (focus_host_window_ != nullptr) {
+    RemoveWindowSubclass(focus_host_window_, FlutterViewFocusProc,
+                         reinterpret_cast<UINT_PTR>(this));
+  }
   UnregisterClass(window_class_.lpszClassName, nullptr);
 }
 
@@ -190,6 +195,7 @@ WindowsHostApi::GetWebViewVersion() {
   return std::optional<std::string>();
 }
 
+/// Creates a browser whose native focus belongs to its containing Flutter view.
 void WindowsHostApi::CreateWebView(
     std::function<void(webview_all_windows::ErrorOr<
                        webview_all_windows::WindowsCreateWebViewResult>
@@ -211,10 +217,18 @@ void WindowsHostApi::CreateWebView(
   }
 
   const auto hwnd = FlutterDesktopViewGetHWND(view_);
+  if (focus_host_window_ == nullptr) {
+    if (!SetWindowSubclass(hwnd, FlutterViewFocusProc,
+                           reinterpret_cast<UINT_PTR>(this), 0)) {
+      return result(FlutterError("native_focus_failed",
+                                "Could not install the Flutter native focus host"));
+    }
+    focus_host_window_ = hwnd;
+  }
   webview_host_->CreateWebview(
       hwnd, true, false,
       [result = std::move(result), host = webview_host_, alive = alive_,
-       this](std::unique_ptr<Webview> webview,
+       hwnd, this](std::unique_ptr<Webview> webview,
              std::unique_ptr<WebviewCreationError> error) mutable {
         if (!*alive) return;
         if (!webview) {
@@ -228,6 +242,13 @@ void WindowsHostApi::CreateWebView(
           return result(webview_all_windows::FlutterError(
               kErrorCodeWebviewCreationFailed, "Creating the webview failed."));
         }
+
+        // Native descendants do not send WM_KILLFOCUS to the Flutter HWND.
+        // Forward a real departure so app deactivation still parks its scope.
+        webview->OnFocusChanged([hwnd, alive](bool focused) {
+          if (!*alive || focused) return;
+          NotifyFlutterViewFocusLost(hwnd);
+        });
 
         auto composition = FlutterDesktopViewCreateNativeComposition(view_);
         if (!composition) {

@@ -25,7 +25,8 @@ mod tests {
     /// Exercises D-Bus descriptor transfer, large frame delivery, and EOF on listener shutdown.
     #[test]
     fn dbus_pipe_session_lifecycle() {
-        let server = Arc::new(LinuxPluginSdkIpcHost::new());
+        let instance = format!("test-{}", std::process::id());
+        let server = Arc::new(LinuxPluginSdkIpcHost::withInstance(&instance));
         let (received_tx, received_rx) = mpsc::channel();
         let (closed_tx, closed_rx) = mpsc::channel();
         server
@@ -40,7 +41,20 @@ mod tests {
                 ),
             )
             .unwrap();
-        let client = LinuxPluginSdkIpcHost::new();
+        let client = LinuxPluginSdkIpcHost::withInstance(&instance);
+        client.activate(PluginSdkIpcEndpoint::standard()).unwrap();
+        let other = LinuxPluginSdkIpcHost::withInstance(&format!("{instance}-other"));
+        assert!(other.activate(PluginSdkIpcEndpoint::standard()).is_err());
+        assert!(other
+            .connect(
+                PluginSdkIpcEndpoint::standard(),
+                PluginSdkIpcSessionCallbacks::new(
+                    Arc::new(|_| {}),
+                    Arc::new(|_, _| {}),
+                    Arc::new(|_| {}),
+                )
+            )
+            .is_err());
         let id = client
             .connect(
                 PluginSdkIpcEndpoint::standard(),
@@ -95,8 +109,8 @@ impl Endpoint {
 }
 
 /// Uses D-Bus activation and descriptor passing without an application socket listener.
-#[derive(Default)]
 pub struct LinuxPluginSdkIpcHost {
+    busName: String,
     listener: Mutex<Option<Connection>>,
     sessions: PluginSdkPipeSessions,
 }
@@ -104,7 +118,18 @@ pub struct LinuxPluginSdkIpcHost {
 impl LinuxPluginSdkIpcHost {
     /// Creates a Linux session-bus carrier.
     pub fn new() -> Self {
-        Self::default()
+        Self::withInstance(&std::env::var("OPERIT_PLUGIN_SDK_INSTANCE").unwrap_or_default())
+    }
+
+    /// Gives each application profile its own D-Bus service name.
+    pub fn withInstance(instance: &str) -> Self {
+        Self {
+            busName: operit_host_native_plugin_sdk_ipc::pluginSdkIpcInstanceName(
+                BUS_NAME, instance,
+            ),
+            listener: Mutex::new(None),
+            sessions: PluginSdkPipeSessions::default(),
+        }
     }
 
     /// Validates the installed D-Bus service identity.
@@ -118,18 +143,43 @@ impl LinuxPluginSdkIpcHost {
     }
 }
 
+impl Default for LinuxPluginSdkIpcHost {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PluginSdkIpcHost for LinuxPluginSdkIpcHost {
     /// Asks the session bus to start Operit and waits for its registered service name.
     fn activate(&self, endpoint: PluginSdkIpcEndpoint) -> HostResult<()> {
         Self::validate(&endpoint)?;
         let connection = Connection::session().map_err(|e| HostError::new(e.to_string()))?;
+        if self.busName != BUS_NAME {
+            let bus = zbus::blocking::fdo::DBusProxy::new(&connection)
+                .map_err(|e| HostError::new(e.to_string()))?;
+            let name = self
+                .busName
+                .as_str()
+                .try_into()
+                .map_err(|e: zbus::names::Error| HostError::new(e.to_string()))?;
+            return if bus
+                .name_has_owner(name)
+                .map_err(|e| HostError::new(e.to_string()))?
+            {
+                Ok(())
+            } else {
+                Err(HostError::new(
+                    "Start the selected Plugin SDK instance before connecting",
+                ))
+            };
+        }
         let reply = connection
             .call_method(
                 Some("org.freedesktop.DBus"),
                 "/org/freedesktop/DBus",
                 Some("org.freedesktop.DBus"),
                 "StartServiceByName",
-                &(BUS_NAME, 0u32),
+                &(self.busName.as_str(), 0u32),
             )
             .map_err(|e| HostError::new(e.to_string()))?;
         let _: u32 = reply
@@ -163,7 +213,7 @@ impl PluginSdkIpcHost for LinuxPluginSdkIpcHost {
                 },
             )
             .map_err(|e| HostError::new(e.to_string()))?
-            .name(BUS_NAME)
+            .name(self.busName.as_str())
             .map_err(|e| HostError::new(e.to_string()))?
             .build()
             .map_err(|e| HostError::new(e.to_string()))?;
@@ -180,7 +230,13 @@ impl PluginSdkIpcHost for LinuxPluginSdkIpcHost {
         Self::validate(&endpoint)?;
         let connection = Connection::session().map_err(|e| HostError::new(e.to_string()))?;
         let reply = connection
-            .call_method(Some(BUS_NAME), OBJECT_PATH, Some(BUS_NAME), "Open", &())
+            .call_method(
+                Some(self.busName.as_str()),
+                OBJECT_PATH,
+                Some(BUS_NAME),
+                "Open",
+                &(),
+            )
             .map_err(|e| HostError::new(e.to_string()))?;
         let (reader, writer): (zbus::zvariant::OwnedFd, zbus::zvariant::OwnedFd) = reply
             .body()
@@ -213,7 +269,7 @@ impl PluginSdkIpcHost for LinuxPluginSdkIpcHost {
             .take()
             .ok_or_else(|| HostError::new("Plugin SDK listener is not started"))?;
         connection
-            .release_name(BUS_NAME)
+            .release_name(self.busName.as_str())
             .map_err(|e| HostError::new(e.to_string()))?;
         self.sessions.closeAll()
     }

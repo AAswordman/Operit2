@@ -31,6 +31,9 @@ ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
 CLI_MANIFEST = REPO_ROOT / "apps" / "cli" / "Cargo.toml"
 RUNTIME_MANIFEST = REPO_ROOT / "core" / "crates" / "runtime" / "application" / "Cargo.toml"
 BUILD_SCRIPTS_DIR = REPO_ROOT / "tools" / "build_scripts"
+sys.path.insert(0, str(BUILD_SCRIPTS_DIR))
+from common import prepare_plugin_assets, verify_cli_plugin_assets
+from release_artifacts import release_asset_name, validate_release_assets
 DEFAULT_GITHUB_ENV = SECRETS_DIR / "github.env"
 DEFAULT_RELEASE_REPO = "AAswordman/Operit2"
 SEMVER_RE = re.compile(
@@ -512,16 +515,13 @@ def copy_required_file(source, destination):
     shutil.copy2(source, destination)
 
 
+# Creates a ZIP archive while preserving the complete versioned filename.
 def compress_zip(source_dir, destination):
     if not source_dir.exists():
         raise RuntimeError(f"Expected build directory not found: {source_dir}")
     if destination.exists():
         destination.unlink()
     shutil.make_archive(str(destination.with_suffix("")), "zip", source_dir)
-    produced = destination.with_suffix("")
-    produced = produced.with_suffix(".zip")
-    if produced != destination:
-        produced.replace(destination)
 
 
 def compress_tar_gz(source_dir, destination):
@@ -689,8 +689,8 @@ def cli_package_dir(target):
 
 # Returns the release archive path for one packaged CLI target.
 def cli_package_path(target):
-    return DIST_DIR / (
-        f"operit2-cli-{target.platform}-{target.arch}.{cli_archive_extension(target.platform)}"
+    return DIST_DIR / release_asset_name(
+        "cli", str(target.platform), target.arch, cli_archive_extension(target.platform)
     )
 
 
@@ -803,6 +803,7 @@ def wsl_single_quote(value):
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
+# Builds the Linux App in WSL with the shared versioned release filename.
 def build_wsl_linux_app(distro, build_name, build_number):
     if not wsl_check_command(distro, "dart"):
         raise RuntimeError(
@@ -814,6 +815,7 @@ def build_wsl_linux_app(distro, build_name, build_number):
     dist = shlex.quote(windows_path_to_wsl(DIST_DIR))
     build_name_arg = shlex.quote(build_name)
     build_number_arg = shlex.quote(build_number)
+    package = shlex.quote(windows_path_to_wsl(DIST_DIR / release_asset_name("app", "linux", "x86_64", "tar.gz")))
     script = f"""
 set -e
 cd {repo}
@@ -825,8 +827,8 @@ rm -rf build/linux/x64/release
 fvm flutter build linux --release --no-pub --build-name {build_name_arg} --build-number {build_number_arg}
 cd {repo}
 mkdir -p {dist}
-rm -f {dist}/operit2-app-linux-x86_64.tar.gz
-tar -czf {dist}/operit2-app-linux-x86_64.tar.gz -C apps/flutter/app/build/linux/x64/release/bundle .
+rm -f {package}
+tar -czf {package} -C apps/flutter/app/build/linux/x64/release/bundle .
 """
     wsl_run(distro, script)
 
@@ -838,6 +840,8 @@ def build_wsl_linux_cli(distro):
 
 
 def wsl_build_cli_target(distro, target):
+    # Generate the generated ToolPkg assets on the Windows host so the WSL build needs no Node.
+    prepare_plugin_assets()
     dist = shlex.quote(windows_path_to_wsl(DIST_DIR))
     work = shlex.quote(windows_path_to_wsl(cli_package_dir(target)))
     package = shlex.quote(windows_path_to_wsl(cli_package_path(target)))
@@ -971,10 +975,11 @@ def build_ohos_app(build_name, build_number):
             build_number,
             "--enforce-lockfile",
             "--output",
-            DIST_DIR / "operit2-app-ohos-arm64.hap",
+            DIST_DIR / release_asset_name("app", "ohos", "arm64", "hap"),
         ],
     )
 
+# Builds the host App using the shared versioned release filename.
 def build_host_app(build_name, build_number):
     current_platform = host_platform()
     current_arch = host_arch()
@@ -990,7 +995,7 @@ def build_host_app(build_name, build_number):
                 build_number,
                 "--enforce-lockfile",
                 "--archive-path",
-                DIST_DIR / f"operit2-app-windows-{current_arch}.zip",
+                DIST_DIR / release_asset_name("app", "windows", current_arch, "zip"),
             ]
         )
         return
@@ -1006,7 +1011,7 @@ def build_host_app(build_name, build_number):
                 build_number,
                 "--enforce-lockfile",
                 "--archive-path",
-                DIST_DIR / f"operit2-app-linux-{current_arch}.tar.gz",
+                DIST_DIR / release_asset_name("app", "linux", current_arch, "tar.gz"),
             ]
         )
         return
@@ -1022,7 +1027,7 @@ def build_host_app(build_name, build_number):
                 build_number,
                 "--enforce-lockfile",
                 "--archive-path",
-                DIST_DIR / "operit2-app-macos-universal.zip",
+                DIST_DIR / release_asset_name("app", "macos", "universal", "zip"),
             ]
         )
         return
@@ -1086,6 +1091,7 @@ def vs_dev_env(vcvars_path, arch):
 
 def build_cli_target(target, use_default_target=False):
     require_command("cargo")
+    prepare_plugin_assets()
     binary_name = cli_binary_name(target.platform)
     package_dir = cli_package_dir(target)
     package_path = cli_package_path(target)
@@ -1113,6 +1119,7 @@ def build_cli_target(target, use_default_target=False):
         run(["cargo", "build", "--release", "--target", target.rust_target, "--manifest-path", CLI_MANIFEST], env=build_env)
         binary_source = cli_target_binary_path(target)
 
+    verify_cli_plugin_assets(binary_source)
     reset_dir(package_dir)
     copy_required_file(binary_source, package_dir / binary_name)
     write_cli_installer_files(package_dir, target.platform)
@@ -1162,10 +1169,12 @@ def check_release_environment(products, cli_arches, no_wsl, wsl_distro):
     run(command)
 
 
+# Publishes only files matching the current versioned release specification.
 def publish_release(tag, repo_value, draft, prerelease, auth):
     assets = sorted(path for path in DIST_DIR.iterdir() if path.is_file())
     if not assets:
         raise RuntimeError("No release assets were produced")
+    validate_release_assets(assets)
 
     repo = parse_github_repo(repo_value)
     tag_path = "/releases/tags/" + urllib.parse.quote(tag, safe="")

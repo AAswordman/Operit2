@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde_json::Value;
 
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use super::ToolPkgToolLifecycleBridge::ToolPkgToolLifecycleBridge;
 use crate::plugins::toolpkg::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::{
@@ -21,11 +22,7 @@ use operit_providers::chat::hooks::PromptHookRegistry::{
 };
 use operit_tools::ToolExecutionManager::ToolExecutionManager;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
-use super::ToolPkgToolLifecycleBridge::ToolPkgToolLifecycleBridge;
-use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
-
-const TAG: &str = "ToolPkgPromptHookBridge";
 
 static PROMPT_INPUT_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>>> = OnceLock::new();
 static PROMPT_HISTORY_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>>> = OnceLock::new();
@@ -128,18 +125,15 @@ impl ToolPkgPromptHookBridge {
     }
 }
 
+/// Stores prompt hooks in the committed scope and user order.
 fn replace_hooks(
     target: &Mutex<Vec<ToolPkgPromptHookRegistration>>,
-    mut updated: Vec<ToolPkgPromptHookRegistration>,
+    updated: Vec<ToolPkgPromptHookRegistration>,
 ) {
-    updated.sort_by(|left, right| {
-        left.containerPackageName
-            .cmp(&right.containerPackageName)
-            .then(left.hookId.cmp(&right.hookId))
-    });
     *target.lock().expect("toolpkg prompt hook mutex poisoned") = updated;
 }
 
+/// Expands one owner's prompt hooks in manifest order.
 fn registrations(
     container: &ToolPkgContainerRuntime,
     hooks: &[operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgFunctionHookRuntime],
@@ -153,13 +147,6 @@ fn registrations(
             functionSource: hook.functionSource.clone(),
         })
         .collect()
-}
-
-/// Reports a timed-out ToolPkg prompt hook through the active send turn's Toast callback.
-fn report_prompt_hook_timeout(context: &PromptHookContext, hook: &ToolPkgPromptHookRegistration) {
-    if let Some(callback) = context.on_hook_timeout.as_ref() {
-        callback(format!("{}:{}", hook.containerPackageName, hook.hookId));
-    }
 }
 
 struct PromptInputBridge {
@@ -244,9 +231,13 @@ impl ToolPromptComposeHook for ToolPromptComposeBridge {
         Box::pin(async move {
             let manager = RuntimePackageManager::readySnapshot(
                 self.runtime.tool_handler().getOrCreatePackageManager(),
-            ).await?;
-            ToolPkgToolLifecycleBridge::validateExecutionSnapshot(&manager, executionContext.as_ref())?;
-            let budget = ToolPkgPreHookTimeout::fromPreferences();
+            )
+            .await?;
+            ToolPkgToolLifecycleBridge::validateExecutionContext(
+                &manager,
+                executionContext.as_ref(),
+            )?;
+            let budget = ToolPkgPreHookTimeout::forStage(&context.stage)?;
             let mut current = context.clone();
             let mut combined = PromptHookMutation::default();
             let mut changed = false;
@@ -257,17 +248,18 @@ impl ToolPromptComposeHook for ToolPromptComposeBridge {
                     )?;
                     let mut payload = prompt_context_to_value(&current);
                     payload["metadata"]["executionContext"] = ownerContext;
-                    let timeoutMillis = budget.remainingTimeoutMillis().ok_or_else(|| format!(
-                        "Tool-prompt policy timed out before handler {}:{}", container.packageName, hook.id,
-                    ))?;
-                    let raw = manager.runToolPkgMainHookWithTimeoutMillis(
-                        &container.packageName, &hook.function, TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE,
-                        Some(&current.stage), Some(&hook.id), hook.functionSource.as_deref(),
-                        payload, None, None, None, timeoutMillis,
-                    ).await?;
-                    if budget.hasExpired() {
-                        return Err(format!("Tool-prompt policy timed out after handler {}:{}", container.packageName, hook.id));
-                    }
+                    let raw = ToolPkgPreHookTimeout::runHook(
+                        budget.as_ref(),
+                        &manager,
+                        &container.packageName,
+                        &hook.function,
+                        TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE,
+                        &current.stage,
+                        &hook.id,
+                        hook.functionSource.as_deref(),
+                        payload,
+                    )
+                    .await?;
                     if let Some(mutation) = decode_tool_prompt_policy_result(raw)? {
                         apply_prompt_mutation(&mut current, mutation.clone());
                         merge_prompt_mutation(&mut combined, mutation);
@@ -338,12 +330,13 @@ prompt_bridge!(
     TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE
 );
 
+/// Runs prompt handlers under their declared stage policy and propagates failures.
 async fn dispatch_prompt_hooks(
     runtime: &ToolPkgBridgeRuntime,
     hooks: &Mutex<Vec<ToolPkgPromptHookRegistration>>,
     event: &str,
     context: &PromptHookContext,
-) -> Option<PromptHookMutation> {
+) -> Result<Option<PromptHookMutation>, String> {
     let snapshot = hooks
         .lock()
         .expect("toolpkg prompt hook mutex poisoned")
@@ -352,22 +345,9 @@ async fn dispatch_prompt_hooks(
     let mut mutation = PromptHookMutation::default();
     let mut changed = false;
     let package_manager = runtime.package_manager();
-    let budget = ToolPkgPreHookTimeout::fromPreferences();
+    let budget = ToolPkgPreHookTimeout::forStage(&context.stage)?;
     for hook in snapshot {
-        let Some(timeoutMillis) = budget.remainingTimeoutMillis() else {
-            report_prompt_hook_timeout(&current, &hook);
-            ChainLogger::error(
-                PLUGIN_CHAIN,
-                "plugin.toolpkg.prompt.timeout",
-                &[
-                    ("event", event.to_string()),
-                    ("stage", current.stage.clone()),
-                    ("phase", "before_hook".to_string()),
-                ],
-            );
-            break;
-        };
-        ChainLogger::info(
+        ChainLogger::verbose_with_level(
             PLUGIN_CHAIN,
             "plugin.toolpkg.prompt.run.start",
             &[
@@ -377,71 +357,26 @@ async fn dispatch_prompt_hooks(
                 ("hookId", hook.hookId.clone()),
                 ("function", hook.functionName.clone()),
             ],
+            operit_util::AppLogger::VERBOSE_LEVEL_3,
         );
-        let raw = package_manager
-            .runToolPkgMainHookWithTimeoutMillis(
-                &hook.containerPackageName,
-                &hook.functionName,
-                event,
-                Some(&current.stage),
-                Some(&hook.hookId),
-                hook.functionSource.as_deref(),
-                prompt_context_to_value(&current),
-                None,
-                None,
-                None,
-                timeoutMillis,
-            )
-            .await;
-        let hookTimedOut = raw
-            .as_ref()
-            .err()
-            .map(|error| ToolPkgPreHookTimeout::isTimeoutError(error))
-            .unwrap_or(false);
-        if hookTimedOut || budget.hasExpired() {
-            report_prompt_hook_timeout(&current, &hook);
-            ChainLogger::error(
-                PLUGIN_CHAIN,
-                "plugin.toolpkg.prompt.timeout",
-                &[
-                    ("event", event.to_string()),
-                    ("stage", current.stage.clone()),
-                    ("package", hook.containerPackageName.clone()),
-                    ("hookId", hook.hookId.clone()),
-                ],
-            );
-            break;
-        }
-        let result = match raw {
-            Ok(raw) => decodeToolPkgHookResult(raw),
-            Err(error) => {
-                ChainLogger::error(
-                    PLUGIN_CHAIN,
-                    "plugin.toolpkg.prompt.run.error",
-                    &[
-                        ("event", event.to_string()),
-                        ("stage", current.stage.clone()),
-                        ("package", hook.containerPackageName.clone()),
-                        ("hookId", hook.hookId.clone()),
-                        ("function", hook.functionName.clone()),
-                        ("error", error.clone()),
-                    ],
-                );
-                AppLogger::e(
-                    TAG,
-                    &format!(
-                        "ToolPkg prompt hook failed: {}:{} {}",
-                        hook.containerPackageName, hook.hookId, error
-                    ),
-                );
-                None
-            }
-        };
+        let raw = ToolPkgPreHookTimeout::runHook(
+            budget.as_ref(),
+            &package_manager,
+            &hook.containerPackageName,
+            &hook.functionName,
+            event,
+            &current.stage,
+            &hook.hookId,
+            hook.functionSource.as_deref(),
+            prompt_context_to_value(&current),
+        )
+        .await?;
+        let result = decodeToolPkgHookResult(raw);
         if let Some(next_mutation) = parse_prompt_hook_result(event, result.as_ref(), &current) {
             apply_prompt_mutation(&mut current, next_mutation.clone());
             merge_prompt_mutation(&mut mutation, next_mutation);
             changed = true;
-            ChainLogger::info(
+            ChainLogger::verbose_with_level(
                 PLUGIN_CHAIN,
                 "plugin.toolpkg.prompt.run.changed",
                 &[
@@ -450,9 +385,10 @@ async fn dispatch_prompt_hooks(
                     ("package", hook.containerPackageName.clone()),
                     ("hookId", hook.hookId.clone()),
                 ],
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
         } else {
-            ChainLogger::info(
+            ChainLogger::verbose_with_level(
                 PLUGIN_CHAIN,
                 "plugin.toolpkg.prompt.run.done",
                 &[
@@ -462,14 +398,11 @@ async fn dispatch_prompt_hooks(
                     ("hookId", hook.hookId.clone()),
                     ("changed", ChainLogger::boolField(false)),
                 ],
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
         }
     }
-    if changed {
-        Some(mutation)
-    } else {
-        None
-    }
+    Ok(if changed { Some(mutation) } else { None })
 }
 
 /// Serializes prompt histories and omits absent optional fields for the plugin SDK contract.
@@ -743,6 +676,21 @@ fn apply_prompt_mutation(current: &mut PromptHookContext, mutation: PromptHookMu
 #[cfg(test)]
 mod tool_policy_result_tests {
     use super::decode_tool_prompt_policy_result;
+
+    /// Keeps shared owners ahead of local owners even when their names sort in the opposite order.
+    #[test]
+    fn prompt_registration_preserves_committed_owner_order() {
+        let owners = ["z.shared", "b.shared", "a.device"];
+        let target = std::sync::Mutex::new(Vec::new());
+        super::replace_hooks(&target, owners.iter().map(|owner| {
+            operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgPromptHookRegistration {
+                containerPackageName: (*owner).into(), hookId: "compose".into(),
+                functionName: "compose".into(), functionSource: None,
+            }
+        }).collect());
+        let hooks = target.lock().unwrap();
+        assert_eq!(hooks.iter().map(|hook| hook.containerPackageName.as_str()).collect::<Vec<_>>(), owners);
+    }
 
     /// Rejects malformed invoked policies instead of treating invalid output as permission to continue.
     #[test]

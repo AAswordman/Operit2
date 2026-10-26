@@ -159,7 +159,7 @@ async fn removing_relay_capability_blocks_transit_but_not_direct_access() {
         .networkControlStore
         .setIdentity(NetworkControlIdentityAssignment {
             nodeId: routers[2].localNodeId(),
-            roleId: "storage".into(),
+            roleId: "edge".into(),
         })
         .unwrap();
     for router in routers.iter().skip(1) {

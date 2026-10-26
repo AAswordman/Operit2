@@ -85,6 +85,19 @@ impl ChatDao {
         )
     }
 
+    /// Updates a recalculated context window without replacing concurrent token totals.
+    pub fn updateChatContextWindow(
+        &self,
+        chatId: &str,
+        currentWindowSize: i64,
+        timestamp: i64,
+    ) -> Result<(), SqliteStoreError> {
+        self.execute(
+            "UPDATE chats SET currentWindowSize = ?2, updatedAt = ?3 WHERE id = ?1",
+            sqliteParams![chatId, currentWindowSize, timestamp],
+        )
+    }
+
     pub fn updateChatTitle(
         &self,
         chatId: &str,

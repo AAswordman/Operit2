@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 /// Maps provider type IDs to their bundled brand logo assets.
 const Map<String, String> providerLogoAssets = <String, String>{
@@ -16,7 +17,6 @@ const Map<String, String> providerLogoAssets = <String, String>{
   'FOUR_ROUTER': 'assets/model_logos/FOUR_ROUTER.svg',
   'GEMINI_GENERIC': 'assets/model_logos/GEMINI_GENERIC.svg',
   'GOOGLE': 'assets/model_logos/GOOGLE.svg',
-  'IFLOW': 'assets/model_logos/IFLOW.png',
   'INFINIAI': 'assets/model_logos/INFINIAI.png',
   'LMSTUDIO': 'assets/model_logos/LMSTUDIO.svg',
   'MIMO': 'assets/model_logos/MIMO.svg',
@@ -45,7 +45,6 @@ const Map<String, String> providerLogoAssets = <String, String>{
 /// Logos that carry brand colors and keep them in both themes.
 const Set<String> _coloredLogoProviderTypeIds = <String>{
   'FOUR_ROUTER',
-  'IFLOW',
   'INFINIAI',
 };
 
@@ -180,18 +179,11 @@ class _ProviderLogoInitial extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final trimmedName = name.trim();
     final initial = trimmedName.isEmpty ? '?' : trimmedName.substring(0, 1);
-    return Text(
-      initial.toUpperCase(),
-      textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-        fontWeight: FontWeight.w700,
-        fontSize: size * 0.78,
-        height: 1,
-        color: colorScheme.onSurfaceVariant,
-      ),
+    return ThemeComposerProviderInitial(
+      initial: initial.toUpperCase(),
+      size: size,
     );
   }
 }

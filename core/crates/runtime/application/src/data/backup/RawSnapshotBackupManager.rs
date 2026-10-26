@@ -1,7 +1,12 @@
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 
-use operit_host_api::{RuntimeStorageHost, RuntimeStorageWriteHost, RuntimeStorageWriteSession};
+use operit_host_api::{
+    HostSecretStore, RuntimeStorageHost, RuntimeStorageWriteHost, RuntimeStorageWriteSession,
+};
+use operit_store::PreferencesExport::{
+    exportPreferences, isPreferencesPath, readPreferencesExportBytes, readPreferencesExportKey,
+};
 use operit_util::RuntimeStorageLayout;
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
@@ -27,6 +32,7 @@ pub struct RawSnapshotManifest {
 pub struct RawSnapshotBackupManager {
     storageHost: Arc<dyn RuntimeStorageHost>,
     storageWriteHost: Arc<dyn RuntimeStorageWriteHost>,
+    secretStore: Option<Arc<dyn HostSecretStore>>,
 }
 
 impl RawSnapshotBackupManager {
@@ -34,10 +40,12 @@ impl RawSnapshotBackupManager {
     pub fn new(
         storageHost: Arc<dyn RuntimeStorageHost>,
         storageWriteHost: Arc<dyn RuntimeStorageWriteHost>,
+        secretStore: Option<Arc<dyn HostSecretStore>>,
     ) -> Self {
         Self {
             storageHost,
             storageWriteHost,
+            secretStore,
         }
     }
 
@@ -166,6 +174,18 @@ impl RawSnapshotBackupManager {
         byteLength: u64,
         zip: &mut ZipWriter<W>,
     ) -> Result<(), String> {
+        if isPreferencesPath(path) {
+            let bytes = readPreferencesExportBytes(self.storageHost.as_ref(), path, byteLength)?;
+            if bytes.len() as u64 != byteLength {
+                return Err(format!("Preferences changed while exporting: {path}"));
+            }
+            let plaintext = exportPreferences(path, bytes, || {
+                readPreferencesExportKey(self.storageHost.as_ref(), self.secretStore.as_deref())
+            })?;
+            zip.write_all(&plaintext)
+                .map_err(|error| error.to_string())?;
+            return Ok(());
+        }
         let mut offset = 0u64;
         while offset < byteLength {
             let remaining = byteLength - offset;
@@ -260,4 +280,73 @@ fn validateSnapshotPath(path: &str) -> Result<(), String> {
 #[allow(non_snake_case)]
 fn currentTimeMillis() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use operit_host_native_storage::NativeRuntimeStorageHost;
+    use operit_store::PreferencesEncryption::PreferencesEncryption;
+    use serde_json::json;
+    use std::io::Cursor;
+
+    /// Verifies plaintext snapshot entries without changing the encrypted source preference file.
+    #[test]
+    fn snapshot_preferences_are_portable_plaintext() {
+        let root = std::env::temp_dir().join(format!(
+            "operit-snapshot-preferences-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let host = Arc::new(NativeRuntimeStorageHost::new(
+            root.join("runtime"),
+            root.join("workspaces"),
+        ));
+        let key = serde_json::to_vec(&json!({
+            "format": "operit.preferences.encryption.key", "version": 1,
+            "algorithm": "XChaCha20Poly1305", "keyId": "snapshot-test-key",
+            "key": base64::engine::general_purpose::STANDARD_NO_PAD.encode([9u8; 32]),
+        }))
+        .unwrap();
+        let path = RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH;
+        let plaintext = br#"{"api_key":"portable-snapshot-token"}"#;
+        let encrypted = PreferencesEncryption::decodeKeyBytes(&key)
+            .unwrap()
+            .encrypt(path, plaintext)
+            .unwrap();
+        host.writeBytes(RuntimeStorageLayout::PREFERENCES_ENCRYPTION_KEY_PATH, &key)
+            .unwrap();
+        host.writeBytes(path, &encrypted).unwrap();
+        let manager = RawSnapshotBackupManager::new(host.clone(), host.clone(), None);
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        zip.start_file(format!("payload/{path}"), SimpleFileOptions::default())
+            .unwrap();
+        manager
+            .copyStorageFileToZip(path, encrypted.len() as u64, &mut zip)
+            .unwrap();
+        let output = zip.finish().unwrap();
+        let mut archive = ZipArchive::new(output).unwrap();
+        let mut actual = Vec::new();
+        let mut entry = archive.by_name(&format!("payload/{path}")).unwrap();
+        assert!(!entry.encrypted());
+        entry.read_to_end(&mut actual).unwrap();
+        assert_eq!(actual, plaintext);
+        assert_eq!(host.readBytes(path).unwrap(), encrypted);
+        let resolved = std::fs::canonicalize(&root).unwrap();
+        assert_eq!(
+            resolved.parent(),
+            Some(
+                std::fs::canonicalize(std::env::temp_dir())
+                    .unwrap()
+                    .as_path()
+            )
+        );
+        assert!(resolved
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("operit-snapshot-preferences-"));
+        std::fs::remove_dir_all(resolved).unwrap();
+    }
 }

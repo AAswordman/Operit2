@@ -49,12 +49,16 @@ impl ToolPkgLoader {
     where
         FReportPackageLoadError: Fn(&str, &str),
     {
+        let scope = match ToolPkgArchiveParser::readInstallationScope(bytes)? {
+            Some(scope) => scope,
+            None => ToolPkgConfigScope::Device,
+        };
         Self::loadToolPkgFromArchiveBytes(
             bytes,
             ToolPkgSourceType::EXTERNAL,
             assetName,
             false,
-            ToolPkgConfigScope::Device,
+            scope,
             jsEngine,
             reportPackageLoadError,
         )
@@ -122,6 +126,15 @@ impl ToolPkgLoader {
     where
         FReportPackageLoadError: Fn(&str, &str),
     {
+        let requiredScope = ToolPkgArchiveParser::readInstallationScope(archiveBytes)?;
+        let configScope = match (isBuiltIn, requiredScope) {
+            (true, Some(scope)) => scope,
+            (false, Some(scope)) if scope != configScope => {
+                return Err(format!("ToolPkg requires {} installation scope, not {}", scope.as_str(), configScope.as_str()));
+            }
+            _ => configScope,
+        };
+        ToolPkgArchiveParser::readThemeTemplates(archiveBytes)?;
         let cursor = Cursor::new(archiveBytes);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|error| error.to_string())?;
         let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
@@ -147,12 +160,13 @@ impl ToolPkgLoader {
                     None
                 }
             },
-            |mainScriptText, toolPkgId, mainScriptPath, apiVersion| {
+            |mainScriptText, toolPkgId, mainScriptPath, apiVersion, environmentNames| {
                 parseMainRegistration(
                     mainScriptText,
                     toolPkgId,
                     mainScriptPath,
                     apiVersion,
+                    environmentNames,
                     configScope,
                     jsEngine,
                     textResources.clone(),
@@ -170,6 +184,7 @@ fn parseMainRegistration(
     toolPkgId: &str,
     mainScriptPath: &str,
     apiVersion: &str,
+    environmentNames: &[String],
     configScope: ToolPkgConfigScope,
     jsEngine: &dyn JsExecutionEngine,
     textResources: Arc<std::collections::BTreeMap<String, String>>,
@@ -179,6 +194,7 @@ fn parseMainRegistration(
         toolPkgId,
         mainScriptPath,
         apiVersion,
+        environmentNames,
         configScope,
         jsEngine,
         Some(textResources),

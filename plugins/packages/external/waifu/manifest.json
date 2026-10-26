@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.waifu",
+  "version": "1.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "public_api": "src/api.ts",
+  "display_name": {
+    "zh": "Waifu 模式",
+    "en": "Waifu Mode"
+  },
+  "description": {
+    "zh": "普通聊天中的分句气泡、打字节奏、角色绑定、情绪表情和自拍提示，并提供依赖插件公开 API。",
+    "en": "Role-bound sentence bubbles, typing rhythm, stickers and selfie prompts for native chat and dependent plugins."
+  },
+  "enabled_by_default": false,
+  "subpackages": [
+    {
+      "id": "waifu",
+      "entry": "dist/tools.js"
+    }
+  ],
+  "resources": [
+    {
+      "key": "emoji_angry_angry_1",
+      "path": "resources/emoji/angry/angry_1.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_angry_angry_2",
+      "path": "resources/emoji/angry/angry_2.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_angry_angry_3",
+      "path": "resources/emoji/angry/angry_3.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_angry_angry_4",
+      "path": "resources/emoji/angry/angry_4.gif",
+      "mime": "image/gif"
+    },
+    {
+      "key": "emoji_angry_angry_5",
+      "path": "resources/emoji/angry/angry_5.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_angry_angry_6",
+      "path": "resources/emoji/angry/angry_6.gif",
+      "mime": "image/gif"
+    },
+    {
+      "key": "emoji_confused_confused_1",
+      "path": "resources/emoji/confused/confused_1.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_confused_confused_2",
+      "path": "resources/emoji/confused/confused_2.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_confused_confused_3",
+      "path": "resources/emoji/confused/confused_3.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_confused_confused_4",
+      "path": "resources/emoji/confused/confused_4.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_confused_confused_5",
+      "path": "resources/emoji/confused/confused_5.png",
+      "mime": "image/png"
+    },
+    {
+      "key": "emoji_confused_confused_6",
+      "path": "resources/emoji/confused/confused_6.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_confused_confused_7",
+      "path": "resources/emoji/confused/confused_7.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_crying_crying_1",
+      "path": "resources/emoji/crying/crying_1.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_crying_crying_2",
+      "path": "resources/emoji/crying/crying_2.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_crying_crying_3",
+      "path": "resources/emoji/crying/crying_3.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_crying_crying_4",
+      "path": "resources/emoji/crying/crying_4.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_crying_crying_5",
+      "path": "resources/emoji/crying/crying_5.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_crying_crying_6",
+      "path": "resources/emoji/crying/crying_6.png",
+      "mime": "image/png"
+    },
+    {
+      "key": "emoji_happy_happy_1",
+      "path": "resources/emoji/happy/happy_1.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_happy_happy_2",
+      "path": "resources/emoji/happy/happy_2.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_happy_happy_3",
+      "path": "resources/emoji/happy/happy_3.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_happy_happy_4",
+      "path": "resources/emoji/happy/happy_4.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_happy_happy_5",
+      "path": "resources/emoji/happy/happy_5.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_like_you_like_you_1",
+      "path": "resources/emoji/like_you/like_you_1.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_like_you_like_you_2",
+      "path": "resources/emoji/like_you/like_you_2.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_like_you_like_you_3",
+      "path": "resources/emoji/like_you/like_you_3.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_like_you_like_you_4",
+      "path": "resources/emoji/like_you/like_you_4.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_like_you_like_you_5",
+      "path": "resources/emoji/like_you/like_you_5.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_like_you_like_you_6",
+      "path": "resources/emoji/like_you/like_you_6.gif",
+      "mime": "image/gif"
+    },
+    {
+      "key": "emoji_miss_you_miss_you_1",
+      "path": "resources/emoji/miss_you/miss_you_1.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_miss_you_miss_you_2",
+      "path": "resources/emoji/miss_you/miss_you_2.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_miss_you_miss_you_3",
+      "path": "resources/emoji/miss_you/miss_you_3.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_miss_you_miss_you_4",
+      "path": "resources/emoji/miss_you/miss_you_4.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_miss_you_miss_you_5",
+      "path": "resources/emoji/miss_you/miss_you_5.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_miss_you_miss_you_6",
+      "path": "resources/emoji/miss_you/miss_you_6.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_sad_sad_1",
+      "path": "resources/emoji/sad/sad_1.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_sad_sad_2",
+      "path": "resources/emoji/sad/sad_2.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_sad_sad_3",
+      "path": "resources/emoji/sad/sad_3.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_sad_sad_4",
+      "path": "resources/emoji/sad/sad_4.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_sad_sad_5",
+      "path": "resources/emoji/sad/sad_5.gif",
+      "mime": "image/gif"
+    },
+    {
+      "key": "emoji_sad_sad_6",
+      "path": "resources/emoji/sad/sad_6.gif",
+      "mime": "image/gif"
+    },
+    {
+      "key": "emoji_speechless_speechless_1",
+      "path": "resources/emoji/speechless/speechless_1.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_speechless_speechless_2",
+      "path": "resources/emoji/speechless/speechless_2.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_speechless_speechless_3",
+      "path": "resources/emoji/speechless/speechless_3.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_speechless_speechless_4",
+      "path": "resources/emoji/speechless/speechless_4.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_speechless_speechless_5",
+      "path": "resources/emoji/speechless/speechless_5.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_speechless_speechless_6",
+      "path": "resources/emoji/speechless/speechless_6.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_surprised_surprised_1",
+      "path": "resources/emoji/surprised/surprised_1.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_surprised_surprised_2",
+      "path": "resources/emoji/surprised/surprised_2.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "emoji_surprised_surprised_3",
+      "path": "resources/emoji/surprised/surprised_3.gif",
+      "mime": "image/gif"
+    },
+    {
+      "key": "emoji_surprised_surprised_4",
+      "path": "resources/emoji/surprised/surprised_4.jpg",
+      "mime": "image/jpeg"
+    },
+    {
+      "key": "emoji_surprised_surprised_5",
+      "path": "resources/emoji/surprised/surprised_5.gif",
+      "mime": "image/gif"
+    }
+  ],
+  "requires": [
+    {
+      "id": "com.operit.character_cards",
+      "min_version": "0.1.0"
+    }
+  ]
+}

@@ -164,9 +164,20 @@ impl RuntimeRemoteLinkService {
     pub async fn discoverPeers(&self, timeoutMs: u64) -> Result<Vec<crate::NodeServices::DiscoveredPeer>, String> {
         self.nodeServices()?.peers().discoverPeers(timeoutMs).await.map_err(|error| error.to_string())
     }
+    /// Updates the local outbound pairing endpoint and probes the device through its sole channel.
+    #[allow(non_snake_case)]
+    pub async fn updatePairedDeviceEndpoint(
+        &self,
+        deviceId: String,
+        endpoint: String,
+        transport: Option<operit_peer_link::PeerTransport>,
+    ) -> Result<(), String> {
+        self.nodeServices()?.peers().updatePeerEndpoint(&deviceId, &endpoint, transport)
+            .await.map_err(|error| error.to_string())
+    }
     /// Creates pending pairing for subsequent code confirmation.
     pub async fn startPairing(&self, nodeId: String, address: String,
-        transport: operit_peer_link::PeerTransport,
+        transport: Option<operit_peer_link::PeerTransport>,
     ) -> Result<crate::NodeServices::PendingPairing, String> {
         self.nodeServices()?.peers().startPairing(crate::NodeServices::PeerEndpoint { nodeId, address },
             transport).await.map_err(|error| error.to_string())
@@ -251,6 +262,11 @@ impl RuntimeRemoteLinkService {
         Err("Device space changed while reading its overview".to_string())
     }
 
+    /// Observes local synchronization execution separately from topology changes.
+    pub fn spaceSyncProgressFlow(&self) -> StateFlow<Vec<crate::SpaceSyncProgress::SpaceSyncProgress>> {
+        self.persistenceSyncService().progressFlow()
+    }
+
     /// Observes persistent Space changes and live Peer Links through the shared Host scheduler.
     pub fn deviceSpaceSnapshotFlow(&self) -> Result<StateFlow<RuntimeDeviceSpaceSnapshot>, String> {
         let (changes, mut changed) = tokio::sync::mpsc::channel(1);
@@ -295,6 +311,24 @@ impl RuntimeRemoteLinkService {
             })),
         ).map_err(|error| error.to_string())?;
         Ok(overview)
+    }
+
+    /// Reads only this device's bounded configuration, never a business replica.
+    pub fn devicePreferences(&self, nodeId: String) -> Result<BTreeMap<String, serde_json::Value>, String> {
+        let space = self.spaceStore.space()?;
+        if !space.members.contains(&nodeId) { return Err("Device is not a Space member".into()); }
+        operit_store::DevicePreferencesStore::DevicePreferencesStore::new(self.localRuntime.runtimeStorageHost())
+            .read(&space.spaceId, &nodeId).map(|state| state.values())
+    }
+
+    /// Local configuration editors can configure a member without granting storage.
+    pub fn setDevicePreference(&self, nodeId: String, key: String, value: Option<serde_json::Value>) -> Result<(), String> {
+        let space = self.spaceStore.space()?;
+        if !space.members.contains(&nodeId) || self.networkControlStore.nodeIsDisconnected(&nodeId)? {
+            return Err("Device is not an active Space member".into());
+        }
+        operit_store::DevicePreferencesStore::DevicePreferencesStore::new(self.localRuntime.runtimeStorageHost())
+            .set(&space.spaceId, &nodeId, &self.nodeRouter.localNodeId(), &key, value).map(|_| ())
     }
 
     /// Creates the initial administrator policy for this device's new single-device Space.
@@ -788,6 +822,34 @@ impl RuntimeRemoteLinkService {
             .map_err(|error| error.to_string())?.contains(&deviceId))
     }
 
+    /// Moves one chat whose route metadata cannot be presented onto this device.
+    ///
+    /// This only rewrites the Binding. It does not resume an in-progress turn.
+    #[allow(non_snake_case)]
+    pub fn claimMissingBindingLocal(&self, chatId: String) -> Result<(), String> {
+        if chatId.trim().is_empty() {
+            return Err("route claim chat id must not be empty".to_string());
+        }
+        if self.nodeRouter.bindingRouteStatus(chatId.clone()).is_ok() {
+            return Err("binding owner is already known".to_string());
+        }
+        let localNodeId = self.nodeRouter.localNodeId();
+        let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
+        match bindingStore.bindingOptional(&chatId)? {
+            Some(binding) if binding.nodeId == localNodeId => {
+                Err("current device profile is still missing for this chat binding".to_string())
+            }
+            Some(binding) => {
+                bindingStore.compareAndSet(&chatId, &binding.nodeId, &localNodeId)?;
+                Ok(())
+            }
+            None => {
+                bindingStore.createLocal(&chatId)?;
+                Ok(())
+            }
+        }
+    }
+
     /// Commits a chat Binding change, installs it on the target Core, and resumes there.
     #[allow(non_snake_case)]
     pub async fn requestChangeRoute(
@@ -808,12 +870,12 @@ impl RuntimeRemoteLinkService {
                 "route change target is not a member of the current device space: {targetNodeId}"
             ));
         }
-        if !self
-            .networkControlStore
-            .nodeHasCapability(&targetNodeId, "runtime.execute", None)?
+        if !self.spaceStore.deviceProfiles()?.get(&targetNodeId)
+            .is_some_and(|profile| profile.coreVersion.is_some())
+            || !self.networkControlStore.nodeHasCapability(&targetNodeId, "runtime.execute", None)?
         {
             return Err(format!(
-                "route change target cannot execute runtime work: {targetNodeId}"
+                "route change target cannot host Core execution: {targetNodeId}"
             ));
         }
         let localNodeId = self.nodeRouter.localNodeId();
@@ -833,7 +895,7 @@ impl RuntimeRemoteLinkService {
         let routeChangeStartedAt = currentTimeMillis();
         let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
         let currentBinding = bindingStore.binding(&chatId)?;
-        operit_util::AppLogger::AppLogger::trace(
+        operit_util::AppLogger::AppLogger::v_with_level(
             "CoreRouteTrace",
             &format!(
                 "route_change.binding_observed chatId={} local={} currentOwner={} currentGeneration={} target={} elapsedMs={}",
@@ -844,9 +906,10 @@ impl RuntimeRemoteLinkService {
                 targetNodeId,
                 currentTimeMillis() - routeChangeStartedAt
             ),
+            operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
         if currentBinding.nodeId == targetNodeId {
-            operit_util::AppLogger::AppLogger::trace(
+            operit_util::AppLogger::AppLogger::v_with_level(
                 "CoreRouteTrace",
                 &format!(
                     "route_change.noop chatId={} owner={} generation={} elapsedMs={}",
@@ -855,11 +918,12 @@ impl RuntimeRemoteLinkService {
                     currentBinding.generation,
                     currentTimeMillis() - routeChangeStartedAt
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_2,
             );
         }
 
         if targetNodeId != localNodeId {
-            operit_util::AppLogger::AppLogger::trace(
+            operit_util::AppLogger::AppLogger::v_with_level(
                 "CoreRouteTrace",
                 &format!(
                     "route_change.sync_before_commit.start chatId={} fromOwner={} target={} generation={} elapsedMs={}",
@@ -869,11 +933,12 @@ impl RuntimeRemoteLinkService {
                     currentBinding.generation,
                     currentTimeMillis() - routeChangeStartedAt
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_2,
             );
             self.persistenceSyncService()
-                .synchronizeReachablePeer(targetNodeId.clone(), 512, false)
+                .synchronizeReachablePeer(targetNodeId.clone(), 512)
                 .await?;
-            operit_util::AppLogger::AppLogger::trace(
+            operit_util::AppLogger::AppLogger::v_with_level(
                 "CoreRouteTrace",
                 &format!(
                     "route_change.sync_before_commit.done chatId={} fromOwner={} target={} generation={} elapsedMs={}",
@@ -883,6 +948,7 @@ impl RuntimeRemoteLinkService {
                     currentBinding.generation,
                     currentTimeMillis() - routeChangeStartedAt
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_2,
             );
         }
 
@@ -893,7 +959,7 @@ impl RuntimeRemoteLinkService {
                 commit.binding.nodeId
             ));
         }
-        operit_util::AppLogger::AppLogger::trace(
+        operit_util::AppLogger::AppLogger::v_with_level(
             "CoreRouteTrace",
             &format!(
                 "route_change.binding_committed chatId={} fromOwner={} target={} generation={} elapsedMs={}",
@@ -903,12 +969,13 @@ impl RuntimeRemoteLinkService {
                 commit.binding.generation,
                 currentTimeMillis() - routeChangeStartedAt
             ),
+            operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
 
         self.installRouteBindingOnTarget(&targetNodeId, commit.operation.clone())
             .await?;
 
-        operit_util::AppLogger::AppLogger::trace(
+        operit_util::AppLogger::AppLogger::v_with_level(
             "CoreRouteTrace",
             &format!(
                 "route_change.lifecycle.after.start chatId={} target={} generation={} elapsedMs={}",
@@ -917,6 +984,7 @@ impl RuntimeRemoteLinkService {
                 commit.binding.generation,
                 currentTimeMillis() - routeChangeStartedAt
             ),
+            operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
         let lifecycleResult = self
             .callChatCoreLifecycle(
@@ -926,7 +994,7 @@ impl RuntimeRemoteLinkService {
                 Some(resumeContext),
             )
             .await;
-        operit_util::AppLogger::AppLogger::trace(
+        operit_util::AppLogger::AppLogger::v_with_level(
             "CoreRouteTrace",
             &format!(
                 "route_change.lifecycle.after.done target={} generation={} elapsedMs={} result={}",
@@ -939,6 +1007,7 @@ impl RuntimeRemoteLinkService {
                     "error"
                 }
             ),
+            operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
         lifecycleResult
     }
@@ -1222,7 +1291,7 @@ impl crate::NodeSpaceService::NodeSpaceContext for RuntimeRemoteLinkService {
     async fn callNode(&self, node: String, request: CoreCallRequest) -> operit_link::CoreCallResponse {
         self.nodeRouter.callNode(node, request).await
     }
-    async fn afterJoined(&self, peer: String) -> Result<(), String> {
-        self.persistenceSyncService().synchronizeReachablePeer(peer, 512, true).await.map(|_| ())
+    async fn afterJoined(&self, _peer: String) -> Result<(), String> {
+        self.persistenceSyncService().scheduleSynchronization()
     }
 }

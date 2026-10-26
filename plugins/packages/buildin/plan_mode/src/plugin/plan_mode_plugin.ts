@@ -15,7 +15,6 @@ import {
 import { resolvePlanModeI18n, type PlanModeI18n } from "../shared/plan_mode_i18n.js";
 import {
   PlanModeShared,
-  registerSharedMethods,
 } from "../shared/plan_mode_runtime_ipc.js";
 import { appendPrompt, buildExistingPlanPrompt, buildPlanningModePrompt } from "../shared/plan_mode_prompt.js";
 import { type PlanModeRuntime } from "../shared/plan_mode_state.js";
@@ -31,8 +30,9 @@ import {
 } from "../shared/plan_mode_ask_execution.js";
 import { type PlanImplementationRequest } from "../shared/plan_mode_execution.js";
 import {
-  logPlanModeDebug,
-} from "../shared/plan_mode_workspace.js";
+  logPlanModeError,
+  logPlanModeVerbose,
+} from "../shared/plan_mode_logging.js";
 import { onPlanaskXmlRender } from "./planask-xml-render-plugin.js";
 import { onPlantodoXmlRender } from "./plantodo-xml-render-plugin.js";
 
@@ -93,7 +93,6 @@ export async function onPlanModeCommand(
         action,
         enabled,
         chatId: activeView.chatId,
-        workspacePath: activeView.workspacePath,
       },
     };
   }
@@ -123,13 +122,6 @@ export async function onPlanModeCommand(
     };
   }
 
-  const workspace = await PlanModeShared.resolveWorkspace(activeView.chatId, activeView.runtime);
-  if (!workspace) {
-    return {
-      stderr: text.toastWorkspaceRequired,
-      json: { ok: false, action: message ? "message" : "on", error: "workspace_required" },
-    };
-  }
   await PlanModeShared.enable(activeView.chatId);
   if (message) {
     void Tools.Chat.sendMessage({ kind: "submit", chatId: activeView.chatId, runtime: activeView.runtime, input: { text: message, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
@@ -144,7 +136,6 @@ export async function onPlanModeCommand(
       action: message ? "message" : "on",
       enabled: true,
       chatId: activeView.chatId,
-      workspacePath: workspace.workspacePath,
       message: message || undefined,
     },
   };
@@ -159,17 +150,10 @@ async function enablePlanModeFromCommand(text: PlanModeI18n): Promise<ToolPkg.Co
       json: { ok: false, error: "chat_view_missing" },
     };
   }
-  const workspace = await PlanModeShared.resolveWorkspace(activeView.chatId, activeView.runtime);
-  if (!workspace) {
-    return {
-      stderr: text.toastWorkspaceRequired,
-      json: { ok: false, action: "on", error: "workspace_required" },
-    };
-  }
   await PlanModeShared.enable(activeView.chatId);
   return {
     stdout: text.commandEnabled,
-    json: { ok: true, action: "on", enabled: true, chatId: activeView.chatId, workspacePath: workspace.workspacePath },
+    json: { ok: true, action: "on", enabled: true, chatId: activeView.chatId },
   };
 }
 
@@ -187,15 +171,6 @@ async function handleSubmitPlanaskAnswersIpc(
         error: text.toastChatViewMissing,
       };
     }
-    const workspace = await PlanModeShared.resolveWorkspace(trackedView.chatId, trackedView.runtime);
-    if (!workspace) {
-      await Tools.System.toast(text.toastWorkspaceRequired);
-      return {
-        success: false,
-        error: text.toastWorkspaceRequired,
-      };
-    }
-
     void Tools.Chat.sendMessage({ kind: "submit", chatId: trackedView.chatId, runtime: trackedView.runtime, input: { text: request.message, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
       const errorText = error instanceof Error
         ? error.message || "error"
@@ -236,19 +211,14 @@ async function handleStartImplementationIpc(
       await Tools.System.toast(text.toastChatViewMissing);
       return { success: false, error: text.toastChatViewMissing };
     }
-    const workspace = await PlanModeShared.resolveWorkspace(trackedView.chatId, trackedView.runtime);
-    if (!workspace) {
-      await Tools.System.toast(text.toastWorkspaceRequired);
-      return { success: false, error: text.toastWorkspaceRequired };
-    }
     if (!(await PlanModeShared.claimPlanStart(normalizedPlanContent, trackedView.chatId))) {
       await Tools.System.toast(text.toastPlanAlreadyStarted);
       return { success: true, alreadyStarted: true };
     }
     try {
-      const written = await PlanModeShared.writePlanFile(workspace.chatId, normalizedPlanContent);
+      const written = await PlanModeShared.writePlanFile(trackedView.chatId, normalizedPlanContent);
       await PlanModeShared.disable(written.chatId);
-      void Tools.Chat.sendMessage({ kind: "submit", chatId: written.chatId, runtime: workspace.runtime ?? trackedView.runtime, input: { text: text.implementationMessage, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
+      void Tools.Chat.sendMessage({ kind: "submit", chatId: written.chatId, runtime: trackedView.runtime, input: { text: text.implementationMessage, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
         const errorText = error instanceof Error
           ? error.message || "error"
           : (typeof error === "string" || error == null ? error || "error" : "error");
@@ -276,7 +246,7 @@ async function handleIsPlanStartedIpc(request: PlanImplementationRequest): Promi
   try {
     return await PlanModeShared.isPlanStarted(request.planContent, request.chatId);
   } catch (error) {
-    logPlanModeDebug("handleIsPlanStartedIpc.error", {
+    logPlanModeError("handleIsPlanStartedIpc.error", {
       message: error instanceof Error ? error.message : "error",
     });
     return false;
@@ -289,7 +259,6 @@ function registerPlanModeIpc(): void {
     return;
   }
   planModeIpcRegistered = true;
-  registerSharedMethods(PlanModeShared);
   ToolPkg.ipc.on<SubmitPlanaskAnswersRequest, SubmitPlanaskAnswersResult>(
     PLAN_MODE_SUBMIT_ANSWERS_IPC_CHANNEL,
     handleSubmitPlanaskAnswersIpc
@@ -349,134 +318,35 @@ export async function onInputMenuToggle(
     }
     const text = resolvePlanModeI18n();
     const enabled = await PlanModeShared.isEnabled(chatId);
-    const workspace = await PlanModeShared.resolveWorkspace(chatId, runtime);
-    logPlanModeDebug("onInputMenuToggle", {
-      action,
-      runtime,
-      chatId,
-      enabled,
-      hasWorkspace: !!workspace,
-      workspacePath: workspace?.workspacePath,
-    });
-
     if (action === "create") {
-      return {
-        toggles: [
-          {
-            id: TOGGLE_ID,
-            title: text.menuTitle,
-            description: workspace
-              ? enabled
-                ? text.menuDescriptionEnabled
-                : text.menuDescriptionDisabled
-              : text.menuDescriptionWorkspaceMissing,
-            icon: TOGGLE_ICON,
-            isChecked: enabled,
-          },
-        ],
-      };
+      return { toggles: [{ id: TOGGLE_ID, title: text.menuTitle,
+        description: enabled ? text.menuDescriptionEnabled : text.menuDescriptionDisabled,
+        icon: TOGGLE_ICON, isChecked: enabled }] };
     }
-
-    if (action === "toggle" && payload.toggleId === TOGGLE_ID) {
-      if (enabled) {
-        logPlanModeDebug("toggle.disable", { chatId, runtime });
-        await PlanModeShared.disable(chatId);
-        return null;
-      }
-      if (!workspace) {
-        logPlanModeDebug("toggle.enable_denied_workspace_missing", { chatId, runtime });
-        await Tools.System.toast(text.toastWorkspaceRequired);
-        return null;
-      }
-      logPlanModeDebug("toggle.enable", {
-        chatId,
-        runtime,
-        workspacePath: workspace.workspacePath,
-        workspaceEnv: workspace.workspaceEnv,
-      });
-      await PlanModeShared.enable(workspace.chatId);
+    if (payload.toggleId === TOGGLE_ID) {
+      if (enabled) await PlanModeShared.disable(chatId);
+      else await PlanModeShared.enable(chatId);
     }
 
     return null;
   } catch (error) {
-    logPlanModeDebug("onInputMenuToggle.error", {
+    logPlanModeError("onInputMenuToggle.error", {
       message: error instanceof Error ? error.message : "error",
     });
     return null;
   }
 }
 
-/** Tracks active chat views and their workspace bindings. */
-export async function onChatViewEvent(
-  event: ToolPkg.ChatViewHookEvent
-): Promise<void> {
-  try {
-    const payload = event.eventPayload;
-    const eventName = event.eventName;
-    const runtime = payload.runtime;
-    const viewId = payload.viewId;
-    const chatId = payload.chatId;
-    const workspacePath = payload.workspacePath;
-    const workspaceEnv = payload.workspaceEnv;
-    const title = payload.title;
-    if (
-      !isPlanModeRuntime(runtime) ||
-      !isNonEmptyString(viewId) ||
-      !isNonEmptyString(chatId)
-    ) {
-      logPlanModeDebug("onChatViewEvent.ignore_invalid_workspace", {
-        eventName,
-        runtime,
-        viewId: typeof viewId === "string" ? viewId : undefined,
-        chatId: typeof chatId === "string" ? chatId : undefined,
-        workspacePath:
-          typeof workspacePath === "string" ? workspacePath : workspacePath === null ? "null" : undefined,
-        workspaceEnv:
-          typeof workspaceEnv === "string" ? workspaceEnv : workspaceEnv === null ? "null" : undefined,
-      });
-      return;
-    }
-
-    // Closing or unbinding a view is valid even when its workspace path is empty.
-    if (eventName === "view_closed") {
-      await PlanModeShared.removeTrackedChatView(runtime, viewId);
-      return;
-    }
-    if (!isNonEmptyString(workspacePath)) {
-      await PlanModeShared.removeTrackedChatView(runtime, viewId);
-      await PlanModeShared.disable(chatId);
-      logPlanModeDebug("onChatViewEvent.workspace_unbound", { eventName, runtime, viewId, chatId });
-      return;
-    }
-    if (typeof title !== "string") {
-      logPlanModeDebug("onChatViewEvent.ignore_invalid_title", { eventName, runtime, viewId, chatId });
-      return;
-    }
-
-    logPlanModeDebug("onChatViewEvent", {
-      eventName,
-      runtime,
-      viewId,
-      chatId,
-      workspacePath,
-      workspaceEnv,
-      title,
-    });
-
-    await PlanModeShared.upsertTrackedChatView({
-      viewId,
-      runtime,
-      chatId,
-      workspacePath,
-      workspaceEnv: isNonEmptyString(workspaceEnv) ? workspaceEnv : undefined,
-      title,
-      updatedAt: Date.now(),
-    });
-  } catch (error) {
-    logPlanModeDebug("onChatViewEvent.error", {
-      message: error instanceof Error ? error.message : "error",
-    });
+/** Tracks chat-view identities without requiring a workspace binding. */
+export async function onChatViewEvent(event: ToolPkg.ChatViewHookEvent): Promise<void> {
+  const { runtime, viewId, chatId, title } = event.eventPayload;
+  if (!isPlanModeRuntime(runtime) || !isNonEmptyString(viewId) || !isNonEmptyString(chatId)) return;
+  if (event.eventName === "view_closed") {
+    await PlanModeShared.removeTrackedChatView(runtime, viewId);
+    return;
   }
+  if (typeof title !== "string") return;
+  await PlanModeShared.upsertTrackedChatView({ viewId, runtime, chatId, title, updatedAt: Date.now() });
 }
 
 /** Adds the relevant plan-mode instruction during system prompt composition. */
@@ -502,8 +372,7 @@ export async function onSystemPromptCompose(
       };
     }
 
-    const workspace = await PlanModeShared.resolveWorkspace(chatId);
-    if (!workspace || !(await PlanModeShared.hasPlanFile(workspace.chatId))) {
+    if (!(await PlanModeShared.hasPlanFile(chatId))) {
       return null;
     }
 
@@ -511,7 +380,7 @@ export async function onSystemPromptCompose(
       systemPrompt: appendPrompt(currentPrompt, buildExistingPlanPrompt(useEnglish)),
     };
   } catch (error) {
-    logPlanModeDebug("onSystemPromptCompose.error", {
+    logPlanModeError("onSystemPromptCompose.error", {
       message: error instanceof Error ? error.message : "error",
     });
     return null;
@@ -539,7 +408,7 @@ export async function onToolPromptCompose(
     }
 
     const filteredTools = filterPlanModeTools(availableTools);
-    logPlanModeDebug("onToolPromptCompose", {
+    logPlanModeVerbose("onToolPromptCompose", {
       chatId,
       stage,
       toolCountBefore: availableTools.length,
@@ -549,7 +418,7 @@ export async function onToolPromptCompose(
       availableTools: filteredTools,
     };
   } catch (error) {
-    logPlanModeDebug("onToolPromptCompose.error", {
+    logPlanModeError("onToolPromptCompose.error", {
       message: error instanceof Error ? error.message : "error",
     });
     return null;
@@ -575,8 +444,7 @@ async function buildPromptFinalizeResult(
     };
   }
 
-  const workspace = await PlanModeShared.resolveWorkspace(chatId);
-  if (!workspace || !(await PlanModeShared.hasPlanFile(workspace.chatId))) {
+  if (!(await PlanModeShared.hasPlanFile(chatId))) {
     return null;
   }
 
@@ -600,7 +468,7 @@ export async function onPromptFinalize(
     }
     return await buildPromptFinalizeResult(payload);
   } catch (error) {
-    logPlanModeDebug("onPromptFinalize.error", {
+    logPlanModeError("onPromptFinalize.error", {
       message: error instanceof Error ? error.message : "error",
     });
     return null;
@@ -619,7 +487,7 @@ export async function onPromptEstimateFinalize(
     }
     return await buildPromptFinalizeResult(payload);
   } catch (error) {
-    logPlanModeDebug("onPromptEstimateFinalize.error", {
+    logPlanModeError("onPromptEstimateFinalize.error", {
       message: error instanceof Error ? error.message : "error",
     });
     return null;

@@ -15,6 +15,15 @@ use crate::SyncOperationStore::{
     SyncOperationStore,
 };
 
+/// Identifies only preference datasets explicitly retired into endpoint-local authority projections.
+fn endpointProjectionPreferencePath(path: &str) -> bool {
+    ["runtime/space/members/", "runtime/space/device_profiles/",
+        operit_util::RuntimeStorageLayout::RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH,
+        operit_util::RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH]
+        .iter().any(|prefix| path.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with('/') || prefix.ends_with('/'))
+            && path.ends_with(".preferences.json"))
+}
+
 /// Names the synchronized domain that owns Space authorization and control commands.
 pub const NETWORK_CONTROL_SYNC_DOMAIN: &str = "network_control";
 const NETWORK_CONTROL_ENTITY_TYPE: &str = "command";
@@ -70,7 +79,8 @@ pub enum NetworkControlCommand {
     },
     AdmitSpace {
         sourceSpaceId: String,
-        nodeIds: BTreeSet<String>,
+        /// Each admitted device's initial identity in the target Space.
+        identities: BTreeMap<String, String>,
     },
     RemoveMember {
         nodeId: String,
@@ -82,6 +92,8 @@ pub enum NetworkControlCommand {
         #[serde(default)]
         revokedIncarnation: Option<String>,
     },
+    /// An admitted device retires only its own membership, without deleting pairings.
+    LeaveSpace,
     DisconnectNode {
         nodeId: String,
     },
@@ -97,7 +109,32 @@ pub struct NetworkControlCommandRecord {
     pub commandId: String,
     pub spaceId: String,
     pub issuerNodeId: String,
+    #[serde(deserialize_with = "deserializeControlCommand")]
     pub command: NetworkControlCommand,
+}
+
+/// Normalize the published nodeIds format at the read boundary; stored operations stay immutable.
+#[allow(non_snake_case)]
+fn deserializeControlCommand<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<NetworkControlCommand, D::Error> {
+    use serde::de::Error;
+    let mut value = serde_json::Value::deserialize(deserializer)?;
+    if let Some(admission) = value.get_mut("admit_space").and_then(serde_json::Value::as_object_mut) {
+        if let Some(nodes) = admission.remove("nodeIds") {
+            if admission.contains_key("identities") {
+                return Err(D::Error::custom("Space admission cannot contain both nodeIds and identities"));
+            }
+            let nodes: BTreeSet<String> = serde_json::from_value(nodes).map_err(D::Error::custom)?;
+            let identities: BTreeMap<_, _> = nodes.into_iter().map(|node| (node, "user")).collect();
+            admission.insert("identities".into(), serde_json::to_value(identities).map_err(D::Error::custom)?);
+        }
+    }
+    serde_json::from_value(value).map_err(D::Error::custom)
+}
+
+/// Only decoded historical admissions retain the original join-only authorization.
+#[allow(non_snake_case)]
+fn isLegacyAdmission(operation: &SyncOperation) -> bool {
+    operation.payload["command"]["admit_space"].get("nodeIds").is_some()
 }
 
 /// Reports the local authorization decision for one replicated control command.
@@ -355,6 +392,44 @@ impl NetworkControlStore {
         self.submitLocalCommand(NetworkControlCommand::RemoveMember { nodeId, revokedIncarnation })
     }
 
+    /// Records a local exit before the node switches Spaces. Retrying an
+    /// interrupted exit reuses its receipt; a later admission permits a new exit.
+    #[allow(non_snake_case)]
+    pub fn leaveCurrentSpace(&self) -> Result<Option<SyncOperation>, String> {
+        let _lock = networkControlMutationLock().lock().map_err(|error| error.to_string())?;
+        let space = self.spaceStore.initialize()?;
+        let state = self.materializeState(&space.spaceId)?;
+        if !state.memberNodeIds.contains(&self.localNodeId) {
+            return self.latestLocalDeparture(&space.spaceId);
+        }
+        self.appendLocalCommand(&space.spaceId, NetworkControlCommand::LeaveSpace).map(Some)
+    }
+
+    /// An exit still awaiting its local Space switch, rather than an older
+    /// exit superseded by a subsequent admission or administrative removal.
+    #[allow(non_snake_case)]
+    pub fn committedLocalDeparture(&self) -> Result<Option<SyncOperation>, String> {
+        let space = self.spaceStore.initialize()?;
+        if self.materializeState(&space.spaceId)?.memberNodeIds.contains(&self.localNodeId) { return Ok(None); }
+        self.latestLocalDeparture(&space.spaceId)
+    }
+
+    #[allow(non_snake_case)]
+    fn latestLocalDeparture(&self, spaceId: &str) -> Result<Option<SyncOperation>, String> {
+        for operation in self.orderedCommands(spaceId)?.into_iter().rev() {
+            let record = decodeControlOperation(&operation)?;
+            match record.command {
+                NetworkControlCommand::LeaveSpace if record.issuerNodeId == self.localNodeId
+                    && operation.originDeviceId == self.localNodeId => return Ok(Some(operation)),
+                NetworkControlCommand::RemoveMember { nodeId, .. } | NetworkControlCommand::AdmitMember { nodeId }
+                    if nodeId == self.localNodeId => break,
+                NetworkControlCommand::AdmitSpace { identities, .. } if identities.contains_key(&self.localNodeId) => break,
+                _ => {},
+            }
+        }
+        Ok(None)
+    }
+
     /// Admits one authenticated device as a member of the current Space.
     #[allow(non_snake_case)]
     pub fn admitMember(&self, nodeId: String) -> Result<SyncOperation, String> {
@@ -362,8 +437,8 @@ impl NetworkControlStore {
     }
 
     /// Approves every member of one source Space as one auditable policy command.
-    pub fn admitSpace(&self, sourceSpaceId: String, nodeIds: BTreeSet<String>) -> Result<SyncOperation, String> {
-        self.submitLocalCommand(NetworkControlCommand::AdmitSpace { sourceSpaceId, nodeIds })
+    pub fn admitSpace(&self, sourceSpaceId: String, identities: BTreeMap<String, String>) -> Result<SyncOperation, String> {
+        self.submitLocalCommand(NetworkControlCommand::AdmitSpace { sourceSpaceId, identities })
     }
 
     /// Validates and replays a received policy without publishing any received operation.
@@ -387,10 +462,10 @@ impl NetworkControlStore {
         for (index, operation) in ordered.iter().enumerate() {
             let record = decodeControlOperation(operation)?;
             if record.spaceId != targetSpaceId { continue; }
-            if let NetworkControlCommand::AdmitSpace { sourceSpaceId: source, nodeIds } = &record.command {
-                if source == sourceSpaceId && members.is_subset(nodeIds) {
+            if let NetworkControlCommand::AdmitSpace { sourceSpaceId: source, identities } = &record.command {
+                if source == sourceSpaceId && members.iter().all(|node| identities.contains_key(node)) {
                     let (mut before, _) = self.replayCommands(targetSpaceId, &ordered[..index], false)?;
-                    if authorizeAndApplyCommand(&mut before, &record, &operation.originDeviceId).is_ok() {
+                    if authorizeAndApplyCommand(&mut before, &record, &operation.originDeviceId, isLegacyAdmission(operation)).is_ok() {
                         return Ok(());
                     }
                 }
@@ -403,13 +478,13 @@ impl NetworkControlStore {
     /// The key is bound to the claimed request/version, not just the member:
     /// removing and later readmitting a member must still create a new command.
     #[allow(non_snake_case)]
-    pub fn admitSpaceForReview(&self, sourceSpaceId: String, nodeIds: BTreeSet<String>, reviewKey: &str) -> Result<SyncOperation, String> {
+    pub fn admitSpaceForReview(&self, sourceSpaceId: String, identities: BTreeMap<String, String>, reviewKey: &str) -> Result<SyncOperation, String> {
         let _lock = networkControlMutationLock()
             .lock()
             .map_err(|error| format!("Network control mutation lock poisoned: {error}"))?;
         let space = self.spaceStore.initialize()?;
         let state = self.materializeState(&space.spaceId)?;
-        let command = NetworkControlCommand::AdmitSpace { sourceSpaceId, nodeIds };
+        let command = NetworkControlCommand::AdmitSpace { sourceSpaceId, identities };
         authorizeCommand(&state, &self.localNodeId, &command)?;
         let commandId = format!("control-review-{reviewKey}");
         for operation in self.orderedCommands(&space.spaceId)? {
@@ -479,6 +554,12 @@ impl NetworkControlStore {
         if self.nodeLocalOnly { return self.projectControlOperationsUnlocked(std::slice::from_ref(operation)); }
         self.syncOperationStore
             .appendUnobservedOperation(operation)
+            .map_err(|error| error.to_string())?;
+        // Acknowledge the control sequence on its own clock so the same page is
+        // not exported on every synchronization pass. Business sequences stay
+        // behind this command so earlier chat or file operations are not lost.
+        self.syncOperationStore
+            .observeNetworkControlOperation(operation)
             .map_err(|error| error.to_string())
     }
 
@@ -529,7 +610,7 @@ impl NetworkControlStore {
                 }
                 // Replay order must not let a formerly privileged member use a
                 // backdated command to resurrect authority revoked in the present.
-                authorizeCommand(&state, peer, &record.command)?;
+                authorizeAndApplyCommand(&mut state.clone(), &record, &operation.originDeviceId, isLegacyAdmission(operation))?;
             }
         }
         self.projectControlOperationsUnlocked(operations)
@@ -564,10 +645,17 @@ impl NetworkControlStore {
                         let record = crate::PreferencesDataStore::PreferencesSyncedEntry::fromOperation(&operation)
                             .map_err(|_| "Endpoint journal contains business operations; refusing automatic retirement")?;
                         let path = record.storagePath();
-                        if !["runtime/space/members/", "runtime/space/device_profiles/", operit_util::RuntimeStorageLayout::RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH, operit_util::RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH]
-                            .iter().any(|prefix| path.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with('/') || prefix.ends_with('/')) && path.ends_with(".preferences.json")) {
+                        if !endpointProjectionPreferencePath(path) {
                             return Err("Endpoint journal contains business operations; refusing automatic retirement".into());
                         }
+                    }
+                }
+            } else if entry.path == "runtime/sync/preference_outboxes.json" {
+                let registry: BTreeMap<String, bool> = serde_json::from_slice(&storage.readBytes(&entry.path).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+                for (path, encrypted) in registry {
+                    if encrypted || !endpointProjectionPreferencePath(&path) {
+                        return Err("Endpoint outbox contains business operations; refusing automatic retirement".into());
                     }
                 }
             } else if !["runtime/sync/clocks.json", "runtime/sync/devices.json", "runtime/sync/entity_versions.jsonl",
@@ -798,7 +886,7 @@ impl NetworkControlStore {
             } else {
                 None
             };
-            let result = authorizeAndApplyCommand(&mut state, &record, &operation.originDeviceId);
+            let result = authorizeAndApplyCommand(&mut state, &record, &operation.originDeviceId, isLegacyAdmission(operation));
             let (accepted, reason) = match result {
                 Ok(()) => (true, "accepted".to_string()),
                 Err(reason) => (false, reason),
@@ -836,15 +924,13 @@ fn builtinRoles() -> BTreeMap<String, NetworkControlRole> {
             "User",
             [
                 NETWORK_DEVICES_VIEW_CAPABILITY,
-                "chat.read",
                 "network.relay",
                 "runtime.execute",
+                "storage.provide",
             ],
         ),
-        builtinRole("relay", "Relay", ["network.relay"]),
-        builtinRole("storage", "Storage", ["storage.provide"]),
-        builtinRole("runner", "Runner", ["runtime.execute"]),
-        builtinRole("auditor", "Auditor", ["network.audit.read"]),
+        builtinRole("relay", "Relay", [NETWORK_DEVICES_VIEW_CAPABILITY, "network.relay", "storage.provide"]),
+        builtinRole("edge", "Edge", [NETWORK_DEVICES_VIEW_CAPABILITY, "runtime.execute"]),
     ]
     .into_iter()
     .map(|role| (role.roleId.clone(), role))
@@ -896,14 +982,15 @@ fn controlAuditSummary(
         NetworkControlCommand::AdmitMember { nodeId } => {
             format!("Admit device {}", controlDeviceLabel(profiles, nodeId)?)
         }
-        NetworkControlCommand::AdmitSpace { sourceSpaceId, nodeIds } => {
-            let labels = nodeIds.iter().map(|node| controlDeviceLabel(profiles, node))
+        NetworkControlCommand::AdmitSpace { sourceSpaceId, identities } => {
+            let labels = identities.keys().map(|node| controlDeviceLabel(profiles, node))
                 .collect::<Result<Vec<_>, _>>()?;
             format!("Merge Space {sourceSpaceId}; admit {}", labels.join(", "))
         }
         NetworkControlCommand::RemoveMember { nodeId, .. } => {
             format!("Remove device {}", controlDeviceLabel(profiles, nodeId)?)
         }
+        NetworkControlCommand::LeaveSpace => "Leave Space".to_string(),
         NetworkControlCommand::DisconnectNode { nodeId } => format!(
             "Disconnect device {}",
             controlDeviceLabel(profiles, nodeId)?
@@ -981,6 +1068,7 @@ fn validateCommandRecord(record: &NetworkControlCommandRecord) -> Result<(), Str
     validateSpaceId(&record.spaceId)?;
     validateNodeId(&record.issuerNodeId)?;
     match &record.command {
+        NetworkControlCommand::LeaveSpace => Ok(()),
         NetworkControlCommand::Bootstrap { initialAdminNodeId } => {
             validateNodeId(initialAdminNodeId)
         }
@@ -993,12 +1081,15 @@ fn validateCommandRecord(record: &NetworkControlCommandRecord) -> Result<(), Str
             validateIdentityAssignment(assignment)
         }
         NetworkControlCommand::RevokeRole { nodeId } => validateNodeId(nodeId),
-        NetworkControlCommand::AdmitSpace { sourceSpaceId, nodeIds } => {
+        NetworkControlCommand::AdmitSpace { sourceSpaceId, identities } => {
             validateSpaceId(sourceSpaceId)?;
-            if sourceSpaceId == &record.spaceId || nodeIds.is_empty() {
+            if sourceSpaceId == &record.spaceId || identities.is_empty() {
                 return Err("Space admission requires a distinct source and nonempty membership".into());
             }
-            for nodeId in nodeIds { validateNodeId(nodeId)?; }
+            for (nodeId, identityId) in identities {
+                validateNodeId(nodeId)?;
+                validateIdentifier("role id", identityId, 120)?;
+            }
             Ok(())
         }
         NetworkControlCommand::AdmitMember { nodeId }
@@ -1025,7 +1116,7 @@ fn authorizeCommand(
         issuerNodeId: issuerNodeId.to_string(),
         command: command.clone(),
     };
-    authorizeAndApplyCommand(&mut candidate, &record, issuerNodeId)
+    authorizeAndApplyCommand(&mut candidate, &record, issuerNodeId, false)
 }
 
 /// Checks issuer provenance and applies a command to the selected policy state when authorized.
@@ -1034,6 +1125,7 @@ fn authorizeAndApplyCommand(
     state: &mut NetworkControlState,
     record: &NetworkControlCommandRecord,
     originNodeId: &str,
+    legacyAdmission: bool,
 ) -> Result<(), String> {
     if record.issuerNodeId != originNodeId {
         return Err("network control issuer does not match operation origin".to_string());
@@ -1125,22 +1217,9 @@ fn authorizeAndApplyCommand(
             Ok(())
         }
         NetworkControlCommand::GrantRole { grant: assignment } => {
-            let role = state.roles.get(&assignment.roleId).ok_or_else(|| {
-                format!(
-                    "network control identity does not exist: {}",
-                    assignment.roleId
-                )
-            })?;
+            requireIdentityAssignmentAuthority(state, &record.issuerNodeId, &assignment.roleId)?;
             if !state.memberNodeIds.contains(&assignment.nodeId) {
                 return Err("identity target has not been admitted to the Space".to_string());
-            }
-            requireGlobalCapability(
-                state,
-                &record.issuerNodeId,
-                NETWORK_IDENTITY_ASSIGN_CAPABILITY,
-            )?;
-            for capability in &role.capabilities {
-                requireGlobalCapability(state, &record.issuerNodeId, capability)?;
             }
             if let Some(existingIdentityId) = state.deviceIdentityIds.get(&assignment.nodeId) {
                 if assignment.roleId != "admin"
@@ -1171,8 +1250,8 @@ fn authorizeAndApplyCommand(
             // Reset to the default user identity instead of leaving the
             // member identity-less. Every other replay path that grants
             // membership also assigns an identity; an identity-less member
-            // would lose every capability - including the chat.read its own
-            // UI depends on - and, for a solo Space, any in-band recovery.
+            // would lose the device visibility and routing capabilities its
+            // UI depends on and, for a solo Space, any in-band recovery.
             state
                 .deviceIdentityIds
                 .insert(nodeId.to_string(), "user".to_string());
@@ -1194,15 +1273,19 @@ fn authorizeAndApplyCommand(
             }
             Ok(())
         }
-        NetworkControlCommand::AdmitSpace { nodeIds, .. } => {
-            // Validate the entire group before changing any authorization state.
-            for nodeId in nodeIds {
+        NetworkControlCommand::AdmitSpace { identities, .. } => {
+            // Validate the complete group and its initial identities before
+            // changing membership. Existing target identities remain intact.
+            for (nodeId, identityId) in identities {
                 requireCapability(state, &record.issuerNodeId, "network.members.join", Some(nodeId))?;
+                if !legacyAdmission {
+                    requireIdentityAssignmentAuthority(state, &record.issuerNodeId, identityId)?;
+                }
             }
-            for nodeId in nodeIds {
+            for (nodeId, identityId) in identities {
                 state.disconnectedNodeIds.remove(nodeId);
                 state.memberNodeIds.insert(nodeId.clone());
-                state.deviceIdentityIds.entry(nodeId.clone()).or_insert_with(|| "user".into());
+                state.deviceIdentityIds.entry(nodeId.clone()).or_insert_with(|| identityId.clone());
             }
             Ok(())
         }
@@ -1221,6 +1304,15 @@ fn authorizeAndApplyCommand(
             state.deviceIdentityIds.remove(nodeId);
             state.memberNodeIds.remove(nodeId);
             state.disconnectedNodeIds.remove(nodeId);
+            Ok(())
+        }
+        NetworkControlCommand::LeaveSpace => {
+            let node = &record.issuerNodeId;
+            if !state.memberNodeIds.remove(node) {
+                return Err("Only an admitted device can leave its Space".into());
+            }
+            state.deviceIdentityIds.remove(node);
+            state.disconnectedNodeIds.remove(node);
             Ok(())
         }
         NetworkControlCommand::DisconnectNode { nodeId } => {
@@ -1266,6 +1358,23 @@ fn requireCapability(
         return Ok(());
     }
     Err(format!("node {nodeId} lacks capability {capability}"))
+}
+
+/// Admission and later identity changes obey the same assignment policy.
+#[allow(non_snake_case)]
+fn requireIdentityAssignmentAuthority(
+    state: &NetworkControlState,
+    issuerNodeId: &str,
+    identityId: &str,
+) -> Result<(), String> {
+    let role = state.roles.get(identityId).ok_or_else(|| {
+        format!("network control identity does not exist: {identityId}")
+    })?;
+    requireGlobalCapability(state, issuerNodeId, NETWORK_IDENTITY_ASSIGN_CAPABILITY)?;
+    for capability in &role.capabilities {
+        requireGlobalCapability(state, issuerNodeId, capability)?;
+    }
+    Ok(())
 }
 
 /// Resolves one capability from the device's current identity.

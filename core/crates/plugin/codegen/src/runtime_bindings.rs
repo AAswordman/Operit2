@@ -30,8 +30,10 @@ const HOST_TRAITS: &[(&str, &str, &str)] = &[
     ),
     ("js_sdk/models.rs", "ModelsHost", "Models"),
     ("js_sdk/tts.rs", "TtsHost", "Tts"),
+    ("js_sdk/stt.rs", "SttHost", "Stt"),
     ("js_sdk/theme.rs", "ThemeHost", "Theme"),
     ("js_sdk/catalog.rs", "CatalogHost", "Catalog"),
+    ("js_sdk/media.rs", "MediaHost", "Media"),
     ("js_sdk/chat.rs", "ChatHost", "Chat"),
     ("js_sdk/storage.rs", "StorageHost", "Storage"),
 ];
@@ -395,6 +397,7 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
     );
     let mut initialized_namespaces = BTreeSet::new();
     output.push_str(&fs::read_to_string(sdk_src.join("chat_runtime.js"))?);
+    output.push_str(&fs::read_to_string(sdk_src.join("terminal_runtime.js"))?);
     output.push_str(&fs::read_to_string(sdk_src.join("js_sdk/storage_runtime.js"))?);
     let mut chat_namespace_open = false;
     for ((namespace, method), overloads) in methods {
@@ -437,6 +440,7 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
         let make_function = |signature: &str, overloads: &str| -> Result<String, Box<dyn Error>> {
             match binding.facade.as_str() {
                 "AsyncIterator" => Ok(format!("function({signature}) {{ if (arguments.length !== 1) throw new Error(\"{namespace}.{method} requires exactly one request\"); return __operitCreateToolStream(\"{}\", {signature}); }}", binding.tool)),
+                "TerminalCallback" => Ok("function(sessionId, command, options) { return __operitExecTerminalStreaming(sessionId, command, options); }".to_string()),
                 "Promise" | "Storage" => {
                     let validation = if binding.strict_arguments {
                         Some(argument_checks(sdk_src, &namespace, &method)?)
@@ -491,10 +495,12 @@ var __operitCanonicalTools = __operitCopyToolsNamespaces(Tools);
     // Embed the handwritten legacy adapters after the canonical Tools namespace exists.
     for relative_path in [
         "compat/v1/files.js",
+        "compat/v1/media.js",
         "compat/v1/chat.js",
         "compat/v1/workflow.js",
         "compat/v1/characters.js",
         "compat/v1/memory.js",
+        "compat/v1/runtime.js",
         "compat/v1/install.js",
         "DeviceTools.script.js",
     ] {

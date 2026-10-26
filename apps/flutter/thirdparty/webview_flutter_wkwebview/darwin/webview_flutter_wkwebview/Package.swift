@@ -17,9 +17,10 @@ let package = Package(
   ],
   dependencies: [],
   targets: [
+    .target(name: "OperitWebViewSafety"),
     .target(
       name: "webview_flutter_wkwebview",
-      dependencies: [],
+      dependencies: ["OperitWebViewSafety"],
       resources: [
         .process("Resources")
       ]

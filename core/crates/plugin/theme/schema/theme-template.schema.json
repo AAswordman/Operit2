@@ -1,0 +1,58 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 63,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^(theme\\.json|preview\\.png|licenses/([a-z0-9_-]+/)?[a-z0-9_-]+\\.txt|assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)|assets/fonts/([a-z0-9_-]+/)?[a-z0-9_-]+\\.ttf)$"
+          },
+          "mediaType": {
+            "type": "string",
+            "enum": [
+              "application/json",
+              "image/png",
+              "image/jpeg",
+              "image/svg+xml",
+              "font/ttf",
+              "text/plain"
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "mediaType"
+        ]
+      }
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "preview": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id",
+    "path",
+    "preview",
+    "files"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operit2:theme-template"
+}

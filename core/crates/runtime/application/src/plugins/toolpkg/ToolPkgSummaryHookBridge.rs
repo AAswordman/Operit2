@@ -60,6 +60,7 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
         "builtin.toolpkg.summary-generate-bridge"
     }
 
+    /// Runs summary handlers and propagates any notified before-stage failure.
     fn on_event_async<'a>(
         &'a self,
         context: &'a SummaryHookContext,
@@ -73,20 +74,9 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
             let mut mutation = SummaryHookMutation::default();
             let mut changed = false;
             let manager = self.runtime.package_manager();
-            let budget = ToolPkgPreHookTimeout::fromPreferences();
+            let budget = ToolPkgPreHookTimeout::forStage(&context.stage)?;
             for hook in snapshot {
-                let Some(timeoutMillis) = budget.remainingTimeoutMillis() else {
-                    ChainLogger::error(
-                        PLUGIN_CHAIN,
-                        "plugin.toolpkg.summary.timeout",
-                        &[
-                            ("stage", context.stage.clone()),
-                            ("phase", "before_hook".to_string()),
-                        ],
-                    );
-                    break;
-                };
-                ChainLogger::info(
+                ChainLogger::verbose_with_level(
                     PLUGIN_CHAIN,
                     "plugin.toolpkg.summary.run.start",
                     &[
@@ -95,60 +85,25 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
                         ("hookId", hook.hookId.clone()),
                         ("function", hook.functionName.clone()),
                     ],
+                    operit_util::AppLogger::VERBOSE_LEVEL_3,
                 );
-                let raw = manager
-                    .runToolPkgMainHookWithTimeoutMillis(
-                        &hook.containerPackageName,
-                        &hook.functionName,
-                        TOOLPKG_EVENT_SUMMARY_GENERATE,
-                        None,
-                        Some(&hook.hookId),
-                        hook.functionSource.as_deref(),
-                        summary_context_to_value(context),
-                        None,
-                        None,
-                        None,
-                        timeoutMillis,
-                    )
-                    .await;
-                let hookTimedOut = raw
-                    .as_ref()
-                    .err()
-                    .map(|error| ToolPkgPreHookTimeout::isTimeoutError(error))
-                    .unwrap_or(false);
-                if hookTimedOut || budget.hasExpired() {
-                    ChainLogger::error(
-                        PLUGIN_CHAIN,
-                        "plugin.toolpkg.summary.timeout",
-                        &[
-                            ("stage", context.stage.clone()),
-                            ("package", hook.containerPackageName.clone()),
-                            ("hookId", hook.hookId.clone()),
-                        ],
-                    );
-                    break;
-                }
-                let result = match raw {
-                    Ok(raw) => decodeToolPkgHookResult(raw),
-                    Err(error) => {
-                        ChainLogger::error(
-                            PLUGIN_CHAIN,
-                            "plugin.toolpkg.summary.run.error",
-                            &[
-                                ("stage", context.stage.clone()),
-                                ("package", hook.containerPackageName.clone()),
-                                ("hookId", hook.hookId.clone()),
-                                ("function", hook.functionName.clone()),
-                                ("error", error),
-                            ],
-                        );
-                        None
-                    }
-                };
+                let raw = ToolPkgPreHookTimeout::runHook(
+                    budget.as_ref(),
+                    &manager,
+                    &hook.containerPackageName,
+                    &hook.functionName,
+                    TOOLPKG_EVENT_SUMMARY_GENERATE,
+                    &context.stage,
+                    &hook.hookId,
+                    hook.functionSource.as_deref(),
+                    summary_context_to_value(context),
+                )
+                .await?;
+                let result = decodeToolPkgHookResult(raw);
                 if let Some(Value::Object(object)) = result {
                     let hookChanged = apply_summary_object_result(&mut mutation, object);
                     changed |= hookChanged;
-                    ChainLogger::info(
+                    ChainLogger::verbose_with_level(
                         PLUGIN_CHAIN,
                         "plugin.toolpkg.summary.run.done",
                         &[
@@ -157,9 +112,10 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
                             ("hookId", hook.hookId.clone()),
                             ("changed", ChainLogger::boolField(hookChanged)),
                         ],
+                        operit_util::AppLogger::VERBOSE_LEVEL_3,
                     );
                 } else {
-                    ChainLogger::info(
+                    ChainLogger::verbose_with_level(
                         PLUGIN_CHAIN,
                         "plugin.toolpkg.summary.run.done",
                         &[
@@ -168,14 +124,11 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
                             ("hookId", hook.hookId.clone()),
                             ("changed", ChainLogger::boolField(false)),
                         ],
+                        operit_util::AppLogger::VERBOSE_LEVEL_3,
                     );
                 }
             }
-            if changed {
-                Some(mutation)
-            } else {
-                None
-            }
+            Ok(if changed { Some(mutation) } else { None })
         })
     }
 }

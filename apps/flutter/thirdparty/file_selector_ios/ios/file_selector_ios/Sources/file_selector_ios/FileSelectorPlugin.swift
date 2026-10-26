@@ -14,17 +14,30 @@ class PickerCompletionBridge: NSObject, UIDocumentPickerDelegate {
   /// serves as a delegate for. Instances are responsible for removing themselves from their owner
   /// on completion.
   let owner: FileSelectorPlugin
+  let scoped: Bool
 
-  init(completion: @escaping (Result<[String], Error>) -> Void, owner: FileSelectorPlugin) {
+  /// Retains one explicit selection mode until the system picker completes.
+  init(completion: @escaping (Result<[String], Error>) -> Void, owner: FileSelectorPlugin, scoped: Bool = false) {
     self.completion = completion
     self.owner = owner
+    self.scoped = scoped
   }
 
+  /// Keeps scoped source access alive before returning its file reference.
   func documentPicker(
     _ controller: UIDocumentPickerViewController,
     didPickDocumentsAt urls: [URL]
   ) {
-    sendResult(urls.map({ $0.path }))
+    if scoped {
+      do {
+        sendResult(try urls.map { try IOSFolderAccessStore.shared.rememberSelection($0).path })
+      } catch {
+        completion(.failure(error))
+        owner.pendingCompletions.remove(self)
+      }
+    } else {
+      sendResult(urls.map({ $0.path }))
+    }
   }
 
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
@@ -180,6 +193,10 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
 
   /// Routes a file-backed save separately from the existing byte-payload operation.
   private func handleSaveCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "openFileReference" {
+      handleFileReferenceOpen(call, result: result)
+      return
+    }
     if call.method == "saveFileFromPath" {
       handleFileReferenceSave(call, result: result)
       return
@@ -228,6 +245,30 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
     }
 
     presentSavePicker(temporaryURL: temporaryURL, arguments: arguments, result: result)
+  }
+
+  /// Opens an existing document directly instead of asking iOS to copy the entire archive.
+  private func handleFileReferenceOpen(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let arguments = call.arguments as? [String: Any],
+          let utis = arguments["utis"] as? [String], !utis.isEmpty else {
+      result(FlutterError(code: "INVALID_OPEN_ARGS", message: "Document types are required.", details: nil))
+      return
+    }
+    guard let presenter = viewPresenterProvider.viewPresenter else {
+      result(FlutterError(code: "PICK_UNAVAILABLE", message: "No view controller available.", details: nil))
+      return
+    }
+    let bridge = PickerCompletionBridge(completion: { selection in
+      switch selection {
+      case .success(let paths): result(paths.first)
+      case .failure(let error): result(FlutterError(code: "SOURCE_OPEN_FAILED", message: error.localizedDescription, details: nil))
+      }
+    }, owner: self, scoped: true)
+    let picker = UIDocumentPickerViewController(documentTypes: utis, in: .open)
+    picker.allowsMultipleSelection = false
+    picker.delegate = bridge
+    pendingCompletions.insert(bridge)
+    presenter.present(picker, animated: true, completion: nil)
   }
 
   /// Copies a host-owned file without passing its bytes through Dart or MethodChannel.

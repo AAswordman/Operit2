@@ -6,6 +6,7 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../common/ChatAvatarImage.dart';
+import '../../../../../common/markdown/MarkdownImageRenderer.dart';
 import '../../../../../theme/OperitTheme.dart';
 import '../../../../../theme/OperitThemeAssets.dart';
 import '../../attachments/AttachmentViewerDialog.dart';
@@ -75,8 +76,7 @@ class _BubbleUserMessageComposableState
       snapshot,
       isUser: true,
     );
-    final effectiveBubbleImageStyle =
-        isHiddenPlaceholder || widget.transparentSurface
+    final effectiveBubbleImageStyle = isHiddenPlaceholder
         ? null
         : widget.bubbleImageStyle;
     final bubbleShape = widget.bubbleRoundedCornersEnabled
@@ -124,6 +124,7 @@ class _BubbleUserMessageComposableState
               contentPadding: contentPadding,
               isHiddenPlaceholder: isHiddenPlaceholder,
               textContent: parseResult.processedText,
+              enableImagePreview: widget.enableDialogs,
             )
           else
             _NormalUserBubbleLayout(
@@ -145,6 +146,7 @@ class _BubbleUserMessageComposableState
               contentPadding: contentPadding,
               isHiddenPlaceholder: isHiddenPlaceholder,
               textContent: parseResult.processedText,
+              enableImagePreview: widget.enableDialogs,
             ),
         ],
       ),
@@ -274,6 +276,7 @@ class _WideUserBubbleLayout extends StatelessWidget {
     required this.contentPadding,
     required this.isHiddenPlaceholder,
     required this.textContent,
+    required this.enableImagePreview,
   });
 
   final bool shouldShowAvatar;
@@ -291,6 +294,7 @@ class _WideUserBubbleLayout extends StatelessWidget {
   final EdgeInsets contentPadding;
   final bool isHiddenPlaceholder;
   final String textContent;
+  final bool enableImagePreview;
 
   @override
   Widget build(BuildContext context) {
@@ -354,6 +358,7 @@ class _WideUserBubbleLayout extends StatelessWidget {
                       contentPadding: contentPadding,
                       isHiddenPlaceholder: isHiddenPlaceholder,
                       textContent: textContent,
+                      enableImagePreview: enableImagePreview,
                     ),
                   ),
                 ],
@@ -383,6 +388,7 @@ class _NormalUserBubbleLayout extends StatelessWidget {
     required this.contentPadding,
     required this.isHiddenPlaceholder,
     required this.textContent,
+    required this.enableImagePreview,
   });
 
   final bool shouldShowAvatar;
@@ -400,6 +406,7 @@ class _NormalUserBubbleLayout extends StatelessWidget {
   final EdgeInsets contentPadding;
   final bool isHiddenPlaceholder;
   final String textContent;
+  final bool enableImagePreview;
 
   @override
   Widget build(BuildContext context) {
@@ -455,6 +462,7 @@ class _NormalUserBubbleLayout extends StatelessWidget {
                             contentPadding: contentPadding,
                             isHiddenPlaceholder: isHiddenPlaceholder,
                             textContent: textContent,
+                            enableImagePreview: enableImagePreview,
                           ),
                         ),
                       );
@@ -489,6 +497,7 @@ class _UserBubbleBody extends StatelessWidget {
     required this.contentPadding,
     required this.isHiddenPlaceholder,
     required this.textContent,
+    required this.enableImagePreview,
   });
 
   final Color backgroundColor;
@@ -499,9 +508,18 @@ class _UserBubbleBody extends StatelessWidget {
   final EdgeInsets contentPadding;
   final bool isHiddenPlaceholder;
   final String textContent;
+  final bool enableImagePreview;
 
   @override
   Widget build(BuildContext context) {
+    if (!isHiddenPlaceholder && isStandaloneMarkdownImage(textContent.trim())) {
+      return MarkdownImageRenderer(
+        imageMarkdown: textContent.trim(),
+        textColor: textColor,
+        maxImageHeight: 320,
+        enablePreview: enableImagePreview,
+      );
+    }
     return BubbleSurface(
       color: backgroundColor,
       borderRadius: bubbleShape,

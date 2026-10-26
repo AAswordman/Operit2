@@ -16,30 +16,15 @@ async function repository(disk) { return loadModule("src/storage/database.ts", d
 /** Null explicitly leaves the separate configuration unchanged; a new draft must not select any theme. */
 test("new plugin character draft explicitly contains a required nullable independent themeConfigId", () => {
   const card = character(null); assert.equal(Object.hasOwn(card, "themeConfigId"), true); assert.equal(card.themeConfigId, null);
-  validation.assertCard(card); assert.equal(card.ttsConfigId, null);
+  assert.equal(drafts.readCharacter(card).ttsConfigId, null);
 });
 
-/** Strict full-record validation rejects missing, blank and non-string references without editing input. */
-test("complete character schema rejects absent or malformed themeConfigId without compatibility repair", () => {
-  for (const value of [undefined, 7, {}, [], false, "", " "]) {
-    const card = character(value); if (value === undefined) delete card.themeConfigId;
-    const before = JSON.stringify(card); assert.throws(
-      /** Runs the actual complete stored-record validator instead of weakening a test fixture schema. */
-      () => validation.assertCard(card), /themeConfigId|角色主题配置/,
-    );
-    assert.equal(JSON.stringify(card), before);
+/** Old cards use the same optional reference defaults as new drafts. */
+test("character decoding defaults missing or unusable theme references", () => {
+  for (const value of [undefined, null, 7, {}, [], false, "", " "]) {
+    assert.equal(drafts.readCharacter(character(value)).themeConfigId, null);
   }
-  for (const value of [null, "independent-theme-one"]) validation.assertCard(character(value));
-});
-
-/** Existing version-three records require the newly declared complete character field and are never migrated on read. */
-test("version-three file schema rejects a character missing the required independent theme reference", () => {
-  const current = plain(schema.createInitialState(10)); assert.equal(current.version, 3); assert.equal(current.cards[0].themeConfigId, null);
-  schema.assertCharacterState(current); delete current.cards[0].themeConfigId;
-  assert.throws(
-    /** Uses the real whole-snapshot validator so absent references cannot be supplied by a reader. */
-    () => schema.assertCharacterState(current), /themeConfigId/,
-  );
+  assert.equal(drafts.readCharacter(character("independent-theme-one")).themeConfigId, "independent-theme-one");
 });
 
 /** Native and Tavern codecs preserve the exact independent ID, never a legacy role-prefixed theme target. */
@@ -52,9 +37,9 @@ test("native and Tavern character export import preserve themeConfigId and TTS r
   }
 });
 
-/** Real file persistence retains the supplied reference; a corrupt stored record rejects without writing repaired bytes. */
-test("actual plugin files preserve themeConfigId and reject old incomplete record bytes without mutation", async t => {
-  const disk = await createDiskHarness(t), file = path.join(disk.directory, "character-memory", "state.json"), owner = await repository(disk);
+/** Real file persistence retains supplied references and repairs omitted optional references on reopen. */
+test("actual plugin files preserve themeConfigId and complete old incomplete records", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), file = path.join(disk.directory, "character-memory", "state.json"), owner = await repository(disk);
   const saved = await owner.run(
     /** Persists the complete explicit reference in the real repository, without a simulated external configuration apply. */
     session => session.createCharacter(character("independent-theme-one")),
@@ -64,19 +49,20 @@ test("actual plugin files preserve themeConfigId and reject old incomplete recor
     session => session.getCharacter(saved.id),
   );
   assert.equal(retained.themeConfigId, "independent-theme-one");
-  disk.storage.inspect(sql => sql.prepare('UPDATE cards SET "themeConfigId__state"=0 WHERE "_key"=?').run(saved.id));
+  disk.storage.inspectPreferences("cards", values => { delete values["record_" + saved.id].themeConfigId; });
   disk.clearCalls();
-  await assert.rejects(repository(disk), /themeConfigId/);
-  assert.equal(disk.storage.inspect(sql => sql.prepare('SELECT "themeConfigId__state" FROM cards WHERE "_key"=?').get(saved.id).themeConfigId__state), 0);
+  const current = await repository(disk);
+  assert.equal((await current.getCharacter(saved.id)).themeConfigId, null);
+  assert.equal(disk.storage.inspectPreferences("cards", values => values["record_" + saved.id].themeConfigId), undefined);
   assert.equal(disk.calls.filter(
-    /** Confirms failed reads cannot manufacture a new field or publish any implicit migration. */
+    /** Completing JSON fields does not recreate files or owner resources. */
     call => ["write", "move", "mkdir"].indexOf(call.method) >= 0,
   ).length, 0);
 });
 
-/** Character backups use the same complete strict records and preserve the single-direction independent reference. */
-test("real character backup retains themeConfigId and rejects incomplete records instead of defaulting null", async t => {
-  const disk = await createDiskHarness(t), owner = await repository(disk);
+/** Character backups retain supplied references and complete missing optional fields. */
+test("real character backup retains themeConfigId and defaults incomplete records", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await repository(disk);
   const saved = await owner.run(
     /** Creates genuine file-owned state before exporting from the same serialized repository. */
     session => session.createCharacter(character("independent-theme-one")),
@@ -91,10 +77,9 @@ test("real character backup retains themeConfigId and rejects incomplete records
   );
   assert.equal(selected.length, 1); assert.equal(selected[0].themeConfigId, "independent-theme-one");
   const document = JSON.parse(encoded); delete document.characterCards[1].themeConfigId;
-  assert.throws(
-    /** Rejects a malformed backup before it can restore any record or change the independent theme. */
-    () => backup.decodeCharacterBackup(JSON.stringify(document)), /themeConfigId/,
-  );
+  const completed = backup.decodeCharacterBackup(JSON.stringify(document));
+  assert.equal(completed.characterCards[1].themeConfigId, null);
+  assert.equal(completed.characterCards[1].id, document.characterCards[1].id);
 });
 
 /** Role groups own their theme reference instead of inferring either configuration from the first member. */
@@ -112,7 +97,7 @@ test("new role-group draft explicitly declares its own nullable themeConfigId wi
 
 /** Actual group files and backup bytes retain this group's independent reference without copying a member role's config. */
 test("actual plugin group persistence and backup preserve its own themeConfigId", async t => {
-  const disk = await createDiskHarness(t), owner = await repository(disk);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await repository(disk);
   const saved = await owner.run(
     /** Writes one real role-composition group referencing the intentional initial default card. */
     session => session.createGroup({ ...plain(drafts.createGroupDraft()), name: "Own independent group theme", themeConfigId: "independent-group-theme", members: [{ characterCardId: "default", orderIndex: 0 }] }),
@@ -139,10 +124,10 @@ test("actual plugin group persistence and backup preserve its own themeConfigId"
 /** The original v3 complete state contract rejects a missing group reference before any implicit record repair. */
 test("version-three strict state rejects groups missing their own required themeConfigId", () => {
   const state = plain(schema.createInitialState(10));
-  state.groups.push({ ...plain(drafts.createGroupDraft()), id: "entity-1", name: "Explicit schema group", members: [{ characterCardId: "default", orderIndex: 0 }] });
-  state.nextId = "2"; schema.assertCharacterState(state); delete state.groups[0].themeConfigId;
+  state.groups.push({ ...plain(drafts.createGroupDraft()), id: "entity-1", name: "Explicit schema group", members: [{ characterCardId: state.cards[0].id, orderIndex: 0 }] });
+  validation.assertGroup(state.groups[0]); delete state.groups[0].themeConfigId;
   assert.throws(
     /** Runs the full real schema rather than accepting the record because its members are valid. */
-    () => schema.assertCharacterState(state), /group.themeConfigId/,
+    () => validation.assertGroup(state.groups[0]), /group.themeConfigId/,
   );
 });

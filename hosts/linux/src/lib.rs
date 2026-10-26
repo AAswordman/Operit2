@@ -1,5 +1,9 @@
 #![allow(non_snake_case)]
 
+#[cfg(all(feature = "daemon", target_os = "linux"))]
+#[path = "../../unix/daemon.rs"]
+pub mod daemon;
+
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
@@ -50,12 +54,8 @@ pub fn createRuntimeHostManager(
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
-    let runtimeStorageWriteHost =
-        Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-            runtimeRoot.clone(),
-            workspaceRoot.clone(),
-        ));
     let runtimeStorageHost = Arc::new(LinuxRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
+    let runtimeStorageWriteHost = runtimeStorageHost.clone();
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
     HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(

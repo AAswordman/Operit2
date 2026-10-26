@@ -14,6 +14,7 @@ import file_selector_macos
 import geolocator_apple
 import image_picker_macos
 import operit_folder_access
+import operit_keep_alive
 import package_info_plus
 import printing
 import record_macos
@@ -31,6 +32,7 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   GeolocatorPlugin.register(with: registry.registrar(forPlugin: "GeolocatorPlugin"))
   ImagePickerMacOSPlugin.register(with: registry.registrar(forPlugin: "ImagePickerMacOSPlugin"))
   OperitFolderAccessPlugin.register(with: registry.registrar(forPlugin: "OperitFolderAccessPlugin"))
+  OperitKeepAlivePlugin.register(with: registry.registrar(forPlugin: "OperitKeepAlivePlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
   PrintingPlugin.register(with: registry.registrar(forPlugin: "PrintingPlugin"))
   RecordMacOsPlugin.register(with: registry.registrar(forPlugin: "RecordMacOsPlugin"))

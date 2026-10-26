@@ -115,9 +115,10 @@ class RuntimeHostInteractionSubscriber {
           },
           onDone: () {
             _releaseSubscription(subscription);
-            ClientLogger.d(
+            ClientLogger.v(
               'owner host interaction stream closed',
               tag: 'RuntimeHostInteraction',
+              verboseLevel: VerboseLevel.level4,
             );
           },
           cancelOnError: true,
@@ -376,7 +377,7 @@ class RuntimeHostInteractionSubscriber {
 
   /// Logs one compact browser interaction host timing summary.
   static void _logBrowserInteractHostSummary(_BrowserInteractHostStats stats) {
-    ClientLogger.d(
+    ClientLogger.v(
       'host summary elapsedMs=${stats.windowStopwatch.elapsedMilliseconds} '
       'accepted=${stats.count} errors=${stats.errorCount} '
       'avgAcceptUs=${_averageMicroseconds(stats.totalAcceptElapsedUs, stats.count)} '
@@ -389,6 +390,7 @@ class RuntimeHostInteractionSubscriber {
       'maxRoundTripUs=${stats.maxRoundTripElapsedUs} '
       'slowestSession=${stats.slowestSessionId}',
       tag: _browserInputLogTag,
+      verboseLevel: VerboseLevel.level3,
     );
   }
 

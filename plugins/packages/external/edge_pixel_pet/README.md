@@ -1,4 +1,4 @@
-# 像素桌宠 Core ToolPkg 示例
+# 像素桌宠设备配置器
 
 随 Core 分发在「内置更多包」，**不会默认导入或开启**。使用现有 ToolPkg 运行时与 `Tools.device(nodeId).Edge.execute`，不在 Edge 执行 JS。
 协议见 `plugins/docs/edge-scene.md`。原件保存在本包的 `resources/demo.esp`；
@@ -24,37 +24,10 @@ core plugin enable com.operit.edge_pixel_pet
 ```
 
 同一 `.toolpkg` 仍可独立导入，用于测试或市场分发。
-设 `EDGE_SCENE_NODE_ID` 为已授权的 Edge ID（`test` 使用该变量），或为其他工具显式传 `node_id`。
+设 `EDGE_SCENE_NODE_ID` 为已授权的 Edge ID，或为其他工具显式传 `node_id`。
 
-- `edge_pixel_pet:start_pet`：查询能力、申请 60 秒租约、分块校验安装素材并显示宠物与道具。
-- `edge_pixel_pet:renew_pet`：只续显示租约，不查询输入；已退出时停止。
-- `edge_pixel_pet:pet_status`：只读 Core 已保存的互动次数、游标和退出状态，不访问 Edge。
-- `edge_pixel_pet:close_pet`：释放区域，保留 Core 数据和设备缓存。
-- `edge_pixel_pet:test`：只查原生能力，不占屏幕。
+- `edge_pixel_pet:inspect`：查询设备的原生显示能力。
+- `edge_pixel_pet:apply_configuration`：上传并校验资源，将桌宠显示配置保存到设备。
+- `edge_pixel_pet:clear_configuration`：清除保存配置，恢复系统界面。
 
-点击宠物／道具后 Edge 主动调用 Core 的固定通用 `chatEdgeEvent` 入口，`on_edge_event` 在原 main 运行时持久化后 ACK。
-空闲时不发送事件请求、不写配置。`events.poll` 仅保留为固件的手动诊断，示例不再使用。
-如需持续显示，可每 20 秒执行一次 renew_pet（只保活）；触摸与退出无需等待保活。
-系统右上角退出和 TTL 到期均停止场景，不自动重开。
-首版缓存不是重启持久化缓存，Core 原件不丢；重新 start 会按 SHA 判断／重装。
-示例是单 Core 控制器，不提供分布式养成事务。
-
-事件使用通用 `EdgeEventBatch`，本插件仅消费 `source:"display.scene"`，按 action 分发。
-其他插件可监听传感器、GPIO、串口或其他固件来源；通用协议见 `plugins/docs/edge-events.md`。
-
-工具使用既有同包 `ToolPkg.ipc` 进入 main actor，与事件回调共用一个串行队列和配置缓存。关闭后保留 lease/cursor 去重 tombstone；重发 ACK 不重复计数或写盘。
-
-插件卡片的连通性／工具调用测试复用既有 `test_connection` 和 `test_tool_call` 导出，仅调用原生 capabilities，不申请区域；需要设置 `EDGE_SCENE_NODE_ID`。
-
-## 端侧前提与示例范围
-
-Core SDK 需提供 `Tools.device(nodeId).Edge` 与 `on_edge_event`；已配对的目标 Edge 需有现有
-设备空间/Binding 和兼容 `display.scene` 服务。公共 Edge 节点库不内置渲染器，
-端侧应用通过可选 `hosts/common/operit-edge-scene` 注册服务。场景下发和事件使用
-原有设备空间连接，插件不使用编辑器的 HTTP 镜像或另建网络后端。
-
-当前素材和图层坐标针对 ESP32/模拟器的 320×240 配置。其他分辨率应根据能力查询
-与租约返回的 `rect` 调整；无屏幕设备需要另一种呈现/互动适配。示例保存互动次数，
-不包括完整养成、美术自适应或多 Core 冲突解决逻辑。设备重启的 RAM 素材丢失不等于
-Core 存档丢失。市场作者工作流与完整联调步骤见
-[Edge 插件作者指南](../../../docs/edge-plugin-guide.md)。
+本包安装在手机或其他可运行 ToolPkg 的宿主上，只承担配置编辑器的作用。设备负责渲染、点击命中和动作，配置包退出、禁用或卸载后设备仍能继续运行。没有 keepalive、远程点击回调或宿主管理的互动状态。

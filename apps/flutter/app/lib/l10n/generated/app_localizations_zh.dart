@@ -891,7 +891,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryLocalModelsTitle => '本地模型';
 
   @override
-  String get settingsCategoryLocalModelsSubtitle => '下载、引擎、STT / TTS';
+  String get settingsCategoryLocalModelsSubtitle => 'LLM、下载、STT / TTS';
 
   @override
   String get settingsCategoryLocalModelsDescription => '管理按需安装的本地模型和推理引擎。';
@@ -1362,9 +1362,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelProviderTypeSiliconflow => '硅基流动';
-
-  @override
-  String get settingsModelProviderTypeIflow => '心流';
 
   @override
   String get settingsModelProviderTypeOpenrouter => 'OpenRouter';
@@ -2232,6 +2229,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeTcpAddressHint => 'host:端口，例如 192.168.1.10:37195';
 
   @override
+  String get settingsRuntimeTransportAuto => '自动（推荐）';
+
+  @override
+  String get settingsRuntimeTransportAutoHint =>
+      '输入 IP:端口，自动识别 HTTP/WebSocket/TCP 协议';
+
+  @override
   String settingsRuntimeConnectionFailed(String error) {
     return '设备连接失败：$error';
   }
@@ -2742,6 +2746,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsAppearanceBubbleImagePreviewText => '这是一条气泡预览，切线展示九宫格区域';
+
+  @override
+  String settingsAppearanceBubbleImageImportFailed(String error) {
+    return '气泡图片没有生效：$error';
+  }
 
   @override
   String get settingsAppearanceBubbleImageCrop => '裁切';
@@ -3460,13 +3469,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeControlCapabilityNetworkRelay => '中继网络流量';
 
   @override
-  String get settingsRuntimeControlCapabilityStorageProvide => '提供存储空间';
+  String get settingsRuntimeControlCapabilityStorageProvide => '保存共享数据副本';
 
   @override
-  String get settingsRuntimeControlCapabilityRuntimeExecute => '执行任务';
-
-  @override
-  String get settingsRuntimeControlCapabilityChatRead => '读取聊天记录';
+  String get settingsRuntimeControlCapabilityRuntimeExecute => '承载 Core 执行';
 
   @override
   String get settingsRuntimeControlCapabilityViewDevices => '查看设备与当前身份';
@@ -3483,16 +3489,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeControlRoleAdministrator => '管理员';
 
   @override
-  String get settingsRuntimeControlRoleAuditor => '审计员';
-
-  @override
   String get settingsRuntimeControlRoleRelay => '中继节点';
 
   @override
-  String get settingsRuntimeControlRoleStorage => '存储节点';
-
-  @override
-  String get settingsRuntimeControlRoleRunner => '执行节点';
+  String get settingsRuntimeControlRoleEdge => '边缘节点';
 
   @override
   String get settingsRuntimeControlRoleUser => '普通用户';
@@ -3529,6 +3529,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get pluginLoadingKindPackage => '包';
 
   @override
+  String get pluginLoadingKindPlugin => '插件';
+
+  @override
   String get pluginLoadingKindMcp => 'MCP';
 
   @override
@@ -3558,6 +3561,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatRouteUnknown => '运行设备状态未知';
+
+  @override
+  String get chatRouteClaimHostPrompt => '当前设备宿主未找到，是否切换为当前设备？';
+
+  @override
+  String get chatRouteClaimHostYes => '是';
+
+  @override
+  String get chatRouteClaimHostNo => '否';
 
   @override
   String edgePairingCodeTitle(String deviceName) {
@@ -3867,6 +3879,18 @@ class AppLocalizationsZh extends AppLocalizations {
       '该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。';
 
   @override
+  String get deviceSpaceUpdateEndpoint => '更新直连地址';
+
+  @override
+  String get deviceSpaceUpdateEndpointLabel => '直连地址';
+
+  @override
+  String get deviceSpaceUpdateEndpointHint => '例如 ws://192.168.1.20:37195/link';
+
+  @override
+  String get deviceSpaceUpdateEndpointSaved => '直连地址已更新';
+
+  @override
   String deviceSpaceDirectLinkEstablished(String device) {
     return '已建立直连：$device';
   }
@@ -3961,4 +3985,218 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsRuntimeControlDeleteRoleMessage =>
       '持有该角色的设备将回退为默认的普通用户身份。';
+
+  @override
+  String get settingsAppearanceThemeConfigSource => '创建来源';
+
+  @override
+  String get settingsAppearanceThemeConfigFromDefaults => '默认外观';
+
+  @override
+  String get settingsAppearanceThemeConfigFromCurrent => '当前外观';
+
+  @override
+  String settingsAppearanceThemeConfigInherit(String name) {
+    return '继承：$name';
+  }
+
+  @override
+  String settingsAppearanceThemeConfigFromTemplate(String name) {
+    return '模板：$name';
+  }
+
+  @override
+  String get settingsAppearanceThemeConfigDefaultsHint => '从软件默认样式开始';
+
+  @override
+  String get settingsAppearanceThemeConfigCurrentHint => '复制现在的外观设置';
+
+  @override
+  String get settingsAppearanceThemeConfigSavedSources => '继承已有配置';
+
+  @override
+  String get settingsAppearanceThemeConfigPluginSources => '从插件模板新建';
+
+  @override
+  String get settingsAppearanceThemeConfigSourceHint =>
+      '模板来自已安装的插件。新建后可独立编辑，并沿用外观配置同步。';
+
+  @override
+  String get settingsAppearanceLoadFailed => '无法加载外观设置';
+
+  @override
+  String get settingsAppearanceRepairHint =>
+      '已保存的外观没有被替换。修复资源后可以重试，也可以主动重置外观。重置会保留头像和已保存的配置，并切换到自定义外观。';
+
+  @override
+  String get settingsAppearanceRetry => '重试';
+
+  @override
+  String get settingsAppearanceResetAfterError => '重置外观';
+
+  @override
+  String get backgroundWorkIdle => '当前没有正在运行的工作';
+
+  @override
+  String get backgroundWorkRunningCount => '项工作正在运行';
+
+  @override
+  String get backgroundWorkWaiting => '等待你确认';
+
+  @override
+  String get backgroundWorkWaitingCount => '项待确认';
+
+  @override
+  String get backgroundWorkCompleted => '已完成';
+
+  @override
+  String get backgroundWorkFailed => '执行失败，打开查看详情';
+
+  @override
+  String get backgroundWorkCancelled => '已停止';
+
+  @override
+  String get backgroundWorkProcessing => '正在准备';
+
+  @override
+  String get backgroundWorkConnecting => '正在连接';
+
+  @override
+  String get backgroundWorkReceiving => '正在生成回复';
+
+  @override
+  String get backgroundWorkTool => '正在执行工具';
+
+  @override
+  String get backgroundWorkToolResult => '正在处理工具结果';
+
+  @override
+  String get backgroundWorkSummarizing => '正在整理上下文';
+
+  @override
+  String get backgroundWorkPlan => '正在执行计划';
+
+  @override
+  String get backgroundWorkOpen => '查看会话';
+
+  @override
+  String get backgroundWorkReview => '查看并确认';
+
+  @override
+  String get backgroundWorkStop => '停止';
+
+  @override
+  String get localModelsDeviceOnly => '保存在此设备';
+
+  @override
+  String get localModelsDeviceOnlyDescription =>
+      '模型权重、下载进度和安装记录仅保存在当前设备，不参与设备空间同步。聊天可通过路由使用安装了模型的设备。';
+
+  @override
+  String get localModelsRunChat => '推理与设置';
+
+  @override
+  String get localModelsUseForChat => '用于聊天';
+
+  @override
+  String get localModelsChatActivated => '已设为聊天模型';
+
+  @override
+  String get localModelsPrompt => '输入提示词';
+
+  @override
+  String get localModelsGenerate => '开始推理';
+
+  @override
+  String get localModelsGenerating => '正在推理…';
+
+  @override
+  String get localModelsThreads => 'CPU 线程数';
+
+  @override
+  String get localModelsContextSize => '上下文长度（token）';
+
+  @override
+  String get localModelsBatchSize => '批次大小';
+
+  @override
+  String get localModelsUnload => '释放模型内存';
+
+  @override
+  String get localModelsCpuBackend => '本机 CPU 推理';
+
+  @override
+  String get localModelsLlmDescription =>
+      '下载 GGUF 模型使用 llama.cpp，或下载 MNN 模型包。安装后可在这里试运行，或设为聊天模型。';
+
+  @override
+  String get localModelsInvalidSettings => '请检查线程数、上下文长度和批次大小。';
+
+  @override
+  String get localModelsFilterAll => '全部模型';
+
+  @override
+  String get localModelsFilterInstalled => '仅已安装';
+
+  @override
+  String get localModelsSearchCatalog => '搜索名称或推理引擎';
+
+  @override
+  String get deviceSpaceSyncPeer => '空间设备';
+
+  @override
+  String deviceSpaceSyncActive(String device) {
+    return '正在与 $device 同步';
+  }
+
+  @override
+  String deviceSpaceSyncCompleted(String device) {
+    return '与 $device 同步完成';
+  }
+
+  @override
+  String get deviceSpaceSyncChecking => '正在检查数据差异';
+
+  @override
+  String get deviceSpaceSyncRecords => '正在交换数据记录';
+
+  @override
+  String get deviceSpaceSyncFiles => '正在传输并校验文件';
+
+  @override
+  String get deviceSpaceSyncRetrying => '同步暂时中断，稍后自动重试';
+
+  @override
+  String get deviceSpaceSyncPending => '部分数据尚未处理完成，稍后自动重试';
+
+  @override
+  String deviceSpaceSyncCurrentFile(String done, String total) {
+    return '当前文件：$done / $total';
+  }
+
+  @override
+  String deviceSpaceSyncTransferred(int count, String bytes) {
+    return '已交换 $count 条记录 · 已传输 $bytes';
+  }
+
+  @override
+  String get deviceSpaceSyncBackground => '可以继续使用，同步会在后台完成';
+
+  @override
+  String get runtimeActivityTitle => '后台任务';
+
+  @override
+  String get runtimeActivitySyncing => '正在同步';
+
+  @override
+  String get runtimeActivitySyncCompleted => '同步完成';
+
+  @override
+  String get runtimeActivityWaiting => '等待重试';
+
+  @override
+  String get runtimeActivityExpand => '查看后台任务';
+
+  @override
+  String get runtimeActivityLoadingPackages => '加载扩展';
 }

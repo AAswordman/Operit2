@@ -22,11 +22,9 @@ export interface GroupSubmission {
   replyToMessageTimestamp: number | null;
 }
 /** Selects an explicit opaque participant; the native resolver authors the complete persisted snapshot exactly once. */
-export interface GroupSelectedTurn { requestKey: string; selection: string; participantId: string; notifyReply: boolean }
-/** Distinguishes real user-only persistence from execution instead of assigning an arbitrary speaker to an empty plan. */
-export type GroupInitialTurn =
-  | { kind: "execute"; submission: GroupSubmission; turn: GroupSelectedTurn }
-  | { kind: "record_only"; submission: GroupSubmission; requestKey: string };
+export interface GroupSelectedTurn { requestKey: string; selection: string; participantId: string; notifyReply: boolean; summaryPolicy: Chat.SummaryPolicy }
+/** Persists the complete original input before response planning can begin. */
+export interface GroupInitialTurn { kind: "record_only"; submission: GroupSubmission; requestKey: string }
 /** Reuses a real persisted user message and cannot submit the original input a second time. */
 export interface GroupContinuationTurn {
   submissionId: string;
@@ -61,7 +59,7 @@ export interface GroupSequenceCompletion {
 }
 /** Requires actual submission, continuation, cancellation and finalization implementations; no default transport exists. */
 export interface GroupTurnTransport {
-  /** Persists the full initial input exactly once and optionally executes the explicitly selected snapshot. */
+  /** Persists the full initial input exactly once before any participant reply. */
   submit(input: GroupInitialTurn): Promise<MessageSendResultData>;
   /** Executes against the named existing user message without writing another user message. */
   continue(input: GroupContinuationTurn): Promise<MessageSendResultData>;
@@ -129,7 +127,7 @@ export function decodeNativeGroupSendResult(
 ): GroupSendDecision {
   const result = object(value, "Native send result"), initial = "kind" in input;
   const chatId = initial ? input.submission.chatId : input.chatId;
-  const requestKey = initial && input.kind === "record_only" ? input.requestKey : input.turn.requestKey;
+  const requestKey = initial ? input.requestKey : input.turn.requestKey;
   if (result.chatId !== chatId) throw new Error("Native send result belongs to a different chat");
   if (typeof result.message !== "string") throw new Error("Native send result must retain its real submitted text");
   assertInteger(result.sentAt, "native send sentAt", 0);
@@ -145,8 +143,8 @@ export function decodeNativeGroupSendResult(
       const located = outcome.assistant === null ? null : assistant(outcome.assistant);
       if (terminal === "completed" && userMessageTimestamp === null) throw new Error("Completed group commit requires the actual user message timestamp");
       if (located !== null && userMessageTimestamp === null) throw new Error("Group assistant commit has no actual originating user message");
-      if (initial && input.kind === "record_only" && located !== null) throw new Error("User-only group commit cannot declare an assistant reply");
-      if (!(initial && input.kind === "record_only") && terminal === "completed" && located === null) throw new Error("Completed group execution requires an actual assistant locator");
+      if (initial && located !== null) throw new Error("User-only group commit cannot declare an assistant reply");
+      if (!initial && terminal === "completed" && located === null) throw new Error("Completed group execution requires an actual assistant locator");
       return { type: "committed", receipt: { status: terminal, chatId, requestKey, userMessageTimestamp, assistant: located } };
     }
     case "not_persisted": fields(outcome, ["type", "status"]); return { type: "not_persisted", status: status(outcome.status) };

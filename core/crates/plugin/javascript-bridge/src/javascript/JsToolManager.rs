@@ -378,7 +378,6 @@ impl JsToolManager {
                 &BTreeMap::new(),
                 None,
                 true,
-                60,
             )
         })
         .await
@@ -416,7 +415,6 @@ impl JsToolManager {
                     &BTreeMap::new(),
                     None,
                     true,
-                    60,
                 )
             })
             .await;
@@ -524,12 +522,17 @@ mod tests {
         }
 
         /// Reports no environment value in manager tests.
-        fn read_environment_variable(&self, _key: &str) -> Result<Option<String>, String> {
+        fn prepare_environment(&self, _owner: &operit_plugin_sdk::javascript::JsEnvironmentOwner, _declared_names: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+
+        /// Returns the environment value selected by the test host.
+        fn read_environment_variable(&self, _owner: &operit_plugin_sdk::javascript::JsEnvironmentOwner, _key: &str) -> Result<Option<String>, String> {
             Ok(None)
         }
 
         /// Ignores environment writes in manager tests.
-        fn write_environment_variable(&self, _key: &str, _value: &str) -> Result<(), String> {
+        fn write_environment_variable(&self, _owner: &operit_plugin_sdk::javascript::JsEnvironmentOwner, _key: &str, _value: &str) -> Result<(), String> {
             Ok(())
         }
 
@@ -1563,7 +1566,6 @@ mod tests {
                 &BTreeMap::new(),
                 None,
                 true,
-                60,
             )
             .await;
 

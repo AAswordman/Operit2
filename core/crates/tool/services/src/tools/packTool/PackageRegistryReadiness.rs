@@ -65,13 +65,12 @@ impl PackageRegistryReadiness {
             .send_replace(PackageRegistryLoadState::Loading);
     }
 
-    /// Publishes the existing load outcome after the canonical registration snapshot has been installed.
-    pub fn complete_scan(&self, outcome: Result<(), String>) {
-        let state = match outcome {
-            Ok(()) => PackageRegistryLoadState::Ready,
-            Err(error) => PackageRegistryLoadState::Failed(error),
-        };
-        self.inner.state.send_replace(state);
+    /// Publishes a completed catalog. Individual package issues belong to that catalog,
+    /// and must not prevent commands from using its healthy packages.
+    pub fn complete_scan(&self) {
+        self.inner
+            .state
+            .send_replace(PackageRegistryLoadState::Ready);
     }
 
     /// Publishes the original startup scheduler or loader error to every waiting command.
@@ -147,7 +146,7 @@ mod tests {
         tokio::task::yield_now().await;
         assert!(!waiter.is_finished());
         readiness.begin_scan();
-        readiness.complete_scan(Ok(()));
+        readiness.complete_scan();
         assert_eq!(waiter.await.unwrap(), Ok(()));
         assert!(!readiness.claim_initial_load().unwrap());
     }
@@ -176,19 +175,14 @@ mod tests {
         );
     }
 
-    /// Exposes an actual loader issue even when a source scan registered some unrelated packages.
+    /// A rescan publishes readiness again after an earlier fatal startup failure.
     #[tokio::test(flavor = "current_thread")]
-    async fn source_scan_error_is_not_partial_success() {
+    async fn completed_rescan_recovers_readiness() {
         let readiness = PackageRegistryReadiness::new();
+        readiness.fail("startup failed".into());
         readiness.begin_scan();
-        readiness.complete_scan(Err("invalid toolpkg manifest".to_string()));
-        assert_eq!(
-            readiness.wait_until_ready().await.unwrap_err(),
-            "invalid toolpkg manifest"
-        );
-        assert_eq!(
-            readiness.require_ready().unwrap_err(),
-            "invalid toolpkg manifest"
-        );
+        readiness.complete_scan();
+        assert_eq!(readiness.wait_until_ready().await, Ok(()));
+        assert_eq!(readiness.require_ready(), Ok(()));
     }
 }

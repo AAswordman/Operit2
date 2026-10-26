@@ -19,7 +19,7 @@ Widget reference(bool expanded) => Builder(
   builder: (context) {
     final colors = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    Widget switchRow(IconData icon, String title) => InkWell(
+    Widget switchRow(IconData icon, String title, {bool checked = true}) => InkWell(
       onTap: () {},
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 32),
@@ -27,7 +27,11 @@ Widget reference(bool expanded) => Builder(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
-              Icon(icon, size: 16, color: colors.primary),
+              Icon(
+                icon,
+                size: 16,
+                color: checked ? colors.primary : colors.onSurfaceVariant,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -38,7 +42,7 @@ Widget reference(bool expanded) => Builder(
                 ),
               ),
               Text(
-                '开',
+                checked ? '开' : '关',
                 style: text.bodySmall!.copyWith(
                   color: colors.primary,
                   fontWeight: FontWeight.w600,
@@ -50,7 +54,7 @@ Widget reference(bool expanded) => Builder(
                 height: 28,
                 child: FittedBox(
                   child: Switch(
-                    value: true,
+                    value: checked,
                     onChanged: (_) {},
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
@@ -58,6 +62,42 @@ Widget reference(bool expanded) => Builder(
               ),
             ],
           ),
+        ),
+      ),
+    );
+    Widget inputRow(String title, String value, String hint) => ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 32),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            Icon(Icons.tune, size: 16, color: colors.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.bodySmall!.copyWith(color: colors.onSurface),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 72,
+              child: TextField(
+                controller: TextEditingController(text: value),
+                maxLines: 1,
+                // Mirrors the DSL style parser: bodyMedium scaled by the declared fontSize.
+                style: text.bodyMedium!
+                    .apply(fontSizeFactor: 13 / text.bodyMedium!.fontSize!),
+                decoration: InputDecoration(
+                  hintText: hint,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -130,6 +170,9 @@ Widget reference(bool expanded) => Builder(
               children: [
                 switchRow(Icons.assignment_ind_outlined, '提供用户资料'),
                 switchRow(Icons.save, '自动更新记忆库'),
+                switchRow(Icons.auto_awesome, '自动检索注入记忆'),
+                inputRow('记忆注入条数', '3', '1-50'),
+                switchRow(Icons.repeat, '允许重复命中', checked: false),
                 InkWell(
                   onTap: () {},
                   child: ConstrainedBox(
@@ -171,8 +214,9 @@ Future<Uint8List> capture(
   WidgetTester tester,
   Widget child,
   Brightness brightness,
-  GlobalKey key,
-) async {
+  GlobalKey key, {
+  double height = 160,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(brightness: brightness),
@@ -183,7 +227,7 @@ Future<Uint8List> capture(
             key: key,
             child: SizedBox(
               width: 300,
-              height: 160,
+              height: height,
               child: ColoredBox(
                 color: Colors.white,
                 child: Align(alignment: Alignment.topLeft, child: child),
@@ -315,6 +359,7 @@ void main() {
             reference(expanded),
             brightness,
             GlobalKey(),
+            height: expanded ? 280 : 160,
           );
           await tester.pumpWidget(const SizedBox.shrink());
           await tester.pumpAndSettle();
@@ -337,6 +382,7 @@ void main() {
             ),
             brightness,
             GlobalKey(),
+            height: expanded ? 280 : 160,
           );
           expect(actual, orderedEquals(expected));
         },

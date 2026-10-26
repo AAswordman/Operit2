@@ -1,11 +1,12 @@
 import { createStorageHost } from "./storage-host.mjs";
 import { loadModule } from "./runtime.mjs";
-import { mkdtemp, mkdir, readFile, writeFile, rename, stat, rm, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rename, stat, rm, readdir, copyFile } from "node:fs/promises";
 import path from "node:path";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 /** Creates real disk IO for the existing Files API; it implements no plugin records or persistence policy. */
-export async function createDiskHarness(testContext) {
+export async function createDiskHarness(testContext, { legacyIdentity = null } = {}) {
   const temporaryRoot = path.resolve(tmpdir());
   const directory = path.resolve(await mkdtemp(path.join(temporaryRoot, "character-cards-disk-")));
   const calls = [], faults = new Map();
@@ -21,8 +22,9 @@ export async function createDiskHarness(testContext) {
   /** Records an actual IO attempt and throws a deliberately injected original failure before disk mutation. */
   function attempted(method, args) {
     calls.push({ method, args: [...args] });
-    if (faults.has(method)) {
-      const failure = faults.get(method); faults.delete(method); throw failure;
+    const fault = faults.get(method);
+    if (fault !== undefined && --fault.remaining <= 0) {
+      faults.delete(method); throw fault.failure;
     }
   }
 
@@ -35,6 +37,18 @@ export async function createDiskHarness(testContext) {
   }
 
   const methods = {
+    /** Lists native directory entries for migration resource traversal. */
+    async list(file) {
+      const target = confined(file); attempted("list", [file]);
+      const entries = await readdir(target, { withFileTypes: true });
+      return { path: file, entries: entries.map(entry => ({ name: entry.name, isDirectory: entry.isDirectory() })) };
+    },
+    /** Copies exact file bytes through the existing generic Files capability. */
+    async copy(source, destination, recursive = false) {
+      const from = confined(source), to = confined(destination); attempted("copy", [source, destination, recursive]);
+      if (recursive) throw new Error("Disk harness copy requires an explicit file");
+      await copyFile(from, to); return operationResult("copy", destination);
+    },
     /** Reports native stat results; only the exact not-found outcome denotes a nonexistent file. */
     async exists(file) {
       const target = confined(file); attempted("exists", [file]);
@@ -70,6 +84,12 @@ export async function createDiskHarness(testContext) {
         /** Formats the exact file content supplied by native disk IO. */
         toString() { return this.content; },
       };
+    },
+    /** Writes exact binary bytes through the same confined generic file boundary. */
+    async writeBinary(file, contentBase64) {
+      const target = confined(file); attempted("writeBinary", [file, contentBase64]);
+      await writeFile(target, Buffer.from(contentBase64, "base64"));
+      return operationResult("writeBinary", file);
     },
     /** Writes the supplied content exactly once and does not create missing parent directories. */
     async write(file, content, append = false) {
@@ -115,6 +135,25 @@ export async function createDiskHarness(testContext) {
     await rm(resolved, { recursive: true, force: false });
   }
   testContext.after(cleanup);
+  if (legacyIdentity !== null) {
+    const state = loadModule("src/storage/state.ts").createInitialState(123);
+    const schema = loadModule("src/storage/records.ts");
+    const ownerKey = "character:" + legacyIdentity;
+    state.cards[0].id = legacyIdentity;
+    state.active = { CharacterCard: { id: legacyIdentity } };
+    state.owners[0].ownerKey = ownerKey;
+    state.owners[0].userDocumentPath = "owners/" + encodeURIComponent(ownerKey) + "/USER.md";
+    const database = await storage.objects.open({ path: directory + "/memory.sqlite" });
+    const names = ["cards", "groups", "tags", "stores", "conversationGroups"];
+    for (const name of names) writeFileSync(path.join(directory, name + ".preferences.json"), JSON.stringify(Object.fromEntries(schema.records(state).filter(row => row.collection === name).map(row => ["record_" + row.key, row.value]))), "utf8");
+    writeFileSync(path.join(directory, "meta.preferences.json"), JSON.stringify({ __operit_preferences_schema_version: 1, state: { version: 1, active: state.active, memoryPreferences: state.memoryPreferences } }), "utf8");
+    await database.commit(schema.records(state).filter(row => !names.includes(row.collection)).map(row => ({ op: "put", ...row, expectedVersion: null })));
+    await database.close();
+    const profile = path.join(directory, state.owners[0].userDocumentPath);
+    await mkdir(path.dirname(profile), { recursive: true });
+    await writeFile(profile, "");
+    calls.length = 0;
+  }
   return {
     directory, calls, files, storage,
     globals: {
@@ -129,39 +168,40 @@ export async function createDiskHarness(testContext) {
         },
       },
     },
-    /** Injects one negative IO event; no successful domain operation is implemented by the harness. */
-    failNext(method, failure) {
-      if (!Object.hasOwn(methods, method) && !["storage.commit", "storage.open", "storage.list", "storage.get", "storage.transaction", "storage.query", "storage.execute"].includes(method)) throw new Error("Cannot fail an unsupported disk method: " + method);
+    /** Injects one negative IO event on the Nth call of a method; no successful domain operation is implemented by the harness. */
+    failNext(method, failure, occurrence = 1) {
+      if (!Object.hasOwn(methods, method) && !["storage.commit", "storage.open", "storage.list", "storage.get", "storage.transaction", "storage.query", "storage.execute", "storage.getMany", "storage.preferences.open", "storage.preferences.edit", "storage.preferences.data"].includes(method)) throw new Error("Cannot fail an unsupported disk method: " + method);
       if (faults.has(method)) throw new Error("A disk failure is already scheduled for " + method);
-      faults.set(method, failure);
+      if (!Number.isInteger(occurrence) || occurrence < 1) throw new Error("Disk failure occurrence must be a positive integer");
+      faults.set(method, { failure, remaining: occurrence });
     },
-    /** Reconstructs assertion data independently from actual persisted SQLite records. */
+    /** Reconstructs assertion data independently from real preference files and memory SQLite rows. */
     readState() {
-      return storage.inspect(sql => {
-        const schema = loadModule("src/storage/records.ts"), codec = loadModule("src/storage/relational.ts"), records = [];
-        let metadata;
-        for (const collection of ["meta", ...schema.collections]) {
-          const rows = new Map(codec.tables(codec.layouts[collection]).map(table => [table.name, sql.prepare('SELECT * FROM "' + table.name + '" ORDER BY "_key"').all()]));
-          for (const row of rows.get(collection)) { const value = codec.decode(collection, row, rows); if (collection === "meta" && row._key === "state") metadata = value; else records.push({ collection, key: row._key, value, version: row._revision }); }
-        }
-        if (metadata === undefined) throw new Error("Test database has no metadata");
-        return schema.stateFromRecords(metadata, records);
+      const schema = loadModule("src/storage/records.ts"), names = ["cards", "groups", "tags", "stores", "conversationGroups"];
+      const metadata = storage.inspectPreferences("meta", values => values.state);
+      if (metadata === undefined) throw new Error("Test preferences have no metadata");
+      const rows = [];
+      for (const name of names) storage.inspectPreferences(name, values => {
+        for (const [key, value] of Object.entries(values).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) if (key.startsWith("record_")) rows.push({ collection: name, key: key.slice(7), value, version: null });
       });
-    },
-    /** Returns deterministic assertion bytes for the current database domain records. */
-    stateBytes() { return Buffer.from(JSON.stringify(this.readState())); },
-    /** Writes deliberate test data directly to SQLite without supplying domain responses through the host. */
-    replaceState(state) {
       storage.inspect(sql => {
-        const schema = loadModule("src/storage/records.ts"), codec = loadModule("src/storage/relational.ts");
+        for (const row of sql.prepare("SELECT collection,key,value,version FROM records ORDER BY collection,key").all())
+          if (schema.collections.includes(row.collection)) rows.push({ ...row, value: JSON.parse(row.value) });
+      });
+      return schema.decodeStateFromRecords(metadata, rows);
+    },
+    /** Returns deterministic assertion bytes for the current authoritative records. */
+    stateBytes() { return Buffer.from(JSON.stringify(this.readState())); },
+    /** Writes deliberately supplied test records into their actual independent storage owners. */
+    replaceState(state) {
+      const schema = loadModule("src/storage/records.ts"), rows = schema.records(state), names = ["cards", "groups", "tags", "stores", "conversationGroups"];
+      for (const name of names) writeFileSync(path.join(directory, name + ".preferences.json"), JSON.stringify(Object.fromEntries(rows.filter(row => row.collection === name).map(row => ["record_" + row.key, row.value]))), "utf8");
+      writeFileSync(path.join(directory, "meta.preferences.json"), JSON.stringify({ __operit_preferences_schema_version: 1, state: { version: state.version, active: state.active, memoryPreferences: state.memoryPreferences, memoryRecall: state.memoryRecall } }), "utf8");
+      storage.inspect(sql => {
         sql.exec("BEGIN");
         try {
-          for (const collection of ["meta", ...schema.collections]) for (const table of codec.tables(codec.layouts[collection])) sql.prepare('DELETE FROM "' + table.name + '"').run();
-          for (const record of [...schema.records(state), { collection: "meta", key: "state", value: { version: state.version, nextId: state.nextId, active: state.active, memoryPreferences: state.memoryPreferences } }]) {
-            for (const [table, rows] of codec.encode(record.collection, record.key, record.value, "test-edit")) for (const row of rows) {
-              const columns = Object.keys(row); sql.prepare('INSERT INTO "' + table + '" (' + columns.map(name => '"' + name + '"').join(",") + ') VALUES (' + columns.map(() => "?").join(",") + ")").run(...columns.map(name => Object.prototype.toString.call(row[name]) === "[object Uint8Array]" ? Buffer.from(row[name]) : row[name]));
-            }
-          }
+          sql.exec("DELETE FROM records");
+          for (const row of rows.filter(row => !names.includes(row.collection))) sql.prepare("INSERT INTO records VALUES(?,?,?,?)").run(row.collection, row.key, JSON.stringify(row.value), "test-edit");
           sql.exec("COMMIT");
         } catch (error) { sql.exec("ROLLBACK"); throw error; }
       });

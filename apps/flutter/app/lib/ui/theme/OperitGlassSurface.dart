@@ -1,12 +1,11 @@
 // ignore_for_file: file_names
 
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import 'OperitTheme.dart';
 
-enum OperitGlassSurfaceLayer { panel, card, control }
+typedef OperitGlassSurfaceLayer = ThemeGlassSurfaceLayer;
 
 class OperitGlassSurface extends StatelessWidget {
   const OperitGlassSurface({
@@ -38,90 +37,20 @@ class OperitGlassSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final transparentSurface = OperitTheme.of(
-      context,
-    ).themePreferenceSnapshot.transparentSurfaceEnabled;
-    final content = material
-        ? Material(color: Colors.transparent, child: child)
-        : child;
-    if (!transparentSurface) {
-      return _clipIfNeeded(
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: borderRadius,
-            border: border,
-            boxShadow: shadows,
-          ),
-          child: content,
-        ),
-      );
-    }
-
-    final style = _styleForLayer(layer);
-    final decoration = BoxDecoration(
-      color: color.withValues(alpha: transparentAlpha ?? style.alpha),
+    return ThemeGlassSurface(
+      transparentSurface: OperitTheme.of(
+        context,
+      ).themePreferenceSnapshot.transparentSurfaceEnabled,
+      child: child,
+      color: color,
       borderRadius: borderRadius,
       border: border,
-      boxShadow: shadows
-          .map(
-            (shadow) => BoxShadow(
-              color: shadow.color.withValues(alpha: 0.08),
-              offset: shadow.offset,
-              blurRadius: shadow.blurRadius,
-              spreadRadius: shadow.spreadRadius,
-            ),
-          )
-          .toList(growable: false),
-    );
-    if (!enableBackdropFilter) {
-      return _clipIfNeeded(
-        DecoratedBox(decoration: decoration, child: content),
-      );
-    }
-    return _clipBackdrop(
-      BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: style.blur, sigmaY: style.blur),
-        child: DecoratedBox(decoration: decoration, child: content),
-      ),
+      shadows: shadows,
+      layer: layer,
+      transparentAlpha: transparentAlpha,
+      material: material,
+      enableBackdropFilter: enableBackdropFilter,
+      clip: clip,
     );
   }
-
-  Widget _clipIfNeeded(Widget child) {
-    if (!clip) {
-      return child;
-    }
-    return ClipRRect(borderRadius: borderRadius, child: child);
-  }
-
-  Widget _clipBackdrop(Widget child) {
-    if (!clip) {
-      return ClipRect(child: child);
-    }
-    return ClipRRect(borderRadius: borderRadius, child: child);
-  }
-}
-
-class _OperitGlassSurfaceStyle {
-  const _OperitGlassSurfaceStyle({required this.blur, required this.alpha});
-
-  final double blur;
-  final double alpha;
-}
-
-_OperitGlassSurfaceStyle _styleForLayer(OperitGlassSurfaceLayer layer) {
-  return switch (layer) {
-    OperitGlassSurfaceLayer.panel => const _OperitGlassSurfaceStyle(
-      blur: 16,
-      alpha: 0.045,
-    ),
-    OperitGlassSurfaceLayer.card => const _OperitGlassSurfaceStyle(
-      blur: 14,
-      alpha: 0.16,
-    ),
-    OperitGlassSurfaceLayer.control => const _OperitGlassSurfaceStyle(
-      blur: 10,
-      alpha: 0.28,
-    ),
-  };
 }

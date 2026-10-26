@@ -1,3 +1,6 @@
+#[path = "../../terminal_command.rs"]
+mod terminal_command;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,7 +19,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use uuid::Uuid;
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
-const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
+const PTY_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
 const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
@@ -93,7 +96,12 @@ impl PtyCommandSpec {
     /// Builds the default interactive bash command configuration.
     fn nativeBash() -> Self {
         Self {
-            program: if cfg!(target_os = "macos") { "/bin/bash" } else { "bash" }.to_string(),
+            program: if cfg!(target_os = "macos") {
+                "/bin/bash"
+            } else {
+                "bash"
+            }
+            .to_string(),
             args: vec![
                 "--noprofile".to_string(),
                 "--norc".to_string(),
@@ -471,6 +479,16 @@ impl TerminalHost for NativePtyTerminalHost {
         command: &str,
         timeoutMs: u64,
     ) -> HostResult<TerminalCommandOutput> {
+        self.executeInSessionStreaming(sessionId, command, timeoutMs, &mut |_| Ok(()))
+    }
+
+    fn executeInSessionStreaming(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
+    ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
         let (terminalType, commandOutput, commandProtocol, commandEcho) = {
@@ -481,7 +499,11 @@ impl TerminalHost for NativePtyTerminalHost {
                 .ok_or_else(|| {
                     HostError::new(format!("Terminal session does not exist: {sessionId}"))
                 })?;
-            session.commandRunning = true;
+            if session.commandRunning {
+                return Err(HostError::new(
+                    "Terminal session already has a command in progress",
+                ));
+            }
             clearPtyCommandOutput(&session.commandOutput)?;
             let commandInput = ptyCommandInput(&normalizedCommand, session.commandProtocol);
             let commandEcho = commandInput.trim_end().to_string();
@@ -491,6 +513,7 @@ impl TerminalHost for NativePtyTerminalHost {
                 .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
             writer.write_all(commandInput.as_bytes())?;
             writer.flush()?;
+            session.commandRunning = true;
             (
                 session.terminalType.clone(),
                 session.commandOutput.clone(),
@@ -499,21 +522,33 @@ impl TerminalHost for NativePtyTerminalHost {
             )
         };
 
-        let result =
-            executePtyCommandInSession(commandOutput, &commandEcho, timeoutMs, commandProtocol)?;
+        let result = executePtyCommandInSession(
+            commandOutput,
+            &commandEcho,
+            timeoutMs,
+            commandProtocol,
+            onOutput,
+        );
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                if result.timedOut {
+                // Release the busy flag even if interrupting a broken PTY fails.
+                // The state lock still excludes new commands during cancellation.
+                session.commandRunning = false;
+                if result.as_ref().map_or(true, |receipt| receipt.timedOut) {
                     if let Some(workingDir) = cancelTimedOutPtyCommand(session)? {
                         session.workingDir = workingDir;
                     }
-                } else if let Some(workingDir) = result.workingDir.clone() {
+                } else if let Some(workingDir) = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|receipt| receipt.workingDir.clone())
+                {
                     session.workingDir = workingDir;
                 }
-                session.commandRunning = false;
             }
         }
+        let result = result?;
         Ok(TerminalCommandOutput {
             command: normalizedCommand,
             output: result.output,
@@ -696,10 +731,13 @@ fn createPtySession(
         .openpty(ptySize(rows, cols))
         .map_err(|error| HostError::new(format!("PTY open failed: {error}")))?;
     // Acquire all master handles before spawning, so setup errors cannot leak a shell.
-    let mut reader = pair.master.try_clone_reader()
+    let mut reader = pair
+        .master
+        .try_clone_reader()
         .map_err(|error| HostError::new(format!("PTY reader setup failed: {error}")))?;
-    let writer = Arc::new(Mutex::new(pair.master.take_writer()
-        .map_err(|error| HostError::new(format!("PTY writer setup failed: {error}")))?));
+    let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(|error| {
+        HostError::new(format!("PTY writer setup failed: {error}"))
+    })?));
     let command = posixPtyCommand(&workingDir, commandSpec);
     let mut child = pair.slave.spawn_command(command).map_err(|error| {
         HostError::new(format!(
@@ -716,24 +754,29 @@ fn createPtySession(
     let screenOutputForThread = screenOutput.clone();
     let writerForThread = writer.clone();
     let cursorStateForThread = cursorState.clone();
-    thread::spawn(move || {
-        let mut buffer = [0u8; 4096];
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(count) => {
-                    let chunk = &buffer[..count];
-                    processPtyTerminalQueries(&writerForThread, &cursorStateForThread, chunk);
-                    let commandChunk = stripPtyDeviceStatusReports(chunk);
-                    let visibleChunk = stripPtyPromptMarkers(&commandChunk);
-                    appendPtyOutput(&outputForThread, &visibleChunk);
-                    appendPtyOutput(&screenOutputForThread, &visibleChunk);
-                    appendPtyCommandOutput(&commandOutputForThread, &commandChunk);
+    let reader_task =
+        operit_host_native_scheduler::scheduleNativeServiceTask("operit-pty-reader", move || {
+            let mut buffer = [0u8; 4096];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        let chunk = &buffer[..count];
+                        processPtyTerminalQueries(&writerForThread, &cursorStateForThread, chunk);
+                        let commandChunk = stripPtyDeviceStatusReports(chunk);
+                        let visibleChunk = stripPtyPromptMarkers(&commandChunk);
+                        appendPtyOutput(&outputForThread, &visibleChunk);
+                        appendPtyOutput(&screenOutputForThread, &visibleChunk);
+                        appendPtyCommandOutput(&commandOutputForThread, &commandChunk);
+                    }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
-        }
-    });
+        });
+    if let Err(error) = reader_task {
+        let _ = child.kill();
+        return Err(error);
+    }
     if commandSpec.commandProtocol == PtyCommandProtocol::ExplicitMarker {
         writePtyPromptMarker(&writer)?;
     }
@@ -765,6 +808,7 @@ fn createPtySession(
 
 /// Produces the shell input that emits the command-completion marker for one protocol.
 fn ptyCommandInput(command: &str, commandProtocol: PtyCommandProtocol) -> String {
+    let command = terminal_command::posixCommandLine(command);
     match commandProtocol {
         PtyCommandProtocol::BashPromptCommand => format!("{command}\r"),
         PtyCommandProtocol::ExplicitMarker => format!(
@@ -984,13 +1028,16 @@ fn executePtyCommandInSession(
     command: &str,
     timeoutMs: u64,
     commandProtocol: PtyCommandProtocol,
+    onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
 ) -> HostResult<SessionCommandResult> {
     let deadline = Instant::now() + Duration::from_millis(timeoutMs);
     let mut collected = Vec::new();
     let mut promptSeenAt = None;
     let quietPeriod = Duration::from_millis(150);
     loop {
+        let previousLength = collected.len();
         let drained = drainPtyCommandOutput(&output, &mut collected, deadline)?;
+        onOutput(&collected[previousLength..])?;
         if drained > 0 {
             promptSeenAt = None;
         }
@@ -1695,6 +1742,47 @@ fn nextSessionId() -> String {
 mod tests {
     use super::*;
     use operit_host_api::TerminalHost;
+
+    /// Runs every statement before completing and keeps changes in the existing shell.
+    #[test]
+    fn posix_multiline_command_preserves_shell_state() {
+        let host = NativePtyTerminalHost::new();
+        let session = host.createOrGetSession("terminal_multiline").unwrap();
+        let result = host.executeInSession(
+            &session.sessionId,
+            "OPERIT_V=$(cat <<'EOF'\n中文 'quoted' \\012 $literal\nEOF\n)\nsleep 1\nprintf '%s\\n' \"$OPERIT_V\"",
+            5000,
+        ).unwrap();
+        assert!(!result.timedOut);
+        assert_eq!(result.exitCode, 0);
+        assert_eq!(result.output, "中文 'quoted' \\012 $literal");
+        let next = host
+            .executeInSession(&session.sessionId, "printf '%s\\n' \"$OPERIT_V\"", 3000)
+            .unwrap();
+        assert_eq!(next.output, "中文 'quoted' \\012 $literal");
+    }
+
+    /// Applies the timeout to the complete multiline script and keeps the shell responsive.
+    #[test]
+    fn posix_multiline_timeout_keeps_session_usable() {
+        let host = NativePtyTerminalHost::new();
+        let session = host
+            .createOrGetSession("terminal_multiline_timeout")
+            .unwrap();
+        let result = host
+            .executeInSession(
+                &session.sessionId,
+                "printf 'started\\n'\nsleep 8\nprintf forbidden",
+                800,
+            )
+            .unwrap();
+        assert!(result.timedOut);
+        let next = host
+            .executeInSession(&session.sessionId, "printf 'ready\\n'", 3000)
+            .unwrap();
+        assert!(!next.timedOut);
+        assert_eq!(next.output, "ready");
+    }
 
     #[test]
     fn linux_command_block_completes_in_pty() {

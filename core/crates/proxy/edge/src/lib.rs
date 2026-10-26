@@ -5,19 +5,16 @@
 use std::fmt::{Display, Formatter};
 
 use async_trait::async_trait;
+use operit_edge_contract::{EdgeScreenInputRequest, EdgeScreenInputState, EdgeScreenSnapshot};
 use operit_edge_contract::{
     EDGE_DEVICE_IO_OBJECT_ID, EDGE_DEVICE_IO_STATE_PROPERTY, EDGE_ROBOT_FACE_OBJECT_ID,
     EDGE_ROBOT_FACE_STATE_PROPERTY, EDGE_SCREEN_OBJECT_ID,
-    EDGE_PLUGIN_TARGET,
 };
 use operit_host_api::{DeviceDigitalOutputState, RobotFaceState};
 use operit_link::{
     fromCoreValue, CoreCallRequest, CoreEventStream, CoreLinkError, CoreLinkSharedClient,
     CoreValue, CoreWatchRequest,
 };
-use operit_edge_contract::{EdgePluginManifest, EdgeScreenInputRequest, EdgeScreenInputState, EdgeScreenSnapshot};
-
-
 
 /// Owns the typed proxy entry point for Edge Core services.
 pub struct EdgeProxy<C> {
@@ -51,40 +48,9 @@ impl<C> EdgeProxy<C> {
         }
     }
 
-    /// Returns the native plugin proxy for this Edge node.
-    pub fn plugins(&mut self) -> EdgePluginProxy<'_, C> {
-        EdgePluginProxy { client: &mut self.client }
-    }
-
     /// Returns the underlying Link client after proxy use is complete.
     pub fn intoInner(self) -> C {
         self.client
-    }
-}
-
-/// Discovers and invokes explicitly registered native Edge plugin actions.
-pub struct EdgePluginProxy<'a, C> {
-    client: &'a mut C,
-}
-
-impl<'a, C: CoreLinkSharedClient> EdgePluginProxy<'a, C> {
-    pub async fn list(&mut self) -> Result<Vec<EdgePluginManifest>, EdgeProxyError> {
-        let response = self.client.call(CoreCallRequest::new(
-            "edge-plugin-list", EDGE_PLUGIN_TARGET, "list", CoreValue::emptyMap(),
-        )).await;
-        decodeResponse(response.result)
-    }
-
-    pub async fn invoke(&mut self, pluginId: &str, action: &str, args: CoreValue)
-        -> Result<CoreValue, EdgeProxyError> {
-        let request = CoreValue::Map(std::collections::BTreeMap::from([
-            ("pluginId".into(), CoreValue::String(pluginId.into())),
-            ("action".into(), CoreValue::String(action.into())),
-            ("args".into(), args),
-        ]));
-        self.client.call(CoreCallRequest::new(
-            "edge-plugin-invoke", EDGE_PLUGIN_TARGET, "invoke", request,
-        )).await.result.map_err(EdgeProxyError::from)
     }
 }
 
@@ -457,8 +423,8 @@ mod tests {
         DeviceIoService, DeviceIoStateStream, EdgeNode, EdgeServiceError, RobotFaceService,
         RobotFaceStateStream,
     };
-    use std::sync::mpsc;
     use std::sync::Arc;
+    use tokio::sync::mpsc;
 
     /// Provides typed device operations for a deterministic Edge Proxy test.
     struct TestDeviceIoService;
@@ -482,7 +448,7 @@ mod tests {
 
         /// Opens a typed stream containing one deterministic snapshot.
         fn watchDigitalOutput(&self, pin: u8) -> Result<DeviceIoStateStream, EdgeServiceError> {
-            let (sender, receiver) = mpsc::channel();
+            let (sender, receiver) = mpsc::unbounded_channel();
             sender
                 .send(DeviceDigitalOutputState { pin, level: false })
                 .map_err(|error| EdgeServiceError::new(error.to_string()))?;
@@ -513,7 +479,7 @@ mod tests {
 
         /// Opens a typed robot face stream containing one deterministic snapshot.
         fn watchExpression(&self) -> Result<RobotFaceStateStream, EdgeServiceError> {
-            let (sender, receiver) = mpsc::channel();
+            let (sender, receiver) = mpsc::unbounded_channel();
             sender
                 .send(RobotFaceState {
                     expression: "neutral".to_string(),

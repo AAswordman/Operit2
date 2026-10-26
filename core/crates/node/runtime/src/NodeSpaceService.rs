@@ -24,6 +24,8 @@ pub(crate) struct PeerSpaceSnapshot {
     pub(crate) deviceProfiles: Vec<CoreSpaceDeviceProfile>,
     pub(crate) controlOperations: Vec<SyncOperation>,
     pub(crate) topology: Vec<CoreSpaceTopologyRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) departures: Vec<SyncOperation>,
 }
 pub(crate) type PeerSpaceJoin = PeerSpaceSnapshot;
 
@@ -56,6 +58,8 @@ pub struct SpaceJoinRequest {
 }
 
 
+#[path = "peer/space_departure.rs"]
+pub(crate) mod space_departure;
 #[path = "peer/space_join.rs"]
 pub(crate) mod space_join;
 #[path = "peer/space_reconcile.rs"]
@@ -83,7 +87,7 @@ pub(crate) fn dispatchPeerSpaceCall(
     service: &dyn NodeSpaceContext, peer: &str, request: CoreCallRequest,
 ) -> Result<CoreValue, String> {
     match request.methodName.as_str() {
-        "snapshot" => toCoreValue(peerSpaceSnapshot(service)?).map_err(|e| e.to_string()),
+        "snapshot" => toCoreValue(peerSpaceSnapshotForPeer(service, peer)?).map_err(|e| e.to_string()),
         "deviceSpace" => toCoreValue(service.spaceStore().initialize()?).map_err(|e| e.to_string()),
         "observeSpaceSnapshot" => {
             let snapshot: PeerSpaceSnapshot = fromCoreValue(request.args).map_err(|e| e.to_string())?;
@@ -114,9 +118,16 @@ pub(crate) fn peerSpaceSnapshotFor(service: &dyn NodeSpaceContext, space: CoreSp
     let snapshot = PeerSpaceSnapshot {
         space, deviceProfiles,
         controlOperations: service.networkControlStore().currentSpaceOperations()?,
-        topology,
+        topology, departures: Vec::new(),
     };
     CoreSpaceStore::validateSpaceProfiles(&snapshot.space, &snapshot.deviceProfiles)?;
+    Ok(snapshot)
+}
+
+/// Only direct former neighbors receive this node's pending exit receipts.
+pub(crate) fn peerSpaceSnapshotForPeer(service: &dyn NodeSpaceContext, peer: &str) -> Result<PeerSpaceSnapshot, String> {
+    let mut snapshot = peerSpaceSnapshot(service)?;
+    snapshot.departures = space_departure::pending(service, peer)?;
     Ok(snapshot)
 }
 
@@ -125,6 +136,7 @@ pub(crate) fn observePeerSpaceSnapshot(service: &dyn NodeSpaceContext, peerNodeI
         if !snapshot.space.members.iter().any(|node| node == peerNodeId) {
             return Err("Paired device is not present in its announced device space".into());
         }
+        space_departure::observe(service, peerNodeId, &snapshot.departures, &snapshot.controlOperations)?;
         let local = peerSpaceSnapshot(service)?.space;
         let crossing = local.spaceId != snapshot.space.spaceId;
         if crossing {
@@ -171,10 +183,12 @@ pub(crate) fn observePeerSpaceSnapshot(service: &dyn NodeSpaceContext, peerNodeI
             service.networkControlStore().applyBootstrapOperation(operation)?;
         }
         if crossing {
-            service.spaceStore().adopt(snapshot.space)
+            service.spaceStore().adopt(snapshot.space)?;
         } else {
-            service.spaceStore().observePairedDeviceSpace(peerNodeId.to_string(), snapshot.space)
+            service.spaceStore().observePairedDeviceSpace(peerNodeId.to_string(), snapshot.space)?;
         }
+        space_join::applyRemovedMemberLocalEffects(service, &service.networkControlStore().currentSpaceOperations()?)?;
+        service.spaceStore().space()
     }
 
 /// Lightweight assembly for devices without the application execution runtime.
@@ -210,8 +224,10 @@ impl NodeSpaceService {
         Ok(())
     }
     pub fn acceptPeerSpaceCall(&self, peer: &str, request: CoreCallRequest) -> Result<CoreValue, String> {
-        if !self.peers.hasPairing(peer, crate::NodeServices::PairingDirection::Inbound).map_err(|e| e.to_string())? {
-            return Err("Node Space calls require direct inbound pairing".into());
+        // Join rides any current pairing: the direction the pairing was
+        // established in is transport history, not applicant authority.
+        if !self.peers.hasPairing(peer, crate::NodeServices::PairingDirection::Either).map_err(|e| e.to_string())? {
+            return Err("Node Space calls require a current direct pairing".into());
         }
         dispatchPeerSpaceCall(self, peer, request)
     }
@@ -229,8 +245,34 @@ impl NodeSpaceService {
         space_join::incoming(self).await
     }
     pub async fn decideDeviceSpaceJoin(&self, id: String, version: u64, approve: bool) -> Result<SpaceJoinRequest, String> { space_join::decide(self, id, version, approve).await }
+    /// Local outgoing approvals, shared by the Core facade and bounded Edge UI.
+    pub fn outgoingDeviceSpaceJoins(&self) -> Result<Vec<SpaceJoinRequest>, String> { space_join::outgoing(self) }
     pub async fn refreshDeviceSpaceJoin(&self, id: String) -> Result<SpaceJoinRequest, String> { space_join::refresh(self, id).await }
     pub async fn cancelDeviceSpaceJoin(&self, id: String) -> Result<SpaceJoinRequest, String> { space_join::cancel(self, id).await }
+    pub async fn synchronizePreferences(&self) -> Result<(), String> {
+        use operit_store::DevicePreferencesStore::{DevicePreferences, DevicePreferencesStore};
+        let departures = space_departure::synchronize(self).await;
+        let store = DevicePreferencesStore::new(self.storage.clone());
+        for peer in self.peers.activePeerNodeIds().map_err(|e| e.to_string())? {
+            let Some(scope) = self.spaceChannelScope(&peer).map_err(|e| e.to_string())? else { continue; };
+            let local = store.read(&scope, &self.localNodeId)?;
+            let response = self.callNode(peer.clone(), CoreCallRequest::new("device-preferences", NODE_SPACE_CONTROL_TARGET,
+                "exchangePreferences", toCoreValue(local).map_err(|e| e.to_string())?)).await;
+            if response.result.as_ref().is_err_and(|error| error.code == "SPACE_ID_MISMATCH") {
+                // A paired endpoint may have exited while its old scoped
+                // connection is still alive. Fetch its durable exit receipt.
+                space_departure::exchange(self, &peer).await?;
+                continue;
+            }
+            let incoming: DevicePreferences = fromCoreValue(response.result.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            if incoming.spaceId != scope || incoming.nodeId != self.localNodeId
+                || self.spaceChannelScope(&peer).map_err(|e| e.to_string())?.as_deref() != Some(scope.as_str()) {
+                return Err("Device preference response no longer belongs to this Space".into());
+            }
+            store.merge(&incoming)?;
+        }
+        departures
+    }
     pub fn spaceChannelScope(&self, peer: &str) -> Result<Option<String>, CoreLinkError> {
         crate::space_policy::spaceChannelScope(&self.space, &self.control, &self.localNodeId, peer)
     }
@@ -286,6 +328,14 @@ pub fn acceptSpaceControlCall(service: &dyn NodeSpaceContext, origin: &str, requ
         || !control.memberNodeIds.contains(origin)
         || control.disconnectedNodeIds.contains(origin) {
         return Err("Space control exchange requires an admitted member".into());
+    }
+    if request.methodName == "exchangePreferences" {
+        let incoming: operit_store::DevicePreferencesStore::DevicePreferences = fromCoreValue(request.args).map_err(|e| e.to_string())?;
+        if incoming.spaceId != space.spaceId || (incoming.nodeId != origin && incoming.nodeId != service.localNodeId()) {
+            return Err("Device preference exchange scope mismatch".into());
+        }
+        let merged = operit_store::DevicePreferencesStore::DevicePreferencesStore::new(service.storage()).merge(&incoming)?;
+        return toCoreValue(merged).map_err(|e| e.to_string());
     }
     if request.methodName != "exchange" { return Err("Unknown Space control method".into()); }
     let operations: Vec<SyncOperation> = fromCoreValue(request.args).map_err(|error| error.to_string())?;

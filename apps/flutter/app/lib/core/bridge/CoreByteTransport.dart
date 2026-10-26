@@ -2,7 +2,7 @@
 import 'dart:typed_data';
 import '../link/CoreLinkCodec.dart';
 
-/// Defines the version-one direct Core transport operation numbers.
+/// Defines the operation numbers carried by the ABI v3 Core transport.
 enum CoreTransportOperation {
   call,
   pushOpen,

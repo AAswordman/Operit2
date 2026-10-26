@@ -1,3 +1,4 @@
+import '../support/compose_program_fixture.dart';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -99,13 +100,13 @@ core_proxy.ToolPkgComposeDslEvent _event(
   error: null,
   navigationCommands: const [],
   update: includeTree
-      ? core_proxy.ToolPkgComposeDslNodeUpdate(
+      ? composeTestTransaction(
           reset: true,
           revision: 1,
-          rootId: 'root',
+          rootInstanceId: 'root',
           removed: const [],
-          upserts: [
-            core_proxy.ToolPkgComposeDslNodeRecord(
+          instances: [
+            composeTestInstance(
               id: 'root',
               nodeType: 'Text',
               props: const {'text': 'Guardian'},

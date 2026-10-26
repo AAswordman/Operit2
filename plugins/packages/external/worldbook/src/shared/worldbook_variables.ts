@@ -1,4 +1,4 @@
-import { getWorldBookDir } from "./worldbook_storage.js";
+import { initializeWorldBookStorage } from "./worldbook_storage.js";
 
 interface WorldBookVariableEntryLike {
   name?: string;
@@ -38,41 +38,13 @@ interface JsonPatchOperation {
   value?: unknown;
 }
 
-const VARIABLE_STORE_FILE = "variables.json";
 const DEFAULT_VARIABLE_NAME = "stat_data";
 
-function getVariableStoreFile(): string {
-  return `${getWorldBookDir()}/${VARIABLE_STORE_FILE}`;
-}
-
-async function ensureVariableStore(): Promise<void> {
-  const dir = getWorldBookDir();
-  const file = getVariableStoreFile();
-
-  await Tools.Files.mkdir(dir, true);
-  const existsResult = await Tools.Files.exists(file);
-  if (!existsResult?.exists) {
-    await Tools.Files.write(
-      file,
-      JSON.stringify(
-        {
-          global_variables: {},
-          character_variables: {},
-          chats: {}
-        },
-        null,
-        2
-      ),
-      false
-    );
-  }
-}
-
 async function readVariableStore(): Promise<WorldBookVariableStore> {
-  await ensureVariableStore();
+  const storage = await initializeWorldBookStorage();
 
   try {
-    const fileResult = await Tools.Files.read(getVariableStoreFile());
+    const fileResult = await Tools.Files.read(storage.variablesFile);
     const parsed = JSON.parse(String(fileResult?.content || "{}"));
     const globalVariables =
       parsed && typeof parsed.global_variables === "object" && !Array.isArray(parsed.global_variables)
@@ -102,8 +74,8 @@ async function readVariableStore(): Promise<WorldBookVariableStore> {
 }
 
 async function writeVariableStore(store: WorldBookVariableStore): Promise<void> {
-  await ensureVariableStore();
-  await Tools.Files.write(getVariableStoreFile(), JSON.stringify(store, null, 2));
+  const storage = await initializeWorldBookStorage();
+  await Tools.Files.write(storage.variablesFile, JSON.stringify(store, null, 2));
 }
 
 function createEmptyChatState(): WorldBookChatVariableState {
@@ -749,7 +721,20 @@ function getScopedVariableValue(
   return getByDotPath(context.localVariables, path);
 }
 
-export async function syncWorldBookVariableContext(
+let variableUpdates: Promise<unknown> = Promise.resolve();
+
+export function syncWorldBookVariableContext(
+  chatId: string,
+  entries: WorldBookVariableEntryLike[],
+  callerCardId: string
+): Promise<WorldBookVariableRenderContext | null> {
+  const update = variableUpdates.then(() => updateWorldBookVariableContext(chatId, entries, callerCardId));
+  // A rejected request must not poison subsequent requests for this owner.
+  variableUpdates = update.catch(() => {});
+  return update;
+}
+
+async function updateWorldBookVariableContext(
   chatId: string,
   entries: WorldBookVariableEntryLike[],
   callerCardId: string

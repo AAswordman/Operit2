@@ -32,3 +32,39 @@ pub fn tryCurrentTimeMillisU128() -> Result<u128, String> {
             .map_err(|error| error.to_string())
     }
 }
+
+/// Returns the host's current local date and time with its explicit UTC offset.
+pub fn currentLocalDateTime() -> String {
+    let timestampMillis = currentTimeMillis();
+    let utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestampMillis)
+        .expect("host time must be a valid chrono timestamp");
+    #[cfg(not(target_arch = "wasm32"))]
+    let local = utc.with_timezone(&chrono::Local).fixed_offset();
+    #[cfg(target_arch = "wasm32")]
+    let local = {
+        let date = js_sys::Date::new(&js_sys::wasm_bindgen::JsValue::from_f64(timestampMillis as f64));
+        let offset = chrono::FixedOffset::east_opt((-date.get_timezone_offset() * 60.0) as i32)
+            .expect("host timezone offset must be valid");
+        utc.with_timezone(&offset)
+    };
+    local.to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    /// Keeps the instant and the host's timezone in the same unambiguous timestamp.
+    #[test]
+    fn local_datetime_preserves_clock_and_host_timezone() {
+        let before = currentTimeMillis();
+        let formatted = currentLocalDateTime();
+        let after = currentTimeMillis();
+        let parsed = chrono::DateTime::parse_from_rfc3339(&formatted).unwrap();
+        assert!((before..=after).contains(&parsed.timestamp_millis()));
+        let expected = parsed.with_timezone(&chrono::Local);
+        assert_eq!(parsed.offset().local_minus_utc(), expected.offset().local_minus_utc());
+        assert_eq!(parsed.naive_local(), expected.naive_local());
+        assert_eq!(formatted, expected.to_rfc3339_opts(chrono::SecondsFormat::Millis, false));
+    }
+}

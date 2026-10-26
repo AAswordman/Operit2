@@ -30,7 +30,7 @@ def check_snapshot() -> None:
 
 
 def import_snapshot(source_repository: Path) -> None:
-    """Copy declarations verbatim from an explicitly selected local v1 repository."""
+    """Import committed v1 declarations and apply the documented runtime alias extension."""
     repository = source_repository.resolve(strict=True)
     source = repository / "examples" / "types"
     paths = sorted(source.glob("*.d.ts"))
@@ -45,8 +45,23 @@ def import_snapshot(source_repository: Path) -> None:
     ).strip()
     if dirty:
         raise ValueError("Commit v1 declaration changes before importing a reproducible snapshot")
-    data = {path.name: path.read_bytes() for path in paths}
-    license_data = (repository / "LICENSE").read_bytes()
+    data = {
+        path.name: subprocess.check_output(
+            ["git", "-C", str(repository), "show", f"{commit}:examples/types/{path.name}"]
+        )
+        for path in paths
+    }
+    runtime_header = b"declare global {\n"
+    runtime = data["quickjs-runtime.d.ts"]
+    if not runtime.startswith(runtime_header):
+        raise ValueError("Unsupported v1 runtime declaration header")
+    data["quickjs-runtime.d.ts"] = runtime_header + (
+        b"    /** Operit2 runtime extension: alias of the standard global object. */\n"
+        b"    var global: typeof globalThis;\n\n"
+    ) + runtime[len(runtime_header):]
+    license_data = subprocess.check_output(
+        ["git", "-C", str(repository), "show", f"{commit}:LICENSE"]
+    )
     removed = {path.name for path in DESTINATION.glob("*.d.ts")} - set(data)
     if removed:
         raise ValueError("Review and explicitly remove obsolete v1 declarations: " + ", ".join(sorted(removed)))
@@ -59,6 +74,11 @@ def import_snapshot(source_repository: Path) -> None:
         "directory": "examples/types",
         "commit": commit,
         "files": {name: digest(content) for name, content in data.items()},
+        "localExtensions": {
+            "quickjs-runtime.d.ts": [
+                "Declare global as an alias of globalThis supplied by the shared engine bootstrap."
+            ]
+        },
     }
     (DESTINATION / "source.json").write_text(
         json.dumps(provenance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

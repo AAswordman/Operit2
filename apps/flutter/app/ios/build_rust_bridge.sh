@@ -31,6 +31,13 @@ for arch in $ARCHS; do
   mkdir -p "$out_dir/$arch"
   rustup target add "$rust_target"
 
+  # A source-built jitless library, its embedded snapshot and bindings must match.
+  # The common scheduler remains independent of Apple build policy.
+  v8_env="$out_dir/$arch/v8.env"
+  "$repo_root/.venv/bin/python" "$repo_root/tools/build_scripts/prepare_ios_v8.py" \
+    --target "$rust_target" --env-file "$v8_env"
+  . "$v8_env"
+
   RUSTFLAGS="-Awarnings" cargo rustc \
     --manifest-path "$crate_dir/Cargo.toml" \
     --release \

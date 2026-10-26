@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../core/host/AppToastController.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import 'ChatToolPermissionPanel.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
@@ -20,7 +21,6 @@ import 'NewChatIntro.dart';
 import 'ChatLayoutMetrics.dart';
 import 'ChatMultiSelectBar.dart';
 import 'ChatScrollNavigator.dart';
-import 'ChatToastHost.dart';
 import 'MessageContextMenu.dart';
 import 'share/ChatShareImageGenerator.dart';
 import 'share/ChatShareImagePreviewDialog.dart';
@@ -108,8 +108,11 @@ class ChatScreenContent extends StatelessWidget {
     required this.isSpeechTranscribing,
     required this.onSpeechInput,
     this.selectedMessageTimestamps = const <int>{},
+    this.showInput = true,
   });
 
+  /// Keeps the shared transcript available when another workflow owns submission.
+  final bool showInput;
   final List<ChatUiMessage> messages;
   final bool loading;
   final String? errorMessage;
@@ -295,55 +298,49 @@ class ChatScreenContent extends StatelessWidget {
               // it down deactivates tooltip states whose global pointer
               // routes then crash on ancestor lookups ("deactivated
               // widget's ancestor"), matching the chat area treatment.
-              IgnorePointer(
-                ignoring: isPreparingChatSwitch,
-                child: Opacity(
-                  opacity: isPreparingChatSwitch ? 0 : 1,
-                  child: isMultiSelectMode
-                      ? ChatMultiSelectBar(
-                          selectedCount: selectedMessageTimestamps.length,
-                          allSelected:
-                              _selectableMessageTimestamps.isNotEmpty &&
-                              _selectableMessageTimestamps.length ==
-                                  selectedMessageTimestamps.length,
-                          onClose: onExitMultiSelectMode,
-                          onToggleSelectAll:
-                              _selectableMessageTimestamps.isNotEmpty &&
-                                  _selectableMessageTimestamps.length ==
-                                      selectedMessageTimestamps.length
-                              ? onClearMessageSelection
-                              : onSelectAllMessages,
-                          onCopy: selectedMessageTimestamps.isEmpty
-                              ? null
-                              : () => _copySelectedMessages(context),
-                          onShareImage: selectedMessageTimestamps.isEmpty
-                              ? null
-                              : () => _generateShareImage(context),
-                          onDelete: selectedMessageTimestamps.isEmpty
-                              ? null
-                              : () => _confirmDeleteSelected(context),
-                        )
-                      : DrawerGestureExclusion(
-                          child: _buildChatInputSection(inputStyle),
-                        ),
+              if (showInput || isMultiSelectMode)
+                IgnorePointer(
+                  ignoring: isPreparingChatSwitch,
+                  child: Opacity(
+                    opacity: isPreparingChatSwitch ? 0 : 1,
+                    child: isMultiSelectMode
+                        ? ChatMultiSelectBar(
+                            selectedCount: selectedMessageTimestamps.length,
+                            allSelected:
+                                _selectableMessageTimestamps.isNotEmpty &&
+                                _selectableMessageTimestamps.length ==
+                                    selectedMessageTimestamps.length,
+                            onClose: onExitMultiSelectMode,
+                            onToggleSelectAll:
+                                _selectableMessageTimestamps.isNotEmpty &&
+                                    _selectableMessageTimestamps.length ==
+                                        selectedMessageTimestamps.length
+                                ? onClearMessageSelection
+                                : onSelectAllMessages,
+                            onCopy: selectedMessageTimestamps.isEmpty
+                                ? null
+                                : () => _copySelectedMessages(context),
+                            onShareImage: selectedMessageTimestamps.isEmpty
+                                ? null
+                                : () => _generateShareImage(context),
+                            onDelete: selectedMessageTimestamps.isEmpty
+                                ? null
+                                : () => _confirmDeleteSelected(context),
+                          )
+                        : DrawerGestureExclusion(
+                            child: _buildChatInputSection(inputStyle),
+                          ),
+                  ),
                 ),
-              ),
             ],
           ),
         ),
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: ValueListenableBuilder<String?>(
-              valueListenable: toastMessageListenable,
-              builder: (context, toastMessage, _) {
-                return ChatToastHost(
-                  message: toastMessage,
-                  onDismiss: onDismissToast,
-                  maxHeight: 280,
-                );
-              },
-            ),
+        Positioned(
+          left: 0,
+          top: 0,
+          child: _ChatNoticeBridge(
+            messageListenable: toastMessageListenable,
+            onDismiss: onDismissToast,
           ),
         ),
       ],
@@ -355,15 +352,20 @@ class ChatScreenContent extends StatelessWidget {
     return ChatRouteStatusHint(
       chatId: currentChatId,
       viewModel: viewModel,
-      builder: (suffix) => _buildChatInputWithRouteHint(inputStyle, suffix),
+      builder: (hint) => _buildChatInputWithRouteHint(inputStyle, hint),
     );
   }
 
   /// Passes the same Core-provided route label to both composer styles.
-  Widget _buildChatInputWithRouteHint(String inputStyle, String suffix) {
+  Widget _buildChatInputWithRouteHint(
+    String inputStyle,
+    ChatRouteComposerHint hint,
+  ) {
+    final sendMessage = hint.hostMissing ? hint.onClaimHost : onSendMessage;
     return switch (inputStyle) {
       UserPreferencesManager.INPUT_STYLE_AGENT => AgentChatInputSection(
-        hintSuffix: suffix,
+        hintSuffix: hint.suffix,
+        hostMissing: hint.hostMissing,
         controller: messageController,
         focusNode: inputFocusNode,
         isLoading: loading,
@@ -371,7 +373,7 @@ class ChatScreenContent extends StatelessWidget {
         mentionSuggestionPanel: mentionSuggestionPanel,
         viewModel: viewModel,
         currentChatId: currentChatId,
-        onSendMessage: onSendMessage,
+        onSendMessage: sendMessage,
         onQueueMessage: onQueueMessage,
         onCancelMessage: onCancelMessage,
         pendingQueueMessages: pendingQueueMessages,
@@ -398,7 +400,8 @@ class ChatScreenContent extends StatelessWidget {
         onSpeechInput: onSpeechInput,
       ),
       UserPreferencesManager.INPUT_STYLE_CLASSIC => ClassicChatInputSection(
-        hintSuffix: suffix,
+        hintSuffix: hint.suffix,
+        hostMissing: hint.hostMissing,
         controller: messageController,
         focusNode: inputFocusNode,
         isLoading: loading,
@@ -406,7 +409,7 @@ class ChatScreenContent extends StatelessWidget {
         mentionSuggestionPanel: mentionSuggestionPanel,
         viewModel: viewModel,
         currentChatId: currentChatId,
-        onSendMessage: onSendMessage,
+        onSendMessage: sendMessage,
         onQueueMessage: onQueueMessage,
         onCancelMessage: onCancelMessage,
         pendingQueueMessages: pendingQueueMessages,
@@ -667,5 +670,109 @@ class ChatScreenContent extends StatelessWidget {
         context,
       ).showSnackBar(SnackBar(content: Text('生成长图失败：$error')));
     }
+  }
+}
+
+/// Forwards chat toast events into the window-level corner notice stack.
+class _ChatNoticeBridge extends StatefulWidget {
+  /// Creates a bridge from the chat toast listenable to the notice controller.
+  const _ChatNoticeBridge({
+    required this.messageListenable,
+    required this.onDismiss,
+  });
+
+  final ValueListenable<String?> messageListenable;
+  final VoidCallback onDismiss;
+
+  /// Creates the state that keeps one chat notice in the corner stack.
+  @override
+  State<_ChatNoticeBridge> createState() => _ChatNoticeBridgeState();
+}
+
+class _ChatNoticeBridgeState extends State<_ChatNoticeBridge> {
+  int? _noticeId;
+  String? _shownText;
+
+  /// Subscribes to chat toast changes.
+  @override
+  void initState() {
+    super.initState();
+    widget.messageListenable.addListener(_sync);
+    _scheduleSync();
+  }
+
+  /// Follows a replaced toast listenable.
+  @override
+  void didUpdateWidget(_ChatNoticeBridge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.messageListenable == widget.messageListenable) {
+      return;
+    }
+    oldWidget.messageListenable.removeListener(_sync);
+    widget.messageListenable.addListener(_sync);
+    _scheduleSync();
+  }
+
+  /// Releases the subscription and the active chat notice.
+  @override
+  void dispose() {
+    widget.messageListenable.removeListener(_sync);
+    _dismissActive();
+    super.dispose();
+  }
+
+  /// Publishes the current chat toast after the surrounding build finishes.
+  void _scheduleSync() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _sync();
+      }
+    });
+  }
+
+  /// Shows, replaces, or clears the chat notice to match the listenable.
+  void _sync() {
+    final message = widget.messageListenable.value?.trim() ?? '';
+    if (message.isEmpty) {
+      _dismissActive();
+      return;
+    }
+    if (_noticeId != null && _shownText == message) {
+      return;
+    }
+    _dismissActive();
+    late final int id;
+    id = AppToastController.instance.show(
+      message,
+      onDismissed: () => _handleNoticeDismissed(id),
+    );
+    _noticeId = id;
+    _shownText = message;
+  }
+
+  /// Removes the chat notice without treating that removal as a user dismiss.
+  void _dismissActive() {
+    final id = _noticeId;
+    _noticeId = null;
+    _shownText = null;
+    if (id != null) {
+      AppToastController.instance.dismiss(id);
+    }
+  }
+
+  /// Clears the chat toast after the user or the timer dismisses its notice.
+  void _handleNoticeDismissed(int id) {
+    if (!mounted || _noticeId != id) {
+      return;
+    }
+    _noticeId = null;
+    _shownText = null;
+    widget.onDismiss();
+  }
+
+  /// Occupies no space; the notice is drawn by the window overlay.
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox.shrink();
   }
 }

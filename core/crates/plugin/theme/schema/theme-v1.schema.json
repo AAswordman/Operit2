@@ -1,0 +1,1247 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "light": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#36618EFF"
+            },
+            "onPrimary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#FFFFFFFF"
+            },
+            "primaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D1E4FFFF"
+            },
+            "onPrimaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#001D36FF"
+            },
+            "primaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D1E4FFFF"
+            },
+            "primaryFixedDim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#A0CAFDFF"
+            },
+            "onPrimaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#001D36FF"
+            },
+            "onPrimaryFixedVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#194975FF"
+            },
+            "secondary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#535F70FF"
+            },
+            "onSecondary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#FFFFFFFF"
+            },
+            "secondaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D7E3F8FF"
+            },
+            "onSecondaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#101C2BFF"
+            },
+            "secondaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D7E3F8FF"
+            },
+            "secondaryFixedDim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#BBC7DBFF"
+            },
+            "onSecondaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#101C2BFF"
+            },
+            "onSecondaryFixedVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#3B4858FF"
+            },
+            "tertiary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#6B5778FF"
+            },
+            "onTertiary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#FFFFFFFF"
+            },
+            "tertiaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#F2DAFFFF"
+            },
+            "onTertiaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#251431FF"
+            },
+            "tertiaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#F2DAFFFF"
+            },
+            "tertiaryFixedDim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D6BEE4FF"
+            },
+            "onTertiaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#251431FF"
+            },
+            "onTertiaryFixedVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#523F5FFF"
+            },
+            "error": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#BA1A1AFF"
+            },
+            "onError": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#FFFFFFFF"
+            },
+            "errorContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#FFDAD6FF"
+            },
+            "onErrorContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#410002FF"
+            },
+            "surface": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#F8F9FFFF"
+            },
+            "onSurface": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#191C20FF"
+            },
+            "surfaceDim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D8DAE0FF"
+            },
+            "surfaceBright": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#F8F9FFFF"
+            },
+            "surfaceContainerLowest": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#FFFFFFFF"
+            },
+            "surfaceContainerLow": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#F2F3FAFF"
+            },
+            "surfaceContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#ECEEF4FF"
+            },
+            "surfaceContainerHigh": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#E6E8EEFF"
+            },
+            "surfaceContainerHighest": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#E1E2E8FF"
+            },
+            "onSurfaceVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#43474EFF"
+            },
+            "outline": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#73777FFF"
+            },
+            "outlineVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#C3C7CFFF"
+            },
+            "shadow": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#000000FF"
+            },
+            "scrim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#000000FF"
+            },
+            "inverseSurface": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#2E3035FF"
+            },
+            "onInverseSurface": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#EFF0F7FF"
+            },
+            "inversePrimary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#A0CAFDFF"
+            },
+            "surfaceTint": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#36618EFF"
+            }
+          },
+          "required": [
+            "primary",
+            "onPrimary",
+            "primaryContainer",
+            "onPrimaryContainer",
+            "primaryFixed",
+            "primaryFixedDim",
+            "onPrimaryFixed",
+            "onPrimaryFixedVariant",
+            "secondary",
+            "onSecondary",
+            "secondaryContainer",
+            "onSecondaryContainer",
+            "secondaryFixed",
+            "secondaryFixedDim",
+            "onSecondaryFixed",
+            "onSecondaryFixedVariant",
+            "tertiary",
+            "onTertiary",
+            "tertiaryContainer",
+            "onTertiaryContainer",
+            "tertiaryFixed",
+            "tertiaryFixedDim",
+            "onTertiaryFixed",
+            "onTertiaryFixedVariant",
+            "error",
+            "onError",
+            "errorContainer",
+            "onErrorContainer",
+            "surface",
+            "onSurface",
+            "surfaceDim",
+            "surfaceBright",
+            "surfaceContainerLowest",
+            "surfaceContainerLow",
+            "surfaceContainer",
+            "surfaceContainerHigh",
+            "surfaceContainerHighest",
+            "onSurfaceVariant",
+            "outline",
+            "outlineVariant",
+            "shadow",
+            "scrim",
+            "inverseSurface",
+            "onInverseSurface",
+            "inversePrimary",
+            "surfaceTint"
+          ],
+          "default": {}
+        },
+        "dark": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#A0CAFDFF"
+            },
+            "onPrimary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#003258FF"
+            },
+            "primaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#194975FF"
+            },
+            "onPrimaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D1E4FFFF"
+            },
+            "primaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D1E4FFFF"
+            },
+            "primaryFixedDim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#A0CAFDFF"
+            },
+            "onPrimaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#001D36FF"
+            },
+            "onPrimaryFixedVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#194975FF"
+            },
+            "secondary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#BBC7DBFF"
+            },
+            "onSecondary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#253141FF"
+            },
+            "secondaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#3B4858FF"
+            },
+            "onSecondaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D7E3F8FF"
+            },
+            "secondaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D7E3F8FF"
+            },
+            "secondaryFixedDim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#BBC7DBFF"
+            },
+            "onSecondaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#101C2BFF"
+            },
+            "onSecondaryFixedVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#3B4858FF"
+            },
+            "tertiary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D6BEE4FF"
+            },
+            "onTertiary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#3B2948FF"
+            },
+            "tertiaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#523F5FFF"
+            },
+            "onTertiaryContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#F2DAFFFF"
+            },
+            "tertiaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#F2DAFFFF"
+            },
+            "tertiaryFixedDim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#D6BEE4FF"
+            },
+            "onTertiaryFixed": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#251431FF"
+            },
+            "onTertiaryFixedVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#523F5FFF"
+            },
+            "error": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#FFB4ABFF"
+            },
+            "onError": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#690005FF"
+            },
+            "errorContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#93000AFF"
+            },
+            "onErrorContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#FFDAD6FF"
+            },
+            "surface": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#111318FF"
+            },
+            "onSurface": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#E1E2E8FF"
+            },
+            "surfaceDim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#111318FF"
+            },
+            "surfaceBright": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#37393EFF"
+            },
+            "surfaceContainerLowest": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#0C0E13FF"
+            },
+            "surfaceContainerLow": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#191C20FF"
+            },
+            "surfaceContainer": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#1D2024FF"
+            },
+            "surfaceContainerHigh": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#282A2FFF"
+            },
+            "surfaceContainerHighest": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#33353AFF"
+            },
+            "onSurfaceVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#C3C7CFFF"
+            },
+            "outline": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#8D9199FF"
+            },
+            "outlineVariant": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#43474EFF"
+            },
+            "shadow": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#000000FF"
+            },
+            "scrim": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#000000FF"
+            },
+            "inverseSurface": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#E1E2E8FF"
+            },
+            "onInverseSurface": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#2E3035FF"
+            },
+            "inversePrimary": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#36618EFF"
+            },
+            "surfaceTint": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 9,
+              "pattern": "^#[0-9A-F]{8}$",
+              "default": "#A0CAFDFF"
+            }
+          },
+          "required": [
+            "primary",
+            "onPrimary",
+            "primaryContainer",
+            "onPrimaryContainer",
+            "primaryFixed",
+            "primaryFixedDim",
+            "onPrimaryFixed",
+            "onPrimaryFixedVariant",
+            "secondary",
+            "onSecondary",
+            "secondaryContainer",
+            "onSecondaryContainer",
+            "secondaryFixed",
+            "secondaryFixedDim",
+            "onSecondaryFixed",
+            "onSecondaryFixedVariant",
+            "tertiary",
+            "onTertiary",
+            "tertiaryContainer",
+            "onTertiaryContainer",
+            "tertiaryFixed",
+            "tertiaryFixedDim",
+            "onTertiaryFixed",
+            "onTertiaryFixedVariant",
+            "error",
+            "onError",
+            "errorContainer",
+            "onErrorContainer",
+            "surface",
+            "onSurface",
+            "surfaceDim",
+            "surfaceBright",
+            "surfaceContainerLowest",
+            "surfaceContainerLow",
+            "surfaceContainer",
+            "surfaceContainerHigh",
+            "surfaceContainerHighest",
+            "onSurfaceVariant",
+            "outline",
+            "outlineVariant",
+            "shadow",
+            "scrim",
+            "inverseSurface",
+            "onInverseSurface",
+            "inversePrimary",
+            "surfaceTint"
+          ],
+          "default": {}
+        }
+      },
+      "required": [
+        "light",
+        "dark"
+      ],
+      "default": {}
+    },
+    "background": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "asset": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)$",
+          "maxLength": 128,
+          "default": null
+        },
+        "fit": {
+          "type": "string",
+          "enum": [
+            "cover"
+          ],
+          "default": "cover"
+        },
+        "alignment": {
+          "type": "string",
+          "enum": [
+            "center"
+          ],
+          "default": "center"
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.3
+        },
+        "blur": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "radius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 40,
+              "default": 12
+            }
+          },
+          "required": [
+            "enabled",
+            "radius"
+          ],
+          "default": {}
+        }
+      },
+      "required": [
+        "asset",
+        "fit",
+        "alignment",
+        "opacity",
+        "blur"
+      ],
+      "default": {}
+    },
+    "surfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transparent": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "transparent"
+      ],
+      "default": {}
+    },
+    "chat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": [
+            "cursor",
+            "bubble"
+          ],
+          "default": "cursor"
+        },
+        "wideLayout": {
+          "type": "boolean",
+          "default": false
+        },
+        "showAvatar": {
+          "type": "boolean",
+          "default": true
+        },
+        "avatarShape": {
+          "type": "string",
+          "enum": [
+            "circle",
+            "square"
+          ],
+          "default": "circle"
+        },
+        "avatarCornerRadius": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 32,
+          "default": 8
+        },
+        "cursorUserColor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^#[0-9A-F]{8}$",
+          "maxLength": 128,
+          "default": null
+        },
+        "user": {
+          "$ref": "#/$defs/bubble"
+        },
+        "ai": {
+          "$ref": "#/$defs/bubble"
+        }
+      },
+      "required": [
+        "style",
+        "wideLayout",
+        "showAvatar",
+        "avatarShape",
+        "avatarCornerRadius",
+        "cursorUserColor",
+        "user",
+        "ai"
+      ],
+      "default": {}
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": [
+            "classic",
+            "agent"
+          ],
+          "default": "agent"
+        },
+        "floating": {
+          "type": "boolean",
+          "default": false
+        },
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^#[0-9A-F]{8}$",
+          "maxLength": 128,
+          "default": null
+        },
+        "roundedCorners": {
+          "type": "boolean",
+          "default": true
+        },
+        "image": {
+          "$ref": "#/$defs/bubbleImage"
+        },
+        "settingsAsset": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)$",
+          "maxLength": 128,
+          "default": null
+        },
+        "settingsAssetSize": {
+          "type": "number",
+          "minimum": 12,
+          "maximum": 44,
+          "default": 18
+        },
+        "attachmentAsset": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)$",
+          "maxLength": 128,
+          "default": null
+        },
+        "attachmentAssetSize": {
+          "type": "number",
+          "minimum": 12,
+          "maximum": 44,
+          "default": 18
+        },
+        "micAsset": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)$",
+          "maxLength": 128,
+          "default": null
+        },
+        "micAssetSize": {
+          "type": "number",
+          "minimum": 12,
+          "maximum": 48,
+          "default": 26
+        },
+        "sendAsset": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)$",
+          "maxLength": 128,
+          "default": null
+        },
+        "sendAssetSize": {
+          "type": "number",
+          "minimum": 12,
+          "maximum": 48,
+          "default": 26
+        },
+        "stopAsset": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)$",
+          "maxLength": 128,
+          "default": null
+        },
+        "stopAssetSize": {
+          "type": "number",
+          "minimum": 12,
+          "maximum": 48,
+          "default": 26
+        }
+      },
+      "required": [
+        "style",
+        "floating"
+      ],
+      "default": {}
+    },
+    "typography": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "global": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^(noto-sans-sc|cascadia-mono|assets/fonts/([a-z0-9_-]+/)?[a-z0-9_-]+\\.ttf)$",
+          "default": "noto-sans-sc"
+        },
+        "user": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(noto-sans-sc|cascadia-mono|assets/fonts/([a-z0-9_-]+/)?[a-z0-9_-]+\\.ttf)$",
+          "maxLength": 128,
+          "default": null
+        },
+        "ai": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(noto-sans-sc|cascadia-mono|assets/fonts/([a-z0-9_-]+/)?[a-z0-9_-]+\\.ttf)$",
+          "maxLength": 128,
+          "default": null
+        }
+      },
+      "required": [
+        "global",
+        "user",
+        "ai"
+      ],
+      "default": {}
+    }
+  },
+  "required": [
+    "palette",
+    "background",
+    "surfaces",
+    "chat",
+    "input",
+    "typography"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operit2:theme-visual:1",
+  "$defs": {
+    "bubbleImage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "asset": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)$"
+        },
+        "renderMode": {
+          "type": "string",
+          "enum": [
+            "tiled_nine_slice",
+            "nine_patch"
+          ],
+          "default": "tiled_nine_slice"
+        },
+        "crop": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "left": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.45,
+              "default": 0
+            },
+            "top": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.45,
+              "default": 0
+            },
+            "right": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.45,
+              "default": 0
+            },
+            "bottom": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.45,
+              "default": 0
+            }
+          },
+          "required": [
+            "left",
+            "top",
+            "right",
+            "bottom"
+          ],
+          "default": {}
+        },
+        "slice": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "xStart": {
+              "type": "number",
+              "minimum": 0.05,
+              "maximum": 0.9,
+              "default": 0.35
+            },
+            "xEnd": {
+              "type": "number",
+              "minimum": 0.06,
+              "maximum": 0.95,
+              "default": 0.65
+            },
+            "yStart": {
+              "type": "number",
+              "minimum": 0.05,
+              "maximum": 0.9,
+              "default": 0.35
+            },
+            "yEnd": {
+              "type": "number",
+              "minimum": 0.06,
+              "maximum": 0.95,
+              "default": 0.65
+            }
+          },
+          "required": [
+            "xStart",
+            "xEnd",
+            "yStart",
+            "yEnd"
+          ],
+          "default": {}
+        },
+        "scale": {
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 3,
+          "default": 1
+        }
+      },
+      "required": [
+        "asset",
+        "renderMode",
+        "crop",
+        "slice",
+        "scale"
+      ],
+      "default": null
+    },
+    "bubble": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^#[0-9A-F]{8}$",
+          "maxLength": 128,
+          "default": null
+        },
+        "textColor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^#[0-9A-F]{8}$",
+          "maxLength": 128,
+          "default": null
+        },
+        "image": {
+          "$ref": "#/$defs/bubbleImage"
+        },
+        "roundedCorners": {
+          "type": "boolean",
+          "default": true
+        },
+        "padding": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "left": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 32,
+              "default": 12
+            },
+            "right": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 32,
+              "default": 12
+            }
+          },
+          "required": [
+            "left",
+            "right"
+          ],
+          "default": {}
+        }
+      },
+      "required": [
+        "color",
+        "textColor",
+        "image",
+        "roundedCorners",
+        "padding"
+      ],
+      "default": {}
+    }
+  }
+}

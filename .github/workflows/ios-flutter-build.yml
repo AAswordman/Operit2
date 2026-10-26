@@ -21,7 +21,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: apps/flutter/app/ios/Runner/ish-root.tar.gz
-          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh') }}
+          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh', 'tools/runtime/verify_alpine_node24.py') }}
 
       - name: Build iSH Alpine rootfs
         if: steps.ish-rootfs-cache.outputs.cache-hit != 'true'
@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: apps/flutter/app/ios/Runner/ish-root.tar.gz
-          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh') }}
+          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh', 'tools/runtime/verify_alpine_node24.py') }}
 
       - name: Upload iSH Alpine rootfs
         uses: actions/upload-artifact@v4
@@ -75,6 +75,11 @@ jobs:
           dart pub global activate fvm "$FVM_VERSION"
           echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
 
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Cache project Flutter SDK
         uses: actions/cache@v4
         with:
@@ -100,9 +105,9 @@ jobs:
 
       - name: Install iSH build tools
         run: |
-          brew install llvm lld meson ninja
-          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
-          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          brew install llvm@23 lld@23 meson ninja
+          echo "$(brew --prefix llvm@23)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld@23)/bin" >> "$GITHUB_PATH"
 
       - name: Identify iSH build toolchain
         id: ish-build-toolchain
@@ -122,6 +127,12 @@ jobs:
         with:
           path: apps/flutter/app/apple/ish-build/Release-iphoneos
           key: ${{ runner.os }}-${{ runner.arch }}-ish-static-${{ steps.ish-build-toolchain.outputs.hash }}-${{ hashFiles('apps/flutter/app/ios/Runner.xcodeproj/project.pbxproj', 'tools/ios-runtime/ish/build_ish_ios.sh', 'tools/ios-runtime/ish/fetch_sources.py', 'tools/ios-runtime/ish/patches/**') }}
+
+      - name: Cache source-built iOS V8
+        uses: actions/cache@v4
+        with:
+          path: tools/release/work/ios-v8/*/aarch64-apple-ios
+          key: ${{ runner.os }}-${{ runner.arch }}-ios-v8-${{ steps.ish-build-toolchain.outputs.hash }}-${{ hashFiles('tools/build_scripts/prepare_ios_v8.py', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock') }}
 
       - name: Check build environment
         run: python3 tools/build_scripts/check_build_environment.py --products app --include-ios --github-runner
@@ -160,6 +171,11 @@ jobs:
           test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyClients.g.dart
           test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyModels.g.dart
 
+      - name: Prepare matching jitless V8 library and bindings
+        run: |
+          rustup target add aarch64-apple-ios
+          python3 tools/build_scripts/prepare_ios_v8.py --target aarch64-apple-ios --env-file tools/release/work/ios-v8/device.env
+
       - name: Build and package unsigned iOS app
         run: python3 tools/build_scripts/build_flutter_ios.py
 
@@ -167,6 +183,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operit2-ios-${{ github.sha }}
-          path: tools/release/dist/operit2-app-ios-arm64.zip
+          path: tools/release/dist/operit2-app-ios-arm64-*.zip
           if-no-files-found: error
           retention-days: 14

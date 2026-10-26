@@ -65,14 +65,14 @@ def run_smoke(port, node, cli, count=20, interval=0.2, timeout=20):
     started = time.monotonic()
     warmed_heap = None
     for index in range(count):
-        status = cli_json(cli, ['edge-plugin', node, 'invoke', 'device.status', 'read'], timeout)
+        status = cli_json(cli, ['edge-call', node, 'edge.status', 'read'], timeout)
         if status.get('boardId') != 'ESP32-2432S028':
             raise RuntimeError(f'Wrong physical board: {status.get("boardId")}')
         if board_id is not None and status['boardId'] != board_id:
             raise RuntimeError('Board identity changed during test')
         board_id = status['boardId']
         # A second authenticated request checks the health plugin and reconnect.
-        remote_health = cli_json(cli, ['edge-plugin', node, 'invoke', 'device.status', 'health'], timeout)
+        remote_health = cli_json(cli, ['edge-call', node, 'edge.status', 'health'], timeout)
         check_health(previous, remote_health)
         current = hardware_health()
         check_health(remote_health, current)

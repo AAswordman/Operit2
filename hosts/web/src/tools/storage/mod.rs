@@ -92,6 +92,12 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
         Ok(())
     }
 
+    /// Flushes the worker-owned OPFS data and index without copying the record.
+    fn flushFile(&self, path: &str) -> HostResult<()> {
+        call_storage("flushFile", &[JsValue::from_str(path)])?;
+        Ok(())
+    }
+
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         call_storage(
             "delete",

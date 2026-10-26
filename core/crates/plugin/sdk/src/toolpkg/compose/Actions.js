@@ -1,82 +1,81 @@
-/// Owns callback closures, transport IDs, and registration cleanup for one context.
+/// Owns one closure per logical instance event slot; no construction trampolines are created.
 var OperitComposeActions = function () {
-  var sources = new WeakMap();
-
-  /// Preserves ownership when generation observes the same callback through a proxy.
-  function inherit(reference, proxy) {
-    var source = sources.get(reference);
-    if (source) sources.set(proxy, source);
-  }
+  var owners = new WeakMap();
+  var viewportHandlers = new WeakSet();
+  /// Marks SDK-owned viewport events without changing user callback behavior.
+  function viewport(handler) { viewportHandlers.add(handler); return handler; }
+  /// Creates the only event registry for a composition context.
   function create() {
-    var store = {};
-    var pending = new Set();
-    var counter = 0;
-    function allocate() {
-      return '__action_' + ++counter;
+    var store = Object.create(null);
+    var sequence = 0;
+    var identity = {};
+    /// Creates a context-owned reference whose ownership is preserved by public views.
+    function reference(id, event) { var value = { __actionId: id }; owners.set(value, { context: identity, event: event }); return value; }
+    /// Requires the original callback context even when opaque transport IDs happen to collide.
+    function resolve(value) {
+      var owner = owners.get(value);
+      if (owner && owner.context !== identity) throw new Error('Compose callback belongs to another context');
+      return owner && owner.event ? owner.event.handler : handler(value.__actionId);
     }
+    /// Carries ownership through an explicitly observed property proxy.
+    function alias(value, proxy) { if (owners.has(value)) owners.set(proxy, owners.get(value)); }
+    /// Releases an explicitly owned controller event independently of UI instances.
+    function unregister(id) { delete store[id]; }
+    /// Allocates an opaque address in this context.
+    function allocate() { return '__action_' + ++sequence; }
+    /// Registers a handler at a known address.
     function set(id, handler) {
       if (typeof handler !== 'function') throw new TypeError('Compose callback must be a function');
       store[id] = handler;
     }
-    function register(handler) {
-      var id = allocate();
-      set(id, handler);
-      pending.add(id);
-      return id;
+    /// Registers an explicit SDK event outside a compiled layout.
+    function register(handler) { var id = allocate(); set(id, handler); return id; }
+    /// Binds or refreshes one instance-owned slot directly to its latest closure.
+    function bind(instance, slot, handler) {
+      var event = instance.events.get(slot);
+      if (!event) { event = { handler: handler, reference: null }; event.reference = reference(allocate(), event); instance.events.set(slot, event); }
+      event.handler = handler;
+      set(event.reference.__actionId, handler);
+      return event.reference;
     }
-    function remember(reference, handler) {
-      sources.set(reference, {
-        store: store,
-        id: reference.__actionId,
-        handler: handler
+    /// Removes obsolete logical slots after their replacement has been validated.
+    function retain(instance, ids) {
+      instance.events.forEach(
+      /// Releases only callbacks absent from the effective instance snapshot.
+      function (event, slot) {
+        if (!ids.has(event.reference.__actionId)) { delete store[event.reference.__actionId]; instance.events.delete(slot); }
       });
     }
-    function reference(handler) {
-      var value = {
-        __actionId: register(handler)
-      };
-      remember(value, handler);
-      return value;
+    /// Expires transport registrations without retaining detached instances in the registry.
+    function release(instance) {
+      instance.events.forEach(
+      /// Keeps the cached source's closures while releasing every live address.
+      function (event) { delete store[event.reference.__actionId]; });
     }
-    function bind(value, previousId) {
-      var source = sources.get(value);
-      if (source && source.store !== store) throw new Error('Compose callback belongs to another context');
-      var handler = source && source.id === value.__actionId ? source.handler : store[value.__actionId];
-      if (typeof handler !== 'function') throw new Error('compose callback is not registered: ' + value.__actionId);
-      var id = previousId || allocate();
-      set(id, handler);
-      OperitComposeGeneration.rebind(value, id);
-      if (source) source.id = id;else remember(value, handler);
-      return id;
+    /// Gives a cached source fresh event addresses when it is declared again.
+    function revive(instance) {
+      var replacements = new Map();
+      instance.events.forEach(
+      /// Allocates one replacement for each previously expired logical slot.
+      function (event) {
+        var previous = event.reference;
+        delete store[previous.__actionId];
+        event.reference = reference(register(event.handler), event);
+        replacements.set(previous, event.reference);
+      });
+      return replacements;
     }
-    function release(id) {
-      delete store[id];
+    /// Requires a current event instead of silently accepting a removed registration.
+    function handler(id) {
+      var result = store[String(id).trim()];
+      if (typeof result !== 'function') throw new Error('compose action not found: ' + id);
+      return result;
     }
-    function finish(deletes) {
-      deletes.forEach(release);
-      pending.clear();
-    }
-    return {
-      store: store,
-      allocate: allocate,
-      set: set,
-      register: register,
-      reference: reference,
-      bind: bind,
-      release: release,
-      pendingDeletes: function () {
-        return new Set(pending);
-      },
-      finish: finish,
-      invoke: function (id, payload) {
-        var handler = store[String(id || '').trim()];
-        if (typeof handler !== 'function') throw new Error('compose action not found: ' + id);
-        return handler(payload);
-      }
-    };
+    return { reference: reference, resolve: resolve, alias: alias, unregister: unregister, store: store, allocate: allocate, set: set, register: register, bind: bind, retain: retain, release: release, revive: revive,
+      /// Dispatches an event to its current closure.
+      invoke: function (id, payload) { return handler(id)(payload); },
+      /// Identifies the SDK viewport event kind.
+      isViewport: function (id) { return viewportHandlers.has(handler(id)); } };
   }
-  return {
-    create: create,
-    inherit: inherit
-  };
+  return { create: create, viewport: viewport };
 }();

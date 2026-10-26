@@ -371,7 +371,7 @@ fn terminalImplementation(value: &str) -> TerminalImplementation {
 }
 
 #[allow(non_snake_case)]
-fn terminalCommandResultData(data: &TerminalCommandOutput) -> TerminalCommandResultData {
+pub(crate) fn terminalCommandResultData(data: &TerminalCommandOutput) -> TerminalCommandResultData {
     TerminalCommandResultData {
         command: data.command.clone(),
         output: data.output.clone(),

@@ -22,7 +22,7 @@ Common tools:
 ```text
 Rust stable toolchain with rustup
 Python virtual environment at .venv
-Node.js with Corepack enabled
+Node.js 24 with Corepack enabled
 pnpm 10.7.0 for plugins/packages/buildin/workflow
 Git
 ```
@@ -127,9 +127,10 @@ and remains the supported configuration for Windows builds.
 
 ## Pinned Build Inputs and Source of Truth
 
-The following values are the repository build contract validated on September 27,
-2026. Keep these values synchronized with the referenced source files and CI
-workflows when changing a build dependency.
+The following values are the repository build contract. The baseline was
+validated on September 27, 2026; later dependency changes still require their
+platform builds and runtime smoke tests. Keep these values synchronized with
+the referenced source files and CI workflows when changing a build dependency.
 
 | Input | Version or pin | Source of truth |
 | --- | --- | --- |
@@ -137,11 +138,10 @@ workflows when changing a build dependency.
 | FVM | 4.3.0 | `FVM_VERSION` in the Flutter CI workflows; Dart pub global package |
 | Dart SDK | `^3.10.8` | `apps/flutter/app/pubspec.yaml`; supplied by the pinned Flutter SDK |
 | Rust toolchain | 1.95.0 | `RUST_TOOLCHAIN_VERSION` in `.github/workflows/`; rustup |
-| Node.js | 22 | `actions/setup-node` in the CI workflows |
+| Node.js | 24 | `actions/setup-node` in the CI workflows |
 | Java | Temurin 17 | `actions/setup-java` in `.github/workflows/android-flutter-build.yml` |
 | Gradle | 8.14 | `apps/flutter/app/android/gradle/wrapper/gradle-wrapper.properties` |
 | Workflow package manager | pnpm 10.7.0 | `plugins/packages/buildin/workflow/package.json` |
-| Apple scientific-runtime host Python | 3.13 | `tools/ios-runtime/native/build_scientific.py` and `tools/ios-runtime/prepare.py` |
 
 Dependency source rules:
 
@@ -165,6 +165,15 @@ entry in the same change as this documentation. Merge conflicts in generated
 lockfiles must preserve both the dependency graph change and the repository's
 source policy.
 
+### Terminal Node.js versions
+
+Android, iOS/iSH, OpenHarmony, and Web runtime builders target Node.js 24 from
+Alpine v3.23 and reject an installed APK database with another Node major.
+Their generated rootfs/initramfs artifacts must be rebuilt; CI `setup-node`
+only selects the build host's Node. Desktop terminals use the user's system
+shell and Node installation, not an app-bundled Node runtime. Use Node.js 24
+on those hosts; CI configuration alone cannot upgrade an end user's machine.
+
 ## iOS Runtime Source Pins
 
 The iOS runtime source set is reproducible from the pins in
@@ -178,7 +187,7 @@ The iOS runtime source set is reproducible from the pins in
 | iSH Linux | `8ec9bf17f89c6dba818f3ed2427de4223e78644a` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
 | libarchive | `fc6563f5130d8a7ee1fc27c0e55baef35119f26c` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
 | iSH Alpine rootfs | `g00712ff0a54b2839c5aa1a8ed758003ca65357dc` | GitHub release archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
-| iSH Alpine repository | Alpine v3.19, x86 | `https://dl-cdn.alpinelinux.org/alpine/v3.19` |
+| iSH Alpine repository | Alpine v3.23, x86 | `https://dl-cdn.alpinelinux.org/alpine/v3.23` |
 | uv | 0.12.1, i686 musl | GitHub release archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
 | pnpm in iSH rootfs | 10.12.1 | npm registry archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
 
@@ -186,6 +195,26 @@ The iOS workflow runs on `macos-15` and records the installed Xcode SDK,
 Clang, Meson, and Ninja versions in its cache key. Keep those runner and source
 pins synchronized with `.github/workflows/ios-flutter-build.yml` and
 `.github/workflows/ios-app-package-build.yml`.
+
+## Generated Plugin Assets
+
+`core/crates/runtime/application/assets/plugins/{buildin,external}` is generated
+at build time and gitignored. `operit-runtime`'s `build.rs` embeds those files
+into every binary, so they must be regenerated from `plugins/packages/` before
+compiling:
+
+```bash
+python3 plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload
+```
+
+Flutter platform builds run this automatically through their native build hooks,
+and the CLI build scripts (`build_cli_*.py`, `tools/release/build_release.py`)
+run it before `cargo build`. Running `cargo build --release` by hand without that
+step fails in `build.rs` when assets are missing or stale; debug `cargo check`
+only warns. CLI packaging also rejects a binary that omits any generated asset
+name. Never copy this directory between machines: a stale snapshot builds a
+binary whose plugin set silently differs from the source tree.
+
 ## Built-In Workflow Plugin
 
 The workflow plugin is a pnpm project. Its `package.json` pins the package
@@ -335,10 +364,10 @@ CLI architecture selection:
 On Windows, `--cli-arches all` builds:
 
 ```text
-operit2-cli-windows-x86_64.zip
-operit2-cli-windows-aarch64.zip
-operit2-cli-linux-x86_64.tar.gz
-operit2-cli-linux-aarch64.tar.gz
+operit2-cli-windows-x86_64-<release-version>.zip
+operit2-cli-windows-aarch64-<release-version>.zip
+operit2-cli-linux-x86_64-<release-version>.tar.gz
+operit2-cli-linux-aarch64-<release-version>.tar.gz
 ```
 
 Cloud workflows are independent manual `workflow_dispatch` entrypoints. The
@@ -402,10 +431,10 @@ Local Apple builds require Xcode, Rust, FVM, Node/npm, and Python 3 on the macOS
 host. Apple outputs include:
 
 ```text
-operit2-app-macos-universal.zip
-operit2-app-ios-arm64.zip
-operit2-cli-macos-x86_64.tar.gz
-operit2-cli-macos-aarch64.tar.gz
+operit2-app-macos-universal-<release-version>.zip
+operit2-app-ios-arm64-<release-version>.zip
+operit2-cli-macos-x86_64-<release-version>.tar.gz
+operit2-cli-macos-aarch64-<release-version>.tar.gz
 ```
 
 The output directory is:
@@ -547,6 +576,13 @@ provide implicitly:
    place that package the same way or point the Gradle task at a full LLVM
    install before the daemon starts. Without it the bridge build fails with
    "Unable to find libclang".
+6. **Source-built V8**. The bridge links V8 for the JavaScript runtime, and
+   rusty_v8 publishes no prebuilt Android artifacts. The Gradle build runs
+   `tools/build_scripts/prepare_android_v8.py` automatically; the first build
+   takes substantially longer and needs an NDK r23+ installation (detected from
+   `OPERIT_ANDROID_V8_NDK`, `ANDROID_NDK_HOME`, `$ANDROID_HOME/ndk` or
+   `~/Android/ndk`) plus libclang 21.1+ for the bindings generation — the same
+   `libclang.dll` as item 5 works. See `tools/build_scripts/README.md`.
 
 With the prerequisites in place:
 
@@ -556,8 +592,10 @@ python tools\build_scripts\build_flutter_android.py --build-name 2.0.0 --build-n
 
 The command runs the full chain (plugin packaging, Rust bridge cross-build,
 Gradle `assembleRelease`) and writes
-`tools/release/dist/operit2-app-android-arm64-v8a.apk`. The NDK is provisioned
-automatically by the Android Gradle Plugin; `rustup target add aarch64-linux-android`
+`tools/release/dist/operit2-app-android-arm64-v8a-<release-version>.apk`.
+The filename uses the full release version
+(for example, `2.0.0-preview.16`), including any prerelease identifiers.
+The NDK is provisioned automatically by the Android Gradle Plugin; `rustup target add aarch64-linux-android`
 is still required for the Rust bridge.
 
 Android Gradle selects the Rust bridge profile from the Android build variant:
@@ -576,6 +614,11 @@ install `libclang.so`; set `OPERIT_LIBCLANG_DIR` to override it when libclang
 lives elsewhere. All other prerequisites are shared with the Windows list above:
 host C compiler, pnpm 10.7.0 via corepack, Web Access bundle, plugin packaging,
 and the Android runtime (rootfs) artifacts.
+
+The source-built V8 from item 6 also applies here: install libclang 21.1+ and
+`ld.lld` (Debian/Ubuntu: `apt install llvm-21-dev lld`) and make sure an NDK
+r23+ is discoverable (`~/Android/ndk`, `$ANDROID_HOME/ndk` or
+`ANDROID_NDK_HOME`); the host compiler is fetched automatically.
 
 ```bash
 python tools/build_scripts/build_flutter_android.py --build-name 2.0.0 --build-number 11
@@ -762,7 +805,7 @@ That directory is ignored by git and should be treated as local build output.
 The signed build output is copied to:
 
 ```text
-tools/release/dist/operit2-app-ohos-arm64.hap
+tools/release/dist/operit2-app-ohos-arm64-<release-version>.hap
 ```
 
 If the Flutter command reports `Can't load Kernel binary`, clear stale FVM or

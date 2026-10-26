@@ -13,6 +13,8 @@ void main() {
     expect(snapshot['brightness'], 'dark');
     final colors = snapshot['colors'] as Map<String, String>;
     expect(colors['primary'], '#34567880');
+    expect(colors['background'], '#00000000');
+    expect(colors['surface'], isNot('#00000000'));
     expect(
       colors.keys,
       containsAll(['surfaceContainer', 'tertiary', 'onError']),

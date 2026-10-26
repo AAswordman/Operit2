@@ -1,5 +1,6 @@
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use operit_host_api::TimeUtils::currentTimeMillis;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 
 /// Tracks the single total deadline shared by one ToolPkg pre-hook dispatch chain.
 pub struct ToolPkgPreHookTimeout {
@@ -8,11 +9,11 @@ pub struct ToolPkgPreHookTimeout {
 
 impl ToolPkgPreHookTimeout {
     /// Creates a deadline from the persisted ToolPkg pre-hook timeout preference.
-    pub fn fromPreferences() -> Self {
+    pub fn fromPreferences() -> Result<Self, String> {
         let seconds = ApiPreferences::getInstance()
             .getToolPkgPreHookTimeoutSeconds()
-            .expect("ToolPkg pre-hook timeout preference must be readable");
-        Self::fromSeconds(seconds)
+            .map_err(|error| format!("Before-hook timeout preference read failed: {error}"))?;
+        Ok(Self::fromSeconds(seconds))
     }
 
     /// Creates a deadline with the supplied whole-second duration.
@@ -20,6 +21,78 @@ impl ToolPkgPreHookTimeout {
         let durationMillis = i64::from(seconds.clamp(1, 60)) * 1000;
         Self {
             deadlineMillis: currentTimeMillis() + durationMillis,
+        }
+    }
+
+    /// Creates a deadline only for explicitly declared pre-action hook stages.
+    pub fn forStage(stage: &str) -> Result<Option<Self>, String> {
+        match stage {
+            "before_process"
+            | "before_prepare_history"
+            | "before_finalize_prompt"
+            | "before_send_to_model"
+            | "before_prepare_summary_prompt"
+            | "before_compose_system_prompt"
+            | "compose_system_prompt_sections"
+            | "build_tool_prompt"
+            | "before_compose_tool_prompt"
+            | "filter_tool_prompt_items"
+            | "filter_tool_call_tools" => Self::fromPreferences().map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// Executes a hook under its stage policy and propagates notified deadline failures.
+    pub async fn runHook(
+        budget: Option<&Self>,
+        manager: &RuntimePackageManager,
+        packageName: &str,
+        functionName: &str,
+        event: &str,
+        stage: &str,
+        hookId: &str,
+        functionSource: Option<&str>,
+        payload: serde_json::Value,
+    ) -> Result<Option<String>, String> {
+        match budget {
+            Some(budget) => {
+                let timeout = budget.remainingForHook(manager, packageName, hookId, stage)?;
+                let result = manager
+                    .runToolPkgMainHookWithTimeoutMillis(
+                        packageName,
+                        functionName,
+                        event,
+                        Some(stage),
+                        Some(hookId),
+                        functionSource,
+                        payload,
+                        None,
+                        None,
+                        None,
+                        timeout,
+                    )
+                    .await?;
+                if budget.hasExpired() {
+                    return Err(manager.reportToolPkgHookTimeout(packageName, hookId, stage));
+                }
+                Ok(result)
+            }
+            None => {
+                manager
+                    .runToolPkgMainHook(
+                        packageName,
+                        functionName,
+                        event,
+                        Some(stage),
+                        Some(hookId),
+                        functionSource,
+                        payload,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+            }
         }
     }
 
@@ -35,10 +108,17 @@ impl ToolPkgPreHookTimeout {
         Some(millis)
     }
 
-    /// Identifies the timeout error emitted by the JavaScript hook executor.
+    /// Reports an exhausted before-hook chain before declining to start another handler.
     #[allow(non_snake_case)]
-    pub fn isTimeoutError(error: &str) -> bool {
-        error.to_ascii_lowercase().contains("timed out")
+    pub fn remainingForHook(
+        &self,
+        manager: &RuntimePackageManager,
+        packageName: &str,
+        hookId: &str,
+        event: &str,
+    ) -> Result<u64, String> {
+        self.remainingTimeoutMillis()
+            .ok_or_else(|| manager.reportToolPkgHookTimeout(packageName, hookId, event))
     }
 
     /// Reports whether the shared pre-hook deadline has elapsed.
@@ -54,6 +134,24 @@ mod tests {
     use std::time::Duration;
 
     use super::ToolPkgPreHookTimeout;
+
+    /// Keeps after-event notifications and custom notification stages outside the before-hook deadline policy.
+    #[test]
+    fn notification_stages_do_not_create_deadlines() {
+        for stage in [
+            "after_process",
+            "after_prepare_history",
+            "after_compose_system_prompt",
+            "after_compose_tool_prompt",
+            "after_generate_summary",
+            "custom_notification",
+        ] {
+            assert!(
+                ToolPkgPreHookTimeout::forStage(stage).unwrap().is_none(),
+                "{stage}"
+            );
+        }
+    }
 
     /// Verifies a shared deadline cannot be renewed between hook invocations.
     #[test]

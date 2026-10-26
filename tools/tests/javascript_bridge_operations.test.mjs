@@ -30,6 +30,8 @@ function runtime(operations = {}) {
   vm.runInContext(source('hosts/web/src/javascript_promises.js'), context);
   const registry = context.__operitHostPromiseRegistry;
   const builtins = {
+    /** Receives the exact execution owner selected by the production call registry. */
+    __operitNativeActivateCall() { return null; },
     /** Reads the exact trusted library requested by its production accessor. */
     __operitNativeReadBootstrapLibrary: bootstrapLibrarySource,
     __operitNativePrepareComposeModule: compileComposeModule,
@@ -61,8 +63,8 @@ function runtime(operations = {}) {
     const name = match[1];
     context[name] = registry.syncBinding((...args) => invoke(name, args));
   }
-  for (const match of asyncBlock.matchAll(/"([^"]+)"/g)) {
-    const name = match[1];
+  const asyncNames = Array.from(asyncBlock.matchAll(/"([^"]+)"/g), match => match[1]);
+  for (const name of [...asyncNames, '__operitNativeCallToolStructured']) {
     context[name] = registry.binding((id, ...args) => {
       Promise.resolve().then(() => invoke(name, args)).then(
         value => registry.settle(id, value, false),
@@ -72,6 +74,8 @@ function runtime(operations = {}) {
   }
   context.__operitNativeCancelJavaScriptPromises = registry.syncBinding(builtins.__operitNativeCancelJavaScriptPromises);
   context.__operitNativeScheduleJavaScriptTimer = registry.binding((id, delay) => timers.set(id, delay));
+  vm.runInContext(`globalThis.__operitNativeCompileModuleFactory = body =>
+    new Function('module', 'exports', 'require', '__operit_call_runtime', body);`, context);
   vm.runInContext(productionBootstrap(), context, { filename: 'production-bootstrap.js' });
   /** Opens a real execution session for direct public library calls. */
   function openCall(id = 'owner') {
@@ -171,12 +175,19 @@ test('ToolPkg resources and WASM pass owned arrays and never treat failures as p
   assert.equal(context.__operitGetCallState('owner').pendingReferences, 0);
 });
 
+/** Registers exact source before entering the production source-ID execution API. */
+function executeScript(context, id, params, script, ...options) {
+  const sourceId = createHash('sha256').update(script).digest('hex');
+  context.__operitRegisterScriptSource(sourceId, script);
+  return context.__operitExecuteScriptFunction(id, params, sourceId, ...options);
+}
+
 /** Runs an actual script through the bootstrap lifecycle and receives its final result as structured data. */
 test('script completion uses structured host values with JSON text disabled', async () => {
   const { context, outputs, failures } = runtime();
   vm.runInContext('JSON.parse = JSON.stringify = function() { throw Error("JSON transport used"); };', context);
-  context.__operitExecuteScriptFunction('script-owner', {__operit_toolpkg_api_version: '2.0.0'},
-    'exports.run = function() { return { literal: "{\\\"data\\\":1}", nested: {value: 7} }; };', 'run', 60, 10000);
+  executeScript(context, 'script-owner', {__operit_toolpkg_api_version: '2.0.0'},
+    'exports.run = function() { return { literal: "{\\\"data\\\":1}", nested: {value: 7} }; };', 'run');
   await flush();
   assert.equal(failures.size, 0);
   assert.equal(outputs.get('script-owner').literal, '{"data":1}');
@@ -184,11 +195,73 @@ test('script completion uses structured host values with JSON text disabled', as
   assert.equal(context.__operitGetCallState('script-owner'), null);
 });
 
+/** Exercises cancellation through the real bootstrap while a new chat waits for shared cleanup. */
+test('cancelled tool execution releases a waiting chat initializer without reviving its session', async () => {
+  let finishRead, reads = 0;
+  const firstRead = new Promise(resolve => { finishRead = resolve; });
+  const { context, outputs, failures } = runtime({
+    /** Suspends the first storage read and serves the next call on the same retained handle. */
+    __operitNativeCallToolStructured(_type, name, parameters) {
+      assert.equal(name, 'storage_request');
+      switch (parameters.request.op) {
+        case 'open_preferences': return { success: true, data: { op: 'open', handle: 'preferences', path: 'chats.preferences.json' } };
+        case 'preferences_data':
+          if (++reads === 1) return firstRead;
+          return { success: true, data: { op: 'preferences_data', snapshot: { schemaVersion: 1, values: { selection: 'card:role' } } } };
+        default: throw new Error('Unexpected preference operation: ' + parameters.request.op);
+      }
+    },
+  });
+  vm.runInContext(source(sdk + 'js_sdk/storage_runtime.js'), context);
+  vm.runInContext(`globalThis.Tools = { Storage: {
+    /** Adapts the fixture tool surface to the production structured tool-call transport. */
+    request(request) { return toolCall('storage_request', { request: request }); }
+  } };`, context);
+  const params = { __operit_toolpkg_api_version: '2.0.0' };
+  executeScript(context, 'weather-owner', params, `
+    /** Retains the real preferences facade while its first queued read is suspended. */
+    exports.run = async function() {
+      globalThis.released = 0;
+      globalThis.store = await __operitPreferencesOpen({ path: 'chats.preferences.json' });
+      try {
+        await store.data();
+        throw new Error('Cancelled operation resumed successfully');
+      } finally {
+        released++;
+      }
+    };
+  `, 'run');
+  await flush();
+  executeScript(context, 'new-chat-owner', params, `
+    /** Reads the binding through the same serialized queue using the new chat's own session. */
+    exports.run = async function() {
+      const binding = await store.data();
+      return { selection: binding.get('selection'), owner: __operitCurrentCallId };
+    };
+  `, 'run');
+  await flush();
+  assert.equal(outputs.size, 0);
+  context.__operitCancelCallSession('weather-owner');
+  context.__operitHostPromiseRegistry.cancel('weather-owner');
+  await flush();
+  assert.equal(context.released, 1);
+  assert.deepEqual(structuredClone(outputs.get('new-chat-owner')), { selection: 'card:role', owner: 'new-chat-owner' });
+  assert.equal(reads, 2);
+  assert.equal(outputs.has('weather-owner'), false);
+  assert.equal(failures.size, 0);
+  assert.equal(context.__operitGetCallState('weather-owner'), null);
+  assert.equal(context.__operitGetCallState('new-chat-owner'), null);
+  finishRead({ success: true, data: { op: 'preferences_data', snapshot: { schemaVersion: 1, values: { selection: 'card:cancelled' } } } });
+  await flush();
+  assert.equal(context.released, 1);
+  assert.equal(outputs.size, 1);
+});
+
 /** Checks result conversion failures cannot mark a session completed before reporting the error. */
 test('cyclic script results fail explicitly rather than producing replacement data', async () => {
   const { context, outputs, failures } = runtime();
-  context.__operitExecuteScriptFunction('cycle-owner', {__operit_toolpkg_api_version: '2.0.0'},
-    'exports.run = function() { var value = {}; value.self = value; return value; };', 'run', 60, 10000);
+  executeScript(context, 'cycle-owner', {__operit_toolpkg_api_version: '2.0.0'},
+    'exports.run = function() { var value = {}; value.self = value; return value; };', 'run');
   await flush();
   assert.equal(outputs.size, 0);
   assert.equal(failures.get('cycle-owner').success, false);
@@ -326,10 +399,10 @@ test('module reads preserve empty source and propagate the original resource-own
       return resources.has(path) ? resources.get(path) : null;
     },
   });
-  successful.context.__operitExecuteScriptFunction('modules', {
+  executeScript(successful.context, 'modules', {
     __operit_toolpkg_api_version:'2.0.0', toolPkgId:'fixture', __operit_ui_package_name:'fixture',
     __operit_script_screen:'dist/main.js',
-  }, 'var empty = require("./empty"); var shared = require("./shared"); exports.run = function() { return {empty:empty.missing===undefined, label:shared.label}; };', 'run', 60, 10000);
+  }, 'var empty = require("./empty"); var shared = require("./shared"); exports.run = function() { return {empty:empty.missing===undefined, label:shared.label}; };', 'run');
   await flush();
   assert.equal(successful.failures.size, 0);
   assert.equal(successful.outputs.get('modules').empty, true);
@@ -338,10 +411,10 @@ test('module reads preserve empty source and propagate the original resource-own
     /** Rejects the real owner failure instead of reporting an absent module or empty source. */
     __operitNativeReadToolPkgTextResource() { throw new Error('resource owner read denied'); },
   });
-  failed.context.__operitExecuteScriptFunction('failed-modules', {
+  executeScript(failed.context, 'failed-modules', {
     __operit_toolpkg_api_version:'2.0.0', toolPkgId:'fixture', __operit_ui_package_name:'fixture',
     __operit_script_screen:'dist/main.js',
-  }, 'var shared = require("./shared"); exports.run = function() { return shared; };', 'run', 60, 10000);
+  }, 'var shared = require("./shared"); exports.run = function() { return shared; };', 'run');
   await flush();
   assert.equal(failed.outputs.size, 0);
   assert.match(failed.failures.get('failed-modules').message, /resource owner read denied/);
@@ -354,7 +427,7 @@ test('page bootstrap owns no compiler and precompiled factories bypass shared lo
     __operitNativePrepareComposeModule() { throw Error('Artifact attempted source lowering'); },
   });
   assert.equal(vm.runInContext('typeof __operitAcorn + ":" + typeof OperitComposeCompiler', context), 'undefined:undefined');
-  const source = '// @operit-compose-artifact 1\nexports.run = function() { return 7; };';
+  const source = '// @operit-compose-artifact 4\nexports.run = function() { return 7; };';
   const factory = context.__operitGetFactory('main', 'pkg:artifact', source, true);
   const module = { exports: {} };
   factory(module, module.exports, () => { throw Error('Unexpected require'); }, {});

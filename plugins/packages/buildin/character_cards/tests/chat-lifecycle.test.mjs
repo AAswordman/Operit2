@@ -12,7 +12,7 @@ function event(changes = {}) {
 }
 /** Connects the pure initializer to actual file-backed active/card/group operations in this test without emulating records. */
 async function environment(t) {
-  const disk = await createDiskHarness(t);
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" });
   const runtime = loadModule("src/service-runtime.ts", disk.globals);
   const helper = loadModule("src/chat-bindings.ts");
   const lifecycle = loadModule("src/chat-lifecycle.ts");
@@ -115,7 +115,7 @@ test("lifecycle parser rejects invalid envelope fields and source provenance", (
 /** Bundles the actual callback and existing service export into one test runtime, preserving their true shared repository instance. */
 async function callbackEnvironment(t) {
   const require = createRequire(new URL("../../workflow/package.json", import.meta.url)), { buildSync } = require("esbuild");
-  const disk = await createDiskHarness(t), module = { exports: {} };
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), module = { exports: {} };
   const result = buildSync({ absWorkingDir: fileURLToPath(new URL("../", import.meta.url)), stdin: { contents: 'export { beforeChatCreate } from "./chat-lifecycle"; export { dispatchDomain } from "./service-runtime";', resolveDir: fileURLToPath(new URL("../src", import.meta.url)), sourcefile: "chat-lifecycle-callback-check.ts", loader: "ts" }, bundle: true, format: "cjs", platform: "neutral", target: "es2020", write: false });
   assert.equal(result.outputFiles.length, 1);
   vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, ...disk.globals, console, TextEncoder, TextDecoder, setTimeout, clearTimeout });
@@ -128,7 +128,7 @@ test("real beforeChatCreate callback initializes its namespace through one autho
   await runtime.dispatchDomain("activePrompt.setCard", { id: card.id });
   const result = await runtime.beforeChatCreate({ event: "before_create", eventName: "before_create", toolPkgId: "com.operit.character_cards", eventPayload: event() });
   assert.deepEqual(plain(result), { extension: { recordId: "draft-chat", schemaVersion: 1 } });
-  runtime.disk.storage.inspect(sql => assert.equal(sql.prepare('SELECT selection FROM chat_drafts WHERE _key=?').get("draft-chat").selection, "card:" + card.id));
+  runtime.disk.storage.inspectPreferences("chats", values => assert.equal(values["draft_draft-chat"].selection, "card:" + card.id));
   assert.deepEqual(Object.keys(result), ["extension"], "The callback must not return an owner id or native chat fields");
 });
 /** Keeps an ordinary model conversation in model mode when the role plugin is enabled later. */
@@ -136,8 +136,8 @@ test("real beforeChatCreate callback branches an unassociated model conversation
   const runtime = await callbackEnvironment(t);
   const result = await runtime.beforeChatCreate({ event: "before_create", eventName: "before_create", eventPayload: event({ sourceChatId: "source-chat", sourceExtension: null }) });
   assert.deepEqual(plain(result), { extension: { recordId: "draft-chat", schemaVersion: 1 } });
-  runtime.disk.storage.inspect(sql => {
-    assert.equal(sql.prepare("SELECT selection FROM chat_drafts WHERE _key=?").get("draft-chat").selection, "model:chat");
-    assert.equal(sql.prepare("SELECT count(*) AS count FROM chat_bindings").get().count, 0);
+  runtime.disk.storage.inspectPreferences("chats", values => {
+    assert.equal(values["draft_draft-chat"].selection, "model:chat");
+    assert.equal(Object.keys(values).filter(key => key.startsWith("binding_")).length, 0);
   });
 });

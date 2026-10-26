@@ -140,41 +140,8 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
       'network.identity.manage',
     );
     final canReadAudit = _hasCapability(topology, 'network.audit.read');
-    final refresh = IconButton(
-      tooltip: MaterialLocalizations.of(context).refreshIndicatorSemanticLabel,
-      style: SettingsControlStyles.entityIconButton(),
-      onPressed: _reloadSettings,
-      icon: const Icon(Icons.refresh_outlined),
-    );
-    final actions = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        refresh,
-      ],
-    );
     return <Widget>[
-      LayoutBuilder(
-        builder: (context, constraints) {
-          final identity = _selfIdentity(l10n, topology);
-          if (constraints.maxWidth >= 420) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(child: identity),
-                const SizedBox(width: 12),
-                actions,
-              ],
-            );
-          }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              identity,
-              Align(alignment: Alignment.centerRight, child: actions),
-            ],
-          );
-        },
-      ),
+      _selfIdentity(l10n, topology),
       if (canManageIdentities)
         _CollapsibleSection(
           title: l10n.settingsRuntimeControlIdentityDefinitions,
@@ -215,32 +182,52 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 8,
-          runSpacing: 4,
+        Row(
+          key: const ValueKey('space-local-identity-header'),
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Icon(
-              Icons.verified_user_outlined,
-              size: 18,
-              color: theme.colorScheme.primary,
-            ),
-            Text(
-              l10n.settingsRuntimeControlLocalIdentity,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            Expanded(
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
+                children: <Widget>[
+                  Icon(
+                    Icons.verified_user_outlined,
+                    size: 18,
+                    color: theme.colorScheme.primary,
+                  ),
+                  Text(
+                    l10n.settingsRuntimeControlLocalIdentity,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  Text(
+                    identity == null
+                        ? l10n.settingsRuntimeControlNoIdentity
+                        : spaceIdentityDisplayName(identity.displayName, l10n),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (allPermissions)
+                    _SmallLabel(
+                      label: l10n.settingsRuntimeControlCapabilityAll,
+                    ),
+                ],
               ),
             ),
-            Text(
-              identity == null
-                  ? l10n.settingsRuntimeControlNoIdentity
-                  : spaceIdentityDisplayName(identity.displayName, l10n),
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+            const SizedBox(width: 8),
+            IconButton(
+              key: const ValueKey('space-identity-refresh'),
+              tooltip: MaterialLocalizations.of(
+                context,
+              ).refreshIndicatorSemanticLabel,
+              style: SettingsControlStyles.entityIconButton(),
+              onPressed: _reloadSettings,
+              icon: const Icon(Icons.refresh_outlined),
             ),
-            if (allPermissions)
-              _SmallLabel(label: l10n.settingsRuntimeControlCapabilityAll),
           ],
         ),
         if (grants.isNotEmpty && !allPermissions) ...<Widget>[
@@ -268,11 +255,13 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
             children: <Widget>[
               IconButton(
                 tooltip: l10n.settingsRuntimeControlEditRole,
+                style: SettingsControlStyles.entityIconButton(),
                 icon: const Icon(Icons.edit_outlined, size: 20),
                 onPressed: () => _editIdentity(role, l10n),
               ),
               IconButton(
                 tooltip: l10n.settingsRuntimeControlDeleteRole,
+                style: SettingsControlStyles.entityIconButton(),
                 icon: const Icon(Icons.delete_outline, size: 20),
                 onPressed: () => _deleteIdentity(role, l10n),
               ),
@@ -296,7 +285,7 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
           final grantCount = spaceCapabilityValues(role.capabilities).length;
           final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
           final minimumWidth =
-              (grantCount <= 1 ? 240 : 320) * textScale + (editable ? 96 : 0);
+              (grantCount <= 1 ? 240 : 320) * textScale + (editable ? 64 : 0);
           if (constraints.maxWidth >= minimumWidth) {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -304,7 +293,7 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
                 SizedBox(width: 96 * textScale, child: name),
                 const SizedBox(width: 12),
                 Expanded(child: capabilities),
-                if (actions != null) actions,
+                ?actions,
               ],
             );
           }
@@ -314,7 +303,7 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
               Row(
                 children: <Widget>[
                   Expanded(child: name),
-                  if (actions != null) actions,
+                  ?actions,
                 ],
               ),
               const SizedBox(height: 6),
@@ -999,14 +988,7 @@ bool _hasCapability(
 }
 
 /// Role ids seeded by the Space bootstrap; built-in roles cannot be edited or removed.
-const _builtinRoleIds = <String>{
-  'admin',
-  'user',
-  'relay',
-  'storage',
-  'runner',
-  'auditor',
-};
+const _builtinRoleIds = <String>{'admin', 'user', 'relay', 'edge'};
 
 /// Generates an internal assignment identifier for the replicated command.
 String _generatedControlId(String prefix) {

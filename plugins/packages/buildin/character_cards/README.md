@@ -38,6 +38,20 @@ Stable node keys and an unchanged wrapper hierarchy preserve in-flight transitio
 and ink ripples when chat selection refreshes. Flutter's own Workspace drawer is
 independent and may keep using its internal rail widget.
 
+## Host sidebar state and detached windows
+
+The host supplies `chatSidebar.currentChatId` only while its chat route is active;
+other destinations supply `null`, clearing the role sidebar's selected row without
+changing the actual current conversation or reloading the role catalog.
+
+`chatSidebarCapabilities.openInWindow` is separate host-supplied Compose input.
+Only an explicit `true` exposes “在新窗口打开” in the long-press dialog. The action
+returns exactly `{ type: "toolpkg.chat.openInWindow", chatId }`; Flutter validates
+the live registration and conversation, then uses its existing desktop launcher
+and current theme snapshot without activating the chat in the original window.
+Missing capability input (including older hosts) keeps this desktop-only action
+hidden. The canonical sidebar metadata/catalog contract is unchanged.
+
 ## Chat input menu
 
 The package registers one `chat_input_menu` navigation entry pointing to
@@ -128,12 +142,17 @@ role command names and descriptions are supplied only by this package.
 
 ## Storage and released-data migration
 
-`Tools.Storage.objects` owns the plugin's `characters.sqlite` database in the stable
-Space data directory returned by `ToolPkg.getSpaceDataDir()`. Each domain record has
-its own collection/key and exact version; commits publish changed records, not an
-entire JSON library. Current operation sessions still load paged records into a
-validated domain snapshot. USER.md remains a real file for editing and attachment.
-Its staged publication and the SQLite transaction have separate failure boundaries.
+The request path is:
+
+- UI, commands and public APIs enter `service-runtime.ts`, which opens one lazy service.
+- Reads enter `storage/database.ts`. `operations.ts` routes configuration edits to preference snapshots and memory operations to `storage/memory-repository.ts`; HTTP calls hold no repository-wide queue.
+- Configuration records live in native JSON preferences; memories and jobs live in `memory.sqlite`. USER.md stays a file.
+- `drafts.ts:readCharacter` decodes persisted and imported cards with the same defaults as new cards. It returns a new value and preserves existing content.
+
+There is no startup repair scan, whole-database record validation, or second service
+adapter. Missing fields are completed when read and persisted with the next normal
+write. A damaged unrelated memory job cannot block reading or editing a character.
+Released-data migration uses this same decoder before publishing its records.
 
 The unreleased plugin's former `state.json` format is removed without a compatibility
 reader. Released application data takes a distinct migration path: Core's centralized
@@ -148,7 +167,7 @@ groups, prompt tags, memory profiles, USER.md, memories, properties, document ch
 links, pending extraction tasks and declared memory preferences. Source Room schemas
 remain explicit; chat name/group bindings resolve to plugin selection markers before
 Core chat import. Historical message send profiles are not reconstructed. Derived
-binary embedding vectors are not imported into the plugin's endpoint/model/text cache.
+binary embedding vectors are not imported. Explicit rebuilds derive current source vectors using the configured provider.
 See `docs/migration-acceptance.md` and `docs/operit1-restore-boundary.md` for evidence.
 
 ## Ownership boundary
@@ -168,6 +187,11 @@ See `docs/migration-acceptance.md` and `docs/operit1-restore-boundary.md` for ev
   database, CLI business bridge, or alternate transport are accepted.
 
 ## Browser source and packaging
+
+Compose screens under `dist/ui/` ship as readable CommonJS JavaScript with UTF-8
+text and their authored UI declarations and callbacks. Users can edit these entry
+files and repackage the plugin. The runtime owns Compose compilation and caching;
+plugin packaging does not emit versioned Compose artifacts.
 
 Hand-written browser source is strict TypeScript under `web/`. esbuild produces a
 browser IIFE inside the offline HTML; generated JavaScript is a packaging artifact,
@@ -198,7 +222,7 @@ startup require their own integration acceptance.
 
 `manifest.json` publishes the self-contained client `src/api.ts`. Consumers
 copy that file into their own source tree, import it locally and declare
-`com.operit.character_cards >= 0.1.0` in `requires`, following
+`com.operit.character_cards >= 0.2.0` in `requires`, following
 `plugins/docs/PUBLIC_API.md`. Public calls use `ToolPkg.callDependency`.
 
 `characterCards.memory.query({ participantId, query, limit, snapshotId })`
@@ -206,8 +230,33 @@ resolves the explicit participant's actual memory binding and reuses the
 plugin's existing query implementation. Results contain complete typed
 matches and document chunks; snapshots remain in the provider's main runtime.
 A `null` snapshot ID requests a fresh query. An explicit snapshot ID retains
-owner-scoped deduplication across calls. The extra information injection
-plugin consumes this method through an exact local SDK copy.
+owner-scoped deduplication across calls.
+
+## Built-in memory recall
+
+The plugin owns per-turn memory recall through its prompt finalize hook
+(`src/memory-recall.ts`). On every main character or group turn it strips host
+markup from the authored input, queries the speaking participant's primary
+memory owner with a per-chat snapshot for owner-scoped deduplication, and
+appends the configured number of matches as a transient `<memory_context>`
+block to the final model request. Injections never persist into chat history,
+an empty result injects nothing, and provider failures fail closed without
+blocking the send.
+
+The memory menu's expanded section controls the persisted `memoryRecall` state
+field: the 自动检索注入记忆 switch, a numeric input for the per-turn injection
+count (1–50, committing every valid typed value), and the 允许重复命中 switch
+that bypasses the per-chat snapshot exclusion. States written by the released
+plugin or the Core migration default to enabled, count three, and repeated
+hits off. This recall replaces the memory item formerly offered by the extra
+information injection package.
+
+Retrieval always honors the owner's persisted search weights from the memory
+settings retrieval tab. Disabling cloud embeddings explicitly selects lexical,
+tag and graph retrieval. Enabling embeddings requires a valid endpoint and model;
+provider errors and an incomplete or stale source-vector index fail the request.
+Changing providers or enabling embeddings on an existing library requires an
+explicit embedding rebuild.
 
 ## Owner memory controls
 
@@ -218,11 +267,20 @@ publishes settings plus search weights in one repository transaction; it preserv
 the scheduler's latest `nextAutoSaveRunAtMs` rather than overwriting it from a stale
 editor draft. Both character and shared-library rows open their exact owner.
 
-History rebuilds use the registered memory-job interval hook and persisted plans,
-not browser timers. The modal polls only genuine queue/progress values, without
-replacing editable fields, and stops polling on close without cancelling jobs.
+Memory candidates are produced on the device that actually persists a reply; receiving
+synchronized history does not create another extraction request. Each candidate records
+that producing CoreNode, and each device's ordinary interval processes only its own
+requests. History rebuilds likewise remain with the device on which they were requested.
+Restarting that device resumes its persisted work; another device never takes work merely
+because its producer is unreachable. Memory records and task provenance remain synchronized.
+Released tasks without producer metadata are reported as failed without calling a model;
+explicit retry assigns candidate work to the requesting device, and a new rebuild records
+its requesting device. One owner's failure does not stop independent owners or later intervals.
+The modal polls genuine queue/progress values without replacing editable fields, and stops
+polling on close without cancelling jobs.
 Embedding rebuilds use the saved endpoint/model/key and the existing HTTP capability;
-provider errors stay visible and leave the previous cache intact. The unnecessary
+provider errors stay visible. Rebuilds publish version-checked source pages; already
+committed pages remain committed when a later page fails. The unnecessary
 score-mode selector is omitted while its stored configuration is preserved.
 
 `tests/memory-controls-ui.test.mjs` exercises browser controls through registered
@@ -242,15 +300,33 @@ placeholder controls:
   without flags upgrades to its previously active behavior; malformed stored flags
   fail reads instead of guessing values. Provider prompt assembly trusts the plugin
   execution profile, not a second retired Core preference gate.
-- Retrieval debugging reuses the production search index and real provider embeddings.
+- Retrieval debugging reuses the production database search and real provider embeddings.
   Draft weights are not saved. Each candidate reports actual lexical/tag/vector/edge
   contributions and its threshold decision; normal retrieval filters the same results.
 - Graph export/import invokes the full owner backup codec, including records, document
-  chunks, relationships, settings and USER.md. Relationship editing reads the canonical
-  persisted link by ID, even if a graph projection lacks its description.
+  chunks, relationships, settings and USER.md. Relationship tools read one owner-scoped
+  graph snapshot containing the actual record and link identities and descriptions.
 - Character imports select Operit or Tavern JSON; exports invoke the corresponding
   production serializer. Preview avatars use the existing host-loaded image resources.
   Export dialogs only report success after the real host file operation acknowledges it.
+
+Memory nodes and document chunks share lexical and semantic ranking; tools no longer
+export full backups or maintain their own embedding/scoring implementation. UI memory
+mutations use the same domain operations as dependency clients. Extraction follows the
+Kotlin query budgets, duplicate-title prompt and new-identity merge behavior; the
+scheduler orders candidates by source timestamp before applying its twenty-record cap.
+
+Kotlin remains the behavior reference, with explicit implementation differences:
+lexical expansion uses bounded Unicode terms and Han unigrams/bigrams rather than
+Jieba; imported document chunks also participate in node recall; vectors use the
+configured HTTP provider and exact database-side dot products over normalized source
+vectors. Source text and its vector occupy one synchronized, versioned row; query
+vectors are ephemeral. SQL applies owner/folder/time scope, scoring, graph expansion,
+snapshot exclusions and result limits before returning records. There is no retained
+TypeScript corpus or query-time construction of historical vectors. HTTP batches
+contain at most 64 inputs and use at most four concurrent workers. Failed jobs stay
+terminal without automatic retry. Merge removes source
+chunks and internal links that would become self-links under this domain's invariant.
 
 The browser/main-IPC suite covers these flows, failed writes, runtime reopening,
 owner isolation and a real local HTTP vector provider. `cargo check -p operit-runtime
@@ -268,3 +344,29 @@ requires running the updated application.
 插件启用时，原生选择器提供“仅使用模型”，CLI 提供 `active-prompt set-model`。没有角色关联的现有聊天属于普通模型模式。该模式不注入角色提示词，不授予角色记忆资源，自动记忆队列不为其建立任务。全局无角色状态使用现有可空 active 存储表达，消息中的无记忆目的地使用空 primaryOwnerKey 表达；SQL 表声明不变。
 
 回复者名称使用实际模型名，头像通过明确的 `provider-logo:<providerTypeId>` 标识加载供应商 logo，不按供应商名称猜测。Core 为新消息和开场消息保存通用的显示身份；Flutter 各消息样式读取所选消息版本的身份，不使用当前聊天头像替换历史回复。v1 SDK 保持原设计。
+
+
+### 群组历史、输入持久化和回合结束摘要
+
+群组在调用 `ROLE_RESPONSE_PLANNER` 前，先通过 `record_only` 保存完整原始输入、附件和回复目标。
+输入钩子等待真实入库回执后才清空编辑框；入库失败时保留编辑框原文，规划失败时保留已入库的用户消息。
+所有成员回复均继续同一条用户消息，不重复提交输入。空计划仅留下用户消息。
+
+执行配置显式声明 `historyPolicy`。角色卡按已保存的作者 ID 区分历史；群组同时给用户消息添加
+`[From user]`。当前角色自己的历史保留 assistant/tool 边界，其他角色的 Markdown 发言以
+`[From role: name]` 作为参考上下文，排除其思考、状态和工具协议。姓名来自原消息的显示身份；
+改名、重名和成员退出不改变历史作者。缺失作者身份会直接报错。
+
+中间成员使用 `summaryPolicy: "defer"`，最后一个成员使用 `"after_reply"`。每次成员回复期间均不自动摘要；
+最后一个成员真实完成且原生发送清理结束后，Core 重新计算各参与者上下文窗口并检查摘要阈值，
+达到阈值时通过已有摘要任务执行一次摘要，不继续生成新回复。取消、发送失败和空计划不触发结束摘要。
+宿主只处理通用历史和摘要策略，群组计划仍由插件负责。
+
+The current vector engine uses SQLite JSON/window queries through the shared host.
+It performs exact scans within the selected scope; it has no ANN/HNSW index and no
+sqlite-vec extension. Query latency still includes the configured provider request.
+Explicit imports use independently atomic batches and may partially commit; USER.md,
+configuration preferences and the memory database have separate transaction boundaries.
+Backups export source records without the retired text cache; importing with embeddings
+enabled recomputes vectors. Synchronization carries existing vectors with their source
+row. Opening migrated libraries deletes retired cache rows without loading their payloads.

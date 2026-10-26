@@ -79,7 +79,7 @@ async fn device_tools_route_between_real_routers_preserves_origin_and_closes_str
 }
 
 #[tokio::test]
-async fn device_tools_reject_missing_capability_and_binding_route_bypasses() {
+async fn device_tools_accept_non_executor_members_and_reject_binding_route_bypasses() {
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
     let router = testCoreNodeRouter("tools-target", "tools-origin", "tools-binding");
@@ -94,15 +94,19 @@ async fn device_tools_reject_missing_capability_and_binding_route_bypasses() {
             },
         )
         .unwrap();
-    let error = router
-        .openDeviceToolWatch(
-            deviceToolWatch("permission"),
-            "tools-origin".into(),
-            RoutedCoreRequestKind::Target,
-        )
-        .err()
-        .unwrap();
-    assert_eq!(error.code, "ROUTE_PERMISSION_DENIED");
+    let stream = router.openDeviceToolWatch(
+        deviceToolWatch("member"), "tools-origin".into(), RoutedCoreRequestKind::Target,
+    ).expect("a relay member may send device requests without hosting Core execution");
+    drop(stream);
+    let error = router.openDeviceToolWatch(
+        deviceToolWatch("stranger"), "stranger".into(), RoutedCoreRequestKind::Target,
+    ).err().unwrap();
+    assert_eq!(error.code, "ORIGIN_CORE_NODE_NOT_IN_SPACE");
+    router.networkControlStore.disconnectNode("tools-origin".into()).unwrap();
+    let error = router.openDeviceToolWatch(
+        deviceToolWatch("revoked"), "tools-origin".into(), RoutedCoreRequestKind::Target,
+    ).err().unwrap();
+    assert_eq!(error.code, "ORIGIN_CORE_NODE_REVOKED");
     let error = router
         .openDeviceToolWatch(
             deviceToolWatch("binding"),
@@ -131,7 +135,7 @@ async fn device_tools_reject_missing_capability_and_binding_route_bypasses() {
         response.result.unwrap_err().code,
         "DEVICE_TOOL_MODE_INVALID"
     );
-    assert!(service.requests.lock().unwrap().is_empty());
+    assert_eq!(service.requests.lock().unwrap().len(), 1, "rejected routes must not reach the tool service");
 }
 
 #[tokio::test]
@@ -337,13 +341,15 @@ async fn device_tools_multihop_preserves_origin_result_cancellation_and_permissi
             },
         )
         .unwrap();
-    let error = source
-        .watchNode("tools-c".into(), deviceToolWatch("multihop-denied"))
-        .await
-        .err()
-        .unwrap();
-    assert_eq!(error.code, "ROUTE_PERMISSION_DENIED");
-    assert_eq!(service.origins.lock().unwrap().len(), 2);
+    let stream = source.watchNode("tools-c".into(), deviceToolWatch("non-executor-origin"))
+        .await.expect("execution capacity is not a caller permission");
+    drop(stream);
+    assert_eq!(service.origins.lock().unwrap().len(), 3);
+    target.networkControlStore.disconnectNode("tools-a".into()).unwrap();
+    let error = source.watchNode("tools-c".into(), deviceToolWatch("revoked-origin"))
+        .await.err().unwrap();
+    assert_eq!(error.code, "ORIGIN_CORE_NODE_REVOKED");
+    assert_eq!(service.origins.lock().unwrap().len(), 3);
     ab.close();
     bc.close();
 }
@@ -367,7 +373,7 @@ async fn device_tools_multihop_never_resubmits_after_an_uncertain_reply() {
     );
     assert_eq!(service.origins.lock().unwrap().len(), 1);
     assert!(!super::route_forwarding::canRetryRouteTarget(
-        "edge.plugins"
+        "edge.scene"
     ));
     assert!(!super::route_forwarding::canRetryRouteTarget(
         "edge.deviceIo"
@@ -427,7 +433,7 @@ async fn forwarding_uses_one_replay_policy_for_calls_snapshots_watches_and_pushe
     let (source, _relay, _target, ab, bc) = deviceToolsRelayRoute();
     let failed = Arc::new(LostForwardingReply::default());
     bc.attach(failed.clone());
-    for target in [DEVICE_TOOL_TARGET, "edge.plugins", "edge.deviceIo", "chat"] {
+    for target in [DEVICE_TOOL_TARGET, "edge.scene", "edge.deviceIo", "chat"] {
         let expected = if target == "chat" {
             "CORE_NODE_UNREACHABLE"
         } else {
@@ -534,7 +540,7 @@ async fn route_status_and_forwarding_share_transit_and_revocation_policy() {
         .setIdentity(
             operit_store::NetworkControlStore::NetworkControlIdentityAssignment {
                 nodeId: "tools-b".into(),
-                roleId: "runner".into(),
+                roleId: "edge".into(),
             },
         )
         .unwrap();

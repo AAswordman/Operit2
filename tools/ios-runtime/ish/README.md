@@ -4,8 +4,9 @@ This directory owns the iOS iSH runtime inputs and build steps.
 
 - `fetch_sources.py` downloads verified ZIP archives for iSH and its required
   upstream dependencies into `downloads/`, then extracts them into `sources/`.
-- `build_alpine_rootfs_linux.sh` produces the x86 Alpine rootfs on Linux with
-  `bash`, `python3`, `py3-pip`, `nodejs`, `npm`, and `ca-certificates`.
+- `build_alpine_rootfs_linux.sh` produces the Alpine v3.23 x86 rootfs on Linux
+  with `bash`, `python3`, `py3-pip`, `nodejs` (Node.js 24), `npm`, and
+  `ca-certificates`.
 - `build_ish_ios.sh` builds the iSH static targets used by the Flutter iOS
   Runner. It requires the rootfs staged by the Linux rootfs build.
 
@@ -59,6 +60,14 @@ page on both success and failure. Hostfs copies the path into its own storage.
 CPU instead of Darwin thread-local storage, which can retain stale addresses
 when Linux tasks migrate between host pthreads. It remains a required build input.
 
+`0005-namespace-darwin-kernel-formatters.patch` gives the embedded kernel's
+printf/scanf implementations private names. Linux's format language differs from
+Darwin libc (in particular, it does not support floating point). Exporting them
+under libc names can route V8 GC tracing and other host formatting through the
+kernel and crash the application. The native formatter regression links the
+actual namespace macros with separate host and kernel translation units and
+checks both call paths.
+
 Run the runtime and cache regressions with:
 
 ```bash
@@ -71,3 +80,59 @@ read-only paths, page-length boundaries, repeated/conflicting mounts, every
 allocation failure, and mount failure/retry cleanup. Patch application is also
 checked against locally cached, pinned upstream archives, without downloading
 sources. Edit the tracked patches rather than generated files under `sources/`.
+
+## Root filesystem lifecycle
+
+`0003-root-preparation-lifecycle.patch` replaces the former kernel-side inode
+rebuild fix. One host preparation path now owns schema validation, migration and
+inode rebuilding before Linux starts. Migration, rebuilt metadata and the
+`db_inode` marker commit in one SQLite transaction. Mount only opens version-3
+metadata whose inode marker matches the database file; it never upgrades or
+rebuilds a root. Preparation and mount failures return errors instead of invoking
+`die()` for startup database errors.
+
+Runner's `IshRootFilesystem` imports into `rootfs.importing`, closes the importer,
+prepares that root, then atomically renames it to `rootfs`. Interrupted staging
+imports can be discarded and retried. Existing healthy roots are adopted in
+place without requiring a new marker file. Only the known legacy interrupted
+state (valid SQLite database, version 0, empty schema) is moved aside as
+`rootfs.incomplete-<UUID>` before importing anew. Its files are retained; other
+corrupt or unsupported existing databases return errors without replacement.
+
+The importer closes SQLite/archive/file handles on errors and cancellation.
+Inode rebuilding creates a replacement hardlink before replacing a file, and
+commits the rebuilt inode map with the marker so interruption cannot claim that
+an unfinished rebuild is ready.
+
+`actuate_kernel()` reuses the existing startup condition and returns the actual
+root mount result. A failed root boot wakes the host and parks the Linux init
+task, preventing Linux's missing-root panic. Runner retains that failure for the
+rest of the process and queues no sessions on the failed kernel. Preparation
+errors occur before boot and can be retried in the same process.
+
+`test_ish_root_lifecycle.py` compiles the actual patched sources with ASan/UBSan
+and executes the host lifecycle against SQLite and real files, including SIGKILL,
+legacy roots, all supported schema versions, rollback, hardlink restoration and
+the shipped Alpine archive. It also injects faults into each root boot operation.
+To run the real kernel and terminal bridge on a booted arm64 simulator:
+
+```bash
+python3 tools/tests/run_ish_simulator_smoke.py
+```
+
+This checks native library freshness, then tests a fresh root, a reused root and
+a failed root mount. It executes a shell command through the PTY and requires
+mount failures to return to the host. It does not build or install the Flutter
+app; temporary test roots are removed afterwards.
+
+## Node.js version contract
+
+The rootfs builder uses the Alpine v3.23 repositories, constrains `nodejs` to
+major 24, and verifies the installed APK database before packaging. Changing CI's
+host Node does not update `ish-root.tar.gz`: rebuild the rootfs on Linux and
+include that artifact in the iOS build.
+
+Installed apps currently reuse the persistent iSH fakefs root, so replacing the
+bundled archive does not upgrade an existing installation. That root may contain
+user-created files; a future migration must preserve them rather than deleting
+the directory as part of an upgrade.

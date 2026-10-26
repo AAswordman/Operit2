@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:hooks/hooks.dart';
 
+import 'dependency_files.dart';
 import 'verified_asset_download.dart';
 
 const String _v86PackageVersion = '0.5.424';
@@ -98,11 +99,25 @@ void main(List<String> args) async {
     await _run(_pythonExecutable(repoRoot), [
       syncScript.path,
       '--source',
-      'buildin',
+      'runtime',
       '--no-hot-reload',
     ], workingDirectory: repoRoot.path);
 
     if (shouldBuildWebAssets) {
+      final fontScript = File.fromUri(
+        repoRoot.uri.resolve('tools/prepare_flutter_web_fonts.py'),
+      );
+      output.dependencies.add(fontScript.uri);
+      output.dependencies.add(
+        repoRoot.uri.resolve('tools/flutter_web_fonts.lock.json'),
+      );
+      await _run(_pythonExecutable(repoRoot), [
+        fontScript.path,
+        '--flutter-sdk',
+        Directory.fromUri(packageRoot.uri.resolve('.fvm/flutter_sdk/')).path,
+        '--output-dir',
+        Directory.fromUri(webSourceDir.uri.resolve('fonts/')).path,
+      ], workingDirectory: repoRoot.path);
       await _invalidateWebRuntimeArtifacts([webBuildDir]);
       await _run(
         'cargo',
@@ -197,6 +212,7 @@ class _V86GuestAsset {
   final String sha256;
 }
 
+/// Registers source dependencies after pruning package and generated directories.
 Future<void> _addDirectoryFileDependencies(
   BuildOutputBuilder output,
   Directory root,
@@ -206,16 +222,15 @@ Future<void> _addDirectoryFileDependencies(
   if (!root.existsSync()) {
     throw StateError('Dependency root does not exist: ${root.path}');
   }
-  await for (final entity in root.list(recursive: true, followLinks: false)) {
-    if (entity is! File) {
-      continue;
-    }
+  await for (final entity in dependencyFiles(
+    root,
+    excludedDirectoryNames: {
+      'target',
+      'node_modules',
+      if (excludeGeneratedOutputs) '.out',
+    },
+  )) {
     final path = entity.path;
-    if (path.contains(
-      '${Platform.pathSeparator}node_modules${Platform.pathSeparator}',
-    )) {
-      continue;
-    }
     if (excludeGeneratedOutputs && _isGeneratedInputDependency(entity)) {
       continue;
     }
@@ -227,14 +242,7 @@ Future<void> _addDirectoryFileDependencies(
 
 /// Detects build-owned outputs that must not be registered as hook inputs.
 bool _isGeneratedInputDependency(File file) {
-  final path = file.path;
-  final separator = Platform.pathSeparator;
-  if (path.contains('$separator.out$separator')) {
-    return true;
-  }
-  final fileName = file.uri.pathSegments.isEmpty
-      ? path
-      : file.uri.pathSegments.last;
+  final fileName = file.uri.pathSegments.last;
   if (fileName == '.sync_state.json' ||
       fileName == '.sync_hot_reload_state.json') {
     return true;
@@ -264,6 +272,7 @@ Future<void> _compileWebRuntimeBridge(
   ], workingDirectory: workingDirectory.path);
 }
 
+/// Registers Rust source inputs without entering Cargo build output trees.
 Future<void> _addRustDependencies(
   BuildOutputBuilder output,
   Directory root,
@@ -271,19 +280,14 @@ Future<void> _addRustDependencies(
   if (!root.existsSync()) {
     throw StateError('Rust dependency root does not exist: ${root.path}');
   }
-  await for (final entity in root.list(recursive: true, followLinks: false)) {
-    if (entity is! File) {
-      continue;
-    }
-    final path = entity.path;
-    if (path.contains(
-      '${Platform.pathSeparator}target${Platform.pathSeparator}',
-    )) {
-      continue;
-    }
-    if (path.endsWith('.rs') ||
-        path.endsWith('Cargo.toml') ||
-        path.endsWith('Cargo.lock')) {
+  await for (final entity in dependencyFiles(
+    root,
+    excludedDirectoryNames: const {'target'},
+  )) {
+    final fileName = entity.uri.pathSegments.last;
+    if (fileName.endsWith('.rs') ||
+        fileName == 'Cargo.toml' ||
+        fileName == 'Cargo.lock') {
       output.dependencies.add(entity.uri);
     }
   }
@@ -314,23 +318,12 @@ Future<void> _syncWebRuntimeArtifacts(
   );
 }
 
-/// Writes the worker bridge from the matching wasm-bindgen output with relative WASI imports.
+/// Copies the matching browser wasm-bindgen module for the runtime worker entry.
 Future<void> _writeWorkerWasmBridgeModule(
   File bridgeModule,
   File workerBridgeModule,
 ) async {
-  final bridgeContents = await bridgeModule.readAsString();
-  final workerContents = bridgeContents.replaceAll(
-    'from "wasi_snapshot_preview1"',
-    'from "./wasi_snapshot_preview1.js"',
-  );
-  if (workerContents == bridgeContents) {
-    throw StateError(
-      'wasm-bindgen bridge did not declare the WASI module import: '
-      '${bridgeModule.path}',
-    );
-  }
-  await workerBridgeModule.writeAsString(workerContents, flush: true);
+  await bridgeModule.copy(workerBridgeModule.path);
 }
 
 /// Writes an ESM wrapper that exposes the UMD MessagePack runtime to module workers.
@@ -538,10 +531,15 @@ Future<void> _invalidateWebRuntimeArtifacts(
 
 const Set<String> _webRuntimeArtifactNames = <String>{
   'operit_runtime_bridge.js',
+  'operit_data_rescue.js',
+  'operit_data_rescue_worker.js',
   'browser_system_capabilities.js',
   'browser_file_open.js',
   'browser_http_stream.js',
   'operit_runtime_worker.js',
+  'operit_javascript_runtime.js',
+  'operit_javascript_transport.js',
+  'operit_javascript_worker.js',
   'operit_model_install_worker.js',
   'v86_runtime_worker.js',
   'operit_flutter_bridge.js',
@@ -556,6 +554,7 @@ const Set<String> _webRuntimeArtifactNames = <String>{
 
 const Set<String> _generatedWebRuntimeFileNames = <String>{
   ..._webRuntimeArtifactNames,
+  'font-resources.json',
   'libv86.mjs',
   'v86.wasm',
   'seabios.bin',
@@ -835,105 +834,11 @@ String _targetOs(BuildInput input) {
   throw StateError('Unsupported build hook target configuration: $config');
 }
 
-/// Configures the shared WASM C toolchain and runtime linker dependencies.
+/// Configures warnings for the browser Rust runtime build.
 Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
-  final environment = _withRustupProxyEnvironment(
+  return _withRustupProxyEnvironment(
     Map<String, String>.from(Platform.environment),
   )..['RUSTFLAGS'] = '-Awarnings';
-
-  final toolsDir = Directory.fromUri(
-    repoRoot.uri.resolve('target/operit-build-tools/'),
-  );
-  final wasiSdkName = switch (Platform.operatingSystem) {
-    'windows' => 'wasi-sdk-20.0.m-mingw',
-    'macos' => 'wasi-sdk-20.0-macos',
-    'linux' => 'wasi-sdk-20.0-linux',
-    _ => throw StateError(
-      'Unsupported Web Access WASI SDK host: ${Platform.operatingSystem}',
-    ),
-  };
-  final wasiSdk = Directory.fromUri(toolsDir.uri.resolve('$wasiSdkName/'));
-  final clangName = Platform.isWindows ? 'clang.exe' : 'clang';
-
-  await _ensureExtractedArchive(
-    archiveUrl:
-        'https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/$wasiSdkName.tar.gz',
-    archiveFile: File.fromUri(toolsDir.uri.resolve('$wasiSdkName.tar.gz')),
-    destination: wasiSdk,
-    requiredFile: File.fromUri(wasiSdk.uri.resolve('bin/$clangName')),
-    stripComponents: 1,
-  );
-
-  environment['QUICKJS_WASM_SYS_WASI_SDK_PATH'] = wasiSdk.path;
-  environment['CC_wasm32_unknown_unknown'] = File.fromUri(
-    wasiSdk.uri.resolve('bin/$clangName'),
-  ).path;
-  final arName = Platform.isWindows ? 'llvm-ar.exe' : 'llvm-ar';
-  environment['AR_wasm32_unknown_unknown'] = File.fromUri(
-    wasiSdk.uri.resolve('bin/$arName'),
-  ).path;
-  final clangResourceDir = File.fromUri(
-    wasiSdk.uri.resolve('lib/clang/16'),
-  ).path.replaceAll(r'\', '/');
-  if (!Directory(clangResourceDir).existsSync()) {
-    throw StateError(
-      'WASI SDK Clang resource directory does not exist: $clangResourceDir',
-    );
-  }
-  final bindgenClangArgs = '-resource-dir=$clangResourceDir';
-  final wasiLibDir = Directory.fromUri(
-    wasiSdk.uri.resolve('share/wasi-sysroot/lib/wasm32-wasi/'),
-  );
-  final wasiBuiltinsDir = Directory.fromUri(
-    wasiSdk.uri.resolve('lib/clang/16/lib/wasi/'),
-  );
-  final wasiLibc = File.fromUri(wasiLibDir.uri.resolve('libc.a'));
-  final wasiBuiltins = File.fromUri(
-    wasiBuiltinsDir.uri.resolve('libclang_rt.builtins-wasm32.a'),
-  );
-  if (!wasiLibc.existsSync() || !wasiBuiltins.existsSync()) {
-    throw StateError(
-      'WASI SDK is missing the WebAssembly libc or compiler builtins required '
-      'by QuickJS: libc=${wasiLibc.path} builtins=${wasiBuiltins.path}',
-    );
-  }
-  final wasiLibDirPath = wasiLibDir.path.replaceAll(r'\', '/');
-  final wasiBuiltinsDirPath = wasiBuiltinsDir.path.replaceAll(r'\', '/');
-  environment['RUSTFLAGS'] = <String>[
-    '-Awarnings',
-    '-L',
-    'native=$wasiLibDirPath',
-    '-L',
-    'native=$wasiBuiltinsDirPath',
-    '-l',
-    'static=c',
-    '-l',
-    'static=clang_rt.builtins-wasm32',
-  ].join(' ');
-  environment['BINDGEN_EXTRA_CLANG_ARGS_wasm32_unknown_unknown'] =
-      bindgenClangArgs;
-  if (Platform.isWindows) {
-    final libclangDir = Directory.fromUri(
-      toolsDir.uri.resolve(
-        'libclang.runtime.win-x64.21.1.8/runtimes/win-x64/native/',
-      ),
-    );
-    await _ensureExtractedArchive(
-      archiveUrl:
-          'https://www.nuget.org/api/v2/package/libclang.runtime.win-x64/21.1.8',
-      archiveFile: File.fromUri(
-        toolsDir.uri.resolve('libclang.runtime.win-x64.21.1.8.nupkg'),
-      ),
-      destination: Directory.fromUri(
-        toolsDir.uri.resolve('libclang.runtime.win-x64.21.1.8/'),
-      ),
-      requiredFile: File.fromUri(libclangDir.uri.resolve('libclang.dll')),
-      stripComponents: 0,
-    );
-    environment['LIBCLANG_PATH'] = libclangDir.path;
-    environment['BINDGEN_EXTRA_CLANG_ARGS'] = bindgenClangArgs;
-  }
-  return environment;
 }
 
 /// Verifies that wasm-bindgen generated browser-resolvable imports.
@@ -948,7 +853,7 @@ Future<void> _validateWasmBindgenImports(File bridgeScript) async {
   if (invalidImport != null) {
     throw StateError(
       'wasm-bindgen generated an unresolved env import in ${bridgeScript.path}. '
-      'Check the Web Access WASI SDK link configuration.',
+      'Check the Web host dependency link configuration.',
     );
   }
 }

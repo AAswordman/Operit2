@@ -32,7 +32,6 @@ MIMO|MiMo|https://api.xiaomimimo.com/v1/chat/completions||list_models:GET:/v1/mo
 DEEPSEEK|DeepSeek|https://api.deepseek.com/v1/chat/completions|https://api.deepseek.com/v1/chat/completions~Chat Completions;https://api.deepseek.com/v1/responses~Responses|list_models:GET:/v1/models:$.data:$.id:::::::::::::true,balance:GET:/user/balance:$.balance_infos[0].total_balance:$.balance_infos[0].currency:true
 MISTRAL|Mistral|https://codestral.mistral.ai/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 SILICONFLOW|SiliconFlow|https://api.siliconflow.cn/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true,balance:GET:/v1/user/info:$.data.balance::true
-IFLOW|iFlow|https://apis.iflow.cn/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 OPENROUTER|OpenRouter|https://openrouter.ai/api/v1/chat/completions||list_models:GET:/api/v1/models:$.data:$.id:$.pricing.prompt:$.pricing.input_cache_read:$.pricing.completion::USD:$.context_length:$.architecture.input_modalities~image:$.architecture.input_modalities~audio:$.architecture.input_modalities~video::$.supported_parameters~tools:$.supported_parameters~tools:true,balance:GET:/api/v1/credits:$.data.total_credits::true
 OPENCODE|OpenCode|https://opencode.ai/zen|https://opencode.ai/zen~Zen;https://opencode.ai/zen/go~Go|list_models:GET:/v1/models:$.data:$.id:::::::::::::false
 FOUR_ROUTER|4Router|https://4router.net/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true

@@ -137,3 +137,17 @@ Runtime-owned behavior is requested through `ProviderRuntimeSupport`;
 `operit-providers` does not depend on `operit-runtime`.
 
 See `core/CRATE_BOUNDARIES.md` for the full dependency direction.
+
+## Tool Continuation and Response Completion
+
+Enhanced chat consumes the finalized `ToolExecutionBatch.message` directly;
+there is no second formatting or independent truncation pass for model history.
+A nonempty continuation must carry a nonblank finalized message. Response
+completion diagnostics record sizes and execution identifiers, not response text.
+
+OpenAI-compatible streaming and non-streaming producers record terminal failures
+before closing their shared response channels. `RevisableTextStream` exposes that
+failure through boxed consumers. Enhanced chat checks it after collection for both
+initial responses and tool-result responses, before normal completion, token-usage
+persistence, or further tool dispatch. The existing runtime error lifecycle receives
+the error; partial text is retained and user cancellation remains distinct.

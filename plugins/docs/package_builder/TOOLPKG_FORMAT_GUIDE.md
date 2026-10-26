@@ -170,7 +170,7 @@ windows_control.toolpkg (ZIP 压缩包)
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | `schema_version` | number | 是 | 清单格式版本，当前为 `1`；不是 ToolPkg API 版本 |
-| `api_version` | string | 否 | ToolPkg API 契约版本。Operit2 新建包显式填写 `2.0.0`；省略时当前解析器按 `2.0.0` 处理。`1.0.0`、`1.0.1` 的兼容加载支持并不完整 |
+| `api_version` | string | 否 | ToolPkg API 契约版本。Operit2 新建包显式填写 `2.0.0`；省略时按旧版 `1.0.0` 契约加载，启用对应适配和运行依赖。`1.0.0`、`1.0.1` 的兼容加载支持并不完整 |
 | `toolpkg_id` | string | 是 | 包的唯一标识符，建议使用反向域名格式（如 `com.operit.windows_bundle`） |
 | `version` | string | 否 | 插件自身的发布版本，建议使用语义化版本（如 `0.2.0`）；与 `api_version`、`schema_version` 分别声明 |
 | `author` | string \| string[] | 否 | 作者信息，支持单个作者字符串或作者字符串数组 |
@@ -986,6 +986,8 @@ items[0];     // 对
 
 Compose DSL 是一种基于 JavaScript 的声明式 UI 框架，灵感来自 Jetpack Compose。
 
+UI 模块分发普通、可读的 CommonJS JavaScript，保留 `ctx.UI.*` 声明、业务函数与事件回调。TypeScript 只需转换为这种 JS，Compose 编译与缓存由运行时负责。不要将 Compose 内部预编译产物作为插件示例或用户编辑入口；用户修改 JS 后按插件更新流程重新打包和导入。
+
 **特点**：
 - 声明式语法
 - 组件化设计
@@ -1372,7 +1374,7 @@ PackageBuilder 的示例路径为 `examples/packages/`，不是旧版根目录 `
 - `examples/packages/buildin/workflow/`：工具、UI、依赖公共接口及其构建契约。
 - `examples/packages/buildin/goal_mode/`：界面与插件注册示例。
 
-按所选示例的真实 `package.json` 和说明构建；并非每个示例都采用相同打包命令。阅读 Skill 的示例不会自动将该包安装到当前 runtime。
+随软件携带的示例提供源码与构建配置，排除 `dist/`、`build/`、`tests-dist/` 生成目录。按所选示例的真实 `package.json` 和说明构建，输出可读的普通 JS；并非每个示例都采用相同打包命令。阅读 Skill 的示例不会自动将该包安装到当前 runtime。
 
 ## 12. 参考资料
 

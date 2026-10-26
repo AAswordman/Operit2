@@ -625,7 +625,9 @@ class _RemotePairDialog extends StatefulWidget {
 class _RemotePairDialogState extends State<_RemotePairDialog> {
   final TextEditingController _baseUrlController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
-  generated.PeerTransport _transport = generated.PeerTransport.http;
+  // Null leaves the carrier open: the core classifies the endpoint from one
+  // throwaway probe connection, so a bare `ip:port` input is enough.
+  generated.PeerTransport? _transport;
   generated.PendingPairing? _pairing;
   bool _busy = false;
   String? _error;
@@ -724,9 +726,12 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
               enabled: pairing == null,
               decoration: InputDecoration(
                 labelText: l10n.settingsRuntimeBaseUrl,
-                helperText: _transport == generated.PeerTransport.tcp
-                    ? l10n.settingsRuntimeTcpAddressHint
-                    : null,
+                helperText: switch (_transport) {
+                  null => l10n.settingsRuntimeTransportAutoHint,
+                  generated.PeerTransport.tcp =>
+                    l10n.settingsRuntimeTcpAddressHint,
+                  _ => null,
+                },
                 border: const OutlineInputBorder(),
                 isDense: true,
               ),
@@ -916,13 +921,15 @@ class _RemotePairResult {
 class _LinkTransportSelector extends StatelessWidget {
   const _LinkTransportSelector({required this.value, required this.onChanged});
 
-  final generated.PeerTransport value;
-  final ValueChanged<generated.PeerTransport> onChanged;
+  final generated.PeerTransport? value;
+  final ValueChanged<generated.PeerTransport?> onChanged;
 
-  /// Builds the explicit Link carrier selector shared by pairing dialogs.
+  /// Builds the Link carrier selector shared by pairing dialogs; null picks
+  /// the auto-detected carrier from the address alone.
   @override
   Widget build(BuildContext context) {
-    return OperitFormStyles.dropdownButtonFormField<generated.PeerTransport>(
+    final l10n = AppLocalizations.of(context)!;
+    return OperitFormStyles.dropdownButtonFormField<generated.PeerTransport?>(
       context,
       initialValue: value,
       decoration: const InputDecoration(
@@ -930,25 +937,25 @@ class _LinkTransportSelector extends StatelessWidget {
         border: OutlineInputBorder(),
         isDense: true,
       ),
-      items: const <DropdownMenuItem<generated.PeerTransport>>[
+      items: <DropdownMenuItem<generated.PeerTransport?>>[
         DropdownMenuItem(
+          value: null,
+          child: Text(l10n.settingsRuntimeTransportAuto),
+        ),
+        const DropdownMenuItem(
           value: generated.PeerTransport.http,
           child: Text('HTTP'),
         ),
-        DropdownMenuItem(
+        const DropdownMenuItem(
           value: generated.PeerTransport.webSocket,
           child: Text('WebSocket'),
         ),
-        DropdownMenuItem(
+        const DropdownMenuItem(
           value: generated.PeerTransport.tcp,
           child: Text('TCP'),
         ),
       ],
-      onChanged: (selected) {
-        if (selected != null) {
-          onChanged(selected);
-        }
-      },
+      onChanged: onChanged,
     );
   }
 }

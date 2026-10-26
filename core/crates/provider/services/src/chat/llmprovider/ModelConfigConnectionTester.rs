@@ -1,15 +1,18 @@
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
 use crate::chat::enhance::MultiServiceManager::MultiServiceManager;
-use crate::chat::llmprovider::AIService::{collect_stream_chunks, SendMessageRequest};
+use crate::chat::llmprovider::AIService::{ensure_response_completed, AIService, SendMessageRequest};
 use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::ModelConfigData::ResolvedModelConfig;
 use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
+use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
+use operit_util::stream::Stream::Stream;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::MediaPoolManager::MediaPoolManager;
@@ -75,8 +78,9 @@ impl ModelConfigConnectionTester {
         {
             let mut service = serviceHandle;
             Self::runCase(&mut items, ModelConnectionTestType::CHAT, || async {
-                let stream = service
-                    .send_message(SendMessageRequest {
+                Self::executeTestRequest(
+                    &mut service,
+                    SendMessageRequest {
                         chat_history: vec![PromptTurn::new(PromptTurnKind::USER, "Hi")],
                         model_parameters: parameters.clone(),
                         enable_thinking: false,
@@ -89,11 +93,9 @@ impl ModelConfigConnectionTester {
                         enable_retry: false,
                         on_non_fatal_error: None,
                         on_tool_invocation: None,
-                    })
-                    .await
-                    .map_err(|error| error.to_string())?;
-                let _ = collect_stream_chunks(stream);
-                Ok(())
+                    },
+                )
+                .await
             })
             .await;
 
@@ -103,6 +105,7 @@ impl ModelConfigConnectionTester {
                     let toolResultTagName = ChatMarkupRegex::generate_random_tool_result_tag_name();
                     let history = vec![
                         ("system".to_string(), "You are a helpful assistant.".to_string()),
+                        ("user".to_string(), "Call the echo tool with the text \"ping\".".to_string()),
                         (
                             "assistant".to_string(),
                             format!(
@@ -110,14 +113,15 @@ impl ModelConfigConnectionTester {
                             ),
                         ),
                         (
-                            "user".to_string(),
+                            "tool_result".to_string(),
                             format!(
                                 "<{toolResultTagName} name=\"echo\" status=\"success\"><content>pong</content></{toolResultTagName}>"
                             ),
                         ),
                     ];
-                    let stream = service
-                        .send_message(SendMessageRequest {
+                    Self::executeTestRequest(
+                        &mut service,
+                        SendMessageRequest {
                             chat_history: toPromptTurns(&history),
                             model_parameters: parameters.clone(),
                             enable_thinking: false,
@@ -130,11 +134,9 @@ impl ModelConfigConnectionTester {
                             enable_retry: false,
                             on_non_fatal_error: None,
                             on_tool_invocation: None,
-                        })
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    let _ = collect_stream_chunks(stream);
-                    Ok(())
+                        },
+                    )
+                    .await
                 })
                 .await;
             }
@@ -150,11 +152,12 @@ impl ModelConfigConnectionTester {
                         return Err("Failed to create test image".to_string());
                     }
                     let prompt = format!(
-                        "{}\nPlease analyze this image briefly.",
+                        "{}\n\nPlease analyze this image briefly.",
                         MediaLinkBuilder::image(&imageId)
                     );
-                    let result = service
-                        .send_message(SendMessageRequest {
+                    let result = Self::executeTestRequest(
+                        &mut service,
+                        SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
                             enable_thinking: false,
@@ -167,12 +170,9 @@ impl ModelConfigConnectionTester {
                             enable_retry: false,
                             on_non_fatal_error: None,
                             on_tool_invocation: None,
-                        })
-                        .await
-                        .map(|stream| {
-                            let _ = collect_stream_chunks(stream);
-                        })
-                        .map_err(|error| error.to_string());
+                        },
+                    )
+                    .await;
                     ImagePoolManager::remove_image(&imageId);
                     result
                 })
@@ -189,11 +189,12 @@ impl ModelConfigConnectionTester {
                         return Err("Failed to create test audio".to_string());
                     }
                     let prompt = format!(
-                        "{}\nPlease analyze this audio briefly.",
+                        "{}\n\nPlease analyze this audio briefly.",
                         MediaLinkBuilder::audio(&audioId)
                     );
-                    let result = service
-                        .send_message(SendMessageRequest {
+                    let result = Self::executeTestRequest(
+                        &mut service,
+                        SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
                             enable_thinking: false,
@@ -206,12 +207,9 @@ impl ModelConfigConnectionTester {
                             enable_retry: false,
                             on_non_fatal_error: None,
                             on_tool_invocation: None,
-                        })
-                        .await
-                        .map(|stream| {
-                            let _ = collect_stream_chunks(stream);
-                        })
-                        .map_err(|error| error.to_string());
+                        },
+                    )
+                    .await;
                     MediaPoolManager::remove_media(&audioId);
                     result
                 })
@@ -228,11 +226,12 @@ impl ModelConfigConnectionTester {
                         return Err("Failed to create test video".to_string());
                     }
                     let prompt = format!(
-                        "{}\nPlease analyze this video briefly.",
+                        "{}\n\nPlease analyze this video briefly.",
                         MediaLinkBuilder::video(&videoId)
                     );
-                    let result = service
-                        .send_message(SendMessageRequest {
+                    let result = Self::executeTestRequest(
+                        &mut service,
+                        SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
                             enable_thinking: false,
@@ -245,12 +244,9 @@ impl ModelConfigConnectionTester {
                             enable_retry: false,
                             on_non_fatal_error: None,
                             on_tool_invocation: None,
-                        })
-                        .await
-                        .map(|stream| {
-                            let _ = collect_stream_chunks(stream);
-                        })
-                        .map_err(|error| error.to_string());
+                        },
+                    )
+                    .await;
                     MediaPoolManager::remove_media(&videoId);
                     result
                 })
@@ -262,6 +258,36 @@ impl ModelConfigConnectionTester {
         }
 
         Ok(Self::report(configForTest, items))
+    }
+
+    /// Executes a connection probe and rejects both request and stream completion failures.
+    async fn executeTestRequest(
+        service: &mut Box<dyn AIService>,
+        mut request: SendMessageRequest,
+    ) -> Result<(), String> {
+        let stream_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let error_sink = stream_error.clone();
+        request.on_non_fatal_error = Some(Arc::new(move |error| {
+            let mut guard = error_sink.lock().unwrap();
+            if guard.is_none() {
+                *guard = Some(error);
+            }
+        }));
+        let stream = service
+            .send_message(request)
+            .await
+            .map_err(|error| error.to_string())?;
+        Self::verifyTestResponse(stream).await?;
+        if let Some(error) = stream_error.lock().unwrap().take() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Consumes the complete response before accepting its authoritative terminal state.
+    async fn verifyTestResponse(mut stream: Box<dyn RevisableTextStreamLike>) -> Result<(), String> {
+        stream.collect(&mut |_| {}).await;
+        ensure_response_completed(stream.as_ref()).map_err(|error| error.to_string())
     }
 
     async fn runCase<F, Fut>(
@@ -312,3 +338,7 @@ impl ModelConfigConnectionTester {
         tool
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/ModelConfigConnectionTesterTests.rs"]
+mod tests;

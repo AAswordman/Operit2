@@ -4,7 +4,7 @@ import { loadModule, plain } from "./runtime.mjs";
 
 const codec = loadModule("src/group-execution/contracts.ts");
 const chatId = "real-request-chat", userTimestamp = 1700000000111;
-const input = { kind: "execute", submission: { chatId, text: "Original user text" }, turn: { requestKey: "plugin-local-only", configuration: {} } };
+const input = { chatId, userMessageTimestamp: userTimestamp, turn: { requestKey: "plugin-local-only" } };
 
 /** Constructs the actual Rust send-result wire shape, with no invented native execution token or locator from receivedAt. */
 function native(outcome) { return { chatId, message: "Original user text", sentAt: 1700000000000, aiResponse: "Text is not an identity", receivedAt: 1700000000999, outcome }; }
@@ -42,7 +42,7 @@ test("receipt: malformed or unrelated receipts are rejected with no latest-messa
   for (const value of invalids) assert.throws(() => codec.decodeNativeGroupSendResult(value, input, null));
   const continuation = { chatId, userMessageTimestamp: userTimestamp, turn: input.turn };
   assert.throws(() => codec.decodeNativeGroupSendResult(native({ ...completed, userMessageTimestamp: userTimestamp + 1 }), continuation, userTimestamp), /different user/);
-  const recordOnly = { kind: "record_only", submission: input.submission, requestKey: "record-only-local-key" };
+  const recordOnly = { kind: "record_only", submission: { chatId, text: "Original user text" }, requestKey: "record-only-local-key" };
   assert.throws(() => codec.decodeNativeGroupSendResult(native(completed), recordOnly, null), /User-only/);
   assert.deepEqual(plain(codec.decodeNativeGroupSendResult(native({ ...completed, assistant: null }), recordOnly, null)), { type: "committed", receipt: { status: "completed", chatId,
     requestKey: "record-only-local-key", userMessageTimestamp: userTimestamp, assistant: null } });

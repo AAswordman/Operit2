@@ -12,6 +12,7 @@ import '../utils/PackageDisplayUtils.dart';
 import '../screens/ToolPkgDesktopWidgetsScreen.dart';
 
 class PluginDetailsDialog extends StatefulWidget {
+  /// Creates plugin details with actions for the current installation source.
   const PluginDetailsDialog({
     super.key,
     required this.plugin,
@@ -19,6 +20,7 @@ class PluginDetailsDialog extends StatefulWidget {
     required this.packageManager,
     required this.onOpenUi,
     required this.onDeletePackage,
+    this.isCustomized = false,
   });
 
   final core_proxy.ToolPkgContainerRuntime plugin;
@@ -26,6 +28,7 @@ class PluginDetailsDialog extends StatefulWidget {
   final GeneratedApplicationPackageManagerCoreProxy packageManager;
   final ValueChanged<String?> onOpenUi;
   final VoidCallback? onDeletePackage;
+  final bool isCustomized;
 
   @override
   State<PluginDetailsDialog> createState() => _PluginDetailsDialogState();
@@ -157,7 +160,12 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
                 value: (details?.author ?? widget.plugin.author).join(', '),
               ),
               _DetailLine(label: l10n.entry, value: widget.plugin.mainEntry),
-              _DetailLine(label: l10n.source, value: widget.plugin.sourcePath),
+              if (widget.isCustomized)
+                _DetailLine(label: l10n.source, value: '自定义'),
+              _DetailLine(
+                label: widget.isCustomized ? '来源路径' : l10n.source,
+                value: widget.plugin.sourcePath,
+              ),
               if (_logo != null) ...<Widget>[
                 const SizedBox(height: 12),
                 _ToolPkgLogo(logo: _logo!),
@@ -338,7 +346,7 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
           OutlinedButton.icon(
             onPressed: widget.onDeletePackage,
             icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
+            label: Text(widget.isCustomized ? '卸载自定义' : '删除'),
             style: OutlinedButton.styleFrom(
               foregroundColor: Theme.of(context).colorScheme.error,
             ),
@@ -444,15 +452,18 @@ bool _useEnglishForToolPkgText(BuildContext context) {
 }
 
 class PackageDetailsDialog extends StatelessWidget {
+  /// Creates package details with the custom or ordinary uninstall action.
   const PackageDetailsDialog({
     super.key,
     required this.package,
     required this.onDeletePackage,
+    this.isCustomized = false,
     required this.onRunTool,
   });
 
   final core_proxy.ToolPackage package;
   final VoidCallback onDeletePackage;
+  final bool isCustomized;
   final ValueChanged<core_proxy.PackageTool> onRunTool;
 
   @override
@@ -476,7 +487,11 @@ class PackageDetailsDialog extends StatelessWidget {
               _DetailLine(label: l10n.author, value: package.author.join(', ')),
               _DetailLine(
                 label: l10n.source,
-                value: package.isBuiltIn ? l10n.builtIn : l10n.external,
+                value: isCustomized
+                    ? '自定义'
+                    : package.isBuiltIn
+                    ? l10n.builtIn
+                    : l10n.external,
               ),
               _DetailLine(
                 label: l10n.defaultStatus,
@@ -531,15 +546,14 @@ class PackageDetailsDialog extends StatelessWidget {
         ),
       ),
       actions: <Widget>[
-        if (!package.isBuiltIn)
-          OutlinedButton.icon(
-            onPressed: onDeletePackage,
-            icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
+        OutlinedButton.icon(
+          onPressed: onDeletePackage,
+          icon: const Icon(Icons.delete_outline),
+          label: Text(isCustomized ? '卸载自定义' : '删除'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
           ),
+        ),
       ],
     );
   }

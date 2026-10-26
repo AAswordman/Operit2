@@ -24,10 +24,12 @@ pub mod LocationUtils;
 pub mod MarkdownRenderStream;
 pub mod MediaBase64Limiter;
 pub mod MediaPoolManager;
+pub mod MediaRegistration;
 pub mod NetworkUtils;
 pub mod OCRUtils;
 pub mod OperitPaths;
 pub mod PortProcessKiller;
+pub mod PluginStoragePaths;
 #[path = "RuntimeStorageLayout.rs"]
 pub mod RuntimeStorageLayout;
 #[path = "RuntimeStoreRoot.rs"]

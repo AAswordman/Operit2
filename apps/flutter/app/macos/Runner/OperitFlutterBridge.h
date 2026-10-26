@@ -9,6 +9,8 @@ void *operit_flutter_bridge_create_with_storage_roots(
     const char *runtime_root,
     const char *workspace_root);
 char *operit_flutter_bridge_create_error(void);
+/// Executes independent data maintenance without constructing Core.
+char *operit_flutter_bridge_data_rescue(const char *default_runtime_root, const char *request);
 /// Reads the client bootstrap record before the native Runtime is created.
 char *operit_flutter_bridge_runtime_bootstrap_read(const char *default_runtime_root);
 /// Writes the client bootstrap record before the native Runtime is created.

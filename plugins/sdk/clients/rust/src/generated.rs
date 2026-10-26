@@ -316,6 +316,10 @@ pub struct SdkToolPkgContainerRuntime {
     pub author: Vec<String>,
     #[serde(rename = "mainEntry")]
     pub mainEntry: String,
+    #[serde(rename = "themes")]
+    pub themes: Vec<SdkToolPkgManifestTheme>,
+    #[serde(rename = "license")]
+    pub license: Option<String>,
     #[serde(rename = "sourceType")]
     pub sourceType: SdkToolPkgSourceType,
     #[serde(rename = "sourcePath")]
@@ -360,6 +364,8 @@ pub struct SdkToolPkgContainerRuntime {
     pub chatMessageMenuItems: Vec<SdkToolPkgChatMessageMenuItemRuntime>,
     #[serde(rename = "chatRuntimeHooks")]
     pub chatRuntimeHooks: Vec<SdkToolPkgFunctionHookRuntime>,
+    #[serde(rename = "chatResponseHooks")]
+    pub chatResponseHooks: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "hostEventHooks")]
     pub hostEventHooks: Vec<SdkToolPkgHostEventHookRuntime>,
     #[serde(rename = "toolLifecycleHooks")]
@@ -488,6 +494,19 @@ pub struct SdkToolPkgManifestRequirement {
     pub minVersion: Option<String>,
     #[serde(rename = "max_version")]
     pub maxVersion: Option<String>,
+}
+
+/// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgManifestTheme`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgManifestTheme {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "preview")]
+    pub preview: String,
+    #[serde(rename = "files")]
+    pub files: Vec<SdkManifestFile>,
 }
 
 /// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgMarketOrigin`.
@@ -686,6 +705,15 @@ pub struct SdkToolPkgWorkspaceTemplateRuntime {
     pub resource_key: String,
     #[serde(rename = "project_type")]
     pub project_type: String,
+}
+
+/// Generated SDK model for `operit_plugin_theme::ManifestFile`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkManifestFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "mediaType")]
+    pub media_type: String,
 }
 
 /// Generated SDK model for `operit_tools::ConversationMarkupManager::ToolResult`.

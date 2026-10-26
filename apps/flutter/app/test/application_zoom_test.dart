@@ -1,3 +1,5 @@
+import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -195,6 +197,98 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('display features follow zoom and viewport changes', (
+    tester,
+  ) async {
+    final zoom = ValueNotifier<double>(1);
+    final features = ValueNotifier<List<DisplayFeature>>(const <DisplayFeature>[
+      DisplayFeature(
+        bounds: Rect.fromLTWH(450, 0, 0, 600),
+        type: DisplayFeatureType.fold,
+        state: DisplayFeatureState.postureHalfOpened,
+      ),
+      DisplayFeature(
+        bounds: Rect.fromLTWH(420, 12, 60, 30),
+        type: DisplayFeatureType.cutout,
+        state: DisplayFeatureState.unknown,
+      ),
+    ]);
+    addTearDown(zoom.dispose);
+    addTearDown(features.dispose);
+    late MediaQueryData data;
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => AnimatedBuilder(
+          animation: Listenable.merge(<Listenable>[zoom, features]),
+          builder: (context, _) => MediaQuery(
+            data: MediaQueryData(
+              size: const Size(900, 600),
+              devicePixelRatio: 2,
+              displayFeatures: features.value,
+            ),
+            child: ApplicationZoomHost(
+              zoom: zoom.value,
+              onZoomChanged: (value) => zoom.value = value,
+              child: child!,
+            ),
+          ),
+        ),
+        home: Builder(
+          builder: (context) {
+            data = MediaQuery.of(context);
+            return const SizedBox.expand();
+          },
+        ),
+      ),
+    );
+
+    for (final value in <double>[1, 1.5, 0.7, 1]) {
+      zoom.value = value;
+      await tester.pump();
+      expect(data.displayFeatures, hasLength(2));
+      for (var index = 0; index < features.value.length; index++) {
+        final original = features.value[index];
+        final scaled = data.displayFeatures[index];
+        expect(scaled.bounds.left, closeTo(original.bounds.left / value, 1e-9));
+        expect(scaled.bounds.top, closeTo(original.bounds.top / value, 1e-9));
+        expect(
+          scaled.bounds.width,
+          closeTo(original.bounds.width / value, 1e-9),
+        );
+        expect(
+          scaled.bounds.height,
+          closeTo(original.bounds.height / value, 1e-9),
+        );
+        expect(scaled.type, original.type);
+        expect(scaled.state, original.state);
+      }
+      expect(data.devicePixelRatio, 2);
+    }
+
+    zoom.value = 1.5;
+    features.value = const <DisplayFeature>[
+      DisplayFeature(
+        bounds: Rect.fromLTWH(0, 300, 900, 0),
+        type: DisplayFeatureType.fold,
+        state: DisplayFeatureState.postureFlat,
+      ),
+    ];
+    await tester.pump();
+    expect(data.displayFeatures, hasLength(1));
+    expect(
+      data.displayFeatures.single.bounds,
+      const Rect.fromLTWH(0, 200, 600, 0),
+    );
+    expect(data.displayFeatures.single.state, DisplayFeatureState.postureFlat);
+    expect(features.value.single.bounds, const Rect.fromLTWH(0, 300, 900, 0));
+
+    features.value = const <DisplayFeature>[];
+    await tester.pump();
+    expect(data.displayFeatures, isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     'scaled popup anchors and pointer hits share overlay coordinates',

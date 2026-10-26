@@ -1,0 +1,183 @@
+{
+  "version": 4,
+  "maxEntities": 1,
+  "maxReferences": 48,
+  "entities": [
+    {
+      "collection": "owners",
+      "identityColumn": "ownerKey",
+      "nameColumn": null,
+      "ignoredColumns": [],
+      "keyEncoding": "slash_root",
+      "matchMode": "identity",
+      "keyReferences": [
+        {
+          "prefix": "character:",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          }
+        },
+        {
+          "prefix": "shared:",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          }
+        }
+      ],
+      "childCollections": [
+        "memories",
+        "links",
+        "chunks",
+        "candidates",
+        "embeddings"
+      ],
+      "references": [
+        {
+          "collection": "owners",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          "keyPrefix": "character:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "owners",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          "keyPrefix": "shared:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "owners",
+          "column": "userDocumentPath",
+          "target": {
+            "kind": "collection",
+            "collection": "owners"
+          },
+          "keyPrefix": "owners/",
+          "keySuffix": "/USER.md",
+          "valueEncoding": "uri_component"
+        },
+        {
+          "collection": "memories",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          "keyPrefix": "character:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "memories",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          "keyPrefix": "shared:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "links",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          "keyPrefix": "character:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "links",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          "keyPrefix": "shared:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "chunks",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          "keyPrefix": "character:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "chunks",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          "keyPrefix": "shared:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "candidates",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          "keyPrefix": "character:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "candidates",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          "keyPrefix": "shared:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "embeddings",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+          },
+          "keyPrefix": "character:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        },
+        {
+          "collection": "embeddings",
+          "column": "ownerKey",
+          "target": {
+            "kind": "preference",
+            "path": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+          },
+          "keyPrefix": "shared:",
+          "keySuffix": "",
+          "valueEncoding": "direct"
+        }
+      ]
+    }
+  ]
+}

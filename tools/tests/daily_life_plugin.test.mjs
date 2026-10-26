@@ -9,8 +9,9 @@ const root = new URL('../../', import.meta.url);
 const require = createRequire(new URL('plugins/packages/buildin/workflow/package.json', root));
 const ts = require('typescript');
 const packagePath = 'plugins/packages/buildin/daily_life/';
-const configDirectory = '/app/data/extensions/device/plugins/configs/com.operit.daily_life';
-const configPath = `${configDirectory}/reminders.json`;
+const dataDirectory = '/app/data/plugin_data/space/com.operit.daily_life';
+const storePath = `${dataDirectory}/reminders.preferences.json`;
+const reminderKeyPrefix = 'reminder_';
 const startTime = Date.parse('2030-01-01T00:00:00Z');
 
 /** Reads the current production source instead of generated plugin artifacts. */
@@ -26,18 +27,47 @@ function embedded(relativePath) {
   return text.slice(start, text.indexOf('"#', start));
 }
 
-/** Loads real plugin modules and PluginConfig with strictly mocked Host capabilities. */
-function fixture({ files = new Map(), visitResults = [], notify } = {}) {
+/** Builds a native store state seeded with the supplied reminder records. */
+function storeStateWith(records) {
+  return { schema: 1, entries: new Map(records.map(record => [reminderKeyPrefix + record.id, record])) };
+}
+
+/** Reads every persisted reminder record from the emulated native store. */
+function storedReminders(fixtureInstance) {
+  return [...fixtureInstance.storeState.entries.entries()]
+    .filter(([key]) => key.startsWith(reminderKeyPrefix))
+    .map(([, value]) => plain(value));
+}
+
+/** Selects the recorded storage edits that touched reminder records. */
+function reminderEdits(fixtureInstance) {
+  return fixtureInstance.storageEdits.filter(edit =>
+    Object.keys(edit.set).some(key => key.startsWith(reminderKeyPrefix)) || edit.removed.some(key => key.startsWith(reminderKeyPrefix)));
+}
+
+/** Tracks one reminder's persisted status sequence across edits. */
+function reminderStatusHistory(fixtureInstance, id) {
+  const key = reminderKeyPrefix + id;
+  const history = [];
+  for (const edit of fixtureInstance.storageEdits) {
+    if (Object.hasOwn(edit.set, key)) history.push(edit.set[key].status);
+    if (edit.removed.includes(key)) history.push('removed');
+  }
+  return history;
+}
+
+/** Loads real plugin modules with strictly mocked Host capabilities behind the native storage channel. */
+function fixture({ visitResults = [], notify, storeState = null, failReminderEdits = false } = {}) {
   const requests = [];
   const notifications = [];
-  const writes = [];
+  const storageEdits = [];
   const ipcCalls = [];
   const hooks = [];
   const lifecycleHooks = [];
   const handlers = new Map();
-  const errors = [];
+  const state = storeState ?? { schema: 0, entries: new Map() };
   let now = startTime;
-  let denyWrites = false;
+  let declaredSchema = null;
 
   /** Uses an explicit fixture clock for instants without changing date parsing semantics. */
   class Clock extends Date {
@@ -50,10 +80,73 @@ function fixture({ files = new Map(), visitResults = [], notify } = {}) {
     static now() { return now; }
   }
 
+  function snapshotPreferences(entries) {
+    return {
+      get(key) { return entries.has(key) ? plain(entries.get(key)) : undefined; },
+      contains(key) { return entries.has(key); },
+      entries() { return [...entries.entries()].map(([key, value]) => [key, plain(value)]); },
+    };
+  }
+
+  function mutablePreferences(entries) {
+    const changes = { set: new Map(), removed: [] };
+    return {
+      changes,
+      preferences: {
+        get(key) { return entries.has(key) ? plain(entries.get(key)) : undefined; },
+        contains(key) { return entries.has(key); },
+        entries() { return [...entries.entries()].map(([key, value]) => [key, plain(value)]); },
+        set(key, value) { entries.set(key, plain(value)); changes.set.set(key, plain(value)); },
+        remove(key) { if (entries.delete(key)) changes.removed.push(key); },
+        incrementInteger(key, delta) {
+          const current = typeof entries.get(key) === 'number' ? entries.get(key) : 0;
+          entries.set(key, current + delta);
+          changes.set.set(key, current + delta);
+        },
+        setObjectField(key, field, value) {
+          const object = entries.has(key) ? plain(entries.get(key)) : {};
+          object[field] = plain(value);
+          entries.set(key, object);
+          changes.set.set(key, plain(object));
+        },
+      },
+    };
+  }
+
+  const storeHandle = {
+    /** Applies one declared schema upgrade through a committed edit. */
+    async applySchema() {
+      const pending = declaredSchema;
+      if (pending === null || state.schema >= pending.version) return;
+      declaredSchema = null;
+      try { await storeHandle.edit(preferences => pending.migrate(state.schema, preferences)); }
+      finally { declaredSchema = pending; }
+      state.schema = pending.version;
+    },
+    async data() {
+      await this.applySchema();
+      return snapshotPreferences(state.entries);
+    },
+    async edit(transform) {
+      await this.applySchema();
+      const draft = new Map(state.entries);
+      const { changes, preferences } = mutablePreferences(draft);
+      await transform(preferences);
+      if (failReminderEdits && [...changes.set.keys()].some(key => key.startsWith(reminderKeyPrefix))) {
+        throw new Error('disk write denied');
+      }
+      state.entries = draft;
+      storageEdits.push({ path: storePath, set: Object.fromEntries(changes.set), removed: [...changes.removed] });
+      return this.data();
+    },
+    withSchema(version, migrate) { declaredSchema = { version, migrate }; return storeHandle; },
+    async schemaVersion() { await this.applySchema(); return state.schema; },
+    async close() {},
+  };
+
   const context = vm.createContext({
     Date: Clock, setTimeout, clearTimeout,
-    console: { log() {}, error: (...args) => errors.push(args) },
-    __operit_call_runtime_ref: { getPluginConfigDir: () => configDirectory },
+    console: { log() {}, error() {} },
     __operitExpose() {},
     toolCall: async (name, params) => {
       assert.equal(name, 'capture_screenshot');
@@ -61,28 +154,13 @@ function fixture({ files = new Map(), visitResults = [], notify } = {}) {
       return '/app/data/temp/screenshot.png';
     },
     Tools: {
-      Files: {
-        /** Reports VFS existence without accessing the execution host filesystem. */
-        async exists(file) { return { exists: files.has(file) }; },
-        /** Reads the exact persisted config body. */
-        async read(file) {
-          if (!files.has(file)) throw new Error(`Missing fixture file: ${file}`);
-          return { content: files.get(file) };
-        },
-        /** Verifies the plugin-scoped VFS directory used by production PluginConfig. */
-        async mkdir(directory, recursive) {
-          assert.equal(directory, configDirectory);
-          assert.equal(recursive, true);
-          return { successful: true };
-        },
-        /** Persists a config body or returns an explicit Host storage error. */
-        async write(file, content, append) {
-          assert.equal(file, configPath);
-          assert.equal(append, false);
-          if (denyWrites) return { successful: false, details: 'disk write denied' };
-          files.set(file, content);
-          writes.push(JSON.parse(content));
-          return { successful: true };
+      Storage: {
+        dataStore: {
+          /** Opens the one plugin-owned native preference store. */
+          async open(options) {
+            assert.deepEqual(plain(options), { path: storePath });
+            return storeHandle;
+          },
         },
       },
       Net: {
@@ -101,7 +179,7 @@ function fixture({ files = new Map(), visitResults = [], notify } = {}) {
         /** Records the real notification payload at the Host boundary. */
         async sendNotification(message, title) {
           notifications.push({ message, title });
-          if (notify !== undefined) return notify(message, title, files);
+          if (notify !== undefined) return notify(message, title);
           return 'notification accepted';
         },
         /** Returns an explicit device-info Host result. */
@@ -109,6 +187,8 @@ function fixture({ files = new Map(), visitResults = [], notify } = {}) {
       },
     },
     ToolPkg: {
+      /** Supplies the plugin-owned native data directory used by reminder persistence. */
+      getSpaceDataDir: () => dataDirectory,
       ipc: {
         /** Registers the one main-runtime reminder owner. */
         on(channel, handler) { handlers.set(channel, handler); },
@@ -126,7 +206,6 @@ function fixture({ files = new Map(), visitResults = [], notify } = {}) {
       registerAppLifecycleHook(definition) { lifecycleHooks.push(definition); },
     },
   });
-  vm.runInContext(source('core/crates/plugin/javascript-bridge/src/javascript/PluginConfig.script.js'), context);
   const modules = new Map();
 
   /** Evaluates CommonJS modules from TypeScript in memory without building the application. */
@@ -139,8 +218,8 @@ function fixture({ files = new Map(), visitResults = [], notify } = {}) {
     }).outputText;
     const execute = vm.runInContext(`(function(require, module, exports) { ${javascript}\n})`, context);
     execute((specifier) => {
-      assert.match(specifier, /^\.\//);
-      return load(path.posix.join(path.posix.dirname(relativeFile), `${specifier}.ts`));
+      assert.match(specifier, /^\.\.?(\/|$)/);
+      return load(path.posix.normalize(path.posix.join(path.posix.dirname(relativeFile), `${specifier}.ts`)));
     }, module, module.exports);
     return module.exports;
   }
@@ -149,11 +228,10 @@ function fixture({ files = new Map(), visitResults = [], notify } = {}) {
   const tools = load('src/tools.ts');
   const reminders = load('src/reminders.ts');
   return {
-    main, tools, reminders, context, files, requests, notifications, writes, ipcCalls, hooks, lifecycleHooks, errors,
+    main, tools, reminders, context, requests, notifications, storageEdits, ipcCalls, hooks, lifecycleHooks,
+    storeState: state,
     /** Advances the fixture clock without waiting for wall-clock time. */
     setTime(value) { now = value; },
-    /** Configures an explicit persistent-storage failure. */
-    denyWrites() { denyWrites = true; },
   };
 }
 
@@ -178,6 +256,14 @@ test('daily_life is a ToolPkg with the unchanged daily_life subpackage and no su
   for (const name of ['tools', 'reminders', 'main']) {
     assert.doesNotMatch(source(packagePath + `src/${name}.ts`), /runSubAgent|Tools\.UI|fetch\(|XMLHttpRequest|https?\.request|executeShell|Tools\.Net\.http|open-meteo/);
   }
+});
+
+/** Checks the reminder owner no longer persists through the retired PluginConfig file channel. */
+test('reminder persistence uses the native preference store instead of PluginConfig', () => {
+  const text = source(packagePath + 'src/reminders.ts');
+  assert.match(text, /Tools\.Storage\.dataStore\.open/);
+  assert.match(text, /ToolPkg\.getSpaceDataDir\(\)/);
+  assert.doesNotMatch(text, /PluginConfig\.(use|flush)/);
 });
 
 /** Checks existing date, status and screenshot functionality remains directly connected. */
@@ -221,7 +307,7 @@ test('weather propagates the web-visit Host error without retries', async () => 
   assert.equal(f.requests.length, 1);
 });
 
-/** Checks registration only describes Host events and performs no filesystem or network work. */
+/** Checks registration only describes Host events and performs no storage or network work. */
 test('reminders register existing minute, startup and resume Host hooks', () => {
   const f = fixture();
   assert.equal(f.main.registerToolPkg(), true);
@@ -233,7 +319,7 @@ test('reminders register existing minute, startup and resume Host hooks', () => 
   assert.equal(f.lifecycleHooks[0].event, 'application_on_create');
   assert.equal(f.lifecycleHooks[0].function, f.main.onOpen);
   assert.equal(f.requests.length, 0);
-  assert.equal(f.writes.length, 0);
+  assert.equal(f.storageEdits.length, 0);
 });
 
 /** Checks actual production registration captures exported callback names durably. */
@@ -257,7 +343,7 @@ test('production ToolPkg registration resolves the reminder hooks to main-module
   assert.equal(interval.trigger.intervalMs, 60000);
   assert.equal(resume.function, 'onResume');
   assert.equal(startup.function, 'onOpen');
-  assert.equal(f.writes.length, 0);
+  assert.equal(f.storageEdits.length, 0);
   assert.equal(f.requests.length, 0);
 });
 
@@ -271,7 +357,7 @@ test('set_reminder persists a pending record in the main owner before returning'
   assert.equal(result.delivered_at, null);
   assert.equal(result.error, null);
   assert.equal(f.notifications.length, 0);
-  assert.deepEqual(JSON.parse(f.files.get(configPath)).reminders, [result]);
+  assert.deepEqual(storedReminders(f), [result]);
   assert.deepEqual(f.ipcCalls[0].options, { targetRuntime: 'main' });
 });
 
@@ -295,7 +381,7 @@ test('reminders reject ambiguous, invalid, and past dates', async () => {
   }
   assert.deepEqual(plain(await f.tools.list_reminders()), []);
   assert.equal(f.notifications.length, 0);
-  assert.equal(f.writes.length, 0);
+  assert.equal(reminderEdits(f).length, 0);
 });
 
 /** Checks calendar validation accepts a real leap day but rejects a nonexistent one. */
@@ -307,10 +393,10 @@ test('reminder ISO validation respects leap years and explicit offsets', () => {
 
 /** Checks persisted claims precede notifications and repeated clock events cannot resend them. */
 test('due reminders are claimed durably, notified once, and marked delivered', async () => {
-  const f = fixture({ notify(message, title, files) {
+  const f = fixture({ notify(message, title) {
     assert.equal(message, '记得喝一杯水');
     assert.equal(title, '喝水');
-    assert.equal(JSON.parse(files.get(configPath)).reminders[0].status, 'delivering');
+    assert.equal(storedReminders(f)[0].status, 'delivering');
     return 'notification accepted';
   } });
   await f.tools.set_reminder(reminderParams());
@@ -322,14 +408,14 @@ test('due reminders are claimed durably, notified once, and marked delivered', a
   const [record] = plain(await f.tools.list_reminders());
   assert.equal(record.status, 'delivered');
   assert.equal(record.delivered_at, '2030-01-01T00:01:00.000Z');
-  assert.deepEqual(f.writes.map(db => db.reminders[0].status), ['pending', 'delivering', 'delivered']);
+  assert.deepEqual(reminderStatusHistory(f, record.id), ['pending', 'delivering', 'delivered']);
 });
 
 /** Checks plugin-owned records survive runtime replacement and startup processes overdue reminders. */
 test('pending reminders survive restart and are checked on application startup', async () => {
   const first = fixture();
   const reminder = plain(await first.tools.set_reminder(reminderParams()));
-  const next = fixture({ files: first.files });
+  const next = fixture({ storeState: first.storeState });
   next.setTime(startTime + 120000);
   await next.main.onOpen();
   assert.equal(next.notifications.length, 1);
@@ -343,7 +429,7 @@ test('cancel_reminder prevents delivery across runtime restarts', async () => {
   const f = fixture();
   const reminder = await f.tools.set_reminder(reminderParams());
   assert.equal((await f.tools.cancel_reminder({ id: reminder.id })).status, 'cancelled');
-  const next = fixture({ files: f.files });
+  const next = fixture({ storeState: f.storeState });
   next.setTime(startTime + 60000);
   await next.main.onClock();
   assert.equal(next.notifications.length, 0);
@@ -387,8 +473,7 @@ test('one failed reminder is reported while other due reminders are delivered no
 test('interrupted delivery is recorded as failed without resending', async () => {
   const first = fixture();
   const reminder = plain(await first.tools.set_reminder(reminderParams()));
-  first.files.set(configPath, JSON.stringify({ version: 1, reminders: [{ ...reminder, status: 'delivering' }] }));
-  const next = fixture({ files: first.files });
+  const next = fixture({ storeState: storeStateWith([{ ...reminder, status: 'delivering' }]) });
   next.setTime(startTime + 60000);
   await next.main.onOpen();
   const [record] = plain(await next.tools.list_reminders());
@@ -399,23 +484,21 @@ test('interrupted delivery is recorded as failed without resending', async () =>
 
 /** Checks corrupt records stop the owner rather than being replaced by an empty reminder list. */
 test('invalid stored reminders surface a storage-contract error', async () => {
-  const files = new Map([[configPath, JSON.stringify({ version: 1, reminders: [{ id: 'invalid' }] })]]);
-  const f = fixture({ files });
+  const f = fixture({ storeState: storeStateWith([{ id: 'invalid' }]) });
   await assert.rejects(f.tools.list_reminders(), /non-empty string/);
   await assert.rejects(f.main.onClock(), /non-empty string/);
   assert.equal(f.notifications.length, 0);
-  assert.equal(f.writes.length, 0);
+  assert.equal(reminderEdits(f).length, 0);
 });
 
 /** Checks failure to persist acceptance stops all delivery of the uncommitted in-memory record. */
 test('storage failure rejects scheduling and stops this owner without attempting notification', async () => {
-  const f = fixture();
-  f.denyWrites();
+  const f = fixture({ failReminderEdits: true });
   await assert.rejects(f.tools.set_reminder(reminderParams()), /disk write denied/);
   f.setTime(startTime + 60000);
   await assert.rejects(f.main.onClock(), /runtime has stopped delivery/);
   assert.equal(f.notifications.length, 0);
-  assert.equal(f.files.has(configPath), false);
+  assert.equal(storedReminders(f).length, 0);
 });
 
 /** Checks serialized concurrent creation cannot lose records and returned copies cannot mutate storage. */
@@ -430,5 +513,5 @@ test('concurrent reminder requests retain separate persistent records and return
   const stored = plain(await f.tools.list_reminders());
   assert.equal(stored.length, 2);
   assert.equal(stored[0].title, '喝水');
-  assert.equal(JSON.parse(f.files.get(configPath)).reminders.length, 2);
+  assert.equal(storedReminders(f).length, 2);
 });

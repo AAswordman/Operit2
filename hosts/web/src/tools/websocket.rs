@@ -58,7 +58,9 @@ impl WebSocketHost for WebWebSocketHost {
             }) as Box<dyn FnMut(Event)>);
             let message = Closure::wrap(Box::new(move |event: MessageEvent| {
                 let data = event.data();
-                if data.is_instance_of::<js_sys::ArrayBuffer>() {
+                if let Some(text) = data.as_string() {
+                    onMessage(text.into_bytes());
+                } else if data.is_instance_of::<js_sys::ArrayBuffer>() {
                     onMessage(js_sys::Uint8Array::new(&data).to_vec());
                 }
             }) as Box<dyn FnMut(MessageEvent)>);
@@ -109,6 +111,16 @@ impl WebSocketHost for WebWebSocketHost {
                 .socket
                 .send_with_u8_array(&message)
                 .map_err(|error| HostError::new(format!("WebSocket send failed: {error:?}")))
+        })
+    }
+
+    /// Sends one UTF-8 text frame through the browser networking Host.
+    #[allow(non_snake_case)]
+    fn sendWebSocketText(&self, streamId: &str, text: String) -> HostResult<()> {
+        WEB_SOCKETS.with(|sockets| {
+            let sockets = sockets.borrow();
+            let socket = sockets.get(streamId).ok_or_else(|| HostError::new(format!("WebSocket is not open: {streamId}")))?;
+            socket.socket.send_with_str(&text).map_err(|error| HostError::new(format!("WebSocket send failed: {error:?}")))
         })
     }
 

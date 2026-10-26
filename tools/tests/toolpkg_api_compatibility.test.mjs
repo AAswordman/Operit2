@@ -110,8 +110,8 @@ test('implementation errors and promise identity pass through unchanged', () => 
   assert.equal(context.calls, 2);
 });
 
-/** Verifies public registration aliases select the same production compatibility adapter. */
-test('legacy registrations use current payloads and retain 1.0.1 gates', () => {
+/** Verifies namespaced registrations retain the explicitly selected API contract. */
+test('namespaced registrations use current payloads and retain 1.0.1 gates', () => {
   for (const registrationOnly of ['true', 'false']) {
     for (const version of ['1.0.0', '1.0.1', '2.0.0']) {
       const context = runtime(version);
@@ -134,7 +134,7 @@ test('legacy registrations use current payloads and retain 1.0.1 gates', () => {
       assert.equal(context.__operitToolPkgRegistrationCapture.chatMessageHooks.length, 1);
       assert.equal(context.__operitToolPkgRegistrationCapture.uiRoutes.length, 1);
       const registration = `
-        registerToolPkgChatRuntimeHook({ id: 'runtime', function: onRuntime });
+        ToolPkg.registerChatRuntimeHook({ id: 'runtime', function: onRuntime });
         ToolPkg.registerChatMessageMenuItem({
           id: 'menu', function: onMenu, dialog: { screen: 'ui/dialog.js' }
         });
@@ -153,6 +153,36 @@ test('legacy registrations use current payloads and retain 1.0.1 gates', () => {
       assert.equal(context.__operitToolPkgApi.currentVersion(), version);
     }
   }
+});
+
+/** Keeps registration operations exclusively on ToolPkg in both execution modes. */
+test('registration bridge exposes no standalone global registration aliases', () => {
+  for (const registrationOnly of ['true', 'false']) {
+    const context = runtime('2.0.0');
+    vm.runInContext(embedded('core/crates/plugin/sdk/src/toolpkg/ToolPkgRegistrationBridge.rs')
+      .replace('__OPERIT_TOOLPKG_REGISTRATION_ONLY__', registrationOnly), context);
+    const methods = Object.keys(context.ToolPkg).filter(name => /^register[A-Z]/.test(name));
+    assert.ok(methods.length >= 28);
+    for (const method of methods) {
+      assert.equal(typeof context.ToolPkg[method], 'function', method);
+      for (const alias of [method, 'registerToolPkg' + method.slice('register'.length)]) {
+        assert.equal(Object.hasOwn(context, alias), false, alias);
+        assert.equal(vm.runInContext('typeof ' + alias, context), 'undefined', alias);
+      }
+    }
+  }
+});
+
+/** Rejects duplicate global declarations in Rust-generated author-facing types. */
+test('generated ToolPkg declarations expose only namespaced registration operations', () => {
+  const source = readFileSync(new URL('plugins/types/toolpkg.d.ts', root), 'utf8');
+  assert.doesNotMatch(source, /function registerToolPkg[A-Z]/);
+  assert.doesNotMatch(source, /Requires the host to implement every global host operation/);
+  assert.match(source, /registerUiRoute\(definition: UiRouteRegistration\): void;/);
+  assert.doesNotMatch(source, /\b(?:GlobalHost|GlobalBinding)\b/);
+  const globalBlocks = [...source.matchAll(/declare global \{([^}]*)\}/g)];
+  assert.equal(globalBlocks.length, 1);
+  assert.equal(globalBlocks[0][1].trim(), 'export import ToolPkg = ToolPkgRuntime;');
 });
 
 /** Checks that the canonical generated Chat.call bindings explicitly cover both families. */

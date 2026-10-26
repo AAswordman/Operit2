@@ -74,3 +74,6 @@ pub mod UnsafeModelSsl;
 #[cfg(test)]
 #[path = "../../../../tests/ProviderMediaTestSupport.rs"]
 mod ProviderMediaTestSupport;
+
+#[path = "LocalModelProvider.rs"]
+pub mod LocalModelProvider;

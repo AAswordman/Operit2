@@ -20,7 +20,8 @@ use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
+    empty_revisable_event_channel, with_event_channel_and_failure, RevisableTextStream,
+    RevisableTextStreamLike, TerminalFailureState,
 };
 use operit_util::stream::Stream::FnStream;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
@@ -405,12 +406,18 @@ impl ClaudeProvider {
 
     /// Builds Claude content blocks from text and registered image links.
     fn build_content_array(&self, text: &str) -> Value {
-        if !MediaLinkParser::has_image_links(text) {
-            return json!([{"type": "text", "text": text}]);
+        let text_after_media_removal = if MediaLinkParser::has_media_links(text) {
+            MediaLinkParser::remove_media_links(text).trim().to_string()
+        } else {
+            text.to_string()
+        };
+
+        if !MediaLinkParser::has_image_links(&text_after_media_removal) {
+            return json!([{"type": "text", "text": text_after_media_removal}]);
         }
 
-        let image_links = MediaLinkParser::extract_image_links(text);
-        let text_without_links = MediaLinkParser::remove_image_links(text).trim().to_string();
+        let image_links = MediaLinkParser::extract_image_links(&text_after_media_removal);
+        let text_without_links = MediaLinkParser::remove_image_links(&text_after_media_removal).trim().to_string();
         let mut content_blocks = Vec::new();
         for link in image_links {
             content_blocks.push(json!({
@@ -779,6 +786,7 @@ impl AIService for ClaudeProvider {
         self.set_cancelled(true);
     }
 
+    /// Sends a Claude request while preserving producer failures through the cold wrapper.
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
@@ -788,6 +796,8 @@ impl AIService for ClaudeProvider {
         if request.stream {
             let event_channel = empty_revisable_event_channel();
             let streamEventChannel = event_channel.clone();
+            let terminalFailure = TerminalFailureState::new();
+            let producerTerminalFailure = terminalFailure.clone();
             let mut ownedProvider = Some(self.clone());
             let mut ownedRequest = Some(request);
             let coldStream = FnStream::new(move |emit| {
@@ -798,17 +808,31 @@ impl AIService for ClaudeProvider {
                     .take()
                     .expect("ClaudeProvider stream must only be collected once");
                 let eventChannel = streamEventChannel.clone();
+                let producerTerminalFailure = producerTerminalFailure.clone();
                 Box::pin(async move {
-                    if let Ok(mut responseStream) = provider.send_streaming_message(request).await {
-                        responseStream.collect(emit).await;
+                    match provider.send_streaming_message(request).await {
+                        Ok(mut responseStream) => {
+                            responseStream.collect(emit).await;
+                            if let Some(error) = responseStream.terminal_failure() {
+                                producerTerminalFailure.set(error);
+                            }
+                        }
+                        Err(AiServiceError::RequestCancelled) => {}
+                        Err(error) => producerTerminalFailure.set(error.to_string()),
                     }
                     eventChannel.close();
                 })
             });
-            return Ok(Box::new(with_event_channel(coldStream, event_channel)));
+            return Ok(Box::new(with_event_channel_and_failure(
+                coldStream,
+                event_channel,
+                terminalFailure,
+            )));
         }
         let event_channel = empty_revisable_event_channel();
         let streamEventChannel = event_channel.clone();
+        let terminalFailure = TerminalFailureState::new();
+        let producerTerminalFailure = terminalFailure.clone();
         let mut ownedProvider = Some(self.clone());
         let mut ownedRequest = Some(request);
         let coldStream = FnStream::new(move |emit| {
@@ -819,14 +843,26 @@ impl AIService for ClaudeProvider {
                 .take()
                 .expect("ClaudeProvider non-stream request must only be collected once");
             let eventChannel = streamEventChannel.clone();
+            let producerTerminalFailure = producerTerminalFailure.clone();
             Box::pin(async move {
-                if let Ok(mut responseStream) = provider.send_non_streaming_message(request).await {
-                    responseStream.collect(emit).await;
+                match provider.send_non_streaming_message(request).await {
+                    Ok(mut responseStream) => {
+                        responseStream.collect(emit).await;
+                        if let Some(error) = responseStream.terminal_failure() {
+                            producerTerminalFailure.set(error);
+                        }
+                    }
+                    Err(AiServiceError::RequestCancelled) => {}
+                    Err(error) => producerTerminalFailure.set(error.to_string()),
                 }
                 eventChannel.close();
             })
         });
-        Ok(Box::new(with_event_channel(coldStream, event_channel)))
+        Ok(Box::new(with_event_channel_and_failure(
+            coldStream,
+            event_channel,
+            terminalFailure,
+        )))
     }
 
     async fn calculate_input_tokens(
@@ -897,28 +933,27 @@ impl ClaudeProvider {
                 retryCount = newRetryCount;
                 continue;
             }
-            match self.process_streaming_response(response).await {
+            let error = match self.process_streaming_response(response).await {
                 Ok(responseStream) => return Ok(responseStream),
                 Err(AiServiceError::RequestCancelled) => {
                     return Err(AiServiceError::RequestCancelled);
                 }
-                Err(error) => {
-                    let errorText = retry_error_text(&error);
-                    if !request.enable_retry {
-                        return Err(error);
-                    }
-                    let newRetryCount = retryCount + 1;
-                    if newRetryCount > maxRetries {
-                        return Err(error);
-                    }
-                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                    }
-                    self.delayRetryOrCancel(newRetryCount).await?;
-                    retryCount = newRetryCount;
-                    continue;
-                }
+                Err(error) => error,
+            };
+            let errorText = retry_error_text(&error);
+            if !request.enable_retry {
+                return Err(error);
             }
+            let newRetryCount = retryCount + 1;
+            if newRetryCount > maxRetries {
+                return Err(error);
+            }
+            if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                on_non_fatal_error(retry_message(&errorText, newRetryCount));
+            }
+            self.delayRetryOrCancel(newRetryCount).await?;
+            retryCount = newRetryCount;
+            continue;
         }
     }
 

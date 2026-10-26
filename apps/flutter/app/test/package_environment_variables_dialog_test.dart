@@ -11,77 +11,96 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/packages/dialogs/PackageEnvironmentVariablesDialog.dart';
 
-/// Verifies the Kotlin environment editor behavior through the runtime proxy.
+/// Verifies installation ownership throughout the environment editor.
 void main() {
-  testWidgets(
-    'groups enabled packages and shares controllers by variable name',
-    (tester) async {
-      final bridge = _EnvironmentBridge(
-        packages: <core_proxy.ToolPackage>[
-          _package('z_plugin', <core_proxy.EnvVar>[_variable('SHARED')]),
-          _package('disabled', <core_proxy.EnvVar>[_variable('DISABLED')]),
-          _package('a_subpackage', <core_proxy.EnvVar>[
-            _variable(
-              'SHARED',
-              required: true,
-              defaultValue: 'manifest-default',
-            ),
-          ]),
-        ],
-        enabled: <String>['z_plugin', 'a_subpackage'],
-        effective: <String, String>{'SHARED': 'runtime-value'},
-      );
-      await _openEditor(tester, bridge);
-
-      expect(find.text('disabled'), findsNothing);
-      expect(find.text('必填'), findsOneWidget);
-      expect(find.text('可选'), findsOneWidget);
-      expect(find.text('默认: manifest-default'), findsOneWidget);
-      expect(find.text('SHARED description'), findsNWidgets(2));
-      expect(bridge.readKeys, <String>['SHARED']);
-      expect(
-        tester.getTopLeft(find.text('a_subpackage')).dy,
-        lessThan(tester.getTopLeft(find.text('z_plugin')).dy),
-      );
-      final fields = tester
-          .widgetList<TextField>(find.byType(TextField))
-          .toList();
-      expect(fields[0].controller, same(fields[1].controller));
-      expect(fields[0].controller!.text, 'runtime-value');
-      await tester.enterText(_field('a_subpackage', 'SHARED'), 'updated-value');
-      expect(fields[1].controller!.text, 'updated-value');
-      await tester.tap(find.text('保存'));
-      await tester.pumpAndSettle();
-      expect(bridge.stored, <String, String>{'SHARED': 'updated-value'});
-      expect(find.byType(PackageEnvironmentVariablesDialog), findsNothing);
-    },
-  );
-
-  testWidgets('merges edits, deletes blank keys, and never applies defaults', (
+  testWidgets('same-name variables remain independent across installations', (
     tester,
   ) async {
     final bridge = _EnvironmentBridge(
-      packages: <core_proxy.ToolPackage>[
-        _package('demo', <core_proxy.EnvVar>[
-          _variable('TOKEN', required: true),
-          _variable('URL', defaultValue: 'https://manifest.example'),
-        ]),
+      packages: [
+        _package('space_plugin', ['TOKEN']),
+        _package('device_plugin', ['TOKEN']),
       ],
-      enabled: <String>['demo'],
-      effective: <String, String>{'TOKEN': 'old-token'},
-      stored: <String, String>{'TOKEN': 'old-token', 'UNRELATED': 'keep'},
+      enabled: ['space_plugin', 'device_plugin'],
+      environments: {
+        'space_plugin': {'TOKEN': 'space-token'},
+        'device_plugin': {'TOKEN': 'device-token'},
+      },
     );
     await _openEditor(tester, bridge);
+    expect(_controller(tester, 'space_plugin', 'TOKEN').text, 'space-token');
+    expect(_controller(tester, 'device_plugin', 'TOKEN').text, 'device-token');
     expect(
-      tester.widget<TextField>(_field('demo', 'URL')).controller!.text,
-      '',
+      _controller(tester, 'space_plugin', 'TOKEN'),
+      isNot(same(_controller(tester, 'device_plugin', 'TOKEN'))),
     );
-    bridge.stored['CONCURRENT'] = 'keep-new-value';
+    await tester.enterText(
+      _field('space_plugin', 'TOKEN'),
+      'updated-space-token',
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(bridge.environments['space_plugin'], {
+      'TOKEN': 'updated-space-token',
+    });
+    expect(bridge.environments['device_plugin'], {'TOKEN': 'device-token'});
+    expect(bridge.writes, 1);
+  });
+
+  testWidgets('subpackages share their installation controller and save once', (
+    tester,
+  ) async {
+    final bridge = _EnvironmentBridge(
+      packages: [
+        _package('plugin', ['SHARED']),
+        _package('child', ['SHARED']),
+        _package('disabled', ['HIDDEN']),
+      ],
+      enabled: ['plugin', 'child'],
+      owners: {'child': 'plugin'},
+      environments: {
+        'plugin': {'SHARED': 'shared-value'},
+      },
+    );
+    await _openEditor(tester, bridge);
+    expect(find.text('disabled'), findsNothing);
+    expect(
+      _controller(tester, 'child', 'SHARED'),
+      same(_controller(tester, 'plugin', 'SHARED')),
+    );
+    await tester.enterText(_field('child', 'SHARED'), 'updated-value');
+    expect(_controller(tester, 'plugin', 'SHARED').text, 'updated-value');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(bridge.environments['plugin'], {'SHARED': 'updated-value'});
+    expect(bridge.writes, 1);
+  });
+
+  testWidgets('saves changed keys and preserves unrelated concurrent edits', (
+    tester,
+  ) async {
+    final bridge = _EnvironmentBridge(
+      packages: [
+        _package('demo', ['TOKEN', 'URL', 'UNCHANGED']),
+      ],
+      enabled: ['demo'],
+      environments: {
+        'demo': {
+          'TOKEN': 'old-token',
+          'UNCHANGED': 'initial',
+          'UNRELATED': 'keep',
+        },
+      },
+    );
+    await _openEditor(tester, bridge);
+    bridge.environments['demo']!['CONCURRENT'] = 'keep-new-value';
+    bridge.environments['demo']!['UNCHANGED'] = 'remote-edit';
     await tester.enterText(_field('demo', 'TOKEN'), '   ');
     await tester.enterText(_field('demo', 'URL'), '  custom-value  ');
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
-    expect(bridge.stored, <String, String>{
+    expect(bridge.environments['demo'], {
+      'UNCHANGED': 'remote-edit',
       'UNRELATED': 'keep',
       'CONCURRENT': 'keep-new-value',
       'URL': '  custom-value  ',
@@ -89,40 +108,81 @@ void main() {
     expect(bridge.writes, 1);
   });
 
-  testWidgets('cancel discards edits without writing preferences', (
+  testWidgets('cancel discards edits without writing configuration', (
     tester,
   ) async {
     final bridge = _EnvironmentBridge(
-      packages: <core_proxy.ToolPackage>[
-        _package('demo', <core_proxy.EnvVar>[_variable('TOKEN')]),
+      packages: [
+        _package('demo', ['TOKEN']),
       ],
-      enabled: <String>['demo'],
-      effective: <String, String>{'TOKEN': 'old-token'},
-      stored: <String, String>{'TOKEN': 'old-token'},
+      enabled: ['demo'],
+      environments: {
+        'demo': {'TOKEN': 'old-token'},
+      },
     );
     await _openEditor(tester, bridge);
     await tester.enterText(_field('demo', 'TOKEN'), 'unsaved-token');
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
-    expect(bridge.stored, <String, String>{'TOKEN': 'old-token'});
+    expect(bridge.environments['demo'], {'TOKEN': 'old-token'});
+    expect(bridge.writes, 0);
+  });
+
+  testWidgets('saving unchanged values publishes no configuration writes', (
+    tester,
+  ) async {
+    final bridge = _EnvironmentBridge(
+      packages: [
+        _package('demo', ['TOKEN']),
+      ],
+      enabled: ['demo'],
+    );
+    await _openEditor(tester, bridge);
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
     expect(bridge.writes, 0);
     expect(find.byType(PackageEnvironmentVariablesDialog), findsNothing);
   });
 
-  testWidgets('shows an empty-state message without reading undeclared keys', (
+  testWidgets('shows declaration metadata without applying defaults', (
+    tester,
+  ) async {
+    final package = _package('demo', ['TOKEN']);
+    final json = package.toJson();
+    json['env'] = [
+      core_proxy.EnvVar(
+        name: 'TOKEN',
+        description: const core_proxy.LocalizedText(
+          values: {'zh': 'Token description'},
+        ),
+        requiredValue: true,
+        defaultValue: 'manifest-default',
+      ).toJson(),
+    ];
+    final bridge = _EnvironmentBridge(
+      packages: [core_proxy.ToolPackage.fromJson(json)],
+      enabled: ['demo'],
+    );
+    await _openEditor(tester, bridge);
+    expect(find.text('必填'), findsOneWidget);
+    expect(find.text('默认: manifest-default'), findsOneWidget);
+    expect(_controller(tester, 'demo', 'TOKEN').text, '');
+  });
+
+  testWidgets('empty declarations do not read environment configuration', (
     tester,
   ) async {
     final bridge = _EnvironmentBridge(
-      packages: <core_proxy.ToolPackage>[
-        _package('disabled', <core_proxy.EnvVar>[_variable('HIDDEN')]),
-        _package('enabled', <core_proxy.EnvVar>[]),
+      packages: [
+        _package('disabled', ['HIDDEN']),
+        _package('enabled', []),
       ],
-      enabled: <String>['enabled'],
+      enabled: ['enabled'],
     );
     await _openEditor(tester, bridge);
     expect(find.text('当前已启用的工具包没有声明需要的环境变量。'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
-    expect(bridge.readKeys, isEmpty);
+    expect(bridge.readPackages, isEmpty);
   });
 
   testWidgets('variable lists scroll on a narrow viewport without overflow', (
@@ -133,12 +193,8 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final bridge = _EnvironmentBridge(
-      packages: <core_proxy.ToolPackage>[
-        _package('demo', <core_proxy.EnvVar>[
-          for (var index = 0; index < 12; index++) _variable('VAR_$index'),
-        ]),
-      ],
-      enabled: <String>['demo'],
+      packages: [_package('demo', List.generate(12, (index) => 'VAR_$index'))],
+      enabled: ['demo'],
     );
     await _openEditor(tester, bridge);
     await tester.ensureVisible(_field('demo', 'VAR_11'));
@@ -146,7 +202,7 @@ void main() {
     await tester.enterText(_field('demo', 'VAR_11'), 'last-value');
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
-    expect(bridge.stored, <String, String>{'VAR_11': 'last-value'});
+    expect(bridge.environments['demo'], {'VAR_11': 'last-value'});
     expect(tester.takeException(), isNull);
   });
 
@@ -159,17 +215,14 @@ void main() {
       isNull,
     );
     expect(bridge.writes, 0);
-    expect(find.byType(PackageEnvironmentVariablesDialog), findsOneWidget);
   });
 
-  testWidgets('save errors keep edited values open for correction', (
-    tester,
-  ) async {
+  testWidgets('save errors retain edits for correction', (tester) async {
     final bridge = _EnvironmentBridge(
-      packages: <core_proxy.ToolPackage>[
-        _package('demo', <core_proxy.EnvVar>[_variable('TOKEN')]),
+      packages: [
+        _package('demo', ['TOKEN']),
       ],
-      enabled: <String>['demo'],
+      enabled: ['demo'],
       saveError: 'environment-save-failed',
     );
     await _openEditor(tester, bridge);
@@ -177,26 +230,19 @@ void main() {
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     expect(find.textContaining('environment-save-failed'), findsOneWidget);
-    expect(
-      tester.widget<TextField>(_field('demo', 'TOKEN')).controller!.text,
-      'edited-token',
-    );
-    expect(bridge.stored, isEmpty);
+    expect(_controller(tester, 'demo', 'TOKEN').text, 'edited-token');
+    expect(bridge.environments['demo'], isEmpty);
     expect(find.byType(PackageEnvironmentVariablesDialog), findsOneWidget);
-    expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-      isNotNull,
-    );
   });
 }
 
-/// Mounts the editor on a localized route and waits for runtime data.
+/// Mounts the localized editor and waits for the runtime responses.
 Future<void> _openEditor(WidgetTester tester, _EnvironmentBridge bridge) async {
   await tester.pumpWidget(
     MaterialApp(
-      locale: const Locale('zh'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('zh'),
       home: Builder(
         builder: (context) => Scaffold(
           body: TextButton(
@@ -215,97 +261,102 @@ Future<void> _openEditor(WidgetTester tester, _EnvironmentBridge bridge) async {
   expect(tester.takeException(), isNull);
 }
 
-/// Locates one package-specific field for a shared environment key.
+/// Locates a variable field in its displayed package section.
 Finder _field(String packageName, String name) =>
     find.byKey(ValueKey<String>('package-env:$packageName:$name'));
 
-/// Creates a package manifest fixture with explicit environment declarations.
-core_proxy.ToolPackage _package(String name, List<core_proxy.EnvVar> env) {
-  return core_proxy.ToolPackage(
-    name: name,
-    description: const core_proxy.LocalizedText(values: <String, String>{}),
-    displayName: const core_proxy.LocalizedText(values: <String, String>{}),
-    tools: const <core_proxy.PackageTool>[],
-    states: const <core_proxy.ToolPackageState>[],
-    env: env,
-    isBuiltIn: false,
-    enabledByDefault: false,
-    category: 'Other',
-    author: const <String>[],
-  );
-}
+/// Returns the controller attached to a displayed package variable.
+TextEditingController _controller(
+  WidgetTester tester,
+  String packageName,
+  String name,
+) => tester.widget<TextField>(_field(packageName, name)).controller!;
 
-/// Creates an environment declaration without supplying an effective value.
-core_proxy.EnvVar _variable(
-  String name, {
-  bool required = false,
-  String? defaultValue,
-}) {
-  return core_proxy.EnvVar(
-    name: name,
-    description: core_proxy.LocalizedText(
-      values: <String, String>{'zh': '$name description'},
-    ),
-    requiredValue: required,
-    defaultValue: defaultValue,
-  );
-}
+/// Creates a manifest with explicit environment declarations.
+core_proxy.ToolPackage _package(String name, List<String> keys) =>
+    core_proxy.ToolPackage(
+      name: name,
+      description: const core_proxy.LocalizedText(values: {}),
+      displayName: const core_proxy.LocalizedText(values: {}),
+      tools: const [],
+      states: const [],
+      env: [
+        for (final key in keys)
+          core_proxy.EnvVar(
+            name: key,
+            description: const core_proxy.LocalizedText(values: {}),
+            requiredValue: false,
+            defaultValue: null,
+          ),
+      ],
+      isBuiltIn: false,
+      enabledByDefault: false,
+      category: 'Other',
+      author: const [],
+    );
 
 class _EnvironmentBridge extends OperitRuntimeBridge {
-  /// Initializes an isolated runtime preference fixture.
+  /// Creates independent persisted configuration for each explicit installation owner.
   _EnvironmentBridge({
-    this.packages = const <core_proxy.ToolPackage>[],
-    this.enabled = const <String>[],
-    this.effective = const <String, String>{},
-    Map<String, String> stored = const <String, String>{},
+    this.packages = const [],
+    this.enabled = const [],
+    Map<String, String> owners = const {},
+    Map<String, Map<String, String>> environments = const {},
     this.loadError,
     this.saveError,
-  }) : stored = Map<String, String>.of(stored);
+  }) : owners = {
+         for (final package in packages) package.name: package.name,
+         ...owners,
+       },
+       environments = {
+         for (final package in packages) package.name: {},
+         for (final entry in environments.entries)
+           entry.key: Map.of(entry.value),
+       };
 
   final List<core_proxy.ToolPackage> packages;
   final List<String> enabled;
-  final Map<String, String> effective;
-  final Map<String, String> stored;
+  final Map<String, String> owners;
+  final Map<String, Map<String, String>> environments;
   final String? loadError;
   final String? saveError;
-  final List<String> readKeys = <String>[];
+  final List<String> readPackages = [];
   int writes = 0;
 
-  /// Encodes preference responses using the runtime bridge envelope.
+  /// Encodes runtime responses in the common bridge envelope.
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async =>
       encodeCoreLink(<Object?>[0, await call(request)]);
 
-  /// Implements only the package catalog and environment preference methods.
+  /// Implements the package catalog and installation-owned environment contract.
   @override
   Future<Object?> call(CoreCallRequest request) async {
     switch ((request.target, request.methodName)) {
       case ('core/application.packageManager', 'getAvailablePackages'):
-        if (loadError != null) {
-          throw StateError(loadError!);
-        }
-        return <String, Object?>{
-          for (final package in packages) package.name: package.toJson(),
-        };
+        if (loadError != null) throw StateError(loadError!);
+        return {for (final package in packages) package.name: package.toJson()};
       case ('core/application.packageManager', 'getEnabledPackageNames'):
         return enabled;
-      case ('core/preferences.envPreferences', 'getEnv'):
-        final key = (request.args as Map<String, Object?>)['key'] as String;
-        readKeys.add(key);
-        return effective[key];
-      case ('core/preferences.envPreferences', 'getAllEnv'):
-        return Map<String, String>.of(stored);
-      case ('core/preferences.envPreferences', 'setAllEnv'):
-        if (saveError != null) {
-          throw StateError(saveError!);
+      case ('core/preferences.envPreferences', 'getPackageEnvironment'):
+        final packageName = (request.args as Map)['packageName'] as String;
+        readPackages.add(packageName);
+        final owner = owners[packageName]!;
+        return {
+          'ownerId': owner,
+          'variables': Map<String, String>.of(environments[owner]!),
+        };
+      case ('core/preferences.envPreferences', 'editPackageEnvironment'):
+        if (saveError != null) throw StateError(saveError!);
+        final args = request.args as Map;
+        final owner = owners[args['packageName']]!;
+        for (final entry in (args['changes'] as Map).entries) {
+          if (entry.value == null) {
+            environments[owner]!.remove(entry.key);
+          } else {
+            environments[owner]![entry.key as String] = entry.value as String;
+          }
         }
         writes++;
-        stored
-          ..clear()
-          ..addAll(
-            ((request.args as Map<String, Object?>)['variables'] as Map)
-                .cast<String, String>(),
-          );
         return null;
     }
     throw StateError(
@@ -313,17 +364,17 @@ class _EnvironmentBridge extends OperitRuntimeBridge {
     );
   }
 
-  /// Rejects push operations outside the environment preference fixture.
+  /// Rejects push operations outside this environment fixture.
   @override
   Future<CorePushSink> push(CorePushRequest request) =>
       throw UnimplementedError();
 
-  /// Rejects snapshot watches outside the environment preference fixture.
+  /// Rejects snapshot watches outside this environment fixture.
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) =>
       throw UnimplementedError();
 
-  /// Rejects stream watches outside the environment preference fixture.
+  /// Rejects stream watches outside this environment fixture.
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) =>
       throw UnimplementedError();

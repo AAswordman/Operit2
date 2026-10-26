@@ -25,7 +25,7 @@ test("plugin production source does not depend on withdrawn business globals DTO
 test("plugin internal contracts do not erase known SDK and domain result types", () => {
   const hooks = readFileSync(new URL("../src/group-execution/hooks.ts", import.meta.url), "utf8");
   const lifecycle = readFileSync(new URL("../src/chat-lifecycle.ts", import.meta.url), "utf8");
-  const service = readFileSync(new URL("../src/service.ts", import.meta.url), "utf8");
+  const service = readFileSync(new URL("../src/service-runtime.ts", import.meta.url), "utf8");
   const contracts = readFileSync(new URL("../src/group-execution/contracts.ts", import.meta.url), "utf8");
   assert.match(hooks, /event: ToolPkgTypes\.ChatInputHookEvent/);
   assert.doesNotMatch(hooks, /event\.eventPayload\s+as\s+unknown/);

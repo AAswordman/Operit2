@@ -23,8 +23,11 @@ export interface MemoryChat {
   isCurrent: boolean; inputTokens: number; outputTokens: number;
 }
 
+/** Publishes the listing contract: surviving bound chats plus bindings whose Core conversation disappeared. */
+export interface MemoryChatListing { chats: MemoryChat[]; missingChatIds: string[] }
+
 /** Publishes the complete MemoryExtractionResult contract in the standalone dependency client. */
-export interface MemoryExtractionResult { ownerKey: string; created: number; updated: number; merged: number; links: number; profileUpdated: boolean }
+export interface MemoryExtractionResult { ownerKey: string; created: number; updated: number; merged: number; links: number; profileUpdated: boolean; skipped: number }
 
 /** Publishes the complete MemoryRebuild contract in the standalone dependency client. */
 export interface MemoryRebuild {
@@ -50,6 +53,8 @@ export interface MemoryRebuildProgress {
 
 /** Publishes the complete MemorySearchOptions contract in the standalone dependency client. */
 export interface MemorySearchOptions {
+  limit?: number;
+  excludeIds?: string[];
   ownerKey: string;
   query: string;
   folderPath: string | null;
@@ -65,7 +70,6 @@ export interface ChatConfigurationRequest {
   purpose: "display" | "execution";
   chatId: string | null;
   chatExtension: JsonObject | null;
-  messageExtension: JsonObject | null;
   participantId: string | null;
   promptFunctionType: "CHAT" | "VOICE";
   defaultModelBinding: ChatModelBinding;
@@ -91,9 +95,10 @@ export interface ChatParticipantProfile {
 /** Returns one selected execution profile together with its available participants. */
 export interface ChatConfigurationExecutionResult {
   contextKey: string;
+  historyPolicy: { isolateParticipants: boolean; labelUserMessages: boolean };
   profile: ChatParticipantProfile;
   participants: ChatParticipantProfile[];
-  messageExtension: JsonObject;
+  executionData: JsonObject;
 }
 
 /** Describes presentation identity without resolving a model, speech voice or memory owner. */
@@ -101,7 +106,7 @@ export interface ChatDisplayIdentity { title: string; avatarUri: string | null }
 /** Preserves the plugin-declared presentation order and real participant identity. */
 export interface ChatDisplayParticipant { id: string; name: string; avatarUri: string | null }
 /** Supplies an explicitly authored initial message and its complete immutable participant snapshot. */
-export interface ChatInitialMessage { content: string; displayName: string; messageExtension: JsonObject }
+export interface ChatInitialMessage { content: string; displayName: string; participantId: string }
 /** Returns presentation data only; an empty initial-message array does not select an executor. */
 export interface ChatConfigurationDisplayResult {
   contextKey: string | null;
@@ -116,11 +121,11 @@ export type ChatConfigurationResult = ChatConfigurationDisplayResult | ChatConfi
 export interface CharacterRecord {
   id: string; name: string; description: string; characterSetting: string; openingStatement: string;
   otherContentChat: string; otherContentVoice: string; avatarUri: string | null; attachedTagIds: string[];
-  advancedCustomPrompt: string; marks: string; chatModelBindingMode: string; chatModelId: string | null;
+  advancedCustomPrompt: string; marks: string; chatModelBindingMode: string; chatModelId: string | null; chatProviderId: string | null;
   ttsConfigId: string | null; themeConfigId: string | null; memoryBindingMode: string; sharedMemoryId: string | null;
   sharedMemoryMounts: { sharedMemoryId: string; readable: boolean; writable: boolean }[];
   toolAccessConfig: { enabled: boolean; allowedBuiltinTools: string[]; allowedPackages: string[]; allowedSkills: string[]; allowedMcpServers: string[] };
-  isDefault: boolean; createdAt: number; updatedAt: number;
+  createdAt: number; updatedAt: number;
 }
 /** Defines the complete stored group record. */
 export interface GroupRecord { id: string; name: string; description: string; themeConfigId: string | null; members: { characterCardId: string; orderIndex: number }[]; createdAt: number; updatedAt: number }
@@ -216,8 +221,10 @@ export interface MemoryQueryMatch { ownerKey: string; title: string; content: st
 export interface MemoryQueryResult { memories: MemoryQueryMatch[]; snapshotId: string | null; snapshotCreated: boolean; excludedBySnapshotCount: number }
 /** Maps every published domain method to its exact input and output contract. */
 export interface DomainOperations {
-  "memory.searchWithOptions": { input: MemorySearchOptions; output: { ownerKey: string; items: MemoryRecord[] } };
-  "memory.chat.list": { input: { ownerKey: string }; output: MemoryChat[] };
+  "memory.searchWithOptions": { input: MemorySearchOptions; output: { ownerKey: string; items: MemoryRecord[]; documents: ({ memoryId: string } & DomainOperations["memory.chunks"]["output"])[]; excludedBySnapshotCount: number } };
+  "memory.chunks": { input: OwnerParams & { memoryId: string; query: string; count: number }; output: { total: number; chunks: { id: string; memoryUuid: string; chunkIndex: number; content: string }[] } };
+  "memory.chat.list": { input: { ownerKey: string }; output: MemoryChatListing };
+  "memory.chat.pruneMissing": { input: { ownerKey: string }; output: { removedChatIds: string[]; removedCandidateIds: string[] } };
   "memory.chat.update": { input: { ownerKey: string; chatId: string }; output: MemoryExtractionResult };
   "memory.categorize": { input: { ownerKey: string }; output: number };
   "memory.rebuild.start": { input: { ownerKey: string; rebuild: MemoryRebuild }; output: MemoryRebuildProgress };
@@ -225,7 +232,10 @@ export interface DomainOperations {
   "memory.rebuild.cancel": { input: { ownerKey: string }; output: MemoryRebuildProgress };
   "memory.embeddings.rebuild": { input: { ownerKey: string }; output: number };
   "memory.candidate.enqueue": { input: { chatId: string; timestamp: number; variantIndex: number; sourceType: "reply_finalized_auto" | "selected_user_message"; ownerKey: string | null }; output: { owners: string[]; candidateIds: string[] } };
+  "memory.candidates.retryFailed": { input: { ownerKey: string }; output: { retried: number } };
+  "memory.candidates.clearFailed": { input: { ownerKey: string }; output: { cleared: number } };
   "chat.configuration.resolve": { input: ChatConfigurationRequest; output: ChatConfigurationResult };
+  "chat.configuration.binding.find": { input: { chatId: string }; output: ChatBindingRecord | null };
   "chat.configuration.binding.read": { input: { chatId: string }; output: ChatBindingRecord };
   "chat.configuration.binding.write": { input: ChatBindingRecord; output: ChatBindingRecord };
   "chat.configuration.binding.delete": { input: { chatId: string }; output: { chatId: string; deleted: boolean } };
@@ -237,7 +247,6 @@ export interface DomainOperations {
   "character.delete": { input: IdParams; output: { id: string; deleted: boolean } };
   "character.setActive": { input: IdParams; output: ActivationResult };
   "character.combine": { input: { id: string; promptFunctionType?: "CHAT" | "VOICE"; additionalTagIds?: string[] }; output: { id: string; promptFunctionType: "CHAT" | "VOICE"; additionalTagIds: string[]; prompt: string } };
-  "character.resetDefault": { input: EmptyParams; output: { defaultCharacterReset: boolean } };
   "character.export": { input: { id: string; format: CharacterFormat }; output: { id: string; format: CharacterFormat; content: string } };
   "character.import": { input: { format: CharacterFormat; content: string }; output: CharacterRecord };
   "character.exportBackup": { input: EmptyParams; output: { content: string } };
@@ -337,8 +346,6 @@ export const characterCards = {
     setActive: (payload: IdParams): Promise<ActivationResult> => call("character.setActive", payload),
     /** Combines the character prompt and selected tags. */
     combine: (payload: DomainInput<"character.combine">): Promise<DomainOutput<"character.combine">> => call("character.combine", payload),
-    /** Resets the built-in character. */
-    resetDefault: (): Promise<DomainOutput<"character.resetDefault">> => call("character.resetDefault", {}),
     /** Exports an explicitly selected character format. */
     export: (payload: DomainInput<"character.export">): Promise<DomainOutput<"character.export">> => call("character.export", payload),
     /** Imports an explicitly selected character format. */
@@ -402,8 +409,10 @@ export const characterCards = {
     /** Queries participant-bound memories using provider-owned snapshots and document matching. */
     query: (payload: MemoryQueryRequest): Promise<MemoryQueryResult> => ToolPkg.callDependency<MemoryQueryRequest, MemoryQueryResult>("com.operit.character_cards", "memory.query", payload),
     chats: {
-      /** Lists actual generic chat summaries selected by persisted plugin bindings. */
-      list: (payload: OwnerParams): Promise<MemoryChat[]> => call("memory.chat.list", payload),
+      /** Lists actual generic chat summaries selected by persisted plugin bindings, including missing-binding ids. */
+      list: (payload: OwnerParams): Promise<MemoryChatListing> => call("memory.chat.list", payload),
+      /** Deletes bindings whose Core conversation no longer exists. */
+      pruneMissing: (payload: OwnerParams): Promise<{ removedChatIds: string[]; removedCandidateIds: string[] }> => call("memory.chat.pruneMissing", payload),
       /** Applies genuine functional MEMORY extraction to the selected real chat. */
       update: (payload: DomainInput<"memory.chat.update">): Promise<MemoryExtractionResult> => call("memory.chat.update", payload),
     },
@@ -424,6 +433,10 @@ export const characterCards = {
     candidates: {
       /** Enqueues an actual finalized reply or explicit selected-user message. */
       enqueue: (payload: DomainInput<"memory.candidate.enqueue">): Promise<DomainOutput<"memory.candidate.enqueue">> => call("memory.candidate.enqueue", payload),
+      /** Returns terminal failed records to the pending queue for a genuine interval retry. */
+      retryFailed: (payload: OwnerParams): Promise<DomainOutput<"memory.candidates.retryFailed">> => call("memory.candidates.retryFailed", payload),
+      /** Deletes terminal failed records instead of leaving them in the queue permanently. */
+      clearFailed: (payload: OwnerParams): Promise<DomainOutput<"memory.candidates.clearFailed">> => call("memory.candidates.clearFailed", payload),
     },
     shared: {
       /** Lists shared memory libraries. */
@@ -465,7 +478,7 @@ export const characterCards = {
     graph: (payload: OwnerParams): Promise<DomainOutput<"memory.graph">> => call("memory.graph", payload),
     /** Lists memory records. */
     list: (payload: OwnerParams): Promise<DomainOutput<"memory.list">> => call("memory.list", payload),
-    /** Searches full records with explicit filters through the sole service and its durable embedding cache. */
+    /** Searches bounded source and document hits using one ephemeral query vector. */
     searchWithOptions: (payload: MemorySearchOptions): Promise<DomainOutput<"memory.searchWithOptions">> => call("memory.searchWithOptions", payload),
     /** Searches memory records. */
     search: (payload: DomainInput<"memory.search">): Promise<DomainOutput<"memory.search">> => call("memory.search", payload),

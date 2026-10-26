@@ -1,5 +1,5 @@
 //! Explicit-device tool execution. Routing metadata never becomes a tool parameter.
-use crate::tools::AIToolHandler::{AIToolHandler, ToolRegistrationVisibility};
+use crate::tools::AIToolHandler::AIToolHandler;
 use crate::tools::ToolResultDataClasses::ToolResultData;
 use crate::ConversationMarkupManager::ToolResult;
 use crate::ToolExecutionManager::{AITool, ToolCall, ToolExecutionPolicy, ToolParameter};
@@ -13,18 +13,10 @@ use operit_plugin_sdk::javascript::{
 
 pub const DEVICE_TOOL_TARGET: &str = "core.tools";
 
-pub type DeviceToolPreflight = JsExecutionCompletion<Result<(), String>>;
-
-/// Outbound capability installed by the owning Core assembly.
+/// Outbound direct SDK transport installed by the owning Core assembly.
 pub trait DeviceToolRuntime: Send + Sync {
-    fn dispatch(&self, request: JsToolCallRequest) -> JsExecutionCompletion<JsToolCallResult> {
-        self.dispatch_with_preflight(request, None)
-    }
-    fn dispatch_with_preflight(
-        &self,
-        request: JsToolCallRequest,
-        preflight: Option<DeviceToolPreflight>,
-    ) -> JsExecutionCompletion<JsToolCallResult>;
+    fn close_transports(&self, _owner: &str) {}
+    fn dispatch(&self, request: JsToolCallRequest) -> JsExecutionCompletion<JsToolCallResult>;
 }
 
 /// Incoming capability owned by one device's existing tool registry.
@@ -82,80 +74,34 @@ pub fn result_to_js(result: ToolResult) -> JsToolCallResult {
 }
 
 impl AIToolHandler {
-    /// Runs only public tools, with receiver-owned validation and permission preflight.
+    /// Uses the same direct execution policy as local JavaScript after transport authentication.
     async fn execute_device_tool(
         &mut self,
         request: JsToolCallRequest,
         origin: &str,
     ) -> JsToolCallResult {
-        let name = request.qualified_tool_name();
-        if let Some((package, _)) = name.split_once(':') {
-            let manager = self.getOrCreatePackageManager();
-            let manager = manager.lock().map_err(|error| error.to_string());
-            match manager {
-                Ok(manager)
-                    if manager.getAvailablePackages().contains_key(package)
-                        && !manager.getAvailableServerPackages().contains_key(package)
-                        && !manager.isPackageEnabled(package) =>
-                {
-                    return failure(format!("Package is disabled on target device: {package}"));
-                }
-                Err(error) => return failure(error),
-                _ => {}
-            }
-        }
-        match self.getToolExecutorOrActivate(&name).await {
-            Ok(true) => {},
-            Ok(false) => return failure(format!("Tool not found on target device: {name}")),
-            Err(error) => return failure(error),
-        }
-        if self.getToolVisibility(&name) != Some(ToolRegistrationVisibility::PUBLIC) {
-            return failure(format!("Tool is not public on target device: {name}"));
-        }
-        let tool = tool_from_request(&request);
-        operit_util::AppLogger::AppLogger::i(
+        let call = ToolCall { name: request.qualified_tool_name(), parameters: request.parameters };
+        operit_util::AppLogger::AppLogger::v_with_level(
             "DeviceTools",
-            &format!("Execute {} from authenticated node {origin}", tool.name),
+            &format!("Direct execution {} from authenticated node {origin}", call.name),
+            operit_util::AppLogger::VERBOSE_LEVEL_3,
         );
-        let call = ToolCall { name, parameters: request.parameters };
-        match self.executeToolInvocation(&call, ToolExecutionPolicy::Device).await {
+        match self.executeToolInvocation(&call, ToolExecutionPolicy::Direct).await {
             Ok(results) => result_to_js(results.into_iter().last()
                 .expect("The invocation pipeline rejects empty results")),
             Err(error) => failure(error),
         }
     }
 
+    /// Returns the same SDK catalog on local and explicitly selected devices.
     fn device_tool_catalog(&self) -> JsToolCallResult {
-        let mut catalog = match JsExecutionHost::get_tool_catalog(self) {
-            Ok(catalog) => catalog,
-            Err(error) => return failure(error),
-        };
-        // The local catalog includes internal tools and disabled packages.
-        if let Some(tools) = catalog
-            .get_mut("tools")
-            .and_then(|value| value.as_array_mut())
-        {
-            tools.retain(|tool| {
-                if tool["source"] == "package" {
-                    tool["packageName"].as_str().is_some_and(|package| {
-                        self.getOrCreatePackageManager()
-                            .lock()
-                            .is_ok_and(|manager| {
-                                manager.isPackageEnabled(package)
-                                    || manager.getAvailableServerPackages().contains_key(package)
-                            })
-                    })
-                } else {
-                    tool["name"].as_str().is_some_and(|name| {
-                        self.getToolVisibility(name) == Some(ToolRegistrationVisibility::PUBLIC)
-                    })
-                }
-            });
-        }
-        JsToolCallResult {
-            success: true,
-            data: JsToolCallResultData::Value(catalog),
-            error: None,
+        match JsExecutionHost::get_tool_catalog(self) {
+            Ok(catalog) => JsToolCallResult {
+                success: true,
+                data: JsToolCallResultData::Value(catalog),
+                error: None,
+            },
+            Err(error) => failure(error),
         }
     }
 }
@@ -236,5 +182,26 @@ impl DeviceToolService for AIToolHandler {
             )
             .map_err(|error| CoreLinkError::internal(error.to_string()))?;
         Ok(stream)
+    }
+}
+
+/// Owns the channels of one JS engine, including its cloned invocation hosts.
+pub(crate) struct DeviceTransportScope {
+    pub id: String,
+    support: std::sync::Mutex<Option<std::sync::Weak<dyn crate::runtime_support::ToolRuntimeSupport>>>,
+}
+impl Default for DeviceTransportScope {
+    fn default() -> Self { Self {id: uuid::Uuid::new_v4().to_string(), support:Default::default()} }
+}
+impl DeviceTransportScope {
+    pub fn bind(&self, support: &std::sync::Arc<dyn crate::runtime_support::ToolRuntimeSupport>) {
+        *self.support.lock().unwrap()=Some(std::sync::Arc::downgrade(support));
+    }
+}
+impl Drop for DeviceTransportScope {
+    fn drop(&mut self) {
+        if let Some(support)=self.support.get_mut().unwrap().as_ref().and_then(std::sync::Weak::upgrade) {
+            support.closeDeviceTransports(&self.id);
+        }
     }
 }

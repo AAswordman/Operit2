@@ -443,7 +443,7 @@
   "settingsCategoryModelSubtitle": "模型、Key、上下文",
   "settingsCategoryModelDescription": "配置模型连接，选择聊天模型，并管理思考、上下文和多模态能力。",
   "settingsCategoryLocalModelsTitle": "本地模型",
-  "settingsCategoryLocalModelsSubtitle": "下载、引擎、STT / TTS",
+  "settingsCategoryLocalModelsSubtitle": "LLM、下载、STT / TTS",
   "settingsCategoryLocalModelsDescription": "管理按需安装的本地模型和推理引擎。",
   "settingsCategoryToolsTitle": "工具与权限",
   "settingsCategoryToolsSubtitle": "AI 能力、系统授权、扩展",
@@ -690,7 +690,6 @@
   "settingsModelProviderTypeDeepseek": "DeepSeek",
   "settingsModelProviderTypeMistral": "Mistral",
   "settingsModelProviderTypeSiliconflow": "硅基流动",
-  "settingsModelProviderTypeIflow": "心流",
   "settingsModelProviderTypeOpenrouter": "OpenRouter",
   "settingsModelProviderTypeOpencode": "OpenCode",
   "settingsModelProviderTypeFourRouter": "4Router",
@@ -1122,6 +1121,8 @@
   "settingsRuntimeFinishPairing": "完成连接",
   "settingsRuntimeBaseUrl": "设备地址",
   "settingsRuntimeTcpAddressHint": "host:端口，例如 192.168.1.10:37195",
+  "settingsRuntimeTransportAuto": "自动（推荐）",
+  "settingsRuntimeTransportAutoHint": "输入 IP:端口，自动识别 HTTP/WebSocket/TCP 协议",
   "settingsRuntimeConnectionFailed": "设备连接失败：{error}",
   "@settingsRuntimeConnectionFailed": {
     "placeholders": {
@@ -1352,6 +1353,14 @@
   "settingsAppearanceBubbleImageAdjustAi": "调整 AI 气泡图片",
   "settingsAppearanceBubbleImagePreview": "预览",
   "settingsAppearanceBubbleImagePreviewText": "这是一条气泡预览，切线展示九宫格区域",
+  "settingsAppearanceBubbleImageImportFailed": "气泡图片没有生效：{error}",
+  "@settingsAppearanceBubbleImageImportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceBubbleImageCrop": "裁切",
   "settingsAppearanceBubbleImageRepeat": "重复区域",
   "settingsAppearanceBubbleImageScale": "图片缩放",
@@ -1729,7 +1738,13 @@
   "settingsRuntimeControlDeviceId": "设备 ID",
   "settingsRuntimeControlNoAudit": "暂无操作记录，身份和设备的变更会显示在这里",
   "settingsRuntimeControlAuditCount": "{count} 条记录",
-  "@settingsRuntimeControlAuditCount": {"placeholders": {"count": {"type": "int"}}},
+  "@settingsRuntimeControlAuditCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsRuntimeControlNoBindings": "暂无设备绑定",
   "settingsRuntimeControlGranted": "已授予",
   "settingsRuntimeControlRevoked": "已撤销",
@@ -1750,7 +1765,13 @@
   "settingsRuntimeControlIdentityResetDone": "身份已重置为默认用户",
   "settingsRuntimeControlIdentityDefinitions": "身份权限",
   "settingsRuntimeControlIdentityCount": "{count} 个身份",
-  "@settingsRuntimeControlIdentityCount": {"placeholders": {"count": {"type": "int"}}},
+  "@settingsRuntimeControlIdentityCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsRuntimeControlIdentityAssignment": "身份分配",
   "settingsRuntimeControlNoIdentity": "未设置身份",
   "settingsRuntimeControlOnline": "在线",
@@ -1758,9 +1779,8 @@
   "settingsRuntimeControlCapabilityAll": "全部权限",
   "settingsRuntimeControlCapabilityAuditRead": "查看审计记录",
   "settingsRuntimeControlCapabilityNetworkRelay": "中继网络流量",
-  "settingsRuntimeControlCapabilityStorageProvide": "提供存储空间",
-  "settingsRuntimeControlCapabilityRuntimeExecute": "执行任务",
-  "settingsRuntimeControlCapabilityChatRead": "读取聊天记录",
+  "settingsRuntimeControlCapabilityStorageProvide": "保存共享数据副本",
+  "settingsRuntimeControlCapabilityRuntimeExecute": "承载 Core 执行",
   "settingsRuntimeControlCapabilityViewDevices": "查看设备与当前身份",
   "settingsRuntimeControlCapabilityApproval": "审批授权",
   "chatRoutePermissionDenied": "权限不足：目标设备 {targetNodeId} 没有 {capability} 权限。",
@@ -1771,10 +1791,8 @@
     }
   },
   "settingsRuntimeControlRoleAdministrator": "管理员",
-  "settingsRuntimeControlRoleAuditor": "审计员",
   "settingsRuntimeControlRoleRelay": "中继节点",
-  "settingsRuntimeControlRoleStorage": "存储节点",
-  "settingsRuntimeControlRoleRunner": "执行节点",
+  "settingsRuntimeControlRoleEdge": "边缘节点",
   "settingsRuntimeControlRoleUser": "普通用户",
   "pluginLoadingTitle": "正在加载",
   "pluginLoadingSkip": "跳过",
@@ -1802,6 +1820,7 @@
   "pluginLoadingFailed": "加载失败",
   "pluginLoadingWaiting": "等待中",
   "pluginLoadingKindPackage": "包",
+  "pluginLoadingKindPlugin": "插件",
   "pluginLoadingKindMcp": "MCP",
   "pluginLoadingCompleteSuccess": "包和插件已全部加载",
   "pluginLoadingCompleteWithFailures": "部分包或插件加载失败",
@@ -1811,6 +1830,9 @@
   "chatRouteRemoteOffline": "远程{platform} 离线",
   "chatRouteLoading": "正在读取运行设备",
   "chatRouteUnknown": "运行设备状态未知",
+  "chatRouteClaimHostPrompt": "当前设备宿主未找到，是否切换为当前设备？",
+  "chatRouteClaimHostYes": "是",
+  "chatRouteClaimHostNo": "否",
   "@chatRouteRemote": {
     "placeholders": {
       "platform": {
@@ -1995,16 +2017,20 @@
       }
     }
   },
-
   "settingsPeerPortModeHelp": "固定模式使用填写的 IP 和端口，适用于内网穿透和端口映射。固定端口被占用时会报错，不会改变监听地址。",
   "settingsPeerPortMode": "端口分配方式",
   "settingsPeerPortModeFixed": "固定 IP 和端口",
   "settingsPeerPortModeAutomatic": "自动分配端口",
-
   "settingsPeerAdvanced": "高级选项",
   "settingsPeerDiscoveryUnavailable": "当前 Host 不支持在局域网广播监听服务。支持的协议仍可通过地址直接连接。",
   "settingsPeerTransportUnavailable": "当前 Host 不支持 {transport} 监听。",
-  "@settingsPeerTransportUnavailable": {"placeholders": {"transport": {"type": "String"}}},
+  "@settingsPeerTransportUnavailable": {
+    "placeholders": {
+      "transport": {
+        "type": "String"
+      }
+    }
+  },
   "settingsPeerTransportHelp": "暴露方式（可多选）。HTTP 和 WebSocket 可共用端口；TCP 暂不能与它们共用端口。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。",
   "settingsPeerBindAddress": "监听 IP 地址",
   "settingsPeerBindAddressHelp": "例如 0.0.0.0，允许局域网访问；也支持 IPv6 地址。",
@@ -2075,14 +2101,30 @@
   "deviceSpacePairedOnly": "已配对",
   "deviceSpaceDirectLink": "直连",
   "deviceSpaceRelayHops": "经中继 {hops} 跳",
-  "@deviceSpaceRelayHops": {"placeholders": {"hops": {"type": "int"}}},
+  "@deviceSpaceRelayHops": {
+    "placeholders": {
+      "hops": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceRelayPath": "路径",
   "deviceSpaceLocalDevice": "本机",
   "deviceSpaceManageDevice": "管理设备",
   "deviceSpaceConnectDirect": "建立直连",
   "deviceSpaceConnectDirectHint": "该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。",
+  "deviceSpaceUpdateEndpoint": "更新直连地址",
+  "deviceSpaceUpdateEndpointLabel": "直连地址",
+  "deviceSpaceUpdateEndpointHint": "例如 ws://192.168.1.20:37195/link",
+  "deviceSpaceUpdateEndpointSaved": "直连地址已更新",
   "deviceSpaceDirectLinkEstablished": "已建立直连：{device}",
-  "@deviceSpaceDirectLinkEstablished": {"placeholders": {"device": {"type": "String"}}},
+  "@deviceSpaceDirectLinkEstablished": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
   "deviceSpaceUnpair": "解除配对",
   "deviceSpaceMore": "更多设备操作",
   "deviceSpaceConnectionSettings": "连接设置",
@@ -2097,7 +2139,13 @@
   "workspaceUndo": "撤销",
   "workspaceRedo": "重做",
   "workspaceInsertSymbol": "插入 {symbol}",
-  "@workspaceInsertSymbol": {"placeholders": {"symbol": {"type": "String"}}},
+  "@workspaceInsertSymbol": {
+    "placeholders": {
+      "symbol": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceThemeConfig": "主题配置",
   "settingsAppearanceThemeConfigCustom": "未绑定的外观",
   "settingsAppearanceThemeConfigCreate": "新建主题配置",
@@ -2118,6 +2166,126 @@
   "settingsRuntimeControlEditRole": "编辑角色",
   "settingsRuntimeControlDeleteRole": "删除角色",
   "settingsRuntimeControlDeleteRoleTitle": "删除角色 {roleName}？",
-  "@settingsRuntimeControlDeleteRoleTitle": {"placeholders":{"roleName":{"type":"String"}}},
-  "settingsRuntimeControlDeleteRoleMessage": "持有该角色的设备将回退为默认的普通用户身份。"
+  "@settingsRuntimeControlDeleteRoleTitle": {
+    "placeholders": {
+      "roleName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeControlDeleteRoleMessage": "持有该角色的设备将回退为默认的普通用户身份。",
+  "settingsAppearanceThemeConfigSource": "创建来源",
+  "settingsAppearanceThemeConfigFromDefaults": "默认外观",
+  "settingsAppearanceThemeConfigFromCurrent": "当前外观",
+  "settingsAppearanceThemeConfigInherit": "继承：{name}",
+  "@settingsAppearanceThemeConfigInherit": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfigFromTemplate": "模板：{name}",
+  "@settingsAppearanceThemeConfigFromTemplate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfigDefaultsHint": "从软件默认样式开始",
+  "settingsAppearanceThemeConfigCurrentHint": "复制现在的外观设置",
+  "settingsAppearanceThemeConfigSavedSources": "继承已有配置",
+  "settingsAppearanceThemeConfigPluginSources": "从插件模板新建",
+  "settingsAppearanceThemeConfigSourceHint": "模板来自已安装的插件。新建后可独立编辑，并沿用外观配置同步。",
+  "settingsAppearanceLoadFailed": "无法加载外观设置",
+  "settingsAppearanceRepairHint": "已保存的外观没有被替换。修复资源后可以重试，也可以主动重置外观。重置会保留头像和已保存的配置，并切换到自定义外观。",
+  "settingsAppearanceRetry": "重试",
+  "settingsAppearanceResetAfterError": "重置外观",
+  "backgroundWorkIdle": "当前没有正在运行的工作",
+  "backgroundWorkRunningCount": "项工作正在运行",
+  "backgroundWorkWaiting": "等待你确认",
+  "backgroundWorkWaitingCount": "项待确认",
+  "backgroundWorkCompleted": "已完成",
+  "backgroundWorkFailed": "执行失败，打开查看详情",
+  "backgroundWorkCancelled": "已停止",
+  "backgroundWorkProcessing": "正在准备",
+  "backgroundWorkConnecting": "正在连接",
+  "backgroundWorkReceiving": "正在生成回复",
+  "backgroundWorkTool": "正在执行工具",
+  "backgroundWorkToolResult": "正在处理工具结果",
+  "backgroundWorkSummarizing": "正在整理上下文",
+  "backgroundWorkPlan": "正在执行计划",
+  "backgroundWorkOpen": "查看会话",
+  "backgroundWorkReview": "查看并确认",
+  "backgroundWorkStop": "停止",
+  "localModelsDeviceOnly": "保存在此设备",
+  "localModelsDeviceOnlyDescription": "模型权重、下载进度和安装记录仅保存在当前设备，不参与设备空间同步。聊天可通过路由使用安装了模型的设备。",
+  "localModelsRunChat": "推理与设置",
+  "localModelsUseForChat": "用于聊天",
+  "localModelsChatActivated": "已设为聊天模型",
+  "localModelsPrompt": "输入提示词",
+  "localModelsGenerate": "开始推理",
+  "localModelsGenerating": "正在推理…",
+  "localModelsThreads": "CPU 线程数",
+  "localModelsContextSize": "上下文长度（token）",
+  "localModelsBatchSize": "批次大小",
+  "localModelsUnload": "释放模型内存",
+  "localModelsCpuBackend": "本机 CPU 推理",
+  "localModelsLlmDescription": "下载 GGUF 模型使用 llama.cpp，或下载 MNN 模型包。安装后可在这里试运行，或设为聊天模型。",
+  "localModelsInvalidSettings": "请检查线程数、上下文长度和批次大小。",
+  "localModelsFilterAll": "全部模型",
+  "localModelsFilterInstalled": "仅已安装",
+  "localModelsSearchCatalog": "搜索名称或推理引擎",
+  "deviceSpaceSyncPeer": "空间设备",
+  "deviceSpaceSyncActive": "正在与 {device} 同步",
+  "@deviceSpaceSyncActive": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncCompleted": "与 {device} 同步完成",
+  "@deviceSpaceSyncCompleted": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncChecking": "正在检查数据差异",
+  "deviceSpaceSyncRecords": "正在交换数据记录",
+  "deviceSpaceSyncFiles": "正在传输并校验文件",
+  "deviceSpaceSyncRetrying": "同步暂时中断，稍后自动重试",
+  "deviceSpaceSyncPending": "部分数据尚未处理完成，稍后自动重试",
+  "deviceSpaceSyncCurrentFile": "当前文件：{done} / {total}",
+  "@deviceSpaceSyncCurrentFile": {
+    "placeholders": {
+      "done": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncTransferred": "已交换 {count} 条记录 · 已传输 {bytes}",
+  "@deviceSpaceSyncTransferred": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "bytes": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncBackground": "可以继续使用，同步会在后台完成",
+  "runtimeActivityTitle": "后台任务",
+  "runtimeActivitySyncing": "正在同步",
+  "runtimeActivitySyncCompleted": "同步完成",
+  "runtimeActivityWaiting": "等待重试",
+  "runtimeActivityExpand": "查看后台任务",
+  "runtimeActivityLoadingPackages": "加载扩展"
 }

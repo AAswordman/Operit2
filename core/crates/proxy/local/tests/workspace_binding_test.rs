@@ -52,7 +52,7 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
                 let core = holder.coreForTarget(target).unwrap();
-                core.createNewChat(true, None, None).await.unwrap();
+                core.createNewChat(true, None, None, None).await.unwrap();
                 core.chatHistoryDelegate
                     .currentChatIdFlow()
                     .value()
@@ -90,7 +90,7 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
                 );
                 core.chatHistoryDelegate
                     .addMessageToChat(message, Some(chat_id.clone()));
-                core.createNewChat(true, Some(chat_id.clone()), None)
+                core.createNewChat(true, Some(chat_id.clone()), None, None)
                     .await
                     .unwrap();
                 let inherited_chat_id = core

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 /// Whether the new-chat intro currently owns the empty-chat stage.
 ///
@@ -228,7 +229,6 @@ class _NewChatIntroOverlayState extends State<NewChatIntroOverlay>
       return const SizedBox.shrink();
     }
     final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
     return AnimatedBuilder(
       animation: _intro,
       builder: (context, _) {
@@ -264,42 +264,11 @@ class _NewChatIntroOverlayState extends State<NewChatIntroOverlay>
             Center(
               child: Opacity(
                 opacity: greetingVisible ? 1 : 0,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Text(
-                          _greeting.substring(0, typedCount),
-                          style: textTheme.headlineSmall!.copyWith(
-                            color: colorScheme.primary,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 2,
-                          ),
-                        ),
-                        const SizedBox(width: 3),
-                        Opacity(
-                          opacity: caretOn ? 1 : 0,
-                          child: Container(
-                            width: 2,
-                            height: 26,
-                            color: colorScheme.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Opacity(
-                      opacity: subtitleVisible ? 1 : 0,
-                      child: Text(
-                        _subtitle,
-                        style: textTheme.bodySmall!.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
+                child: ThemeNewChatGreeting(
+                  greeting: _greeting.substring(0, typedCount),
+                  subtitle: _subtitle,
+                  caretVisible: caretOn,
+                  subtitleVisible: subtitleVisible,
                 ),
               ),
             ),

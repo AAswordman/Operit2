@@ -3,11 +3,12 @@
 #![allow(non_snake_case)]
 pub use crate::js_sdk::{JsNullable, JsOptional};
 use super::catalog::CatalogToolSource;
+use super::network::NetWebSocketEvent;
 use super::chat::ChatSendEvent;
 use super::core::JsonObject;
 use super::models::ModelsSummary;
 use super::storage::{
-    StorageChangeEntry, StorageKeyValueEntry, StorageResponse, StorageSqlExecutionResult,
+    StorageKeyValueEntry, StorageResponse, StorageSqlExecutionResult,
     StorageSqlRow, StorageValueEntry,
 };
 use super::theme::ThemeConfig;
@@ -32,6 +33,9 @@ pub enum ToolResultData {
     EnvironmentVariableReadResultData(EnvironmentVariableReadResultData),
     EnvironmentVariableWriteResultData(EnvironmentVariableWriteResultData),
     ModelsListSummariesResultData(ModelsListSummariesResultData),
+    TtsSynthesizeResultData(TtsSynthesizeResultData),
+    TtsSpeakResultData(TtsSpeakResultData),
+    SttTranscribeResultData(SttTranscribeResultData),
     TtsListConfigsResultData(TtsListConfigsResultData),
     TtsGetCurrentConfigIdResultData(TtsGetCurrentConfigIdResultData),
     TtsSetCurrentConfigIdResultData(TtsSetCurrentConfigIdResultData),
@@ -48,6 +52,7 @@ pub enum ToolResultData {
     FileOperationData(FileOperationData),
     FileApplyResultData(FileApplyResultData),
     StorageRequestResultData(StorageRequestResultData),
+    WebSocketResultData(WebSocketResultData),
     HttpResponseData(HttpResponseData),
     HttpStreamEventData(HttpStreamEventData),
     SystemSettingData(SystemSettingData),
@@ -78,6 +83,7 @@ pub enum ToolResultData {
     TerminalInfoResultData(TerminalInfoResultData),
     TerminalCommandResultData(TerminalCommandResultData),
     TerminalStreamEventData(TerminalStreamEventData),
+    TerminalObservationResultData(TerminalObservationResultData),
     HiddenTerminalCommandResultData(HiddenTerminalCommandResultData),
     TerminalSessionCreationResultData(TerminalSessionCreationResultData),
     TerminalSessionCloseResultData(TerminalSessionCloseResultData),
@@ -92,6 +98,7 @@ pub enum ToolResultData {
     BluetoothBleServicesData(BluetoothBleServicesData),
     BluetoothBleNotificationData(BluetoothBleNotificationData),
     CatalogReadToolSourcesResultData(CatalogReadToolSourcesResultData),
+    MediaRegistrationResultData(MediaRegistrationResultData),
     FindFilesResultData(FindFilesResultData),
     GrepResultData(GrepResultData),
 }
@@ -115,6 +122,9 @@ impl ToolResultData {
             Self::EnvironmentVariableReadResultData(data) => data.toString(),
             Self::EnvironmentVariableWriteResultData(data) => data.toString(),
             Self::ModelsListSummariesResultData(data) => data.toString(),
+            Self::TtsSynthesizeResultData(data) => data.toString(),
+            Self::TtsSpeakResultData(data) => data.toString(),
+            Self::SttTranscribeResultData(data) => data.toString(),
             Self::TtsListConfigsResultData(data) => data.toString(),
             Self::TtsGetCurrentConfigIdResultData(data) => data.toString(),
             Self::TtsSetCurrentConfigIdResultData(data) => data.toString(),
@@ -131,6 +141,7 @@ impl ToolResultData {
             Self::FileOperationData(data) => data.toString(),
             Self::FileApplyResultData(data) => data.toString(),
             Self::StorageRequestResultData(data) => data.toString(),
+            Self::WebSocketResultData(data) => data.toString(),
             Self::HttpResponseData(data) => data.toString(),
             Self::HttpStreamEventData(data) => data.toString(),
             Self::SystemSettingData(data) => data.toString(),
@@ -184,6 +195,7 @@ impl ToolResultData {
             Self::TerminalInfoResultData(data) => data.toString(),
             Self::TerminalCommandResultData(data) => data.toString(),
             Self::TerminalStreamEventData(data) => data.toString(),
+            Self::TerminalObservationResultData(data) => serde_json::to_string(data).expect("Terminal observation serialization failed"),
             Self::HiddenTerminalCommandResultData(data) => data.toString(),
             Self::TerminalSessionCreationResultData(data) => data.toString(),
             Self::TerminalSessionCloseResultData(data) => data.message.clone(),
@@ -198,6 +210,7 @@ impl ToolResultData {
             Self::BluetoothBleServicesData(data) => data.toString(),
             Self::BluetoothBleNotificationData(data) => data.toString(),
             Self::CatalogReadToolSourcesResultData(data) => data.toString(),
+            Self::MediaRegistrationResultData(data) => data.toString(),
             Self::FindFilesResultData(data) => data.toString(),
             Self::GrepResultData(data) => data.toString(),
         }
@@ -549,6 +562,45 @@ impl ModelsListSummariesResultData {
     }
 }
 
+/// One encoded audio segment, in synthesis order.
+#[derive(Clone, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct TtsAudioSegment {
+    pub audio: Vec<u8>,
+    pub contentType: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsSynthesizeResultData { pub segments: Vec<TtsAudioSegment> }
+impl TtsSynthesizeResultData {
+    pub fn toString(&self) -> String { serde_json::to_string(self).expect("TTS result serialization failed") }
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SttTranscribeResultData { pub text: String }
+impl SttTranscribeResultData {
+    pub fn toString(&self) -> String { serde_json::to_string(self).expect("STT result serialization failed") }
+}
+
+/// Reports the actual host speech start and the resolved utterance parameters.
+#[derive(Clone, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct TtsSpeakResultData {
+    pub providerType: String,
+    pub started: bool,
+    pub interrupt: bool,
+    pub speed: f64,
+    pub pitch: f64,
+}
+impl TtsSpeakResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("TtsSpeakResultData serialization failed")
+    }
+}
+
 /// Returns the complete configured speech records.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -585,6 +637,26 @@ impl TtsSetCurrentConfigIdResultData {
     /// Formats the concrete tool fields for the common text result path.
     pub fn toString(&self) -> String {
         serde_json::to_string(self).expect("TtsSetCurrentConfigIdResultData serialization failed")
+    }
+}
+
+/// Returns the pool identity and canonical link for one registered media item.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaRegistrationResultData {
+    pub id: String,
+    pub mimeType: String,
+    pub link: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<i32>,
+}
+
+impl MediaRegistrationResultData {
+    /// Formats the concrete tool fields for the common text result path.
+    pub fn toString(&self) -> String {
+        serde_json::to_string(self).expect("MediaRegistrationResultData serialization failed")
     }
 }
 
@@ -767,6 +839,14 @@ pub enum StorageRequestResultData {
         handle: String,
         path: String,
     },
+    #[serde(rename = "preferences_data")]
+    PreferencesData { snapshot: super::storage::StoragePreferencesSnapshot },
+    #[serde(rename = "preferences_begin_edit")]
+    PreferencesBeginEdit { edit: super::storage::StoragePreferencesEdit },
+    #[serde(rename = "preferences_finish_edit")]
+    PreferencesFinishEdit { snapshot: super::storage::StoragePreferencesSnapshot },
+    #[serde(rename = "preferences_cancel_edit")]
+    PreferencesCancelEdit,
     #[serde(rename = "close")]
     Close,
     #[serde(rename = "query")]
@@ -789,6 +869,10 @@ pub enum StorageRequestResultData {
     Get {
         entry: JsNullable<StorageValueEntry>,
     },
+    #[serde(rename = "get_many")]
+    GetMany {
+        entries: Vec<JsNullable<StorageValueEntry>>,
+    },
     #[serde(rename = "list")]
     List {
         entries: Vec<StorageKeyValueEntry>,
@@ -796,10 +880,6 @@ pub enum StorageRequestResultData {
     #[serde(rename = "commit")]
     Commit {
         version: String,
-    },
-    #[serde(rename = "changes")]
-    Changes {
-        entries: Vec<StorageChangeEntry>,
     },
 }
 
@@ -810,6 +890,10 @@ impl From<StorageResponse> for StorageRequestResultData {
                 handle: opened.handle,
                 path: opened.path,
             },
+            StorageResponse::PreferencesData(snapshot) => Self::PreferencesData { snapshot },
+            StorageResponse::PreferencesBeginEdit(edit) => Self::PreferencesBeginEdit { edit },
+            StorageResponse::PreferencesFinishEdit(snapshot) => Self::PreferencesFinishEdit { snapshot },
+            StorageResponse::PreferencesCancelEdit => Self::PreferencesCancelEdit,
             StorageResponse::Close => Self::Close,
             StorageResponse::Query(rows) => Self::Query { rows },
             StorageResponse::Execute(results) => Self::Execute { results },
@@ -820,11 +904,13 @@ impl From<StorageResponse> for StorageRequestResultData {
             StorageResponse::Get(entry) => Self::Get {
                 entry: JsNullable::from_option(entry),
             },
+            StorageResponse::GetMany(entries) => Self::GetMany {
+                entries: entries.into_iter().map(JsNullable::from_option).collect(),
+            },
             StorageResponse::List(entries) => Self::List { entries },
             StorageResponse::Commit(result) => Self::Commit {
                 version: result.version,
             },
-            StorageResponse::Changes(entries) => Self::Changes { entries },
         }
     }
 }
@@ -2945,4 +3031,40 @@ pub struct EdgePortResultData {
     pub nodeId: String,
     /// Native Edge action/port result; no JavaScript source or local serial handle.
     pub data: crate::js_sdk::JsAny,
+}
+
+/// Exchanges one scoped terminal execution observation through the common tool transport.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TerminalObservationResultData {
+    Open { handle: String },
+    Next { event: JsNullable<super::system::TerminalExecEvent> },
+    Close {},
+}
+
+/// Reports exactly the requested WebSocket operation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum WebSocketResultData {
+    #[serde(rename = "open")]
+    Open { handle: String },
+    #[serde(rename = "read")]
+    Read { events: Vec<NetWebSocketEvent> },
+    #[serde(rename = "send")]
+    Send,
+    #[serde(rename = "close")]
+    Close,
+}
+
+impl WebSocketResultData {
+    /// Formats the concrete operation without hiding serialization errors.
+    #[allow(non_snake_case)]
+    pub fn toString(&self) -> String {
+        match self {
+            Self::Open { handle } => format!("WebSocket opened: {handle}"),
+            Self::Read { events } => format!("WebSocket events: {}", events.len()),
+            Self::Send => "WebSocket message sent".into(),
+            Self::Close => "WebSocket closed".into(),
+        }
+    }
 }

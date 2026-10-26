@@ -553,6 +553,47 @@ pub fn buildManifestFromRepoFiles(
         sources[0].baseUrl = format!("https://huggingface.co/{repository}/resolve/{revision}");
     }
 
+    // Prefer one complete quantization. Never download every GGUF variant in a repo.
+    let mut gguf = repoFiles.iter().filter(|file| file.relativePath.to_ascii_lowercase().ends_with(".gguf"))
+        .filter(|file| !file.relativePath.to_ascii_lowercase().contains("mmproj"))
+        .filter(|file| !file.relativePath.contains("-of-"))
+        .collect::<Vec<_>>();
+    gguf.sort_by_key(|file| {
+        let lower = file.relativePath.to_ascii_lowercase();
+        (!lower.contains("q4_k_m"), !lower.contains("q4_0"), file.byteSize, file.relativePath.clone())
+    });
+    let mnnConfig = findRepoFile(repoFiles, "config.json");
+    let mnnModel = findRepoFile(repoFiles, "llm.mnn");
+    if let Some(file) = gguf.first() {
+        return Ok(LocalModelManifest {
+            id: sanitizeModelId(&repository.replace('/', "--")), version: revision.to_string(),
+            displayName: format!("{displayName} ({})", file.relativePath),
+            description: format!("Imported GGUF chat model ({repository})"), kind: LocalModelKind::Chat,
+            engine: LocalEngineKind::LlamaCpp, license: license.to_string(), homepage: homepage.to_string(),
+            languages, tags, engineRequirement: Some(LocalEngineRequirement { engineId: "llama-cpp".to_string(), version: "b11829".to_string() }),
+            driver: Some(LocalModelDriver::LlamaCpp { model: file.relativePath.clone() }),
+            files: vec![toModelFile(&sourceId, file)], sources, installSource: LocalModelInstallSource::Files,
+        });
+    }
+    if let (Some(config), Some(_)) = (mnnConfig, mnnModel) {
+        for required in ["llm_config.json", "tokenizer.txt", "llm.mnn.weight"] {
+            if findRepoFile(repoFiles, required).is_none() { return Err(format!("MNN repository is missing {required}")); }
+        }
+        let files = repoFiles.iter().filter(|file| {
+            let name = file.relativePath.to_ascii_lowercase();
+            !name.starts_with('.') && !name.starts_with(".git/") &&
+                [".mnn", ".weight", ".json", ".txt", ".bin", ".model"].iter().any(|extension| name.ends_with(extension))
+        }).map(|file| toModelFile(&sourceId, file)).collect();
+        return Ok(LocalModelManifest {
+            id: sanitizeModelId(&repository.replace('/', "--")), version: revision.to_string(), displayName,
+            description: format!("Imported MNN chat model ({repository})"), kind: LocalModelKind::Chat,
+            engine: LocalEngineKind::Mnn, license: license.to_string(), homepage: homepage.to_string(), languages, tags,
+            engineRequirement: Some(LocalEngineRequirement { engineId: "mnn".to_string(), version: "3.6.1".to_string() }),
+            driver: Some(LocalModelDriver::Mnn { config: config.relativePath.clone() }),
+            files, sources, installSource: LocalModelInstallSource::Files,
+        });
+    }
+
     let rootOnnxFiles: Vec<&HubRepoFileEntry> = repoFiles
         .iter()
         .filter(|f| !f.relativePath.contains('/') && f.relativePath.ends_with(".onnx"))
@@ -766,7 +807,7 @@ pub fn buildManifestFromRepoFiles(
     }
 
     Err(format!(
-        "Repository '{repository}' does not match any supported Sherpa ONNX STT/TTS model layout"
+        "Repository '{repository}' does not match a supported GGUF, MNN, or Sherpa ONNX model layout"
     ))
 }
 
@@ -851,6 +892,34 @@ fn encodeUrlQueryComponent(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn importsOneGgufQuantizationInsteadOfEveryVariant() {
+        let files = ["model-Q8_0.gguf", "model-Q4_K_M.gguf", "mmproj-F16.gguf"].into_iter()
+            .map(|name| HubRepoFileEntry { relativePath: name.into(), byteSize: 100, sha256: "a".repeat(64) }).collect::<Vec<_>>();
+        let manifest = buildManifestFromRepoFiles("owner/chat", "revision", "", "apache-2.0", vec![], vec![],
+            testChatSource(), &files).unwrap();
+        assert_eq!(manifest.kind, LocalModelKind::Chat);
+        assert_eq!(manifest.engine, LocalEngineKind::LlamaCpp);
+        assert_eq!(manifest.files.len(), 1);
+        assert_eq!(manifest.files[0].relativePath, "model-Q4_K_M.gguf");
+    }
+
+    #[test]
+    fn requiresCompleteMnnBundleAndIncludesExternalWeights() {
+        let mut files = ["config.json", "llm.mnn", "llm_config.json", "tokenizer.txt"].into_iter()
+            .map(|name| HubRepoFileEntry { relativePath: name.into(), byteSize: 100, sha256: "a".repeat(64) }).collect::<Vec<_>>();
+        assert!(buildManifestFromRepoFiles("owner/chat", "revision", "", "apache-2.0", vec![], vec![], testChatSource(), &files).is_err());
+        files.push(HubRepoFileEntry { relativePath: "llm.mnn.weight".into(), byteSize: 100, sha256: "a".repeat(64) });
+        let manifest = buildManifestFromRepoFiles("owner/chat", "revision", "", "apache-2.0", vec![], vec![], testChatSource(), &files).unwrap();
+        assert_eq!(manifest.engine, LocalEngineKind::Mnn);
+        assert_eq!(manifest.files.len(), 5);
+    }
+
+    fn testChatSource() -> LocalModelSource {
+        LocalModelSource { id: "hf".into(), kind: LocalModelSourceKind::HuggingFace, repository: "owner/chat".into(),
+            revision: "revision".into(), baseUrl: "https://huggingface.co/owner/chat/resolve/revision".into() }
+    }
+
     use super::*;
 
     #[test]

@@ -103,3 +103,7 @@ mod convergence_properties {
         "/tests/device_space/convergence_properties.rs"
     ));
 }
+
+mod departure {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/device_space/departure.rs"));
+}

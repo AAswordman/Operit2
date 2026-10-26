@@ -1,14 +1,15 @@
 // Canonical current Chat bindings use the same scoped host Promise transport as Tools.
 
 /** Captures one complete send request before its caller can mutate it across asynchronous pulls. */
-function __operitChatRequestValue(request) {
-    if (request === null || typeof request !== 'object' || Array.isArray(request)) throw new Error('Chat requires one send request object');
+function __operitChatRequestValue(request, label) {
+    if (request === null || typeof request !== 'object' || Array.isArray(request)) throw new Error(label ? label + ' requires one request object' : 'Chat requires one send request object');
     return __operitSnapshotJsonObject(request);
 }
 
-/** Returns one bounded pull-based iterator whose disposal never cancels generation. */
+/** Returns one bounded pull-based iterator with tool-specific disposal semantics. */
 function __operitCreateToolStream(toolName, request) {
-    var requestValue = __operitChatRequestValue(request);
+    var requestValue = __operitChatRequestValue(request, toolName === "terminal_observe" ? "Terminal execution" : undefined);
+    var label = toolName === "terminal_observe" ? "Terminal execution" : "Chat observation";
     var opening = null, streamId = null, disposal = null, closed = false, pulling = false;
 
     /** Starts the sole accepted send lazily on its first consumer pull. */
@@ -43,7 +44,7 @@ function __operitCreateToolStream(toolName, request) {
             try { await dispose(); }
             catch (cleanupError) {
                 if (cleanupError !== originalError) {
-                    var combined = new Error('Chat observation and disposal both failed');
+                    var combined = new Error(label + ' and disposal both failed');
                     combined.cause = originalError; combined.cleanupError = cleanupError;
                     throw combined;
                 }
@@ -72,11 +73,11 @@ function __operitCreateToolStream(toolName, request) {
         /** Rejects concurrent pulls instead of creating an unbounded local Promise queue. */
         next: function() {
             if (closed) return Promise.resolve({ done: true, value: undefined });
-            if (pulling) return Promise.reject(new Error('Chat observation permits only one pending next call'));
+            if (pulling) return Promise.reject(new Error(label + ' permits only one pending next call'));
             pulling = true;
             return pull();
         },
-        /** Stops only observation and wakes a pending native pull through explicit disposal. */
+        /** Disposes the tool observation and wakes a pending native pull. */
         return: async function() { await dispose(); return { done: true, value: undefined }; },
         /** Disposes observation while retaining the consumer's original error. */
         throw: function(error) { return rejectAndDispose(error); }

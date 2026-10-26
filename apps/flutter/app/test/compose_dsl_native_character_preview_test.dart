@@ -164,9 +164,10 @@ void main() {
           160,
           scrollable: _readingScrollable(),
         );
+        final previousActions = actions.length;
         await tester.tap(find.text('配置摘要'));
         await tester.pump();
-        expect(actions, hasLength(1));
+        expect(actions, hasLength(previousActions + 1));
         expect(tester.takeException(), isNull);
         tester.view.physicalSize = const Size(600, 850);
         await tester.pumpAndSettle();

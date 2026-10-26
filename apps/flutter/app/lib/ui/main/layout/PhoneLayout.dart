@@ -300,6 +300,8 @@ class _PhoneLayoutState extends State<PhoneLayout>
                             if (contentShadowVisible && contentShadowBlur > 0)
                               BoxShadow(
                                 blurRadius: contentShadowBlur,
+                                // Keep the image visible through the page.
+                                blurStyle: BlurStyle.outer,
                                 color: Colors.black.withValues(alpha: 0.16),
                               ),
                           ],
@@ -335,30 +337,32 @@ class _PhoneLayoutState extends State<PhoneLayout>
                 child: Transform.translate(
                   // A fixed Stack slot keeps drag frames in the paint phase.
                   offset: Offset(drawerOffset, 0),
-                  child: Opacity(
-                    opacity: clampedDrawerContentAlpha,
-                    child: Transform.scale(
-                      alignment: Alignment.centerLeft,
-                      scale: drawerScale,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          boxShadow: <BoxShadow>[
-                            if (drawerProgress > 0.001)
-                              BoxShadow(
-                                blurRadius: sidebarShadowBlur,
-                                color: Colors.black.withValues(alpha: 0.12),
-                              ),
-                          ],
-                        ),
-                        child: OperitGlassSurface(
-                          color: appearance.containerColor,
-                          layer: OperitGlassSurfaceLayer.panel,
-                          transparentAlpha: 0.035,
-                          enableBackdropFilter: false,
-                          borderRadius: const BorderRadiusDirectional.only(
-                            topEnd: Radius.circular(16),
-                            bottomEnd: Radius.circular(16),
-                          ).resolve(Directionality.of(context)),
+                  child: Transform.scale(
+                    alignment: Alignment.centerLeft,
+                    scale: drawerScale,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        boxShadow: <BoxShadow>[
+                          if (drawerProgress > 0.001)
+                            BoxShadow(
+                              blurRadius: sidebarShadowBlur,
+                              // Keep the translucent drawer interior clear.
+                              blurStyle: BlurStyle.outer,
+                              color: Colors.black.withValues(alpha: 0.12),
+                            ),
+                        ],
+                      ),
+                      child: OperitGlassSurface(
+                        color: appearance.containerColor,
+                        layer: OperitGlassSurfaceLayer.panel,
+                        transparentAlpha: 0.035,
+                        borderRadius: const BorderRadiusDirectional.only(
+                          topEnd: Radius.circular(16),
+                          bottomEnd: Radius.circular(16),
+                        ).resolve(Directionality.of(context)),
+                        // Fade controls without isolating the backdrop.
+                        child: Opacity(
+                          opacity: clampedDrawerContentAlpha,
                           child: animatedChild.drawerContent,
                         ),
                       ),

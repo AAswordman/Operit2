@@ -19,6 +19,7 @@ import 'package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart';
 import 'package:operit2/ui/features/chat/components/ChatArea.dart';
 import 'package:operit2/ui/features/chat/components/ChatMessageExtent.dart';
 import 'package:operit2/ui/features/chat/components/ChatScrollNavigator.dart';
+import 'package:operit2/ui/features/chat/components/MessageContextMenu.dart';
 import 'package:operit2/ui/features/chat/components/part/StructuredMessagePartRenderer.dart';
 import 'package:operit2/ui/features/chat/components/part/ThinkToolsXmlNodeGrouper.dart';
 import 'package:operit2/ui/features/chat/components/part/ToolDisplayComponents.dart';
@@ -27,8 +28,88 @@ import 'package:operit2/ui/features/chat/components/style/cursor/CursorStyleChat
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
+/// Counts how many positions the owner controller holds at once.
+class _PositionPeakController extends ScrollController {
+  var peak = 0;
+
+  /// Records the high-water mark after each viewport registration.
+  @override
+  void attach(ScrollPosition position) {
+    super.attach(position);
+    if (positions.length > peak) {
+      peak = positions.length;
+    }
+  }
+}
+
 /// Verifies transcript rendering and scroll ownership across asynchronous updates.
 void main() {
+  testWidgets('refreshes cached message actions when chat busy state changes', (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(false);
+    addTearDown(scrollController.dispose);
+    addTearDown(autoScrollToBottom.dispose);
+    final message = _heightTestMessage(0);
+    for (final busy in [false, true, false]) {
+      await tester.pumpWidget(
+        _chatArea(
+          message: message,
+          isLoading: busy,
+          scrollController: scrollController,
+          autoScrollToBottom: autoScrollToBottom,
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester
+            .widget<MessageContextMenu>(find.byType(MessageContextMenu))
+            .isChatBusy,
+        busy,
+      );
+    }
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'replacing the chat viewport keeps one origin on the owner controller',
+    (tester) async {
+      final scrollController = _PositionPeakController();
+      final autoScrollToBottom = ValueNotifier<bool>(true);
+      addTearDown(scrollController.dispose);
+      addTearDown(autoScrollToBottom.dispose);
+      final messages = List.generate(4, (index) => _heightTestMessage(index));
+      await tester.pumpWidget(
+        _chatArea(
+          messages: messages,
+          isLoading: false,
+          scrollController: scrollController,
+          autoScrollToBottom: autoScrollToBottom,
+        ),
+      );
+      await tester.pump();
+
+      await tester.pumpWidget(
+        _chatArea(
+          currentChatId: 'chat-next',
+          messages: messages,
+          isLoading: false,
+          scrollController: scrollController,
+          autoScrollToBottom: autoScrollToBottom,
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(scrollController.peak, 1);
+      expect(scrollController.positions, hasLength(1));
+      expect(scrollController.offset, isA<double>());
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets(
     'keeps measured scroll extent stable during a manual upward drag',
     (tester) async {

@@ -6,6 +6,7 @@ use operit_model::FunctionType::FunctionType;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{SystemToolPromptCategory, ToolParameterSchema, ToolPrompt};
+use operit_plugin_sdk::js_sdk::{results::TtsSpeakResultData, tts::TtsSpeakRequest};
 use operit_providers::chat::config::FunctionalPrompts::FunctionalPrompts;
 use operit_providers::chat::config::SystemToolPrompts as ProviderToolPrompts;
 use operit_providers::chat::enhance::FileBindingService::{
@@ -26,6 +27,7 @@ use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill::SkillManager::SkillManager;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_util::stream::Stream::Stream;
+use operit_util::TtsCleaner::TtsCleaner;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::services::core::ChatTurnTransport::{
@@ -37,6 +39,7 @@ use crate::data::preferences::EnvPreferences::EnvPreferences;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
 use crate::plugins::BuiltinPluginAssets::{BUILTIN_PLUGIN_ASSETS, BUNDLED_EXTERNAL_PLUGIN_ASSETS};
 use crate::plugins::BundledExternalSkillAssets::BUNDLED_EXTERNAL_SKILL_ASSETS;
+use crate::services::TtsPlaybackService::TtsPlaybackService;
 
 /// Creates runtime-backed services required by the tools crate.
 pub struct ToolRuntimeSupportService;
@@ -131,11 +134,14 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     fn bindDeviceToolRuntime(&self, runtime: Arc<dyn operit_tools::tools::DeviceTools::DeviceToolRuntime>) -> Result<(), String> {
         self.deviceToolRuntime.set(runtime).map_err(|_| "Device tool routing is already initialized".into())
     }
-    fn executeDeviceTool(&self, request: operit_plugin_sdk::javascript::JsToolCallRequest,
-        preflight: Option<operit_tools::tools::DeviceTools::DeviceToolPreflight>)
+    fn closeDeviceTransports(&self, owner: &str) {
+        if let Some(runtime)=self.deviceToolRuntime.get() {runtime.close_transports(owner);}
+    }
+
+    fn executeDeviceTool(&self, request: operit_plugin_sdk::javascript::JsToolCallRequest)
         -> operit_plugin_sdk::javascript::JsExecutionCompletion<operit_plugin_sdk::javascript::JsToolCallResult> {
         match self.deviceToolRuntime.get() {
-            Some(runtime) => runtime.dispatch_with_preflight(request, preflight),
+            Some(runtime) => runtime.dispatch(request),
             None => Box::pin(async { operit_tools::tools::DeviceTools::failure("Device tool routing is not initialized") }),
         }
     }
@@ -208,6 +214,57 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
             .map_err(|error| error.to_string())?;
         serde_json::from_value(serde_json::to_value(summaries).map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())
+    }
+
+    fn synthesizeSpeech(&self, request: operit_plugin_sdk::js_sdk::tts::TtsSynthesizeRequest)
+        -> Result<operit_plugin_sdk::js_sdk::results::TtsSynthesizeResultData, String> {
+        let id = match request.configId {
+            Some(id) => id,
+            None => self.getCurrentTtsConfigId()?,
+        };
+        crate::services::TtsSynthesisService::TtsSynthesisService::getInstance(&self.hostManager)
+            .synthesizeAudioWithConfig(&id, &request.text)
+    }
+
+    /// Resolves the exact configured system voice and applies utterance-only playback overrides.
+    #[allow(non_snake_case)]
+    fn speakSpeech(&self, request: TtsSpeakRequest) -> Result<TtsSpeakResultData, String> {
+        let manager = crate::data::preferences::TtsConfigManager::TtsConfigManager::getInstance();
+        let id = match request.configId {
+            Some(id) => id,
+            None => manager.getCurrentTtsConfigId()?,
+        };
+        let mut config = manager.getTtsConfig(&id)?;
+        if let Some(speed) = request.speed {
+            config.speed = speed;
+        }
+        let interrupt = request.interrupt.unwrap_or(true);
+        let pitch = request.pitch.unwrap_or(1.0);
+        let providerType = operit_model::TtsConfig::TtsProviderType::normalize(&config.providerType);
+        let speed = config.speed;
+        let status = TtsPlaybackService::getInstance(&self.hostManager)?.speakWithResolvedConfig(
+            config,
+            TtsCleaner::clean(&request.text),
+            interrupt,
+            pitch,
+        )?;
+        Ok(TtsSpeakResultData {
+            providerType,
+            started: status.active,
+            interrupt,
+            speed,
+            pitch,
+        })
+    }
+
+    fn transcribeSpeech(&self, request: operit_plugin_sdk::js_sdk::stt::SttTranscribeRequest)
+        -> Result<operit_plugin_sdk::js_sdk::results::SttTranscribeResultData, String> {
+        let service = crate::services::SttRecognitionService::SttRecognitionService::getInstance(&self.hostManager);
+        let result = match request.configId {
+            Some(id) => service.transcribeWithConfigId(id, request.audio, request.fileName, request.contentType, request.language)?,
+            None => service.transcribeCurrent(request.audio, request.fileName, request.contentType, request.language)?,
+        };
+        Ok(operit_plugin_sdk::js_sdk::results::SttTranscribeResultData { text: result.text })
     }
 
     /// Reads complete real configured speech records without consulting character preferences.
@@ -356,26 +413,23 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
 
     /// Reads one stored environment variable.
     #[allow(non_snake_case)]
-    fn readEnvironmentVariable(&self, key: &str) -> Result<Option<String>, String> {
+    fn readEnvironmentVariable(&self, packageName: &str, key: &str) -> Result<Option<String>, String> {
         EnvPreferences::getInstance()
-            .getEnv(key)
-            .map_err(|error| error.to_string())
+            .getEnv(packageName, key)
     }
 
     /// Writes one stored environment variable.
     #[allow(non_snake_case)]
-    fn writeEnvironmentVariable(&self, key: &str, value: &str) -> Result<(), String> {
+    fn writeEnvironmentVariable(&self, packageName: &str, key: &str, value: &str) -> Result<(), String> {
         EnvPreferences::getInstance()
-            .setEnv(key, value)
-            .map_err(|error| error.to_string())
+            .setEnv(packageName, key, value)
     }
 
     /// Removes one stored environment variable.
     #[allow(non_snake_case)]
-    fn removeEnvironmentVariable(&self, key: &str) -> Result<(), String> {
+    fn removeEnvironmentVariable(&self, packageName: &str, key: &str) -> Result<(), String> {
         EnvPreferences::getInstance()
-            .removeEnv(key)
-            .map_err(|error| error.to_string())
+            .removeEnv(packageName, key)
     }
 
     /// Returns built-in and internal tool prompt categories.
@@ -621,13 +675,26 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         &'a self,
         setAsCurrentChat: bool,
         sourceChatId: Option<String>,
+        parentChatId: Option<String>,
         input: Option<serde_json::Value>,
     ) -> ToolRuntimeSupportFuture<'a, Result<String, String>> {
         Box::pin(async move {
+            // Creating an unopened conversation only needs the shared record manager
+            // and publication flows. Do not reserve every chat runtime while plugins run.
+            if !setAsCurrentChat {
+                let (mut history, service) = {
+                    let mut holder = self.chatRuntimeHolder.lock().await;
+                    let core = holder.getCore(ChatRuntimeSlot::MAIN);
+                    let service = core.enhancedAiService.clone()
+                        .ok_or_else(|| "Chat creation requires an initialized AI runtime".to_string())?;
+                    (core.chatHistoryDelegate.clone_for_core(), service)
+                };
+                return history.createNewChat(&service, false, sourceChatId, parentChatId, input).await;
+            }
             let mut holder = self.chatRuntimeHolder.lock().await;
             let chatId = holder
                 .getCore(ChatRuntimeSlot::MAIN)
-                .createNewChat(setAsCurrentChat, sourceChatId, input)
+                .createNewChat(setAsCurrentChat, sourceChatId, parentChatId, input)
                 .await?;
             holder.observeStats();
             Ok(chatId)
@@ -950,7 +1017,22 @@ async fn finalizeAdmittedChatSend(
         (Err(publication), Err(release)) => Err(format!("Chat finalization failed: {publication}; chat lease release failed: {release}")),
     };
     match (result, cleanup) {
-        (Ok(result), Ok(())) => Ok(result),
+        (Ok(result), Ok(())) => {
+            if let Some(participantId) = admitted.work.summaryParticipantAfter(&result.outcome) {
+                let (mut coordinator, mut service) = {
+                    let mut runtime = holder.lock().await;
+                    let core = runtime.getCore(admitted.slot.clone());
+                    let service = core.enhancedAiService.as_ref()
+                        .ok_or("Completed chat execution has no enhanced AI service")?.clone();
+                    let coordinator = crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate::forBackgroundWork(
+                        core.chatHistoryDelegate.clone_for_core(), core.messageProcessingDelegate.clone_for_core(),
+                    );
+                    (coordinator, service)
+                };
+                coordinator.checkSummaryAfterReply(&mut service, admitted.handle.chatId.clone(), participantId.to_string()).await?;
+            }
+            Ok(result)
+        },
         (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
         (Err(error), Err(cleanup)) => Err(format!("{error}; chat cleanup failed: {cleanup}")),
     }
@@ -1019,7 +1101,7 @@ async fn runAdmittedChatTurn(
                 ChatInitialTurn::Execute { participantId } => (participantId.clone(), text, attachments, input.replyToMessageTimestamp.as_value().copied(), None),
             }
         }
-        AdmittedChatTurnWork::Continue { userMessageTimestamp, participantId } =>
+        AdmittedChatTurnWork::Continue { userMessageTimestamp, participantId, .. } =>
             (Some(participantId.clone()), String::new(), Vec::new(), None, Some(ChatTurnContinuation { userMessageTimestamp: *userMessageTimestamp })),
     };
     let submission = {
@@ -1030,6 +1112,7 @@ async fn runAdmittedChatTurn(
             .loadChatMessageVariant(chatId, timestamp, 0).map_err(|error| error.to_string())).transpose()?;
         let options = ChatTurnOptions {
             continuation, nativeExecutionId: Some(admitted.handle.executionId.clone()), outputObserver: admitted.outputObserver.clone(), deferSequenceCompletion: true,
+            deferSummary: matches!(admitted.work, AdmittedChatTurnWork::Continue { .. }),
             chatInputSubmitRequestedHandled: true, notifyReply: Some(false), ..ChatTurnOptions::default()
         };
         let submission = core.startUserMessage(PromptFunctionType::CHAT, participantId, Some(chatId.clone()),

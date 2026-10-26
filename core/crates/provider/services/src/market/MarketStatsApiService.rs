@@ -1202,7 +1202,7 @@ impl MarketStatsApiService {
             url.starts_with(MARKET_V2_BASE_URL) || url.starts_with(MARKET_V2_STATIC_URL);
         let requestStartedAtMillis = currentTimeMillis();
         if is_market_request {
-            AppLogger::d(
+            AppLogger::v_with_level(
                 MARKET_API_LOG_TAG,
                 &format!(
                     "HTTP {} url={} bodyBytes={} followRedirects={}",
@@ -1211,6 +1211,7 @@ impl MarketStatsApiService {
                     body.len(),
                     follow_redirects
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
         }
         headers.push(("User-Agent".to_string(), USER_AGENT.to_string()));
@@ -1231,7 +1232,7 @@ impl MarketStatsApiService {
         match response {
             Ok(response) => {
                 if is_market_request {
-                    AppLogger::d(
+                    AppLogger::v_with_level(
                         MARKET_API_LOG_TAG,
                         &format!(
                             "HTTP RESP {} status={} elapsedMs={} url={} responseBytes={}",
@@ -1241,6 +1242,7 @@ impl MarketStatsApiService {
                             url,
                             response.body.len()
                         ),
+                        operit_util::AppLogger::VERBOSE_LEVEL_3,
                     );
                 }
                 Ok(response)

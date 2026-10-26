@@ -79,24 +79,18 @@ EdgeInsets? _commonPaddingFromProps(Map<String, Object?> props) {
   if (props['padding'] != null) {
     return _edgeInsetsFromValue(props['padding']);
   }
-  final start = _number(props['paddingStart']);
-  final top = _number(props['paddingTop']);
-  final end = _number(props['paddingEnd']);
-  final bottom = _number(props['paddingBottom']);
+  final horizontal = _number(props['paddingHorizontal']);
+  final vertical = _number(props['paddingVertical']);
+  final start = _number(props['paddingStart']) ?? horizontal;
+  final top = _number(props['paddingTop']) ?? vertical;
+  final end = _number(props['paddingEnd']) ?? horizontal;
+  final bottom = _number(props['paddingBottom']) ?? vertical;
   if (start != null || top != null || end != null || bottom != null) {
     return EdgeInsets.only(
       left: start ?? 0,
       top: top ?? 0,
       right: end ?? 0,
       bottom: bottom ?? 0,
-    );
-  }
-  final horizontal = _number(props['paddingHorizontal']);
-  final vertical = _number(props['paddingVertical']);
-  if (horizontal != null || vertical != null) {
-    return EdgeInsets.symmetric(
-      horizontal: horizontal ?? 0,
-      vertical: vertical ?? 0,
     );
   }
   return null;
@@ -249,6 +243,36 @@ TextStyle? _textFieldStyle(BuildContext context, Object? raw) {
     fontFamily: _string(raw['fontFamily']).trim().isEmpty
         ? null
         : _string(raw['fontFamily']).trim(),
+  );
+}
+
+/// Resolves optional plugin-owned input decoration without changing theme defaults.
+InputDecoration? _textFieldDecoration(BuildContext context, Object? raw) {
+  if (raw is! Map) return null;
+  final radius = _number(raw['cornerRadius']);
+  final borderColor = _color(context, raw['borderColor']);
+  final focusedColor = _color(context, raw['focusedBorderColor']);
+  final border = radius == null && borderColor == null && focusedColor == null
+      ? null
+      : OutlineInputBorder(
+          borderRadius: BorderRadius.circular(radius ?? 4),
+          borderSide: borderColor == null
+              ? BorderSide.none
+              : BorderSide(color: borderColor),
+        );
+  return InputDecoration(
+    isDense: raw['isDense'] == null ? null : _bool(raw['isDense']),
+    filled: raw['filled'] == null ? null : _bool(raw['filled']),
+    fillColor: _color(context, raw['fillColor']),
+    contentPadding: raw['contentPadding'] == null
+        ? null
+        : _edgeInsetsFromValue(raw['contentPadding']),
+    hintStyle: _textFieldStyle(context, raw['hintStyle']),
+    border: border,
+    enabledBorder: border,
+    focusedBorder: focusedColor == null
+        ? null
+        : border!.copyWith(borderSide: BorderSide(color: focusedColor)),
   );
 }
 
@@ -558,25 +582,6 @@ List<Map<String, Object?>> _canvasCommands(Object? raw) {
     return const <Map<String, Object?>>[];
   }
   return raw.whereType<Map>().map(_stringMap).toList(growable: false);
-}
-
-/// Resolves node list for the Compose DSL renderer.
-List<_ComposeDslNode> _nodeList(Object? raw) {
-  if (raw is List) {
-    return raw
-        .map(_ComposeDslNode.parse)
-        .whereType<_ComposeDslNode>()
-        .toList(growable: false);
-  }
-  return const <_ComposeDslNode>[];
-}
-
-/// Resolves slot map for the Compose DSL renderer.
-Map<String, List<_ComposeDslNode>> _slotMap(Object? raw) {
-  if (raw is Map) {
-    return raw.map((key, value) => MapEntry(key.toString(), _nodeList(value)));
-  }
-  return const <String, List<_ComposeDslNode>>{};
 }
 
 /// Resolves string for the Compose DSL renderer.

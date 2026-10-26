@@ -19,20 +19,22 @@ def check(elf: Path):
     def run(tool, *args):
         return subprocess.check_output([str(bins[-1] / ('xtensa-esp32-elf-' + tool + suffix)), *map(str, args)], text=True, encoding='utf-8')
     symbols = run('nm', '-C', elf).splitlines()
+    # The overlay exports preserve the same Rust call boundaries under LTO.
+    # Legacy names allow inspection of previously built, non-LTO firmware.
     required = [
-        ('<tokio::runtime::scheduler::current_thread::CurrentThread>::new', {0, 4, 8}),
-        ('ring::aead::chacha20_poly1305::seal', {0}),
+        ('<tokio::runtime::scheduler::current_thread::CurrentThread>::new', 'operit_xtensa_tokio_current_thread_new', {0, 4, 8}),
+        ('ring::aead::chacha20_poly1305::seal', 'operit_xtensa_ring_chacha20_poly1305_seal', {0}),
         # open receives its Overlapping descriptor by pointer; all live arguments
         # fit in registers. Its over-aligned frame must still be rejected.
-        ('ring::aead::chacha20_poly1305::open', set()),
+        ('ring::aead::chacha20_poly1305::open', 'operit_xtensa_ring_chacha20_poly1305_open', set()),
     ]
     # Xtensa property tables can label LLVM code as data; remove only from a
     # disposable inspection copy. The build/flashed ELF remains unchanged.
     with tempfile.TemporaryDirectory(prefix='operit-elf-check-') as directory:
         copy = Path(directory) / 'inspect.elf'
         run('objcopy', '--remove-section=.xt.prop', '--remove-section=.xt.lit', elf, copy)
-        for name, argument_offsets in required:
-            symbol = next((line for line in symbols if line.endswith(name)), None)
+        for name, export, argument_offsets in required:
+            symbol = next((line for line in symbols if line.endswith(" " + export) or line.endswith(" " + name)), None)
             if not symbol:
                 raise RuntimeError(f'{name} symbol missing; manual disassembly review required')
             address = int(symbol.split()[0], 16)

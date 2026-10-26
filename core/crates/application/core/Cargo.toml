@@ -19,5 +19,12 @@ tokio = { workspace = true, features = ["sync", "time", "macros"] }
 serde_json.workspace = true
 
 [dev-dependencies]
-operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage"] }
+async-trait.workspace = true
+operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage", "tcp"] }
 operit-util = { path = "../../foundation/util" }
+
+operit-node-edge = { path = "../../node/edge" }
+operit-model = { path = "../../foundation/model" }
+uuid.workspace = true
+operit-store = { path = "../../persistence/store" }
+zip.workspace = true

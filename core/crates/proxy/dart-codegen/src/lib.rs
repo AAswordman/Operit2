@@ -1510,7 +1510,7 @@ fn collect_reachable_type(
 }
 
 fn dart_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -> String {
-    if ty == "Vec<u8>" {
+    if matches!(ty, "Vec<u8>" | "CoreBuffer" | "operit_link::CoreBuffer") {
         return "Uint8List".to_string();
     }
     if let Some(inner) = single_generic_arg(ty, "Option") {

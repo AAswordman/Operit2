@@ -1,0 +1,40 @@
+name: operit_keep_alive
+description: Process-owned background residency and explicit execution protection for Flutter hosts.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.35.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: app.operit.keep_alive
+        pluginClass: OperitKeepAlivePlugin
+      windows:
+        pluginClass: OperitKeepAlivePlugin
+      macos:
+        pluginClass: OperitKeepAlivePlugin
+      linux:
+        pluginClass: OperitKeepAlivePlugin
+      ios:
+        pluginClass: OperitKeepAlivePlugin
+      ohos:
+        package: app.operit.keep_alive
+        pluginClass: OperitKeepAlivePlugin
+      web:
+        pluginClass: BrowserKeepAlivePlugin
+        fileName: browser_registration.dart

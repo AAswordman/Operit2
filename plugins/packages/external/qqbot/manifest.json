@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.qqbot_bundle",
+  "version": "1.1.1",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "QQ Bot",
+    "en": "QQ Bot"
+  },
+  "description": {
+    "zh": "通过宿主原生网络连接腾讯 QQ Bot，提供 C2C/群消息收发、事件队列和 AI 自动回复。",
+    "en": "Connect Tencent QQ Bot through host networking with C2C/group messaging, inbound events and AI replies."
+  },
+  "enabled_by_default": false,
+  "installation_scope": "device",
+  "subpackages": [
+    {
+      "id": "qqbot",
+      "entry": "dist/tools.js"
+    }
+  ],
+  "resources": [],
+  "requires": [
+    {
+      "id": "com.operit.waifu",
+      "min_version": "1.0.0"
+    }
+  ]
+}

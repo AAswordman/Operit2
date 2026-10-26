@@ -50,6 +50,10 @@ pub fn buildExecutionPreludeSource() -> String {
         var console = {
             log: function() { return __operitInvokeCallRuntimeConsole('log', arguments); },
             info: function() { return __operitInvokeCallRuntimeConsole('info', arguments); },
+            /** Forwards developer diagnostics to the active execution console. */
+            debug: function() { return __operitInvokeCallRuntimeConsole('debug', arguments); },
+            /** Preserves the shared V1-V6 depth through the scoped execution console. */
+            verbose: function() { return __operitInvokeCallRuntimeConsole('verbose', arguments); },
             warn: function() { return __operitInvokeCallRuntimeConsole('warn', arguments); },
             error: function() { return __operitInvokeCallRuntimeConsole('error', arguments); }
         };

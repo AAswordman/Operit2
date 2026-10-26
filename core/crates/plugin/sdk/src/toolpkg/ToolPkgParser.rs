@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::package::{LocalizedText, ToolPackage};
 use crate::toolpkg::ToolPkgApiVersion::{
-    currentToolPkgApiVersionText, requireSupportedToolPkgApiVersion, ToolPkgApiVersion,
+    defaultToolPkgApiVersionText, requireSupportedToolPkgApiVersion, ToolPkgApiVersion,
 };
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgTemplateModels::{
@@ -469,6 +469,8 @@ pub struct ToolPkgMainRegistration {
     pub chatMessageMenuItems: Vec<ToolPkgRegisteredChatMessageMenuItem>,
     #[serde(rename = "chatRuntimeHooks", default)]
     pub chatRuntimeHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    #[serde(rename = "chatResponseHooks", default)]
+    pub chatResponseHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "hostEventHooks", default)]
     pub hostEventHooks: Vec<ToolPkgRegisteredHostEventHook>,
     #[serde(rename = "toolLifecycleHooks", default)]
@@ -531,6 +533,11 @@ pub struct ToolPkgContainerRuntime {
     pub author: Vec<String>,
     #[serde(rename = "mainEntry")]
     pub mainEntry: String,
+    /// Retains each declared theme template for capability consumers.
+    #[serde(default)]
+    pub themes: Vec<ToolPkgManifestTheme>,
+    #[serde(default)]
+    pub license: Option<String>,
     #[serde(rename = "sourceType")]
     pub sourceType: ToolPkgSourceType,
     #[serde(rename = "sourcePath")]
@@ -576,6 +583,8 @@ pub struct ToolPkgContainerRuntime {
     pub chatMessageMenuItems: Vec<ToolPkgChatMessageMenuItemRuntime>,
     #[serde(rename = "chatRuntimeHooks")]
     pub chatRuntimeHooks: Vec<ToolPkgFunctionHookRuntime>,
+    #[serde(rename = "chatResponseHooks", default)]
+    pub chatResponseHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "hostEventHooks")]
     pub hostEventHooks: Vec<ToolPkgHostEventHookRuntime>,
     #[serde(rename = "toolLifecycleHooks")]
@@ -628,7 +637,7 @@ pub struct ToolPkgManifest {
     pub toolpkgId: String,
     #[serde(default)]
     pub version: String,
-    #[serde(rename = "api_version", default = "currentToolPkgApiVersionText")]
+    #[serde(rename = "api_version", default = "defaultToolPkgApiVersionText")]
     pub apiVersion: String,
     /// Names the self-contained TypeScript client distributed to dependent packages.
     #[serde(rename = "public_api", default)]
@@ -645,12 +654,21 @@ pub struct ToolPkgManifest {
     pub author: Vec<String>,
     #[serde(default)]
     pub logo: Option<String>,
+    /// References an agreement text distributed inside this ToolPkg archive.
+    #[serde(default)]
+    pub license: Option<String>,
     #[serde(rename = "enabled_by_default", default = "defaultEnabledByDefault")]
     pub enabledByDefault: bool,
     #[serde(rename = "market_only", default)]
     pub marketOnly: bool,
+    /// Restricts installation to one explicit device or space scope.
+    #[serde(rename = "installation_scope", default)]
+    pub installationScope: Option<crate::javascript::ToolPkgConfigScope>,
     #[serde(default)]
     pub subpackages: Vec<ToolPkgManifestSubpackage>,
+    /// Declares theme templates alongside the other ToolPkg capabilities.
+    #[serde(default)]
+    pub themes: Vec<ToolPkgManifestTheme>,
     #[serde(default)]
     pub resources: Vec<ToolPkgManifestResource>,
     #[serde(rename = "wasm_modules", alias = "wasmModules", default)]
@@ -688,6 +706,17 @@ pub struct ToolPkgManifestRequirement {
 pub struct ToolPkgManifestSubpackage {
     pub id: String,
     pub entry: String,
+}
+
+/// Describes one declarative theme contributed by a ToolPkg container.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolPkgManifestTheme {
+    pub id: String,
+    pub path: String,
+    pub preview: String,
+    #[serde(default)]
+    pub files: Vec<operit_plugin_theme::ManifestFile>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -760,6 +789,29 @@ pub struct ToolPkgParser;
 pub struct ToolPkgArchiveParser;
 
 impl ToolPkgArchiveParser {
+    /// Reads installation restrictions before any registration script can create scoped data.
+    #[allow(non_snake_case)]
+    pub fn readInstallationScope(archiveBytes: &[u8]) -> Result<Option<crate::javascript::ToolPkgConfigScope>, String> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(archiveBytes))
+            .map_err(|error| error.to_string())?;
+        let index = Self::buildZipEntryIndex(&mut archive);
+        let entry = findManifestEntry(&index.entryNames).ok_or("ToolPkg manifest is missing")?;
+        let text = Self::readZipEntryText(&mut archive, &index, &entry).ok_or("Cannot read ToolPkg manifest")?;
+        Ok(parseToolPkgManifest(&text, &entry)?.installationScope)
+    }
+
+    /// Resolves ordinary ToolPkg metadata once and validates its declared theme templates.
+    #[allow(non_snake_case)]
+    pub fn readThemeTemplates(archiveBytes: &[u8]) -> Result<Vec<operit_plugin_theme::ValidatedThemeTemplate>, String> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(archiveBytes)).map_err(|error| error.to_string())?;
+        let index = Self::buildZipEntryIndex(&mut archive);
+        let preview = Self::readToolPkgManifestPreview(&mut archive, &index).ok_or("ToolPkg manifest is missing or invalid")?;
+        let text = Self::readZipEntryText(&mut archive, &index, &preview.entryName).ok_or("Cannot read ToolPkg manifest")?;
+        let value = parseToolPkgManifestValue(&text, &preview.entryName)?;
+        operit_plugin_theme::validate_declared_theme_templates(archiveBytes, &preview.entryName, text.as_bytes(), &value)
+            .map_err(|error| error.to_string())
+    }
+
     /// Parses and validates a ToolPkg container from an indexed archive source.
     #[allow(non_snake_case)]
     pub fn parseToolPkgFromIndexedEntries<
@@ -783,7 +835,7 @@ impl ToolPkgArchiveParser {
         FReadEntryText: FnMut(&str) -> Option<String>,
         FReadEntryProtectionHeader: FnMut(&str) -> Option<Vec<u8>>,
         FParseJsPackage: FnMut(&str, &mut dyn FnMut(String, String)) -> Option<ToolPackage>,
-        FParseMainRegistration: FnMut(&str, &str, &str, &str) -> ToolPkgMainRegistrationParseResult,
+        FParseMainRegistration: FnMut(&str, &str, &str, &str, &[String]) -> ToolPkgMainRegistrationParseResult,
         FReportPackageLoadError: FnMut(String, String),
     {
         let manifestEntryName = findManifestEntry(&entryIndex.entryNames)
@@ -829,17 +881,43 @@ impl ToolPkgArchiveParser {
             }
             None => None,
         };
-        let normalizedMainEntry =
-            Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, &manifest.main)
-                .ok_or_else(|| "manifest.main is required".to_string())?;
-        if !entryIndex.containsEntry(&normalizedMainEntry) {
-            return Err(format!(
-                "Cannot find manifest.main entry '{}'",
-                manifest.main
-            ));
+        if let Some(license) = &manifest.license {
+            validateDeclaredPackagePath(license)?;
+            let entry = Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, license)
+                .ok_or_else(|| "manifest.license must reference a safe package path".to_string())?;
+            if !entryIndex.containsEntry(&entry) {
+                return Err(format!("Cannot find manifest.license entry '{license}'"));
+            }
         }
-        let mainScriptText = readEntryText(&normalizedMainEntry)
-            .ok_or_else(|| format!("Failed to read manifest.main entry '{}'", manifest.main))?;
+        let mut themeIds = BTreeSet::new();
+        for theme in &manifest.themes {
+            if theme.id.trim().is_empty() || theme.id.contains(':') || !themeIds.insert(theme.id.clone()) {
+                return Err("manifest.themes requires unique nonempty ids".to_string());
+            }
+            for path in [&theme.path, &theme.preview] {
+                validateDeclaredPackagePath(path)?;
+                let entry = Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, path)
+                    .ok_or_else(|| "Theme resources must use safe relative paths".to_string())?;
+                if !entryIndex.containsEntry(&entry) {
+                    return Err(format!("Cannot find theme resource '{path}'"));
+                }
+            }
+        }
+        let (normalizedMainEntry, mainScriptText) = if manifest.main.is_empty() {
+            if publicApi.is_some() || !manifest.subpackages.is_empty() {
+                return Err("Script APIs and subpackages require manifest.main".to_string());
+            }
+            (String::new(), None)
+        } else {
+            let entry = Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, &manifest.main)
+                .ok_or_else(|| "manifest.main must be a safe relative path".to_string())?;
+            if !entryIndex.containsEntry(&entry) {
+                return Err(format!("Cannot find manifest.main entry '{}'", manifest.main));
+            }
+            let source = readEntryText(&entry)
+                .ok_or_else(|| format!("Failed to read manifest.main entry '{}'", manifest.main))?;
+            (entry, Some(source))
+        };
 
         let mut subpackagePackages = Vec::new();
         let mut subpackageRuntimes = Vec::new();
@@ -1073,19 +1151,33 @@ impl ToolPkgArchiveParser {
         } else {
             localizedTextOf(&manifest.toolpkgId)
         };
-        let mainRegistration = match parseMainRegistration(
-            &mainScriptText,
-            &manifest.toolpkgId,
-            &normalizedMainEntry,
-            &apiVersionText,
-        ) {
-            ToolPkgMainRegistrationParseResult::Success { registration } => registration,
-            ToolPkgMainRegistrationParseResult::Failure { message } => {
-                return Err(format!(
-                    "Failed to parse main registration from '{}': {message}",
-                    manifest.main
-                ));
-            }
+        let mainRegistration = match mainScriptText {
+            None => {
+                let marketOrigin = manifest.extensionFields.get("market_origin")
+                    .map(|value| serde_json::from_value::<ToolPkgMarketOrigin>(value.clone()))
+                    .transpose().map_err(|error| error.to_string())?;
+                if let Some(origin) = &marketOrigin {
+                    if origin.toolpkgId != manifest.toolpkgId || origin.version != manifest.version || origin.author != manifest.author {
+                        return Err("Declarative ToolPkg market origin differs from its manifest".to_string());
+                    }
+                }
+                ToolPkgMainRegistration { marketOrigin, ..Default::default() }
+            },
+            Some(source) => match parseMainRegistration(
+                &source,
+                &manifest.toolpkgId,
+                &normalizedMainEntry,
+                &apiVersionText,
+                &subpackagePackages
+                    .iter()
+                    .flat_map(|package| package.env.iter().map(|variable| variable.name.clone()))
+                    .collect::<Vec<_>>(),
+            ) {
+                ToolPkgMainRegistrationParseResult::Success { registration } => registration,
+                ToolPkgMainRegistrationParseResult::Failure { message } => {
+                    return Err(format!("Failed to parse main registration from '{}': {message}", manifest.main));
+                }
+            },
         };
 
         if !mainRegistration.publicApis.is_empty() && publicApi.is_none() {
@@ -1186,6 +1278,10 @@ impl ToolPkgArchiveParser {
         }
 
         let mut manifestExtensions = manifest.extensionFields.clone();
+        if let Some(scope) = manifest.installationScope {
+            manifestExtensions.insert("installation_scope".to_string(), serde_json::to_value(scope)
+                .map_err(|error| error.to_string())?);
+        }
         if !manifest.workspaceTemplates.is_empty() {
             manifestExtensions.insert(
                 "workspace_templates".to_string(),
@@ -1341,6 +1437,10 @@ impl ToolPkgArchiveParser {
             &mainRegistration.chatRuntimeHooks,
             TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK,
         )?;
+        let chatResponseHooks = validateFunctionHooks(
+            &mainRegistration.chatResponseHooks,
+            TOOLPKG_REGISTRATION_CHAT_RESPONSE_HOOK,
+        )?;
         let hostEventHooks = validateHostEventHooks(
             &mainRegistration.hostEventHooks,
             TOOLPKG_REGISTRATION_HOST_EVENT_HOOK,
@@ -1415,6 +1515,8 @@ impl ToolPkgArchiveParser {
             manifestExtensions,
             author: manifest.author.clone(),
             mainEntry: normalizedMainEntry,
+            themes: manifest.themes.clone(),
+            license: manifest.license.clone(),
             sourceType,
             sourcePath: sourcePath.to_string(),
             subpackages: subpackageRuntimes,
@@ -1437,6 +1539,7 @@ impl ToolPkgArchiveParser {
             chatLifecycleHooks,
             chatMessageMenuItems,
             chatRuntimeHooks,
+            chatResponseHooks,
             hostEventHooks,
             toolLifecycleHooks,
             promptInputHooks,
@@ -2419,17 +2522,30 @@ fn findManifestEntry(entryNames: &BTreeSet<String>) -> Option<String> {
         .cloned()
 }
 
+/// Rejects unsafe declared resource paths without rewriting the manifest spelling.
+#[allow(non_snake_case)]
+fn validateDeclaredPackagePath(path: &str) -> Result<(), String> {
+    if path.is_empty() || path != path.trim() || path.starts_with('/') || path.contains(['\\', ':']) ||
+        path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+        return Err(format!("Invalid ToolPkg resource reference '{path}'"));
+    }
+    Ok(())
+}
+
 #[allow(non_snake_case)]
 /// Parses one ToolPkg manifest and records its source entry path.
 fn parseToolPkgManifest(content: &str, manifestEntryName: &str) -> Result<ToolPkgManifest, String> {
-    let manifestJson = if manifestEntryName.to_ascii_lowercase().ends_with(".hjson") {
-        let value: Value =
-            json5::from_str(&normalizeHjsonLike(content)).map_err(|error| error.to_string())?;
-        serde_json::to_string(&value).map_err(|error| error.to_string())?
+    serde_json::from_value(parseToolPkgManifestValue(content, manifestEntryName)?).map_err(|error| error.to_string())
+}
+
+/// Parses the ordinary manifest syntax while retaining all declared extension fields.
+#[allow(non_snake_case)]
+pub fn parseToolPkgManifestValue(content: &str, manifestEntryName: &str) -> Result<Value, String> {
+    if manifestEntryName.to_ascii_lowercase().ends_with(".hjson") {
+        json5::from_str(&normalizeHjsonLike(content)).map_err(|error| error.to_string())
     } else {
-        content.to_string()
-    };
-    serde_json::from_str::<ToolPkgManifest>(&manifestJson).map_err(|error| error.to_string())
+        serde_json::from_str(content).map_err(|error| error.to_string())
+    }
 }
 
 #[allow(non_snake_case)]
@@ -2529,17 +2645,24 @@ mod logo_tests {
 mod api_compatibility_tests {
     use super::*;
 
-    /// Verifies archive loading preserves the declared API contract through registration and runtime metadata.
+    /// Verifies omitted and explicit API contracts reach registration, runtime metadata, and prerequisites.
     #[test]
-    fn loads_explicit_legacy_and_current_contracts() {
-        for version in ["1.0.0", "1.0.1", "2.0.0"] {
-            let manifest = serde_json::json!({
+    fn loads_omitted_and_explicit_api_contracts() {
+        for (declared, version) in [
+            (None, "1.0.0"),
+            (Some("1.0.0"), "1.0.0"),
+            (Some("1.0.1"), "1.0.1"),
+            (Some("2.0.0"), "2.0.0"),
+        ] {
+            let mut manifest = serde_json::json!({
                 "schema_version": 1,
                 "toolpkg_id": "compat_fixture",
-                "api_version": version,
                 "main": "main.js"
-            })
-            .to_string();
+            });
+            if let Some(declared) = declared {
+                manifest["api_version"] = serde_json::json!(declared);
+            }
+            let manifest = manifest.to_string();
             let entries = BTreeMap::from([
                 ("manifest.json".to_string(), manifest),
                 ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
@@ -2556,7 +2679,7 @@ mod api_compatibility_tests {
                 "compat_fixture.toolpkg",
                 false,
                 |_, _| panic!("fixture does not contain subpackages"),
-                |_, id, path, declared| {
+                |_, id, path, declared, _environment| {
                     assert_eq!(id, "compat_fixture");
                     assert_eq!(path, "main.js");
                     assert_eq!(declared, version);
@@ -2636,15 +2759,122 @@ mod api_compatibility_tests {
         assert!(applyCompatibilityRequirements(version, V1_CHARACTER_PREREQUISITE, &mut Vec::new()).is_err());
     }
 
-    /// Keeps the existing current-contract default explicit and rejects undeclared future contracts.
+    /// Loads declarative theme and agreement references without invoking a JavaScript registration callback.
     #[test]
-    fn preserves_manifest_default_and_rejects_future_contracts() {
+    fn loads_declarative_theme_and_agreement_without_main() {
+        let manifest = serde_json::json!({
+            "schema_version": 1, "toolpkg_id": "theme_fixture", "version": "1",
+            "license": "licenses/agreement.txt",
+            "themes": [{"id":"default", "path":"theme.json", "preview":"preview.png"}]
+        });
+        for missing in [None, Some("theme.json"), Some("preview.png"), Some("licenses/agreement.txt")] {
+            let mut entries = BTreeMap::from([
+                ("manifest.json".to_string(), manifest.to_string()),
+                ("theme.json".to_string(), "{}".to_string()),
+                ("preview.png".to_string(), "image".to_string()),
+                ("licenses/agreement.txt".to_string(), "Custom terms, not an SPDX enum".to_string()),
+            ]);
+            if let Some(missing) = missing { entries.remove(missing); }
+            let index = ToolPkgEntryIndex {
+                entryNames: entries.keys().cloned().collect(),
+                entryNamesByNormalizedLowercase: entries.keys().map(|name| (name.clone(), name.clone())).collect(),
+            };
+            let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+                &index, |name| entries.get(name).cloned(), |_| None,
+                ToolPkgSourceType::EXTERNAL, "theme_fixture.toolpkg", false,
+                |_, _| panic!("declarative theme has no scripts"),
+                |_, _, _, _, _| panic!("declarative theme must not execute registration"),
+                |_, _| panic!("declarative theme has no subpackages"),
+            );
+            match missing {
+                None => {
+                    let loaded = loaded.unwrap();
+                    assert!(loaded.containerRuntime.mainEntry.is_empty());
+                    assert!(loaded.containerPackage.tools.is_empty());
+                    assert_eq!(loaded.containerRuntime.version, "1");
+                    assert_eq!(loaded.containerRuntime.themes[0].id, "default");
+                    assert_eq!(loaded.containerRuntime.license.as_deref(), Some("licenses/agreement.txt"));
+                }
+                Some(_) => assert!(loaded.is_err()),
+            }
+        }
+    }
+
+    /// Allows ordinary declarative resources without inventing a theme-specific package class.
+    #[test]
+    fn loads_declared_resources_without_main_or_themes() {
+        let entries = BTreeMap::from([
+            ("manifest.json".to_string(), serde_json::json!({
+                "toolpkg_id": "resource_fixture", "resources": [{"key":"text", "path":"data.txt", "mime":"text/plain"}]
+            }).to_string()),
+            ("data.txt".to_string(), "Resource data".to_string()),
+        ]);
+        let index = ToolPkgEntryIndex {
+            entryNames: entries.keys().cloned().collect(),
+            entryNamesByNormalizedLowercase: entries.keys().map(|name| (name.clone(), name.clone())).collect(),
+        };
+        let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+            &index, |name| entries.get(name).cloned(), |_| None,
+            ToolPkgSourceType::EXTERNAL, "resource_fixture.toolpkg", false,
+            |_, _| panic!("no executable declarations"), |_, _, _, _, _| panic!("no main entry"),
+            |_, _| panic!("resource declarations must load"),
+        ).unwrap();
+        assert!(loaded.containerRuntime.mainEntry.is_empty());
+        assert!(loaded.containerRuntime.themes.is_empty());
+        assert_eq!(loaded.containerRuntime.resources[0].path, "data.txt");
+    }
+
+    /// Uses the shared HJSON manifest resolver for a mixed package with templates in a nested root.
+    #[test]
+    fn reads_theme_templates_through_the_ordinary_manifest_parser() {
+        use std::io::{Cursor, Read, Write};
+        let mut preview = Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(1280, 800, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut preview, image::ImageFormat::Png).unwrap();
+        let authored = operit_plugin_theme::export_toolpkg_from_theme(&operit_plugin_theme::ThemeExportDraft {
+            toolpkg_id: "org.operit.mixed".into(), version: "1".into(), display_name: "Mixed".into(),
+            author_name: "Creator".into(), theme_json: b"{}".to_vec(), preview_png: preview.into_inner(),
+            agreement_text: String::new(), description: None, assets: Vec::new(),
+        }).unwrap();
+        let mut input = zip::ZipArchive::new(Cursor::new(authored)).unwrap();
+        let mut output = Vec::new();
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut output));
+        for index in 0..input.len() {
+            let mut entry = input.by_index(index).unwrap();
+            let name = entry.name().to_string();
+            let mut bytes = Vec::new(); entry.read_to_end(&mut bytes).unwrap();
+            if name == "manifest.json" {
+                let mut manifest: Value = serde_json::from_slice(&bytes).unwrap();
+                manifest["main"] = Value::String("main.js".into());
+                manifest["display_name"] = serde_json::json!({"values":{"zh":"混合包","en":"Mixed"}});
+                writer.start_file("bundle/manifest.hjson", zip::write::SimpleFileOptions::default()).unwrap();
+                writer.write_all(manifest.to_string().as_bytes()).unwrap();
+            } else {
+                writer.start_file(format!("bundle/{name}"), zip::write::SimpleFileOptions::default()).unwrap();
+                writer.write_all(&bytes).unwrap();
+            }
+        }
+        writer.start_file("bundle/main.js", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(b"exports.registerToolPkg = function() {};").unwrap();
+        writer.start_file("resources/site/manifest.json", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(b"{\"name\":\"unrelated web resource\"}").unwrap();
+        writer.finish().unwrap();
+        let templates = ToolPkgArchiveParser::readThemeTemplates(&output).unwrap();
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].metadata().theme_id, "org.operit.mixed:default");
+        assert_eq!(templates[0].metadata().version, "1");
+        assert!(templates[0].file_bytes("main.js").is_none());
+    }
+
+    /// Defaults omitted manifest versions to the original contract and rejects unadmitted future versions.
+    #[test]
+    fn defaults_manifest_to_v1_and_rejects_future_contracts() {
         let manifest = parseToolPkgManifest(
-            r#"{"toolpkg_id":"current_fixture","main":"main.js"}"#,
+            r#"{"toolpkg_id":"legacy_fixture","main":"main.js"}"#,
             "manifest.json",
         )
-        .expect("current manifest must parse");
-        assert_eq!(manifest.apiVersion, "2.0.0");
+        .expect("legacy manifest must parse");
+        assert_eq!(manifest.apiVersion, "1.0.0");
         for version in ["1.0.2", "2.0.1", "3.0.0"] {
             assert!(requireSupportedToolPkgApiVersion(version).is_err());
         }
@@ -2678,7 +2908,7 @@ mod public_api_tests {
             &index, |name| entries.get(name).cloned(), |_| None,
             ToolPkgSourceType::EXTERNAL, "public_fixture.toolpkg", false,
             |_, _| panic!("fixture has no subpackages"),
-            |_, _, _, _| ToolPkgMainRegistrationParseResult::Success {
+            |_, _, _, _, _| ToolPkgMainRegistrationParseResult::Success {
                 registration: ToolPkgMainRegistration {
                     publicApis: (0..methods).map(|_| ToolPkgRegisteredFunctionHook {
                         id: "run".to_string(), function: "runExport".to_string(), ..Default::default()
@@ -2744,7 +2974,7 @@ mod navigation_registration_tests {
             &index, |name| sources.get(name).cloned(), |_| None,
             ToolPkgSourceType::EXTERNAL, "arbitrary_package.toolpkg", false,
             |_, _| panic!("navigation unit input has no subpackages"),
-            |_, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
+            |_, _, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
             |name, message| panic!("unexpected package error {name}: {message}"),
         )
     }
@@ -2808,7 +3038,7 @@ mod navigation_registration_tests {
             &index, |name| sources.get(name).cloned(), |_| None,
             ToolPkgSourceType::EXTERNAL, "arbitrary_package.toolpkg", false,
             |_, _| panic!("sidebar archive input declares no subpackages"),
-            |_, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
+            |_, _, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
             |name, message| panic!("unexpected package error {name}: {message}"),
         )
     }
@@ -2879,4 +3109,20 @@ mod navigation_registration_tests {
         assert!(load_sidebar_navigation(vec![invalid], entry).unwrap_err().contains("route must use compose_dsl for chat_input_menu_sections"));
     }
 
+}
+
+#[cfg(test)]
+mod installation_scope_tests {
+    use super::*;
+    /// Accepts exactly the declared device and space installation scopes.
+    #[test]
+    fn installation_scope_uses_the_strict_rust_scope_enum() {
+        for (text, expected) in [("device", crate::javascript::ToolPkgConfigScope::Device), ("space", crate::javascript::ToolPkgConfigScope::Space)] {
+            let manifest = parseToolPkgManifest(&serde_json::json!({"toolpkg_id":"scope.fixture", "main":"main.js", "installation_scope":text}).to_string(), "manifest.json").unwrap();
+            assert_eq!(manifest.installationScope, Some(expected));
+        }
+        for scope in [serde_json::json!("workspace"), serde_json::json!("local"), serde_json::json!("SPACE"), serde_json::json!(true), serde_json::json!(1)] {
+            assert!(parseToolPkgManifest(&serde_json::json!({"toolpkg_id":"scope.fixture", "main":"main.js", "installation_scope":scope}).to_string(), "manifest.json").is_err());
+        }
+    }
 }

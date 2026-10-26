@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.character_cards",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "public_api": "src/api.ts",

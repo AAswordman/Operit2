@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui' show PointerDeviceKind;
+import 'dart:ui' show PointerDeviceKind, ImageByteFormat;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'package:operit2/ui/main/components/CollapsedDrawerContent.dart';
+import 'package:operit2/ui/main/components/NavigationDrawerAppearance.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -89,25 +92,34 @@ Widget themed(Widget child) => OperitTheme(
   child: child,
 );
 
+/// Renders sidebar lists through their shared sliver protocol and other nodes as boxes.
 Widget renderSidebar(
   Map<String, Object?> node,
   List<String> actions, {
   Future<Object?> Function(String, [Object?])? onAction,
-}) => buildComposeDslLayoutForTest(
-  node: node,
-  hostContext: ComposeDslWebViewHostContext(
-    packageName: 'fixture.character-sidebar',
-    routeInstanceId: 'sidebar-layout-test',
-    executionContextKey: 'sidebar-layout-test',
-    dispatchAction: (id, [payload]) async {
-      actions.add('$id:$payload');
-      return onAction == null ? null : await onAction(id, payload);
-    },
-    runtimeOptionsProvider: () => {},
-  ),
-  onTextInput: (_, _) async => null,
-  splitMarkdownContent: (_) async => [],
-);
+  bool inScrollView = false,
+}) {
+  final sliver = inScrollView || node['type'] == 'LazyColumn';
+  final renderer = buildComposeDslLayoutForTest(
+    node: node,
+    contentBuilder: (context, content) =>
+        sliver ? content.sliver : content.body,
+    onLoadHandledByHost: true,
+    hostContext: ComposeDslWebViewHostContext(
+      packageName: 'fixture.character-sidebar',
+      routeInstanceId: 'sidebar-layout-test',
+      executionContextKey: 'sidebar-layout-test',
+      dispatchAction: (id, [payload]) async {
+        actions.add('$id:$payload');
+        return onAction == null ? null : await onAction(id, payload);
+      },
+      runtimeOptionsProvider: () => {},
+    ),
+    onTextInput: (_, _) async => null,
+    splitMarkdownContent: (_) async => [],
+  );
+  return sliver ? CustomScrollView(slivers: [renderer]) : renderer;
+}
 
 /// Counts real ink features rather than accepting a gesture-only click region.
 class RecordingSplashFactory extends InteractiveInkFeatureFactory {
@@ -276,8 +288,9 @@ void main() {
     Map propsFor(Map<String, Object?> tree, String key) {
       Map? result;
       void visit(Map node) {
-        if ((node['props'] as Map?)?['key'] == key)
+        if ((node['props'] as Map?)?['key'] == key) {
           result = node['props'] as Map;
+        }
         for (final child in node['children'] as List? ?? []) {
           visit(child as Map);
         }
@@ -737,6 +750,303 @@ void main() {
       await mouse.removePointer();
     },
   );
+
+  for (final brightness in Brightness.values) {
+    for (final scale in [1.0, 1.8]) {
+      testWidgets(
+        'actual plugin search matches workspace geometry in $brightness at scale $scale',
+        (tester) async {
+          await tester.binding.setSurfaceSize(const Size(680, 180));
+          addTearDown(() => tester.binding.setSurfaceSize(null));
+          final controller = TextEditingController();
+          addTearDown(controller.dispose);
+          final plugin = sidebarTree(
+            fixture: 'native_character_sidebar_search.json',
+          );
+          await tester.pumpWidget(
+            themed(
+              MaterialApp(
+                theme: ThemeData(
+                  colorScheme: ColorScheme.fromSeed(
+                    seedColor: Colors.blue,
+                    brightness: brightness,
+                  ),
+                ),
+                home: MediaQuery(
+                  data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+                  child: Scaffold(
+                    body: Builder(
+                      builder: (context) => RepaintBoundary(
+                        key: const ValueKey('search-comparison'),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              key: const ValueKey('plugin-search-reference'),
+                              width: 320,
+                              child: renderSidebar(plugin, []),
+                            ),
+                            const SizedBox(width: 20),
+                            SizedBox(
+                              key: const ValueKey('workspace-search-reference'),
+                              width: 320,
+                              child: Padding(
+                                padding: const EdgeInsetsDirectional.only(
+                                  start: 12,
+                                  end: 12,
+                                  bottom: 12,
+                                ),
+                                child: ConversationSearchField(
+                                  controller: controller,
+                                  appearance: navigationDrawerAppearanceOf(
+                                    context,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final output = Platform.environment['OPERIT_SEARCH_COMPARISON_DIR'];
+          if (output != null) {
+            await tester.runAsync(() async {
+              final boundary = tester.renderObject<RenderRepaintBoundary>(
+                find.byKey(const ValueKey('search-comparison')),
+              );
+              final image = await boundary.toImage();
+              final bytes = await image.toByteData(format: ImageByteFormat.png);
+              await Directory(output).create(recursive: true);
+              await File(
+                '$output/search-${brightness.name}-$scale.png',
+              ).writeAsBytes(bytes!.buffer.asUint8List());
+              image.dispose();
+            });
+          }
+          final pluginRoot = find.byKey(
+            const ValueKey('plugin-search-reference'),
+          );
+          final nativeRoot = find.byKey(
+            const ValueKey('workspace-search-reference'),
+          );
+          final pluginField = find.descendant(
+            of: pluginRoot,
+            matching: find.byType(TextField),
+          );
+          final nativeField = find.descendant(
+            of: nativeRoot,
+            matching: find.byType(TextField),
+          );
+          final pluginIcon = find.descendant(
+            of: pluginField,
+            matching: find.byIcon(Icons.search),
+          );
+          final nativeIcon = find.descendant(
+            of: nativeField,
+            matching: find.byIcon(Icons.search),
+          );
+          final pluginText = find.descendant(
+            of: pluginField,
+            matching: find.byType(EditableText),
+          );
+          final nativeText = find.descendant(
+            of: nativeField,
+            matching: find.byType(EditableText),
+          );
+          Rect localRect(Finder child, Finder parent) =>
+              tester.getRect(child).shift(-tester.getTopLeft(parent));
+          expect(
+            localRect(
+              find.descendant(of: pluginIcon, matching: find.byType(RichText)),
+              pluginField,
+            ),
+            rectMoreOrLessEquals(
+              localRect(
+                find.descendant(
+                  of: nativeIcon,
+                  matching: find.byType(RichText),
+                ),
+                nativeField,
+              ),
+              epsilon: 0.01,
+            ),
+            reason: 'The search icon must have the native centered inset',
+          );
+          expect(
+            localRect(pluginField, pluginRoot),
+            rectMoreOrLessEquals(
+              localRect(nativeField, nativeRoot),
+              epsilon: 0.01,
+            ),
+            reason: 'The field must preserve both horizontal and bottom insets',
+          );
+          expect(
+            localRect(pluginText, pluginField),
+            rectMoreOrLessEquals(
+              localRect(nativeText, nativeField),
+              epsilon: 0.01,
+            ),
+          );
+          expect(tester.getSize(pluginRoot), tester.getSize(nativeRoot));
+          final actual = tester.widget<TextField>(pluginField).decoration!;
+          final reference = tester.widget<TextField>(nativeField).decoration!;
+          expect(actual.fillColor, reference.fillColor);
+          expect(actual.contentPadding, reference.contentPadding);
+          expect(actual.enabledBorder, reference.enabledBorder);
+          expect(actual.focusedBorder, reference.focusedBorder);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  for (final scale in [1.0, 1.8]) {
+    testWidgets(
+      'search content animates intrinsic height and native decoration at text scale $scale',
+      (tester) async {
+        final actions = <String>[];
+        var expanded = false;
+        late StateSetter update;
+        Map<String, Object?> searchTree() => {
+          'type': 'Column',
+          'props': {'fillMaxWidth': true},
+          'children': [
+            {
+              'type': 'Box',
+              'props': {
+                'key': 'search-animation',
+                'fillMaxWidth': true,
+                'animation': {
+                  'durationMillis': 180,
+                  'curve': 'easeOutCubic',
+                  'animateContentSize': true,
+                },
+              },
+              'children': [
+                if (expanded)
+                  {
+                    'type': 'Column',
+                    'props': {
+                      'fillMaxWidth': true,
+                      'paddingHorizontal': 12,
+                      'paddingBottom': 12,
+                    },
+                    'children': [
+                      {
+                        'type': 'TextField',
+                        'props': {
+                          'key': 'search-input',
+                          'value': '',
+                          'singleLine': true,
+                          'fillMaxWidth': true,
+                          'placeholder': '搜索对话',
+                          'onValueChange': {'__actionId': 'search-change'},
+                          'decoration': {
+                            'isDense': true,
+                            'filled': true,
+                            'fillColor': '#FFEEEEEE',
+                            'cornerRadius': 14,
+                            'focusedBorderColor': '#FF0000FF',
+                            'contentPadding': {
+                              'horizontal': 12,
+                              'vertical': 10,
+                            },
+                            'hintStyle': {'color': '#FF666666'},
+                          },
+                        },
+                        'children': <Object?>[],
+                      },
+                    ],
+                  }
+                else
+                  {
+                    'type': 'Spacer',
+                    'props': {'height': 0},
+                    'children': <Object?>[],
+                  },
+              ],
+            },
+            {
+              'type': 'Text',
+              'props': {'text': '会话列表'},
+              'children': <Object?>[],
+            },
+          ],
+        };
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+              child: Scaffold(
+                body: SizedBox(
+                  width: 320,
+                  child: StatefulBuilder(
+                    builder: (context, setState) {
+                      update = setState;
+                      return renderSidebar(
+                        searchTree(),
+                        actions,
+                        inScrollView: true,
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        final animation = find.descendant(
+          of: find.byKey(const ValueKey<Object?>('search-animation')),
+          matching: find.byType(AnimatedSize),
+        );
+        final animationState = tester.state(animation);
+        expect(tester.getSize(animation).height, 0);
+        update(() => expanded = true);
+        await tester.pump();
+        final field = tester.widget<TextField>(find.byType(TextField));
+        final decoration = field.decoration!;
+        expect(decoration.isDense, isTrue);
+        expect(decoration.filled, isTrue);
+        expect(decoration.fillColor, const Color(0xFFEEEEEE));
+        expect(
+          decoration.contentPadding,
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        );
+        expect(decoration.hintStyle!.color, const Color(0xFF666666));
+        expect(
+          (decoration.enabledBorder! as OutlineInputBorder).borderRadius,
+          BorderRadius.circular(14),
+        );
+        expect(decoration.enabledBorder!.borderSide, BorderSide.none);
+        expect(
+          decoration.focusedBorder!.borderSide.color,
+          const Color(0xFF0000FF),
+        );
+        final targetHeight = tester.getSize(find.byType(TextField)).height + 12;
+        await tester.pump(const Duration(milliseconds: 90));
+        expect(tester.getSize(animation).height, greaterThan(0));
+        expect(tester.getSize(animation).height, lessThan(targetHeight));
+        await tester.pump(const Duration(milliseconds: 90));
+        expect(tester.getSize(animation).height, closeTo(targetHeight, 0.01));
+        expect(tester.state(animation), same(animationState));
+        update(() => expanded = false);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 90));
+        expect(tester.getSize(animation).height, greaterThan(0));
+        expect(tester.getSize(animation).height, lessThan(targetHeight));
+        await tester.pump(const Duration(milliseconds: 90));
+        expect(tester.getSize(animation).height, 0);
+        expect(actions, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'generic LoadingIndicator uses the app rotating polygon, not a legacy Material spinner',

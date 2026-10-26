@@ -79,6 +79,14 @@ pub async fn collect_stream_chunks(mut stream: Box<dyn RevisableTextStreamLike>)
     chunks
 }
 
+/// Rejects a failed producer before interpreting any received text as a completed model round.
+pub fn ensure_response_completed(stream: &dyn RevisableTextStreamLike) -> Result<(), AiServiceError> {
+    match stream.terminal_failure() {
+        Some(error) => Err(AiServiceError::RequestFailed(error)),
+        None => Ok(()),
+    }
+}
+
 /// Converts provider errors into user-facing retry status text.
 pub fn retry_error_text(error: &AiServiceError) -> String {
     let message = error.to_string();

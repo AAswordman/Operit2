@@ -35,6 +35,9 @@ pub struct ChatTurnOptions {
     /// Keeps sequence-level lease ownership and completion notifications with the native transport.
     #[serde(skip)]
     pub deferSequenceCompletion: bool,
+    /// Leaves summary scheduling to the acknowledged completion policy of a native continuation.
+    #[serde(skip)]
+    pub deferSummary: bool,
     #[serde(default)]
     pub chatInputSubmitRequestedHandled: bool,
 }
@@ -51,6 +54,7 @@ impl Default for ChatTurnOptions {
             nativeExecutionId: None,
             outputObserver: None,
             deferSequenceCompletion: false,
+            deferSummary: false,
             chatInputSubmitRequestedHandled: false,
         }
     }

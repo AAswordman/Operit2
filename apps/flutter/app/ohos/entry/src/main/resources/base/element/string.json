@@ -1,5 +1,6 @@
 {
   "string": [
+    { "name": "DataRescue_label", "value": "Operit2 数据救援" },
     {
       "name": "module_desc",
       "value": "module description"

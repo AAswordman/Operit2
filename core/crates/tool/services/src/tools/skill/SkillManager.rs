@@ -4,7 +4,7 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use operit_host_api::FileSystemHost;
+use operit_host_api::{FileSystemHost, TimeUtils::currentLocalDateTime};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
@@ -391,7 +391,7 @@ impl SkillManager {
         };
         let mut prompt = String::new();
         prompt.push_str(&format!("Using package (Skill): {}\n", skill.name));
-        prompt.push_str(&format!("Use Time: {}\n", currentUseTime()));
+        prompt.push_str(&format!("Use Time: {}\n", currentLocalDateTime()));
         prompt.push_str("Execution policy:\n");
         prompt.push_str("Prioritize using the skill-provided instructions and bundled scripts, and complete tasks with terminal-related tools.\n");
         if !skill.description.trim().is_empty() {
@@ -751,19 +751,6 @@ fn walkDirectory(
             output.push('\n');
         }
     }
-}
-
-#[allow(non_snake_case)]
-/// Formats the host-provided Unix clock for skill prompt metadata.
-fn currentUseTime() -> String {
-    let timestampMillis = currentTimeMillis()
-        .try_into()
-        .expect("host time must fit into chrono timestamp milliseconds");
-    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestampMillis)
-        .expect("host time must be a valid chrono timestamp")
-        .naive_utc()
-        .format("%Y-%m-%dT%H:%M:%S%.f")
-        .to_string()
 }
 
 #[allow(non_snake_case)]

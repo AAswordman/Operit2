@@ -27,23 +27,23 @@ class Tests(unittest.TestCase):
         with patch.object(bridge.subprocess, 'Popen', return_value=process) as spawn:
             session = bridge.CoreSession(Path('core-cli'), timeout=1)
             try:
-                result = session.plugin('real-board', 'device.ui', 'chat')
+                result = session.service('real-board', 'edge.ui', 'chat')
                 self.assertFalse(result['connected'])
                 self.assertEqual(result['error'], 'offline')
                 self.assertEqual(spawn.call_count, 1)
                 args = json.loads(process.stdin.getvalue().splitlines()[0])
-                self.assertEqual(args[:5], ['edge-plugin', 'real-board', 'invoke', 'device.ui', 'chat'])
+                self.assertEqual(args[:4], ['edge-call', 'real-board', 'edge.ui', 'chat'])
             finally: session.close()
     def test_timeout_stops_ambiguous_pipeline_without_replaying_mutation(self):
         session = object.__new__(bridge.CoreSession)
         session.process = Process([]); session.lock = threading.Lock(); session.output = queue.Queue(); session.timeout = .01
-        with self.assertRaises(TimeoutError): session.command(['edge-plugin', 'real-board', 'invoke', 'device.ui', 'tap'])
+        with self.assertRaises(TimeoutError): session.command(['edge-call', 'real-board', 'edge.ui', 'tap'])
         self.assertTrue(session.process.terminated)
         self.assertEqual(len(session.process.stdin.getvalue().splitlines()), 1)
     def test_http_targets_real_node_and_bounds_body_and_actions(self):
         class Session:
             calls = []
-            def plugin(self, *args): self.calls.append(args); return {'ok': True}
+            def service(self, *args): self.calls.append(args); return {'ok': True}
         session = Session()
         server = HTTPServer(('127.0.0.1', 0), bridge.make_handler(session, 'real-board'))
         worker = threading.Thread(target=server.serve_forever); worker.start()
@@ -52,7 +52,7 @@ class Tests(unittest.TestCase):
             req = Request(url, data=json.dumps({'operation': 'draft', 'argument': 'hello'}).encode(), headers={'Content-Type': 'application/json'})
             with urlopen(req, timeout=2) as response: result = json.load(response)
             self.assertEqual(result['source'], 'device-link-serial')
-            self.assertEqual(session.calls, [('real-board', 'device.ui', 'draft', 'hello')])
+            self.assertEqual(session.calls, [('real-board', 'edge.ui', 'draft', 'hello')])
             for body in [b'x'*8193, b'{"operation":"erase"}']:
                 try:
                     with urlopen(Request(url, data=body), timeout=2): self.fail('invalid request accepted')
@@ -78,7 +78,7 @@ class Tests(unittest.TestCase):
             for args in [['peers'], ['space', 'show']]:
                 with post(args) as response: self.assertEqual(response.status, 200)
             for args in [['space', 'leave'], ['space', 'show', '--extra'], ['control', 'remove'],
-                         ['core', 'model', 'set'], ['edge-plugin', 'other-board', 'invoke'], ['peers', 'delete']]:
+                         ['core', 'model', 'set'], ['edge-call', 'other-board', 'edge.ui'], ['peers', 'delete']]:
                 with self.assertRaises(HTTPError) as caught: post(args)
                 self.assertEqual(caught.exception.code, 400); caught.exception.close()
             for headers in [{'Origin': 'http://example.com'}, {'Host': 'example.com'}, {'Content-Type': 'text/plain'}]:

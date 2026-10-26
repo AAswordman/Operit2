@@ -26,7 +26,7 @@ impl ToolPkgChatMessageHookBridge {
     /// Synchronizes active chat message hook registrations from enabled ToolPkg containers.
     #[allow(non_snake_case)]
     pub fn syncToolPkgRegistrations(activeContainers: &[ToolPkgContainerRuntime]) {
-        let mut hooks = activeContainers
+        let hooks = activeContainers
             .iter()
             .flat_map(|runtime| {
                 runtime
@@ -40,11 +40,6 @@ impl ToolPkgChatMessageHookBridge {
                     })
             })
             .collect::<Vec<_>>();
-        hooks.sort_by(|left, right| {
-            left.containerPackageName
-                .cmp(&right.containerPackageName)
-                .then(left.hookId.cmp(&right.hookId))
-        });
         *CHAT_MESSAGE_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -54,6 +49,11 @@ impl ToolPkgChatMessageHookBridge {
     /// Dispatches a notification after a chat message has been persisted.
     #[allow(non_snake_case)]
     pub fn dispatchMessagePersisted(chatId: &str, message: &ChatMessage) {
+        // Checkpoints save an unfinished response for recovery. Filter them before
+        // queueing plugin work; the terminal commit dispatches the completed message.
+        if message.sender == "ai" && message.completedAt <= 0 {
+            return;
+        }
         let chatId = chatId.to_owned();
         let message = message.to_owned();
         super::ToolPkgHookBridgeSupport::scheduleToolPkgNotification(
@@ -77,7 +77,7 @@ impl ToolPkgChatMessageHookBridge {
                     let eventPayload = buildChatMessagePayload(chatId, message);
                     let manager = runtime.package_manager();
                     for hook in activeHooks {
-                        ChainLogger::info(
+                        ChainLogger::verbose_with_level(
                             PLUGIN_CHAIN,
                             "plugin.toolpkg.chat_message.run.start",
                             &[
@@ -86,6 +86,7 @@ impl ToolPkgChatMessageHookBridge {
                                 ("hookId", hook.hookId.clone()),
                                 ("function", hook.functionName.clone()),
                             ],
+                            operit_util::AppLogger::VERBOSE_LEVEL_3,
                         );
                         match manager
                             .runToolPkgMainHook(
@@ -102,7 +103,7 @@ impl ToolPkgChatMessageHookBridge {
                             )
                             .await
                         {
-                            Ok(_) => ChainLogger::info(
+                            Ok(_) => ChainLogger::verbose_with_level(
                                 PLUGIN_CHAIN,
                                 "plugin.toolpkg.chat_message.run.done",
                                 &[
@@ -110,6 +111,7 @@ impl ToolPkgChatMessageHookBridge {
                                     ("package", hook.containerPackageName.clone()),
                                     ("hookId", hook.hookId.clone()),
                                 ],
+                                operit_util::AppLogger::VERBOSE_LEVEL_3,
                             ),
                             Err(error) => ChainLogger::error(
                                 PLUGIN_CHAIN,

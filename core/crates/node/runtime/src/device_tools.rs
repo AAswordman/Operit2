@@ -9,20 +9,18 @@ impl CoreNodeRouter {
             .map_err(|_| "Device tool service is already initialized".into())
     }
 
-    fn requireDeviceToolPermission(&self, origin: &str) -> Result<(), CoreLinkError> {
-        for node in [origin, self.localNodeId.as_str()] {
-            if !self
-                .networkControlStore
-                .nodeHasCapability(node, "runtime.execute", None)
-                .map_err(CoreLinkError::internal)?
-            {
-                return Err(CoreLinkError::new(
-                    "ROUTE_PERMISSION_DENIED",
-                    format!("Device {node} lacks runtime.execute"),
-                ));
-            }
-        }
-        Ok(())
+    fn requireDeviceToolMember(&self, origin: &str) -> Result<(), CoreLinkError> {
+        let space = self.spaceStore.space().map_err(CoreLinkError::internal)?;
+        let policy = RoutingPolicy::load(&self.networkControlStore)
+            .map_err(CoreLinkError::internal)?;
+        requireRouteMember(
+            &space, &policy, origin,
+            RouteParticipant::Origin,
+        )?;
+        requireRouteMember(
+            &space, &policy, &self.localNodeId,
+            RouteParticipant::Target,
+        )
     }
 
     /// This surface accepts only explicit Target routing; it never falls back to another device.
@@ -38,7 +36,7 @@ impl CoreNodeRouter {
                 "Device tools require explicit Target routing",
             ));
         }
-        self.requireDeviceToolPermission(&origin)?;
+        self.requireDeviceToolMember(&origin)?;
         self.deviceToolService
             .get()
             .ok_or_else(|| {

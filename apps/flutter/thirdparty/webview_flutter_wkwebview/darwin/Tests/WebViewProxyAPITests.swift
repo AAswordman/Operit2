@@ -42,6 +42,17 @@ class WebViewProxyAPITests: XCTestCase {
   }
 
   #if os(iOS)
+    @MainActor func testProductionWebViewRejectsInvalidGeometry() throws {
+      let registrar = TestProxyApiRegistrar()
+      let api = webViewProxyAPI(forRegistrar: registrar)
+      let view = try api.pigeonDelegate.pigeonDefaultConstructor(
+        pigeonApi: api, initialConfiguration: WKWebViewConfiguration())
+      view.frame = CGRect(x: 0, y: 0, width: 320, height: 600)
+      view.frame = CGRect(x: CGFloat.nan, y: 0, width: 320, height: 600)
+      XCTAssertTrue(view.isHidden)
+      XCTAssertEqual(view.frame, CGRect(x: 0, y: 0, width: 320, height: 600))
+    }
+
     @MainActor func testScrollView() {
       let registrar = TestProxyApiRegistrar()
       let api = webViewProxyAPI(forRegistrar: registrar)

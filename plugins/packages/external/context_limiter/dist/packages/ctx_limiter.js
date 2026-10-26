@@ -67,13 +67,14 @@ function normalizeLimit(value) {
     const parsed = Number.parseInt(String(value), 10);
     return parsed;
 }
+/** Saves the validated limit in the container installation environment. */
 function set_floor_limit(params) {
     const limit = normalizeLimit(params.n);
     if (!Number.isFinite(limit) || limit < 1) {
         complete({ success: false, error: "n 必须是大于 0 的整数" });
         return;
     }
-    Tools.SoftwareSettings.writeEnvironmentVariable(constants_1.ENV_KEYS.floorLimit, String(limit))
+    Tools.SoftwareSettings.writeEnvironmentVariable("com.operit.context_limiter", constants_1.ENV_KEYS.floorLimit, String(limit))
         .then(() => {
         complete({
             success: true,

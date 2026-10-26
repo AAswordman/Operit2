@@ -13,5 +13,3 @@ export const PLANASK_XML_TAG = "planask";
 export const SUBPACKAGE_ID = "plan_mode_tools";
 export const GET_PLAN_TOOL_NAME = "get_plan";
 export const COMPLETE_PLAN_TOOL_NAME = "complete_plan";
-export const PLAN_FILE_DIRECTORY_NAME = ".operit";
-export const PLAN_FILE_NAME = "planmode.md";

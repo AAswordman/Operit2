@@ -245,3 +245,48 @@ fn chat_history_does_not_replay_responses_metadata_as_visible_text() {
     assert!(!body.to_string().contains("<meta"));
     assert!(!body.to_string().contains("encrypted-reasoning"));
 }
+
+#[test]
+fn audio_and_video_links_are_converted_to_openai_multimodal_parts() {
+    use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
+    use operit_util::MediaPoolManager::MediaPoolManager;
+
+    let audio_id = MediaPoolManager::add_media_bytes(b"audio", "audio/mpeg");
+    let video_id = MediaPoolManager::add_media_bytes(b"video", "video/mp4");
+    let prompt = format!(
+        "{}\n{}\nAnalyze media",
+        MediaLinkBuilder::audio(&audio_id),
+        MediaLinkBuilder::video(&video_id)
+    );
+    let multimodal_provider = OpenAIProvider::new_with_capabilities(
+        "https://example.test/v1/chat/completions".to_string(),
+        "test-key".to_string(),
+        "test-model".to_string(),
+        "OPENAI_GENERIC".to_string(),
+        Vec::new(),
+        true,
+        true,
+        true,
+        true,
+    );
+    let body = multimodal_provider
+        .create_request_body(&send_request(vec![PromptTurn::new(
+            PromptTurnKind::USER,
+            prompt,
+        )]))
+        .unwrap();
+
+    MediaPoolManager::remove_media(&audio_id);
+    MediaPoolManager::remove_media(&video_id);
+
+    let content = body["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 3);
+    assert_eq!(content[0]["type"], "input_audio");
+    assert_eq!(content[0]["input_audio"]["format"], "mp3");
+    assert_eq!(content[0]["input_audio"]["data"], "YXVkaW8=");
+    assert_eq!(content[1]["type"], "video_url");
+    assert_eq!(content[1]["video_url"]["url"], "data:video/mp4;base64,dmlkZW8=");
+    assert_eq!(content[2]["type"], "text");
+    assert_eq!(content[2]["text"], "Analyze media");
+    assert!(!body.to_string().contains("<link"));
+}

@@ -109,6 +109,12 @@ impl WebSocketHost for AndroidHttpHost {
         self.inner.sendWebSocketMessage(streamId, message)
     }
 
+    /// Sends one UTF-8 text frame through the shared Android networking Host.
+    #[allow(non_snake_case)]
+    fn sendWebSocketText(&self, streamId: &str, text: String) -> HostResult<()> {
+        self.inner.sendWebSocketText(streamId, text)
+    }
+
     /// Closes one Android WebSocket.
     #[allow(non_snake_case)]
     fn closeWebSocket(&self, streamId: &str) -> HostResult<()> {

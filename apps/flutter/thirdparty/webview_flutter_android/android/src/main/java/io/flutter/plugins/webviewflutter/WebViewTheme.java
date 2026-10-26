@@ -14,10 +14,12 @@ final class WebViewTheme {
   private static final Set<WebView> views =
       Collections.newSetFromMap(new WeakHashMap<WebView, Boolean>());
 
-  /** Creates a private resource configuration and theme for a browser view. */
+  /** Isolates browser resources while preserving the Activity context for native popups. */
   static Context createContext(Context parent) {
     Configuration configuration = configuration(parent.getResources().getConfiguration());
-    return new ContextThemeWrapper(parent.createConfigurationContext(configuration), style());
+    ContextThemeWrapper context = new ContextThemeWrapper(parent, style());
+    context.applyOverrideConfiguration(configuration);
+    return context;
   }
 
   /** Tracks live browser views without extending their lifetime. */

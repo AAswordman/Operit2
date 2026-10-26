@@ -3,39 +3,48 @@
  * @param {typeof import('../../../../../../../plugins/types/files').Files} current
  * @returns {typeof import('../../../../../../../plugins/types-v1/files').Files}
  */
+/**
+ * Converts a legacy environment/path pair to a host-owned VFS address.
+ * The omitted environment is the documented v1 Android environment, not the host OS.
+ * @param {string} path
+ * @param {import('../../../../../../../plugins/types-v1/files').FileEnvironment} environment
+ */
+function __operitV1FileAddress(path, environment) {
+    if (typeof path !== 'string' || path[0] !== '/' || path.indexOf('\\') !== -1) {
+        throw new Error('ToolPkg v1 Files requires an absolute slash-separated path.');
+    }
+    if (environment !== 'android' && environment !== 'linux') {
+        throw new Error('Unsupported ToolPkg v1 file environment: ' + environment);
+    }
+    var segments = [];
+    for (var segment of path.split('/')) {
+        if (segment === '' || segment === '.') continue;
+        if (segment === '..') {
+            if (segments.length === 0) throw new Error('ToolPkg v1 file path escapes its root.');
+            segments.pop();
+        } else {
+            segments.push(segment);
+        }
+    }
+    var normalized = '/' + segments.join('/');
+    // Paths returned by the current resource/config APIs are already VFS addresses.
+    if (segments[0] === 'app' || segments[0] === 'mnt') return normalized;
+    if (environment === 'linux') return '/mnt/linux' + (normalized === '/' ? '' : normalized);
+    if (segments[0] === 'sdcard' || segments[0] === 'data') return normalized;
+    if (segments[0] === 'storage' && segments[1] === 'emulated' && segments[2] === '0') {
+        return '/sdcard' + (segments.length === 3 ? '' : '/' + segments.slice(3).join('/'));
+    }
+    throw new Error('ToolPkg v1 Android path has no VFS mapping: ' + normalized);
+}
+
 function __operitCreateV1Files(current) {
     /**
      * Converts a legacy environment/path pair to a host-owned VFS address.
-     * The omitted environment is the documented v1 Android environment, not the host OS.
      * @param {string} path
      * @param {import('../../../../../../../plugins/types-v1/files').FileEnvironment} environment
      */
     function address(path, environment) {
-        if (typeof path !== 'string' || path[0] !== '/' || path.indexOf('\\') !== -1) {
-            throw new Error('ToolPkg v1 Files requires an absolute slash-separated path.');
-        }
-        if (environment !== 'android' && environment !== 'linux') {
-            throw new Error('Unsupported ToolPkg v1 file environment: ' + environment);
-        }
-        var segments = [];
-        for (var segment of path.split('/')) {
-            if (segment === '' || segment === '.') continue;
-            if (segment === '..') {
-                if (segments.length === 0) throw new Error('ToolPkg v1 file path escapes its root.');
-                segments.pop();
-            } else {
-                segments.push(segment);
-            }
-        }
-        var normalized = '/' + segments.join('/');
-        // Paths returned by the current resource/config APIs are already VFS addresses.
-        if (segments[0] === 'app' || segments[0] === 'mnt') return normalized;
-        if (environment === 'linux') return '/mnt/linux' + (normalized === '/' ? '' : normalized);
-        if (segments[0] === 'sdcard' || segments[0] === 'data') return normalized;
-        if (segments[0] === 'storage' && segments[1] === 'emulated' && segments[2] === '0') {
-            return '/sdcard' + (segments.length === 3 ? '' : '/' + segments.slice(3).join('/'));
-        }
-        throw new Error('ToolPkg v1 Android path has no VFS mapping: ' + normalized);
+        return __operitV1FileAddress(path, environment);
     }
 
     /**

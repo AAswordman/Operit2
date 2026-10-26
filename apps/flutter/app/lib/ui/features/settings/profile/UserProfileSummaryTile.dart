@@ -153,10 +153,13 @@ class _UserProfileSummaryTileState extends State<UserProfileSummaryTile> {
     }
     try {
       final auth = _clients.preferencesGitHubAuthPreferences;
-      final loggedIn = await auth.isLoggedIn();
+      var loggedIn = await auth.isLoggedIn();
       final user = await auth.getCurrentUserInfo();
       if (loggedIn && user == null) {
-        throw StateError('GitHub session has no user profile');
+        // An interrupted legacy login can leave a session without its profile.
+        // Clear it so the summary falls back to the logged-out state.
+        await auth.logout();
+        loggedIn = false;
       }
       if (!mounted) {
         return;

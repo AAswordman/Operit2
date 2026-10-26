@@ -38,11 +38,19 @@ space requests outgoing
 
 - 所有传输都通过接收端显示的 6 位配对码确认；发现开关和连接来源不改变配对流程。
 - HTTP 地址形如 `http://host:port/link`，WS 地址形如 `ws://host:port/link`。
-- 单纯配对不授予空间权限。申请获批并加入同一 Space 后，双方通过原已认证连接交换空间专用回连凭证，**不需要再反向配对一次**。双方需运行新版本并启用 TCP/HTTP/WS 监听；回连地址使用实际接入来源 IP 与已绑定监听端口，不依赖发现开关。
+- 单纯配对不授予空间权限。申请获批并加入同一 Space 后，双方通过原已认证连接交换空间专用回连凭证，**不需要再反向配对一次**。双方需运行新版本并启用 TCP/HTTP/WS 监听；回连通告携带已绑定端口和具体监听 IP；通配绑定或旧通告使用实际接入来源 IP。出站连接与监听地址可以属于不同地址族，不依赖发现开关。
 - 空间回连凭证不改变配对方向或设备角色；每次使用重新检查当前空间、成员资格、原配对和撤销状态。离开空间或撤销后旧凭证不可用。
 - `space status <node-id>` 沿用 Core 的空间状态语义：尚未加入同一空间时返回 `RemovedFromSpace`，不表示配对被删除。加入后再检查在线状态。
 - `space join` 输出正常申请状态、审批人、请求编号和 `assignment-version`，等待审批不是命令失败。
 - `space leave` 只重置本机状态，不会通知对方。之后再次 `space join` 同一目标时，接收端会把旧的申请/批准记录退役（源 Space 已不同），按一条全新申请重新走审批；同一源 Space 的重复提交仍会被拒绝。旧记录被退役后不可再被审批。
+
+Windows、Linux、macOS 的 CLI 使用非空 `OPERIT_CLI_CONFIG_DIR` 时，插件 IPC 均按当前身份的 runtime 根路径隔离，
+不需要另设 `TMPDIR`。宿主分别使用命名管道、D-Bus 服务名和 Unix socket 目录承载实例。
+外部 SDK 要连接指定实例，可为 CLI 和 SDK 客户端共同设置 `OPERIT_PLUGIN_SDK_INSTANCE`（例如 `test-a`），
+它优先于自动实例选择。配置目录和实例均未指定时使用标准 SDK 端点。
+显式实例需先启动对应 CLI；SDK 不会用默认应用的启动入口代替该实例。
+Apple 宿主仍可通过 `OPERIT_PLUGIN_SDK_SOCKET_DIR` 指定 socket 目录，该目录覆盖实例对应的自动目录。
+Apple 端点文件锁一直持有至监听和连接清理完成，重复启动不会删除已有实例的 socket。
 
 ## 审批人终端
 
@@ -89,6 +97,14 @@ TUI 设备窗口（`/network devices`）与 Flutter 设备行都提供这个入�
 
 ## 角色、策略与设备控制
 
+内置身份为 Administrator、User、Relay 和 Edge。User 具备查看成员设备、网络中继和承载 Core 执行能力；
+Relay 具备查看成员设备和网络中继能力；Edge 具备查看成员设备和承载 Core 执行能力。
+`runtime.execute` 描述设备能否承载 Core 执行，`switch_core` 和初始 Binding 分配据此选择目标，并检查目标确实提供 Core。
+聊天读写不再单独设置权限，仍通过已认证的空间成员关系和 Binding 路由。
+User 和 Relay 默认具有 `storage.provide`，Edge 默认没有；审计和其他能力也可
+通过自定义身份分配。权限角色不表示节点实际实现了相应服务，设备侧职责见
+[Edge 架构](edge-architecture.md)。
+
 ```text
 control show
 control audit
@@ -107,7 +123,7 @@ control device remove <device-id>
 审批角色需要同时具备 `approve`（`network.approval`）和 `join`（`network.members.join`）。
 普通成员不能修改网络策略，CLI 不会替它提升权限。
 
-`control identity clear` 把设备身份重置为默认 User（自带 `chat.read` 等普通成员能力）。
+`control identity clear` 把设备身份重置为默认 User（自带查看成员设备、网络中继和承载 Core 执行能力）。
 成员始终拥有身份，不存在无身份状态：身份被清空的设备会失去包括自身 UI 依赖能力在内的全部能力，
 且单机空间内没有任何带内恢复路径。
 
@@ -161,10 +177,45 @@ python3 apps/cli/tests/network_control_session.py --transport ws
 
 ## 启动后的在线状态与自动重连
 
-原生 Peer runtime 在监听启动时尝试恢复已保存的出站配对和仍有效的同 Space 返回通道；
+原生 Peer runtime 在监听启动时恢复已保存的出站配对；配对发起方负责建立和重连唯一的双向连接，接收方复用该连接。
 不要求对方先被标成在线，不需要重新配对，也不依赖发现设备或手动同步。
 后台每 3 秒执行一次有鉴权的可用性检查，单次尝试上限 5 秒，最多 4 个并发对端。
 成功鉴权才产生在线证据；连接失败会撤掉在线证据，之后继续重试。
 连接变化触发现有持久化同步，不把同步层变成连接管理器。
 停止监听会取消并等待重连任务退出；已被断开或移除的节点不会被后台任务自动接回。
-测试重用原身份、配对数据和监听端口，覆盖返回通道恢复及双向远端聊天订阅，不清理应用数据。
+测试重用原身份、配对数据和监听端口，覆盖单连接恢复及双向远端聊天订阅，不清理应用数据。
+
+## 设备配置与储存能力
+
+`storage.provide` 表示保存共享业务数据副本：聊天历史与附件、插件共享数据和文件。
+它不控制本机读写、聊天收发或设备 preference 同步。已加入空间、未被断开的 ESP
+可以双向同步自己的小份配置，不接收聊天数据库、插件包、插件数据或文件副本。
+插件包仍由宿主的安装机制管理，数据同步不会替设备安装插件。
+
+配置按空间和目标设备隔离，每个设备最多 24 个键，完整明文文件最多 6144 字节；
+本地使用加密 preference 保存，不建立 SQL 数据库或业务同步日志。
+每个键独立合并，删除保留有界的删除标记，离线设备返回时不会把旧值恢复出来。
+同一键的并发修改按逻辑版本、写入节点 ID 确定结果。
+
+```text
+space preferences <device-id>
+space preference-set <device-id> <key> <JSON-value>
+space preference-delete <device-id> <key>
+space sync
+```
+
+例如配置 ESP 的独立聊天（示例中的地址、模型和密钥需要替换）：
+
+```text
+["space","preference-set","<esp-id>","chat","{\"endpoint\":\"https://example.invalid/v1/chat/completions\",\"model\":\"your-model\",\"apiKey\":\"your-key\",\"systemPrompt\":\"你是设备助手。\"}"]
+["space","sync"]
+```
+
+API 地址是设备自身可访问的完整 chat-completions 地址。它需要支持流式 SSE 回复。
+保存并同步后，ESP 自己请求服务，CLI 可以关闭。不要把真实密钥放进共享日志或截图。
+配置编辑 ToolPkg 也可通过已有 `Tools.device(nodeId).Edge.execute` 调用
+`edge.preferences` 的 `keys`、`read`（可传 `{key}` 单独读取）、`set`（`{key,value}`）、`remove`（`{key}`），无需运行在 ESP 上。
+
+无交互的 CLI 在 Windows、Linux、macOS 上均可显式设置 `OPERIT_CLI_SECRET_STORE=file`，将密钥存于当前 CLI
+身份的运行目录 `secrets/`，Unix 目录权限 0700、文件权限 0600；Windows 继承配置目录的访问权限。默认仍使用平台密钥存储。
+集成测试使用此选项及临时 `OPERIT_CLI_CONFIG_DIR`，避免访问开发者的 macOS 钥匙串。

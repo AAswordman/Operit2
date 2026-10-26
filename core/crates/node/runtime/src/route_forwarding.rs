@@ -82,10 +82,7 @@ impl RoutedPayload for CorePushRequest {
 /// A missing reply does not prove a tool or firmware action never ran.
 /// Source and relay submissions use the same replay policy for every operation.
 pub(super) fn canRetryRouteTarget(target: &str) -> bool {
-    !matches!(
-        target,
-        DEVICE_TOOL_TARGET | "edge.plugins" | "edge.deviceIo"
-    )
+    target != DEVICE_TOOL_TARGET && !target.starts_with("edge.")
 }
 
 /// Classifies route failures; the target replay policy separately decides whether resubmission is allowed.

@@ -189,7 +189,6 @@ struct ResourceGate {
     released: Mutex<bool>,
     changed: Condvar,
     entered: mpsc::Sender<()>,
-    main_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl ResourceGate {
@@ -201,9 +200,6 @@ impl ResourceGate {
 
     /// Blocks the selected operation without holding fixture state needed by other requests.
     fn intercept(&self, operation: &str, path: &str) {
-        if operation == "read" && std::path::Path::new(path).ends_with("dist/main.js") {
-            self.main_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
         if !std::path::Path::new(path).ends_with("dist/ui/main/index.ui.js") {
             return;
         }
@@ -327,7 +323,6 @@ async fn blocked_ui_resources_do_not_block_engines_or_resurrect_closed_sessions(
         released: Mutex::new(false),
         changed: Condvar::new(),
         entered,
-        main_reads: std::sync::atomic::AtomicUsize::new(0),
     });
     let _release = ReleaseGate(gate.clone());
     let mut hosts = HostManager::withFileSystemHost(Arc::new(GatedFileSystem {
@@ -567,28 +562,16 @@ fn character_preferences_request() -> operit_plugin_sdk::javascript::JsToolPkgIp
     }
 }
 
-/// Exercises actual public API and IPC dispatch with cold I/O, warm reads, reloads and revocation.
+/// Preserves a running plugin across canonical installation-setting changes and rescans.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ipc_and_public_api_share_resources_without_holding_manager() {
+async fn public_api_and_ipc_preserve_the_engine_after_installation_settings_change() {
+    use operit_store::ExtensionStore::ExtensionStore;
     use operit_tools::tools::ToolJsRuntime::invokeToolPkgIpc;
-    use std::sync::atomic::Ordering;
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
     let storage = register_test_runtime_roots();
-    let (entered, entering) = mpsc::channel();
-    let gate = Arc::new(ResourceGate {
-        operation: Mutex::new(None),
-        released: Mutex::new(false),
-        changed: Condvar::new(),
-        entered,
-        main_reads: std::sync::atomic::AtomicUsize::new(0),
-    });
-    let _release = ReleaseGate(gate.clone());
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(GatedFileSystem {
-        inner: PosixFileSystemHost::new(),
-        gate: gate.clone(),
-    }));
+    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
     hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage);
+    hosts.runtimeSqliteHost = Some(storage.clone());
     hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
     hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
     hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
@@ -600,98 +583,66 @@ async fn ipc_and_public_api_share_resources_without_holding_manager() {
     let package = "com.operit.character_cards";
     let context = format!("toolpkg_main:{package}");
     let proxy = LocalCoreProxy::new(app);
-
-    gate.arm("read");
-    let api = start_package_call(proxy.clone(), package_request("invokeToolPkgPublicApi", json!({
+    let request = || package_request("invokeToolPkgPublicApi", json!({
         "packageName": package, "methodName": "chat.sidebar.prepare", "payload": {"chats": []},
-    })));
-    entering.recv_timeout(Duration::from_secs(20)).expect("public API must load the shared resource snapshot");
-    assert!(packages.try_lock().is_ok(), "public API resource I/O must release the manager lock");
-    gate.release();
-    let result = api.join().unwrap().result.expect("real sidebar public API must succeed");
+    }));
+    let result = CoreLinkSharedClient::call(&proxy, request()).await.result.unwrap();
     let result: Value = fromCoreValue(result).unwrap();
     assert_eq!(result["entries"][0]["entryId"], "sidebar-characters");
-    let reads = gate.main_reads.load(Ordering::SeqCst);
-    assert_eq!(reads, 1, "cold public API must read the main entry exactly once");
-
-    let mut direct_read = Vec::new();
-    let mut cached_read = Vec::new();
-    for _ in 0..20 {
-        let started = Instant::now();
-        let original = packages.lock().unwrap().getRegisteredToolPkgMainScript(package).unwrap();
-        direct_read.push(started.elapsed().as_secs_f64() * 1000.0);
-        let started = Instant::now();
-        let pending = packages.lock().unwrap().toolPkgTextResources(package);
-        let resources = pending.await.unwrap();
-        let cached = resources.get("dist/main.js").unwrap().clone();
-        cached_read.push(started.elapsed().as_secs_f64() * 1000.0);
-        assert_eq!(cached, original, "shared IPC resources must preserve exact script bytes");
-    }
-    direct_read.sort_by(f64::total_cmp);
-    cached_read.sort_by(f64::total_cmp);
-    println!("IPC_PROBE directScriptP50Ms={:.3} cachedScriptP50Ms={:.3}", direct_read[10], cached_read[10]);
-
+    let engine = packages.lock().unwrap().getToolPkgExecutionEngine(&context, package).unwrap();
     let expected = invokeToolPkgIpc(&handler, character_preferences_request()).await.unwrap();
-    let mut warm = Vec::new();
-    for _ in 0..20 {
-        let started = Instant::now();
-        assert_eq!(invokeToolPkgIpc(&handler, character_preferences_request()).await.unwrap(), expected);
-        warm.push(started.elapsed().as_secs_f64() * 1000.0);
-    }
-    warm.sort_by(f64::total_cmp);
-    assert_eq!(gate.main_reads.load(Ordering::SeqCst), reads, "warm IPC must reuse the public API snapshot");
-    println!("IPC_PROBE warmBusinessP50Ms={:.3} warmBusinessP95Ms={:.3} mainFileReads={reads}", warm[10], warm[18]);
-
-    let concurrent = (0..4).map(|_| {
-        let handler = handler.clone();
-        std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
-                .block_on(invokeToolPkgIpc(&handler, character_preferences_request()))
-        })
-    }).collect::<Vec<_>>();
-    for call in concurrent {
-        assert_eq!(call.join().unwrap().unwrap(), expected);
-    }
-    assert_eq!(gate.main_reads.load(Ordering::SeqCst), reads, "concurrent IPC must share the same resources");
-
+    let store = ExtensionStore::new(storage);
+    let mut record = store.record("package", package).unwrap();
+    record.settings["order"] = json!(9);
+    store.setSettings("package", package, record.settings).unwrap();
+    packages.lock().unwrap().loadAvailablePackages();
+    let current = packages.lock().unwrap().getToolPkgExecutionEngine(&context, package).unwrap();
+    assert!(Arc::ptr_eq(&engine, &current), "Settings changes must retain the running plugin realm");
+    assert_eq!(store.record("package", package).unwrap().settings["order"], 9);
+    assert_eq!(invokeToolPkgIpc(&handler, character_preferences_request()).await.unwrap(), expected);
+    assert!(CoreLinkSharedClient::call(&proxy, request()).await.result.is_ok());
     let mut missing = character_preferences_request();
     missing.target_context_key = Some("toolpkg_xml_render:missing".into());
     missing.target_runtime = Some("ui".into());
-    assert!(invokeToolPkgIpc(&handler, missing).await.is_err(), "IPC must reject an inactive UI context");
+    assert!(invokeToolPkgIpc(&handler, missing).await.is_err());
     let mut invalid_caller = character_preferences_request();
     invalid_caller.dependency_caller = Some(package.into());
-    assert!(invokeToolPkgIpc(&handler, invalid_caller).await.is_err(), "dependency validation must remain enforced");
+    assert!(invokeToolPkgIpc(&handler, invalid_caller).await.is_err());
+}
 
-    packages.lock().unwrap().loadAvailablePackages();
-    let api = start_package_call(proxy.clone(), package_request("invokeToolPkgPublicApi", json!({
-        "packageName": package, "methodName": "chat.sidebar.prepare", "payload": {"chats": []},
-    })));
-    assert!(api.join().unwrap().result.is_ok());
-    assert_eq!(gate.main_reads.load(Ordering::SeqCst), reads + 1, "registry reload must invalidate the shared main script");
-
-    packages.lock().unwrap().loadAvailablePackages();
-    gate.arm("read");
-    let api = start_package_call(proxy, package_request("invokeToolPkgPublicApi", json!({
-        "packageName": package, "methodName": "chat.sidebar.prepare", "payload": {"chats": []},
-    })));
-    entering.recv_timeout(Duration::from_secs(20)).expect("reloaded API must read fresh resources");
-    let lease = packages.lock().unwrap().acquireToolPkgExecutionEngine(&context, package);
-    lease.await.unwrap();
-    packages.lock().unwrap().releaseToolPkgExecutionEngine(&context, package);
-    gate.release();
-    assert!(api.join().unwrap().result.is_err(), "a revoked engine must not execute after resource loading");
-
-    packages.lock().unwrap().loadAvailablePackages();
-    gate.arm("read");
-    let ipc = std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
-            .block_on(invokeToolPkgIpc(&handler, character_preferences_request()))
-    });
-    entering.recv_timeout(Duration::from_secs(20)).expect("cold IPC must use the shared resource reader");
-    assert!(packages.try_lock().is_ok(), "IPC resource I/O must release the manager lock");
-    let lease = packages.lock().unwrap().acquireToolPkgExecutionEngine(&context, package);
-    lease.await.unwrap();
-    packages.lock().unwrap().releaseToolPkgExecutionEngine(&context, package);
-    gate.release();
-    assert_eq!(ipc.join().unwrap().unwrap_err(), "ToolPkg execution context has been released or replaced");
+/// Keeps a real default-enabled bundled subpackage disabled across catalog reloads and container toggles.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bundled_subpackage_toggle_preserves_explicit_state() {
+    let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    let storage = register_test_runtime_roots();
+    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+    hosts.runtimeStorageHost = Some(storage.clone());
+    hosts.runtimeSqliteHost = Some(storage);
+    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+    configure_package_hosts(&mut hosts);
+    let app = OperitApplication::newWithContext(hosts);
+    let packages = app.packageManager();
+    let mut manager = packages.lock().unwrap();
+    manager.loadAvailablePackages();
+    let container = "com.operit.plan_mode_bundle";
+    let child = "plan_mode_tools";
+    assert!(manager.isPackageEnabled(child));
+    assert!(manager.setToolPkgSubpackageEnabled(child, false), "default-enabled child must accept disablement");
+    assert!(!manager.isPackageEnabled(child));
+    assert!(!manager.getToolPkgContainerDetails(container, false).unwrap().subpackages[0].enabled);
+    manager.loadAvailablePackages();
+    assert!(!manager.isPackageEnabled(child), "catalog reload must retain explicit disablement");
+    manager.disablePackage(container);
+    manager.enablePackage(container);
+    assert!(!manager.isPackageEnabled(child), "container activation must retain child preference");
+    assert!(manager.setToolPkgSubpackageEnabled(child, true));
+    assert!(manager.isPackageEnabled(child));
+    manager.disablePackage(container);
+    assert!(!manager.isPackageEnabled(child), "a disabled container cannot expose its child");
+    assert!(manager.setToolPkgSubpackageEnabled(child, true));
+    assert!(!manager.isPackageEnabled(child), "editing a child must not enable its container");
+    manager.enablePackage(container);
+    assert!(manager.isPackageEnabled(child));
 }

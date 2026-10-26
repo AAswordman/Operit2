@@ -361,7 +361,7 @@ impl SystemOperationHost for OhosSystemOperationHost {
         (self.screenshotCapturer)()
     }
 
-    /// Recognizes text from an image through the owner app.
+    /// Recognizes text through the OCR callback fixed by the OHOS host assembly.
     fn recognizeText(
         &self,
         imagePath: &str,

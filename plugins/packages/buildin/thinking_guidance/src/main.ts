@@ -26,8 +26,9 @@ function readEnabled() {
   return ENABLED_VALUES.has(String(raw || "").trim().toLowerCase());
 }
 
+/** Persists the toggle in its owning package installation. */
 async function writeEnabled(enabled) {
-  await Tools.SoftwareSettings.writeEnvironmentVariable(ENV_KEY, enabled ? "true" : "false");
+  await Tools.SoftwareSettings.writeEnvironmentVariable("com.operit.thinking_guidance", ENV_KEY, enabled ? "true" : "false");
 }
 
 function preferredLanguage(event) {

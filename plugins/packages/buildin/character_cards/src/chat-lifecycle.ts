@@ -1,5 +1,5 @@
 import type { ToolPkg as ToolPkgTypes } from "../../../../types/toolpkg";
-import { parseChatSelection, requireChatSelection, selectionForActive } from "./chat-bindings";
+import { parseChatSelection, selectionForActive } from "./chat-bindings";
 import { markerObject, decodeChatMarker, encodeChatMarker } from "./chat-markers";
 import { record } from "./domain";
 import { dispatchDomain } from "./service-runtime";
@@ -102,10 +102,16 @@ export async function initializeChatExtension(value: ToolPkgTypes.ChatLifecycleE
 async function readActiveSelection(): Promise<string> {
   return selectionForActive(await dispatchDomain("activePrompt.get", {}));
 }
-/** Delegates existence and participant validation to the authoritative backend helper using genuine persisted records. */
+/** Reads only the selected actor and, for a group, its referenced participants. */
 async function requireSelection(selection: string): Promise<void> {
-  const [cards, groups] = await Promise.all([dispatchDomain("character.list", {}), dispatchDomain("group.list", {})]);
-  requireChatSelection(selection, cards, groups);
+  const selected = parseChatSelection(selection);
+  if (selected.kind === "card") {
+    await dispatchDomain("character.get", { id: selected.id });
+  } else if (selected.kind === "group") {
+    const group = await dispatchDomain("group.get", { id: selected.id });
+    if (group.members.length === 0) throw new Error("A bound chat group must have actual participants: " + group.id);
+    await Promise.all(group.members.map(member => dispatchDomain("character.get", { id: member.characterCardId })));
+  }
 }
 /** Handles the SDK's existing hook envelope and returns only this package's initialized namespace before native commit. */
 export async function beforeChatCreate(event: ToolPkgTypes.ChatLifecycleHookEvent): Promise<ChatInitializationResult> {

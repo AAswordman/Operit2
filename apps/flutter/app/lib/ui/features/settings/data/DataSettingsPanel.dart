@@ -440,9 +440,10 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         active: true,
       );
     });
-    ClientLogger.i(
+    ClientLogger.v(
       'settings snapshot selected name=${file.name} bytes=${file.byteLength}',
       tag: _operit1SnapshotImportLogTag,
+      verboseLevel: VerboseLevel.level2,
     );
     SnapshotImportSession? stagedSession;
     late final Operit1SnapshotPreview preview;
@@ -472,9 +473,10 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         detail: '正在检查 Operit1 快照内容，请稍候。',
         progress: 0.20,
       );
-      ClientLogger.i(
+      ClientLogger.v(
         'settings snapshot upload completed bytes=${stagedSession.byteLength}; inspection started',
         tag: _operit1SnapshotImportLogTag,
+        verboseLevel: VerboseLevel.level3,
       );
       preview = await stagedSession.completeOperit1();
       ClientLogger.i(

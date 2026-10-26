@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+mod secrets;
+pub use secrets::NativeFileSecretStore;
+
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
@@ -38,6 +41,9 @@ impl NativeRuntimeStorageWriteSession {
         }
         drop(file);
         atomicReplace(&self.temporaryPath, &self.targetPath)?;
+        if sync {
+            syncParentDirectory(&self.targetPath)?;
+        }
         Ok(())
     }
 }
@@ -83,6 +89,9 @@ impl RuntimeStorageWriteSession for NativeRuntimeStorageWriteSession {
     }
 }
 
+/// Names the Host-owned temporary archive namespace excluded from portable data.
+pub const ARCHIVE_STAGING_DIRECTORY_NAME: &str = "archive_staging";
+
 /// Stages streamed archive uploads in the runtime-private temporary directory.
 #[derive(Clone, Debug)]
 pub struct NativeArchiveStagingHost {
@@ -91,10 +100,76 @@ pub struct NativeArchiveStagingHost {
 }
 
 /// Tracks the declared length and lifecycle state of one current-process archive upload.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct NativeArchiveUpload {
     expectedByteLength: Option<u64>,
     sealed: bool,
+    files: NativeArchiveFiles,
+}
+
+/// Holds an archive lease until its temporary files have been removed.
+#[derive(Debug)]
+struct NativeArchiveFiles {
+    root: PathBuf,
+    id: String,
+    lease: Option<fs::File>,
+    removed: bool,
+}
+
+impl NativeArchiveFiles {
+    /// Removes temporary payloads while the caller holds the staging directory lock.
+    fn removeLocked(&mut self) -> HostResult<()> {
+        removeLeasedArchiveFiles(&self.root, &self.id, &mut self.lease)?;
+        self.removed = true;
+        Ok(())
+    }
+
+    /// Serializes explicit disposal with archive creation and abandoned-file collection.
+    fn remove(&mut self) -> HostResult<()> {
+        if self.removed { return Ok(()); }
+        let _directoryLease = lockArchiveDirectory(&self.root)?;
+        self.removeLocked()
+    }
+}
+
+impl Drop for NativeArchiveFiles {
+    /// Releases unpublished and sealed archives when their final Host owner closes.
+    fn drop(&mut self) {
+        if let Err(error) = self.remove() {
+            operit_host_api::logHostError("ArchiveStagingCleanup", &error.message);
+        }
+    }
+}
+
+/// Locks staging mutations across Host instances without locking archive payload bytes.
+/// Uses fs2 because Rust 1.95 standard file locking does not support Android.
+fn lockArchiveDirectory(root: &Path) -> HostResult<fs::File> {
+    let file = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true)
+        .open(root.join(".staging.lock"))?;
+    fs2::FileExt::lock_exclusive(&file)?;
+    Ok(file)
+}
+
+/// Deletes only a regular temporary file and treats an already removed file as complete.
+fn removeArchiveFile(path: &Path) -> HostResult<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            fs::remove_file(path)?;
+            Ok(())
+        }
+        Ok(_) => Err(HostError::new(format!("Archive staging entry is not a regular file: {}", path.display()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Deletes archive payloads before releasing and removing their ownership lease.
+fn removeLeasedArchiveFiles(root: &Path, id: &str, lease: &mut Option<fs::File>) -> HostResult<()> {
+    for extension in ["upload", "sealed"] {
+        removeArchiveFile(&root.join(format!("{id}.{extension}")))?;
+    }
+    drop(lease.take());
+    removeArchiveFile(&root.join(format!("{id}.lease")))
 }
 
 impl NativeArchiveStagingHost {
@@ -114,7 +189,77 @@ impl NativeArchiveStagingHost {
         let name = runtimeRoot
             .file_name()
             .expect("runtime root must have a final segment for archive staging");
-        parent.join("archive_staging").join(name)
+        parent.join(ARCHIVE_STAGING_DIRECTORY_NAME).join(name)
+    }
+
+    /// Collects abandoned archives for every runtime sharing a Host staging namespace.
+    pub fn cleanupAbandonedArchivesForRuntimeParent(runtimeParent: &Path) -> HostResult<()> {
+        let root = runtimeParent.join(ARCHIVE_STAGING_DIRECTORY_NAME);
+        match fs::symlink_metadata(&root) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {},
+            Ok(_) => return Err(HostError::new("Archive staging namespace is not a regular directory")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
+        for entry in fs::read_dir(root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                return Err(HostError::new("Archive staging owner is not a regular directory"));
+            }
+            Self::new(runtimeParent.join(entry.file_name())).cleanupAbandonedArchivesDuringMaintenance()?;
+        }
+        Ok(())
+    }
+
+    /// Removes abandoned files while retaining archives leased by any active Host.
+    pub fn cleanupAbandonedArchives(&self) -> HostResult<()> {
+        self.cleanupArchiveDirectory(false)
+    }
+
+    /// Collects legacy unleased archives only while maintenance owns exclusive storage access.
+    pub fn cleanupAbandonedArchivesDuringMaintenance(&self) -> HostResult<()> {
+        self.cleanupArchiveDirectory(true)
+    }
+
+    /// Locks an existing staging directory before collecting its abandoned transfers.
+    fn cleanupArchiveDirectory(&self, includeLegacy: bool) -> HostResult<()> {
+        match fs::symlink_metadata(&self.stagingRoot) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {},
+            Ok(_) => return Err(HostError::new("Archive staging root is not a regular directory")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
+        let _directoryLease = lockArchiveDirectory(&self.stagingRoot)?;
+        self.cleanupAbandonedArchivesLocked(includeLegacy)
+    }
+
+    /// Collects only recognized archive files under an already locked staging directory.
+    fn cleanupAbandonedArchivesLocked(&self, includeLegacy: bool) -> HostResult<()> {
+        let mut ids = BTreeSet::new();
+        for entry in fs::read_dir(&self.stagingRoot)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !matches!(path.extension().and_then(|value| value.to_str()), Some("upload" | "sealed" | "lease")) { continue; }
+            if !entry.file_type()?.is_file() { return Err(HostError::new("Archive staging entry is not a regular file")); }
+            let id = path.file_stem().and_then(|value| value.to_str())
+                .ok_or_else(|| HostError::new("Archive staging filename is not valid UTF-8"))?;
+            self.validateArchiveId(id)?;
+            ids.insert(id.to_owned());
+        }
+        for id in ids {
+            let leasePath = self.stagingRoot.join(format!("{id}.lease"));
+            if !includeLegacy && !leasePath.try_exists()? { continue; }
+            let lease = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&leasePath)?;
+            match fs2::FileExt::try_lock_exclusive(&lease) {
+                Ok(()) => {
+                    let mut lease = Some(lease);
+                    removeLeasedArchiveFiles(&self.stagingRoot, &id, &mut lease)?;
+                }
+                Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {},
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
     }
 
     /// Creates an archive with an explicit upload or growable-export length contract.
@@ -133,18 +278,26 @@ impl NativeArchiveStagingHost {
             return Err(HostError::new("Archive staging ID already exists"));
         }
         fs::create_dir_all(self.stagingRoot())?;
+        let _directoryLease = lockArchiveDirectory(&self.stagingRoot)?;
+        self.cleanupAbandonedArchivesLocked(false)?;
         if sealedPath.exists() {
             return Err(HostError::new("Archive staging ID already exists"));
         }
-        fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(path)?;
+        let lease = fs::OpenOptions::new().create_new(true).read(true).write(true)
+            .open(self.stagingRoot.join(format!("{archiveId}.lease")))?;
+        fs2::FileExt::lock_exclusive(&lease)?;
+        if let Err(error) = fs::OpenOptions::new().create_new(true).write(true).open(path) {
+            drop(lease);
+            removeArchiveFile(&self.stagingRoot.join(format!("{archiveId}.lease")))
+                .map_err(|cleanup| HostError::new(format!("{error}; archive lease cleanup failed: {}", cleanup.message)))?;
+            return Err(error.into());
+        }
         uploads.insert(
             archiveId.to_string(),
             NativeArchiveUpload {
                 expectedByteLength,
                 sealed: false,
+                files: NativeArchiveFiles { root: self.stagingRoot.clone(), id: archiveId.to_owned(), lease: Some(lease), removed: false },
             },
         );
         Ok(())
@@ -316,19 +469,14 @@ impl ArchiveStagingHost for NativeArchiveStagingHost {
         Ok(bytes)
     }
 
-    /// Deletes one private staged upload.
+    /// Deletes one private staged upload before releasing its cross-process lease.
     fn removeArchive(&self, archiveId: &str) -> HostResult<()> {
-        let uploadingPath = self.uploadingArchivePath(archiveId)?;
-        let sealedPath = self.sealedArchivePath(archiveId)?;
-        self.uploads
-            .lock()
-            .map_err(|_| HostError::new("Archive staging upload state is poisoned"))?
-            .remove(archiveId);
-        if uploadingPath.exists() {
-            fs::remove_file(uploadingPath)?;
-        }
-        if sealedPath.exists() {
-            fs::remove_file(sealedPath)?;
+        self.validateArchiveId(archiveId)?;
+        let mut uploads = self.uploads.lock()
+            .map_err(|_| HostError::new("Archive staging upload state is poisoned"))?;
+        if let Some(upload) = uploads.get_mut(archiveId) {
+            upload.files.remove()?;
+            uploads.remove(archiveId);
         }
         Ok(())
     }
@@ -496,6 +644,12 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
         Ok(())
     }
 
+    fn flushFile(&self, path: &str) -> HostResult<()> {
+        let path = self.resolveFile(path)?;
+        fs::OpenOptions::new().write(true).open(&path)?.sync_all()?;
+        syncParentDirectory(&path)
+    }
+
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         let path = self.resolveFile(path)?;
         if !path.exists() {
@@ -519,7 +673,11 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
             // A dangling link is still an occupied destination, never a new writable file.
             return match fs::symlink_metadata(resolved) {
                 Ok(_) => Ok(true),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                // A former descendant also ceases to exist when its parent
+                // directory has been replaced by a regular file.
+                Err(error) if matches!(error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => Ok(false),
                 Err(error) => Err(error.into()),
             };
         }
@@ -552,16 +710,12 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
         }
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
+            // The atomic writer stages a private sibling until commit; a killed
+            // process leaves it behind and no listing may ever publish it.
+            if isPartialStagingFile(&entry.file_name().to_string_lossy()) {
+                continue;
+            }
             let metadata = if managedWorkspace {
-                // The host's atomic writer stages a private sibling until commit.
-                // Never publish that transient file as user workspace content.
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if name.starts_with('.') && name.strip_suffix(".partial")
-                    .and_then(|stem| stem.rsplit_once('.'))
-                    .is_some_and(|(_, id)| uuid::Uuid::parse_str(id).is_ok()) {
-                    continue;
-                }
                 let metadata = fs::symlink_metadata(entry.path())?;
                 // Do not copy link targets or try reading sockets, devices and FIFOs as files.
                 if isStorageLink(&metadata) || (!metadata.is_dir() && !metadata.is_file()) {
@@ -581,6 +735,16 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
     }
 }
 
+/// Detects the atomic writer's private `.{name}.{uuid}.partial` staging siblings.
+#[allow(non_snake_case)]
+fn isPartialStagingFile(name: &str) -> bool {
+    name.starts_with('.')
+        && name
+            .strip_suffix(".partial")
+            .and_then(|stem| stem.rsplit_once('.'))
+            .is_some_and(|(_, id)| uuid::Uuid::parse_str(id).is_ok())
+}
+
 /// Detects symbolic links and Windows junctions without resolving their targets.
 #[allow(non_snake_case)]
 fn isStorageLink(metadata: &fs::Metadata) -> bool {
@@ -594,6 +758,18 @@ fn isStorageLink(metadata: &fs::Metadata) -> bool {
     }
     #[cfg(not(windows))]
     false
+}
+
+/// Persists the directory entry published by a durable write or journal append.
+#[allow(non_snake_case)]
+fn syncParentDirectory(path: &Path) -> HostResult<()> {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 /// Atomically publishes one sibling staging file over its target path.
@@ -773,7 +949,10 @@ impl RuntimeSqliteConnection for RusqliteRuntimeConnection {
     fn beginTransaction(&mut self) -> HostResult<Box<dyn RuntimeSqliteTransaction + '_>> {
         let transaction = self
             .connection
-            .transaction()
+            // Reserve the writer before reading. Deferred read-then-write
+            // transactions can deadlock with another plugin connection and
+            // return SQLITE_BUSY immediately instead of using the busy timeout.
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| HostError::new(error.to_string()))?;
         Ok(Box::new(RusqliteRuntimeTransaction { transaction }))
     }
@@ -813,6 +992,7 @@ impl RuntimeSqliteTransaction for RusqliteRuntimeTransaction<'_> {
     }
 }
 
+/// Reuses a connection-owned prepared query while keeping each row result owned.
 fn queryRowsConnection(
     connection: &rusqlite::Connection,
     sql: &str,
@@ -820,11 +1000,12 @@ fn queryRowsConnection(
 ) -> HostResult<Vec<SqliteRow>> {
     let params = params.into_iter().map(toRusqliteValue).collect::<Vec<_>>();
     let mut statement = connection
-        .prepare(sql)
+        .prepare_cached(sql)
         .map_err(|error| HostError::new(error.to_string()))?;
     collectRows(&mut statement, params)
 }
 
+/// Reuses a prepared query within the exact active transaction.
 fn queryRowsTransaction(
     transaction: &rusqlite::Transaction<'_>,
     sql: &str,
@@ -832,7 +1013,7 @@ fn queryRowsTransaction(
 ) -> HostResult<Vec<SqliteRow>> {
     let params = params.into_iter().map(toRusqliteValue).collect::<Vec<_>>();
     let mut statement = transaction
-        .prepare(sql)
+        .prepare_cached(sql)
         .map_err(|error| HostError::new(error.to_string()))?;
     collectRows(&mut statement, params)
 }
@@ -896,6 +1077,51 @@ mod tests {
     use operit_host_api::{ArchiveStagingHost, RuntimeStorageHost, RuntimeStorageWriteHost};
 
     use super::{NativeArchiveStagingHost, NativeRuntimeStorageHost};
+
+    /// Transactions reserve their writer before reads so independent plugin
+    /// connections cannot deadlock while upgrading a read lock to a write lock.
+    #[test]
+    fn sqlite_transactions_reserve_the_writer_before_reading() {
+        use operit_host_api::RuntimeSqliteHost;
+        let root =
+            std::env::temp_dir().join(format!("operit-sqlite-lock-{}", uuid::Uuid::new_v4()));
+        let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
+        let mut first = host
+            .openSqliteDatabase("runtime/plugins/shared.db")
+            .unwrap();
+        let mut second = host
+            .openSqliteDatabase("runtime/plugins/shared.db")
+            .unwrap();
+        first
+            .executeBatch("CREATE TABLE data(value INTEGER)")
+            .unwrap();
+        second.executeBatch("PRAGMA busy_timeout = 0").unwrap();
+        let mut transaction = first.beginTransaction().unwrap();
+        transaction.query("SELECT * FROM data", vec![]).unwrap();
+        assert!(
+            second.beginTransaction().is_err(),
+            "a second writer must contend before reading"
+        );
+        transaction
+            .execute("INSERT INTO data VALUES(1)", vec![])
+            .unwrap();
+        transaction.commit().unwrap();
+        let mut transaction = second.beginTransaction().unwrap();
+        assert_eq!(
+            transaction
+                .query("SELECT * FROM data", vec![])
+                .unwrap()
+                .len(),
+            1
+        );
+        transaction
+            .execute("INSERT INTO data VALUES(2)", vec![])
+            .unwrap();
+        transaction.commit().unwrap();
+        drop(first);
+        drop(second);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     /// Verifies that snapshot outputs grow, accept ZIP header updates, and expose sealed files.
     #[test]
@@ -975,17 +1201,73 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Hides active write sessions in every namespace until commit and preserves the old file on discard.
     #[test]
-    fn workspace_listing_hides_uncommitted_atomic_write_staging() {
-        let root = std::env::temp_dir().join(format!("operit-workspace-stage-{}", uuid::Uuid::new_v4()));
+    fn listings_publish_only_committed_atomic_writes() {
+        let root =
+            std::env::temp_dir().join(format!("operit-storage-stage-{}", uuid::Uuid::new_v4()));
         let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
-        let mut session = host.createWriteSession("workspaces/project/data.txt").unwrap();
-        session.writeChunk(b"new").unwrap();
-        assert!(host.list("workspaces/project").unwrap().is_empty());
-        session.commitFast().unwrap();
-        let files = host.list("workspaces/project").unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "workspaces/project/data.txt");
+        for prefix in [
+            "runtime/space/members",
+            "workspaces/project",
+            "secure/catalogs",
+        ] {
+            let path = format!("{prefix}/data.txt");
+            let mut session = host.createWriteSession(&path).unwrap();
+            session.writeChunk(b"original").unwrap();
+            assert!(host.list(prefix).unwrap().is_empty());
+            session.commit().unwrap();
+            let mut replacement = host.createWriteSession(&path).unwrap();
+            replacement.writeChunk(b"replacement").unwrap();
+            let files = host.list(prefix).unwrap();
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].path, path);
+            assert_eq!(host.readBytes(&path).unwrap(), b"original");
+            replacement.discard().unwrap();
+            assert_eq!(host.list(prefix).unwrap().len(), 1);
+            assert_eq!(host.readBytes(&path).unwrap(), b"original");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Hides only the reserved staging grammar and leaves all physical entries untouched during listing.
+    #[test]
+    fn listings_hide_abandoned_staging_without_hiding_committed_dotfiles() {
+        let root =
+            std::env::temp_dir().join(format!("operit-storage-orphan-{}", uuid::Uuid::new_v4()));
+        let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
+        for prefix in [
+            "runtime/space/topology",
+            "workspaces/project",
+            "secure/catalogs",
+        ] {
+            let names = [
+                "record.preferences.json",
+                ".hidden.preferences.json",
+                "record.partial",
+                ".record.invalid.partial",
+                "record.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial",
+            ];
+            for name in names {
+                host.writeBytes(&format!("{prefix}/{name}"), b"{}").unwrap();
+            }
+            let staging = host
+                .resolve(prefix)
+                .unwrap()
+                .join(".record.preferences.json.3d75c4a5-2e81-4d0a-8f85-11ee23df1e79.partial");
+            fs::write(&staging, b"uncommitted").unwrap();
+            let mut paths = host
+                .list(prefix)
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect::<Vec<_>>();
+            paths.sort();
+            let mut expected = names.map(|name| format!("{prefix}/{name}")).to_vec();
+            expected.sort();
+            assert_eq!(paths, expected);
+            assert!(staging.exists(), "Listing must not delete a staging file");
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1018,6 +1300,121 @@ mod tests {
             .expect("sealed archive must be removed");
         fs::remove_dir_all(root).expect("temporary archive test root must be removed");
         fs::remove_dir_all(stagingRoot).expect("temporary archive staging root must be removed");
+    }
+
+    /// Removes unfinished and sealed archives only when the final shared Host owner closes.
+    #[test]
+    fn archive_staging_lifetime_removes_files_after_last_owner() {
+        let root = std::env::temp_dir().join(format!("operit-archive-lifetime-{}", uuid::Uuid::new_v4()));
+        let host = NativeArchiveStagingHost::new(root.join("runtime"));
+        let shared = host.clone();
+        host.createExportArchive("sealed").unwrap();
+        host.writeExportArchive("sealed", 0, b"archive payload").unwrap();
+        host.sealArchive("sealed").unwrap();
+        host.createArchive("unfinished", 100).unwrap();
+        host.appendArchive("unfinished", b"partial").unwrap();
+        let sealed = host.sealedArchivePath("sealed").unwrap();
+        let unfinished = host.uploadingArchivePath("unfinished").unwrap();
+        drop(host);
+        assert!(sealed.exists());
+        assert!(unfinished.exists());
+        drop(shared);
+        assert!(!sealed.exists());
+        assert!(!unfinished.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Collects interrupted archives while preserving an independently leased active transfer.
+    #[test]
+    fn archive_staging_collects_abandoned_files_and_preserves_live_hosts() {
+        let root = std::env::temp_dir().join(format!("operit-archive-collection-{}", uuid::Uuid::new_v4()));
+        let active = NativeArchiveStagingHost::new(root.join("runtime"));
+        active.createExportArchive("active").unwrap();
+        active.writeExportArchive("active", 0, b"active payload").unwrap();
+        active.sealArchive("active").unwrap();
+        let staging = active.stagingRoot();
+        fs::write(staging.join("interrupted.upload"), b"interrupted payload").unwrap();
+        fs::write(staging.join("interrupted.lease"), b"").unwrap();
+        fs::write(staging.join("legacy.sealed"), b"legacy payload").unwrap();
+        fs::write(staging.join("orphan.lease"), b"").unwrap();
+        fs::write(staging.join("unrelated.txt"), b"preserved").unwrap();
+        let next = NativeArchiveStagingHost::new(root.join("runtime"));
+        next.createExportArchive("next").unwrap();
+        assert!(!staging.join("interrupted.upload").exists());
+        assert!(staging.join("legacy.sealed").exists());
+        next.cleanupAbandonedArchivesDuringMaintenance().unwrap();
+        assert!(!staging.join("legacy.sealed").exists());
+        assert!(!staging.join("orphan.lease").exists());
+        assert_eq!(active.readArchive("active", 0, 14).unwrap(), b"active payload");
+        assert_eq!(fs::read(staging.join("unrelated.txt")).unwrap(), b"preserved");
+        next.removeArchive("active").unwrap();
+        assert!(active.sealedArchivePath("active").unwrap().exists());
+        drop(next);
+        drop(active);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Keeps another process's live upload and export leased while reclaiming an abandoned archive.
+    #[test]
+    fn archive_staging_preserves_live_archives_across_processes() {
+        const ROOT_ENV: &str = "OPERIT_ARCHIVE_LIVE_TEST_ROOT";
+        if let Some(root) = std::env::var_os(ROOT_ENV) {
+            let host = NativeArchiveStagingHost::new(std::path::PathBuf::from(root).join("runtime"));
+            host.cleanupAbandonedArchivesDuringMaintenance().unwrap();
+            assert!(host.sealedArchivePath("active").unwrap().exists());
+            assert!(host.uploadingArchivePath("uploading").unwrap().exists());
+            assert!(!host.uploadingArchivePath("abandoned").unwrap().exists());
+            host.createArchive("child", 4).unwrap();
+            host.appendArchive("child", b"test").unwrap();
+            host.sealArchive("child").unwrap();
+            assert_eq!(host.readArchive("child", 0, 4).unwrap(), b"test");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("operit-archive-live-{}", uuid::Uuid::new_v4()));
+        let host = NativeArchiveStagingHost::new(root.join("runtime"));
+        host.createExportArchive("active").unwrap();
+        host.writeExportArchive("active", 0, b"live export").unwrap();
+        host.sealArchive("active").unwrap();
+        host.createArchive("uploading", 100).unwrap();
+        host.appendArchive("uploading", b"live upload").unwrap();
+        fs::write(host.uploadingArchivePath("abandoned").unwrap(), b"abandoned").unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::archive_staging_preserves_live_archives_across_processes"])
+            .env(ROOT_ENV, &root).status().unwrap();
+        assert!(status.success());
+        assert_eq!(host.readArchive("active", 0, 11).unwrap(), b"live export");
+        assert_eq!(fs::read(host.uploadingArchivePath("uploading").unwrap()).unwrap(), b"live upload");
+        drop(host);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Reclaims files after a real child process exits without running Host destructors.
+    #[test]
+    fn archive_staging_collects_files_after_process_exit() {
+        const ROOT_ENV: &str = "OPERIT_ARCHIVE_EXIT_TEST_ROOT";
+        if let Some(root) = std::env::var_os(ROOT_ENV) {
+            let host = NativeArchiveStagingHost::new(std::path::PathBuf::from(root).join("runtime"));
+            host.createExportArchive("crashed").unwrap();
+            host.writeExportArchive("crashed", 0, b"persisted archive").unwrap();
+            host.sealArchive("crashed").unwrap();
+            host.createArchive("unfinished", 100).unwrap();
+            host.appendArchive("unfinished", b"partial archive").unwrap();
+            std::process::exit(0);
+        }
+        let root = std::env::temp_dir().join(format!("operit-archive-process-exit-{}", uuid::Uuid::new_v4()));
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::archive_staging_collects_files_after_process_exit"])
+            .env(ROOT_ENV, &root).status().unwrap();
+        assert!(status.success());
+        let host = NativeArchiveStagingHost::new(root.join("runtime"));
+        let sealed = host.sealedArchivePath("crashed").unwrap();
+        let unfinished = host.uploadingArchivePath("unfinished").unwrap();
+        assert!(sealed.exists());
+        assert!(unfinished.exists());
+        host.cleanupAbandonedArchives().unwrap();
+        assert!(!sealed.exists());
+        assert!(!unfinished.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// Verifies that native runtime storage appends without rewriting earlier content.

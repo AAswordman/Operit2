@@ -24,6 +24,8 @@ pub mod ChatMessage;
 pub mod ChatMessageDisplayMode;
 #[path = "ChatMessageLocatorPreview.rs"]
 pub mod ChatMessageLocatorPreview;
+#[path = "ChatMessagePresentation.rs"]
+pub mod ChatMessagePresentation;
 #[path = "ChatMessageTimestampAllocator.rs"]
 pub mod ChatMessageTimestampAllocator;
 #[path = "ChatTurnOptions.rs"]

@@ -39,3 +39,9 @@ export type FileRepositoryIdentifierContracts = [
   Assert<Equal<DomainInput<"memory.move">["ids"], Memory["id"][]>>,
   Assert<Equal<DomainInput<"memory.link.update">["linkId"], MemoryLink["id"]>>,
 ];
+
+/** The list API exposes viewport geometry; content invalidation belongs to the engine. */
+export type LazyItemOptionContract = Assert<Equal<
+  keyof import("../../../../types/compose-dsl").ComposeLazyItemOptions,
+  "key" | "itemCount" | "itemExtent" | "initialItemCount"
+>>;

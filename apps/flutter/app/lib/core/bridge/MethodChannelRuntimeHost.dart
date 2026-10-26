@@ -14,6 +14,21 @@ class MethodChannelRuntimeHost implements PlatformRuntimeHost {
 
   final MethodChannel _channel;
 
+  /// Validates the offline Host response before exposing maintenance results.
+  @override
+  Future<Object?> dataRescue(Map<String, Object?> request) async {
+    final encoded = await _channel.invokeMethod<String>(
+      'dataRescue',
+      jsonEncode(request),
+    );
+    if (encoded == null) {
+      throw StateError('Data rescue returned an empty response');
+    }
+    final response = jsonDecode(encoded) as Map<String, Object?>;
+    if (response['ok'] != true) throw StateError(response['error'] as String);
+    return response['value'];
+  }
+
   /// Reads the native platform's default Runtime storage roots.
   @override
   Future<Map<Object?, Object?>> runtimeStorageDefaults() async {

@@ -14,6 +14,7 @@ void main() {
         home: Scaffold(
           body: ConversationDrawerItem(
             history: const ChatHistoryListItem(
+              parentChatId: null,
               group: null,
               id: 'chat-1',
               title: 'Running chat',
@@ -70,6 +71,7 @@ void main() {
         home: Scaffold(
           body: ConversationDrawerItem(
             history: const ChatHistoryListItem(
+              parentChatId: null,
               group: null,
               id: 'chat-2',
               title: 'Idle chat',
