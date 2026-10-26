@@ -384,9 +384,67 @@ async fn a_failed_pass_backs_off_before_retrying_the_full_exchange() {
     assert_eq!(fullPassMarkers(&peers[1]), markersAfterRetry);
 }
 
-/// A preference-only edit must reopen a settled storage-provider gate without
-/// creating business operations, then return to idling after convergence.
+/// A lost clock probe must arm the failure backoff instead of forcing a full
+/// journal export against a peer whose transport cannot answer probes.
 #[tokio::test]
+async fn a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, _access, peers, _pendingFailure) = gateMesh("sync-probe-loss");
+    let observer = idleObserver(&routers[1]);
+    observer.synchronizeOnce().await.unwrap();
+    observer.synchronizeOnce().await.unwrap();
+    let markersBefore = fullPassMarkers(&peers[1]);
+
+    // Every clock probe is lost: the cycles must idle. The old behavior fell
+    // back to a full exchange per cycle, re-exporting the entire journal
+    // against an unreachable peer indefinitely.
+    for _ in 0..3 {
+        peers[1]
+            .faults
+            .lock()
+            .unwrap()
+            .insert("syncClock".into(), CallFault::BeforeDelivery);
+        observer.synchronizeOnce().await.unwrap();
+        assert_eq!(
+            fullPassMarkers(&peers[1]),
+            markersBefore,
+            "a lost probe must not trigger a full exchange"
+        );
+    }
+
+    // The armed backoff keeps idling even on probe-free cycles.
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(
+        fullPassMarkers(&peers[1]),
+        markersBefore,
+        "the probe-failure backoff must suppress the retry"
+    );
+
+    // The probe recovers: once the backoff elapses, the gate reopens and
+    // converges without further manual expiry.
+    peers[1].faults.lock().unwrap().clear();
+    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
+    observer.synchronizeOnce().await.unwrap();
+    assert!(
+        fullPassMarkers(&peers[1]) > markersBefore,
+        "the recovered probe must reopen the gate"
+    );
+    let settled = fullPassMarkers(&peers[1]);
+    peers[1]
+        .faults
+        .lock()
+        .unwrap()
+        .insert("syncClock".into(), CallFault::BeforeDelivery);
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(
+        fullPassMarkers(&peers[1]), settled,
+        "the settled gate must stay settled"
+    );
+}
+
+/// A preference-only edit must reopen a settled storage-provider gate without
+/// creating business operations, then return to idling after convergence.#[tokio::test]
 async fn preference_edits_reopen_a_settled_storage_provider_gate() {
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();

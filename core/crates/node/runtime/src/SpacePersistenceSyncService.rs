@@ -640,9 +640,17 @@ impl SpacePersistenceSyncService {
                     gate.lastRemoteClockSummary.as_deref() != Some(summary.as_str())
                         || gate.lastLocalStateSummary.as_deref() != Some(localStateSummary)
                 }
-                // The clock is unobservable (the probe was lost): fall back to
-                // exchanging, as before.
-                Err(_) => true,
+                // The clock is unobservable (the probe was lost). Forcing the
+                // full exchange from here made every cycle re-export the whole
+                // operation journal against an unreachable peer — seconds of
+                // serialization per attempt, indefinitely. Record the failed
+                // pass instead so the exponential backoff governs the retry;
+                // once the peer answers again, the retry converges and the
+                // gate returns to probing.
+                Err(_) => {
+                    self.recordPeerPassFailed(targetNodeId);
+                    false
+                }
             }
         };
         cycleDecisions.insert(targetNodeId.to_string(), decision);
