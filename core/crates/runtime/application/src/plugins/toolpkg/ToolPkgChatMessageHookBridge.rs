@@ -7,7 +7,9 @@ use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    ToolPkgBridgeRuntime, TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
+};
 
 static CHAT_MESSAGE_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatMessageHookRegistration>>> =
     OnceLock::new();
@@ -89,7 +91,7 @@ impl ToolPkgChatMessageHookBridge {
                             operit_util::AppLogger::VERBOSE_LEVEL_3,
                         );
                         match manager
-                            .runToolPkgMainHook(
+                            .runToolPkgMainHookWithTimeoutMillis(
                                 &hook.containerPackageName,
                                 &hook.functionName,
                                 TOOLPKG_EVENT_CHAT_MESSAGE,
@@ -100,6 +102,7 @@ impl ToolPkgChatMessageHookBridge {
                                 None,
                                 None,
                                 None,
+                                TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
                             )
                             .await
                         {
