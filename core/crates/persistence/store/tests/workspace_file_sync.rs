@@ -1,8 +1,10 @@
-use operit_host_api::RuntimeStorageHost;
+use operit_host_api::{HostResult, RuntimeStorageEntry, RuntimeStorageHost};
 use operit_host_native_storage::NativeRuntimeStorageHost;
 use operit_store::RuntimeFileSyncStore::{RuntimeFileSyncStore, RUNTIME_FILE_SYNC_DOMAIN};
 use operit_store::SyncOperationStore::{SyncClock, SyncOperation, SyncOperationStore};
 use operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 const SYNC: &str = "runtime/sync";
@@ -81,12 +83,12 @@ fn bidirectional_binary_empty_and_no_echo() {
     assert_eq!(b.workspace().scan().unwrap(), 0);
     assert_eq!(b.ops().len(), 3);
     std::thread::sleep(std::time::Duration::from_millis(2));
-    b.write("workspaces/project/中文.txt", b"phone");
+    b.write("workspaces/project/中文.txt", b"phones");
     b.workspace().scan().unwrap();
     b.send(&a);
     assert_eq!(
         a.host.readBytes("workspaces/project/中文.txt").unwrap(),
-        b"phone"
+        b"phones"
     );
     assert_eq!(a.workspace().scan().unwrap(), 0);
     assert_eq!(a.ops().len(), 4);
@@ -321,5 +323,190 @@ fn file_to_directory_and_back_replicate_in_order() {
     assert_eq!(
         b.host.readBytes("workspaces/project/item").unwrap(),
         b"file again"
+    );
+}
+
+/// Counts workspace file reads so tests can assert what a scan actually read.
+struct CountingHost {
+    inner: Arc<NativeRuntimeStorageHost>,
+    workspaceReads: AtomicUsize,
+}
+
+impl RuntimeStorageHost for CountingHost {
+    fn runtimeRootDir(&self) -> Option<PathBuf> {
+        self.inner.runtimeRootDir()
+    }
+    fn workspaceRootDir(&self) -> Option<PathBuf> {
+        self.inner.workspaceRootDir()
+    }
+    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
+        if path.starts_with("workspaces/") {
+            self.workspaceReads.fetch_add(1, Ordering::SeqCst);
+        }
+        self.inner.readBytes(path)
+    }
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        self.inner.readBytesRange(path, offset, length)
+    }
+    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.inner.writeBytes(path, content)
+    }
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.inner.writeBytesAtomically(path, content)
+    }
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.inner.appendBytes(path, content)
+    }
+    fn flushFile(&self, path: &str) -> HostResult<()> {
+        self.inner.flushFile(path)
+    }
+    fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
+        self.inner.delete(path, recursive)
+    }
+    fn exists(&self, path: &str) -> HostResult<bool> {
+        self.inner.exists(path)
+    }
+    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
+        self.inner.list(prefix)
+    }
+}
+
+struct CountedNode {
+    root: std::path::PathBuf,
+    host: Arc<CountingHost>,
+}
+
+impl CountedNode {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "operit-ws-sync-counted-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(root.join("workspaces")).unwrap();
+        let inner = Arc::new(NativeRuntimeStorageHost::new(
+            root.join("runtime"),
+            root.join("workspaces"),
+        ));
+        Self {
+            root,
+            host: Arc::new(CountingHost {
+                inner,
+                workspaceReads: AtomicUsize::new(0),
+            }),
+        }
+    }
+    fn workspace(&self) -> WorkspaceFileSyncStore {
+        WorkspaceFileSyncStore::new(self.host.clone(), SYNC)
+    }
+    fn reads(&self) -> usize {
+        self.host.workspaceReads.load(Ordering::SeqCst)
+    }
+    /// Backdates the persisted inventory so the next scan must run a full-hash round.
+    fn expireFullHash(&self) {
+        const STATE: &str = "runtime/sync/workspace_inventory.json";
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&self.host.readBytes(STATE).unwrap()).unwrap();
+        let now = operit_host_api::TimeUtils::tryCurrentTimeMillis().unwrap();
+        state["lastFullHashAt"] = serde_json::json!(now - 6 * 60_000);
+        self.host
+            .writeBytes(STATE, &serde_json::to_vec(&state).unwrap())
+            .unwrap();
+    }
+}
+
+impl Drop for CountedNode {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn size_unchanged_scans_reuse_references_without_reading() {
+    let node = CountedNode::new();
+    node.host
+        .writeBytes("workspaces/project/file.txt", b"content")
+        .unwrap();
+    assert_eq!(node.workspace().scan().unwrap(), 1); // initial inventory round
+    let baseline = node.reads();
+    assert_eq!(node.workspace().scan().unwrap(), 0);
+    assert_eq!(node.reads(), baseline); // steady state: no reads, no hashing
+}
+
+#[test]
+fn size_change_triggers_exactly_one_read() {
+    let node = CountedNode::new();
+    node.host
+        .writeBytes("workspaces/project/file.txt", b"v1")
+        .unwrap();
+    node.workspace().scan().unwrap();
+    node.host
+        .writeBytes("workspaces/project/file.txt", b"version two")
+        .unwrap();
+    let baseline = node.reads();
+    assert_eq!(node.workspace().scan().unwrap(), 1);
+    assert_eq!(node.reads() - baseline, 1);
+}
+
+#[test]
+fn same_size_external_edit_waits_for_the_full_hash_round() {
+    let node = CountedNode::new();
+    node.host
+        .writeBytes("workspaces/project/file.txt", b"hello")
+        .unwrap();
+    node.workspace().scan().unwrap();
+    // Same-length in-place rewrite made by an external editor or terminal.
+    node.host
+        .writeBytes("workspaces/project/file.txt", b"world")
+        .unwrap();
+    assert_eq!(node.workspace().scan().unwrap(), 0);
+    assert_eq!(
+        node.host.readBytes("workspaces/project/file.txt").unwrap(),
+        b"world"
+    );
+    // The periodic full-hash round discovers it and publishes exactly once.
+    node.expireFullHash();
+    assert_eq!(node.workspace().scan().unwrap(), 1);
+    assert_eq!(node.workspace().scan().unwrap(), 0);
+}
+
+#[test]
+fn legacy_inventory_without_last_full_hash_round_hashes_every_file() {
+    let node = CountedNode::new();
+    node.host
+        .writeBytes("workspaces/project/a.txt", b"one")
+        .unwrap();
+    node.host
+        .writeBytes("workspaces/project/b.txt", b"two")
+        .unwrap();
+    node.workspace().scan().unwrap();
+    // Inventories written by older builds carry no lastFullHashAt field; the
+    // first scan on the new build must hash everything before trusting sizes.
+    const STATE: &str = "runtime/sync/workspace_inventory.json";
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&node.host.readBytes(STATE).unwrap()).unwrap();
+    state.as_object_mut().unwrap().remove("lastFullHashAt");
+    node.host
+        .writeBytes(STATE, &serde_json::to_vec(&state).unwrap())
+        .unwrap();
+    let baseline = node.reads();
+    assert_eq!(node.workspace().scan().unwrap(), 0); // no changes, but…
+    assert_eq!(node.reads() - baseline, 2); // …every file was re-hashed
+}
+
+#[test]
+fn structured_same_size_writes_publish_immediately() {
+    let a = Node::new();
+    let b = Node::new();
+    a.write("workspaces/project/file.txt", b"hello");
+    a.workspace().scan().unwrap();
+    // RuntimeFileSyncStore routes workspace writes through trackPaths, so the
+    // same-size rewrite must not wait for the periodic full-hash round.
+    RuntimeFileSyncStore::new(a.host.clone(), SYNC)
+        .writeBytes("workspaces/project/file.txt", b"world")
+        .unwrap();
+    a.send(&b);
+    assert_eq!(
+        b.host.readBytes("workspaces/project/file.txt").unwrap(),
+        b"world"
     );
 }

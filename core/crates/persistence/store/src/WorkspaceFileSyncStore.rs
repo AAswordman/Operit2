@@ -3,7 +3,7 @@
 //! by terminals/editors and deletions made while the application was stopped.
 #![allow(non_snake_case)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use operit_host_api::RuntimeStorageHost;
@@ -20,12 +20,22 @@ type Inventory = BTreeMap<String, RuntimeFileSyncReference>;
 type WorkspaceLocks = Vec<(Weak<dyn RuntimeStorageHost>, String, Arc<Mutex<()>>)>;
 static LOCKS: OnceLock<Mutex<WorkspaceLocks>> = OnceLock::new();
 
+/// Steady-state scans reuse inventory references while a file's size is unchanged.
+/// This interval forces a full content-hash round so same-size rewrites made by
+/// terminals and external editors are eventually discovered.
+const FULL_HASH_INTERVAL_MS: i64 = 300_000;
+
 #[derive(Serialize, Deserialize, Default)]
 struct ScanState {
     files: Inventory,
     // Written before materializing incoming bytes. After a crash the next scan
     // compares with the intended remote content, not the obsolete local content.
     pending: Option<(String, Option<RuntimeFileSyncReference>)>,
+    // Milliseconds timestamp of the last full-content-hash round. Missing (zero)
+    // in inventories written by older builds, which forces the next scan to
+    // hash every file before the shortcut may be trusted.
+    #[serde(default)]
+    lastFullHashAt: i64,
 }
 
 pub struct WorkspaceFileSyncStore {
@@ -67,7 +77,7 @@ impl WorkspaceFileSyncStore {
     /// Scans only the managed root; mounted VFS directories are not consulted.
     pub fn scan(&self) -> Result<usize, String> {
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
-        self.scanUnlocked()
+        self.scanUnlocked(&[])
     }
 
     /// Joining a Space makes old local operation logs unexportable. Retain local
@@ -81,10 +91,25 @@ impl WorkspaceFileSyncStore {
 
     /// Captures app edits immediately; periodic scans also cover other writers.
     pub fn track<T>(&self, change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        self.trackPaths::<T, &str>(&[], change)
+    }
+
+    /// Like track, but re-hashes the given workspace file paths after the change
+    /// even when their size is unchanged, so structured same-size rewrites publish
+    /// immediately instead of waiting for the next full-content-hash round.
+    pub fn trackPaths<T, P: AsRef<str>>(
+        &self,
+        paths: &[P],
+        change: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        for path in paths {
+            validateFilePath(path.as_ref())?;
+        }
+        let forcedPaths: Vec<&str> = paths.iter().map(|path| path.as_ref()).collect();
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
-        self.scanUnlocked()?;
+        self.scanUnlocked(&[])?;
         let result = change();
-        let scanned = self.scanUnlocked();
+        let scanned = self.scanUnlocked(&forcedPaths);
         match result {
             Err(error) => Err(error),
             Ok(value) => {
@@ -127,16 +152,22 @@ impl WorkspaceFileSyncStore {
             .map_err(|e| e.to_string())
     }
 
-    fn scanUnlocked(&self) -> Result<usize, String> {
+    fn scanUnlocked(&self, forcedPaths: &[&str]) -> Result<usize, String> {
         let mut state = self.load()?;
         self.recoverPending(&mut state)?;
+        // A clock moving backwards is treated as an overdue full-hash round, and
+        // a failed clock read (nowMs == 0) degrades to hashing every scan.
+        let nowMs = operit_host_api::TimeUtils::tryCurrentTimeMillis().unwrap_or(0);
+        let fullHashDue = nowMs.saturating_sub(state.lastFullHashAt) >= FULL_HASH_INTERVAL_MS
+            || nowMs < state.lastFullHashAt;
+        let forced: BTreeSet<&str> = forcedPaths.iter().copied().collect();
         let mut current = Inventory::new();
         if !state.files.is_empty() && !self.host.exists("workspaces").map_err(|e| e.to_string())? {
             return Err("Workspace root is unavailable; refusing to publish mass deletions".into());
         }
         // Complete a successful traversal before producing deletion tombstones.
         // One unreadable directory must never be mistaken for mass deletion.
-        self.collect("workspaces", &mut current)?;
+        self.collect("workspaces", &state.files, fullHashDue, &forced, &mut current)?;
         let files = self.files();
         let mut changes = 0;
         for path in state
@@ -155,14 +186,22 @@ impl WorkspaceFileSyncStore {
                 changes += 1;
             }
         }
-        if changes > 0 {
+        if changes > 0 || fullHashDue {
             state.files = current;
+            state.lastFullHashAt = nowMs;
             self.save(&state)?;
         }
         Ok(changes)
     }
 
-    fn collect(&self, directory: &str, files: &mut Inventory) -> Result<(), String> {
+    fn collect(
+        &self,
+        directory: &str,
+        previous: &Inventory,
+        fullHash: bool,
+        forced: &BTreeSet<&str>,
+        files: &mut Inventory,
+    ) -> Result<(), String> {
         for entry in self.host.list(directory).map_err(|e| e.to_string())? {
             validatePath(&entry.path)?;
             entry
@@ -170,10 +209,24 @@ impl WorkspaceFileSyncStore {
                 .strip_prefix(&format!("{directory}/"))
                 .ok_or_else(|| format!("Workspace entry escaped directory: {}", entry.path))?;
             if entry.isDirectory {
-                self.collect(&entry.path, files)?;
+                self.collect(&entry.path, previous, fullHash, forced, files)?;
             } else {
                 // Collection-root housekeeping files are not part of any workspace.
                 if entry.path.split('/').count() < 3 {
+                    continue;
+                }
+                // Size is the cheap change signal: an unchanged size reuses the
+                // inventory reference without reading or hashing, so a steady
+                // workspace costs only directory listings. Same-size rewrites wait
+                // for the next full-hash round or a trackPaths re-hash.
+                if !fullHash
+                    && !forced.contains(entry.path.as_str())
+                    && previous
+                        .get(&entry.path)
+                        .is_some_and(|reference| reference.size == entry.size)
+                {
+                    let reference = previous[entry.path.as_str()].clone();
+                    files.insert(entry.path, reference);
                     continue;
                 }
                 let bytes = self
@@ -231,7 +284,7 @@ impl WorkspaceFileSyncStore {
             }
         }
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
-        self.scanUnlocked()?;
+        self.scanUnlocked(&[])?;
         let operations = self.operations();
         let mut decisions = Vec::new();
         for operation in batch {
@@ -266,7 +319,7 @@ impl WorkspaceFileSyncStore {
     ) -> Result<(), String> {
         validateFilePath(path)?;
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
-        self.scanUnlocked()?;
+        self.scanUnlocked(&[])?;
         self.applyUnlocked(path, operation, payload)
     }
 
