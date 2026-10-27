@@ -135,10 +135,10 @@ node_modules/
 !plugins/buildin/**/dist/**
 !plugins/external/**/dist/
 !plugins/external/**/dist/**
-!plugins/packages/buildin/**/dist/
-!plugins/packages/buildin/**/dist/**
-!plugins/packages/external/**/dist/
-!plugins/packages/external/**/dist/**
+!plugins/packages/buildin/*/dist/
+!plugins/packages/buildin/*/dist/**
+!plugins/packages/external/*/dist/
+!plugins/packages/external/*/dist/**
 **/.turbo/
 **/.vite/
 **/.rollup.cache/
