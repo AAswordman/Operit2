@@ -89,9 +89,14 @@ for (const version of [10, 20, 21]) {
         assert.equal(row.characterGroupId, "legacy-group");
         assert.equal(row.pinned, 1n);
       }
-      const target = body.slice(body.indexOf("chats.push(OperitArchivedChat {"));
+      assert.match(body, /archiveFromOperit1Chats\(chatRows, fileImportPlan,/);
+      const projection = rustFunction(source(backup + "operit1/Operit1ChatMigration.rs"), "archiveFromOperit1Chats");
+      const targetStart = projection.indexOf("chats.push(OperitArchivedChat {");
+      assert.notEqual(targetStart, -1, "Shared Room projection must produce archived chats");
+      const target = projection.slice(targetStart);
       assert.match(target, /pluginExtensions: std::collections::BTreeMap::from/);
       assert.match(target, /LEGACY_BINDING_NAMESPACE/);
+      assert.match(target, /serde_json::json!\(\{"characterCardName":chat\.characterCardName,"characterGroupId":chat\.characterGroupId\}\)/);
       assert.doesNotMatch(target, /\b(?:characterCardName|characterGroupId)\s*:|default_character|activePrompt/);
       assert.equal(db.prepare("PRAGMA user_version").get().user_version, version);
     } finally { db.close(); }

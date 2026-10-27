@@ -37,6 +37,7 @@ export function productionBootstrap() {
     embedded(bridge + 'JsJavaBridge.rs'),
     composeManifest.context.map(composeSource).join('\n'),
     embedded(sdk + 'toolpkg/ToolPkgApiRuntimeScript.rs'),
+    source(bridge + 'JsToolPkgIpc.script.js'),
     embedded(sdk + 'toolpkg/ToolPkgRegistrationBridge.rs').replace('__OPERIT_TOOLPKG_REGISTRATION_ONLY__', 'false'),
     '', '', // These tests exercise host operations, not generated Tools or external libraries.
     source(bridge + 'PluginConfig.script.js'),

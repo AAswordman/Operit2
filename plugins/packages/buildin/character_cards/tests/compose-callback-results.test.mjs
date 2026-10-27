@@ -121,7 +121,11 @@ function nativeTransport(callbackBody) {
       __operit_execution_context_key: "toolpkg_compose:callback-fixture",
       __operit_toolpkg_runtime_kind: "ui",
       ...params,
-    }, sourceId, name, 10, 10000, true);
+    }, sourceId, name, true, {
+      packageTarget: "arbitrary.callback.fixture",
+      contextKey: "toolpkg_compose:callback-fixture",
+      runtime: "ui",
+    });
     return result;
   }
   return { invoke, terminal, intermediate, traces };

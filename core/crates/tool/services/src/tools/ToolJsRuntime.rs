@@ -20,23 +20,12 @@ use serde_json::Value;
 const TOOLPKG_IPC_DISPATCH_FUNCTION_NAME: &str = "__operit_toolpkg_runtime_dispatch__";
 const TOOLPKG_IPC_DISPATCH_FUNCTION_SOURCE: &str = r#"
 async function(params) {
-    var dispatch = globalThis.__operitInvokeToolPkgIpcLocal;
-    if (typeof dispatch !== 'function') {
-        throw new Error('ToolPkg.ipc runtime is unavailable in target context');
-    }
     var payload = params.__operit_toolpkg_ipc_payload;
-    var channel = params.__operit_toolpkg_ipc_channel.trim();
+    var channel = params.__operit_toolpkg_ipc_channel;
     if (channel === '$route') return await globalThis.__operitInvokeToolPkgRouteLocal(payload);
-    if (!channel) {
-        throw new Error('ToolPkg.ipc channel is required');
-    }
-    return await dispatch(channel, payload, {
-        channel: channel,
-        callerContextKey: params.__operit_toolpkg_ipc_caller_context_key,
-        currentContextKey: params.__operit_execution_context_key,
-        currentRuntime: params.__operit_toolpkg_runtime_kind,
-        packageTarget: params.__operit_ui_package_name
-    });
+    return await globalThis.__operitInvokeToolPkgIpcLocal(
+        channel, payload, params.__operit_toolpkg_ipc_caller_context_key
+    );
 }
 "#;
 

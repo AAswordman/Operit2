@@ -1265,6 +1265,8 @@ impl JsEngineState {
             let sourceCount = self.registeredScriptSources.len();
             let sourceId = self.registerScriptSource(&script).map_err(JsExecutionError::runtime)?;
             let sourceRegistered = self.registeredScriptSources.len() != sourceCount;
+            let toolPkgContext = toolPkgCallContext(self.toolPkgContext.as_ref(), &effectiveParams)
+                .map_err(JsExecutionError::invalid_request)?;
             let invocation = self.runtime.callHostJavaScriptFunction(
                 "__operitExecuteScriptFunction",
                 &[
@@ -1273,6 +1275,7 @@ impl JsEngineState {
                     Value::String(sourceId),
                     Value::String(functionName.clone()),
                     Value::Bool(useComposeDslTextResources),
+                    toolPkgContext,
                 ],
             );
             let completedAtMs = currentTimeMillisU128();
@@ -1871,6 +1874,7 @@ impl JsEngineState {
         functionName: &str,
     ) -> Result<(), String> {
         let sourceId = self.registerScriptSource(script)?;
+        let toolPkgContext = toolPkgCallContext(self.toolPkgContext.as_ref(), &params)?;
         self.runtime
             .callHostJavaScriptFunction(
                 "__operitExecuteScriptFunction",
@@ -1879,6 +1883,8 @@ impl JsEngineState {
                     Value::Object(params.into_iter().collect()),
                     Value::String(sourceId),
                     Value::String(functionName.to_string()),
+                    Value::Bool(false),
+                    toolPkgContext,
                 ],
             )
             .map(|_| ())
@@ -2514,6 +2520,64 @@ fn dispatchCoreRouteAsync(
             reject: true,
         });
     }
+}
+
+/// Normalizes execution identity once at the native entry, before any plugin code runs.
+/// The engine owns package/context identity; a shared main engine can execute sandbox calls.
+#[allow(non_snake_case)]
+fn toolPkgCallContext(
+    bound: Option<&ToolPkgExecutionContext>,
+    params: &BTreeMap<String, Value>,
+) -> Result<Value, String> {
+    let text = |key: &str| {
+        params
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let packageTarget = bound
+        .map(|context| context.container_package_name.as_str())
+        .or_else(|| text("__operit_ui_package_name"))
+        .or_else(|| text("toolPkgId"))
+        .unwrap_or_default();
+    let contextKey = bound
+        .map(|context| context.context_key.clone())
+        .or_else(|| text("__operit_execution_context_key").map(str::to_owned))
+        .unwrap_or_else(|| {
+            if packageTarget.is_empty() {
+                String::new()
+            } else {
+                format!("toolpkg_main:{packageTarget}")
+            }
+        });
+    let runtime = match text("__operit_toolpkg_runtime_kind") {
+        Some(value) => value.to_ascii_lowercase(),
+        None => {
+            let key = contextKey.to_ascii_lowercase();
+            if key.starts_with("toolpkg_provider:") {
+                "provider"
+            } else if key.starts_with("toolpkg_compose:")
+                || key.starts_with("toolpkg_compose_dsl:")
+                || key.starts_with("toolpkg_xml_render:")
+            {
+                "ui"
+            } else if text("__operit_toolpkg_subpackage_id").is_some() {
+                "sandbox"
+            } else {
+                "main"
+            }
+            .to_string()
+        }
+    };
+    if !matches!(runtime.as_str(), "main" | "ui" | "sandbox" | "provider") {
+        return Err(format!("ToolPkg execution runtime is invalid: {runtime}"));
+    }
+    Ok(serde_json::json!({
+        "packageTarget": packageTarget,
+        "contextKey": contextKey,
+        "runtime": runtime,
+    }))
 }
 
 /// Validates owned structured IPC data against the host routing contract.

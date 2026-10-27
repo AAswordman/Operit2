@@ -568,7 +568,7 @@ fn assembleRuntimeBootstrapScript() -> String {
         }}
 
         /** Invokes a registered source without transferring or fingerprinting its text again. */
-        function __operitExecuteScriptFunction(callId, params, sourceId, targetFunctionName, structuredResult) {{
+        function __operitExecuteScriptFunction(callId, params, sourceId, targetFunctionName, structuredResult, toolPkgContext) {{
             var scriptText = __operitScriptSources.get(sourceId);
             if (typeof scriptText !== 'string') {{
                 throw new Error('Unknown registered script source: ' + sourceId);
@@ -583,7 +583,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                 }});
                 return;
             }}
-            var callState = registerCallSession(callId, params);
+            var callState = registerCallSession(callId, params, toolPkgContext);
             callState.previousCallId = previousCallId;
             callState.previousCallRuntime = previousCallRuntime;
             globalThis.__operitCurrentCallId = callId;
@@ -837,118 +837,6 @@ fn assembleRuntimeBootstrapScript() -> String {
                         ? __operitText(params.moduleSpec.screen)
                         : ''
                 ));
-                function getCurrentToolPkgRuntimeKind() {{
-                    var explicitRuntime = __operitText(
-                        readCallValue('__operit_toolpkg_runtime_kind', '')
-                    ).trim().toLowerCase();
-                    if (
-                        explicitRuntime === 'main' ||
-                        explicitRuntime === 'ui' ||
-                        explicitRuntime === 'sandbox' ||
-                        explicitRuntime === 'provider'
-                    ) {{
-                        return explicitRuntime;
-                    }}
-                    var contextKey = __operitText(
-                        readCallValue(
-                            '__operit_execution_context_key',
-                            readCallValue('executionContextKey', '')
-                        )
-                    ).trim();
-                    if (/^toolpkg_provider:/i.test(contextKey)) {{
-                        return 'provider';
-                    }}
-                    if (
-                        /^toolpkg_compose:/i.test(contextKey) ||
-                        /^toolpkg_compose_dsl:/i.test(contextKey) ||
-                        /^toolpkg_xml_render:/i.test(contextKey)
-                    ) {{
-                        return 'ui';
-                    }}
-                    var subpackageId = __operitText(
-                        readCallValue('__operit_toolpkg_subpackage_id', '')
-                    ).trim();
-                    return subpackageId.length > 0 ? 'sandbox' : 'main';
-                }}
-
-                function getCurrentToolPkgExecutionContextKey() {{
-                    var composeContextKey = __operitText(
-                        readCallValue(
-                            '__operit_compose_execution_context_key',
-                            readCallValue('executionContextKey', '')
-                        )
-                    ).trim();
-                    var scopedContextKey = __operitText(
-                        readCallValue('__operit_execution_context_key', '')
-                    ).trim();
-                    if (composeContextKey.length > 0) {{
-                        return composeContextKey;
-                    }}
-                    if (scopedContextKey.length > 0) {{
-                        return scopedContextKey;
-                    }}
-                    return packageTarget ? 'toolpkg_main:' + packageTarget : '';
-                }}
-
-                function ensureToolPkgIpcRegistry() {{
-                    var registry = globalThis.__operitToolPkgIpcRegistry;
-                    if (!registry || typeof registry !== 'object') {{
-                        registry = Object.create(null);
-                        globalThis.__operitToolPkgIpcRegistry = registry;
-                    }}
-                    return registry;
-                }}
-
-                function normalizeToolPkgIpcChannel(channel) {{
-                    return __operitText(channel).trim();
-                }}
-
-                function registerToolPkgIpcHandler(channel, handler) {{
-                    var normalizedChannel = normalizeToolPkgIpcChannel(channel);
-                    if (normalizedChannel.length === 0) {{
-                        throw new Error('ToolPkg.ipc channel is required');
-                    }}
-                    if (typeof handler !== 'function') {{
-                        throw new Error('ToolPkg.ipc handler must be a function');
-                    }}
-                    ensureToolPkgIpcRegistry()[normalizedChannel] = handler;
-                    return function() {{
-                        var registry = ensureToolPkgIpcRegistry();
-                        if (registry[normalizedChannel] === handler) {{
-                            delete registry[normalizedChannel];
-                        }}
-                    }};
-                }}
-
-                function unregisterToolPkgIpcHandler(channel, handler) {{
-                    var normalizedChannel = normalizeToolPkgIpcChannel(channel);
-                    if (normalizedChannel.length === 0) {{
-                        return false;
-                    }}
-                    var registry = ensureToolPkgIpcRegistry();
-                    if (arguments.length > 1 && registry[normalizedChannel] !== handler) {{
-                        return false;
-                    }}
-                    if (typeof registry[normalizedChannel] === 'function') {{
-                        delete registry[normalizedChannel];
-                        return true;
-                    }}
-                    return false;
-                }}
-
-                function invokeToolPkgIpcLocal(channel, payload, meta) {{
-                    var normalizedChannel = normalizeToolPkgIpcChannel(channel);
-                    if (normalizedChannel.length === 0) {{
-                        throw new Error('ToolPkg.ipc channel is required');
-                    }}
-                    var registry = ensureToolPkgIpcRegistry();
-                    var handler = registry[normalizedChannel];
-                    if (typeof handler !== 'function') {{
-                        throw new Error('ToolPkg.ipc channel is not registered: ' + normalizedChannel);
-                    }}
-                    return handler(payload, meta && typeof meta === 'object' ? meta : {{}});
-                }}
-
                 function normalizeToolPkgWasmValueType(valueType) {{
                     var normalizedType = __operitText(valueType).trim().toLowerCase();
                     if (
@@ -998,148 +886,6 @@ fn assembleRuntimeBootstrapScript() -> String {
                     return normalizedArgs;
                 }}
 
-                function ensureToolPkgIpcApi() {{
-                    var toolPkgApi = globalThis.ToolPkg && typeof globalThis.ToolPkg === 'object'
-                        ? globalThis.ToolPkg
-                        : {{}};
-                    if (globalThis.ToolPkg !== toolPkgApi) {{
-                        globalThis.ToolPkg = toolPkgApi;
-                    }}
-                    var ipcApi = toolPkgApi.ipc && typeof toolPkgApi.ipc === 'object'
-                        ? toolPkgApi.ipc
-                        : {{}};
-
-                    ipcApi.on = function(channel, handler) {{
-                        return registerToolPkgIpcHandler(channel, handler);
-                    }};
-                    ipcApi.off = function(channel, handler) {{
-                        return unregisterToolPkgIpcHandler(channel, handler);
-                    }};
-                    ipcApi.call = function(channel, payload, options) {{
-                        var normalizedChannel = normalizeToolPkgIpcChannel(channel);
-                        if (normalizedChannel.length === 0) {{
-                            return Promise.reject(new Error('ToolPkg.ipc channel is required'));
-                        }}
-                        var callOptions = options && typeof options === 'object' ? options : {{}};
-                        var targetRuntime = __operitText(callOptions.targetRuntime || '').trim().toLowerCase();
-                        if (
-                            targetRuntime &&
-                            targetRuntime !== 'main' &&
-                            targetRuntime !== 'ui' &&
-                            targetRuntime !== 'sandbox' &&
-                            targetRuntime !== 'provider'
-                        ) {{
-                            return Promise.reject(new Error('ToolPkg.ipc targetRuntime is invalid: ' + targetRuntime));
-                        }}
-                        var targetContextKey = __operitText(callOptions.targetContextKey || '').trim();
-                        var hasTargetOptions = targetRuntime.length > 0 || targetContextKey.length > 0;
-                        var currentContextKey = getCurrentToolPkgExecutionContextKey();
-                        var currentRuntime = getCurrentToolPkgRuntimeKind();
-                        if (
-                            currentRuntime === 'main' &&
-                            (
-                                !hasTargetOptions ||
-                                (
-                                    (targetRuntime.length === 0 || targetRuntime === 'main') &&
-                                    (targetContextKey.length === 0 || targetContextKey === currentContextKey)
-                                )
-                            )
-                        ) {{
-                            try {{
-                                return Promise.resolve(
-                                    invokeToolPkgIpcLocal(normalizedChannel, payload, {{
-                                        channel: normalizedChannel,
-                                        callerContextKey: currentContextKey,
-                                        currentContextKey: currentContextKey,
-                                        currentRuntime: currentRuntime,
-                                        packageTarget: packageTarget
-                                    }})
-                                );
-                            }} catch (error) {{
-                                return Promise.reject(error);
-                            }}
-                        }}
-                        if (
-                            targetContextKey.length > 0 &&
-                            targetContextKey === currentContextKey &&
-                            targetRuntime.length > 0 &&
-                            targetRuntime !== currentRuntime
-                        ) {{
-                            return Promise.reject(
-                                new Error(
-                                    'ToolPkg.ipc targetRuntime does not match current runtime: ' +
-                                        targetRuntime +
-                                        ' != ' +
-                                        currentRuntime
-                                )
-                            );
-                        }}
-                        if (targetContextKey.length > 0 && targetContextKey === currentContextKey) {{
-                            try {{
-                                return Promise.resolve(
-                                    invokeToolPkgIpcLocal(normalizedChannel, payload, {{
-                                        channel: normalizedChannel,
-                                        callerContextKey: currentContextKey,
-                                        currentContextKey: currentContextKey,
-                                        currentRuntime: currentRuntime,
-                                        packageTarget: packageTarget
-                                    }})
-                                );
-                            }} catch (error) {{
-                                return Promise.reject(error);
-                            }}
-                        }}
-                        if (!packageTarget) {{
-                            return Promise.reject(new Error('ToolPkg.ipc requires a bound package target'));
-                        }}
-                        var ownerCallId = String(globalThis.__operitCurrentCallId);
-                        return new Promise(function(resolve, reject) {{
-                            __operitRetainCallReference(ownerCallId);
-                            /** Releases this request only after the public continuation runs. */
-                            function releaseReference() {{
-                                Promise.resolve().then(function() {{
-                                    __operitReleaseCallReference(ownerCallId);
-                                }});
-                            }}
-                            try {{
-                                __operitNativeInvokeToolPkgIpc(
-                                    ownerCallId, packageTarget, currentContextKey,
-                                    targetContextKey, targetRuntime, normalizedChannel,
-                                    payload === undefined ? null : payload
-                                ).then(function(response) {{
-                                    try {{
-                                        __operitActivateCall(ownerCallId);
-                                        if (!response || typeof response !== 'object' || typeof response.success !== 'boolean') {{
-                                            throw new TypeError('IPC host returned an invalid result envelope');
-                                        }}
-                                        if (!response.success) throw new Error(response.message);
-                                        resolve(response.value);
-                                    }} catch (error) {{
-                                        reject(error);
-                                    }} finally {{
-                                        releaseReference();
-                                    }}
-                                }}, function(error) {{
-                                    try {{
-                                        __operitActivateCall(ownerCallId);
-                                        reject(error);
-                                    }} catch (activationError) {{
-                                        reject(activationError);
-                                    }} finally {{
-                                        releaseReference();
-                                    }}
-                                }});
-                            }} catch (error) {{
-                                reject(error);
-                                releaseReference();
-                            }}
-                        }});
-                    }};
-
-                    toolPkgApi.ipc = ipcApi;
-                    globalThis.__operitInvokeToolPkgIpcLocal = invokeToolPkgIpcLocal;
-                }}
-
                 function ensureToolPkgWasmApi() {{
                     var toolPkgApi = globalThis.ToolPkg && typeof globalThis.ToolPkg === 'object'
                         ? globalThis.ToolPkg
@@ -1174,7 +920,6 @@ fn assembleRuntimeBootstrapScript() -> String {
                     toolPkgApi.wasm = wasmApi;
                 }}
 
-                ensureToolPkgIpcApi();
                 __operitInstallToolPkgRouteApi();
                 if (!registrationMode) {{
                     ensureToolPkgWasmApi();
@@ -1399,6 +1144,7 @@ fn assembleRuntimeBootstrapScript() -> String {
         {}
         {}
         {}
+        {}
         "#,
         JsInitRuntimeScriptBuilder::buildRuntimeBootstrapScript(),
         cleanOnExitDirJson,
@@ -1407,6 +1153,7 @@ fn assembleRuntimeBootstrapScript() -> String {
         buildJavaClassBridgeDefinition(),
         buildComposeDslContextBridgeDefinition(),
         buildToolPkgApiRuntimeScript(),
+        include_str!("JsToolPkgIpc.script.js"),
         buildToolPkgRegistrationBridgeScript(false),
         getJsToolsDefinition(),
         getJsThirdPartyLibraries(),

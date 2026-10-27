@@ -47,7 +47,10 @@ function runtime(operations = {}) {
     /** Cancels the exact scope owned by the runtime session or timer. */
     __operitNativeCancelJavaScriptPromises(scope) { registry.cancel(scope); timers.delete(scope); return null; },
     /** Accepts the explicit detached-session lifecycle notification. */
-    __operitNativeNotifyDetachedCall() { return null; },
+    __operitNativeNotifyDetachedCall(id) {
+      setImmediate(() => context.__operitFinalizeDetachedCall(id));
+      return null;
+    },
     ...operations,
   };
   const engine = source(bridge + 'JsEngine.rs');
@@ -72,6 +75,8 @@ function runtime(operations = {}) {
       );
     });
   }
+  // The engine registers this lifecycle binding separately from syncNames.
+  context.__operitNativeNotifyDetachedCall = registry.syncBinding(builtins.__operitNativeNotifyDetachedCall);
   context.__operitNativeCancelJavaScriptPromises = registry.syncBinding(builtins.__operitNativeCancelJavaScriptPromises);
   context.__operitNativeScheduleJavaScriptTimer = registry.binding((id, delay) => timers.set(id, delay));
   vm.runInContext(`globalThis.__operitNativeCompileModuleFactory = body =>
@@ -88,7 +93,11 @@ function runtime(operations = {}) {
 }
 
 /** Flushes deterministic Promise turns without advancing any safety timers. */
-async function flush() { for (let turn = 0; turn < 16; turn++) await Promise.resolve(); }
+async function flush() {
+  for (let turn = 0; turn < 16; turn++) await Promise.resolve();
+  // Native wakes finalize detached sessions after the queued Promise jobs drain.
+  await new Promise(setImmediate);
+}
 
 /** Confirms the complete bootstrap no longer installs a native-interface object or callback delegates. */
 test('production bootstrap exposes public wrappers without the removed global object', () => {
@@ -127,18 +136,22 @@ test('crypto and deflate use direct structured values without error-string guess
 });
 
 /** Checks asynchronous image operations retain the session and never publish callback IDs. */
-test('Jimp uses an owned host Promise and releases exactly the original execution reference', async () => {
+test('Jimp retains its owner while pending and releases all references on success and failure', async () => {
+  let finishRead;
+  const read = new Promise(resolve => { finishRead = resolve; });
   const { context, calls, openCall } = runtime({
     /** Returns an owned image handle or fails the exact submitted image operation. */
     __operitNativeImageProcessing(operation, args) {
-      if (operation === 'read') { assert.equal(args[0], 'encoded'); return 'image-handle'; }
+      if (operation === 'read') { assert.equal(args[0], 'encoded'); return read; }
       throw new Error('image operation rejected');
     },
   });
   openCall();
   vm.runInContext('JSON.parse = JSON.stringify = function() { throw Error("JSON transport used"); };', context);
   const pending = context.Jimp.read('encoded');
-  assert.equal(context.__operitGetCallState('owner').pendingReferences, 1);
+  await flush();
+  assert.ok(context.__operitGetCallState('owner').pendingReferences > 0, 'Pending image work must retain its owner');
+  finishRead('image-handle');
   const image = await pending;
   assert.equal(image.id, 'image-handle');
   await flush();

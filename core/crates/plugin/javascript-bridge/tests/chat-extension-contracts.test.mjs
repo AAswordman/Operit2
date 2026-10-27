@@ -31,7 +31,11 @@ function plain(value) { return JSON.parse(JSON.stringify(value)); }
 test("package engine creation authenticates outside the original registry lock", () => {
   const runtime = source("core/crates/tool/services/src/tools/ToolJsRuntime.rs");
   const caller = runtime.slice(runtime.indexOf("fn toolpkg_execution_engine("), runtime.indexOf("/// Materializes one ToolPkg resource"));
-  assert.match(caller, /let manager = self\s*\.package_manager\s*\.lock\(\)[\s\S]*?\.clone\(\);\s*manager\.getToolPkgExecutionEngine\(context_key, container_package_name\)/);
+  const registry = /let (\w+) = self\s*\.package_manager\s*\.lock\(\)[\s\S]*?\.toolPkgManager\(\)\s*\.clone\(\);/.exec(caller);
+  assert.ok(registry, 'Clone the engine registry in a completed statement to release the package lock');
+  assert.match(caller.slice(registry.index + registry[0].length), new RegExp(
+    `\\b${registry[1]}\\.getToolPkgExecutionEngine\\(context_key, container_package_name\\)`,
+  ));
   assert.doesNotMatch(caller, /\.lock\(\)[\s\S]*?\.expect\([^;]+\)\s*\.getToolPkgExecutionEngine/);
 });
 

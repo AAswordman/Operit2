@@ -95,7 +95,11 @@ export function createNativeToolRuntime(globals, dispatchIpc) {
     );
     const sourceId = callId + ":" + createHash("sha256").update(script).digest("hex");
     context.__operitRegisterScriptSource(sourceId, script);
-    context.__operitExecuteScriptFunction(callId, params, sourceId, name, 10, 10000);
+    context.__operitExecuteScriptFunction(callId, params, sourceId, name, true, {
+      packageTarget: 'com.operit.character_cards',
+      contextKey: 'toolpkg_main:com.operit.character_cards',
+      runtime: params.__operit_toolpkg_runtime_kind,
+    });
     return result;
   }
   return { invoke, terminal };

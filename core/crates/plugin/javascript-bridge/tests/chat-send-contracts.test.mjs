@@ -1,4 +1,4 @@
-import { installScopedHostRuntime, installGeneratedToolsRuntime } from "../../../../../tools/tests/fixtures/scoped_host_runtime.mjs";
+import { installScopedHostRuntime, installGeneratedToolsRuntime, domainToolResult } from "../../../../../tools/tests/fixtures/scoped_host_runtime.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import vm from "node:vm";
@@ -23,7 +23,9 @@ function runtime(native) {
       const value = structuredClone(payload); calls.push({ method, value });
       native(method, value,
         /** Delivers the planned host result without JSON text or public callback slots. */
-        result => registry.settle(id, {success:true,data:result}, false),
+        result => registry.settle(id, registry.snapshotResult({
+          success: true, data: domainToolResult(name, result, parameters),
+        }), false),
         /** Preserves the planned host rejection through the same scoped channel. */
         message => registry.settle(id, message, true));
     });

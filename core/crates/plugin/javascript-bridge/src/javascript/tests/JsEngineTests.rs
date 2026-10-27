@@ -643,11 +643,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
                         ("__operit_script_screen", "dist/main.js".to_string()),
                         ("__operit_inline_function_name", "__test_ipc_dispatch__".to_string()),
                         ("__operit_inline_function_source", r#"async function(params) {
-                            return await globalThis.__operitInvokeToolPkgIpcLocal(params.channel, params.payload, {
-                                callerContextKey: params.callerContextKey,
-                                currentContextKey: params.__operit_execution_context_key,
-                                currentRuntime: 'main'
-                            });
+                            return await globalThis.__operitInvokeToolPkgIpcLocal(params.channel, params.payload, params.callerContextKey);
                         }"#.to_string()),
                     ] { params.insert(name.to_string(), Value::String(value)); }
                     params.insert("channel".to_string(), Value::String(request.channel));
@@ -1601,6 +1597,121 @@ async fn toolpkg_ipc_cross_runtime_dispatch_is_asynchronous() {
             .as_deref(),
         Some("OperitToolPkgIpc")
     );
+    engine.destroy();
+}
+
+/// A completed render must not make a pending UI callback dispatch IPC in its local realm.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn toolpkg_ipc_retains_ui_target_after_overlapping_render() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestIpcEngine(host.clone());
+    let script = r#"
+        exports.default = function(ctx) {
+            return ctx.UI.Button({text: 'Load themes', onClick: async function() {
+                await toolCall('gate', {});
+                const explicit = await ToolPkg.ipc.call('test.async', {value: 41}, {targetRuntime: 'main'});
+                const implicit = await ToolPkg.ipc.call('test.async', {value: explicit.value});
+                return {explicit: explicit, implicit: implicit};
+            }});
+        };
+    "#;
+    let mut params = testParams();
+    params.insert("__operit_ui_package_name".into(), Value::String("test.package".into()));
+    params.insert("__operit_toolpkg_runtime_kind".into(), Value::String("ui".into()));
+    params.insert("executionContextKey".into(), Value::String("toolpkg_compose_dsl:test.package:test".into()));
+    params.insert("__operit_compose_execution_context_key".into(), Value::String("toolpkg_compose_dsl:test.package:test".into()));
+    let initial = expect_js_output(engine.renderForAssertions(script, &params, &BTreeMap::new(), Arc::new(BTreeMap::new())).await, "initial IPC page");
+    let action_id = assertionNodes(&initial).iter().find_map(|node| node["props"]["onClick"]["__actionId"].as_str()).unwrap().to_owned();
+    let action = engine.actionForAssertionsAsync(action_id, None, params.clone(), BTreeMap::new(), None);
+    tokio::pin!(action);
+    tokio::select! {
+        _ = host.gatedToolStarted.notified() => {},
+        result = &mut action => panic!("IPC action completed before gate: {result:?}"),
+    }
+    expect_js_output(engine.renderForAssertions(script, &params, &BTreeMap::new(), Arc::new(BTreeMap::new())).await, "overlapping IPC render");
+    finishGatedTool(&host);
+    let result = expect_js_output(action.await, "IPC after overlapping render");
+    assert_eq!(result["actionResult"], serde_json::json!({"explicit": {"value": 42}, "implicit": {"value": 43}}));
+    assert_eq!(host.toolPkgIpcThreadName.lock().unwrap().as_deref(), Some("OperitToolPkgIpc"));
+    engine.destroy();
+}
+
+/// Cached IPC methods must use the active runtime when main and sandbox executions share an engine.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn toolpkg_ipc_cached_method_uses_active_runtime() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let engine = super::JsEngine::new_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
+        context_key: "toolpkg_main:test.package".into(),
+        container_package_name: "test.package".into(),
+        api_version: "2.0.0".into(),
+        text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: BTreeMap::new() }),
+    }).unwrap();
+    let script = r#"
+        const call = ToolPkg.ipc.call;
+        ToolPkg.ipc.on('test.local', function(_payload, meta) { return meta.currentRuntime; });
+        exports.warm = function() { return true; };
+        exports.remote = async function() { return await call('test.async', {value: 41}, {targetRuntime: 'main'}); };
+        exports.local = async function() { return await call('test.local'); };
+    "#;
+    let mut params = testParams();
+    params.insert("__operit_ui_package_name".into(), Value::String("test.package".into()));
+    params.insert("__operit_execution_context_key".into(), Value::String("toolpkg_main:test.package".into()));
+    params.insert("__operit_toolpkg_runtime_kind".into(), Value::String("main".into()));
+    expect_js_output(engine.execute_script_function(script, "warm", &params, &BTreeMap::new(), None, true, None).await, "capture main IPC method");
+    params.insert("__operit_toolpkg_runtime_kind".into(), Value::String("sandbox".into()));
+    let remote = expect_js_output(engine.execute_script_function(script, "remote", &params, &BTreeMap::new(), None, true, None).await, "cached IPC in sandbox");
+    assert_eq!(serde_json::from_str::<Value>(&remote).unwrap(), serde_json::json!({"value": 42}));
+    params.insert("__operit_toolpkg_runtime_kind".into(), Value::String("main".into()));
+    let local = expect_js_output(engine.execute_script_function(script, "local", &params, &BTreeMap::new(), None, true, None).await, "cached IPC in main");
+    assert_eq!(serde_json::from_str::<Value>(&local).unwrap(), serde_json::json!("main"));
+    engine.destroy();
+}
+
+/// Engine identity and one stable API survive repeated calls, even with misleading input metadata.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn toolpkg_ipc_owns_stable_api_and_uses_native_identity() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestIpcEngine(host);
+    let script = r#"
+        if (!globalThis.testIpcApi) globalThis.testIpcApi = ToolPkg.ipc;
+        const ipc = globalThis.testIpcApi;
+        const call = ipc.call;
+        ipc.on('test.identity', function(_payload, meta) { return meta; });
+        exports.identity = async function() {
+            return {
+                stable: ipc === ToolPkg.ipc && call === ToolPkg.ipc.call,
+                meta: await call('test.identity', null, {
+                    targetContextKey: 'toolpkg_compose_dsl:test.package:test', targetRuntime: 'ui'
+                })
+            };
+        };
+        exports.withoutContext = async function() {
+            const owner = globalThis.__operitCurrentCallId;
+            globalThis.__operitRestoreCallContext('');
+            try { return await call('test.identity'); }
+            catch (error) { return error.message; }
+            finally { globalThis.__operitActivateCall(owner); }
+        };
+    "#;
+    let mut params = testParams();
+    for _ in 0..2 {
+        let output = expect_js_output(engine.execute_script_function(script, "identity", &params, &BTreeMap::new(), None, true, None).await, "native IPC identity");
+        let output: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output, serde_json::json!({"stable": true, "meta": {
+            "channel": "test.identity", "packageTarget": "test.package", "currentRuntime": "ui",
+            "callerContextKey": "toolpkg_compose_dsl:test.package:test",
+            "currentContextKey": "toolpkg_compose_dsl:test.package:test"
+        }}));
+        params.insert("__operit_ui_package_name".into(), Value::String("forged.package".into()));
+        params.insert("__operit_execution_context_key".into(), Value::String("toolpkg_main:forged.package".into()));
+    }
+    let output = expect_js_output(engine.execute_script_function(script, "withoutContext", &params, &BTreeMap::new(), None, true, None).await, "missing IPC context");
+    assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), "ToolPkg.ipc requires an active execution context");
     engine.destroy();
 }
 

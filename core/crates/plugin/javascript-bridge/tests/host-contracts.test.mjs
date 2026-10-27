@@ -71,10 +71,10 @@ test("generic chat consumers have matching async contracts and no old character 
   for (const file of [trait, runtime, tools]) assert.doesNotMatch(file, /RuntimeCharacterCardInfo|resolveCharacterCardName|(?:fn|\.)\s*(?:listCharacterCards|characterCardName)\(|CharacterCardManager|DEFAULT_CHARACTER_CARD_ID|role_card_id|character_card_id|ChatManagerToolOperation::ListCharacterCards/);
   for (const file of [trait, runtime]) {
     const compact = file.replace(/\s+/g, " ");
-    assert.match(compact, /fn createChatRuntime<'a>\( &'a self, setAsCurrentChat: bool, sourceChatId: Option<String>, input: Option<serde_json::Value>, \) -> ToolRuntimeSupportFuture<'a, Result<String, String>>/);
+    assert.match(compact, /fn createChatRuntime<'a>\( &'a self, setAsCurrentChat: bool, sourceChatId: Option<String>, parentChatId: Option<String>, input: Option<serde_json::Value>, \) -> ToolRuntimeSupportFuture<'a, Result<String, String>>/);
     assert.match(compact, /fn switchMainChat<'a>\( &'a self, chatId: &'a str, \) -> ToolRuntimeSupportFuture<'a, Result<\(\), String>>/);
   }
-  assert.match(runtime, /\.createNewChat\(setAsCurrentChat, sourceChatId, input\)\s*\.await\?/);
+  assert.match(runtime, /\.createNewChat\(setAsCurrentChat, sourceChatId, parentChatId, input\)\s*\.await\?/);
   assert.match(tools, /impl AsyncToolExecutor for ChatManagerToolExecutor/);
   assert.doesNotMatch(tools, /block_on|new_current_thread/);
   assert.match(registration, /RegisteredToolExecutor::Asynchronous\(Box::new\(\s*ChatManagerToolExecutor/);
@@ -100,7 +100,7 @@ test("actual package executor delegates one request to immutable exact SDK selec
   assert.doesNotMatch(executor, /packageExecutor:|self\.invoke\(/);
   const execute = manager.slice(manager.indexOf("pub async fn executeScript("), manager.indexOf("/// Releases JavaScript tool manager resources."));
   assert.equal([...execute.matchAll(/\.select_tool\(/g)].length, 1);
-  assert.match(execute, /&selection\.definition\.script/);
+  assert.match(execute, /execute_script_function_owned\(\s*selection\.definition\.script, functionName, runtimeParams, BTreeMap::new\(\)/);
   assert.doesNotMatch(execute, /\b_script\b|script: &str/);
   const host = source("core/crates/tool/services/src/tools/ToolJsRuntime.rs");
   assert.match(host, /packageRegistryReadiness\(\)\.require_ready\(\)\?/);

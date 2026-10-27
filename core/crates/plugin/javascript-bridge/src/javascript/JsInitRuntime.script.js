@@ -116,7 +116,7 @@
         return mostRecentLiveCallId(excludeCallId);
     }
 
-    function registerCallSession(callId, params) {
+    function registerCallSession(callId, params, toolPkgContext) {
         var resolvedCallId = normalizeCallId(callId);
         if (!resolvedCallId) {
             throw new Error('callId is required');
@@ -127,6 +127,7 @@
         callState.callId = resolvedCallId;
         callState.activatedAt = nextCallActivation();
         callState.params = params && typeof params === 'object' ? params : {};
+        callState.toolPkgContext = toolPkgContext ? Object.freeze(toolPkgContext) : null;
         callState.completed = false;
         callState.resultCompleted = false;
         callState.detached = false;

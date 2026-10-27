@@ -314,34 +314,30 @@ test('bridge source exposes only mandatory structured asynchronous transports', 
   }
 });
 
-/** Extracts the real IPC call implementation and supplies its explicit surrounding execution contracts. */
+/** Loads the engine-owned IPC service and its production host Promise helper. */
 function ipcRuntime(native) {
-  const text = source('core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs');
-  const start = text.indexOf('                    ipcApi.call = function(channel, payload, options)');
-  const end = text.indexOf('                    toolPkgApi.ipc = ipcApi;', start);
   let retained = 0;
   const activations = [];
   const context = vm.createContext({
-    /** Receives the exact native execution owner. */
-    __operitNativeActivateCall() {},
-    ipcApi: {}, packageTarget: 'fixture', callId: 'owner', __operitCurrentCallId: 'owner',
-    /** Preserves empty routing options without guessing at transport results. */
-    __operitText(value) { return value == null ? '' : String(value); },
-    /** Normalizes the typed IPC channel used by the production call implementation. */
-    normalizeToolPkgIpcChannel(value) { return String(value).trim(); },
-    /** Returns the bound source context identity. */
-    getCurrentToolPkgExecutionContextKey() { return 'ui-context'; },
-    /** Ensures this fixture exercises cross-context transport rather than a local handler. */
-    getCurrentToolPkgRuntimeKind() { return 'ui'; },
+    __operitCurrentCallId: 'owner',
+    /** Supplies the immutable native identity of the active UI call. */
+    __operitGetCallState(id) {
+      assert.equal(id, 'owner');
+      return { toolPkgContext: { packageTarget: 'fixture', contextKey: 'ui-context', runtime: 'ui' } };
+    },
     /** Records the exact retained owner identity. */
     __operitRetainCallReference(id) { assert.equal(id, 'owner'); retained++; },
     /** Records the matching completion reference release. */
     __operitReleaseCallReference(id) { assert.equal(id, 'owner'); retained--; },
     /** Restores the original execution context on completion. */
     __operitActivateCall(id) { activations.push(id); },
+    /** Installs the same shared SDK helpers used by the real bootstrap. */
+    __operitExpose(name, value) { context[name] = value; },
     __operitNativeInvokeToolPkgIpc: native,
   });
-  vm.runInContext(text.slice(start, end).replaceAll('{{', '{').replaceAll('}}', '}'), context);
+  vm.runInContext(source('core/crates/plugin/sdk/src/JsExecutionRuntimeBridge.script.js'), context);
+  vm.runInContext(source('core/crates/plugin/javascript-bridge/src/javascript/JsToolPkgIpc.script.js'), context);
+  context.ipcApi = context.__operitToolPkgIpc;
   return { context, activations, retained: () => retained };
 }
 

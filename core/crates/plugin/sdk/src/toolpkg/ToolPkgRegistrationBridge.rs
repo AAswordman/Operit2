@@ -624,6 +624,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
 
         var toolPkgApi = requireToolPkgApiRuntime();
         var api = toolPkgApi.namespace('ToolPkg', {
+            ipc: root.__operitToolPkgIpc,
             _m: captureMarketOrigin,
             // Captures only explicitly published methods using durable exported function references.
             registerApi: function(definition) {
