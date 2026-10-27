@@ -258,6 +258,10 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
       reply(200, {running: !!child || starting, ready, output, device});
     } else if (url.pathname === '/api/simulator/storage' && req.method === 'GET') {
       reply(200, await rpc('storageRecords'));
+    } else if (url.pathname === '/api/simulator/storage-control' && req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) { body += String(chunk); if (Buffer.byteLength(body) > 1024) throw new Error('存储测试配置过长'); }
+      reply(200, await rpc('storageControl', {configuration: JSON.parse(body)}));
     } else if (url.pathname === '/api/simulator/speech' && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) { body += String(chunk); if (Buffer.byteLength(body) > 24000) throw new Error('语音请求过长'); }

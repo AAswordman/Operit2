@@ -157,7 +157,10 @@ ESP-IDF 前置文件，无需先手动执行一次 Cargo。
 它保存的是运行时的真实状态，快照切换会清理旧/未发布的块；不再运行退役布局的双槽写入流程。
 有意累积的有效身份/成员/记录仍受 NVS 容量上限约束。不能用每次全擦掩盖运行时泄漏。
 
-运行时 NVS 只支持当前格式：`snapshot_v2` 提交标记、ONV3 路径压缩封装、2 KiB 压缩块。
+运行时 NVS 只支持当前封装：`snapshot_v2` 提交标记、ONV3 路径压缩封装、2 KiB 压缩块。
+封装内记录可读取 raw 0、LZSS 1 和字典 LZSS 2；新写入使用 0/2，旧记录仅在压缩后
+更小时升级，下一次正常事务才发布。格式 2 的不可变字段名字典保存在 Flash，不改变
+解码后的记录，也不提高 7,000 字节预算。旧固件无法读取已发布的格式 2，降级需匹配备份。
 旧 JSON/base64、ONV2、1 KiB 块和未压缩快照的读取/迁移已删除；遇到不支持的格式会报错，
 不会自动迁移、当成空节点重建或擦除数据。普通烧录保留分区不代表支持旧存储格式。
 健康日志会定期输出 `nvs_used` / `nvs_free` / `nvs_available` / `nvs_total`，与
@@ -187,6 +190,24 @@ Invoke-RestMethod http://127.0.0.1:8766/api/simulator/memory
 这些数值覆盖模拟器的 Rust 分配与任务栈。ESP-IDF、无线、TLS 和驱动的整板开销仍需
 通过真实设备 `device:health` 验证，本机 RSS 不作为真机资源余量。
 
+模拟器复用固件的 7,000 字节快照限制、压缩记录和双 bank 提交流程。状态中的 `storage`
+额外报告 NVS 条目模型：24 KiB 分区共 756 条，预留 126 条用于回收，默认其他命名空间
+占用 213 条。213 是压力模型的初始值；不会自动读取当前真机，不能作为当前实测值。
+模型计入两个 bank、blob 和提交标记，但不模拟 ESP-IDF 的精确页布局及回收时序。
+
+可通过仅模拟器提供的接口增加其他命名空间占用，或注入一次写入失败：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8766/api/simulator/storage-control -Method Post -ContentType application/json -Body '{"otherNamespaceEntries":630}'
+Invoke-RestMethod http://127.0.0.1:8766/api/simulator/storage-control -Method Post -ContentType application/json -Body '{"otherNamespaceEntries":213,"failAfterMutations":0}'
+Invoke-RestMethod http://127.0.0.1:8766/api/simulator/storage-control -Method Post -ContentType application/json -Body '{"otherNamespaceEntries":213,"failAfterMutations":-1}'
+```
+
+`failAfterMutations: 0` 使下一次块写入或提交标记发布失败；正数允许相应次数的成功修改后
+失败，`-1` 关闭故障注入。故障只触发一次，不阻止清理和重试。参数在进程重启后恢复默认，
+不写入设备记录。集成测试通过真实配对、审批界面验证容量不足和写入失败，再用原配对重试。
+文件后端测试还逐个覆盖块写入、发布失败和重启，检查旧身份与原提交标记保持有效。
+
 ## 插件与音频联调
 
 宿主插件使用现有 Call / Watch / Push 访问设备。配置编辑、设备本地交互和需要持续
@@ -196,5 +217,10 @@ Invoke-RestMethod http://127.0.0.1:8766/api/simulator/memory
 
 模拟器注册应用自有的 `operit.device.speech` Watch / Push 示例协议，可连接
 [语音处理插件](../../plugins/packages/examples/device_speech_processor/README.md)。
-通用音频通道可用不表示真实板卡已提供麦克风或扬声器，也不表示聊天麦克风按钮已经
-接入完整识别流程；请按具体入口和实际驱动分别验证。
+`test:space` 使用真实 Core JavaScript 插件与加密 TCP，验证处理端断开后的重连、三轮
+STT/TTS 请求、4096 字节二进制块、播放背压和逐字节一致性。测试使用确定性处理端，
+不验证外部语音识别/合成服务的质量。浏览器为模拟器提供麦克风和扬声器；状态每次最多
+取出一块音频，避免 Base64 和 IPC JSON 同时复制整队列而耗尽设备堆。
+
+当前 ESP32-2432S028 固件未配置麦克风采集和扬声器播放驱动。协议测试通过不能替代
+实际驱动、接线及录放音验收；真实板卡仍会明确提示该能力未配置。

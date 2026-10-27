@@ -12,6 +12,7 @@ import {randomUUID} from 'node:crypto';
 import {performDeviceAction} from '../../web/device-actions.ts';
 import {simulatorViewState} from '../../web/device-state.ts';
 import {DeviceView} from '../../web/device-view.ts';
+import {probeSpeech} from './speech-probe.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -475,8 +476,27 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     const credentials = await core.command(['peers']);
     const request = await core.command(['space', 'join', node]);
     assert.equal(request.status, 'pending');
+    // Exercise storage faults through the real pairing/approval path.
+    const pressureBefore = (await state()).device.storage;
+    assert.equal(pressureBefore.logicalBudgetBytes, 7000);
+    for (const [configuration, error] of [
+      [{otherNamespaceEntries: 630}, /NVS capacity exhausted/],
+      [{otherNamespaceEntries: 213, failAfterMutations: 0}, /Injected NVS write failure/],
+    ]) {
+      await post('/api/simulator/storage-control', configuration);
+      await update(); await openReview();
+      actionError = ''; await tap('edge_space_approve');
+      assert.match(actionError, error, 'storage failure must be reported by the approval UI');
+      assert.deepEqual(await core.command(['peers']), credentials, 'failed admission must retain pairing');
+      const retained = await update();
+      assert.equal(retained.device.paired, true);
+      assert.equal(retained.device.spaceJoinRequestId, request.requestId, 'failed save must retain the review');
+      assert.equal(retained.device.storage.runtimeEntries, pressureBefore.runtimeEntries, 'failed save must not leak staged NVS entries');
+    }
+    await post('/api/simulator/storage-control', {otherNamespaceEntries: 213, failAfterMutations: -1});
     await approve();
     assert.equal((await core.command(['space', 'refresh', request.requestId])).status, 'joined');
+    t.diagnostic('NVS exhaustion and interrupted write surfaced through approval UI; retry admitted the same paired Core');
     const former = await core.command(['space', 'show']);
     assert(former.members.includes(node));
     t.diagnostic('paired using the C-rendered screen code; first UI approval completed');
@@ -484,6 +504,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       device => device.chat.connected && device.chat.chatId && !device.chat.initializing && !device.chat.error);
     assert.match(initialChat.chat.chatId, /^[0-9a-f-]{36}$/i, 'first admitted session has a valid nonempty chat ID');
     t.diagnostic('first chat was provisioned through Core before message/state subscriptions opened');
+    await probeSpeech({core, node, directory, post, waitDevice, t});
     const edgePort=await core.command(['core','tool','exec','edge_execute',JSON.stringify(edgePortArgs)]);
     assert.equal(edgePort.success,true);assert.equal(edgePort.result.nodeId,node);
     assert.equal(edgePort.result.data.boardId,'ESP32-2432S028-SIM');

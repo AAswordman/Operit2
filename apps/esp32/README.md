@@ -92,7 +92,16 @@ driver, so independent text chat does not imply verified physical voice I/O.
   a compact sorted index. They do not clone the full index during Space admission.
   Index growth is reserved before writing; the in-memory change becomes visible
   only after the alternate bank is published. Failed writes preserve the old
-  snapshot. The ONV3 format and 7000-byte logical storage limit are unchanged.
+  snapshot. The ONV3 envelope and 7000-byte logical storage limit are unchanged.
+  Packed records now use format 2, with an immutable 847-byte dictionary of
+  public JSON field names stored in firmware Flash. The dictionary does not
+  consume a separate heap buffer. Legacy raw (0) and LZSS (1) records remain
+  readable. Opening storage compacts legacy records one at a time in memory;
+  the next successful ordinary transaction publishes the new representation.
+  A failed transaction keeps the previous bank authoritative. Decoded record
+  contents, identities, pairing secrets and Space policy remain unchanged.
+  Firmware predating record format 2 cannot read newly published snapshots;
+  preserve a matching firmware/NVS backup when testing a downgrade.
   Node-local edits move unshared parsed records into the transaction instead
   of cloning retained JSON trees. A weak mutation witness detects unchanged
   edits without pinning the old tree; external immutable snapshots still receive

@@ -135,6 +135,7 @@ impl DeviceSpeech {
         state.processor = None;
         state.inputOpen = false;
         if state.active.take().is_some() {
+            while self.playbackInput.lock().unwrap().try_recv().is_ok() {}
             state.recording = false;
             state.error = Some("语音处理端已断开".into());
             state.resultId += 1;
@@ -167,6 +168,9 @@ impl DeviceSpeech {
         }
         if state.active.is_some() {
             return Err("请先结束当前语音任务".into());
+        }
+        if operation == "tts" {
+            while self.playbackInput.lock().unwrap().try_recv().is_ok() {}
         }
         let id = uuid::Uuid::new_v4().to_string();
         let mut payload = payload.as_object().unwrap().clone();
@@ -234,7 +238,6 @@ impl DeviceSpeech {
         if text.trim().is_empty() || text.len() > 16384 {
             return Err("Invalid speech text".into());
         }
-        while self.playbackInput.lock().unwrap().try_recv().is_ok() {}
         self.begin("tts", serde_json::json!({"text":text}))
     }
     pub fn cancel(&self, message: String) {
@@ -302,11 +305,16 @@ impl DeviceSpeech {
                 }
             }
         }
-        self.playback
-            .send(CoreValue::Map(packet))
-            .await
-            .map_err(|_| error("Playback closed"))?;
+        // Backpressure can yield while the user cancels or replaces a processor.
+        // Reserve space first, then revalidate while holding the same lock as
+        // cancel/disconnect so old audio cannot enter the next request's queue.
+        let permit = self.playback.reserve().await.map_err(|_| error("Playback closed"))?;
         let mut state = self.state.lock().unwrap();
+        if state.processor.as_ref().map(|p| p.0.as_str()) != Some(session)
+            || state.active.as_ref().map(|p| p.0.as_str()) != Some(id.as_str()) {
+            return Err(error("Speech request expired"));
+        }
+        permit.send(CoreValue::Map(packet));
         if kind == "tts.end" && state.active.as_ref().map(|p| p.0.as_str()) == Some(id.as_str()) {
             state.active = None;
             state.resultId += 1;
@@ -447,4 +455,54 @@ mod tests {
         assert_eq!(service.snapshot()["phase"], 0);
         assert!(service.appendPcm(vec![1, 2]).is_err());
     }
+    #[tokio::test]
+    async fn cancelled_backpressured_audio_never_enters_the_next_request() {
+        let service = DeviceSpeech::default();
+        let (mut output, mut input) = connect(&service, "cancel-race");
+        packet(&mut output).await;
+        let id = service.synthesize("first".into()).unwrap();
+        packet(&mut output).await;
+        for _ in 0..4 {
+            input.send(value(serde_json::json!({"type":"tts.segment","id":id,"contentType":"audio/wav"}))).await.unwrap();
+        }
+        let mut blocked = Box::pin(input.send(value(serde_json::json!({"type":"tts.segment","id":id}))));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(blocked.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        }).await;
+        service.cancel("cancelled".into());
+        let next = service.synthesize("second".into()).unwrap();
+        assert!(blocked.await.is_err());
+        assert!(service.takePlayback().is_none(), "cancelled audio crossed request boundary");
+        assert_eq!(service.snapshot()["requestId"], next);
+    }
+    #[tokio::test]
+    async fn rejected_synthesis_preserves_current_audio_and_disconnect_clears_it() {
+        let service = DeviceSpeech::default();
+        let (mut output, mut input) = connect(&service, "queue");
+        packet(&mut output).await;
+        let id = service.synthesize("first".into()).unwrap();
+        input.send(value(serde_json::json!({"type":"tts.segment","id":id}))).await.unwrap();
+        assert!(service.synthesize("busy".into()).is_err());
+        assert!(service.takePlayback().is_some(), "rejected request discarded current playback");
+        input.send(value(serde_json::json!({"type":"tts.segment","id":id}))).await.unwrap();
+        drop(input);
+        assert!(service.takePlayback().is_none(), "disconnected processor retained old playback");
+        assert_eq!(service.snapshot()["phase"], 0);
+    }
+
+    #[tokio::test]
+    async fn completed_audio_remains_playable_after_processor_closes() {
+        let service = DeviceSpeech::default();
+        let (mut output, mut input) = connect(&service, "completed");
+        packet(&mut output).await;
+        let id = service.synthesize("last segment".into()).unwrap();
+        input.send(value(serde_json::json!({"type":"tts.segment","id":id}))).await.unwrap();
+        input.send(value(serde_json::json!({"type":"tts.end","id":id}))).await.unwrap();
+        drop(input);
+        assert_eq!(fields(service.takePlayback().unwrap()).unwrap()["type"], CoreValue::String("tts.segment".into()));
+        assert_eq!(fields(service.takePlayback().unwrap()).unwrap()["type"], CoreValue::String("tts.end".into()));
+        assert!(service.takePlayback().is_none());
+    }
+
 }
