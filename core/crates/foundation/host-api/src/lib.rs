@@ -9,6 +9,11 @@ pub mod PluginSdkIpc;
 pub mod Tcp;
 pub mod TerminalWorkingDirectory;
 pub mod TimeUtils;
+pub mod JavaScriptExecutionInterrupt;
+pub use JavaScriptExecutionInterrupt::{
+    HostJavaScriptExecutionInterrupt, HostJavaScriptInterruptController,
+    HostJavaScriptInterruptSubscription,
+};
 pub mod JavaScriptBootstrap;
 pub mod JavaScriptCodeCache;
 pub use JavaScriptBootstrap::HostJavaScriptBootstrap;
@@ -31,7 +36,6 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -2071,9 +2075,6 @@ impl PartialEq<Value> for HostJavaScriptValue {
 pub type HostJavaScriptCallback =
     Arc<dyn Fn(Vec<HostJavaScriptValue>) -> HostResult<Value> + Send + Sync + 'static>;
 
-/// Supplies one interrupt predicate to a host-owned JavaScript runtime.
-pub type HostJavaScriptInterruptHandler = Arc<dyn Fn() -> bool + Send + Sync + 'static>;
-
 /// Owns one concrete JavaScript runtime created by the active platform host.
 pub trait HostJavaScriptRuntime {
     /// Executes shared trusted bootstrap bytecode in this runtime's independent global scope.
@@ -2100,11 +2101,8 @@ pub trait HostJavaScriptRuntime {
     /// Executes every JavaScript job currently ready in this runtime.
     fn executePendingHostJavaScriptJobs(&mut self) -> HostResult<()>;
 
-    /// Replaces the interrupt predicate used by the current JavaScript execution.
-    fn setHostJavaScriptInterruptHandler(
-        &mut self,
-        handler: Option<HostJavaScriptInterruptHandler>,
-    ) -> HostResult<()>;
+    /// Provides the event-driven execution scope owned by this realm.
+    fn interruptController(&self) -> Arc<dyn HostJavaScriptInterruptController>;
 
     /// Calls a lifecycle function with structured arguments and returns its structured result.
     fn callHostJavaScriptFunction(&mut self, name: &str, arguments: &[Value]) -> HostResult<Value>;
@@ -2181,78 +2179,6 @@ pub type HostJavaScriptRuntimeStateAsyncTask = Box<
 /// Resolves one asynchronous host-owned JavaScript runtime state operation.
 pub type HostJavaScriptRuntimeStateOutputFuture =
     Pin<Box<dyn Future<Output = HostResult<HostJavaScriptRuntimeStateOutput>> + 'static>>;
-
-struct HostJavaScriptExecutionInterruptState {
-    deadlineMillis: Option<u128>,
-    cancelled: AtomicBool,
-    timedOut: AtomicBool,
-}
-
-/// Controls cancellation and an optional caller-owned JavaScript execution deadline.
-#[derive(Clone)]
-pub struct HostJavaScriptExecutionInterrupt {
-    state: Arc<HostJavaScriptExecutionInterruptState>,
-}
-
-impl HostJavaScriptExecutionInterrupt {
-    /// Creates one interrupt with an absolute deadline derived from milliseconds.
-    pub fn new(timeoutMillis: u64) -> HostResult<Self> {
-        if timeoutMillis == 0 {
-            return Err(HostError::new(
-                "JavaScript execution timeout must be greater than zero",
-            ));
-        }
-        let timeout = Duration::from_millis(timeoutMillis);
-        let nowMillis = crate::TimeUtils::currentTimeMillisU128();
-        let deadlineMillis = nowMillis
-            .checked_add(timeout.as_millis())
-            .ok_or_else(|| HostError::new("JavaScript execution deadline exceeds clock range"))?;
-        Ok(Self {
-            state: Arc::new(HostJavaScriptExecutionInterruptState {
-                deadlineMillis: Some(deadlineMillis),
-                cancelled: AtomicBool::new(false),
-                timedOut: AtomicBool::new(false),
-            }),
-        })
-    }
-
-    /// Creates an execution token that ends only through explicit cancellation.
-    pub fn unlimited() -> Self {
-        Self {
-            state: Arc::new(HostJavaScriptExecutionInterruptState {
-                deadlineMillis: None,
-                cancelled: AtomicBool::new(false),
-                timedOut: AtomicBool::new(false),
-            }),
-        }
-    }
-
-    /// Requests interruption of the execution owning this token.
-    pub fn interrupt(&self) {
-        self.state.cancelled.store(true, Ordering::Release);
-    }
-
-    /// Returns whether the JavaScript runtime must stop the current execution.
-    pub fn shouldInterrupt(&self) -> bool {
-        if self.state.cancelled.load(Ordering::Acquire) {
-            return true;
-        }
-        if self
-            .state
-            .deadlineMillis
-            .is_some_and(|deadline| crate::TimeUtils::currentTimeMillisU128() >= deadline)
-        {
-            self.state.timedOut.store(true, Ordering::Release);
-            return true;
-        }
-        false
-    }
-
-    /// Returns whether the execution crossed its configured deadline.
-    pub fn didTimeOut(&self) -> bool {
-        self.state.timedOut.load(Ordering::Acquire)
-    }
-}
 
 /// Identifies affine JavaScript workloads whose synchronous dependencies require independent scheduling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

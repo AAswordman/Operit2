@@ -3,7 +3,7 @@ use crate::javascript_interrupt::JavaScriptInterrupt;
 use crate::javascript_values::{self, engine_error, text, JsonIntrinsics};
 use operit_host_api::{
     HostError, HostJavaScriptAsyncJsonCallback, HostJavaScriptBootstrap, HostJavaScriptCodeCache,
-    HostJavaScriptInterruptHandler, HostJavaScriptCallback, HostJavaScriptRuntime, HostResult, HostJavaScriptValue,
+    HostJavaScriptInterruptController, HostJavaScriptCallback, HostJavaScriptRuntime, HostResult, HostJavaScriptValue,
 };
 use serde_json::Value as JsonValue;
 use std::cell::{Cell, RefCell};
@@ -176,7 +176,7 @@ impl NativeHostJavaScriptRuntime {
 impl Drop for NativeHostJavaScriptRuntime {
     /// Releases all persistent handles while their owning isolate is entered and alive.
     fn drop(&mut self) {
-        self.interrupt.set(None);
+        self.interrupt.replace(Vec::new());
         let mut isolate = self.isolate.take().expect("live V8 isolate");
         // SAFETY: this affine runtime is being destroyed on its owning executor.
         unsafe {
@@ -253,13 +253,9 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
         })
     }
 
-    /// Replaces cancellation without moving the isolate or any JavaScript handles.
-    fn setHostJavaScriptInterruptHandler(
-        &mut self,
-        handler: Option<HostJavaScriptInterruptHandler>,
-    ) -> HostResult<()> {
-        self.interrupt.set(handler);
-        Ok(())
+    /// Exposes direct cancellation signals without moving the owning V8 isolate.
+    fn interruptController(&self) -> Arc<dyn HostJavaScriptInterruptController> {
+        self.interrupt.clone()
     }
 
     /// Invokes a required lifecycle callback using direct structured argument and result conversion.

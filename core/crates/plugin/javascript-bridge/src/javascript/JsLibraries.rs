@@ -252,7 +252,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                     }});
                 }}
                 try {{
-                    __operitNativeScheduleJavaScriptTimer(timerId, Math.floor(normalizedDelay)).then(function() {{
+                    __operitThenUntracked(__operitNativeScheduleJavaScriptTimer(timerId, Math.floor(normalizedDelay)), function() {{
                         if (!timerStates.delete(timerId)) return;
                         try {{
                             __operitActivateCall(timerCallId);

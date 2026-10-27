@@ -4,9 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 
 import 'MarkdownCodeTypeface.dart';
+import 'MarkdownFootnotes.dart';
 import 'MarkdownLatexBlock.dart';
 import 'MarkdownLink.dart';
 import 'MarkdownNodeGrouper.dart';
+
+const double markdownLineHeight = 1.4;
+const double markdownLetterSpacing = 0.35;
 
 /// Paints Core's semantic inline tree. This layer never reads Markdown syntax.
 TextSpan buildMarkdownInlineSpannableFromMarkdownNodes({
@@ -18,7 +22,11 @@ TextSpan buildMarkdownInlineSpannableFromMarkdownNodes({
   void Function(String url)? onLinkClick,
 }) {
   final style = (Theme.of(context).textTheme.bodyMedium ?? const TextStyle())
-      .copyWith(color: textColor, height: 1.3)
+      .copyWith(
+        color: textColor,
+        height: markdownLineHeight,
+        letterSpacing: markdownLetterSpacing,
+      )
       .merge(baseStyle);
   return TextSpan(
     style: style,
@@ -37,6 +45,13 @@ InlineSpan _inlineSpan(
   void Function(String url)? onLinkClick, [
   String? linkUrl,
 ]) {
+  if (node.type == MarkdownNodeType.footnoteReference) {
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.baseline,
+      baseline: TextBaseline.alphabetic,
+      child: MarkdownFootnoteReference(label: node.content, style: inherited),
+    );
+  }
   if (node.type == MarkdownNodeType.inlineLatex) {
     return WidgetSpan(
       alignment: PlaceholderAlignment.baseline,

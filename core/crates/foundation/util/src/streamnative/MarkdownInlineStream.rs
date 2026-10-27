@@ -10,6 +10,7 @@ pub enum InlineKind {
     Code,
     Latex,
     Link,
+    FootnoteReference,
 }
 
 impl InlineKind {
@@ -23,6 +24,7 @@ impl InlineKind {
             Self::Code => Type::InlineCode,
             Self::Latex => Type::InlineLatex,
             Self::Link => Type::Link,
+            Self::FootnoteReference => Type::FootnoteReference,
         }
     }
 }
@@ -207,7 +209,18 @@ impl MarkdownInlineStream {
                 escaped,
             } => {
                 if !escaped && ch == ']' && depth == 0 {
-                    self.mode = Mode::AfterLabel(raw);
+                    if let Some(label) = raw.strip_prefix('^').filter(|label| {
+                        !label.is_empty()
+                            && !label
+                                .chars()
+                                .any(|ch| ch.is_whitespace() || matches!(ch, '[' | ']' | '\\'))
+                    }) {
+                        out.push(InlineToken::Open(InlineKind::FootnoteReference, None));
+                        Self::literal(out, label);
+                        out.push(InlineToken::Close);
+                    } else {
+                        self.mode = Mode::AfterLabel(raw);
+                    }
                 } else {
                     if !escaped && ch == '[' {
                         depth += 1;

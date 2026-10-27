@@ -461,6 +461,11 @@ impl AIToolHandler {
             .clone()
     }
 
+    /// Shares the system capability without cloning the complete host environment.
+    pub(crate) fn systemOperationHost(&self) -> Option<Arc<dyn operit_host_api::SystemOperationHost>> {
+        self.inner.lock().expect("AIToolHandler mutex poisoned").context.systemOperationHost.clone()
+    }
+
     /// Returns the host manager associated with this handler.
     #[allow(non_snake_case)]
     pub fn getContext(&self) -> HostManager {
@@ -761,12 +766,7 @@ impl AIToolHandler {
                 .first()
                 .map(|tool| tool.script.contains("/* MCPJS"))
                 .unwrap_or(false);
-        let executableTools = toolPackage
-            .tools
-            .iter()
-            .filter(|packageTool| !packageTool.advice)
-            .cloned()
-            .collect::<Vec<_>>();
+        let executableTools = toolPackage.tools.iter().filter(|tool| !tool.advice);
         let context = self.getContext();
         for packageTool in executableTools {
             let toolName = format!("{}:{}", toolPackage.name, packageTool.name);
@@ -781,7 +781,7 @@ impl AIToolHandler {
                 self.registerAsyncTool(
                     toolName,
                     Box::new(PackageToolExecutor::new(
-                        toolPackage.clone(),
+                        toolPackage.name.clone(),
                         packageManager.clone(),
                     )),
                 );

@@ -656,15 +656,25 @@ impl StreamPlugin for StreamMarkdownBlockBracketLaTeXPlugin {
         }
         if self.start_state == 1 {
             if c == '[' {
-                self.state = PluginState::Processing;
-                self.start_state = 0;
-                self.end_state = 0;
+                self.start_state = 2;
                 return self.include_delimiters;
             }
             self.reset();
             return true;
         }
 
+        if self.start_state == 2 {
+            // \[^label] escapes a footnote; it must not consume the rest of
+            // the document as an unfinished display-math block.
+            if c == '^' {
+                self.reset();
+            } else {
+                self.state = PluginState::Processing;
+                self.start_state = 0;
+                self.end_state = usize::from(c == '\\');
+            }
+            return true;
+        }
         self.reset();
         true
     }
@@ -888,5 +898,81 @@ impl StreamPlugin for StreamMarkdownTablePlugin {
         self.table_row_count = 0;
         self.found_header_separator = false;
         self.header_sep_match_state = 0;
+    }
+}
+
+/// A definition owns its first line and subsequent lines indented by four
+/// spaces (or a tab). Prefix recognition remains incremental across chunks.
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownFootnoteDefinitionPlugin {
+    state: PluginState,
+    phase: usize,
+    label_len: usize,
+    indent: usize,
+}
+
+impl Default for StreamMarkdownFootnoteDefinitionPlugin {
+    fn default() -> Self {
+        Self {
+            state: PluginState::Idle,
+            phase: 0,
+            label_len: 0,
+            indent: 0,
+        }
+    }
+}
+
+impl StreamPlugin for StreamMarkdownFootnoteDefinitionPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownFootnoteDefinitionPlugin"
+    }
+    fn state(&self) -> PluginState {
+        self.state
+    }
+    fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Processing {
+            if c == '\n' {
+                self.state = PluginState::WaitFor;
+                self.indent = 0;
+            }
+            return true;
+        }
+        if self.state == PluginState::WaitFor {
+            if c == ' ' {
+                self.indent += 1;
+                if self.indent == 4 {
+                    self.state = PluginState::Processing;
+                }
+            } else if c == '\t' {
+                self.state = PluginState::Processing;
+            } else {
+                self.reset();
+            }
+            return true;
+        }
+        if self.state == PluginState::Idle {
+            if !at_start_of_line {
+                return true;
+            }
+            self.state = PluginState::Trying;
+        }
+        match self.phase {
+            0 if c == ' ' && self.indent < 3 => self.indent += 1,
+            0 if c == '[' => self.phase = 1,
+            1 if c == '^' => self.phase = 2,
+            2 if c == ']' && self.label_len > 0 => self.phase = 3,
+            2 if !c.is_whitespace() && !matches!(c, '[' | ']' | '\\') => self.label_len += 1,
+            3 if c == ':' => self.state = PluginState::Processing,
+            _ => self.reset(),
+        }
+        true
+    }
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+    fn destroy(&mut self) {}
+    fn reset(&mut self) {
+        *self = Self::default();
     }
 }

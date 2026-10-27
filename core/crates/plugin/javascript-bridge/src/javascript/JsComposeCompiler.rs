@@ -136,13 +136,10 @@ impl ComposeCompiler {
                 let state = state
                     .downcast_mut::<CompilerState>()
                     .ok_or_else(|| HostError::new("Invalid Compose compiler state"))?;
-                state
-                    .runtime
-                    .setHostJavaScriptInterruptHandler(Some(Arc::new(move || {
-                        interrupt.shouldInterrupt()
-                    })))?;
+                let controller = state.runtime.interruptController();
+                controller.replace(vec![interrupt]);
                 let result = state.prepare(source, identity);
-                state.runtime.setHostJavaScriptInterruptHandler(None)?;
+                controller.replace(Vec::new());
                 Ok(Box::new(result?))
             }),
         )?;
@@ -257,7 +254,7 @@ mod tests {
                 .unwrap();
             assert_eq!(first.to_string(), next.to_string());
         }
-        let artifact = "// @operit-compose-artifact 1\nexports.value=1;";
+        let artifact = "// @operit-compose-artifact 4\nexports.value=1;";
         assert_eq!(
             compiler
                 .prepare(artifact.into(), "pkg:valid".into())
@@ -271,7 +268,7 @@ mod tests {
     #[test]
     fn compilation_cache_is_bounded_and_keeps_recent_entries() {
         let compiler = compiler();
-        let artifact = "// @operit-compose-artifact 1\nexports.value=1;";
+        let artifact = "// @operit-compose-artifact 4\nexports.value=1;";
         for index in 0..=CACHE_ENTRIES {
             assert!(
                 !compiler

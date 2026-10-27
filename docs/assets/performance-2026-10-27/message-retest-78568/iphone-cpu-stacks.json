@@ -1,0 +1,2413 @@
+{
+  "pid": 78568,
+  "device": "iPhone 18 Pro Max iOS 27 simulator",
+  "mode": "debug via existing Flutter VM",
+  "stages": [
+    {
+      "name": "baseline",
+      "startWallMicros": 1793107454953951,
+      "vmTimeOriginMicros": 113470973222,
+      "endWallMicros": 1793107457956720,
+      "vmTimeExtentMicros": 3002296,
+      "dartSampleCount": 3,
+      "cpu": {
+        "meanPercent": 3.0752848799677786,
+        "peak100msPercent": 20.877387653182314,
+        "nativeSampleCount": 60,
+        "durationSeconds": 3.002769,
+        "cpuSeconds": 0.09234370103735966
+      },
+      "nativeThreads": [
+        {
+          "thread": "io.flutter.1.profiler",
+          "percent": 41.66666666666667
+        },
+        {
+          "thread": "operit-javascript-worker-2",
+          "percent": 16.666666666666664
+        },
+        {
+          "thread": "operit-runtime-worker-12",
+          "percent": 8.333333333333332
+        },
+        {
+          "thread": "Main Thread",
+          "percent": 5.0
+        },
+        {
+          "thread": "Dart Profiler ThreadInterrupter",
+          "percent": 3.3333333333333335
+        },
+        {
+          "thread": "operit-runtime-worker-9",
+          "percent": 3.3333333333333335
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-14",
+          "percent": 3.3333333333333335
+        },
+        {
+          "thread": "operit-runtime-worker-13",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "mDNS_daemon",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-12",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-13",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-2",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "V8 DefaultWorke",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "Dart Profiler SampleBlockProcessor",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-6",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-15",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "operit-javascript-worker-3",
+          "percent": 1.6666666666666667
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-1",
+          "percent": 1.6666666666666667
+        }
+      ],
+      "nativeTop": {
+        "samples": 60,
+        "inclusive": [
+          {
+            "function": "_pthread_start",
+            "percent": 95.0
+          },
+          {
+            "function": "thread_start",
+            "percent": 95.0
+          },
+          {
+            "function": "_CFRunLoopRunSpecificWithOptions",
+            "percent": 46.667
+          },
+          {
+            "function": "__CFRunLoopDoTimer",
+            "percent": 46.667
+          },
+          {
+            "function": "__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__",
+            "percent": 46.667
+          },
+          {
+            "function": "fml::MessageLoopImpl::FlushTasks(fml::FlushType)",
+            "percent": 46.667
+          },
+          {
+            "function": "std::__fl::__function::__value_func<void ()>::operator()[abi:nn210000]() const",
+            "percent": 46.667
+          },
+          {
+            "function": "__CFRunLoopDoTimers",
+            "percent": 46.667
+          },
+          {
+            "function": "std::__fl::function<void ()>::operator()() const",
+            "percent": 46.667
+          },
+          {
+            "function": "fml::MessageLoopDarwin::OnTimerFire(__CFRunLoopTimer*, fml::MessageLoopDarwin*)",
+            "percent": 46.667
+          },
+          {
+            "function": "__CFRunLoopRun",
+            "percent": 46.667
+          },
+          {
+            "function": "core::ops::function::FnOnce::call_once{{vtable.shim}}",
+            "percent": 46.667
+          },
+          {
+            "function": "_RNvNvMs0_NtNtNtCsq1aKLdhfbl_3std3sys6thread4unixNtB7_6Thread3new12thread_start",
+            "percent": 46.667
+          },
+          {
+            "function": "std::sys::backtrace::__rust_begin_short_backtrace",
+            "percent": 46.667
+          },
+          {
+            "function": "_RNvXst_NtCsdBLzwTILsML_5alloc5boxedINtB5_3BoxDINtNtNtCslbPdngnV3ox_4core3ops8function6FnOnceuEp6OutputuNtNtBP_6marker4SendEL_EIBJ_uE9call_onceCsq1aKLdhfbl_3std",
+            "percent": 46.667
+          },
+          {
+            "function": "_<tokio::task::local::RunUntil<T> as core::future::future::Future>::poll",
+            "percent": 45.0
+          },
+          {
+            "function": "operit_host_native_scheduler::runtime_task_scheduler::spawnTaskPoolWithOptions::_{{closure}}::_{{closure}}::_{{closure}}",
+            "percent": 45.0
+          },
+          {
+            "function": "tokio::runtime::task::harness::Harness<T,S>::poll",
+            "percent": 45.0
+          },
+          {
+            "function": "tokio::task::local::LocalSet::run_until::_{{closure}}",
+            "percent": 45.0
+          },
+          {
+            "function": "tokio::runtime::context::runtime::enter_runtime",
+            "percent": 45.0
+          }
+        ],
+        "self": [
+          {
+            "function": "mach_msg2_trap",
+            "percent": 38.333
+          },
+          {
+            "function": "__open_nocancel",
+            "percent": 8.333
+          },
+          {
+            "function": "dart::ThreadInterrupter::ThreadMain(unsigned long)",
+            "percent": 3.333
+          },
+          {
+            "function": "stat",
+            "percent": 3.333
+          },
+          {
+            "function": "_xzm_xzone_malloc_tiny",
+            "percent": 3.333
+          },
+          {
+            "function": "_platform_memset",
+            "percent": 3.333
+          },
+          {
+            "function": "__xzm_xzone_free_to_freelist_chunk",
+            "percent": 3.333
+          },
+          {
+            "function": "dart::FreeListElement* std::__fl::__cxx_atomic_load[abi:nn210000]<dart::FreeListElement*>(std::__fl::__cxx_atomic_base_impl<dart::FreeListElement*> const*, std::__fl::memory_order)",
+            "percent": 1.667
+          },
+          {
+            "function": "void* std::__fl::__libcpp_operator_new[abi:nn210000]<unsigned long>(unsigned long)",
+            "percent": 1.667
+          },
+          {
+            "function": "0x110984b11",
+            "percent": 1.667
+          },
+          {
+            "function": "0x135d1c001",
+            "percent": 1.667
+          },
+          {
+            "function": "__sysctl",
+            "percent": 1.667
+          },
+          {
+            "function": "mkdir",
+            "percent": 1.667
+          },
+          {
+            "function": "memcmp",
+            "percent": 1.667
+          },
+          {
+            "function": "v8::internal::NexusConfig::SetFeedbackPair(v8::internal::Tagged<v8::internal::FeedbackVector>, v8::internal::FeedbackSlot, v8::internal::Tagged<v8::internal::Union<v8::internal::Smi, v8::internal::HeapObject, v8::internal::Weak<v8::internal::HeapObject>>>, v8::internal::WriteBarrierMode, v8::internal::Tagged<v8::internal::Union<v8::internal::Smi, v8::internal::HeapObject, v8::internal::Weak<v8::internal::HeapObject>>>, v8::internal::WriteBarrierMode) const",
+            "percent": 1.667
+          },
+          {
+            "function": "Builtins_LoadIC_Noninlined",
+            "percent": 1.667
+          },
+          {
+            "function": "std::__Cr::optional<v8::internal::DirectHandle<v8::internal::InternalizedString>> v8::internal::StringTable::TryLookupKey<v8::internal::InternalizedStringKey, v8::internal::Isolate>(v8::internal::Isolate*, v8::internal::InternalizedStringKey*)",
+            "percent": 1.667
+          },
+          {
+            "function": "Builtins_FastNewClosure",
+            "percent": 1.667
+          },
+          {
+            "function": "DYLD-STUB$$memcpy",
+            "percent": 1.667
+          },
+          {
+            "function": "heap::base::Worklist<v8::internal::Scavenger::ScavengedObjectListEntry, (unsigned short)256>::Local::PublishPushSegment()",
+            "percent": 1.667
+          }
+        ]
+      },
+      "dartTop": {
+        "samples": 3,
+        "inclusive": [
+          {
+            "function": "dart::ReadMessage(dart::Thread*, dart::Message*)",
+            "percent": 100.0
+          },
+          {
+            "function": "UIApplicationMain",
+            "percent": 100.0
+          },
+          {
+            "function": "_CFRunLoopRunSpecificWithOptions",
+            "percent": 100.0
+          },
+          {
+            "function": "__CFRunLoopDoTimer",
+            "percent": 100.0
+          },
+          {
+            "function": "dart::MessageHandler::HandleNextMessage()",
+            "percent": 100.0
+          },
+          {
+            "function": "block_destroy_helper.15",
+            "percent": 100.0
+          },
+          {
+            "function": "__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__",
+            "percent": 100.0
+          },
+          {
+            "function": "$sSo21UIApplicationDelegateP5UIKitE4mainyyFZ",
+            "percent": 100.0
+          },
+          {
+            "function": "Dart thread 259",
+            "percent": 100.0
+          },
+          {
+            "function": "main",
+            "percent": 100.0
+          },
+          {
+            "function": "$s6Runner11AppDelegateC5$mainyyFZ",
+            "percent": 100.0
+          },
+          {
+            "function": "fml::MessageLoopImpl::FlushTasks(fml::FlushType)",
+            "percent": 100.0
+          },
+          {
+            "function": "[Native] 10e6584e4",
+            "percent": 100.0
+          },
+          {
+            "function": "tonic::DartMessageHandler::OnHandleMessage(tonic::DartState*)",
+            "percent": 100.0
+          },
+          {
+            "function": "__CFRunLoopDoTimers",
+            "percent": 100.0
+          },
+          {
+            "function": "dart::IsolateMessageHandler::HandleMessage(std::__fl::unique_ptr<dart::Message, std::__fl::default_delete<dart::Message>>)",
+            "percent": 100.0
+          },
+          {
+            "function": "dart::MessageDeserializer::Deserialize()",
+            "percent": 100.0
+          },
+          {
+            "function": "dyld-internal",
+            "percent": 100.0
+          },
+          {
+            "function": "std::__fl::__function::__func<tonic::DartMessageHandler::OnMessage(tonic::DartState*)::$_0, std::__fl::allocator<tonic::DartMessageHandler::OnMessage(tonic::DartState*)::$_0>, void ()>::operator()()",
+            "percent": 100.0
+          },
+          {
+            "function": "fml::MessageLoopDarwin::OnTimerFire(__CFRunLoopTimer*, fml::MessageLoopDarwin*)",
+            "percent": 100.0
+          }
+        ],
+        "self": [
+          {
+            "function": "dart::Scavenger::TryAllocateNewTLAB(dart::Thread*, long, bool)",
+            "percent": 66.667
+          },
+          {
+            "function": "dart::Object::Allocate(long, long, dart::Heap::Space, bool, unsigned long, unsigned long)",
+            "percent": 33.333
+          }
+        ]
+      },
+      "dartSourceHotspots": []
+    },
+    {
+      "name": "receiveStreamWithRealUi",
+      "startWallMicros": 1793107458151418,
+      "vmTimeOriginMicros": 113474170213,
+      "endWallMicros": 1793107466079296,
+      "vmTimeExtentMicros": 7927830,
+      "dartSampleCount": 1803,
+      "cpu": {
+        "meanPercent": 40.632693046831776,
+        "peak100msPercent": 182.97821888073108,
+        "nativeSampleCount": 3137,
+        "durationSeconds": 7.927878,
+        "cpuSeconds": 3.221310332867306
+      },
+      "nativeThreads": [
+        {
+          "thread": "Main Thread",
+          "percent": 50.43034746573159
+        },
+        {
+          "thread": "DartWorker",
+          "percent": 22.47370098820529
+        },
+        {
+          "thread": "io.flutter.1.raster",
+          "percent": 9.148868345553076
+        },
+        {
+          "thread": "Operit2",
+          "percent": 4.622250557857826
+        },
+        {
+          "thread": "io.flutter.1.profiler",
+          "percent": 1.4344915524386357
+        },
+        {
+          "thread": "operit-runtime-worker-4",
+          "percent": 1.370736372330252
+        },
+        {
+          "thread": "Dart Profiler ThreadInterrupter",
+          "percent": 0.988205291679949
+        },
+        {
+          "thread": "operit-runtime-worker-11",
+          "percent": 0.956327701625757
+        },
+        {
+          "thread": "operit-runtime-worker-8",
+          "percent": 0.956327701625757
+        },
+        {
+          "thread": "operit-runtime-worker-14",
+          "percent": 0.8925725215173733
+        },
+        {
+          "thread": "operit-javascript-worker-0",
+          "percent": 0.8606949314631814
+        },
+        {
+          "thread": "operit-runtime-worker-5",
+          "percent": 0.8288173414089895
+        },
+        {
+          "thread": "operit-javascript-worker-2",
+          "percent": 0.637551801083838
+        },
+        {
+          "thread": "operit-runtime-worker-12",
+          "percent": 0.5419190309212624
+        },
+        {
+          "thread": "operit-javascript-worker-1",
+          "percent": 0.4781638508128785
+        },
+        {
+          "thread": "operit-runtime-worker-9",
+          "percent": 0.4144086707044948
+        },
+        {
+          "thread": "operit-javascript-worker-3",
+          "percent": 0.22314313037934333
+        },
+        {
+          "thread": "operit-runtime-worker-10",
+          "percent": 0.22314313037934333
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-3",
+          "percent": 0.19126554032515142
+        },
+        {
+          "thread": "operit-runtime-worker-6",
+          "percent": 0.19126554032515142
+        },
+        {
+          "thread": "operit-runtime-worker-2",
+          "percent": 0.1593879502709595
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-5",
+          "percent": 0.1593879502709595
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-8",
+          "percent": 0.1275103602167676
+        },
+        {
+          "thread": "operit-runtime-worker-3",
+          "percent": 0.1275103602167676
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-6",
+          "percent": 0.1275103602167676
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-15",
+          "percent": 0.1275103602167676
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-7",
+          "percent": 0.1275103602167676
+        },
+        {
+          "thread": "operit-runtime-worker-1",
+          "percent": 0.1275103602167676
+        },
+        {
+          "thread": "operit-runtime-worker-0",
+          "percent": 0.1275103602167676
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-0",
+          "percent": 0.1275103602167676
+        },
+        {
+          "thread": "operit-runtime-worker-7",
+          "percent": 0.09563277016257571
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-9",
+          "percent": 0.09563277016257571
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-11",
+          "percent": 0.09563277016257571
+        },
+        {
+          "thread": "dart:io EventHandler",
+          "percent": 0.09563277016257571
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-2",
+          "percent": 0.09563277016257571
+        },
+        {
+          "thread": "tokio-rt-worker",
+          "percent": 0.0637551801083838
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-10",
+          "percent": 0.0637551801083838
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-13",
+          "percent": 0.0637551801083838
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-1",
+          "percent": 0.0318775900541919
+        },
+        {
+          "thread": "V8 DefaultWorke",
+          "percent": 0.0318775900541919
+        },
+        {
+          "thread": "operit-runtime-worker-15",
+          "percent": 0.0318775900541919
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-14",
+          "percent": 0.0318775900541919
+        }
+      ],
+      "nativeTop": {
+        "samples": 3137,
+        "inclusive": [
+          {
+            "function": "_CFRunLoopRunSpecificWithOptions",
+            "percent": 59.994
+          },
+          {
+            "function": "__CFRunLoopRun",
+            "percent": 59.994
+          },
+          {
+            "function": "__CFRunLoopDoTimers",
+            "percent": 54.638
+          },
+          {
+            "function": "__CFRunLoopDoTimer",
+            "percent": 54.606
+          },
+          {
+            "function": "__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__",
+            "percent": 54.383
+          },
+          {
+            "function": "fml::MessageLoopImpl::FlushTasks(fml::FlushType)",
+            "percent": 54.383
+          },
+          {
+            "function": "std::__fl::__function::__value_func<void ()>::operator()[abi:nn210000]() const",
+            "percent": 54.383
+          },
+          {
+            "function": "std::__fl::function<void ()>::operator()() const",
+            "percent": 54.383
+          },
+          {
+            "function": "fml::MessageLoopDarwin::OnTimerFire(__CFRunLoopTimer*, fml::MessageLoopDarwin*)",
+            "percent": 54.351
+          },
+          {
+            "function": "Main Thread",
+            "percent": 50.43
+          },
+          {
+            "function": "static AppDelegate.$main()",
+            "percent": 49.41
+          },
+          {
+            "function": "UIApplicationMain",
+            "percent": 49.41
+          },
+          {
+            "function": "0x1c53d7c30",
+            "percent": 49.41
+          },
+          {
+            "function": "static UIApplicationDelegate.main()",
+            "percent": 49.41
+          },
+          {
+            "function": "main",
+            "percent": 49.41
+          },
+          {
+            "function": "start",
+            "percent": 49.41
+          },
+          {
+            "function": "GSEventRunModal",
+            "percent": 49.41
+          },
+          {
+            "function": "start_sim",
+            "percent": 49.41
+          },
+          {
+            "function": "_pthread_start",
+            "percent": 44.947
+          },
+          {
+            "function": "thread_start",
+            "percent": 44.947
+          }
+        ],
+        "self": [
+          {
+            "function": "mach_msg2_trap",
+            "percent": 4.941
+          },
+          {
+            "function": "0x110983b31",
+            "percent": 2.965
+          },
+          {
+            "function": "madvise",
+            "percent": 1.658
+          },
+          {
+            "function": "stat",
+            "percent": 1.466
+          },
+          {
+            "function": "start_wqthread",
+            "percent": 1.211
+          },
+          {
+            "function": "dart::MarkingVisitor::MarkObject(dart::ObjectPtr)",
+            "percent": 0.988
+          },
+          {
+            "function": "_xzm_xzone_malloc_freelist_outlined",
+            "percent": 0.924
+          },
+          {
+            "function": "__open",
+            "percent": 0.829
+          },
+          {
+            "function": "dart::MarkingVisitor::VisitPointers(dart::ObjectPtr*, dart::ObjectPtr*)",
+            "percent": 0.797
+          },
+          {
+            "function": "_platform_memmove",
+            "percent": 0.765
+          },
+          {
+            "function": "_xzm_xzone_malloc_tiny",
+            "percent": 0.733
+          },
+          {
+            "function": "kevent",
+            "percent": 0.701
+          },
+          {
+            "function": "unsigned long std::__fl::__cxx_atomic_load[abi:nn210000]<unsigned long>(std::__fl::__cxx_atomic_base_impl<unsigned long> const*, std::__fl::memory_order)",
+            "percent": 0.701
+          },
+          {
+            "function": "_platform_memset",
+            "percent": 0.669
+          },
+          {
+            "function": "dart::Object::HandleImpl(dart::Zone*, dart::ObjectPtr, long)",
+            "percent": 0.638
+          },
+          {
+            "function": "write",
+            "percent": 0.606
+          },
+          {
+            "function": "pwrite",
+            "percent": 0.574
+          },
+          {
+            "function": "objc_msgSend",
+            "percent": 0.574
+          },
+          {
+            "function": "__bzero",
+            "percent": 0.51
+          },
+          {
+            "function": "__recvfrom",
+            "percent": 0.51
+          }
+        ]
+      },
+      "dartTop": {
+        "samples": 1803,
+        "inclusive": [
+          {
+            "function": "Dart thread 259",
+            "percent": 100.0
+          },
+          {
+            "function": "fml::MessageLoopImpl::FlushTasks(fml::FlushType)",
+            "percent": 70.771
+          },
+          {
+            "function": "fml::MessageLoopDarwin::OnTimerFire(__CFRunLoopTimer*, fml::MessageLoopDarwin*)",
+            "percent": 70.438
+          },
+          {
+            "function": "__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__",
+            "percent": 70.05
+          },
+          {
+            "function": "__CFRunLoopDoTimer",
+            "percent": 69.717
+          },
+          {
+            "function": "__CFRunLoopDoTimers",
+            "percent": 69.163
+          },
+          {
+            "function": "__CFRunLoopRun",
+            "percent": 68.719
+          },
+          {
+            "function": "_CFRunLoopRunSpecificWithOptions",
+            "percent": 67.998
+          },
+          {
+            "function": "dart::DartEntry::InvokeFunction(dart::Function const&, dart::Array const&, dart::Array const&)",
+            "percent": 67.665
+          },
+          {
+            "function": "GSEventRunModal",
+            "percent": 67.443
+          },
+          {
+            "function": "UIApplicationMain",
+            "percent": 66.999
+          },
+          {
+            "function": "block_destroy_helper.15",
+            "percent": 66.334
+          },
+          {
+            "function": "$sSo21UIApplicationDelegateP5UIKitE4mainyyFZ",
+            "percent": 66.112
+          },
+          {
+            "function": "$s6Runner11AppDelegateC5$mainyyFZ",
+            "percent": 65.169
+          },
+          {
+            "function": "main",
+            "percent": 64.725
+          },
+          {
+            "function": "dyld-internal",
+            "percent": 64.337
+          },
+          {
+            "function": "[Native] 10e6584e4",
+            "percent": 64.115
+          },
+          {
+            "function": "Dart_InvokeClosure",
+            "percent": 61.009
+          },
+          {
+            "function": "dart::DartEntry::InvokeCallable(dart::Thread*, dart::Function const&, dart::Array const&, dart::Array const&)",
+            "percent": 58.957
+          },
+          {
+            "function": "flutter::PlatformConfiguration::BeginFrame(fml::TimePoint, unsigned long long)",
+            "percent": 57.46
+          }
+        ],
+        "self": [
+          {
+            "function": "HVF::LoaderHVGL::loadPartAtIndex(unsigned long, HVF::PartCache&)",
+            "percent": 17.027
+          },
+          {
+            "function": "<anonymous closure>",
+            "percent": 3.05
+          },
+          {
+            "function": "_RawReceivePort._handleMessage",
+            "percent": 2.108
+          },
+          {
+            "function": "_CustomZone.runUnary",
+            "percent": 1.775
+          },
+          {
+            "function": "_rootRunUnary",
+            "percent": 1.553
+          },
+          {
+            "function": "dart::Scavenger::TryAllocateNewTLAB(dart::Thread*, long, bool)",
+            "percent": 1.442
+          },
+          {
+            "function": "_SemanticsGeometry.computeChildGeometry",
+            "percent": 1.387
+          },
+          {
+            "function": "PlatformDispatcher._beginFrame",
+            "percent": 1.22
+          },
+          {
+            "function": "_StreamController.add",
+            "percent": 1.165
+          },
+          {
+            "function": "_WidgetsFlutterBinding&BindingBase&GestureBinding&SchedulerBinding._handleBeginFrame",
+            "percent": 1.109
+          },
+          {
+            "function": "_RenderObjectSemantics._getNonBlockedChildren",
+            "percent": 0.998
+          },
+          {
+            "function": "__psynch_cvwait",
+            "percent": 0.998
+          },
+          {
+            "function": "dart::DartEntry::InvokeFunction(dart::Function const&, dart::Array const&, dart::Array const&)",
+            "percent": 0.943
+          },
+          {
+            "function": "Duration.Duration",
+            "percent": 0.943
+          },
+          {
+            "function": "TimelineTask.start",
+            "percent": 0.943
+          },
+          {
+            "function": "HVF::PartTransformRenderer::blendShape(HVF::Shape const&, HVF::BlendContextView const&)",
+            "percent": 0.887
+          },
+          {
+            "function": "HVF::PartTransformRenderer::blendComposite(HVF::Composite const&, HVF::BlendContextView const&)",
+            "percent": 0.832
+          },
+          {
+            "function": "_WidgetsFlutterBinding&BindingBase&GestureBinding&SchedulerBinding.handleBeginFrame",
+            "percent": 0.832
+          },
+          {
+            "function": "_WidgetsFlutterBinding&BindingBase&GestureBinding&SchedulerBinding._warmUpFrame",
+            "percent": 0.832
+          },
+          {
+            "function": "_CustomZone.runUnaryGuarded",
+            "percent": 0.721
+          }
+        ]
+      },
+      "dartSourceHotspots": [
+        {
+          "function": "_LiveBottomStreamSizeRenderObject.performLayout",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 1534,
+          "percent": 21.852468108707708
+        },
+        {
+          "function": "RenderChatMessageExtentBox.performLayout",
+          "source": "package:operit2/ui/features/chat/components/ChatMessageExtent.dart",
+          "line": 140,
+          "percent": 21.79700499168053
+        },
+        {
+          "function": "RenderChatMessageSliverList.performLayout",
+          "source": "package:operit2/ui/features/chat/components/ChatMessageExtent.dart",
+          "line": 227,
+          "percent": 21.46422628951747
+        },
+        {
+          "function": "RenderMarkdownTextReveal.performLayout",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 145,
+          "percent": 20.133111480865225
+        },
+        {
+          "function": "RenderMarkdownTextReveal.paint",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 199,
+          "percent": 4.714364947310039
+        },
+        {
+          "function": "_FfiConnection._receive",
+          "source": "package:operit2/core/bridge/FfiCoreTransport.dart",
+          "line": 332,
+          "percent": 1.7193566278424846
+        },
+        {
+          "function": "_FfiConnection._receiveFrame",
+          "source": "package:operit2/core/bridge/FfiCoreTransport.dart",
+          "line": 345,
+          "percent": 1.386577925679423
+        },
+        {
+          "function": "RenderMarkdownTextReveal._cursorOffset",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 182,
+          "percent": 0.9428729894620078
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 223,
+          "percent": 0.44370493621741547
+        },
+        {
+          "function": "_TypewriterMarkdownRichTextState.build",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 527,
+          "percent": 0.33277870216306155
+        },
+        {
+          "function": "RenderMarkdownTextReveal._rangePath",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 169,
+          "percent": 0.33277870216306155
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 534,
+          "percent": 0.33277870216306155
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/proxy/generated/CoreProxyClients.g.dart",
+          "line": 3809,
+          "percent": 0.27731558513588467
+        },
+        {
+          "function": "CoreLinkListEventDecoder.decode",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 197,
+          "percent": 0.27731558513588467
+        },
+        {
+          "function": "_StreamMarkdownRendererState._applyMarkdownEvent",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart",
+          "line": 336,
+          "percent": 0.27731558513588467
+        },
+        {
+          "function": "StreamMarkdownRendererState.applyEvent",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart",
+          "line": 27,
+          "percent": 0.27731558513588467
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart",
+          "line": 234,
+          "percent": 0.27731558513588467
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 226,
+          "percent": 0.27731558513588467
+        },
+        {
+          "function": "_ChatAreaState._collectMessageAnchors",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 772,
+          "percent": 0.27731558513588467
+        },
+        {
+          "function": "decodeCoreLink",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 34,
+          "percent": 0.22185246810870773
+        },
+        {
+          "function": "_markdownTextParagraphs",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 660,
+          "percent": 0.22185246810870773
+        },
+        {
+          "function": "_ChatAreaState._tickBottomFollow",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 613,
+          "percent": 0.22185246810870773
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 213,
+          "percent": 0.22185246810870773
+        },
+        {
+          "function": "_CoreLinkMessagePackReader.readNullable",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 1398,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/proxy/generated/CoreProxyClients.g.dart",
+          "line": 3810,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 608,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "attachCoreLinkBuffers",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 901,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "_MarkdownTextState.initState",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 117,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "_ChatLayoutScrollPosition.applyContentDimensions",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 1183,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart",
+          "line": 240,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "sliceCoreLinkBytes",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 909,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "_MarkdownTextState._animateRevealTo",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 160,
+          "percent": 0.16638935108153077
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/chat/components/ChatScreenContent.dart",
+          "line": 355,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "ChatScreenContent._buildChatInputWithRouteHint",
+          "source": "package:operit2/ui/features/chat/components/ChatScreenContent.dart",
+          "line": 360,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "AgentChatInputSection.AgentChatInputSection",
+          "source": "package:operit2/ui/features/chat/components/style/input/agent/AgentChatInputSection.dart",
+          "line": 32,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/chat/components/style/input/common/ChatRouteStatusHint.dart",
+          "line": 125,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/proxy/generated/CoreProxyModels.g.dart",
+          "line": 4124,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "_CoreLinkMessagePackReader.readEmbeddedStream",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 1407,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "OperitRuntimeBridge.openEmbeddedCoreStream",
+          "source": "package:operit2/core/bridge/OperitRuntimeBridge.dart",
+          "line": 47,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "ChatMessage.ChatMessage.fromMessagePack",
+          "source": "package:operit2/core/proxy/generated/CoreProxyModels.g.dart",
+          "line": 4009,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "_ChatScrollNavigatorState.didUpdateWidget",
+          "source": "package:operit2/ui/features/chat/components/ChatScrollNavigator.dart",
+          "line": 99,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "append",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 671,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "MarkdownRenderEvent.MarkdownRenderEvent.from",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart",
+          "line": 1061,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "RenderMarkdownTextReveal._updateCharacterOffsets",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 88,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "MarkdownTextReveal.updateRenderObject",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 44,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "_ChatScrollNavigatorState.build",
+          "source": "package:operit2/ui/features/chat/components/ChatScrollNavigator.dart",
+          "line": 114,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "_MarkdownTextState.didUpdateWidget",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 133,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "MarkdownEventNodeBuilder.startBlock",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart",
+          "line": 284,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "MarkdownEventNodeBuilder._finalizeOpenInlineNodes",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart",
+          "line": 633,
+          "percent": 0.11092623405435387
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/bridge/FfiCoreTransport.dart",
+          "line": 315,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "encodeCoreLinkMessage",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 27,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_WorkspaceHeader.build",
+          "source": "package:operit2/ui/main/components/DrawerContent.dart",
+          "line": 1039,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_AIChatSurfaceState._publishChatContentData",
+          "source": "package:operit2/ui/features/chat/screens/AIChatScreen.dart",
+          "line": 2728,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/chat/screens/AIChatScreen.dart",
+          "line": 1556,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_AIChatSurfaceState._applyMessages",
+          "source": "package:operit2/ui/features/chat/screens/AIChatScreen.dart",
+          "line": 1609,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_AIChatSurfaceState._currentChatContentData",
+          "source": "package:operit2/ui/features/chat/screens/AIChatScreen.dart",
+          "line": 2736,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ChatContentData._ChatContentData",
+          "source": "package:operit2/ui/features/chat/screens/AIChatScreen.dart",
+          "line": 223,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "CoreLinkListEventDecoder._readList",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 237,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 246,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 248,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart",
+          "line": 630,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ToolPkgUiLauncherScreenState._receiveComposeEvent",
+          "source": "package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart",
+          "line": 715,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ToolPkgUiLauncherScreenState._applyComposeEventUpdate",
+          "source": "package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart",
+          "line": 684,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ComposeProgramStore.apply",
+          "source": "package:operit2/ui/features/packages/screens/compose_dsl/program_store.dart",
+          "line": 364,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "ComposeProgramBuffer.transaction",
+          "source": "package:operit2/core/compose/compose_program_buffer.dart",
+          "line": 101,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "ComposeProgramBuffer.value",
+          "source": "package:operit2/core/compose/compose_program_buffer.dart",
+          "line": 36,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_BufferList.[]",
+          "source": "package:operit2/core/compose/compose_program_buffer.dart",
+          "line": 141,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "ChatMarkupRegex.workspaceAttachmentTag",
+          "source": "package:operit2/util/ChatMarkupRegex.dart",
+          "line": 58,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_UserMessageComposableState.build",
+          "source": "package:operit2/ui/features/chat/components/style/cursor/UserMessageComposable.dart",
+          "line": 29,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_StreamMarkdownRendererState.build",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart",
+          "line": 394,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/chat/components/ChatMessageExtent.dart",
+          "line": 276,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "ChatMessageExtent.updatePendingContent",
+          "source": "package:operit2/ui/features/chat/components/ChatMessageExtent.dart",
+          "line": 57,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "ChatMessageExtent._pendingContent",
+          "source": "package:operit2/ui/features/chat/components/ChatMessageExtent.dart",
+          "line": 20,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/chat/screens/AIChatScreen.dart",
+          "line": 1582,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_AIChatSurfaceState._applyChatState",
+          "source": "package:operit2/ui/features/chat/screens/AIChatScreen.dart",
+          "line": 1663,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ComposeFlex.updateRenderObject",
+          "source": "package:operit2/ui/features/packages/screens/compose_dsl/flex_layout.dart",
+          "line": 33,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ProviderLogoAsset.build",
+          "source": "package:operit2/ui/features/settings/model/ProviderLogo.dart",
+          "line": 143,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "CanvasMarkdownNodeRenderer.node",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 19,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ConversationMoreMenuButton.build",
+          "source": "package:operit2/ui/main/components/CollapsedDrawerContent.dart",
+          "line": 813,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_CoreLinkMessagePackWriter.writeValue",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 1092,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_encodeRetainedCoreLink",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 1061,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "ClientLogger.v",
+          "source": "package:operit2/core/logging/ClientLogger.dart",
+          "line": 69,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/main.dart",
+          "line": 209,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "ClientLogger.write",
+          "source": "package:operit2/core/logging/ClientLogger.dart",
+          "line": 167,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "write",
+          "source": "package:operit2/core/logging/ClientLogger_io.dart",
+          "line": 98,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "sanitizeUtf16",
+          "source": "package:operit2/ui/common/markdown/Utf16Text.dart",
+          "line": 2,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "RenderMarkdownTextReveal.update",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 96,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "StreamMarkdownRenderer.splitMarkdownContent",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart",
+          "line": 82,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "RenderMarkdownTextReveal._animation",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 80,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ComposeHostState.build",
+          "source": "package:operit2/ui/features/packages/screens/compose_dsl/compose_host.dart",
+          "line": 55,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ComposeHostState._buildContent",
+          "source": "package:operit2/ui/features/packages/screens/compose_dsl/compose_host.dart",
+          "line": 77,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/bridge/FfiCoreProxy.dart",
+          "line": 100,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "decodeNativeCoreWatchFrame",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 701,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_CoreLinkMessagePackReader.readValueBytes",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 1538,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_TypewriterMarkdownRichText._TypewriterMarkdownRichText",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 481,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_MarkdownParagraph.build",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 454,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "MarkdownEventNodeBuilder._finalizeInlineForBlock",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart",
+          "line": 642,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ChatAreaState._keyForMessage",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 805,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "MarkdownTextReveal.MarkdownTextReveal",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 12,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_PendingLineBreakState._PendingLineBreakState",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart",
+          "line": 851,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "buildMarkdownInlineSpannableFromMarkdownNodes",
+          "source": "package:operit2/ui/common/markdown/MarkdownInlineSpannable.dart",
+          "line": 16,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "MarkdownNodeStable.type",
+          "source": "package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart",
+          "line": 174,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ChatContentData.isLoadingDisplayWindow",
+          "source": "package:operit2/ui/features/chat/screens/AIChatScreen.dart",
+          "line": 251,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "RenderMarkdownTextReveal.RenderMarkdownTextReveal",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 66,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "MarkdownTextReveal.createRenderObject",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 34,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "MarkdownStreamEvent.MarkdownStreamEvent.fromMessagePack",
+          "source": "package:operit2/core/proxy/generated/CoreProxyModels.g.dart",
+          "line": 47258,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/proxy/generated/CoreProxyModels.g.dart",
+          "line": 47303,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "CoreLinkStreamEventValueDecoder.decode",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 55,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_decodeCoreLinkEventBytes",
+          "source": "package:operit2/core/link/CoreLinkCodec.dart",
+          "line": 74,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/bridge/OperitRuntimeBridge.dart",
+          "line": 163,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/bridge/OperitRuntimeBridge.dart",
+          "line": 182,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/bridge/OperitRuntimeBridge.dart",
+          "line": 89,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/core/proxy/generated/CoreProxyModels.g.dart",
+          "line": 4124,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_MarkdownLine.build",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 292,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_StreamingCursorState.build",
+          "source": "package:operit2/ui/common/markdown/CanvasMarkdownNodeRenderer.dart",
+          "line": 804,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "_ChatAreaState._handleScrollMetricsNotification",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 388,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "ChatArea.loadLocatorEntries",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 85,
+          "percent": 0.055463117027176934
+        },
+        {
+          "function": "RenderMarkdownTextReveal._progress",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 160,
+          "percent": 0.055463117027176934
+        }
+      ]
+    },
+    {
+      "name": "uiAfterCompletion",
+      "startWallMicros": 1793107466079523,
+      "vmTimeOriginMicros": 113482098266,
+      "endWallMicros": 1793107469082006,
+      "vmTimeExtentMicros": 3002483,
+      "dartSampleCount": 70,
+      "cpu": {
+        "meanPercent": 9.366702029858777,
+        "peak100msPercent": 73.01628100257153,
+        "nativeSampleCount": 281,
+        "durationSeconds": 3.002483,
+        "cpuSeconds": 0.2812336361071647
+      },
+      "nativeThreads": [
+        {
+          "thread": "DartWorker",
+          "percent": 37.01067615658363
+        },
+        {
+          "thread": "Main Thread",
+          "percent": 29.537366548042705
+        },
+        {
+          "thread": "io.flutter.1.profiler",
+          "percent": 9.608540925266903
+        },
+        {
+          "thread": "Operit2",
+          "percent": 6.761565836298933
+        },
+        {
+          "thread": "io.flutter.1.raster",
+          "percent": 4.270462633451958
+        },
+        {
+          "thread": "operit-javascript-worker-2",
+          "percent": 3.202846975088968
+        },
+        {
+          "thread": "operit-runtime-worker-14",
+          "percent": 1.4234875444839856
+        },
+        {
+          "thread": "operit-runtime-worker-8",
+          "percent": 1.4234875444839856
+        },
+        {
+          "thread": "operit-runtime-worker-10",
+          "percent": 1.0676156583629894
+        },
+        {
+          "thread": "Dart Profiler SampleBlockProcessor",
+          "percent": 1.0676156583629894
+        },
+        {
+          "thread": "operit-runtime-worker-9",
+          "percent": 0.7117437722419928
+        },
+        {
+          "thread": "operit-runtime-worker-3",
+          "percent": 0.7117437722419928
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-0",
+          "percent": 0.7117437722419928
+        },
+        {
+          "thread": "Dart Profiler ThreadInterrupter",
+          "percent": 0.7117437722419928
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-10",
+          "percent": 0.3558718861209964
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-13",
+          "percent": 0.3558718861209964
+        },
+        {
+          "thread": "operit-runtime-blocking-worker-15",
+          "percent": 0.3558718861209964
+        },
+        {
+          "thread": "operit-runtime-worker-11",
+          "percent": 0.3558718861209964
+        },
+        {
+          "thread": "operit-javascript-worker-0",
+          "percent": 0.3558718861209964
+        }
+      ],
+      "nativeTop": {
+        "samples": 281,
+        "inclusive": [
+          {
+            "function": "_pthread_start",
+            "percent": 63.701
+          },
+          {
+            "function": "thread_start",
+            "percent": 63.701
+          },
+          {
+            "function": "_CFRunLoopRunSpecificWithOptions",
+            "percent": 42.705
+          },
+          {
+            "function": "__CFRunLoopRun",
+            "percent": 42.705
+          },
+          {
+            "function": "std::__fl::__function::__value_func<void ()>::operator()[abi:nn210000]() const",
+            "percent": 39.858
+          },
+          {
+            "function": "__CFRunLoopDoTimers",
+            "percent": 39.858
+          },
+          {
+            "function": "std::__fl::function<void ()>::operator()() const",
+            "percent": 39.858
+          },
+          {
+            "function": "__CFRunLoopDoTimer",
+            "percent": 39.146
+          },
+          {
+            "function": "__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__",
+            "percent": 39.146
+          },
+          {
+            "function": "fml::MessageLoopImpl::FlushTasks(fml::FlushType)",
+            "percent": 39.146
+          },
+          {
+            "function": "fml::MessageLoopDarwin::OnTimerFire(__CFRunLoopTimer*, fml::MessageLoopDarwin*)",
+            "percent": 39.146
+          },
+          {
+            "function": "dart::ThreadStart(void*)",
+            "percent": 38.79
+          },
+          {
+            "function": "DartWorker",
+            "percent": 37.011
+          },
+          {
+            "function": "dart::ThreadPool::Worker::Main(unsigned long)",
+            "percent": 37.011
+          },
+          {
+            "function": "dart::ThreadPool::WorkerLoop(dart::ThreadPool::Worker*)",
+            "percent": 37.011
+          },
+          {
+            "function": "Main Thread",
+            "percent": 29.537
+          },
+          {
+            "function": "static AppDelegate.$main()",
+            "percent": 28.826
+          },
+          {
+            "function": "UIApplicationMain",
+            "percent": 28.826
+          },
+          {
+            "function": "0x1c53d7c30",
+            "percent": 28.826
+          },
+          {
+            "function": "static UIApplicationDelegate.main()",
+            "percent": 28.826
+          }
+        ],
+        "self": [
+          {
+            "function": "mach_msg2_trap",
+            "percent": 9.609
+          },
+          {
+            "function": "dart::MarkingVisitor::MarkObject(dart::ObjectPtr)",
+            "percent": 6.05
+          },
+          {
+            "function": "dart::MarkingVisitor::VisitPointers(dart::ObjectPtr*, dart::ObjectPtr*)",
+            "percent": 3.559
+          },
+          {
+            "function": "__open",
+            "percent": 3.203
+          },
+          {
+            "function": "dart::PrologueTask::PruneFreeLists()",
+            "percent": 2.847
+          },
+          {
+            "function": "_platform_memset",
+            "percent": 1.779
+          },
+          {
+            "function": "start_wqthread",
+            "percent": 1.779
+          },
+          {
+            "function": "madvise",
+            "percent": 1.423
+          },
+          {
+            "function": "0x110983b31",
+            "percent": 1.423
+          },
+          {
+            "function": "stat",
+            "percent": 1.423
+          },
+          {
+            "function": "dart::BitField<unsigned long, bool, 3, 1, false, void>::decode(unsigned long)",
+            "percent": 1.423
+          },
+          {
+            "function": "dart::GCSweeper::SweepPage(dart::Page*, dart::FreeList*)",
+            "percent": 1.423
+          },
+          {
+            "function": "fstatat",
+            "percent": 1.068
+          },
+          {
+            "function": "_xzm_xzone_malloc_freelist_outlined",
+            "percent": 1.068
+          },
+          {
+            "function": "__psynch_cvwait",
+            "percent": 1.068
+          },
+          {
+            "function": "dart::MarkingVisitor::DrainMarkingStackWithPauseChecks()",
+            "percent": 1.068
+          },
+          {
+            "function": "dart::UntaggedObject::VisitPointersPredefined(dart::ObjectPointerVisitor*, long)",
+            "percent": 1.068
+          },
+          {
+            "function": "unsigned long std::__fl::__cxx_atomic_fetch_and[abi:nn210000]<unsigned long>(std::__fl::__cxx_atomic_base_impl<unsigned long>*, unsigned long, std::__fl::memory_order)",
+            "percent": 1.068
+          },
+          {
+            "function": "dart::Class::LookupFunctionReadLocked(dart::String const&, dart::Class::MemberKind) const",
+            "percent": 0.712
+          },
+          {
+            "function": "dart::VMHandles::AllocateHandle(dart::Zone*)",
+            "percent": 0.712
+          }
+        ]
+      },
+      "dartTop": {
+        "samples": 70,
+        "inclusive": [
+          {
+            "function": "Dart thread 259",
+            "percent": 100.0
+          },
+          {
+            "function": "fml::MessageLoopImpl::FlushTasks(fml::FlushType)",
+            "percent": 81.429
+          },
+          {
+            "function": "UIApplicationMain",
+            "percent": 80.0
+          },
+          {
+            "function": "_CFRunLoopRunSpecificWithOptions",
+            "percent": 80.0
+          },
+          {
+            "function": "__CFRunLoopDoTimer",
+            "percent": 80.0
+          },
+          {
+            "function": "block_destroy_helper.15",
+            "percent": 80.0
+          },
+          {
+            "function": "__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__",
+            "percent": 80.0
+          },
+          {
+            "function": "$sSo21UIApplicationDelegateP5UIKitE4mainyyFZ",
+            "percent": 80.0
+          },
+          {
+            "function": "main",
+            "percent": 80.0
+          },
+          {
+            "function": "$s6Runner11AppDelegateC5$mainyyFZ",
+            "percent": 80.0
+          },
+          {
+            "function": "[Native] 10e6584e4",
+            "percent": 80.0
+          },
+          {
+            "function": "__CFRunLoopDoTimers",
+            "percent": 80.0
+          },
+          {
+            "function": "dyld-internal",
+            "percent": 80.0
+          },
+          {
+            "function": "fml::MessageLoopDarwin::OnTimerFire(__CFRunLoopTimer*, fml::MessageLoopDarwin*)",
+            "percent": 80.0
+          },
+          {
+            "function": "GSEventRunModal",
+            "percent": 80.0
+          },
+          {
+            "function": "__CFRunLoopRun",
+            "percent": 80.0
+          },
+          {
+            "function": "dart::DartEntry::InvokeFunction(dart::Function const&, dart::Array const&, dart::Array const&)",
+            "percent": 65.714
+          },
+          {
+            "function": "Dart_InvokeClosure",
+            "percent": 64.286
+          },
+          {
+            "function": "flutter::PlatformConfiguration::BeginFrame(fml::TimePoint, unsigned long long)",
+            "percent": 60.0
+          },
+          {
+            "function": "dart::DartEntry::InvokeCallable(dart::Thread*, dart::Function const&, dart::Array const&, dart::Array const&)",
+            "percent": 60.0
+          }
+        ],
+        "self": [
+          {
+            "function": "__psynch_cvwait",
+            "percent": 15.714
+          },
+          {
+            "function": "_SemanticsGeometry.computeChildGeometry",
+            "percent": 4.286
+          },
+          {
+            "function": "dart::Scavenger::TryAllocateNewTLAB(dart::Thread*, long, bool)",
+            "percent": 4.286
+          },
+          {
+            "function": "dart::PrologueTask::RunEnteredIsolateGroup()",
+            "percent": 4.286
+          },
+          {
+            "function": "RenderObject.layout",
+            "percent": 2.857
+          },
+          {
+            "function": "Duration.Duration",
+            "percent": 2.857
+          },
+          {
+            "function": "objc_msgSend",
+            "percent": 2.857
+          },
+          {
+            "function": "<anonymous closure>",
+            "percent": 2.857
+          },
+          {
+            "function": "_CustomZone.runUnaryGuarded",
+            "percent": 2.857
+          },
+          {
+            "function": "dart::Smi::HandleTag() const",
+            "percent": 1.429
+          },
+          {
+            "function": "TimelineTask._taskId",
+            "percent": 1.429
+          },
+          {
+            "function": "Center.Center",
+            "percent": 1.429
+          },
+          {
+            "function": "dart::Type::IsInstantiated(dart::Genericity, long) const",
+            "percent": 1.429
+          },
+          {
+            "function": "_MaterialInterior.color",
+            "percent": 1.429
+          },
+          {
+            "function": "Element.updateChild",
+            "percent": 1.429
+          },
+          {
+            "function": "_RenderObjectSemantics.markNeedsUpdate",
+            "percent": 1.429
+          },
+          {
+            "function": "Element.updateChildren",
+            "percent": 1.429
+          },
+          {
+            "function": "resolve",
+            "percent": 1.429
+          },
+          {
+            "function": "debugDefaultTargetPlatformOverride",
+            "percent": 1.429
+          },
+          {
+            "function": "dart::VMHandles::AllocateHandle(dart::Zone*)",
+            "percent": 1.429
+          }
+        ]
+      },
+      "dartSourceHotspots": [
+        {
+          "function": "_FfiConnection._receive",
+          "source": "package:operit2/core/bridge/FfiCoreTransport.dart",
+          "line": 332,
+          "percent": 7.142857142857142
+        },
+        {
+          "function": "_FfiConnection._receiveFrame",
+          "source": "package:operit2/core/bridge/FfiCoreTransport.dart",
+          "line": 345,
+          "percent": 7.142857142857142
+        },
+        {
+          "function": "_WorkspaceCreateBar.build",
+          "source": "package:operit2/ui/main/components/DrawerContent.dart",
+          "line": 935,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_StreamMarkdownRendererState._startCurrentContent",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart",
+          "line": 148,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "sanitizeUtf16",
+          "source": "package:operit2/ui/common/markdown/Utf16Text.dart",
+          "line": 2,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_StreamMarkdownRendererState.didUpdateWidget",
+          "source": "package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart",
+          "line": 109,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 534,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_ChatAreaState._collectMessageAnchors",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 772,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_ToolPkgUiLauncherScreenState._readComposeScript",
+          "source": "package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart",
+          "line": 498,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_ChatAreaState._tickBottomFollow",
+          "source": "package:operit2/ui/features/chat/components/ChatArea.dart",
+          "line": 613,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_ComposeProgramStore.applyProgram",
+          "source": "package:operit2/ui/features/packages/screens/compose_dsl/program_store.dart",
+          "line": 371,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_ComposeLayoutProgram._ComposeLayoutProgram",
+          "source": "package:operit2/ui/features/packages/screens/compose_dsl/program_store.dart",
+          "line": 135,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "visit",
+          "source": "package:operit2/ui/features/packages/screens/compose_dsl/program_store.dart",
+          "line": 165,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "<anonymous closure>",
+          "source": "package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart",
+          "line": 630,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_ToolPkgUiLauncherScreenState._receiveComposeEvent",
+          "source": "package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart",
+          "line": 715,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_ToolPkgUiLauncherScreenState._applyComposeEventUpdate",
+          "source": "package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart",
+          "line": 684,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "_ComposeProgramStore.apply",
+          "source": "package:operit2/ui/features/packages/screens/compose_dsl/program_store.dart",
+          "line": 364,
+          "percent": 1.4285714285714286
+        },
+        {
+          "function": "RenderMarkdownTextReveal.visitChildrenForSemantics",
+          "source": "package:operit2/ui/common/markdown/MarkdownTextReveal.dart",
+          "line": 254,
+          "percent": 1.4285714285714286
+        }
+      ]
+    },
+    {
+      "name": "idleSettled",
+      "startWallMicros": 1793107474084787,
+      "vmTimeOriginMicros": 113490103483,
+      "endWallMicros": 1793107477087315,
+      "vmTimeExtentMicros": 3002513,
+      "dartSampleCount": 3,
+      "cpu": {
+        "meanPercent": 2.9144170701049044,
+        "peak100msPercent": 11.536897143929856,
+        "nativeSampleCount": 35,
+        "durationSeconds": 3.002528,
+        "cpuSeconds": 0.08750618856667938
+      },
+      "nativeThreads": [
+        {
+          "thread": "io.flutter.1.profiler",
+          "percent": 65.71428571428571
+        },
+        {
+          "thread": "operit-runtime-worker-0",
+          "percent": 14.285714285714285
+        },
+        {
+          "thread": "Dart Profiler ThreadInterrupter",
+          "percent": 5.714285714285714
+        },
+        {
+          "thread": "Main Thread",
+          "percent": 5.714285714285714
+        },
+        {
+          "thread": "Operit2",
+          "percent": 2.857142857142857
+        },
+        {
+          "thread": "operit-runtime-worker-1",
+          "percent": 2.857142857142857
+        },
+        {
+          "thread": "operit-runtime-worker-4",
+          "percent": 2.857142857142857
+        }
+      ],
+      "nativeTop": {
+        "samples": 35,
+        "inclusive": [
+          {
+            "function": "_pthread_start",
+            "percent": 91.429
+          },
+          {
+            "function": "thread_start",
+            "percent": 91.429
+          },
+          {
+            "function": "_CFRunLoopRunSpecificWithOptions",
+            "percent": 71.429
+          },
+          {
+            "function": "std::__fl::__function::__value_func<void ()>::operator()[abi:nn210000]() const",
+            "percent": 71.429
+          },
+          {
+            "function": "std::__fl::function<void ()>::operator()() const",
+            "percent": 71.429
+          },
+          {
+            "function": "__CFRunLoopDoTimers",
+            "percent": 71.429
+          },
+          {
+            "function": "__CFRunLoopRun",
+            "percent": 71.429
+          },
+          {
+            "function": "__CFRunLoopDoTimer",
+            "percent": 68.571
+          },
+          {
+            "function": "__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__",
+            "percent": 68.571
+          },
+          {
+            "function": "fml::MessageLoopImpl::FlushTasks(fml::FlushType)",
+            "percent": 68.571
+          },
+          {
+            "function": "fml::MessageLoopDarwin::OnTimerFire(__CFRunLoopTimer*, fml::MessageLoopDarwin*)",
+            "percent": 68.571
+          },
+          {
+            "function": "std::__fl::__function::__func<fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0, std::__fl::allocator<fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0>, void ()>::operator()()",
+            "percent": 65.714
+          },
+          {
+            "function": "void std::__fl::__invoke_r[abi:nn210000]<void, fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0&>(fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0&)",
+            "percent": 65.714
+          },
+          {
+            "function": "io.flutter.1.profiler",
+            "percent": 65.714
+          },
+          {
+            "function": "fml::ThreadHandle::ThreadHandle(std::__fl::function<void ()>&&)::$_0::operator()(void*) const",
+            "percent": 65.714
+          },
+          {
+            "function": "std::__fl::__function::__alloc_func<fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0, std::__fl::allocator<fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0>, void ()>::operator()[abi:nn210000]()",
+            "percent": 65.714
+          },
+          {
+            "function": "fml::ThreadHandle::ThreadHandle(std::__fl::function<void ()>&&)::$_0::__invoke(void*)",
+            "percent": 65.714
+          },
+          {
+            "function": "fml::MessageLoopImpl::DoRun()",
+            "percent": 65.714
+          },
+          {
+            "function": "fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0::operator()() const",
+            "percent": 65.714
+          },
+          {
+            "function": "void std::__fl::__invoke_void_return_wrapper<void, true>::__call[abi:nn210000]<fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0&>(fml::Thread::Thread(std::__fl::function<void (fml::Thread::ThreadConfig const&)> const&, fml::Thread::ThreadConfig const&)::$_0&)",
+            "percent": 65.714
+          }
+        ],
+        "self": [
+          {
+            "function": "mach_msg2_trap",
+            "percent": 57.143
+          },
+          {
+            "function": "stat",
+            "percent": 11.429
+          },
+          {
+            "function": "_xzm_xzone_malloc_tiny",
+            "percent": 5.714
+          },
+          {
+            "function": "start_wqthread",
+            "percent": 2.857
+          },
+          {
+            "function": "__open_nocancel",
+            "percent": 2.857
+          },
+          {
+            "function": "0x12c7237c1",
+            "percent": 2.857
+          },
+          {
+            "function": "_<alloc::collections::btree::map::IntoIter<K,V,A> as core::ops::drop::Drop>::drop",
+            "percent": 2.857
+          },
+          {
+            "function": "pthread_mutex_lock",
+            "percent": 2.857
+          },
+          {
+            "function": "dart::OS::GetCurrentMonotonicFrequency()",
+            "percent": 2.857
+          },
+          {
+            "function": "std::__fl::__function::__func<-[FlutterEngine startProfiler]::$_5, std::__fl::allocator<-[FlutterEngine startProfiler]::$_5>, flutter::ProfileSample ()>::operator()()",
+            "percent": 2.857
+          },
+          {
+            "function": "std::__fl::__function::__func<-[FlutterEngine startProfiler]::$_5, std::__fl::allocator<-[FlutterEngine startProfiler]::$_5>, flutter::ProfileSample ()>::__func[abi:nn210000](-[FlutterEngine startProfiler]::$_5 const&, std::__fl::allocator<-[FlutterEngine startProfiler]::$_5> const&)",
+            "percent": 2.857
+          },
+          {
+            "function": "dart::MessageSerializationCluster** dart::Zone::Realloc<dart::MessageSerializationCluster*>(dart::MessageSerializationCluster**, long, long)",
+            "percent": 2.857
+          }
+        ]
+      },
+      "dartTop": {
+        "samples": 3,
+        "inclusive": [
+          {
+            "function": "UIApplicationMain",
+            "percent": 100.0
+          },
+          {
+            "function": "_CFRunLoopRunSpecificWithOptions",
+            "percent": 100.0
+          },
+          {
+            "function": "__CFRunLoopDoTimer",
+            "percent": 100.0
+          },
+          {
+            "function": "dart::MessageHandler::HandleNextMessage()",
+            "percent": 100.0
+          },
+          {
+            "function": "block_destroy_helper.15",
+            "percent": 100.0
+          },
+          {
+            "function": "__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__",
+            "percent": 100.0
+          },
+          {
+            "function": "$sSo21UIApplicationDelegateP5UIKitE4mainyyFZ",
+            "percent": 100.0
+          },
+          {
+            "function": "Dart thread 259",
+            "percent": 100.0
+          },
+          {
+            "function": "main",
+            "percent": 100.0
+          },
+          {
+            "function": "$s6Runner11AppDelegateC5$mainyyFZ",
+            "percent": 100.0
+          },
+          {
+            "function": "fml::MessageLoopImpl::FlushTasks(fml::FlushType)",
+            "percent": 100.0
+          },
+          {
+            "function": "[Native] 10e6584e4",
+            "percent": 100.0
+          },
+          {
+            "function": "tonic::DartMessageHandler::OnHandleMessage(tonic::DartState*)",
+            "percent": 100.0
+          },
+          {
+            "function": "__CFRunLoopDoTimers",
+            "percent": 100.0
+          },
+          {
+            "function": "dyld-internal",
+            "percent": 100.0
+          },
+          {
+            "function": "std::__fl::__function::__func<tonic::DartMessageHandler::OnMessage(tonic::DartState*)::$_0, std::__fl::allocator<tonic::DartMessageHandler::OnMessage(tonic::DartState*)::$_0>, void ()>::operator()()",
+            "percent": 100.0
+          },
+          {
+            "function": "fml::MessageLoopDarwin::OnTimerFire(__CFRunLoopTimer*, fml::MessageLoopDarwin*)",
+            "percent": 100.0
+          },
+          {
+            "function": "std::__fl::__function::__func<flutter::DartIsolate::SetMessageHandlingTaskRunner(fml::RefPtr<fml::TaskRunner> const&, bool)::$_1::operator()(std::__fl::function<void ()>) const::'lambda'(), std::__fl::allocator<flutter::DartIsolate::SetMessageHandlingTaskRunner(fml::RefPtr<fml::TaskRunner> const&, bool)::$_1::operator()(std::__fl::function<void ()>) const::'lambda'()>, void ()>::operator()()",
+            "percent": 100.0
+          },
+          {
+            "function": "GSEventRunModal",
+            "percent": 100.0
+          },
+          {
+            "function": "dart::MessageHandler::HandleMessages(dart::MonitorLocker*, bool, bool)",
+            "percent": 100.0
+          }
+        ],
+        "self": [
+          {
+            "function": "void dart::UntaggedObject::StoreCompressedArrayPointer<dart::ObjectPtr, dart::ObjectPtr>(dart::ObjectPtr const*, dart::ObjectPtr)",
+            "percent": 33.333
+          },
+          {
+            "function": "dart::DartLibraryCalls::HandleMessage(long long, dart::Instance const&)",
+            "percent": 33.333
+          },
+          {
+            "function": "dart::Object::HandleTag() const",
+            "percent": 33.333
+          }
+        ]
+      },
+      "dartSourceHotspots": []
+    }
+  ],
+  "reply": {
+    "model": "deepseek-flash",
+    "characters": 1441,
+    "outputTokens": 863,
+    "completionMarkerPresent": true,
+    "chatId": "5d4335d0-bf6f-4b40-8936-967f26c7389e"
+  },
+  "success": true
+}

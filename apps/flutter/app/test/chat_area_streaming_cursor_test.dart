@@ -662,12 +662,25 @@ void main() {
             List.filled(80, 'Continued live output').join('\n'),
           ),
         );
-      await _pumpRenderBoundary(tester);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
       expect(
         scrollController.position.maxScrollExtent,
         greaterThan(initialOffset),
       );
+      // Growth must be visible before the follower catches up, then settle
+      // promptly rather than driving frames for several seconds.
       expect(scrollController.position.extentAfter, greaterThan(1));
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(scrollController.offset, greaterThan(initialOffset));
+      expect(scrollController.position.extentAfter, greaterThan(1));
+      await tester.pump(const Duration(milliseconds: 140));
+      await tester.pump();
+      expect(scrollController.position.extentAfter, lessThanOrEqualTo(1));
+      tester.binding.debugAssertNoTransientCallbacks("Follower should have settled");
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     },

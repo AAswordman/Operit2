@@ -13,6 +13,11 @@ fn main() {
         "数量",
         "苹果",
         "**2**",
+        "正文[^1]和**加粗[^note]**，重复[^1]，未定义[^missing]。\n\n[^1]: 第一条**脚注**与[链接](https://example.com)\n[^note]: 第二条注释\n    续行内容\n\n结束",
+        "相邻[^a][^b]，`[^code]` 和 [清晰](https://example.com) 与 \\[^escaped]。\n\n[^a]: A\n[^b]: B",
+        "空脚注[^empty]\n\n[^empty]:",
+        "> 引用里的脚注[^quote]\n\n[^quote]: 引用注释",
+        "独立文档[^1]，尚无定义",
     ];
     let mut pending: VecDeque<String> = sources.into_iter().map(str::to_string).collect();
     let mut seen = BTreeSet::new();

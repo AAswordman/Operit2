@@ -1,137 +1,145 @@
-//! Thread-safe cancellation for V8 execution, including loops without Host calls.
-use operit_host_api::{HostError, HostJavaScriptInterruptHandler, HostResult};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
+//! Direct cancellation events and one-shot deadlines for a V8 execution scope.
+use operit_host_api::{
+    HostJavaScriptExecutionInterrupt, HostJavaScriptInterruptController,
+    HostJavaScriptInterruptSubscription, HostResult, HostRuntimeTaskSchedulerHost,
+};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-/// Serializes predicate replacement with termination requests from the shared monitor.
+#[derive(Default)]
+struct Execution {
+    generation: u64,
+    tokens: Vec<HostJavaScriptExecutionInterrupt>,
+    subscriptions: Vec<HostJavaScriptInterruptSubscription>,
+}
+
 pub(super) struct JavaScriptInterrupt {
     isolate: v8::IsolateHandle,
-    handler: Mutex<Option<HostJavaScriptInterruptHandler>>,
-    queued: AtomicBool,
+    execution: Mutex<Execution>,
+    changed: tokio::sync::watch::Sender<Option<u128>>,
+    owner: Weak<Self>,
     panic: Mutex<Option<Box<dyn std::any::Any + Send>>>,
 }
 
 impl JavaScriptInterrupt {
-    /// Registers an isolate with the process-wide cancellation monitor.
     pub(super) fn new(isolate: v8::IsolateHandle) -> HostResult<Arc<Self>> {
-        static MONITOR: OnceLock<HostResult<mpsc::Sender<Weak<JavaScriptInterrupt>>>> =
-            OnceLock::new();
-        let sender = MONITOR
-            .get_or_init(|| {
-                let (sender, receiver) = mpsc::channel();
-                std::thread::Builder::new()
-                    .name("operit-v8-interrupts".into())
-                    .spawn(move || monitor(receiver))
-                    .map_err(|error| HostError::new(error.to_string()))?;
-                Ok(sender)
-            })
-            .as_ref()
-            .map_err(Clone::clone)?;
-        let interrupt = Arc::new(Self {
+        let (changed, updates) = tokio::sync::watch::channel(None);
+        let interrupt = Arc::new_cyclic(|owner| Self {
             isolate,
-            handler: Mutex::new(None),
-            queued: AtomicBool::new(false),
+            execution: Mutex::new(Execution::default()),
+            changed,
+            owner: owner.clone(),
             panic: Mutex::new(None),
         });
-        sender
-            .send(Arc::downgrade(&interrupt))
-            .map_err(|error| HostError::new(error.to_string()))?;
+        let owner = Arc::downgrade(&interrupt);
+        crate::NativeHostRuntimeTaskSchedulerHost::new().scheduleHostRuntimeCooperativeAsyncTask(
+            "operit-js-execution-deadline",
+            Box::new(move || Box::pin(deadlines(owner, updates))),
+        )?;
         Ok(interrupt)
     }
 
-    /// Replaces the active execution predicate after synchronizing with the monitor.
-    pub(super) fn set(&self, handler: Option<HostJavaScriptInterruptHandler>) {
-        let mut current = self
-            .handler
-            .lock()
-            .expect("V8 interrupt handler mutex poisoned");
-        *current = handler;
-        self.isolate.cancel_terminate_execution();
+    /// Serializes delivery with scope replacement so a late event cannot stop the next call.
+    fn terminate(&self, generation: u64) {
+        let execution = self.execution.lock().expect("V8 execution scope poisoned");
+        if execution.generation == generation {
+            self.isolate.terminate_execution();
+        }
     }
 
-    /// Retains the original Rust panic until execution returns across the V8 ABI.
     pub(super) fn capture_panic(&self, panic: Box<dyn std::any::Any + Send>) {
         *self.panic.lock().expect("V8 panic state mutex poisoned") = Some(panic);
     }
 
-    /// Takes a callback panic for resumption after the engine has stopped executing.
     pub(super) fn take_panic(&self) -> Option<Box<dyn std::any::Any + Send>> {
         self.panic
             .lock()
             .expect("V8 panic state mutex poisoned")
             .take()
     }
-
-    /// Requests at most one safepoint check while an execution predicate is installed.
-    fn check(&self) {
-        let active = self
-            .handler
-            .lock()
-            .expect("V8 interrupt handler mutex poisoned")
-            .is_some();
-        if active && !self.queued.swap(true, Ordering::AcqRel) {
-            if !self
-                .isolate
-                .request_interrupt(check_on_owner, std::ptr::null_mut())
-            {
-                self.queued.store(false, Ordering::Release);
-            }
-        }
-    }
 }
 
-/// Evaluates cancellation on the isolate owner so execution-local call state remains valid.
-unsafe extern "C" fn check_on_owner(isolate: v8::UnsafeRawIsolatePtr, _: *mut std::ffi::c_void) {
-    // SAFETY: V8 invokes this callback on the interrupted isolate's owning thread.
-    let isolate = unsafe { v8::Isolate::ref_from_raw_isolate_ptr(&isolate) };
-    let interrupt = isolate
-        .get_slot::<Arc<JavaScriptInterrupt>>()
-        .expect("V8 interrupt state");
-    interrupt.queued.store(false, Ordering::Release);
-    let handler = interrupt
-        .handler
-        .lock()
-        .expect("V8 interrupt handler mutex poisoned");
-    if let Some(handler) = handler.as_ref() {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler())) {
-            Ok(true) => {
-                isolate.terminate_execution();
-            }
-            Ok(false) => {}
-            Err(panic) => {
-                interrupt.capture_panic(panic);
-                isolate.terminate_execution();
-            }
-        }
-    }
-}
-
-/// Polls live isolates from one thread without retaining a runtime or its JS handles.
-fn monitor(receiver: mpsc::Receiver<Weak<JavaScriptInterrupt>>) {
-    let mut isolates: Vec<Weak<JavaScriptInterrupt>> = Vec::new();
-    loop {
-        let request = if isolates.is_empty() {
-            match receiver.recv() {
-                Ok(isolate) => Some(isolate),
-                Err(_) => return,
-            }
-        } else {
-            match receiver.recv_timeout(Duration::from_millis(2)) {
-                Ok(isolate) => Some(isolate),
-                Err(mpsc::RecvTimeoutError::Timeout) => None,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
-            }
+impl HostJavaScriptInterruptController for JavaScriptInterrupt {
+    fn replace(&self, tokens: Vec<HostJavaScriptExecutionInterrupt>) {
+        let (generation, previous) = {
+            let mut execution = self.execution.lock().expect("V8 execution scope poisoned");
+            execution.generation += 1;
+            execution.tokens = tokens.clone();
+            self.isolate.cancel_terminate_execution();
+            (
+                execution.generation,
+                std::mem::take(&mut execution.subscriptions),
+            )
         };
-        if let Some(isolate) = request {
-            isolates.push(isolate);
+        drop(previous);
+        let subscriptions = tokens
+            .iter()
+            .map(|token| {
+                let owner = self.owner.clone();
+                token.onInterrupt(Arc::new(move || {
+                    if let Some(owner) = owner.upgrade() {
+                        owner.terminate(generation);
+                    }
+                }))
+            })
+            .collect();
+        {
+            let mut execution = self.execution.lock().expect("V8 execution scope poisoned");
+            if execution.generation != generation {
+                return;
+            }
+            execution.subscriptions = subscriptions;
         }
-        isolates.retain(|isolate| match isolate.upgrade() {
-            Some(isolate) => {
-                isolate.check();
+        // Past deadlines and pre-cancelled tokens are applied before entering JavaScript.
+        let cancelled = tokens
+            .iter()
+            .any(HostJavaScriptExecutionInterrupt::shouldInterrupt);
+        let deadline = if cancelled {
+            None
+        } else {
+            tokens
+                .iter()
+                .filter_map(HostJavaScriptExecutionInterrupt::deadlineMillis)
+                .min()
+        };
+        self.changed.send_if_modified(|current| {
+            if *current == deadline {
+                false
+            } else {
+                *current = deadline;
                 true
             }
-            None => false,
         });
+    }
+}
+
+/// Sleeps until this scope changes or its exact deadline arrives; unlimited work has no timer.
+async fn deadlines(
+    owner: Weak<JavaScriptInterrupt>,
+    mut updates: tokio::sync::watch::Receiver<Option<u128>>,
+) {
+    loop {
+        let deadline = *updates.borrow_and_update();
+        match deadline {
+            None => {
+                if updates.changed().await.is_err() {
+                    return;
+                }
+            }
+            Some(deadline) => {
+                let remaining =
+                    deadline.saturating_sub(operit_host_api::TimeUtils::currentTimeMillisU128());
+                tokio::select! {
+                    update = updates.changed() => if update.is_err() { return; },
+                    _ = tokio::time::sleep(Duration::from_millis(remaining.min(u128::from(u64::MAX)) as u64)) => {
+                        let Some(interrupt) = owner.upgrade() else { return; };
+                        let tokens = interrupt.execution.lock().expect("V8 execution scope poisoned").tokens.clone();
+                        drop(interrupt);
+                        for token in &tokens { token.shouldInterrupt(); }
+                        if updates.changed().await.is_err() { return; }
+                    }
+                }
+            }
+        }
     }
 }

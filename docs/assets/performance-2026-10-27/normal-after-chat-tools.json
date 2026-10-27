@@ -1,0 +1,227 @@
+{
+  "summary": {
+    "pid": 86204,
+    "cpu_time_conversion": "mach absolute ticks: 125/3 ns per tick",
+    "duration_seconds": 30.105889291999997,
+    "cpu_percent_one_core": 1.6571111280849475,
+    "cpu_percent_median": 0.0757259872871083,
+    "cpu_percent_max_1s": 14.87572583822428,
+    "interrupt_wakeups_per_second": 27.73543713993141,
+    "package_idle_wakeups_per_second": 11.525984056953531,
+    "footprint_mib": 237.66776275634766,
+    "disk_read_bytes": 81920,
+    "disk_write_bytes": 1601536
+  },
+  "samples": [
+    {
+      "elapsed_seconds": 1.005219375,
+      "cpu_percent_one_core": 0.056132025907280184,
+      "interrupt_wakeups_per_second": 19.896154508561875,
+      "package_idle_wakeups_per_second": 13.927308155993313,
+      "footprint_mib": 233.63626098632812
+    },
+    {
+      "elapsed_seconds": 2.0099579579999998,
+      "cpu_percent_one_core": 0.05968384979067404,
+      "interrupt_wakeups_per_second": 20.90095907066406,
+      "package_idle_wakeups_per_second": 9.952837652697172,
+      "footprint_mib": 233.63626098632812
+    },
+    {
+      "elapsed_seconds": 3.014377208,
+      "cpu_percent_one_core": 2.737203612933543,
+      "interrupt_wakeups_per_second": 26.881205233770654,
+      "package_idle_wakeups_per_second": 12.942802519963648,
+      "footprint_mib": 233.63626098632812
+    },
+    {
+      "elapsed_seconds": 4.014722333000001,
+      "cpu_percent_one_core": 0.04875400710663064,
+      "interrupt_wakeups_per_second": 19.993099881403424,
+      "package_idle_wakeups_per_second": 10.996204934771882,
+      "footprint_mib": 233.63626098632812
+    },
+    {
+      "elapsed_seconds": 5.017269458,
+      "cpu_percent_one_core": 0.05903296898221452,
+      "interrupt_wakeups_per_second": 19.949186927247943,
+      "package_idle_wakeups_per_second": 10.97205280998637,
+      "footprint_mib": 233.63626098632812
+    },
+    {
+      "elapsed_seconds": 6.020996625,
+      "cpu_percent_one_core": 3.674869813169724,
+      "interrupt_wakeups_per_second": 29.888600195674485,
+      "package_idle_wakeups_per_second": 11.955440078269794,
+      "footprint_mib": 233.65188598632812
+    },
+    {
+      "elapsed_seconds": 7.026208042,
+      "cpu_percent_one_core": 0.9421857107034163,
+      "interrupt_wakeups_per_second": 23.875574425553904,
+      "package_idle_wakeups_per_second": 4.97407800532373,
+      "footprint_mib": 234.07376098632812
+    },
+    {
+      "elapsed_seconds": 8.031387458000001,
+      "cpu_percent_one_core": 0.05083669560539425,
+      "interrupt_wakeups_per_second": 19.896945442424364,
+      "package_idle_wakeups_per_second": 6.963930904848528,
+      "footprint_mib": 234.07376098632812
+    },
+    {
+      "elapsed_seconds": 9.035348833,
+      "cpu_percent_one_core": 14.87572583822428,
+      "interrupt_wakeups_per_second": 151.40024684714598,
+      "package_idle_wakeups_per_second": 12.948705322453275,
+      "footprint_mib": 237.57401275634766
+    },
+    {
+      "elapsed_seconds": 10.036578708,
+      "cpu_percent_one_core": 0.059859713368354425,
+      "interrupt_wakeups_per_second": 20.97420435042452,
+      "package_idle_wakeups_per_second": 15.980346171752018,
+      "footprint_mib": 237.57401275634766
+    },
+    {
+      "elapsed_seconds": 11.041723583,
+      "cpu_percent_one_core": 1.9276159900166976,
+      "interrupt_wakeups_per_second": 22.88227356280359,
+      "package_idle_wakeups_per_second": 10.94369605177563,
+      "footprint_mib": 237.57401275634766
+    },
+    {
+      "elapsed_seconds": 12.043380458,
+      "cpu_percent_one_core": 1.7347216164550692,
+      "interrupt_wakeups_per_second": 28.952030105119576,
+      "package_idle_wakeups_per_second": 13.976842119712899,
+      "footprint_mib": 237.58963775634766
+    },
+    {
+      "elapsed_seconds": 13.045131917,
+      "cpu_percent_one_core": 0.05649688136199985,
+      "interrupt_wakeups_per_second": 17.96852885841415,
+      "package_idle_wakeups_per_second": 11.979019238942767,
+      "footprint_mib": 237.58963775634766
+    },
+    {
+      "elapsed_seconds": 14.050324542,
+      "cpu_percent_one_core": 0.06294813394596885,
+      "interrupt_wakeups_per_second": 20.891518180408468,
+      "package_idle_wakeups_per_second": 11.93801038880484,
+      "footprint_mib": 237.58963775634766
+    },
+    {
+      "elapsed_seconds": 15.052514333,
+      "cpu_percent_one_core": 2.649057451168284,
+      "interrupt_wakeups_per_second": 28.93663481750636,
+      "package_idle_wakeups_per_second": 16.962854893020967,
+      "footprint_mib": 237.55838775634766
+    },
+    {
+      "elapsed_seconds": 16.053188624999997,
+      "cpu_percent_one_core": 0.04307928531587915,
+      "interrupt_wakeups_per_second": 17.987870922539912,
+      "package_idle_wakeups_per_second": 7.994609298906627,
+      "footprint_mib": 237.55838775634766
+    },
+    {
+      "elapsed_seconds": 17.055687457999998,
+      "cpu_percent_one_core": 0.05606407191365441,
+      "interrupt_wakeups_per_second": 19.950147912042492,
+      "package_idle_wakeups_per_second": 11.970088747225496,
+      "footprint_mib": 237.55838775634766
+    },
+    {
+      "elapsed_seconds": 18.060724375,
+      "cpu_percent_one_core": 2.5607351230594935,
+      "interrupt_wakeups_per_second": 29.84964979152099,
+      "package_idle_wakeups_per_second": 17.909789874912594,
+      "footprint_mib": 237.57401275634766
+    },
+    {
+      "elapsed_seconds": 19.062323624999998,
+      "cpu_percent_one_core": 0.04588495182412868,
+      "interrupt_wakeups_per_second": 17.971259463303344,
+      "package_idle_wakeups_per_second": 10.982436338685378,
+      "footprint_mib": 237.57401275634766
+    },
+    {
+      "elapsed_seconds": 20.066310041999998,
+      "cpu_percent_one_core": 0.05523398098588683,
+      "interrupt_wakeups_per_second": 19.92058822843616,
+      "package_idle_wakeups_per_second": 5.976176468530848,
+      "footprint_mib": 237.57401275634766
+    },
+    {
+      "elapsed_seconds": 21.071201917,
+      "cpu_percent_one_core": 4.1760048396583205,
+      "interrupt_wakeups_per_second": 29.853958168384974,
+      "package_idle_wakeups_per_second": 11.94158326735399,
+      "footprint_mib": 237.58963775634766
+    },
+    {
+      "elapsed_seconds": 22.075643499999998,
+      "cpu_percent_one_core": 0.8150216802271397,
+      "interrupt_wakeups_per_second": 24.889451435624245,
+      "package_idle_wakeups_per_second": 7.964624459399759,
+      "footprint_mib": 237.60526275634766
+    },
+    {
+      "elapsed_seconds": 23.076087082999997,
+      "cpu_percent_one_core": 0.06076887729243737,
+      "interrupt_wakeups_per_second": 18.991575659894075,
+      "package_idle_wakeups_per_second": 11.994679364143625,
+      "footprint_mib": 237.60526275634766
+    },
+    {
+      "elapsed_seconds": 24.081083916999997,
+      "cpu_percent_one_core": 4.128860436456526,
+      "interrupt_wakeups_per_second": 38.806092398098045,
+      "package_idle_wakeups_per_second": 12.935364132699348,
+      "footprint_mib": 237.62088775634766
+    },
+    {
+      "elapsed_seconds": 25.081405417,
+      "cpu_percent_one_core": 0.057556495586668775,
+      "interrupt_wakeups_per_second": 19.99357206658056,
+      "package_idle_wakeups_per_second": 13.99550044660639,
+      "footprint_mib": 237.62088775634766
+    },
+    {
+      "elapsed_seconds": 26.0853935,
+      "cpu_percent_one_core": 0.048743108437871795,
+      "interrupt_wakeups_per_second": 18.924527413937454,
+      "package_idle_wakeups_per_second": 9.96027758628287,
+      "footprint_mib": 237.62088775634766
+    },
+    {
+      "elapsed_seconds": 27.090592082999997,
+      "cpu_percent_one_core": 3.459063604085222,
+      "interrupt_wakeups_per_second": 29.844849074961385,
+      "package_idle_wakeups_per_second": 7.958626419989702,
+      "footprint_mib": 237.65213775634766
+    },
+    {
+      "elapsed_seconds": 28.095728333,
+      "cpu_percent_one_core": 0.8377968658477866,
+      "interrupt_wakeups_per_second": 24.87224990641808,
+      "package_idle_wakeups_per_second": 10.943789958823956,
+      "footprint_mib": 237.65213775634766
+    },
+    {
+      "elapsed_seconds": 29.100816541999997,
+      "cpu_percent_one_core": 0.08850384062824775,
+      "interrupt_wakeups_per_second": 19.89875099609299,
+      "package_idle_wakeups_per_second": 14.924063247069741,
+      "footprint_mib": 237.65213775634766
+    },
+    {
+      "elapsed_seconds": 30.105889291999997,
+      "cpu_percent_one_core": 4.248067283355027,
+      "interrupt_wakeups_per_second": 26.863727028715083,
+      "package_idle_wakeups_per_second": 10.944481382069108,
+      "footprint_mib": 237.66776275634766
+    }
+  ]
+}

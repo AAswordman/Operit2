@@ -211,7 +211,6 @@ pub(super) fn newTestJsEngineState(
         None,
         Arc::new(Mutex::new(None)),
         operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(),
-        Arc::new(AtomicBool::new(true)),
     )
         .expect("test JavaScript state must initialize")
 }
@@ -851,16 +850,12 @@ async fn async_tool_call_yields_to_ready_javascript_promise() {
     engine.destroy();
 }
 
-/// Verifies the promise-job pump resumes execution when a callback wake is lost.
+/// Resumes a pending call from its completion notification without a periodic job pump.
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test(flavor = "current_thread")]
-async fn lost_callback_wake_is_recovered_by_the_promise_job_pump() {
+async fn async_completion_notification_resumes_pending_execution() {
     ensure_test_runtime_root();
     let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
-    engine
-        .worker
-        .asyncCallbackWakeEnabled
-        .store(false, Ordering::Release);
     let started = Instant::now();
     let output = engine
         .execute_script_function(
@@ -878,16 +873,12 @@ async fn lost_callback_wake_is_recovered_by_the_promise_job_pump() {
             None,
         )
         .await
-        .expect("the promise job pump must resume a lost callback wake");
+        .expect("the completion event must resume the waiting call");
     assert_eq!(output.as_deref(), Some("20"));
     assert!(
         started.elapsed() < Duration::from_millis(1500),
-        "the pump must recover the lost wake well before the 2 second deadline"
+        "the completion event must resume the call before its deadline"
     );
-    engine
-        .worker
-        .asyncCallbackWakeEnabled
-        .store(true, Ordering::Release);
     engine.destroy();
 }
 
@@ -1933,6 +1924,50 @@ fn abandoned_async_request_cancels_affine_session() {
         assert!(Instant::now() < deadline, "abandoned affine session leaked");
         std::thread::sleep(Duration::from_millis(1));
     }
+    finishGatedTool(&host);
+    engine.destroy();
+}
+
+/// A cleanup budget belongs exclusively to its cancelled call, even within the same job drain.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn cancellation_cleanup_deadline_does_not_limit_another_call() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let mut state = newTestJsEngineState(None);
+    state.initJavaScriptEnvironment().unwrap();
+    let cleanup = operit_host_api::HostJavaScriptExecutionInterrupt::new(20).unwrap();
+    let scope = super::ExecutionScope::enter(&state, Some(cleanup.clone()));
+    super::CURRENT_CLEANUP_OWNER.with(|owner| *owner.borrow_mut() = Some(("retired".into(), cleanup)));
+    super::selectScriptExecution(Some(("other".into(), operit_host_api::HostJavaScriptExecutionInterrupt::unlimited())));
+    state.evalJavaScriptVoid("var started = Date.now(); while (Date.now() - started < 80) {}")
+        .expect("an unrelated continuation must retain its unlimited execution budget");
+    drop(scope);
+}
+
+/// Cancellation must bound hostile finally blocks and leave the realm usable.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn cancelled_busy_cleanup_is_bounded_and_realm_is_reusable() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let caller = engine.clone();
+    let task = tokio::spawn(caller.execute_script_function(
+        "exports.wait = async function() { try { await toolCall('gate', {}); } finally { while (true) {} } };",
+        "wait", &testParams(), &BTreeMap::new(), None, true, None,
+    ));
+    tokio::time::timeout(Duration::from_secs(2), host.gatedToolStarted.notified())
+        .await.expect("host wait must start");
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while executionSessionCounts(&engine).await.0 != 0 { tokio::task::yield_now().await; }
+        let output = engine.execute_script_function(
+            "exports.ready = function() { return 'ready'; };", "ready", &testParams(),
+            &BTreeMap::new(), None, true, None,
+        ).await;
+        assert_eq!(expect_js_output(output, "realm after hostile cancellation cleanup"), "\"ready\"");
+    }).await.expect("cancelled cleanup must terminate without occupying the JS worker");
     finishGatedTool(&host);
     engine.destroy();
 }
@@ -4685,10 +4720,10 @@ fn native_compose_compiler_defers_parser_until_first_source_compilation() {
 #[test]
 fn native_compose_parser_rejects_after_interrupted_initialization() {
     let mut runtime = testJavaScriptRuntimeHost().createHostJavaScriptRuntime().unwrap();
-    let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let signal = armed.clone();
+    let interrupt = operit_host_api::HostJavaScriptExecutionInterrupt::unlimited();
+    let signal = interrupt.clone();
     runtime.registerHostJavaScriptFunction("__armParserInterrupt", Arc::new(move |_| {
-        signal.store(true, Ordering::SeqCst);
+        signal.interrupt();
         Ok(Value::Null)
     })).unwrap();
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sdk/src/toolpkg");
@@ -4704,9 +4739,9 @@ fn native_compose_parser_rejects_after_interrupted_initialization() {
     let loader = std::fs::read_to_string(sdk.join("compose/Parser.js")).unwrap()
         .replace("__OPERIT_COMPOSE_PARSER_SOURCE__", &format!("function() {{ return {}; }}", serde_json::to_string(&parser).unwrap()));
     runtime.evaluateHostJavaScriptVoid("lazy-parser", &loader).unwrap();
-    runtime.setHostJavaScriptInterruptHandler(Some(Arc::new(move || armed.load(Ordering::SeqCst)))).unwrap();
+    runtime.interruptController().replace(vec![interrupt]);
     assert!(runtime.evaluateHostJavaScriptVoid("interrupted-parse", "__operitAcorn.parse('let value = 1;', {ecmaVersion:2022});").is_err());
-    runtime.setHostJavaScriptInterruptHandler(None).unwrap();
+    runtime.interruptController().replace(Vec::new());
     assert!(runtime.evaluateHostJavaScriptVoid("rejected-parse", "__operitAcorn.parse('let value = 1;', {ecmaVersion:2022});").is_err());
     assert_eq!(runtime.evaluateHostJavaScriptString("one-parser-attempt", "String(parserAttempts)").unwrap(), "1");
     assert_eq!(runtime.evaluateHostJavaScriptString("no-parser-global-leak", "[typeof exports, typeof module, typeof acorn].join(',')").unwrap(), "undefined,undefined,undefined");

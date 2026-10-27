@@ -519,6 +519,26 @@ impl MarkdownRenderEventStream {
             return Vec::new();
         };
         let mut events = Vec::new();
+        if let Some(prefix) = block.prefix.as_mut() {
+            if prefix.kind == MarkdownProcessorType::FootnoteDefinition && !prefix.done {
+                let label = prefix
+                    .raw
+                    .trim()
+                    .strip_prefix("[^")
+                    .and_then(|raw| raw.strip_suffix("]:"));
+                if let Some(label) = label {
+                    events.push(inlineEvent(
+                        &self.chatId,
+                        self.parentBlockId,
+                        block.id,
+                        None,
+                        "markdownBlockPrefix",
+                        None,
+                        Some(label.to_string()),
+                    ));
+                }
+            }
+        }
         let tokens = block
             .inline
             .as_mut()
@@ -656,6 +676,7 @@ impl BlockPrefix {
                 MarkdownProcessorType::Header
                     | MarkdownProcessorType::OrderedList
                     | MarkdownProcessorType::UnorderedList
+                    | MarkdownProcessorType::FootnoteDefinition
             )
         })
         .map(|kind| Self {
@@ -673,6 +694,19 @@ impl BlockPrefix {
         for (index, ch) in content.char_indices() {
             let whitespace = ch == ' ' || ch == '\t';
             let prefix = match self.phase {
+                _ if self.kind == MarkdownProcessorType::FootnoteDefinition => match self.phase {
+                    PrefixPhase::Indent => {
+                        if ch == ']' {
+                            self.phase = PrefixPhase::Marker;
+                        }
+                        true
+                    }
+                    PrefixPhase::Marker => {
+                        self.phase = PrefixPhase::Padding;
+                        true
+                    }
+                    PrefixPhase::Padding => whitespace,
+                },
                 PrefixPhase::Indent if whitespace => true,
                 PrefixPhase::Indent => {
                     self.phase = if self.kind == MarkdownProcessorType::UnorderedList {
@@ -706,7 +740,16 @@ impl BlockPrefix {
             if !prefix {
                 self.done = true;
                 return (
-                    Some(std::mem::take(&mut self.raw)),
+                    Some(if self.kind == MarkdownProcessorType::FootnoteDefinition {
+                        self.raw
+                            .trim()
+                            .strip_prefix("[^")
+                            .and_then(|raw| raw.strip_suffix("]:"))
+                            .unwrap_or_default()
+                            .to_string()
+                    } else {
+                        std::mem::take(&mut self.raw)
+                    }),
                     content[index..].to_string(),
                 );
             }
@@ -761,6 +804,8 @@ fn markdownTypeFromSegment(segment: &Segment) -> Option<MarkdownProcessorType> {
         15 => MarkdownProcessorType::Underline,
         16 => MarkdownProcessorType::InlineLatex,
         18 => MarkdownProcessorType::HtmlBreak,
+        19 => MarkdownProcessorType::FootnoteReference,
+        20 => MarkdownProcessorType::FootnoteDefinition,
         17 => return None,
         _ => unreachable!("unknown markdown processor type ordinal"),
     };
@@ -787,6 +832,8 @@ fn markdownTypeLabel(nodeType: Option<MarkdownProcessorType>) -> Option<&'static
         Some(MarkdownProcessorType::Underline) => Some("Underline"),
         Some(MarkdownProcessorType::InlineLatex) => Some("InlineLatex"),
         Some(MarkdownProcessorType::HtmlBreak) => Some("HtmlBreak"),
+        Some(MarkdownProcessorType::FootnoteReference) => Some("FootnoteReference"),
+        Some(MarkdownProcessorType::FootnoteDefinition) => Some("FootnoteDefinition"),
         Some(MarkdownProcessorType::PlainText) | None => None,
     }
 }
@@ -894,6 +941,115 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn footnotes_preserve_semantics_at_every_stream_split() {
+        let content = "正文[^1]和**加粗[^note]**[^1]。\n\n[^1]: 第一条**脚注**\n[^note]: 第二条注释\n    续行内容\n\n结束";
+        let expected = MarkdownRenderEventStream::fromContent(content.to_string());
+        for boundary in content
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(content.len()))
+        {
+            let mut stream = MarkdownRenderEventStream::new(String::new());
+            let mut events = stream.pushChunk(&content[..boundary]);
+            events.extend(stream.pushChunk(&content[boundary..]));
+            events.extend(stream.finish());
+            assert_eq!(
+                styled_chars(&events),
+                styled_chars(&expected),
+                "boundary={boundary}"
+            );
+            let labels: Vec<_> = events
+                .iter()
+                .filter(|event| event.eventType == "markdownBlockPrefix")
+                .filter_map(|event| event.value.as_deref())
+                .collect();
+            assert_eq!(labels, ["1", "note"], "boundary={boundary}");
+            let definitions: Vec<_> = events
+                .iter()
+                .filter(|event| {
+                    event.eventType == "markdownBlockStart"
+                        && event.nodeType.as_deref() == Some("FootnoteDefinition")
+                })
+                .collect();
+            assert_eq!(definitions.len(), 2, "boundary={boundary}");
+            let second_body: String = events
+                .iter()
+                .filter(|event| {
+                    event.eventType == "markdownInlineChunk"
+                        && event.blockId == definitions[1].blockId
+                })
+                .filter_map(|event| event.value.as_deref())
+                .collect();
+            assert_eq!(
+                second_body.trim(),
+                "第二条注释\n    续行内容",
+                "boundary={boundary}"
+            );
+            let references = events
+                .iter()
+                .filter(|event| {
+                    event.eventType == "markdownInlineStyleStart"
+                        && event.nodeType.as_deref() == Some("FootnoteReference")
+                })
+                .count();
+            assert_eq!(references, 3, "boundary={boundary}");
+        }
+    }
+
+    #[test]
+    fn footnotes_handle_empty_definitions_and_literal_syntax() {
+        for source in ["[^empty]:", "[^empty]:   ", "  [^empty]:\n"] {
+            let events = MarkdownRenderEventStream::fromContent(source.to_string());
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event.eventType == "markdownBlockPrefix"
+                        && event.value.as_deref() == Some("empty")),
+                "{source:?}"
+            );
+        }
+        for source in [
+            r"`[^code]` \[^escaped] [^] [^two words]",
+            "```\n[^code]: literal\n```",
+            "[^broken",
+            "[^label] ordinary",
+        ] {
+            let events = MarkdownRenderEventStream::fromContent(source.to_string());
+            assert!(!events
+                .iter()
+                .any(|event| event.nodeType.as_deref() == Some("FootnoteDefinition")));
+        }
+        let events = MarkdownRenderEventStream::fromContent(
+            r"`[^code]` \[^escaped] [^] [^two words]".to_string(),
+        );
+        assert!(!events
+            .iter()
+            .any(|event| event.nodeType.as_deref() == Some("FootnoteReference")));
+        let source = r"escaped \[^escaped] and \[x^2\]";
+        let events = MarkdownRenderEventStream::fromContent(source.to_string());
+        assert!(styled_chars(&events)
+            .iter()
+            .map(|(ch, _)| ch)
+            .collect::<String>()
+            .contains("[^escaped]"));
+        assert!(events
+            .iter()
+            .any(|event| event.nodeType.as_deref() == Some("BlockLatex")));
+        assert!(!events
+            .iter()
+            .any(|event| event.nodeType.as_deref() == Some("FootnoteReference")));
+        let events = MarkdownRenderEventStream::fromContent("[^a][^b]".to_string());
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.eventType == "markdownInlineStyleStart"
+                    && event.nodeType.as_deref() == Some("FootnoteReference"))
+                .count(),
+            2
+        );
     }
 
     fn styled_chars(events: &[MarkdownStreamEvent]) -> Vec<(char, Vec<String>)> {

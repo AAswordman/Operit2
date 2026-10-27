@@ -209,6 +209,51 @@ fn sequences(operations: &[SyncOperation]) -> Vec<i64> {
         .collect()
 }
 
+/// Policy reads must leave unrelated durable preference outboxes untouched.
+#[test]
+fn domain_filtered_reads_do_not_publish_unrelated_preference_outboxes() {
+    use crate::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+
+    for budgeted in [false, true] {
+        for exportDomains in [vec!["preferences".to_string()], Vec::new()] {
+            let storage = Arc::new(MemoryStorageHost::default());
+            let store = SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH);
+            let path = "runtime/config/domain-read.preferences.json";
+            let preferences = PreferencesDataStore::newEncryptedWithStorage(storage.clone(), path);
+            preferences.edit(|values| values.set(&stringPreferencesKey("enabled"), true)).unwrap();
+            let mut policy = operationFromOrigin("peer", 1, "command", "policy", "apply", json!({}));
+            policy.domain = "network_control".into();
+            store.appendOperation(&policy).unwrap();
+            let domains = vec!["network_control".to_string()];
+            let before = storage.readBytes(path).unwrap();
+            let read = |domains: &[String]| {
+                if budgeted {
+                    store.operationsSinceWithBudget(&SyncClock::empty(), domains, usize::MAX, usize::MAX, |_| true)
+                } else {
+                    store.operationsSince(&SyncClock::empty(), domains, usize::MAX)
+                }.unwrap()
+            };
+            assert_eq!(read(&domains), vec![policy.clone()]);
+            assert!(storage.readBytes(path).unwrap() == before,
+                "policy queries must not drain or rewrite an unrelated encrypted outbox");
+
+            // Exports which request preferences must still publish the pending edit.
+            let exported = read(&exportDomains);
+            assert!(exported.iter().any(|operation| operation.domain == "preferences"));
+            assert_ne!(storage.readBytes(path).unwrap(), before);
+            assert_eq!(read(&domains), vec![policy.clone()]);
+            let reads = storage.readCount.load(Ordering::SeqCst);
+            for _ in 0..5 { assert_eq!(read(&domains), vec![policy.clone()]); }
+            // Budgeted queries open the selected record once for the retain
+            // predicate and once for the output page; neither opens preferences.
+            assert_eq!(storage.readCount.load(Ordering::SeqCst) - reads,
+                5 * if budgeted { 2 } else { 1 },
+                "warm policy queries must not load an unrelated encryption key");
+        }
+    }
+}
+
 /// Ensures domain reads avoid unrelated encrypted payloads and observe every append path.
 #[test]
 fn domain_reads_reuse_logs_and_observe_local_remote_and_unobserved_appends() {

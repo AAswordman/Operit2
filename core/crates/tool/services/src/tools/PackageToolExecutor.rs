@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use operit_plugin_sdk::javascript::{JsPackageToolCallRequest, JsPackageToolCallResult};
-use operit_plugin_sdk::package::ToolPackage;
 
 use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use crate::tools::ToolJsRuntime::PackageManagerJsRuntime;
@@ -15,17 +14,17 @@ use crate::ToolExecutionManager::{
 #[derive(Clone)]
 /// Executes one SDK package through the host JavaScript and tool runtimes.
 pub struct PackageToolExecutor {
-    toolPackage: ToolPackage,
+    packageName: String,
     packageManager: Arc<Mutex<RuntimePackageManager>>,
 }
 
 impl PackageToolExecutor {
     /// Creates an executor bound to one package and the shared package runtime.
     pub fn new(
-        toolPackage: ToolPackage,
+        packageName: String,
         packageManager: Arc<Mutex<RuntimePackageManager>>,
     ) -> Self {
-        Self { toolPackage, packageManager }
+        Self { packageName, packageManager }
     }
 
 }
@@ -42,12 +41,12 @@ impl AsyncToolExecutor for PackageToolExecutor {
                     .to_string(),
             };
         }
-        if parts[0] != self.toolPackage.name {
+        if parts[0] != self.packageName {
             return ToolValidationResult {
                 valid: false,
                 errorMessage: format!(
                     "Package mismatch: expected {}, got {}",
-                    self.toolPackage.name, parts[0]
+                    self.packageName, parts[0]
                 ),
             };
         }

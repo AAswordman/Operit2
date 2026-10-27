@@ -632,38 +632,39 @@ mod bridge_tests {
         assert_eq!(runtime.promises.borrow().len(), 1);
         // Dropping here must not abort V8 due to live Persistent handles.
     }
-    /// Interrupts CPU-bound V8 execution and preserves the realm for the next operation.
+    /// Cancellation interrupts native V8 directly and the same realm remains reusable.
     #[test]
     fn interrupts_busy_v8_execution_and_reuses_the_runtime() {
         let mut runtime = runtime();
-        let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let predicate = armed.clone();
-        let owner_thread = std::thread::current().id();
-        let checked_thread = Arc::new(Mutex::new(None));
-        let observed_thread = checked_thread.clone();
-        runtime
-            .setHostJavaScriptInterruptHandler(Some(Arc::new(move || {
-                *observed_thread.lock().unwrap() = Some(std::thread::current().id());
-                predicate.load(Ordering::SeqCst)
-            })))
-            .unwrap();
-        let cancel = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
-            armed.store(true, Ordering::SeqCst);
-        });
-        let failure = runtime
-            .evaluateHostJavaScriptVoid("busy", "globalThis.saved=7;while(true){}")
-            .unwrap_err();
-        cancel.join().unwrap();
-        assert_eq!(*checked_thread.lock().unwrap(), Some(owner_thread));
-        assert_eq!(failure.message, "JavaScript execution was interrupted");
-        runtime.setHostJavaScriptInterruptHandler(None).unwrap();
-        assert_eq!(
-            runtime
-                .evaluateHostJavaScriptString("resumed", "String(saved+1)")
-                .unwrap(),
-            "8"
-        );
+        let controller = runtime.interruptController();
+        for expected in [7, 11] {
+            let interrupt = HostJavaScriptExecutionInterrupt::unlimited();
+            controller.replace(vec![interrupt.clone()]);
+            let cancel = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                interrupt.interrupt();
+            });
+            let failure = runtime.evaluateHostJavaScriptVoid(
+                "busy", &format!("globalThis.saved={expected};while(true){{}}"),
+            ).unwrap_err();
+            cancel.join().unwrap();
+            assert_eq!(failure.message, "JavaScript execution was interrupted");
+            controller.replace(Vec::new());
+            assert_eq!(runtime.evaluateHostJavaScriptString("resumed", "String(saved+1)").unwrap(), (expected + 1).to_string());
+        }
+    }
+
+    /// A retired call's cancellation must never terminate a subsequent execution.
+    #[test]
+    fn retired_execution_signals_do_not_cancel_the_next_scope() {
+        let mut runtime = runtime();
+        let controller = runtime.interruptController();
+        let previous = HostJavaScriptExecutionInterrupt::unlimited();
+        controller.replace(vec![previous.clone()]);
+        controller.replace(vec![HostJavaScriptExecutionInterrupt::unlimited()]);
+        previous.interrupt();
+        assert_eq!(runtime.evaluateHostJavaScriptString("next", "String(6*7)").unwrap(), "42");
+        controller.replace(Vec::new());
     }
 
     /// Permits independent runtimes on one executor to be dropped in any order.
@@ -709,24 +710,17 @@ mod bridge_tests {
         );
     }
 
-    /// Propagates interrupt predicate panics without unwinding through a V8 safepoint callback.
+    /// An asynchronous deadline interrupts a loop without a periodic predicate check.
     #[test]
-    fn rust_interrupt_panics_resume_on_the_owning_rust_stack() {
+    fn execution_deadline_terminates_busy_v8_and_preserves_the_realm() {
         let mut runtime = runtime();
-        runtime
-            .setHostJavaScriptInterruptHandler(Some(Arc::new(|| std::panic::panic_any(23u32))))
-            .unwrap();
-        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime.evaluateHostJavaScriptVoid("panic", "while(true){}")
-        }))
-        .unwrap_err();
-        assert_eq!(*panic.downcast::<u32>().unwrap(), 23);
-        runtime.setHostJavaScriptInterruptHandler(None).unwrap();
-        assert_eq!(
-            runtime
-                .evaluateHostJavaScriptString("resumed", "String(1+1)")
-                .unwrap(),
-            "2"
-        );
+        let controller = runtime.interruptController();
+        let interrupt = HostJavaScriptExecutionInterrupt::new(20).unwrap();
+        controller.replace(vec![interrupt.clone()]);
+        assert_eq!(runtime.evaluateHostJavaScriptVoid("deadline", "while(true){}").unwrap_err().message,
+            "JavaScript execution was interrupted");
+        assert!(interrupt.didTimeOut());
+        controller.replace(Vec::new());
+        assert_eq!(runtime.evaluateHostJavaScriptString("resumed", "String(1+1)").unwrap(), "2");
     }
 }

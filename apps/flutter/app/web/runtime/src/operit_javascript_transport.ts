@@ -11,29 +11,44 @@ const add = Atomics.add;
 const Bytes = Uint8Array;
 const encode = MessagePack.encode;
 const decode = MessagePack.decode;
+const now = Date.now;
 
-/** Carries structured values in acknowledged frames without a fixed message size limit. */
+/** Carries structured frames and cancellation through explicit atomic notifications. */
 export class JavaScriptTransport {
   private readonly header: Int32Array;
   private readonly bytes: Uint8Array;
   private seen = 0;
 
-  /** Attaches one endpoint to the command-owned shared buffer. */
-  constructor(readonly buffer: SharedArrayBuffer) {
+  constructor(readonly buffer: SharedArrayBuffer, private readonly control: Int32Array) {
     this.header = new Int32Array(buffer, 0, headerBytes / 4);
     this.bytes = new Bytes(buffer, headerBytes);
   }
 
-  /** Allocates the bounded reusable frame storage for one command. */
-  static create(): JavaScriptTransport {
-    return new JavaScriptTransport(new SharedArrayBuffer(headerBytes + frameBytes));
+  static create(control: Int32Array): JavaScriptTransport {
+    return new JavaScriptTransport(new SharedArrayBuffer(headerBytes + frameBytes), control);
   }
 
-  /** Publishes each encoded frame and waits until its receiver has copied it. */
-  send(kind: number, value: unknown, check: () => void): void {
+  private signal(): void {
+    add(this.control, 0, 1);
+    notify(this.control, 0);
+  }
+
+  /** Waits for a message, acknowledgment, cancellation, or the exact execution deadline. */
+  private until(ready: () => boolean): void {
+    for (;;) {
+      const version = load(this.control, 0);
+      if (load(this.control, 1) !== 0) throw new Error("JavaScript execution was interrupted");
+      const deadline = (load(this.control, 2) >>> 0) + (load(this.control, 3) >>> 0) * 0x1_0000_0000;
+      const remaining = deadline === 0 ? Infinity : deadline - now();
+      if (remaining <= 0) throw new Error("JavaScript execution deadline expired");
+      if (ready()) return;
+      wait(this.control, 0, version, remaining);
+    }
+  }
+
+  send(kind: number, value: unknown): void {
     const encoded = encode(value);
     for (let offset = 0; offset < encoded.byteLength; offset += frameBytes) {
-      check();
       const chunk = encoded.subarray(offset, offset + frameBytes);
       this.bytes.set(chunk);
       store(this.header, 0, kind);
@@ -42,24 +57,17 @@ export class JavaScriptTransport {
       const sequence = add(this.header, 5, 1) + 1;
       this.seen = sequence;
       store(this.header, 3, sequence);
-      notify(this.header, 3);
-      while (load(this.header, 4) !== sequence) {
-        check();
-        wait(this.header, 4, load(this.header, 4), 5);
-      }
+      this.signal();
+      this.until(() => load(this.header, 4) === sequence);
     }
   }
 
-  /** Receives a complete structured message and acknowledges every copied frame. */
-  receive(check: () => void): { kind: number; value: unknown } {
+  receive(): { kind: number; value: unknown } {
     const chunks: Uint8Array[] = [];
     let length = 0;
     let kind = 0;
     for (;;) {
-      while (load(this.header, 3) === this.seen) {
-        check();
-        wait(this.header, 3, this.seen, 5);
-      }
+      this.until(() => load(this.header, 3) !== this.seen);
       const sequence = load(this.header, 3);
       const nextKind = load(this.header, 0);
       const byteLength = load(this.header, 1);
@@ -72,7 +80,7 @@ export class JavaScriptTransport {
       length += byteLength;
       this.seen = sequence;
       store(this.header, 4, sequence);
-      notify(this.header, 4);
+      this.signal();
       if (final) break;
     }
     const encoded = new Bytes(length);

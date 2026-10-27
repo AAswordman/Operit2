@@ -1,13 +1,13 @@
-use operit_host_native_common::{scheduleNativeServiceTask, NativeTaskHandle as JoinHandle};
+use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost;
 use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use operit_host_api::{
-    HostError, HostResult, PluginSdkIpcEndpoint, PluginSdkIpcHost, PluginSdkIpcSessionCallbacks,
-    PluginSdkIpcSessionId,
+    HostError, HostResult, HostRuntimeTaskSchedulerHost, PluginSdkIpcEndpoint, PluginSdkIpcHost,
+    PluginSdkIpcSessionCallbacks, PluginSdkIpcSessionId,
 };
 
 use operit_host_native_plugin_sdk_ipc::stream::{
@@ -39,8 +39,7 @@ pub struct UnixPluginSdkIpcHost {
 }
 
 struct UnixInner {
-    listenerStop: Option<Arc<AtomicBool>>,
-    listenerThread: Option<JoinHandle<()>>,
+    listenerStop: Option<tokio::sync::watch::Sender<bool>>,
     listenerLock: Option<std::fs::File>,
     socketPath: Option<PathBuf>,
     sessions: HashMap<String, Arc<PluginSdkIpcStreamSession>>,
@@ -76,7 +75,6 @@ impl UnixPluginSdkIpcHost {
         Self {
             inner: Arc::new(Mutex::new(UnixInner {
                 listenerStop: None,
-                listenerThread: None,
                 listenerLock: None,
                 socketPath: None,
                 sessions: HashMap::new(),
@@ -190,7 +188,7 @@ impl PluginSdkIpcHost for UnixPluginSdkIpcHost {
         callbacks: PluginSdkIpcSessionCallbacks,
     ) -> HostResult<()> {
         let mut inner = self.lock()?;
-        if inner.listenerThread.is_some() {
+        if inner.listenerStop.is_some() {
             return Err(HostError::new("Plugin SDK IPC listener is already started"));
         }
         let socketPath = self.socketPathForEndpoint(&endpoint);
@@ -222,78 +220,108 @@ impl PluginSdkIpcHost for UnixPluginSdkIpcHost {
         listener
             .set_nonblocking(true)
             .map_err(|error| HostError::new(error.to_string()))?;
-        let stop = Arc::new(AtomicBool::new(false));
+        let (stop, mut stopped) = tokio::sync::watch::channel(false);
         let host = self.inner.clone();
         let nextSession = self.nextSession.clone();
-        let workerStop = stop.clone();
-        let thread = scheduleNativeServiceTask("operit-plugin-sdk-ipc-listener", move || {
-            while !workerStop.load(Ordering::SeqCst) {
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        // The frame reader is blocking; accepted sockets may inherit O_NONBLOCK.
-                        if stream.set_nonblocking(false).is_err() {
-                            continue;
-                        }
-                        let sessionId = PluginSdkIpcSessionId::new(format!(
-                            "plugin-sdk-unix-{}",
-                            nextSession.fetch_add(1, Ordering::Relaxed)
-                        ));
-                        let Ok(reader) = stream.try_clone() else {
-                            continue;
+        let scheduled = NativeHostRuntimeTaskSchedulerHost::new()
+            .scheduleHostRuntimeCooperativeAsyncTask(
+                "operit-plugin-sdk-ipc-listener",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let listener = match tokio::net::UnixListener::from_std(listener) {
+                            Ok(listener) => listener,
+                            Err(error) => {
+                                operit_host_api::logHostError(
+                                    "PluginSdkIpc",
+                                    &format!("Plugin SDK listener rejected: {error}"),
+                                );
+                                return;
+                            }
                         };
-                        let Ok(writer) = stream.try_clone() else {
-                            continue;
-                        };
-                        let session = Arc::new(PluginSdkIpcStreamSession::new(
-                            sessionId.clone(),
-                            Box::new(SocketWriter(writer)),
-                            true,
-                        ));
-                        if let Ok(mut inner) = host.lock() {
-                            inner.sessions.insert(sessionId.0.clone(), session);
-                        }
-                        let sessions = host.clone();
-                        let closedId = sessionId.clone();
-                        let scheduled = spawnPluginSdkIpcReadLoop(
-                            sessionId.clone(),
-                            reader,
-                            callbacks.clone(),
-                            move || {
-                                if let Ok(mut inner) = sessions.lock() {
-                                    inner.sessions.remove(&closedId.0);
+                        loop {
+                            if *stopped.borrow() {
+                                break;
+                            }
+                            let accepted = tokio::select! {
+                                biased;
+                                _ = stopped.changed() => break,
+                                accepted = listener.accept() => accepted,
+                            };
+                            match accepted {
+                                Ok((stream, _)) => {
+                                    let Ok(stream) = stream.into_std() else {
+                                        continue;
+                                    };
+                                    // The frame reader is blocking; accepted sockets may inherit O_NONBLOCK.
+                                    if stream.set_nonblocking(false).is_err() {
+                                        continue;
+                                    }
+                                    let sessionId = PluginSdkIpcSessionId::new(format!(
+                                        "plugin-sdk-unix-{}",
+                                        nextSession.fetch_add(1, Ordering::Relaxed)
+                                    ));
+                                    let Ok(reader) = stream.try_clone() else {
+                                        continue;
+                                    };
+                                    let Ok(writer) = stream.try_clone() else {
+                                        continue;
+                                    };
+                                    let session = Arc::new(PluginSdkIpcStreamSession::new(
+                                        sessionId.clone(),
+                                        Box::new(SocketWriter(writer)),
+                                        true,
+                                    ));
+                                    if let Ok(mut inner) = host.lock() {
+                                        // Shutdown and admission share the lock, so a late accept cannot leak a session.
+                                        if *stopped.borrow() {
+                                            break;
+                                        }
+                                        inner.sessions.insert(sessionId.0.clone(), session);
+                                    } else {
+                                        break;
+                                    }
+                                    let sessions = host.clone();
+                                    let closedId = sessionId.clone();
+                                    let scheduled = spawnPluginSdkIpcReadLoop(
+                                        sessionId.clone(),
+                                        reader,
+                                        callbacks.clone(),
+                                        move || {
+                                            if let Ok(mut inner) = sessions.lock() {
+                                                inner.sessions.remove(&closedId.0);
+                                            }
+                                        },
+                                    );
+                                    if let Err(error) = scheduled {
+                                        if let Ok(mut inner) = host.lock() {
+                                            if let Some(session) =
+                                                inner.sessions.remove(&sessionId.0)
+                                            {
+                                                closePluginSdkIpcStream(&session);
+                                            }
+                                        }
+                                        operit_host_api::logHostError(
+                                            "PluginSdkIpc",
+                                            &format!("Plugin SDK reader rejected: {error}"),
+                                        );
+                                        continue;
+                                    }
+                                    (callbacks.onConnected)(sessionId);
                                 }
-                            },
-                        );
-                        if let Err(error) = scheduled {
-                            operit_host_api::logHostError(
-                                "PluginSdkIpc",
-                                &format!("Plugin SDK reader rejected: {error}"),
-                            );
-                            continue;
+                                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                                Err(_) => break,
+                            }
                         }
-                        (callbacks.onConnected)(sessionId);
-                    }
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::WouldBlock
-                            || error.kind() == std::io::ErrorKind::Interrupted =>
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-        let thread = match thread {
-            Ok(thread) => thread,
-            Err(error) => {
-                std::fs::remove_file(&socketPath).map_err(|cleanup| {
-                    HostError::new(format!("{error}; remove rejected listener: {cleanup}"))
-                })?;
-                return Err(error);
-            }
-        };
+                    })
+                }),
+            );
+        if let Err(error) = scheduled {
+            std::fs::remove_file(&socketPath).map_err(|cleanup| {
+                HostError::new(format!("{error}; remove rejected listener: {cleanup}"))
+            })?;
+            return Err(error);
+        }
         inner.listenerStop = Some(stop);
-        inner.listenerThread = Some(thread);
         inner.socketPath = Some(socketPath);
         inner.listenerLock = Some(ownership);
         Ok(())
@@ -335,14 +363,14 @@ impl PluginSdkIpcHost for UnixPluginSdkIpcHost {
 
     /// Stops the Unix-domain listener and closes listener-owned sessions.
     fn stopListener(&self) -> HostResult<()> {
-        let (stop, thread, socketPath, owned, _ownership);
+        let (socketPath, owned, _ownership);
         {
             let mut inner = self.lock()?;
-            stop = inner
+            let stop = inner
                 .listenerStop
                 .take()
                 .ok_or_else(|| HostError::new("Plugin SDK IPC listener is not started"))?;
-            thread = inner.listenerThread.take();
+            stop.send_replace(true);
             socketPath = inner.socketPath.take();
             _ownership = inner.listenerLock.take();
             owned = inner
@@ -356,10 +384,6 @@ impl PluginSdkIpcHost for UnixPluginSdkIpcHost {
                     closePluginSdkIpcStream(&session);
                 }
             }
-        }
-        stop.store(true, Ordering::SeqCst);
-        if let Some(thread) = thread {
-            let _ = thread.join();
         }
         if let Some(socketPath) = socketPath {
             let _ = std::fs::remove_file(socketPath);

@@ -831,7 +831,11 @@ impl SyncOperationStore {
         domains: &[String],
         limit: usize,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        self.publishPreferenceOutboxes()?;
+        // Preference outboxes can only contribute to the preferences domain.
+        // Policy and other domain reads must not open unrelated encrypted stores.
+        if domains.is_empty() || domains.iter().any(|domain| domain == "preferences") {
+            self.publishPreferenceOutboxes()?;
+        }
         self.readJournal(
             clock,
             JournalQuery {
@@ -855,7 +859,11 @@ impl SyncOperationStore {
         maxBytes: usize,
         retain: impl Fn(&SyncOperation) -> bool,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        self.publishPreferenceOutboxes()?;
+        // Preference outboxes can only contribute to the preferences domain.
+        // Policy and other domain reads must not open unrelated encrypted stores.
+        if domains.is_empty() || domains.iter().any(|domain| domain == "preferences") {
+            self.publishPreferenceOutboxes()?;
+        }
         self.readJournal(
             clock,
             JournalQuery {

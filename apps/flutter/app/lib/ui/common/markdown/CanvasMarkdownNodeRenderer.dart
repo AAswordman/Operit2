@@ -104,7 +104,7 @@ class _MarkdownTextState extends State<_MarkdownText>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late Animation<double> _revealAnimation;
-  double _revealValue = 0;
+  double get _revealValue => _revealAnimation.value;
   int _targetLength = 0;
 
   bool get _enableTypewriter =>
@@ -117,18 +117,14 @@ class _MarkdownTextState extends State<_MarkdownText>
   @override
   void initState() {
     super.initState();
-    _controller =
-        AnimationController(vsync: this, duration: _streamRenderInterval)
-          ..addListener(() {
-            setState(() {
-              _revealValue = _revealAnimation.value;
-            });
-          });
+    _controller = AnimationController(
+      vsync: this,
+      duration: _streamRenderInterval,
+    );
     _targetLength = _markdownVisibleLength(widget.text, widget.children);
     _revealAnimation = AlwaysStoppedAnimation<double>(
       _enableTypewriter ? 0 : _targetLength.toDouble(),
     );
-    _revealValue = _revealAnimation.value;
     if (_enableTypewriter && _targetLength > 0) {
       _animateRevealTo(_targetLength);
     }
@@ -141,15 +137,17 @@ class _MarkdownTextState extends State<_MarkdownText>
     if (!_enableTypewriter) {
       _controller.stop();
       _targetLength = targetLength;
-      _revealValue = targetLength.toDouble();
-      _revealAnimation = AlwaysStoppedAnimation<double>(_revealValue);
+      _revealAnimation = AlwaysStoppedAnimation<double>(
+        targetLength.toDouble(),
+      );
       return;
     }
     if (targetLength < _revealValue) {
       _controller.stop();
       _targetLength = targetLength;
-      _revealValue = targetLength.toDouble();
-      _revealAnimation = AlwaysStoppedAnimation<double>(_revealValue);
+      _revealAnimation = AlwaysStoppedAnimation<double>(
+        targetLength.toDouble(),
+      );
       return;
     }
     if (targetLength == _targetLength) {
@@ -164,7 +162,7 @@ class _MarkdownTextState extends State<_MarkdownText>
     _revealAnimation = Tween<double>(
       begin: current,
       end: targetLength.toDouble(),
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.linear));
+    ).animate(_controller);
     _controller.forward(from: 0);
   }
 
@@ -177,7 +175,9 @@ class _MarkdownTextState extends State<_MarkdownText>
   @override
   Widget build(BuildContext context) {
     final reveal = _RevealSegment(
-      revealLength: _enableTypewriter ? _revealValue : _targetLength.toDouble(),
+      animation: _enableTypewriter
+          ? _revealAnimation
+          : AlwaysStoppedAnimation<double>(_targetLength.toDouble()),
       showCursor: _enableTypewriter,
     );
     if (widget.nodeType == MarkdownNodeType.plainText &&
@@ -237,6 +237,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           isLastNode: widget.isLastNode,
           onLinkClick: widget.onLinkClick,
         );
+      case MarkdownNodeType.footnoteDefinition:
       case MarkdownNodeType.orderedList:
       case MarkdownNodeType.unorderedList:
         return _MarkdownLine(
@@ -246,7 +247,9 @@ class _MarkdownTextState extends State<_MarkdownText>
           reveal: reveal,
           children: widget.children,
           listType: widget.nodeType,
-          sourcePrefix: widget.sourcePrefix,
+          sourcePrefix: widget.nodeType == MarkdownNodeType.footnoteDefinition
+              ? '[${widget.sourcePrefix}]'
+              : widget.sourcePrefix,
           isLastNode: widget.isLastNode,
           onLinkClick: widget.onLinkClick,
         );
@@ -288,9 +291,11 @@ class _MarkdownLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = Theme.of(
-      context,
-    ).textTheme.bodyMedium?.copyWith(color: color, height: 1.3);
+    final style = Theme.of(context).textTheme.bodyMedium?.copyWith(
+      color: color,
+      height: markdownLineHeight,
+      letterSpacing: markdownLetterSpacing,
+    );
     var indent = 0.0;
     for (final char in sourcePrefix.codeUnits) {
       if (char == 0x20) {
@@ -335,7 +340,7 @@ class _MarkdownLine extends StatelessWidget {
               key: ValueKey<String>('$textKey-body'),
               text: text,
               color: color,
-              revealLength: reveal.revealLength,
+              animation: reveal.animation,
               showCursor: reveal.showCursor,
               children: children,
               onLinkClick: onLinkClick,
@@ -376,7 +381,8 @@ class _MarkdownHeading extends StatelessWidget {
     final style = _markdownHeaderStyle(theme, effectiveLevel)?.copyWith(
       color: color,
       fontWeight: FontWeight.w700,
-      height: _markdownCanvasLineHeightMultiplier,
+      height: markdownLineHeight,
+      letterSpacing: markdownLetterSpacing,
     );
     final topPadding = _markdownHeaderTopPadding(effectiveLevel);
     final bottomPadding = isLastNode
@@ -389,7 +395,7 @@ class _MarkdownHeading extends StatelessWidget {
         key: ValueKey<String>(textKey),
         text: text,
         color: color,
-        revealLength: reveal.revealLength,
+        animation: reveal.animation,
         showCursor: reveal.showCursor,
         children: children,
         onLinkClick: onLinkClick,
@@ -456,13 +462,14 @@ class _MarkdownParagraph extends StatelessWidget {
         key: ValueKey<String>(textKey),
         text: text,
         color: color,
-        revealLength: reveal.revealLength,
+        animation: reveal.animation,
         showCursor: reveal.showCursor,
         children: children,
         onLinkClick: onLinkClick,
         style: theme.textTheme.bodyMedium?.copyWith(
           color: color,
-          height: _markdownCanvasLineHeightMultiplier,
+          height: markdownLineHeight,
+          letterSpacing: markdownLetterSpacing,
         ),
         splitParagraphs: true,
       ),
@@ -476,7 +483,7 @@ class _TypewriterMarkdownRichText extends StatefulWidget {
     required this.text,
     required this.color,
     required this.style,
-    required this.revealLength,
+    required this.animation,
     required this.showCursor,
     this.children = const <MarkdownNodeStable>[],
     this.onLinkClick,
@@ -487,7 +494,7 @@ class _TypewriterMarkdownRichText extends StatefulWidget {
   final Color color;
   final TextStyle? style;
   final bool splitParagraphs;
-  final double revealLength;
+  final Animation<double> animation;
   final bool showCursor;
   final List<MarkdownNodeStable> children;
   final void Function(String url)? onLinkClick;
@@ -597,25 +604,25 @@ class _TypewriterMarkdownRichTextState
     Widget buildParagraph(int index) {
       final paragraph = _paragraphs[index];
       final isLast = index == _paragraphs.length - 1;
-      final revealSpan = _revealedTypewriterSpan(
-        source: paragraph.span,
-        revealLength: widget.revealLength - paragraph.revealOffset,
-        showCursor:
-            widget.showCursor &&
-            (index == 0 || widget.revealLength >= paragraph.revealOffset) &&
-            (isLast ||
-                widget.revealLength < _paragraphs[index + 1].revealOffset),
-        baseStyle: widget.style,
-      );
       return LayoutBuilder(
-        builder: (context, constraints) => wrapWithInteractiveShield(
-          Text.rich(
-            revealSpan,
-            style: widget.style,
-            textHeightBehavior: _markdownTextHeightBehavior,
+        builder: (context, constraints) => MarkdownTextReveal(
+          animation: widget.animation,
+          text: paragraph.span.toPlainText(includeSemanticsLabels: false),
+          revealOffset: paragraph.revealOffset,
+          nextRevealOffset: isLast ? null : _paragraphs[index + 1].revealOffset,
+          showCursor: widget.showCursor,
+          paragraph: wrapWithInteractiveShield(
+            Text.rich(
+              paragraph.span,
+              style: widget.style,
+              textHeightBehavior: _markdownTextHeightBehavior,
+            ),
+            constraints.maxWidth,
+            paragraph.span,
           ),
-          constraints.maxWidth,
-          revealSpan,
+          cursor: widget.showCursor
+              ? const StreamingCursor(blink: false)
+              : const SizedBox.shrink(),
         ),
       );
     }
@@ -724,225 +731,10 @@ InlineSpan _sliceMarkdownSpan(InlineSpan source, int start, int end) {
 }
 
 class _RevealSegment {
-  const _RevealSegment({required this.revealLength, required this.showCursor});
+  const _RevealSegment({required this.animation, required this.showCursor});
 
-  final double revealLength;
+  final Animation<double> animation;
   final bool showCursor;
-}
-
-/// Tracks reveal progress while reconstructing one RichText span tree.
-class _InlineRevealState {
-  _InlineRevealState({required this.revealLength, required this.showCursor});
-
-  final double revealLength;
-  final bool showCursor;
-  var consumedLength = 0;
-  var cursorInserted = false;
-}
-
-/// Builds a RichText span tree that preserves layout while revealing content.
-TextSpan _revealedTypewriterSpan({
-  required InlineSpan source,
-  required double revealLength,
-  required bool showCursor,
-  required TextStyle? baseStyle,
-}) {
-  final plainTextLength = source.toPlainText().characters.length;
-  final state = _InlineRevealState(
-    revealLength: revealLength.clamp(0, plainTextLength).toDouble(),
-    showCursor: showCursor,
-  );
-  final spans = <InlineSpan>[];
-  _appendRevealedInlineSpan(
-    spans: spans,
-    source: source,
-    state: state,
-    inheritedStyle: baseStyle,
-  );
-  _appendRevealCursor(spans, state);
-  return TextSpan(children: spans);
-}
-
-/// Appends one revealed inline span while preserving source ordering.
-void _appendRevealedInlineSpan({
-  required List<InlineSpan> spans,
-  required InlineSpan source,
-  required _InlineRevealState state,
-  required TextStyle? inheritedStyle,
-  GestureRecognizer? inheritedRecognizer,
-}) {
-  if (source is TextSpan) {
-    final effectiveStyle = _mergeTextStyles(inheritedStyle, source.style);
-    final effectiveRecognizer = source.recognizer ?? inheritedRecognizer;
-    final text = source.text;
-    if (text != null && text.isNotEmpty) {
-      _appendRevealedText(
-        spans: spans,
-        text: text,
-        style: effectiveStyle,
-        recognizer: effectiveRecognizer,
-        state: state,
-      );
-    }
-    final children = source.children;
-    if (children != null) {
-      for (final child in children) {
-        _appendRevealedInlineSpan(
-          spans: spans,
-          source: child,
-          state: state,
-          inheritedStyle: effectiveStyle,
-          inheritedRecognizer: effectiveRecognizer,
-        );
-      }
-    }
-    return;
-  }
-  if (source is WidgetSpan) {
-    _appendRevealedWidgetSpan(spans: spans, source: source, state: state);
-    return;
-  }
-  spans.add(source);
-}
-
-/// Appends revealed, partial, and hidden text spans for one source string.
-void _appendRevealedText({
-  required List<InlineSpan> spans,
-  required String text,
-  required TextStyle? style,
-  required GestureRecognizer? recognizer,
-  required _InlineRevealState state,
-}) {
-  final segmentStart = state.consumedLength;
-  final textCharacters = text.characters;
-  final textLength = textCharacters.length;
-  final segmentEnd = segmentStart + textLength;
-  final revealLength = state.revealLength;
-  if (revealLength >= segmentEnd) {
-    spans.add(TextSpan(text: text, style: style, recognizer: recognizer));
-    state.consumedLength = segmentEnd;
-    _appendRevealCursor(spans, state);
-    return;
-  }
-  if (revealLength <= segmentStart) {
-    _appendRevealCursor(spans, state);
-    spans.add(TextSpan(text: text, style: _hiddenTextStyle(style)));
-    state.consumedLength = segmentEnd;
-    return;
-  }
-
-  final visibleLength = (revealLength.floor() - segmentStart)
-      .clamp(0, textLength)
-      .toInt();
-  final partialAmount = (revealLength - revealLength.floor())
-      .clamp(0, 1)
-      .toDouble();
-  if (visibleLength > 0) {
-    spans.add(
-      TextSpan(
-        text: textCharacters.take(visibleLength).toString(),
-        style: style,
-        recognizer: recognizer,
-      ),
-    );
-  }
-  var hiddenStart = visibleLength;
-  if (partialAmount > 0 && visibleLength < textLength) {
-    spans.add(
-      TextSpan(
-        text: textCharacters.skip(visibleLength).take(1).toString(),
-        style: _partialTextStyle(style, partialAmount),
-      ),
-    );
-    hiddenStart = visibleLength + 1;
-  }
-  state.consumedLength = segmentStart + hiddenStart;
-  _appendRevealCursor(spans, state);
-  if (hiddenStart < textLength) {
-    spans.add(
-      TextSpan(
-        text: textCharacters.skip(hiddenStart).toString(),
-        style: _hiddenTextStyle(style),
-      ),
-    );
-  }
-  state.consumedLength = segmentEnd;
-}
-
-/// Appends one WidgetSpan with reveal opacity while preserving its placeholder.
-void _appendRevealedWidgetSpan({
-  required List<InlineSpan> spans,
-  required WidgetSpan source,
-  required _InlineRevealState state,
-}) {
-  final segmentStart = state.consumedLength;
-  final revealAmount = (state.revealLength - segmentStart)
-      .clamp(0, 1)
-      .toDouble();
-  _appendRevealCursor(spans, state);
-  spans.add(
-    WidgetSpan(
-      alignment: source.alignment,
-      baseline: source.baseline,
-      style: source.style,
-      child: Opacity(opacity: revealAmount, child: source.child),
-    ),
-  );
-  state.consumedLength = segmentStart + 1;
-  _appendRevealCursor(spans, state);
-}
-
-/// Appends the streaming cursor at the current reveal boundary.
-void _appendRevealCursor(List<InlineSpan> spans, _InlineRevealState state) {
-  if (!state.showCursor ||
-      state.cursorInserted ||
-      state.revealLength > state.consumedLength) {
-    return;
-  }
-  state.cursorInserted = true;
-  spans.add(_streamingCursorSpan());
-}
-
-/// Builds an inline cursor with finite layout constraints.
-WidgetSpan _streamingCursorSpan() {
-  return const WidgetSpan(
-    alignment: PlaceholderAlignment.middle,
-    child: SizedBox(width: 7, height: 16, child: StreamingCursor()),
-  );
-}
-
-/// Merges nested TextSpan styles for reveal-specific spans.
-TextStyle? _mergeTextStyles(TextStyle? inheritedStyle, TextStyle? style) {
-  if (inheritedStyle == null) {
-    return style;
-  }
-  if (style == null) {
-    return inheritedStyle;
-  }
-  return inheritedStyle.merge(style);
-}
-
-/// Returns a style that keeps layout metrics while hiding glyph paint.
-TextStyle? _hiddenTextStyle(TextStyle? style) {
-  return _textStyleWithRevealOpacity(style, 0);
-}
-
-/// Returns a style that paints a partially revealed glyph.
-TextStyle? _partialTextStyle(TextStyle? style, double amount) {
-  return _textStyleWithRevealOpacity(style, amount);
-}
-
-/// Returns a style with adjusted text visibility and preserved metrics.
-TextStyle? _textStyleWithRevealOpacity(TextStyle? style, double amount) {
-  final opacity = amount.clamp(0, 1).toDouble();
-  final source = style ?? const TextStyle();
-  final color = source.color ?? Colors.transparent;
-  return source.copyWith(
-    color: color.withValues(alpha: opacity),
-    backgroundColor: opacity == 0 ? Colors.transparent : source.backgroundColor,
-    decorationColor: opacity == 0 ? Colors.transparent : source.decorationColor,
-    shadows: opacity == 0 ? const <Shadow>[] : source.shadows,
-  );
 }
 
 /// Reports whether a span tree has an active gesture recognizer.
@@ -980,7 +772,9 @@ bool _isInteractiveSpanHit({
 }
 
 class StreamingCursor extends StatefulWidget {
-  const StreamingCursor({super.key});
+  const StreamingCursor({super.key, this.blink = true});
+
+  final bool blink;
 
   @override
   State<StreamingCursor> createState() => _StreamingCursorState();
@@ -988,20 +782,22 @@ class StreamingCursor extends StatefulWidget {
 
 class _StreamingCursorState extends State<StreamingCursor>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
+  AnimationController? _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
+    if (widget.blink) {
+      _controller = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 900),
+      )..repeat(reverse: true);
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
@@ -1013,7 +809,9 @@ class _StreamingCursorState extends State<StreamingCursor>
       widthFactor: 1,
       heightFactor: 1,
       child: FadeTransition(
-        opacity: Tween<double>(begin: 0.25, end: 0.85).animate(_controller),
+        opacity: _controller == null
+            ? const AlwaysStoppedAnimation<double>(0.85)
+            : Tween<double>(begin: 0.25, end: 0.85).animate(_controller!),
         child: SizedBox(
           width: 7,
           height: 16,

@@ -67,10 +67,16 @@ await import(workerData);
       call(runtime, { operation: 'initialize', source: bootstrap });
       return runtime;
     }
-    /** Gives every command a bounded test interrupt to catch transport deadlocks. */
+    /** Gives every command a bounded test deadline to catch transport deadlocks. */
     function call(runtime, command, callback = () => { throw new Error('Unexpected host callback'); }) {
-      const started = Date.now();
-      return runtime.execute(command, callback, () => Date.now() - started > 3000);
+      return runtime.execute(command, callback, controlFor(3000));
+    }
+    function controlFor(timeout) {
+      const control = new Int32Array(new SharedArrayBuffer(16));
+      const deadline = Date.now() + timeout;
+      Atomics.store(control, 2, deadline >>> 0);
+      Atomics.store(control, 3, Math.floor(deadline / 0x1_0000_0000));
+      return control;
     }
     const runtime = await create();
     await t.test('keeps independent global state and compiles generator for-of syntax', async () => {
@@ -111,11 +117,35 @@ await import(workerData);
       assert.throws(() => call(runtime, { operation: 'evaluateVoid', name: 'throw.js', source: 'throw new Error("script exception");' }), /script exception/);
       assert.equal(call(runtime, { operation: 'evaluateString', name: 'alive.js', source: 'String(marker)' }), '17');
     });
-    await t.test('terminates a busy engine through the host interrupt predicate', () => {
+    await t.test('waits for an execution result without periodic wakeups', () => {
+      const originalWait = Atomics.wait;
+      let waits = 0;
+      Atomics.wait = (...args) => { waits++; return originalWait(...args); };
+      try {
+        call(runtime, { operation: 'evaluateVoid', name: 'finite.js', source: 'const end=Date.now()+100;while(Date.now()<end){}' });
+      } finally { Atomics.wait = originalWait; }
+      assert.ok(waits <= 4, `expected event notifications, observed ${waits} waits`);
+    });
+    await t.test('cancellation notifications wake a blocked caller and terminate a busy worker', async () => {
+      const control = controlFor(3000);
+      const canceller = new NodeWorker(`
+        const {workerData,parentPort}=require('node:worker_threads');
+        const signal=new Int32Array(workerData);
+        parentPort.postMessage('ready');
+        setTimeout(()=>{Atomics.store(signal,1,1);Atomics.add(signal,0,1);Atomics.notify(signal,0);},100);
+      `, { eval: true, workerData: control.buffer });
+      await new Promise(resolve => canceller.once('message', resolve));
       const started = Date.now();
-      assert.throws(() => runtime.execute({ operation: 'evaluateVoid', name: 'loop.js', source: 'for(;;){}' }, () => null, () => Date.now() - started > 100), /interrupted/);
+      assert.throws(() => runtime.execute({ operation: 'evaluateVoid', name: 'loop.js', source: 'for(;;){}' }, () => null, control), /interrupted/);
       assert.ok(Date.now() - started < 1000);
+      await canceller.terminate();
       assert.throws(() => call(runtime, { operation: 'jobs' }), /destroyed/);
+    });
+    await t.test('an exact deadline stops a worker without a predicate callback', async () => {
+      const timed = await create();
+      const started = Date.now();
+      assert.throws(() => timed.execute({ operation: 'evaluateVoid', name: 'deadline.js', source: 'for(;;){}' }, () => null, controlFor(100)), /deadline expired/);
+      assert.ok(Date.now() - started < 1000);
     });
   } finally {
     for (const runtime of runtimes) runtime.dispose();

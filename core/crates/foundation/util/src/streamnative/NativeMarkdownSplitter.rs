@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use crate::stream::plugins::StreamMarkdownPlugin::{
     StreamMarkdownBlockBracketLaTeXPlugin, StreamMarkdownBlockLaTeXPlugin,
     StreamMarkdownBlockQuotePlugin, StreamMarkdownFencedCodeBlockPlugin,
-    StreamMarkdownHeaderPlugin, StreamMarkdownImagePlugin, StreamMarkdownOrderedListPlugin,
-    StreamMarkdownTablePlugin, StreamMarkdownUnorderedListPlugin,
+    StreamMarkdownFootnoteDefinitionPlugin, StreamMarkdownHeaderPlugin, StreamMarkdownImagePlugin,
+    StreamMarkdownOrderedListPlugin, StreamMarkdownTablePlugin, StreamMarkdownUnorderedListPlugin,
 };
 use crate::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 use crate::stream::plugins::StreamXmlPlugin::StreamXmlPlugin;
@@ -32,6 +32,8 @@ pub enum MarkdownProcessorType {
     InlineLatex = 16,
     PlainText = 17,
     HtmlBreak = 18,
+    FootnoteReference = 19,
+    FootnoteDefinition = 20,
 }
 
 impl MarkdownProcessorType {
@@ -56,6 +58,8 @@ impl MarkdownProcessorType {
             16 => Some(Self::InlineLatex),
             17 => Some(Self::PlainText),
             18 => Some(Self::HtmlBreak),
+            19 => Some(Self::FootnoteReference),
+            20 => Some(Self::FootnoteDefinition),
             _ => None,
         }
     }
@@ -102,12 +106,15 @@ impl Default for RunState {
 
 #[derive(Debug, Clone, Copy)]
 struct WaitforPending {
+    c: char,
+    at_start_of_line: bool,
     global_index: usize,
     should_emit: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct PendingChar {
+    at_start_of_line: bool,
     c: char,
     global_index: usize,
 }
@@ -193,15 +200,17 @@ impl MarkdownSession {
         let mut i = 0usize;
 
         while i < chars.len() || !self.pending_chars.is_empty() {
-            let (c, forced_index) = if let Some(pending) = self.pending_chars.pop_front() {
-                (pending.c, Some(pending.global_index))
+            let (c, forced_index, sol) = if let Some(pending) = self.pending_chars.pop_front() {
+                (
+                    pending.c,
+                    Some(pending.global_index),
+                    pending.at_start_of_line,
+                )
             } else {
                 let c = chars[i];
                 i += 1;
-                (c, None)
+                (c, None, at_start_of_line)
             };
-
-            let sol = at_start_of_line;
             at_start_of_line = c == '\n';
             self.process_one(c, sol, forced_index, &mut out, &mut run);
         }
@@ -261,6 +270,8 @@ impl MarkdownSession {
                 self.waitfor_active = true;
                 self.waitfor_at_start_of_line = c == '\n';
                 self.waitfor_pending.push(WaitforPending {
+                    c,
+                    at_start_of_line,
                     global_index,
                     should_emit,
                 });
@@ -298,6 +309,17 @@ impl MarkdownSession {
             .plugin
             .process_char(c, self.waitfor_at_start_of_line);
 
+        if self.plugins[active_index].plugin.state() == PluginState::WaitFor {
+            self.waitfor_pending.push(WaitforPending {
+                c,
+                at_start_of_line: self.waitfor_at_start_of_line,
+                global_index,
+                should_emit: next_should_emit,
+            });
+            self.waitfor_at_start_of_line = c == '\n';
+            return;
+        }
+
         if self.plugins[active_index].plugin.state() == PluginState::Processing {
             for pending in self.waitfor_pending.drain(..) {
                 if pending.should_emit {
@@ -311,14 +333,23 @@ impl MarkdownSession {
             return;
         }
 
+        let mut replay = Vec::new();
         for pending in self.waitfor_pending.drain(..) {
-            if pending.should_emit {
-                Self::emit_index(
-                    out,
-                    MarkdownProcessorType::PlainText,
-                    pending.global_index,
-                    run,
-                );
+            if pending.c == '\n' && replay.is_empty() {
+                if pending.should_emit {
+                    Self::emit_index(
+                        out,
+                        MarkdownProcessorType::PlainText,
+                        pending.global_index,
+                        run,
+                    );
+                }
+            } else {
+                replay.push(PendingChar {
+                    c: pending.c,
+                    global_index: pending.global_index,
+                    at_start_of_line: pending.at_start_of_line,
+                });
             }
         }
         self.waitfor_active = false;
@@ -330,8 +361,14 @@ impl MarkdownSession {
             entry.plugin.reset();
         }
 
-        self.pending_chars
-            .push_front(PendingChar { c, global_index });
+        self.pending_chars.push_front(PendingChar {
+            c,
+            global_index,
+            at_start_of_line: self.waitfor_at_start_of_line,
+        });
+        for pending in replay.into_iter().rev() {
+            self.pending_chars.push_front(pending);
+        }
     }
 
     fn process_evaluation(
@@ -549,6 +586,10 @@ impl NativeMarkdownSplitter {
 
     fn get_block_plugins() -> Vec<PluginEntry> {
         vec![
+            PluginEntry {
+                plugin: Box::new(StreamMarkdownFootnoteDefinitionPlugin::default()),
+                tag: MarkdownProcessorType::FootnoteDefinition,
+            },
             PluginEntry {
                 plugin: Box::new(StreamMarkdownHeaderPlugin::new(true)),
                 tag: MarkdownProcessorType::Header,

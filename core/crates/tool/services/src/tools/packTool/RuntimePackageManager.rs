@@ -267,11 +267,11 @@ struct ExternalPackageScanCacheEntry {
 /// Manages JavaScript packages, ToolPkg containers, MCP packages, and package UI resources.
 pub struct RuntimePackageManager {
     pluginPackageManager: PluginPackageManager,
-    cachedMcpTools: BTreeMap<String, Vec<CachedMcpToolInfo>>,
-    externalPackageScanCache: BTreeMap<String, ExternalPackageScanCacheEntry>,
-    bundledExternalPackageScanCache: BTreeMap<String, ExternalPackageScanCacheEntry>,
-    toolPkgLoadIssues: Vec<ToolPkgLoadIssue>,
-    manualToolPkgLoadIssues: Vec<ToolPkgLoadIssue>,
+    cachedMcpTools: Arc<BTreeMap<String, Vec<CachedMcpToolInfo>>>,
+    externalPackageScanCache: Arc<BTreeMap<String, ExternalPackageScanCacheEntry>>,
+    bundledExternalPackageScanCache: Arc<BTreeMap<String, ExternalPackageScanCacheEntry>>,
+    toolPkgLoadIssues: Arc<Vec<ToolPkgLoadIssue>>,
+    manualToolPkgLoadIssues: Arc<Vec<ToolPkgLoadIssue>>,
     toolPkgCacheLock: Arc<Mutex<()>>,
     toolPkgTextResourceCache: Arc<ToolPkgTextResourceCache>,
     packageRegistryReadiness: PackageRegistryReadiness,
@@ -281,7 +281,7 @@ pub struct RuntimePackageManager {
     dataStore: CoreNodeStateStore,
     storePaths: RuntimeStorePaths,
     fileSystemHost: Arc<dyn FileSystemHost>,
-    context: HostManager,
+    context: Arc<HostManager>,
     toolHandler: crate::tools::AIToolHandler::AIToolHandler,
     mcpManager: MCPManager,
 }
@@ -314,11 +314,11 @@ impl RuntimePackageManager {
                     hostEnvironment: context.hostEnvironment.clone(),
                 }),
             ),
-            cachedMcpTools: BTreeMap::new(),
-            externalPackageScanCache: BTreeMap::new(),
-            bundledExternalPackageScanCache: BTreeMap::new(),
-            toolPkgLoadIssues: Vec::new(),
-            manualToolPkgLoadIssues: Vec::new(),
+            cachedMcpTools: Arc::new(BTreeMap::new()),
+            externalPackageScanCache: Arc::new(BTreeMap::new()),
+            bundledExternalPackageScanCache: Arc::new(BTreeMap::new()),
+            toolPkgLoadIssues: Arc::new(Vec::new()),
+            manualToolPkgLoadIssues: Arc::new(Vec::new()),
             toolPkgCacheLock: Arc::new(Mutex::new(())),
             toolPkgTextResourceCache: Arc::new(ToolPkgTextResourceCache::default()),
             packageRegistryReadiness: PackageRegistryReadiness::new(),
@@ -340,7 +340,7 @@ impl RuntimePackageManager {
             storePaths: paths,
             fileSystemHost,
             mcpManager: MCPManager::getInstance(context.clone()),
-            context,
+            context: Arc::new(context),
             toolHandler,
         };
         manager
@@ -2206,7 +2206,7 @@ impl RuntimePackageManager {
                 packageKind,
             );
         }
-        self.externalPackageScanCache
+        Arc::make_mut(&mut self.externalPackageScanCache)
             .remove(&destinationFile.to_string_lossy().to_string());
         self.loadAvailablePackages();
         format!(
@@ -2246,6 +2246,12 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Resolves one executable without materializing the complete effective package.
+    pub(crate) fn selectPackageTool(&self, packageName: &str, functionName: &str)
+        -> Result<operit_plugin_sdk::package::PackageTool, String> {
+        self.pluginPackageManager.effectiveTool(packageName, functionName)
+    }
+
     /// Returns raw package tool metadata by package name.
     #[operit_route_macros::operit_plugin_sdk_expose]
     pub fn getPackageTools(&self, packageName: &str) -> Option<ToolPackage> {
@@ -2278,7 +2284,7 @@ impl RuntimePackageManager {
     /// Returns every package load or import issue currently shown by the manager.
     #[operit_route_macros::operit_plugin_sdk_expose]
     pub fn getToolPkgLoadIssues(&self) -> Vec<ToolPkgLoadIssue> {
-        let mut issues = self.toolPkgLoadIssues.clone();
+        let mut issues = self.toolPkgLoadIssues.as_ref().clone();
         for entry in self.bundledExternalPackageScanCache.values() {
             appendUniqueToolPkgLoadIssues(&mut issues, &entry.result.issues);
         }
@@ -2308,13 +2314,13 @@ impl RuntimePackageManager {
             message.to_string(),
             packageKind,
         );
-        appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &[issue]);
+        appendUniqueToolPkgLoadIssues(Arc::make_mut(&mut self.manualToolPkgLoadIssues), &[issue]);
     }
 
     /// Removes manual import issues resolved by a successful package operation.
     #[allow(non_snake_case)]
     fn clearManualToolPkgLoadIssues(&mut self, sourcePath: &str, packageName: Option<&str>) {
-        self.manualToolPkgLoadIssues.retain(|issue| {
+        Arc::make_mut(&mut self.manualToolPkgLoadIssues).retain(|issue| {
             issue.sourcePath != sourcePath
                 && packageName.is_none_or(|name| issue.packageName.as_deref() != Some(name))
         });
@@ -2351,7 +2357,7 @@ impl RuntimePackageManager {
             .deactivatePackage(&normalizedServerName);
         self.pluginPackageManager
             .clearActivePackageState(&normalizedServerName);
-        self.cachedMcpTools.remove(&normalizedServerName);
+        Arc::make_mut(&mut self.cachedMcpTools).remove(&normalizedServerName);
         removed
     }
 
@@ -2765,7 +2771,7 @@ impl RuntimePackageManager {
             );
             results.push(result);
         }
-        self.externalPackageScanCache = nextCache;
+        self.externalPackageScanCache = Arc::new(nextCache);
         self.mergePackageScanCandidateResults(results, Some(baseSnapshot))
     }
 
@@ -2796,7 +2802,7 @@ impl RuntimePackageManager {
             );
             results.push(result);
         }
-        self.bundledExternalPackageScanCache = nextCache;
+        self.bundledExternalPackageScanCache = Arc::new(nextCache);
         results
     }
 
@@ -3472,7 +3478,7 @@ impl RuntimePackageManager {
             .replaceAvailablePackages(snapshot.availablePackages);
         self.pluginPackageManager
             .replaceToolPkgRuntimes(snapshot.toolPkgContainers, snapshot.toolPkgSubpackages);
-        self.toolPkgLoadIssues = snapshot.toolPkgLoadIssues;
+        self.toolPkgLoadIssues = Arc::new(snapshot.toolPkgLoadIssues);
     }
 
     #[allow(non_snake_case)]
@@ -3799,7 +3805,7 @@ impl RuntimePackageManager {
             let (loadResult, loadIssues) = self
                 .loadToolPkgFromExternalFileWithIssues(&file, scope)
                 .map_err(|error| format!("Error importing package: {error}"))?;
-            appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &loadIssues);
+            appendUniqueToolPkgLoadIssues(Arc::make_mut(&mut self.manualToolPkgLoadIssues), &loadIssues);
             let packageName = loadResult.containerPackage.name.clone();
             let marketOrigin = loadResult.marketOrigin.clone();
             if !self.canImportToolPkg(&loadResult)? {
@@ -3826,7 +3832,7 @@ impl RuntimePackageManager {
             let (importedLoadResult, importedLoadIssues) = self
                 .loadToolPkgFromExternalFileWithIssues(&destinationFile, scope)
                 .map_err(|error| format!("Error importing package: {error}"))?;
-            appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &importedLoadIssues);
+            appendUniqueToolPkgLoadIssues(Arc::make_mut(&mut self.manualToolPkgLoadIssues), &importedLoadIssues);
             if !self.registerImportedToolPkg(importedLoadResult)? {
                 return Err(format!(
                     "A package with name '{}' already exists in available packages",
@@ -3916,7 +3922,7 @@ impl RuntimePackageManager {
             ExtensionStore::default().customizePackage(
                 &packageMetadata.name, &fileName.to_string_lossy(), vec![packageMetadata.name.clone()],
             )?;
-            self.externalPackageScanCache.remove(&hostPath(&destinationFile));
+            Arc::make_mut(&mut self.externalPackageScanCache).remove(&hostPath(&destinationFile));
             self.loadAvailablePackages();
         } else {
             self.registerScope(
@@ -4034,7 +4040,7 @@ impl RuntimePackageManager {
         self.saveEnabledPackageNames(&enabledNames)
             .map_err(|error| error.to_string())?;
         ExtensionStore::default().customizePackage(&name, &source, members)?;
-        self.externalPackageScanCache.remove(&path);
+        Arc::make_mut(&mut self.externalPackageScanCache).remove(&path);
         self.loadAvailablePackages();
         Ok(self
             .getToolPkgContainerRuntime(&name)
@@ -4362,7 +4368,7 @@ impl RuntimePackageManager {
             }
             let (preview, previewIssues) =
                 self.loadToolPkgFromMarketFileWithIssues(&stagingFile, scope)?;
-            appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &previewIssues);
+            appendUniqueToolPkgLoadIssues(Arc::make_mut(&mut self.manualToolPkgLoadIssues), &previewIssues);
             let packageName = preview.containerPackage.name.clone();
             if !self.canImportToolPkg(&preview)? {
                 return Err(format!(
@@ -4385,7 +4391,7 @@ impl RuntimePackageManager {
             destinationStored = true;
             let (loaded, loadedIssues) =
                 self.loadToolPkgFromMarketFileWithIssues(&destinationFile, scope)?;
-            appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &loadedIssues);
+            appendUniqueToolPkgLoadIssues(Arc::make_mut(&mut self.manualToolPkgLoadIssues), &loadedIssues);
             if !self.registerImportedToolPkg(loaded)? {
                 return Err(format!(
                     "Failed to register toolpkg '{}' due to naming conflict",
@@ -4446,7 +4452,7 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     /// Stores cached MCP tool descriptions for a server package.
     pub fn setCachedMcpTools(&mut self, serverName: String, tools: Vec<CachedMcpToolInfo>) {
-        self.cachedMcpTools.insert(serverName, tools);
+        Arc::make_mut(&mut self.cachedMcpTools).insert(serverName, tools);
     }
 
     #[allow(non_snake_case)]
@@ -4797,7 +4803,7 @@ impl RuntimePackageManager {
             return format!("Cannot get MCP server configuration: {}", serverName);
         };
         let tools = crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient::new(
-            self.context.clone(),
+            self.context.as_ref().clone(),
             serverConfig.name.clone(),
         )
         .getTools();

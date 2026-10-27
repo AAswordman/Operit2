@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8"><title>Operit iOS CPU flamegraphs</title>
+<style>body{font:15px system-ui;margin:24px;background:#10151f;color:#e5edf8}button,select,input{font:inherit;padding:7px;margin:4px;background:#243146;color:inherit;border:1px solid #526681;border-radius:4px}svg{width:100%;background:#172130}text{fill:#121821;font:11px monospace;pointer-events:none}h1{font-size:24px}#tip{white-space:pre-wrap;background:#243146;padding:12px;min-height:35px}#cpu text{fill:#d7e5fa}.note{color:#adc1da;max-width:1100px;line-height:1.6}table{border-collapse:collapse}td,th{padding:8px 18px;text-align:left;border-bottom:1px solid #344257}#graph{overflow:auto;max-height:75vh}#flame rect:hover{stroke:white;stroke-width:1.5;cursor:pointer}</style>
+<h1>Operit · iPhone 18 Pro Max Simulator CPU</h1>
+<p class="note">真实运行实例 / Flutter VM + Instruments。每个矩形表示运行中的 CPU 堆栈采样；宽度是采样权重。点击矩形放大，点击 Reset 返回。Native 和 Dart 是不同采样集合，百分比不能相加。单核满载 = 100%；CPU 曲线约 100 ms 一个样本。模拟器数据不代表真机温度或功耗。</p>
+<table id="summary"><tr><th>阶段</th><th>平均 CPU</th><th>100 ms 峰值</th><th>Native 样本</th><th>Dart 样本</th></tr></table>
+<svg id="cpu" viewBox="0 0 1400 180"></svg>
+<div><select id="stage"></select><select id="kind"><option value="native">Native / all app threads</option><option value="dart">Dart / UI isolate</option></select><input id="search" placeholder="Search function"><button id="reset">Reset zoom</button></div>
+<div id="tip">Hover a frame to inspect its full function name and percentage.</div><div id="graph"><svg id="flame"></svg></div>
+<script>
+const DATA=__PROFILE_DATA__;
+const NS='http://www.w3.org/2000/svg',sel=document.querySelector('#stage'),kind=document.querySelector('#kind'),flame=document.querySelector('#flame');let zoom=null;
+function el(tag,attrs,parent,text){let e=document.createElementNS(NS,tag);for(let k in attrs)e.setAttribute(k,attrs[k]);if(text!==undefined)e.textContent=text;parent.append(e);return e;}
+function percent(x){return x==null?'—':x.toFixed(1)+'%'}
+DATA.stages.forEach((s,i)=>{let o=document.createElement('option');o.value=i;o.textContent=s.name;sel.append(o);let tr=document.createElement('tr');[s.name,percent(s.cpu.meanPercent),percent(s.cpu.peak100msPercent),s.cpu.nativeSampleCount,s.dartSampleCount].forEach((v,j)=>{let td=document.createElement('td');td.textContent=v;tr.append(td)});document.querySelector('#summary').append(tr)});
+function draw(){let data=DATA.stages[sel.value||0],root=zoom||data[kind.value],search=document.querySelector('#search').value.toLowerCase(),max=0;flame.replaceChildren();function row(n,x,y,w){if(w<.8)return;max=Math.max(max,y);let hash=0;for(const c of n.name)hash=(hash*31+c.charCodeAt(0))|0;let fill=search&&n.name.toLowerCase().includes(search)?'#ff76ba':`hsl(${Math.abs(hash)%55+12} 80% ${58+Math.abs(hash)%19}%)`;let rect=el('rect',{x,y:y*21,width:Math.max(0,w-1),height:20,fill},flame);rect.onclick=()=>{zoom=n;draw()};rect.onmousemove=()=>document.querySelector('#tip').textContent=n.name+'\n'+(n.value/root.value*100).toFixed(2)+'% of zoom · '+n.value.toFixed(2)+' sampled CPU ms';if(w>35)el('text',{x:x+3,y:y*21+14},flame,n.name.slice(0,Math.max(0,Math.floor(w/6.6)-1)));let cx=x;for(let child of n.children){let cw=w*child.value/n.value;row(child,cx,y+1,cw);cx+=cw}}
+ if(root.value)row(root,0,0,1400);flame.setAttribute('viewBox',`0 0 1400 ${(max+1)*21}`);flame.style.height=((max+1)*21)+'px';}
+sel.onchange=kind.onchange=()=>{zoom=null;draw()};document.querySelector('#search').oninput=draw;document.querySelector('#reset').onclick=()=>{zoom=null;draw()};sel.value=DATA.stages.findIndex(s=>s.name==='receiveStreamWithRealUi');draw();
+const cpu=document.querySelector('#cpu'),last=DATA.cpu.at(-1)?.[0]||1,peak=Math.max(100,...DATA.cpu.map(p=>p[1]));
+for(const [a,b,name] of DATA.bounds){el('rect',{x:50+a/last*1320,y:10,width:(b-a)/last*1320,height:140,fill:'#24374d'},cpu);}
+for(let n=0;n<=3;n++){let v=peak*n/3,y=150-v/peak*140;el('line',{x1:50,x2:1370,y1:y,y2:y,stroke:'#3b506b'},cpu);el('text',{x:0,y:y+4},cpu,v.toFixed(0)+'%')}
+el('polyline',{points:DATA.cpu.map(([t,v])=>`${50+t/last*1320},${150-v/peak*140}`).join(' '),fill:'none',stroke:'#68dbef','stroke-width':2},cpu);el('text',{x:50,y:174},cpu,'0 s');el('text',{x:1280,y:174},cpu,last.toFixed(1)+' s');
+</script>

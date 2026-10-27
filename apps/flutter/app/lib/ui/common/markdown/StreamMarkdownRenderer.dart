@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:ui' as ui;
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/logging/ClientLogger.dart';
@@ -13,7 +12,9 @@ import '../interactions/MessagePressShield.dart';
 import 'EnhancedCodeBlock.dart';
 import 'EnhancedTableBlock.dart';
 import 'MarkdownNodeGrouper.dart';
+import 'MarkdownTextReveal.dart';
 import 'MarkdownBlockQuote.dart';
+import 'MarkdownFootnotes.dart';
 import 'MarkdownImageRenderer.dart';
 import 'MarkdownInlineSpannable.dart';
 import 'MarkdownLatexBlock.dart';
@@ -414,17 +415,35 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
       splitMarkdownContent: widget.splitMarkdownContent,
     );
+    final inheritedFootnotes = MarkdownFootnoteScope.maybeOf(context);
+    final scopedContent = MarkdownFootnoteScope(
+      definitions: {
+        ...?inheritedFootnotes?.definitions,
+        for (final node in _rendererState.renderNodes)
+          if (node.type == MarkdownNodeType.footnoteDefinition)
+            node.sourcePrefix: node,
+      },
+      definitionBuilder: (definition) => CanvasMarkdownNodeRenderer(
+        nodeKey: 'footnote-${definition.sourcePrefix}',
+        node: definition,
+        textColor: widget.textColor,
+        backgroundColor: widget.backgroundColor,
+        isLastNode: true,
+        onLinkClick: widget.onLinkClick,
+        splitMarkdownContent: widget.splitMarkdownContent,
+      ),
+      child: content,
+    );
     if (!widget.selectionRoot) {
-      return content;
+      return scopedContent;
     }
-    return SelectionArea(child: content);
+    return SelectionArea(child: scopedContent);
   }
 }
 
 const double _markdownParagraphBreakHeight = 4;
 const double _markdownParagraphBottomPadding = 6;
 const double _markdownListItemBottomPadding = 2;
-const double _markdownCanvasLineHeightMultiplier = 1.3;
 final _StaticMarkdownNodeCache _staticMarkdownNodeCache =
     _StaticMarkdownNodeCache(maxEntries: 48);
 
@@ -987,14 +1006,17 @@ bool _canTypewriteNode(MarkdownNodeType type) {
   return type == MarkdownNodeType.plainText ||
       type == MarkdownNodeType.header ||
       type == MarkdownNodeType.orderedList ||
-      type == MarkdownNodeType.unorderedList;
+      type == MarkdownNodeType.unorderedList ||
+      type == MarkdownNodeType.footnoteDefinition;
 }
 
 int _markdownVisibleLength(String text, List<MarkdownNodeStable> children) {
   if (children.isEmpty) return text.characters.length;
   var length = 0;
   for (final child in children) {
-    length += child.type == MarkdownNodeType.inlineLatex
+    length +=
+        (child.type == MarkdownNodeType.inlineLatex ||
+            child.type == MarkdownNodeType.footnoteReference)
         ? 1
         : _markdownVisibleLength(child.content, child.children);
   }

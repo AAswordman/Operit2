@@ -1123,6 +1123,8 @@ MarkdownNodeType markdownNodeTypeFromLabel(String? label) {
     'Underline' => MarkdownNodeType.underline,
     'InlineLatex' => MarkdownNodeType.inlineLatex,
     'HtmlBreak' => MarkdownNodeType.htmlBreak,
+    'FootnoteReference' => MarkdownNodeType.footnoteReference,
+    'FootnoteDefinition' => MarkdownNodeType.footnoteDefinition,
     _ => throw StateError('Unknown markdown node type $label'),
   };
 }

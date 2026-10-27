@@ -36,7 +36,37 @@ struct RuntimeTaskPool {
 /// Shares ready tasks without assigning the receive wait to any single worker.
 pub(crate) struct RuntimeTaskQueue {
     pending: Arc<Mutex<TaskQueueState>>,
-    changed: Arc<tokio::sync::watch::Sender<()>>,
+    changed: Arc<WorkerSignals>,
+}
+
+/// Each dispatcher owns one receiver, so a queue handoff never wakes the whole pool.
+struct WorkerSignals {
+    workers: Vec<tokio::sync::watch::Sender<()>>,
+}
+
+impl TaskQueueState {
+    fn selectedWorker(&self) -> Option<usize> {
+        if self.pending.is_empty() { return None; }
+        (0..self.active.len())
+            .map(|offset| (self.cursor + offset) % self.active.len())
+            .filter(|worker| !self.polling[*worker])
+            .min_by_key(|worker| self.active[*worker])
+    }
+}
+
+impl WorkerSignals {
+    /// Keep the chosen worker and its durable notification consistent under the queue lock.
+    /// A worker entering a blocking poll hands queued work to another eligible worker.
+    fn wakeNext(&self, state: &Mutex<TaskQueueState>) {
+        let state = state.lock().expect("runtime task queue mutex poisoned");
+        if let Some(worker) = state.selectedWorker() {
+            let _ = self.workers[worker].send(());
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        self.workers.iter().all(tokio::sync::watch::Sender::is_closed)
+    }
 }
 
 struct TaskQueueState {
@@ -49,13 +79,13 @@ struct TaskQueueState {
 struct TrackedTask {
     future: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
     state: Arc<Mutex<TaskQueueState>>,
-    changed: std::sync::Weak<tokio::sync::watch::Sender<()>>,
+    changed: std::sync::Weak<WorkerSignals>,
     worker: usize,
 }
 
 struct PollLease<'a> {
     state: &'a Mutex<TaskQueueState>,
-    changed: &'a std::sync::Weak<tokio::sync::watch::Sender<()>>,
+    changed: &'a std::sync::Weak<WorkerSignals>,
     worker: usize,
 }
 
@@ -67,7 +97,7 @@ impl Drop for PollLease<'_> {
             .expect("runtime task queue mutex poisoned")
             .polling[self.worker] = false;
         if let Some(changed) = self.changed.upgrade() {
-            let _ = changed.send(());
+            changed.wakeNext(self.state);
         }
     }
 }
@@ -90,7 +120,7 @@ impl std::future::Future for TrackedTask {
             worker: this.worker,
         };
         if let Some(changed) = this.changed.upgrade() {
-            let _ = changed.send(());
+            changed.wakeNext(&this.state);
         }
         this.future.as_mut().poll(cx)
     }
@@ -104,13 +134,13 @@ impl Drop for TrackedTask {
             .expect("runtime task queue mutex poisoned")
             .active[self.worker] -= 1;
         if let Some(changed) = self.changed.upgrade() {
-            let _ = changed.send(());
+            changed.wakeNext(&self.state);
         }
     }
 }
 
 impl RuntimeTaskQueue {
-    /// Wakes every dispatcher so a blocked worker cannot retain the only notification.
+    /// Wakes the selected eligible dispatcher; polling workers hand queued work onward.
     pub(crate) fn send(&self, task: HostRuntimeAsyncTask) -> Result<(), ()> {
         self.sendMany(vec![task])
     }
@@ -128,7 +158,8 @@ impl RuntimeTaskQueue {
         }
         pending.pending.extend(tasks);
         drop(pending);
-        self.changed.send(()).map_err(|_| ())
+        self.changed.wakeNext(&self.pending);
+        Ok(())
     }
 }
 
@@ -150,11 +181,12 @@ pub(crate) fn spawnTaskPoolWithOptions(
         polling: vec![false; count],
         cursor: 0,
     }));
-    let (changed, updates) = tokio::sync::watch::channel(());
-    let changed = Arc::new(changed);
-    for index in 0..count {
+    if count == 0 { return Err("A task pool requires at least one worker".to_string()); }
+    let (signals, receivers): (Vec<_>, Vec<_>) = (0..count)
+        .map(|_| tokio::sync::watch::channel(())).unzip();
+    let changed = Arc::new(WorkerSignals { workers: signals });
+    for (index, mut updates) in receivers.into_iter().enumerate() {
         let pending = pending.clone();
-        let mut updates = updates.clone();
         let changed = Arc::downgrade(&changed);
         let (ready, started) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -186,10 +218,7 @@ pub(crate) fn spawnTaskPoolWithOptions(
                         let task = {
                             let mut state =
                                 pending.lock().expect("runtime task queue mutex poisoned");
-                            let selected = (0..count)
-                                .map(|offset| (state.cursor + offset) % count)
-                                .filter(|worker| !state.polling[*worker])
-                                .min_by_key(|worker| state.active[*worker]);
+                            let selected = state.selectedWorker();
                             if selected == Some(index) {
                                 let task = state.pending.pop_front();
                                 if task.is_some() {
@@ -215,7 +244,7 @@ pub(crate) fn spawnTaskPoolWithOptions(
                             worker: index,
                         });
                         if let Some(changed) = changed.upgrade() {
-                            let _ = changed.send(());
+                            changed.wakeNext(&pending);
                         }
                         // Let the LocalSet start the task and keep the receive
                         // handoff fair when many tasks arrive in one burst.
@@ -265,6 +294,55 @@ mod tests {
     use super::*;
     use std::{rc::Rc, sync::mpsc, time::Duration};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Queue state changes with no ready work must not wake idle dispatchers.
+    #[test]
+    fn empty_queue_does_not_notify_dispatchers() {
+        let (sender, receiver) = tokio::sync::watch::channel(());
+        let signals = WorkerSignals { workers: vec![sender] };
+        let state = Mutex::new(TaskQueueState { pending: VecDeque::new(), active: vec![0],
+            polling: vec![false], cursor: 0 });
+        signals.wakeNext(&state);
+        assert!(!receiver.has_changed().unwrap());
+    }
+
+    /// Only the selected worker sees an update, including before it starts awaiting.
+    #[test]
+    fn notification_targets_selected_worker_and_survives_until_receive() {
+        let (senders, receivers): (Vec<_>, Vec<_>) = (0..3)
+            .map(|_| tokio::sync::watch::channel(())).unzip();
+        let signals = WorkerSignals { workers: senders };
+        let state = Mutex::new(TaskQueueState {
+            pending: VecDeque::from([Box::new(|| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> { Box::pin(async {}) }) as HostRuntimeAsyncTask]),
+            active: vec![0, 0, 0], polling: vec![true, false, false], cursor: 0,
+        });
+        signals.wakeNext(&state);
+        assert!(!receivers[0].has_changed().unwrap());
+        assert!(receivers[1].has_changed().unwrap());
+        assert!(!receivers[2].has_changed().unwrap());
+        // If the notified worker begins blocking before dispatch, hand off to the next one.
+        state.lock().unwrap().polling[1] = true;
+        signals.wakeNext(&state);
+        assert!(receivers[2].has_changed().unwrap());
+    }
+
+    /// One notification must drain an admitted burst without losing later queue handoffs.
+    #[test]
+    fn directed_notifications_drain_a_burst() {
+        let queue = spawnTaskPool("test-directed-burst", 4).unwrap();
+        let (sent, received) = mpsc::channel();
+        let tasks = (0..256).map(|index| {
+            let sent = sent.clone();
+            Box::new(move || Box::pin(async move {
+                tokio::task::yield_now().await;
+                sent.send(index).unwrap();
+            }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) as HostRuntimeAsyncTask
+        }).collect();
+        queue.sendMany(tasks).unwrap();
+        let mut delivered = std::collections::BTreeSet::new();
+        for _ in 0..256 { delivered.insert(received.recv_timeout(Duration::from_secs(5)).unwrap()); }
+        assert_eq!(delivered.len(), 256);
+    }
 
     /// A resumed blocking call must not retain the queue needed by an idle worker.
     #[test]

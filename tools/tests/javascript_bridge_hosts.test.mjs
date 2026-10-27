@@ -181,6 +181,10 @@ function timerRuntime() {
     /** Receives the exact native execution owner. */
     __operitNativeActivateCall() {},
     __operitCurrentCallId: 'owner',
+    /** Internal timer subscriptions use the original Promise method; timers retain their owner. */
+    __operitThenUntracked(promise, fulfilled, rejected) {
+      return Promise.prototype.then.call(promise, fulfilled, rejected);
+    },
     /** Records each native timer Promise under its explicit cancellation scope. */
     __operitNativeScheduleJavaScriptTimer(scope, delay) {
       return new Promise((resolve, reject) => nativeTimers.set(scope, { delay, resolve, reject }));

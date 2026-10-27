@@ -257,6 +257,8 @@ Future<String> _renderCopyBlock(
       return _renderCopyInline(node);
     case MarkdownNodeType.unorderedList:
       return '• ${_renderCopyInline(node)}';
+    case MarkdownNodeType.footnoteDefinition:
+      return '[${node.sourcePrefix}] ${_renderCopyInline(node)}';
     case MarkdownNodeType.orderedList:
       return '${node.sourcePrefix.trim()} ${_renderCopyInline(node)}';
     case MarkdownNodeType.blockQuote:
@@ -273,12 +275,16 @@ Future<String> _renderCopyBlock(
     case MarkdownNodeType.strikethrough:
     case MarkdownNodeType.underline:
     case MarkdownNodeType.inlineLatex:
+    case MarkdownNodeType.footnoteReference:
       return _renderCopyInline(node);
   }
 }
 
 /// Renders inline AST nodes without Markdown decoration.
 String _renderCopyInline(MarkdownNodeStable node) {
+  if (node.type == MarkdownNodeType.footnoteReference) {
+    return '[${node.content}]';
+  }
   if (node.type == MarkdownNodeType.inlineLatex) {
     return extractLatexContent(node.content.trim()).trim();
   }

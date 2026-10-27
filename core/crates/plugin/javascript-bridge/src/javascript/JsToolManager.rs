@@ -92,10 +92,10 @@ impl JsToolManager {
     #[allow(non_snake_case)]
     async fn withExecutionEngineForPackage<T>(
         &self,
-        selection: &JsPackageToolSelection,
+        runtime: Option<&operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgSubpackageRuntime>,
         block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<JsExecutionResult<T>>,
     ) -> JsExecutionResult<T> {
-        if let Some(runtime) = selection.toolpkg_runtime.as_ref() {
+        if let Some(runtime) = runtime {
             let contextKey = format!("toolpkg_main:{}", runtime.containerPackageName);
             let engine = self
                 .packageRuntime
@@ -370,14 +370,9 @@ impl JsToolManager {
         let runtimeParams = self
             .convertToolParameters(&request, &packageName, &selection)
             .map_err(|error| JsExecutionError::invalid_request(error.message))?;
-        self.withExecutionEngineForPackage(&selection, |engine| {
-            engine.execute_script_function(
-                &selection.definition.script,
-                &functionName,
-                &runtimeParams,
-                &BTreeMap::new(),
-                None,
-                true,
+        self.withExecutionEngineForPackage(selection.toolpkg_runtime.as_ref(), |engine| {
+            engine.execute_script_function_owned(
+                selection.definition.script, functionName, runtimeParams, BTreeMap::new(),
             )
         })
         .await
@@ -407,14 +402,9 @@ impl JsToolManager {
         };
 
         let result = self
-            .withExecutionEngineForPackage(&selection, |engine| {
-                engine.execute_script_function(
-                    &selection.definition.script,
-                    &functionName,
-                    &runtimeParams,
-                    &BTreeMap::new(),
-                    None,
-                    true,
+            .withExecutionEngineForPackage(selection.toolpkg_runtime.as_ref(), |engine| {
+                engine.execute_script_function_owned(
+                    selection.definition.script, functionName, runtimeParams, BTreeMap::new(),
                 )
             })
             .await;

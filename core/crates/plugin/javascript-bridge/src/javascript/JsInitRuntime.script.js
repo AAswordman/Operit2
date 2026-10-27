@@ -180,6 +180,9 @@
         var callState = getCallState(callId);
         if (!callState) return;
         callState.pendingReferences = Math.max(0, Number(callState.pendingReferences || 0) - 1);
+        if (callState.detached && callState.pendingReferences === 0) {
+            root.__operitNotifyDetachedCall(callId);
+        }
     }
 
     /** Finalizes one detached call after its queued JavaScript jobs are delivered. */
@@ -250,6 +253,10 @@
     });
 
     var originalThen = Promise.prototype.then;
+    /** Internal timer reactions already retain their owner through the timer registration. */
+    expose('__operitThenUntracked', function(promise, fulfilled, rejected) {
+        return originalThen.call(promise, fulfilled, rejected);
+    });
     /** Retains each subscribed reaction until delivery under its exact execution owner. */
     Promise.prototype.then = function(onFulfilled, onRejected) {
         var ownerCallId = normalizeCallId(root.__operitCurrentCallId);

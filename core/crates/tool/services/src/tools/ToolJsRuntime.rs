@@ -63,7 +63,10 @@ impl PackageManagerJsRuntime {
 impl JsPackageRuntime for PackageManagerJsRuntime {
     /// Returns the current host language for package JavaScript.
     fn package_language(&self) -> Result<String, String> {
-        let language = LocaleUtils::getCurrentLanguage(&self.tool_handler.getContext(), "")?;
+        let host = self.tool_handler.systemOperationHost()
+            .ok_or("SystemOperationHost is required to resolve system language")?;
+        let language = host.getSystemLanguageCode().map_err(|error| error.to_string())?;
+        let language = LocaleUtils::resolve_supported_language_code(&language);
         let language = language.trim();
         if language.is_empty() {
             return Err("Host returned an empty package language".to_string());
@@ -82,14 +85,10 @@ impl JsPackageRuntime for PackageManagerJsRuntime {
             .lock()
             .map_err(|error| error.to_string())?;
         manager.packageRegistryReadiness().require_ready()?;
-        let package = manager
-            .getEffectivePackageTools(package_name)
-            .ok_or_else(|| format!("Package not registered: {package_name}"))?;
         if !manager.isPackageEnabled(package_name) {
             return Err(format!("Package is disabled: {package_name}"));
         }
-        let definition =
-            operit_plugin_sdk::javascript::select_registered_package_tool(package, function_name)?;
+        let definition = manager.selectPackageTool(package_name, function_name)?;
         Ok(operit_plugin_sdk::javascript::JsPackageToolSelection {
             definition,
             active_state_id: manager.getActivePackageStateId(package_name),
@@ -103,12 +102,15 @@ impl JsPackageRuntime for PackageManagerJsRuntime {
         context_key: &str,
         container_package_name: &str,
     ) -> Result<Arc<dyn JsExecutionEngine>, String> {
-        let manager = self
+        let engines = self
             .package_manager
             .lock()
-            .expect("package manager mutex poisoned")
+            .map_err(|error| error.to_string())?
+            .toolPkgManager()
             .clone();
-        manager.getToolPkgExecutionEngine(context_key, container_package_name)
+        // Only the Arc-backed engine registry crosses the lock boundary. Engine
+        // creation can re-enter the package catalog, so never hold its lock here.
+        engines.getToolPkgExecutionEngine(context_key, container_package_name)
     }
 }
 

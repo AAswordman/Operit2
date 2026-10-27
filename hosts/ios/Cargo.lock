@@ -1370,6 +1370,7 @@ dependencies = [
  "security-framework",
  "serde",
  "serde_json",
+ "tokio",
  "tungstenite",
  "uuid",
  "zip",

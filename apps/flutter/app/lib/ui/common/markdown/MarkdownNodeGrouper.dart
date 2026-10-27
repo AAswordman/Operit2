@@ -150,6 +150,8 @@ enum MarkdownNodeType {
   underline,
   inlineLatex,
   htmlBreak,
+  footnoteReference,
+  footnoteDefinition,
 }
 
 class MarkdownNodeStable {
