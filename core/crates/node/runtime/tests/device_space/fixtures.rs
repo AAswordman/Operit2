@@ -126,6 +126,15 @@ impl RuntimePeerService for ApprovalMeshPeer {
                 CoreLinkError::new("TEST_BEFORE_DELIVERY", "Request not delivered"),
             );
         }
+        if matches!(fault, Some(CallFault::MethodDenied)) {
+            return CoreCallResponse::err(
+                id,
+                CoreLinkError::new(
+                    "PEER_SYNC_METHOD_DENIED",
+                    "Method is not a peer synchronization operation",
+                ),
+            );
+        }
         let endpoint = self.endpoints.lock().unwrap().get(node).cloned().unwrap();
         let response = endpoint.routedCall(self.local.clone(), request).await;
         match fault {
@@ -260,6 +269,7 @@ fn mergedChainFixture(routers: &[&CoreNodeRouter]) {
 enum CallFault {
     BeforeDelivery,
     AfterDelivery,
+    MethodDenied,
     PausedResponse {
         arrived: tokio::sync::oneshot::Sender<()>,
         release: tokio::sync::oneshot::Receiver<()>,

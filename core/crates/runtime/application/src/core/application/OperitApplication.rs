@@ -46,6 +46,7 @@ use operit_store::SyncOperationStore::{
     boundSyncOperationPage, compactSyncOperations, SyncOperation, SyncOperationKnowledge,
     SyncOperationSemantics, SyncOperationStore, SyncReceipt, DEFAULT_SYNC_PAGE_BYTES,
 };
+use sha2::{Digest, Sha256};
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::runtime_support::ToolRuntimeDependencies;
@@ -873,6 +874,60 @@ impl OperitApplication {
             .map_err(|error| error.to_string())?;
         result["errors"] = serde_json::json!(errors);
         Ok(result)
+    }
+
+    /// Returns a compact change fingerprint of the state a full synchronization
+    /// pass would exchange. Peers poll this instead of the full receipt: the
+    /// receipt carries one exact range per synced entity, which grows with the
+    /// Space and made every idle probe transfer the complete clock.
+    ///
+    /// Only durable operation clocks are fingerprinted. A storage-handle close
+    /// publishes a process mutation without writing any operation, so the
+    /// mutation revision cannot distinguish real changes from idle opens.
+    /// Device preferences and projected control operations change no clock,
+    /// but the device that made them detects them in its own local-state
+    /// summary and starts the pass that pushes them to its peers.
+    #[allow(non_snake_case)]
+    pub fn syncClockDigest(&self) -> Result<serde_json::Value, String> {
+        let store = self.runtimeSyncOperationStore()?;
+        let mut clock = store
+            .currentLocalClock()
+            .map_err(|error| error.to_string())?;
+        // Chat operations live in their own SQL journal; merge its clock the
+        // same way the local-state summary does so chat-only writes are seen.
+        if operit_util::RuntimeStoreRoot::default_runtime_store_root_config().is_some() {
+            match SqlChatSyncStore::default() {
+                Ok(sqlStore) => match sqlStore.localClock() {
+                    Ok(sqlClock) => {
+                        for (deviceId, sequence) in sqlClock.sequences {
+                            if sequence > clock.sequenceFor(&deviceId) {
+                                clock.setSequence(deviceId, sequence);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        operit_util::AppLogger::AppLogger::v_with_level(
+                            "CoreSyncTrace",
+                            &format!("sync_clock_digest.chat_clock_unavailable error={error}"),
+                            operit_util::AppLogger::VERBOSE_LEVEL_6,
+                        );
+                    }
+                },
+                Err(error) => {
+                    operit_util::AppLogger::AppLogger::v_with_level(
+                        "CoreSyncTrace",
+                        &format!("sync_clock_digest.chat_storage_unavailable error={error}"),
+                        operit_util::AppLogger::VERBOSE_LEVEL_6,
+                    );
+                }
+            }
+        }
+        let fingerprint = serde_json::to_vec(&clock).map_err(|error| error.to_string())?;
+        let digest = Sha256::digest(&fingerprint);
+        Ok(serde_json::json!({
+            "protocolVersion": 1,
+            "digest": format!("{digest:x}"),
+        }))
     }
 
     /// Exports missing operations while reporting independently unavailable storage engines.

@@ -558,9 +558,12 @@ impl SpacePersistenceSyncService {
     /// trigger: the replication journal clock (journal plus chat storage,
     /// mirroring the application clock), projected operations and preferences.
     /// Projected operations advance neither clock, so their count is what
-    /// makes this device push relayed authority to its peers. Read through
-    /// local stores directly: gating must never enter the application
-    /// backend, which non-storage peers are not permitted to reach.
+    /// makes this device push relayed authority to its peers. Device
+    /// preferences have their own revision. The process mutation revision is
+    /// deliberately excluded: opening and closing a storage handle publishes
+    /// it without writing any data, which would schedule a pass per plugin
+    /// read. Read through local stores directly: gating must never enter the
+    /// application backend, which non-storage peers are not permitted to reach.
     async fn localStateSummary(&self) -> Result<String, String> {
         let storageHost = self.state.localRuntime.runtimeStorageHost();
         let mut clock = operit_store::SyncOperationStore::SyncOperationStore::new(
@@ -600,11 +603,10 @@ impl SpacePersistenceSyncService {
         }
         let control = NetworkControlStore::new(storageHost)?;
         Ok(format!(
-            "{}#{}#{}#{}",
+            "{}#{}#{}",
             serde_json::to_string(&clock).map_err(|error| error.to_string())?,
             control.projectionEntryCount()?,
-            operit_store::DevicePreferencesStore::devicePreferencesMutationRevision(),
-            operit_store::SyncOperationStore::syncMutationRevision()
+            operit_store::DevicePreferencesStore::devicePreferencesMutationRevision()
         ))
     }
 
@@ -674,17 +676,42 @@ impl SpacePersistenceSyncService {
         decision
     }
 
-    /// Reads one peer's synchronization clock through the cheap probe RPC and
-    /// returns its comparable summary.
+    /// Reads one peer's comparable change fingerprint through the cheap probe
+    /// RPC. The fingerprint is a constant-size digest of the durable operation
+    /// clocks, so idle cycles never move the complete per-entity clock. Peers
+    /// that predate the digest method still answer the full clock probe, which
+    /// is summarized exactly as before.
     async fn probeRemoteClockSummary(&self, targetNodeId: &str) -> Result<String, String> {
-        let clock: Value = callRemote(
+        match callRemote::<Value>(
             &self.state.nodeRouter,
             targetNodeId,
-            PeerSyncMethod::SyncClock,
+            PeerSyncMethod::SyncClockDigest,
             Value::Null,
         )
-        .await?;
-        Ok(summarizeSyncClock(&clock))
+        .await
+        {
+            Ok(value) => value
+                .get("digest")
+                .and_then(Value::as_str)
+                .filter(|digest| !digest.is_empty())
+                .map(|digest| format!("digest:{digest}"))
+                .ok_or_else(|| "remote synchronization clock digest is missing".to_string()),
+            // Only a peer that predates the digest method is expected to
+            // answer this way. Every other failure means the probe was lost,
+            // and reading the full clock instead would hide that from the
+            // backoff gate (and momentarily compare two different formats).
+            Err(error) if peerSyncDigestUnsupported(&error) => {
+                let clock: Value = callRemote(
+                    &self.state.nodeRouter,
+                    targetNodeId,
+                    PeerSyncMethod::SyncClock,
+                    Value::Null,
+                )
+                .await?;
+                Ok(summarizeSyncClock(&clock))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Records one completed full pass: the freshly probed clock and the
@@ -1630,6 +1657,14 @@ fn summarizeSyncClock(value: &Value) -> String {
         "ranges={}#pending={}#errors={}",
         value["ranges"], value["pending"], value["errors"]
     )
+}
+
+/// Reports whether a peer refused the digest probe because its synchronization
+/// surface does not implement the method (an older build), as opposed to a
+/// lost or failed probe.
+#[allow(non_snake_case)]
+fn peerSyncDigestUnsupported(error: &str) -> bool {
+    error.contains("PEER_SYNC_METHOD_DENIED")
 }
 
 
