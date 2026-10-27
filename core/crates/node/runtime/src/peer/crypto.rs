@@ -463,7 +463,7 @@ impl MultiplexedChannel {
         receiver
             .await
             .map_err(|_| error("Multiplexed response sender closed"))??
-            .decodeWith(decodeLink)
+            .decodeWith(decodeLinkResponse)
     }
 
     /// Opens one Watch and routes its future events through the shared reader.

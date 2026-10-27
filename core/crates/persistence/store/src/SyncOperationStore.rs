@@ -391,7 +391,7 @@ pub struct SyncOperationStore {
 
 #[derive(Default)]
 struct SyncOperationStoreSharedState {
-    controlRevision: std::sync::atomic::AtomicU64,
+    controlRevision: AtomicU64,
     clock: Mutex<SyncOperationCachedValue<SyncClock>>,
     devices: Mutex<SyncOperationCachedValue<Vec<String>>>,
     entityVersions: Mutex<SyncOperationCachedValue<BTreeMap<String, SyncOperationOrder>>>,
@@ -404,11 +404,11 @@ struct SyncOperationStoreSharedState {
 }
 
 /// Invalidates readers before and after a journal write, including uncertain failures.
-struct ControlJournalMutation<'a>(&'a std::sync::atomic::AtomicU64);
+struct ControlJournalMutation<'a>(&'a AtomicU64);
 
 impl<'a> ControlJournalMutation<'a> {
     /// Opens a publication interval while the caller holds the journal mutation lock.
-    fn new(revision: &'a std::sync::atomic::AtomicU64) -> Self {
+    fn new(revision: &'a AtomicU64) -> Self {
         revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         Self(revision)
     }

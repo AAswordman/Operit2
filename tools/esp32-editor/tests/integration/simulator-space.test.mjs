@@ -143,6 +143,9 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
           }
           if (input.stream) {
             res.writeHead(200, {'Content-Type': 'text/event-stream'});
+            // Send more than one small read without exceeding the per-event limit;
+            // the real stream must keep reading through comments to completion.
+            if (input.model === 'sim-direct') res.write((': keepalive ' + 'x'.repeat(480) + '\n\n').repeat(20));
             for (const content of [text.slice(0, 4), text.slice(4)]) {
               res.write('data: ' + JSON.stringify({id: 'sim-chat', object: 'chat.completion.chunk',
                 choices: [{index: 0, delta: {content}, finish_reason: null}]}) + '\n\n');
@@ -193,7 +196,9 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     };
     /** Checks the actual allocator and guarded task budgets throughout every interaction. */
     const state = async () => {
-      const current = await (await fetch(base + '/api/simulator/state')).json();
+      const response = await fetch(base + '/api/simulator/state');
+      const current = await response.json();
+      assert(response.ok, `Simulator state failed: ${JSON.stringify(current)}`);
       if (current.device) {
         const memory = current.device.memory;
         assert.equal(memory.heapCapacityBytes, 256 * 1024);
@@ -320,11 +325,14 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
         call('set_chat_draft', ['string'], [prompt]);
         actionError = ''; await tap('edge_send'); assert.equal(actionError, '');
         const value = await waitDevice('native streamed reply', device =>
-          !device.chat.generating && device.chat.messages.some(message => message.text === expected));
+          device.chatSendResult?.sendId === sendId && !device.chat.generating &&
+          device.chat.messages.some(message => message.text === expected));
         assert.equal(value.chat.error, null);
         assert.equal(value.chatSendResult.ok, true);
         await update();
         assert(screen().nodes.find(node => node.id === 'chat_text')?.text.includes(expected), 'native reply reaches the rendered chat screen');
+        const memory = (await state()).device.memory;
+        t.diagnostic(`${sendId}: heap peak=${memory.heapPeakBytes}/${memory.heapCapacityBytes}, failures=${memory.allocationFailures}`);
         return value;
       };
       await sendDirect('SIM_CHAT before disconnect', 'SIM_CHAT_OK', 'direct-before');
@@ -341,12 +349,21 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
         const pointer = ui._simulator_frame();
         await writeFile(process.env.OPERIT_SIM_TEST_SCREENSHOT, ui.HEAPU8.subarray(pointer, pointer+320*240*2));
       }
+      const extraTurns = process.env.OPERIT_SIM_TEST_MEMORY_STRESS === '1' ? 12 : 0;
+      for (let turn = 0; turn < extraTurns; turn++) {
+        await sendDirect(`SIM_RECONNECT round ${turn} ${'x'.repeat(160)}`, 'SIM_RECONNECT_OK', `stress-${turn}`);
+        assert.equal(providerRequests.length, 3 + turn, 'each completed turn reached the real HTTP provider');
+      }
+      if (extraTurns) {
+        assert(!providerRequests.at(-1).messages.some(message => message.content === 'SIM_CHAT before disconnect'),
+          'continued standalone chat retires old turns instead of accumulating unlimited context');
+      }
       const directId = standalone.chat.chatId;
       await post('/api/simulator/stop'); await startEdge();
       await waitDevice('direct configuration restored without CLI', device => device.chat.mode === 'direct');
       const rebooted = await sendDirect('SIM_CHAT after ESP restart without CLI', 'SIM_CHAT_OK', 'direct-reboot');
       assert.notEqual(rebooted.chat.chatId, directId, 'transient context is not a hidden chat database');
-      assert.equal(providerRequests.length, 3);
+      assert.equal(providerRequests.length, 3 + extraTurns);
       const persisted = await (await fetch(base + '/api/simulator/storage')).json();
       assert(persisted.some(file => file.startsWith('runtime/node_preferences/')), persisted.join(', '));
       assert(!persisted.some(file => /(?:\.db(?:-|$)|\.sqlite|(?:^|\/)(?:sync|plugins|extensions)(?:\/|$))/.test(file)),
@@ -426,6 +443,23 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     }
     if (process.env.OPERIT_SIM_TEST_ACCESS_ONLY === '1') {
       await probeDeviceAccess();
+      const peers = await core.command(['peers']);
+      const membership = await core.command(['space', 'show']);
+      assert(membership.members.includes(node));
+      await post('/api/simulator/stop');
+      await startEdge();
+      const coreNode = membership.members.find(member => member !== node);
+      assert.equal(typeof coreNode, 'string');
+      const restored = await waitDevice('authenticated peer restored after restart', device =>
+        device.paired && device.activePeers.includes(coreNode));
+      // DeviceSpace's prompt is transient UI state. Verify the durable Router scope instead.
+      const access = await post('/api/simulator/core-access', {step: 'request', nodeId: coreNode});
+      assert.equal(access.joined, true, 'persisted local control state authorizes the existing Space');
+      assert.equal(access.request, null, 'restart does not submit another join request');
+      assert.equal(restored.deviceId, node, 'restart preserves the admitted device identity');
+      assert.deepEqual(await core.command(['peers']), peers, 'restart preserves pairing credentials');
+      assert.deepEqual(await core.command(['space', 'show']), membership, 'restart preserves durable membership');
+      t.diagnostic(`admission and restart: heap peak=${heapPeakBytes}/262144, allocation failures=0`);
       return;
     }
     const edgePortArgs={node_id:node,interface_info:{target:'edge.status',method:'read'},args:{}};

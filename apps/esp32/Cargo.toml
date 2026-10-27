@@ -80,5 +80,7 @@ tokio = { path = ".embuild/tokio-1.53.1" }
 # Prepared by the editor build; keep Poly1305 Rust/C padding within Xtensa ABI.
 ring = { path = ".embuild/ring-0.17.14" }
 
+# The pinned alignment overlay and final ELF ABI check protect Xtensa frames.
+# Optimize Tokio for the same fixed flash budget as the rest of the firmware.
 [profile.release.package.tokio]
-opt-level = 1
+opt-level = "z"

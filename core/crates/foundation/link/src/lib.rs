@@ -2,6 +2,8 @@ pub mod client;
 pub mod session;
 pub use session::CoreLinkSession;
 pub mod codec;
+mod operation_codec;
+pub use operation_codec::{decodeLinkRequest, decodeLinkResponse, decodeLinkRequestOwned, decodeLinkResponseOwned};
 pub use bytes::Bytes as CoreBytes;
 #[path = "CoreStream.rs"]
 mod core_stream;

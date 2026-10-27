@@ -458,7 +458,18 @@ builds do not use them.
 The firmware release uses Fat LTO and size optimization across its Rust packages
 to fit the existing 4 MB board and application partition. ESP32 console timestamps use direct UTC clock fields;
 desktop logs retain their local-time formatter. A single codegen unit keeps the
-Windows linker command within its length limit; package-specific Tokio and UUID optimization settings remain.
+Windows linker command within its length limit. UUID retains `opt-level = 1`
+for the Xtensa hex-parser workaround. Tokio now uses `opt-level = "z"`, with
+its pinned alignment overlay and final ELF ABI checks still required.
+
+Peer transport decoding selects the existing Call / Watch / Push envelope with
+the shared constant-stack field scanner, then decodes its typed body. Owned
+frames retain binary fields as shared ranges. Compatibility tests compare every
+request lifecycle and success/error response against the original Serde codec,
+including rejected positional struct variants. Serializer/decoder entrypoints
+remain out of line so Fat LTO can share each instantiation across callers.
+The built-in font retains all 4,168 glyphs and bitmap bytes in packed nine-byte
+records; table tests check each field width and bitmap boundary.
 
 The ESP32 standard library uses `backtrace-trace-only`: panic diagnostics and
 raw backtrace addresses remain available, while symbol lookup runs on the host

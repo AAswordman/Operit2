@@ -85,6 +85,25 @@ npm run test:standalone --prefix tools/esp32-editor
 关闭 CLI，再验证设备继续请求模型及重启后恢复配置。模型服务使用确定性 HTTP fixture。
 可通过 `OPERIT_SIM_TEST_CLI` 指定已构建的兼容 CLI，避免每次重建 Core。
 
+一次运行固定设备预算的验收入口：
+
+```powershell
+npm run test:device-budget --prefix tools/esp32-editor
+npm run test:device-budget --prefix tools/esp32-editor -- --firmware
+```
+
+入口复用上游的 256 KiB Rust 堆、16/24/20 KiB 主/异步/阻塞任务栈及 7,000 字节
+持久化预算。它依次构建预览、检查 TypeScript、运行共享固件模块和编辑器测试，
+同步已有插件包并构建当前 Core CLI，然后验证配对入空间、独立聊天、额外十二轮对话及重启。
+`--firmware` 还先构建 ESP32 固件并检查 Xtensa ABI；两种入口均不会烧录设备。
+堆探针直接占用同一个固定分配区，制造隔开的 8 KiB 空洞，检查总空闲足够时
+12 KiB 连续分配仍会失败，释放相邻块后又能成功。栈越界在独立子进程中由保护页检测。
+构建、编辑器启动和探针共用同一份锁定的 release 模拟器产物。
+这些测试约束 Rust 内存，不包含真机 ESP-IDF、Wi-Fi、TLS 和 NVS 的整板资源占用。
+HTTP 继续使用上游的连接任务层；请求构造及握手也复用同一个可取消任务工具，
+在原有受限异步工作线程上独立轮询，避免叠加调用方栈帧。取消仍会终止在途请求，
+超时分类、代理、重定向、TLS 验证和上游默认 HTTP 读缓冲保持有效。
+
 测试不能替代实机验收。`npm run test:hardware` 要求设备已经完成配对和入空间，
 检查加密调用、UI、堆/NVS 等声明的场景；它不负责首次配对和完整聊天验收。
 

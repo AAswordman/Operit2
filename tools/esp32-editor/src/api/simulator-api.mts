@@ -1,3 +1,4 @@
+import {simulatorBuildArguments, simulatorExecutable} from '../simulator-build.mts';
 import {requestUi, takeUiCommands, completeUiCommand} from './ui-debug.mts';
 import {spawn} from 'node:child_process';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
@@ -167,8 +168,7 @@ async function start(): Promise<void> {
       prepare.once('close', code => code === 0 ? resolve() : reject(new Error('模拟器依赖准备失败，请查看日志')));
     });
     if (child !== prepare || generation !== lifecycle) return;
-    const build = spawn('cargo', ['build', '--release', '--manifest-path', 'tools/esp32-editor/simulator/Cargo.toml',
-      '--target-dir', fileURLToPath(new URL('../../simulator/target/', import.meta.url))], {
+    const build = spawn('cargo', simulatorBuildArguments, {
       cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
     });
     child = build;
@@ -180,8 +180,7 @@ async function start(): Promise<void> {
       build.once('close', code => code === 0 ? resolve() : reject(new Error('模拟器编译失败，请查看日志')));
     });
     if (child !== build) return;
-    const executable = fileURLToPath(new URL('../../simulator/target/release/operit-esp32-simulator' +
-      (process.platform === 'win32' ? '.exe' : ''), import.meta.url));
+    const executable = simulatorExecutable;
     // Keep the executable separate from the packed storage carrier's runtime/
     // directory. On Unix an extensionless 'runtime' binary occupies that path.
     const runPath = fileURLToPath(new URL('operit-esp32-simulator' +

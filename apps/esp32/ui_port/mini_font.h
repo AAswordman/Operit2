@@ -5,7 +5,15 @@
  */
 #pragma once
 #include <stdint.h>
-typedef struct { uint32_t codepoint, offset; uint16_t advance; uint8_t w,h,bpp,line,baseline; int8_t x,y; } mini_glyph_t;
+/* Preserve all bundled glyphs and bitmap precision in nine-byte flash records.
+ * Each field width is checked against the complete tables by the editor tests.
+ * Packed accesses are compiled independently for Xtensa and the C/Wasm preview. */
+typedef struct __attribute__((packed)) {
+    uint16_t codepoint;
+    uint32_t offset:17, advance:5, w:4, h:5, bpp:2, line:5, baseline:3;
+    int32_t x:5, y:5;
+} mini_glyph_t;
+_Static_assert(sizeof(mini_glyph_t) == 9, "Font records must occupy 9 bytes");
 static const uint8_t mini_text_bitmap[] = {
 0,170,168,60,153,153,73,36,191,73,36,191,82,73,0,35,163,8,97,195,8,98,226,0,112,141,144,137,8,160,138,237,
 219,117,16,145,9,16,155,16,224,56,34,17,9,135,3,7,197,50,142,103,158,96,240,41,41,36,146,36,136,137,34,73,

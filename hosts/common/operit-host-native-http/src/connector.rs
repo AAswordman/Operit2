@@ -44,16 +44,22 @@ where
     fn call(&mut self, request: R) -> Self::Future {
         let replacement = self.0.clone();
         let mut service = std::mem::replace(&mut self.0, replacement);
-        Box::pin(async move {
-            let mut connection = tokio::task::JoinSet::new();
-            connection.spawn(async move { service.call(request).await });
-            connection
-                .join_next()
-                .await
-                .ok_or_else(|| std::io::Error::other("HTTP connection task is missing"))?
-                .map_err(|error| -> ConnectionError { Box::new(error) })?
-        })
+        Box::pin(async move { runTask(async move { service.call(request).await }).await? })
     }
+}
+
+/// Polls one network operation at a fresh task root on the same bounded executor.
+/// Dropping the caller aborts the operation instead of leaving detached I/O.
+pub(super) async fn runTask<F>(operation: F) -> Result<F::Output, ConnectionError>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    let mut task = tokio::task::JoinSet::new();
+    task.spawn(operation);
+    task.join_next().await
+        .ok_or_else(|| std::io::Error::other("HTTP network task is missing"))?
+        .map_err(|error| -> ConnectionError { Box::new(error) })
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ pub type AtomicU64 = LockedU64;
 
 /// A mutex provides stronger ordering than requested and avoids narrowing
 /// timestamps, byte counts or revisions to 32 bits on embedded hosts.
+#[derive(Default)]
 pub struct LockedU64(Mutex<u64>);
 impl LockedU64 {
     pub const fn new(value: u64) -> Self {

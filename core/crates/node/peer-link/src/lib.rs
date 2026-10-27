@@ -56,8 +56,8 @@ impl PeerMessage {
     /// Decodes the declared message direction once, without speculative request decoding.
     pub fn decode(bytes: &[u8]) -> Result<Self, operit_link::CoreLinkCodecError> {
         match MessageDirection::read(bytes)? {
-            MessageDirection::Request => operit_link::decodeLink(bytes).map(Self::Request),
-            MessageDirection::Response => operit_link::decodeLink(bytes).map(Self::Response),
+            MessageDirection::Request => operit_link::decodeLinkRequest(bytes).map(Self::Request),
+            MessageDirection::Response => operit_link::decodeLinkResponse(bytes).map(Self::Response),
         }
     }
 
@@ -66,8 +66,8 @@ impl PeerMessage {
         bytes: operit_link::CoreBytes,
     ) -> Result<Self, operit_link::CoreLinkCodecError> {
         match MessageDirection::read(&bytes)? {
-            MessageDirection::Request => operit_link::decodeLinkOwned(bytes).map(Self::Request),
-            MessageDirection::Response => operit_link::decodeLinkOwned(bytes).map(Self::Response),
+            MessageDirection::Request => operit_link::decodeLinkRequestOwned(bytes).map(Self::Request),
+            MessageDirection::Response => operit_link::decodeLinkResponseOwned(bytes).map(Self::Response),
         }
     }
 }

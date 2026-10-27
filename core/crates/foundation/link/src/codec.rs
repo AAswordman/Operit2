@@ -122,6 +122,8 @@ impl std::fmt::Display for CoreLinkCodecError {
 impl std::error::Error for CoreLinkCodecError {}
 
 /// Encodes a serializable value using the single Link MessagePack representation.
+// Keep one serializer instance per value type across routing and transport.
+#[inline(never)]
 #[allow(non_snake_case)]
 pub fn encodeLink(value: impl Serialize) -> Result<Vec<u8>, CoreLinkCodecError> {
     let mut output = Vec::new();
@@ -215,6 +217,9 @@ pub fn encodedLinkSize(value: impl Serialize) -> Result<usize, CoreLinkCodecErro
 }
 
 /// Decodes a value from the single Link MessagePack representation.
+// Reuse each typed MessagePack decoder across callers instead of inlining
+// another copy into every routing branch under firmware Fat LTO.
+#[inline(never)]
 #[allow(non_snake_case)]
 pub fn decodeLink<T>(bytes: &[u8]) -> Result<T, CoreLinkCodecError>
 where
@@ -227,6 +232,11 @@ where
 /// Borrowed/scratch slices outside this explicit scope still copy normally.
 #[allow(non_snake_case)]
 pub fn decodeLinkOwned<T: DeserializeOwned>(bytes: CoreBytes) -> Result<T, CoreLinkCodecError> {
+    decodeOwnedWith(bytes, decodeLink)
+}
+
+/// Retains one owned frame while a typed decoder selects its borrowed fields.
+pub(crate) fn decodeOwnedWith<T>(bytes: CoreBytes, decode: impl FnOnce(&[u8]) -> Result<T, CoreLinkCodecError>) -> Result<T, CoreLinkCodecError> {
     struct Scope(Option<CoreBytes>);
     impl Drop for Scope {
         /// Restores the previous owned decode source after this scope.
@@ -235,7 +245,7 @@ pub fn decodeLinkOwned<T: DeserializeOwned>(bytes: CoreBytes) -> Result<T, CoreL
         }
     }
     let _scope = Scope(DECODE_SOURCE.with(|slot| slot.replace(Some(bytes.clone()))));
-    decodeLink(&bytes)
+    decode(&bytes)
 }
 pub(crate) fn retain_decoded_slice(value: &[u8]) -> Option<CoreBytes> {
     DECODE_SOURCE.with(|slot| {

@@ -6,7 +6,7 @@ import {mkdtemp, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 
-test('editor starts real TCP device, serves firmware UI, pairs by code and stops listener', {timeout: 120000}, async t => {
+test('editor starts real TCP device, serves firmware UI, pairs by code and stops listener', {timeout: 300000}, async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'operit-sim-api-'));
   process.env.OPERIT_SIM_STATE_DIR = dir;
   process.env.OPERIT_SIM_BIND = '127.0.0.1:0';
@@ -24,14 +24,16 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   assert.equal((await fetch(base + '/api/simulator/state', {headers: {Origin: 'https://example.com'}})).status, 403);
   const state = async () => (await fetch(base + '/api/simulator/state')).json();
   async function ready() {
-    const deadline = Date.now() + 90000;
+    // Include a cold release build; device RPC and memory budgets remain unchanged.
+    const deadline = Date.now() + 180000;
+    let current;
     while (Date.now() < deadline) {
-      const current = await state();
+      current = await state();
       if (current.ready) return current;
       if (!current.running) throw Error(current.output);
       await new Promise(resolve => setTimeout(resolve, 200));
     }
-    throw Error('Simulator did not become ready');
+    throw Error(`Simulator did not become ready: ${JSON.stringify(current)}`);
   }
   assert.equal((await fetch(base + '/api/simulator/start', {method: 'POST'})).status, 202);
   // Startup creates persistent files asynchronously before the child is spawned.
