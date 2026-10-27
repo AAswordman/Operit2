@@ -73,6 +73,7 @@ impl TcpConnection for NativeTcpConnection {
         }
     }
 
+    /// Reads into the suspended future's bounded scratch space and allocates only received bytes.
     async fn read(&self) -> HostResult<Option<Vec<u8>>> {
         let mut closed = self.closed.subscribe();
         tokio::select! {
@@ -81,10 +82,9 @@ impl TcpConnection for NativeTcpConnection {
             result = async {
                 let mut reader = self.reader.lock().await;
                 let Some(reader) = reader.as_mut() else { return Ok(None); };
-                let mut bytes = vec![0; 4096];
+                let mut bytes = [0; 1024];
                 let count = reader.read(&mut bytes).await.map_err(|error| HostError::new(error.to_string()))?;
-                bytes.truncate(count);
-                Ok((count > 0).then_some(bytes))
+                Ok((count > 0).then(|| bytes[..count].to_vec()))
             } => result,
         }
     }

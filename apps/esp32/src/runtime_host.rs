@@ -9,112 +9,74 @@ use operit_host_api::ServiceDiscovery::{
     DiscoveredService, DiscoveryAdvertisement, DiscoveryCallback, DiscoverySubscription,
     ServiceAdvertisement, ServiceDiscoveryHost,
 };
-use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
+use operit_host_api::{HostError, HostResult};
 use std::sync::{Arc, Mutex};
 
 const STORAGE_NAMESPACE: &str = "operit_link";
 const SNAPSHOT_KEY: &str = "snapshot_v2";
-use crate::runtime_storage_codec::{self as codec, Files};
-use crate::runtime_storage_pack as pack;
+use crate::runtime_storage_codec as codec;
 
-struct StorageState {
-    nvs: EspNvs<NvsDefault>,
-    files: Files,
-    snapshot: Option<u8>,
-}
+use crate::runtime_storage_host::{PackedRuntimeStorageHost, RuntimeStorageBackend};
 
-/// Keeps the shared runtime record bytes unchanged and maps their virtual paths
-/// into NVS. One lock covers read-modify-commit, avoiding lost pairing records.
-/// Packed record bytes and compact paths stream into inactive bounded NVS chunks; the marker
-/// is committed last. Only the current storage format is supported.
-pub struct Esp32RuntimeStorageHost {
-    state: Mutex<StorageState>,
-}
+pub type Esp32RuntimeStorageHost = PackedRuntimeStorageHost<NvsSnapshotBackend>;
+
 impl Esp32RuntimeStorageHost {
+    /// Opens the hardware snapshot carrier with shared packed-record semantics.
     pub fn new(partition: EspDefaultNvsPartition) -> HostResult<Arc<Self>> {
         let nvs = EspNvs::new(partition, STORAGE_NAMESPACE, true)
-            .map_err(|e| HostError::new(format!("runtime NVS: {e}")))?;
-        let marker = nvs
-            .get_u32(SNAPSHOT_KEY)
-            .map_err(|e| HostError::new(format!("runtime NVS snapshot: {e}")))?;
-        let snapshot = marker.map(|value| (value & 1) as u8);
-        let files = if let Some(marker) = marker {
-            let length = codec::snapshot_length(marker)?;
-            let mut buffer = Vec::new();
-            buffer
-                .try_reserve_exact(length)
-                .map_err(|_| codec::allocation_error("snapshot read", length))?;
-            buffer.resize(length, 0);
-            for (index, chunk) in buffer.chunks_mut(codec::SNAPSHOT_CHUNK_SIZE).enumerate() {
-                let mut stored = [0u8; codec::SNAPSHOT_CHUNK_SIZE + 3];
-                let read = nvs
-                    .get_blob(&snapshotChunkKey((marker & 1) as u8, index), &mut stored)
-                    .map_err(|e| HostError::new(format!("runtime NVS snapshot read: {e}")))?
-                    .ok_or_else(|| HostError::new("Runtime NVS snapshot chunk missing"))?;
-                codec::decode_snapshot_chunk(read, chunk)?;
-            }
-            codec::decode_packed_files(&buffer)?
-        } else {
-            // Reject obsolete data, never decode/migrate it or treat it as a new node.
-            // This check must precede recovery, which removes unpublished chunks.
-            if nvs
-                .get_u32("snapshot_v1")
-                .map_err(|e| HostError::new(format!("runtime NVS format check: {e}")))?
-                .is_some()
-                || nvs
-                    .blob_len("files")
-                    .map_err(|e| HostError::new(format!("runtime NVS format check: {e}")))?
-                    .is_some()
-            {
-                return Err(HostError::new(
-                    "Unsupported runtime NVS storage format; data left unchanged",
-                ));
-            }
-            Files::new()
-        };
-        // Validate authority before reclaiming only the unpublished bank.
-        codec::recover_snapshot(&mut NvsSnapshotBackend(&nvs), snapshot)?;
-        Ok(Arc::new(Self {
-            state: Mutex::new(StorageState {
-                nvs,
-                files,
-                snapshot,
-            }),
-        }))
+            .map_err(|error| HostError::new(format!("runtime NVS: {error}")))?;
+        Self::open(NvsSnapshotBackend(nvs))
     }
-    fn update(&self, change: impl FnOnce(&Files) -> HostResult<codec::FileChange>) -> HostResult<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| HostError::new("runtime NVS lock poisoned"))?;
-        let change = change(&state.files)?;
-        let StorageState { files, snapshot, nvs } = &mut *state;
-        codec::commit_file_change(files, snapshot, change, &mut NvsSnapshotBackend(nvs))
+}
+
+impl RuntimeStorageBackend for NvsSnapshotBackend {
+    /// Rejects obsolete storage before the shared recovery code can reclaim chunks.
+    fn marker(&mut self) -> HostResult<Option<u32>> {
+        let marker = self.0.get_u32(SNAPSHOT_KEY)
+            .map_err(|error| HostError::new(format!("runtime NVS snapshot: {error}")))?;
+        if marker.is_none() && (self.0.get_u32("snapshot_v1")
+            .map_err(|error| HostError::new(format!("runtime NVS format check: {error}")))?.is_some()
+            || self.0.blob_len("files").map_err(|error| HostError::new(format!("runtime NVS format check: {error}")))?.is_some()) {
+            return Err(HostError::new("Unsupported runtime NVS storage format; data left unchanged"));
+        }
+        Ok(marker)
+    }
+
+    /// Reads one NVS blob without constructing an additional chunk buffer.
+    fn read_chunk(&mut self, bank: u8, index: usize, destination: &mut [u8]) -> HostResult<usize> {
+        self.0.get_blob(&snapshotChunkKey(bank, index), destination)
+            .map_err(|error| HostError::new(format!("runtime NVS snapshot read: {error}")))?
+            .map(|bytes| bytes.len()).ok_or_else(|| HostError::new("Runtime NVS snapshot chunk missing"))
     }
 }
 /// All scalar publication uses IDF's atomic NVS update (no erase-first).
 /// EspNvs::set_blob erases first, so it is used only on an unselected bank.
-struct NvsSnapshotBackend<'a>(&'a EspNvs<NvsDefault>);
-impl codec::SnapshotBackend for NvsSnapshotBackend<'_> {
+pub struct NvsSnapshotBackend(EspNvs<NvsDefault>);
+impl codec::SnapshotBackend for NvsSnapshotBackend {
+    /// Reports cleanup failure after an already committed snapshot.
     fn cleanup_warning(&mut self, error: HostError) {
         log::warn!("runtime NVS post-commit cleanup: {}", error.message);
     }
+    /// Removes one unselected snapshot chunk.
     fn remove_chunk(&mut self, bank: u8, index: usize) -> HostResult<()> {
         self.0
             .remove(&snapshotChunkKey(bank, index))
             .map(|_| ())
             .map_err(|e| HostError::new(format!("runtime NVS chunk cleanup: {e}")))
     }
+    /// Writes one staged chunk into the unselected NVS bank.
     fn write_chunk(&mut self, bank: u8, index: usize, bytes: &[u8]) -> HostResult<()> {
         self.0
             .set_blob(&snapshotChunkKey(bank, index), bytes)
             .map_err(|e| HostError::new(format!("runtime NVS chunk write: {e}")))
     }
+    /// Atomically publishes the completed bank marker through NVS.
     fn publish(&mut self, marker: u32) -> HostResult<()> {
         self.0
             .set_u32(SNAPSHOT_KEY, marker)
             .map_err(|e| HostError::new(format!("runtime NVS snapshot commit: {e}")))
     }
+    /// Rejects snapshots that exceed the physical NVS entry budget.
     fn check_capacity(&mut self, needed: usize) -> HostResult<()> {
         let mut stats = esp_idf_svc::sys::nvs_stats_t::default();
         let result = unsafe { esp_idf_svc::sys::nvs_get_stats(std::ptr::null(), &mut stats) };
@@ -134,108 +96,8 @@ impl codec::SnapshotBackend for NvsSnapshotBackend<'_> {
         Ok(())
     }
 }
-impl RuntimeStorageHost for Esp32RuntimeStorageHost {
-    fn retainPreferencesCache(&self) -> bool { false }
-    fn nodeLocalApplicationHistoryLimit(&self) -> Option<usize> { Some(2) }
-    fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-    fn workspaceRootDir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        self.state
-            .lock()
-            .map_err(|_| HostError::new("runtime NVS lock poisoned"))?
-            .files
-            .get(path)
-            .ok_or_else(|| HostError::new("runtime storage entry not found"))
-            .and_then(|bytes| pack::unpack(bytes))
-    }
-    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        self.state.lock()
-            .map_err(|_| HostError::new("runtime NVS lock poisoned"))?
-            .files.get(path)
-            .ok_or_else(|| HostError::new("runtime storage entry not found"))
-            .and_then(|bytes| pack::unpack_range(bytes, offset, length))
-    }
-    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.update(|_| {
-            Ok(codec::FileChange::Put {
-                path: codec::copy_path(path)?,
-                bytes: pack::pack(content)?,
-            })
-        }).map_err(|error| HostError::new(format!("{} (record {path}, {} expanded bytes)", error.message, content.len())))
-    }
-    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        // writeBytes publishes the complete NVS snapshot through the alternate bank.
-        self.writeBytes(path, content)
-    }
-    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.update(|files| {
-            let mut bytes = files
-                .get(path)
-                .map(|bytes| pack::unpack(bytes))
-                .transpose()?
-                .unwrap_or_default();
-            if content.len() > pack::MAX_RECORD_SIZE.saturating_sub(bytes.len()) {
-                return Err(HostError::new("ESP32 node state exceeds NVS budget"));
-            }
-            bytes
-                .try_reserve_exact(content.len())
-                .map_err(|_| codec::allocation_error("append", bytes.len() + content.len()))?;
-            bytes.extend_from_slice(content);
-            Ok(codec::FileChange::Put {
-                path: codec::copy_path(path)?,
-                bytes: pack::pack(&bytes)?,
-            })
-        })
-    }
-    /// Confirms the file already belongs to the synchronously committed NVS snapshot.
-    fn flushFile(&self, path: &str) -> HostResult<()> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| HostError::new("runtime NVS lock poisoned"))?;
-        if !state.files.contains_key(path) {
-            return Err(HostError::new("runtime storage entry not found"));
-        }
-        Ok(())
-    }
 
-    fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        self.update(|_| {
-            Ok(codec::FileChange::Delete {
-                path: codec::copy_path(path)?,
-                recursive,
-            })
-        })
-    }
-    fn exists(&self, path: &str) -> HostResult<bool> {
-        Ok(self
-            .state
-            .lock()
-            .map_err(|_| HostError::new("runtime NVS lock poisoned"))?
-            .files
-            .contains_key(path))
-    }
-    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-        Ok(self
-            .state
-            .lock()
-            .map_err(|_| HostError::new("runtime NVS lock poisoned"))?
-            .files
-            .iter()
-            .filter(|(path, _)| path.starts_with(prefix))
-            .map(|(path, bytes)| RuntimeStorageEntry {
-                path: path.clone(),
-                isDirectory: false,
-                size: pack::expanded_size(bytes).unwrap_or(0) as i64,
-            })
-            .collect())
-    }
-}
-
+/// Names one chunk within the shared two-bank snapshot format.
 fn snapshotChunkKey(bank: u8, index: usize) -> String {
     format!("files_{bank}_{index}")
 }

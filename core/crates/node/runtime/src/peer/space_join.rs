@@ -43,7 +43,8 @@ pub(crate) struct Record {
     pub(crate) cancelRequested: bool,
 }
 impl Record {
-    fn intoCoreValue(mut self) -> Result<CoreValue, String> {
+    /// Serializes the owned record while moving authority arrays through the wire adapter.
+    fn intoCoreValue(mut self: Box<Self>) -> Result<CoreValue, String> {
         let source = takeSnapshotOperations(&mut self.source);
         let accepted = self.accepted.as_mut().map(|snapshot| takeSnapshotOperations(snapshot));
         let CoreValue::Map(mut fields) = toCoreValue(self).map_err(|error| error.to_string())? else {
@@ -73,7 +74,7 @@ struct Decision {
 }
 #[derive(Serialize, Deserialize)]
 struct Claim {
-    record: Record,
+    record: Box<Record>,
     current: PeerSpaceJoin,
 }
 #[derive(Serialize, Deserialize)]
@@ -99,7 +100,8 @@ fn expire(record: &mut Record, now: i64, spaceId: &str) {
         }
     }
 }
-fn load(service: &dyn NodeSpaceContext, path: &str, id: &str) -> Result<Record, String> {
+/// Loads one owned application record without carrying its snapshots in caller stack frames.
+fn load(service: &dyn NodeSpaceContext, path: &str, id: &str) -> Result<Box<Record>, String> {
     store(service).record(path, id)?.ok_or_else(|| "Join request not found".into())
 }
 // Accepted control history already lives in the common synchronization log.
@@ -592,53 +594,68 @@ fn leaveLocked(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
     Ok(space)
 }
 
+/// Completes preparation before polling any submission response or receipt decoder.
 pub(crate) async fn request(service: &dyn NodeSpaceContext, deviceId: String) -> Result<SpaceJoinRequest, String> {
+    let id = Box::pin(prepareRequest(service, deviceId)).await?;
+    refresh(service, id).await
+}
+
+/// Resolves one immutable submission and releases its working snapshots before returning its identifier.
+async fn prepareRequest(service: &dyn NodeSpaceContext, deviceId: String) -> Result<String, String> {
     let mut retiredStaleSplit = false;
     loop {
-    paired(service, &deviceId, crate::NodeServices::PairingDirection::Either)?;
-    if let Some(old) = outgoing(service)?.into_iter().find(|r| r.targetDeviceId == deviceId && active(&r.status)) {
-        return refresh(service, old.requestId).await;
+        paired(service, &deviceId, crate::NodeServices::PairingDirection::Either)?;
+        if let Some(old) = outgoing(service)?.into_iter().find(|r| r.targetDeviceId == deviceId && active(&r.status)) {
+            return Ok(old.requestId);
+        }
+        let snapshot: PeerSpaceSnapshot = Box::pin(joinSnapshot(service, &deviceId)).await?;
+        if !snapshot.space.members.contains(&deviceId) { return Err("Target is not in its advertised Space".into()); }
+        space_departure::observe(service, &deviceId, &snapshot.departures, &snapshot.controlOperations)?;
+        let source = peerSpaceSnapshot(service)?;
+        let local = source.space.clone();
+        let localId = service.localNodeId();
+        // One shared space identity is never joinable: either both sides already
+        // agree on membership, or their member tables diverged. The divergent case
+        // is reconciled on the spot - both control logs merge into one policy - so
+        // the retried submission sees a single truth instead of a split.
+        if local.spaceId == snapshot.space.spaceId {
+            if snapshot.space.members.contains(&localId) {
+                return Err("This device is already a member of the target Space".into());
+            }
+            let reconciled = space_reconcile::reconcile(service, &deviceId).await?;
+            let converged: PeerSpaceSnapshot = Box::pin(joinSnapshot(service, &deviceId)).await?;
+            if converged.space.members.contains(&localId) {
+                return Err("This device is already a member of the target Space".into());
+            }
+            // The converged truth excludes this device: its records still named
+            // the shared Space while the shared log does not admit it. The
+            // reconcile already retires that stale membership; apply again as the
+            // independent Space this device now is, so a removed device submits
+            // its request on this attempt instead of retrying by hand. The
+            // submission that follows carries the retired single-device source,
+            // never the divergent projection.
+            if !retiredStaleSplit {
+                retiredStaleSplit = true;
+                // The pairing this application arrived on is the transport of the
+                // application itself, so the retirement keeps it.
+                retireRemovedLocalDevice(service, Some(&deviceId))?;
+                continue;
+            }
+            return Err(format!(
+                "Membership split with {deviceId} reconciled; the shared Space control log admits {} \
+                 and this device is {}. Submit a new join request from the reconciled state.",
+                reconciled.members.join(", "),
+                if reconciled.localIsMember { "a member" } else { "not a member" }
+            ));
+        }
+        return prepareSubmission(service, deviceId, source, snapshot);
     }
-    let snapshot: PeerSpaceSnapshot = Box::pin(joinSnapshot(service, &deviceId)).await?;
-    if !snapshot.space.members.contains(&deviceId) { return Err("Target is not in its advertised Space".into()); }
-    space_departure::observe(service, &deviceId, &snapshot.departures, &snapshot.controlOperations)?;
-    let source = peerSpaceSnapshot(service)?;
-    let local = source.space.clone();
+}
+
+/// Persists the immutable consent source and releases both snapshots before the network response phase.
+fn prepareSubmission(service: &dyn NodeSpaceContext, deviceId: String, source: PeerSpaceSnapshot, snapshot: PeerSpaceSnapshot) -> Result<String, String> {
     let localId = service.localNodeId();
-    // One shared space identity is never joinable: either both sides already
-    // agree on membership, or their member tables diverged. The divergent case
-    // is reconciled on the spot - both control logs merge into one policy - so
-    // the retried submission sees a single truth instead of a split.
-    if local.spaceId == snapshot.space.spaceId {
-        if snapshot.space.members.contains(&localId) {
-            return Err("This device is already a member of the target Space".into());
-        }
-        let reconciled = space_reconcile::reconcile(service, &deviceId).await?;
-        let converged: PeerSpaceSnapshot = Box::pin(joinSnapshot(service, &deviceId)).await?;
-        if converged.space.members.contains(&localId) {
-            return Err("This device is already a member of the target Space".into());
-        }
-        // The converged truth excludes this device: its records still named
-        // the shared Space while the shared log does not admit it. The
-        // reconcile already retires that stale membership; apply again as the
-        // independent Space this device now is, so a removed device submits
-        // its request on this attempt instead of retrying by hand. The
-        // submission that follows carries the retired single-device source,
-        // never the divergent projection.
-        if !retiredStaleSplit {
-            retiredStaleSplit = true;
-            // The pairing this application arrived on is the transport of the
-            // application itself, so the retirement keeps it.
-            retireRemovedLocalDevice(service, Some(&deviceId))?;
-            continue;
-        }
-        return Err(format!(
-            "Membership split with {deviceId} reconciled; the shared Space control log admits {} \
-             and this device is {}. Submit a new join request from the reconciled state.",
-            reconciled.members.join(", "),
-            if reconciled.localIsMember { "a member" } else { "not a member" }
-        ));
-    }
+    let local = &source.space;
     let profile = source.deviceProfiles.iter().find(|p| p.nodeId == localId)
         .cloned().ok_or("Local device profile missing")?;
     let applicantName = source.deviceProfiles.iter()
@@ -650,15 +667,15 @@ pub(crate) async fn request(service: &dyn NodeSpaceContext, deviceId: String) ->
             applicantDeviceId: localId, applicantName, spaceName: snapshot.space.spaceName,
             status: SpaceJoinStatus::Pending, createdAt: now, expiresAt: now + LIFETIME_MS, canApprove: false,
             reviewerDeviceId: None, reviewerName: None, reviewerHops: None, assignmentVersion: 0, decisionApprove: None },
-        sourceSpaceId: local.spaceId, sourceRevision: local.spaceRevision,
+        sourceSpaceId: local.spaceId.clone(), sourceRevision: local.spaceRevision,
         targetSpaceId: snapshot.space.spaceId, profile, source, accepted: None, acceptedReference: false, unavailableSince: None, approvedDecision: None, decisionRevision: None, cancelRequested: false,
     };
     saveRecord(service, OUTBOUND, &record.request.requestId, &record)?;
-    // refresh also handles a result already approved after a lost initial reply.
-    return refresh(service, record.request.requestId).await;
-    }
+    Ok(record.request.requestId)
 }
-async fn sendSubmission(service: &dyn NodeSpaceContext, record: &Record) -> Result<Record, String> {
+
+/// Sends the immutable source once and retains the reply through its ownership handle.
+async fn sendSubmission(service: &dyn NodeSpaceContext, record: &Record) -> Result<Box<Record>, String> {
     callPeerSpace(service, &record.request.targetDeviceId, "requestJoin", toCoreValue(Submission {
         requestId: record.request.requestId.clone(), sourceSpaceId: record.sourceSpaceId.clone(),
         sourceRevision: record.sourceRevision, targetSpaceId: record.targetSpaceId.clone(), profile: record.profile.clone(), source: record.source.clone(),
@@ -811,7 +828,7 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
         let id: String = fromCoreValue(request.args).map_err(|e| e.to_string())?;
         let record = load(service, INBOUND, &id)?;
         if record.request.applicantDeviceId != peer { return Err("Join request belongs to another device".into()); }
-        record
+        *record
     };
     if request.methodName == "cancelJoin" {
         if record.request.status == SpaceJoinStatus::Pending {
@@ -846,7 +863,7 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
             accepted.controlOperations = service.networkControlStore().currentSpaceOperations()?;
         }
     }
-    record.intoCoreValue()
+    Box::new(record).intoCoreValue()
 }
 
 async fn approvalCall<T: serde::de::DeserializeOwned>(service: &dyn NodeSpaceContext, node: &str, method: &str, args: CoreValue) -> Result<T, String> {
@@ -899,6 +916,7 @@ pub(crate) fn doctorSummaries(service: &dyn NodeSpaceContext) -> Result<Vec<spac
     }
     Ok(summaries)
 }
+/// Collects public review requests from explicitly addressed assignment sources.
 pub(crate) async fn incoming(service: &dyn NodeSpaceContext) -> Result<Vec<SpaceJoinRequest>, String> {
     let local = service.localNodeId();
     if !canReview(service, &local)? { return Ok(Vec::new()); }
@@ -908,7 +926,7 @@ pub(crate) async fn incoming(service: &dyn NodeSpaceContext) -> Result<Vec<Space
         let fetched = if node == local {
             let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
             assignedRequests(service, &local, &localDecisionContext(service)?)
-        } else { approvalCall::<Vec<Record>>(service, &node, "assigned", CoreValue::Null).await };
+        } else { approvalCall::<Vec<Box<Record>>>(service, &node, "assigned", CoreValue::Null).await };
         let records = match fetched {
             Ok(records) => records,
             Err(error) => {
@@ -953,7 +971,8 @@ fn pruneCompletedRequests(service: &dyn NodeSpaceContext, records: &mut Vec<Reco
     }
     Ok(())
 }
-fn assignedRequests(service: &dyn NodeSpaceContext, origin: &str, current: &CoreSpace) -> Result<Vec<Record>, String> {
+/// Reconciles assigned requests while retaining their snapshots through owned handles.
+fn assignedRequests(service: &dyn NodeSpaceContext, origin: &str, current: &CoreSpace) -> Result<Vec<Box<Record>>, String> {
             let mut assigned = Vec::new();
             // Validate every record before any writes, but retain only tiny
             // summaries. Load live requests individually after the encoded
@@ -1080,7 +1099,8 @@ fn claimDecision(service: &dyn NodeSpaceContext, origin: &str, decision: Decisio
         controlOperations: if origin == service.localNodeId() { Vec::new() }
             else { service.networkControlStore().currentSpaceOperations()? }, departures: Vec::new() } })
 }
-fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Outcome, current: CoreSpace) -> Result<Record, String> {
+/// Completes one claimed decision and returns the owned durable application record.
+fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Outcome, current: CoreSpace) -> Result<Box<Record>, String> {
             let mut record = load(service, INBOUND, &outcome.decision.requestId)?;
             validateAssignment(service, &record, origin, &outcome.decision)?;
             if record.approvedDecision != Some(outcome.decision.approve) { return Err("Decision does not match its claim".into()); }
@@ -1130,12 +1150,17 @@ fn localDecisionContext(service: &dyn NodeSpaceContext) -> Result<CoreSpace, Str
     Ok(current)
 }
 
+/// Resolves one unambiguous review owner and commits its authorized decision.
 pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: u64, approve: bool) -> Result<SpaceJoinRequest, String> {
     let local = service.localNodeId();
     if !canReview(service, &local)? { return Err("This device cannot approve Space join requests".into()); }
-    let inbox = match load(service, INBOUND, &id) {
-        Ok(record) if record.request.targetDeviceId == local => record,
-        _ => load(service, INBOX, &id)?,
+    let records = store(service);
+    let gateway: Option<Box<Record>> = records.record(INBOUND, &id)?;
+    let assigned: Option<Box<Record>> = records.record(INBOX, &id)?;
+    let inbox = match (gateway, assigned) {
+        (Some(record), None) if record.request.targetDeviceId == local => record,
+        (None, Some(record)) if record.request.targetDeviceId != local => record,
+        _ => return Err("Join review must have exactly one matching gateway or assignment record".into()),
     };
     let onGateway = inbox.request.targetDeviceId == local;
     let decision = Decision { requestId: id.clone(), assignmentVersion: version, approve };
@@ -1200,7 +1225,7 @@ pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: 
     drop(claim.current.controlOperations);
     drop(claim.current.deviceProfiles);
     drop(claim.current.topology);
-    let record: Record = if onGateway {
+    let record: Box<Record> = if onGateway {
         let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
         completeDecision(service, &local, outcome, localDecisionContext(service)?)?
     } else {
@@ -1297,7 +1322,8 @@ fn preserveOutgoingStatus(current: &SpaceJoinStatus, incoming: &SpaceJoinStatus)
             && matches!(incoming, SpaceJoinStatus::Pending | SpaceJoinStatus::Approving))
 }
 
-async fn cancelRemote(service: &dyn NodeSpaceContext, local: Record) -> Result<SpaceJoinRequest, String> {
+/// Sends one cancellation using the same owned immutable application record.
+async fn cancelRemote(service: &dyn NodeSpaceContext, local: Box<Record>) -> Result<SpaceJoinRequest, String> {
     let mut remote: Record = callPeerSpace(service, &local.request.targetDeviceId, "cancelJoin", toCoreValue(Submission {
         requestId: local.request.requestId.clone(), sourceSpaceId: local.sourceSpaceId.clone(),
         sourceRevision: local.sourceRevision, targetSpaceId: local.targetSpaceId.clone(),
@@ -1331,8 +1357,7 @@ mod device_space_state_tests {
 }
 
 /// Core verifies the complete immutable history, fetched in bounded pages
-/// when the endpoint advertises that capability. Legacy peers keep the old
-/// snapshot path; negotiation failures never silently downgrade validation.
+/// when the endpoint declares that capability. Complete peers use the full snapshot contract.
 async fn joinSnapshot(service: &dyn NodeSpaceContext, node: &str) -> Result<PeerSpaceSnapshot, String> {
     #[cfg(any(test, feature = "full"))]
     {
@@ -1342,7 +1367,7 @@ async fn joinSnapshot(service: &dyn NodeSpaceContext, node: &str) -> Result<Peer
             "projectionProtocol", toCoreValue(serde_json::json!({"version": space_projection::VERSION})).map_err(|e| e.to_string())?,
         )).await;
         let protocol = space_projection::decodeProtocolResponse(node, response.result)?;
-        if protocol.is_some_and(|protocol| protocol.snapshotPaging) {
+        if protocol.snapshotPaging {
             let header: SnapshotHeader = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
             let mut collector = SnapshotCollector::new(header)?;
             loop {

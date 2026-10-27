@@ -1,6 +1,6 @@
 //! Shares one native mDNS daemon and one event stream per service type.
 
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{IfKind, ServiceDaemon, ServiceEvent, ServiceInfo};
 use operit_host_api::ServiceDiscovery::{
     DiscoveredService, DiscoveryAdvertisement, DiscoveryCallback, DiscoverySubscription,
     ServiceAdvertisement, ServiceDiscoveryHost,
@@ -44,6 +44,7 @@ impl Drop for ListenerSubscription {
 /// Owns native discovery resources shared by Core and Edge callers.
 #[derive(Default)]
 pub struct ServiceDiscoveryProvider {
+    interface: Option<std::net::IpAddr>,
     daemon: OnceLock<Result<ServiceDaemon, String>>,
     browsers: Mutex<BTreeMap<String, Arc<Mutex<BrowserState>>>>,
 }
@@ -64,6 +65,23 @@ fn record(info: &ServiceInfo) -> DiscoveredService {
 }
 
 impl ServiceDiscoveryProvider {
+    /// Restricts a device embedding to its one configured network interface.
+    pub fn forInterface(address: std::net::IpAddr) -> Self {
+        Self { interface: Some(address), ..Self::default() }
+    }
+
+    /// Creates the shared daemon with its explicit interface scope before publication.
+    fn daemon(&self) -> HostResult<&ServiceDaemon> {
+        self.daemon.get_or_init(|| {
+            let daemon = ServiceDaemon::new().map_err(|error| error.to_string())?;
+            if let Some(address) = self.interface {
+                daemon.disable_interface(IfKind::All).map_err(|error| error.to_string())?;
+                daemon.enable_interface(IfKind::Addr(address)).map_err(|error| error.to_string())?;
+            }
+            Ok(daemon)
+        }).as_ref().map_err(|error| HostError::new(error.clone()))
+    }
+
     /// Gets the unique browser for a service type, registering its event loop once.
     fn browser(&self, serviceType: &str) -> HostResult<Arc<Mutex<BrowserState>>> {
         let mut browsers = self
@@ -73,11 +91,7 @@ impl ServiceDiscoveryProvider {
         if let Some(browser) = browsers.get(serviceType) {
             return Ok(browser.clone());
         }
-        let daemon = self
-            .daemon
-            .get_or_init(|| ServiceDaemon::new().map_err(|error| error.to_string()))
-            .as_ref()
-            .map_err(|error| HostError::new(error.clone()))?;
+        let daemon = self.daemon()?;
         let receiver = daemon
             .browse(serviceType)
             .map_err(|error| HostError::new(error.to_string()))?;
@@ -146,12 +160,7 @@ impl ServiceDiscoveryHost for ServiceDiscoveryProvider {
         &self,
         service: ServiceAdvertisement,
     ) -> HostResult<Box<dyn DiscoveryAdvertisement>> {
-        let daemon = self
-            .daemon
-            .get_or_init(|| ServiceDaemon::new().map_err(|e| e.to_string()))
-            .as_ref()
-            .map_err(|e| HostError::new(e.clone()))?
-            .clone();
+        let daemon = self.daemon()?.clone();
         let info = ServiceInfo::new(
             &service.serviceType,
             &service.instance,

@@ -16,6 +16,11 @@ pub use javascript_runtime::NativeHostJavaScriptRuntimeHost;
 pub use runtime_event_scheduler::NativeHostRuntimeEventSchedulerHost;
 pub use runtime_task_scheduler::NativeHostRuntimeTaskSchedulerHost;
 
+#[cfg(feature = "esp32-compat")]
+mod stack_budget;
+#[cfg(feature = "esp32-compat")]
+pub use stack_budget::withStackBudget;
+
 mod local_task_scheduler;
 pub use local_task_scheduler::LocalHostRuntimeTaskSchedulerHost;
 

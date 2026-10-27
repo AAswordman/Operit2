@@ -40,10 +40,7 @@ impl NativeRuntimeStorageWriteSession {
             file.sync_all()?;
         }
         drop(file);
-        atomicReplace(&self.temporaryPath, &self.targetPath)?;
-        if sync {
-            syncParentDirectory(&self.targetPath)?;
-        }
+        publishStagedFile(&self.temporaryPath, &self.targetPath, sync)?;
         Ok(())
     }
 }
@@ -760,6 +757,14 @@ fn isStorageLink(metadata: &fs::Metadata) -> bool {
     false
 }
 
+/// Publishes a closed staging file through the Host's platform-specific atomic replacement.
+#[allow(non_snake_case)]
+pub fn publishStagedFile(source: &Path, target: &Path, sync: bool) -> HostResult<()> {
+    atomicReplace(source, target)?;
+    if sync { syncParentDirectory(target)?; }
+    Ok(())
+}
+
 /// Persists the directory entry published by a durable write or journal append.
 #[allow(non_snake_case)]
 fn syncParentDirectory(path: &Path) -> HostResult<()> {
@@ -828,7 +833,7 @@ fn windowsExtendedPath(path: &Path) -> HostResult<PathBuf> {
     } else {
         std::env::current_dir()?.join(path)
     };
-    let text = absolute.to_string_lossy();
+    let text = absolute.to_string_lossy().replace('/', "\\");
     if text.starts_with(r"\\?\") || text.starts_with(r"\??\") {
         return Ok(absolute);
     }

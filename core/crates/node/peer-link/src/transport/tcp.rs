@@ -26,6 +26,10 @@ struct TcpPeerListener {
 }
 #[async_trait]
 impl PeerListener for TcpPeerListener {
+    /// Reports the socket address selected by the TCP Host.
+    fn localAddress(&self) -> Result<String, String> {
+        self.listener.local_address().map_err(|error| error.to_string())
+    }
     async fn accept(&self) -> Result<Option<Arc<dyn PeerConnection>>, String> {
         let connection = self.listener.accept().await.map_err(|e| e.to_string())?;
         Ok(Some(FramedPeerConnection::new(
@@ -65,7 +69,7 @@ pub(super) async fn connect(
 }
 pub(super) async fn listen(
     host: &HostManager,
-    source: PeerEndpoint,
+    mut source: PeerEndpoint,
     maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
     let provider = host.tcpHost.as_ref().ok_or("TCP Host is not installed")?;
@@ -73,5 +77,6 @@ pub(super) async fn listen(
         .bind(&source.address)
         .await
         .map_err(|e| e.to_string())?;
+    source.address = listener.local_address().map_err(|error| error.to_string())?;
     Ok(Arc::new(TcpPeerListener { listener, source, maxMessageBytes }))
 }

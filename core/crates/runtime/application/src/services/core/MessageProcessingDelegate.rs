@@ -105,6 +105,10 @@ async fn collectCoreResponseStream(
     sender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
 ) {
     let mut markdownStream = MarkdownRenderEventStream::new(streamKey.clone());
+    for event in markdownStream.beginSnapshot("") {
+        sendCoreTextEvent(&sender, &request.requestId, request.target.clone(), &request.propertyName,
+            CoreEventKind::Changed, operit_link::toCoreValue(event).expect("MarkdownStreamEvent must serialize"));
+    }
     let mut textRevisions = TextStreamRevisionTracker::new("");
     let mut itemCollector = |item: ResponseStreamItem| match item {
         ResponseStreamItem::Chunk(chunk) => {

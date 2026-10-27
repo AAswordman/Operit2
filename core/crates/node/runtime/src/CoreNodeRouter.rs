@@ -4425,6 +4425,13 @@ mod tests {
         ) -> CoreCallResponse {
             if self.policyOnly {
                 assert_eq!(request.routeKind, RoutedCoreRequestKind::Target);
+                if request.payload.target == crate::NodeSpaceService::NODE_SPACE_TARGET {
+                    assert_eq!(request.payload.methodName, "projectionProtocol");
+                    let protocol = serde_json::json!({"version":1,"nodeId":request.targetNodeId,
+                        "endpoint":false,"authorityMode":"localReplay","maxMessageBytes":65536,
+                        "snapshotPaging":false,"projectionReference":false});
+                    return CoreCallResponse::ok(request.payload.requestId, operit_link::toCoreValue(protocol).unwrap());
+                }
                 assert_eq!(request.payload.target, crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET);
                 assert!(matches!(request.payload.methodName.as_str(), "exchange" | "exchangePreferences"), "no business RPC is allowed");
                 self.callCount.fetch_add(1, Ordering::SeqCst);

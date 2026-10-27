@@ -128,6 +128,26 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Device HTTP work must share the guarded async worker instead of creating desktop runtimes.
+    #[cfg(feature = "esp32-compat")]
+    #[test]
+    fn network_tasks_use_the_device_async_worker() {
+        let local = LocalHostRuntimeTaskSchedulerHost::new().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let deviceSender = sender.clone();
+        local.scheduleHostRuntimeAsyncTask("device-worker", Box::new(move || Box::pin(async move {
+            deviceSender.send(std::thread::current().id()).unwrap();
+        }))).unwrap();
+        crate::NativeHostRuntimeTaskSchedulerHost::new()
+            .scheduleNetworkAsyncTask("device-http", Box::new(move || Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                sender.send(std::thread::current().id()).unwrap();
+            }))).unwrap();
+        let device = receiver.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let network = receiver.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(device, network);
+    }
     /// A blocked device call must leave the asynchronous timer worker available.
     #[test]
     fn blocking_device_work_does_not_stall_async_timers() {

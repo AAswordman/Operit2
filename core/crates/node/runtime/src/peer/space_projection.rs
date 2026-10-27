@@ -1,5 +1,4 @@
-//! Bounded transport for the existing local-control projection. This is a
-//! migration prerequisite, not an advertisement of Core-managed authorization.
+//! Bounded Space transport shared by peers that validate their own local authority.
 #![allow(non_snake_case)]
 use super::{NodeSpaceContext, CoreSpace, CoreSpaceDeviceProfile,
     CoreSpaceTopologyRecord, CoreSpaceStore, SyncOperation, space_departure};
@@ -43,18 +42,14 @@ pub(crate) struct BoundedControlExchange {
 }
 
 #[cfg(any(test, feature = "full"))]
+/// Validates the explicit transport contract; peer errors terminate this exchange.
 pub(crate) fn decodeProtocolResponse(
     peer: &str, result: Result<CoreValue, operit_link::CoreLinkError>,
-) -> Result<Option<ProjectionProtocol>, String> {
-    match result {
-        Err(error) if error.code == "INTERNAL_ERROR" && error.message == "Unknown node Space method" => Ok(None),
-        Err(error) => Err(error.to_string()),
-        Ok(value) => {
-            let protocol: ProjectionProtocol = fromCoreValue(value).map_err(|error| error.to_string())?;
-            protocol.validate(peer)?;
-            Ok(Some(protocol))
-        }
-    }
+) -> Result<ProjectionProtocol, String> {
+    let value = result.map_err(|error|error.to_string())?;
+    let protocol: ProjectionProtocol = fromCoreValue(value).map_err(|error|error.to_string())?;
+    protocol.validate(peer)?;
+    Ok(protocol)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -335,7 +330,7 @@ mod tests {
     }
     #[test]
     fn negotiated_protocol_never_downgrades_on_failure_or_advertises_hosted_authority() {
-        assert!(decodeProtocolResponse("peer", Err(CoreLinkError::internal("Unknown node Space method"))).unwrap().is_none());
+        assert!(decodeProtocolResponse("peer", Err(CoreLinkError::internal("Unknown node Space method"))).is_err());
         for code in ["PEER_SECURITY", "METHOD_NOT_FOUND", "SPACE_ID_MISMATCH", "INTERNAL"] {
             assert!(decodeProtocolResponse("peer", Err(CoreLinkError::new(code, "failure"))).is_err());
         }

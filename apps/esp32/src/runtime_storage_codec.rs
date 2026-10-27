@@ -392,12 +392,15 @@ pub fn commit_packed_snapshot(
     }
     let mut size = BudgetCounter(0);
     write_packed_files(&mut size, files).map_err(|e| HostError::new(e.to_string()))?;
+    let mut buffer = Vec::new();
+    buffer.try_reserve_exact(SNAPSHOT_CHUNK_SIZE).map_err(|_| allocation_error("snapshot workspace", SNAPSHOT_CHUNK_SIZE))?;
+    buffer.resize(SNAPSHOT_CHUNK_SIZE, 0);
     let mut writer = ChunkWriter {
         sink: |index, bytes: &[u8]| {
             let packed = pack::pack(bytes).map_err(|e| io::Error::other(e.message))?;
             sink(index, &packed)
         },
-        buffer: [0; SNAPSHOT_CHUNK_SIZE],
+        buffer,
         used: 0,
         index: 0,
     };
@@ -436,21 +439,21 @@ pub fn allocation_error(operation: &str, length: usize) -> HostError {
     ))
 }
 
-struct ChunkWriter<F, const SIZE: usize> {
+struct ChunkWriter<F> {
     sink: F,
-    buffer: [u8; SIZE],
+    buffer: Vec<u8>,
     used: usize,
     index: usize,
 }
-impl<F: FnMut(usize, &[u8]) -> io::Result<()>, const SIZE: usize> Write for ChunkWriter<F, SIZE> {
+impl<F: FnMut(usize, &[u8]) -> io::Result<()>> Write for ChunkWriter<F> {
     fn write(&mut self, mut bytes: &[u8]) -> io::Result<usize> {
         let length = bytes.len();
         while !bytes.is_empty() {
-            let copied = bytes.len().min(SIZE - self.used);
+            let copied = bytes.len().min(self.buffer.len() - self.used);
             self.buffer[self.used..self.used + copied].copy_from_slice(&bytes[..copied]);
             self.used += copied;
             bytes = &bytes[copied..];
-            if self.used == SIZE {
+            if self.used == self.buffer.len() {
                 self.flush()?;
             }
         }

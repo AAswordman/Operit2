@@ -71,6 +71,7 @@ export async function copySimulatorBinary(source: string, destination: string,
   }
 }
 
+/** Prepares the bounded desktop Host dependencies and owns the current simulator process. */
 async function start(): Promise<void> {
   if (child || starting) return;
   starting = true;
@@ -82,6 +83,17 @@ async function start(): Promise<void> {
     output = '';
     ready = false;
     // Spawn the binary directly so stop and editor shutdown own the real process.
+    const python = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+    const prepare = spawn(python, ['-X', 'utf8', 'tools/esp32-editor/prepare-simulator.py'], {
+      cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    child = prepare;
+    await new Promise<void>((resolve, reject) => {
+      prepare.once('error', reject);
+      prepare.stderr.on('data', chunk => { output = (output + chunk.toString()).slice(-12000); });
+      prepare.once('close', code => code === 0 ? resolve() : reject(new Error('模拟器依赖准备失败，请查看日志')));
+    });
+    if (child !== prepare || generation !== lifecycle) return;
     const build = spawn('cargo', ['build', '--release', '--manifest-path', 'tools/esp32-editor/simulator/Cargo.toml',
       '--target-dir', fileURLToPath(new URL('../../simulator/target/', import.meta.url))], {
       cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
@@ -97,7 +109,7 @@ async function start(): Promise<void> {
     if (child !== build) return;
     const executable = fileURLToPath(new URL('../../simulator/target/release/operit-esp32-simulator' +
       (process.platform === 'win32' ? '.exe' : ''), import.meta.url));
-    // Keep the executable separate from NativeRuntimeStorageHost's runtime/
+    // Keep the executable separate from the packed storage carrier's runtime/
     // directory. On Unix an extensionless 'runtime' binary occupies that path.
     const runPath = fileURLToPath(new URL('operit-esp32-simulator' +
       (process.platform === 'win32' ? '.exe' : ''), stateDir));
@@ -106,7 +118,7 @@ async function start(): Promise<void> {
     const runtime = spawn(runPath, [], {cwd: root, windowsHide: true,
       env: {...process.env,
         OPERIT_SIM_STATE_DIR: fileURLToPath(stateDir),
-        OPERIT_SIM_STATE: fileURLToPath(new URL('pairing.json', stateDir))},
+        OPERIT_SIM_DISCOVERY_IP: advertisedAddress('0.0.0.0:0').split(':')[0]},
     });
     child = runtime;
     previousExit = new Promise(resolve => runtime.once('close', () => resolve()));
@@ -125,7 +137,8 @@ async function start(): Promise<void> {
       } catch { output = (output + line).slice(-12000); }
     });
     runtime.on('error', e => { output += e.message; });
-    runtime.on('close', () => {
+    runtime.on('close', (code, signal) => {
+      output = (output + `\nSimulator exited (code=${code}, signal=${signal})\n`).slice(-12000);
       if (child === runtime) { child = null; ready = false; failPending(); }
     });
   } catch (e) { child = null; output += String(e); }
@@ -175,6 +188,8 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, device});
+    } else if (url.pathname === '/api/simulator/storage' && req.method === 'GET') {
+      reply(200, await rpc('storageRecords'));
     } else if (url.pathname === '/api/simulator/speech' && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) { body += String(chunk); if (Buffer.byteLength(body) > 24000) throw new Error('语音请求过长'); }
@@ -267,6 +282,6 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
       }
       reply(200, await rpc('action', action));
     } else reply(404, {error: 'Unknown simulator endpoint'});
-  } catch (e) { reply(400, {error: String(e)}); }
+  } catch (e) { reply(400, {error: String(e), running: child !== null, ready, output}); }
   return true;
 }

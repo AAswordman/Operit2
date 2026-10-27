@@ -16,6 +16,7 @@ struct MemoryStorageHost {
     files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     writeCount: Arc<AtomicUsize>,
     readCount: Arc<AtomicUsize>,
+    policyReads: Arc<AtomicUsize>,
     rangeBytes: Arc<AtomicUsize>,
     forbidWholeJournalReads: Arc<AtomicBool>,
     forbidWholePolicyReads: Arc<AtomicBool>,
@@ -55,6 +56,7 @@ impl RuntimeStorageHost for MemoryStorageHost {
             return Err(HostError::new("unbounded policy read"));
         }
         self.readCount.fetch_add(1, Ordering::SeqCst);
+        if path.ends_with("space_policy.preferences.json") { self.policyReads.fetch_add(1, Ordering::SeqCst); }
         let files = self
             .files
             .lock()
@@ -78,6 +80,7 @@ impl RuntimeStorageHost for MemoryStorageHost {
             assert!(length <= crate::SyncOperationJournal::JOURNAL_READ_BYTES);
         }
         self.readCount.fetch_add(1, Ordering::SeqCst);
+        if path.ends_with("space_policy.preferences.json") { self.policyReads.fetch_add(1, Ordering::SeqCst); }
         let files = self.files.lock().map_err(|error| HostError::new(error.to_string()))?;
         let content = files.get(path).ok_or_else(|| HostError::new("missing runtime storage file"))?;
         let start = usize::try_from(offset)
@@ -1726,7 +1729,7 @@ fn control_replay_merges_projection_duplicates_and_rejects_conflicts() {
     use crate::NetworkControlStore::NetworkControlStore;
     use crate::PreferencesDataStore::stringPreferencesKey;
     let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: constrained, ..Default::default() });
-    let store = NetworkControlStore::new(storage.clone()).unwrap().withoutCommandCache();
+    let store = NetworkControlStore::new(storage.clone()).unwrap();
     store.bootstrapCurrentSpace().unwrap();
     store.admitMember("peer".into()).unwrap();
     let before = store.currentSpaceOperations().unwrap();
@@ -2090,4 +2093,53 @@ fn endpoint_control_export_streams_ranges_with_identical_digest_and_legacy_fallb
     let legacy = store.nodeLocalControlExport(&state.spaceId, Some(&revision), None).unwrap();
     assert_eq!(legacy.operation, expected.first().cloned());
     assert_eq!(storage.readBytes(path).unwrap(), reversed.as_bytes());
+}
+
+/// Reopened query handles share the live projection without reading or retaining its history.
+#[test]
+fn control_queries_share_projection_and_observe_revocation() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    for constrained in [false, true] {
+        let host = Arc::new(MemoryStorageHost { releasePreferencesCache: constrained, ..Default::default() });
+        let owner = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+        owner.bootstrapCurrentSpace().unwrap();
+        owner.admitMember("peer".into()).unwrap();
+        for index in 0..32 { owner.updatePolicy("display".into(), index.to_string()).unwrap(); }
+        owner.currentState().unwrap();
+        let reads = host.policyReads.load(Ordering::SeqCst);
+        for _ in 0..32 {
+            let reader = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+            assert!(reader.nodeHasCapability("peer", "runtime.execute", None).unwrap());
+            assert!(!reader.nodeIsDisconnected("peer").unwrap());
+        }
+        assert_eq!(host.policyReads.load(Ordering::SeqCst), reads, "read-only admission checks reread history");
+        let reader = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+        owner.disconnectNode("peer".into()).unwrap();
+        assert!(reader.nodeIsDisconnected("peer").unwrap());
+        owner.removeMember("peer".into()).unwrap();
+        assert!(!reader.nodeHasCapability("peer", "runtime.execute", None).unwrap());
+        owner.admitMember("peer".into()).unwrap();
+        assert!(!reader.nodeIsDisconnected("peer").unwrap());
+    }
+}
+
+/// Direct journal publication invalidates the same projection as node-local imports.
+#[test]
+fn control_projection_observes_independent_journal_appends() {
+    use crate::NetworkControlStore::{NetworkControlStore, NetworkControlCommand, NetworkControlCommandRecord};
+    let host = Arc::new(MemoryStorageHost::default());
+    let owner = NetworkControlStore::new(host.clone()).unwrap();
+    let before = owner.bootstrapCurrentSpace().unwrap();
+    let issuer = before.memberNodeIds.iter().next().unwrap().clone();
+    let journal = SyncOperationStore::new(host.clone(), "runtime/sync");
+    let mutation = journal.appendLocalOperation(&issuer, NewSyncOperation {
+        domain: "network_control".into(), entityType: "command".into(), entityId: "external-policy".into(),
+        operation: "apply".into(), semantics: SyncOperationSemantics::Transaction,
+        payload: serde_json::to_value(NetworkControlCommandRecord {
+            commandId: "external-policy".into(), spaceId: before.spaceId.clone(), issuerNodeId: issuer.clone(),
+            command: NetworkControlCommand::PolicyUpdate { policyId: "external".into(), value: "committed".into() },
+        }).unwrap(),
+    }).unwrap();
+    assert_eq!(mutation.domain, "network_control");
+    assert_eq!(owner.currentState().unwrap().policies.get("external").map(String::as_str), Some("committed"));
 }

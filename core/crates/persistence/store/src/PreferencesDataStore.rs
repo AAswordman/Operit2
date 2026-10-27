@@ -1881,6 +1881,12 @@ pub struct CoreNodeStateStore {
 }
 
 impl CoreNodeStateStore {
+    /// Returns the process-local publication revision shared by all handles to this record.
+    pub(crate) fn revision(&self) -> u64 {
+        *self.inner.changeSignal.version.lock()
+            .expect("PreferencesDataStore version mutex must not be poisoned")
+    }
+
     /// Reads node-local records directly on constrained hosts. Validate the
     /// schema first; migrations and retained/live caches use the regular path.
     pub fn typedEntries<T: serde::de::DeserializeOwned>(&self) -> Result<Vec<(String, T)>, PreferencesDataStoreError> {

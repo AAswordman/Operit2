@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use operit_host_api::RuntimeStorageHost;
 use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
@@ -215,9 +215,8 @@ pub struct NetworkControlStore {
     controlProjection: CoreNodeStateStore,
     nodeLocalOnly: bool,
     localNodeId: String,
-    stateCache: Arc<Mutex<Option<(String, Vec<SyncOperation>, NetworkControlState)>>>,
-    cacheCommands: bool,
-    serializeReplay: bool,
+    stateCache: Arc<Mutex<Option<ControlStateSnapshot>>>,
+    boundedStorage: bool,
 }
 
 impl NetworkControlStore {
@@ -226,17 +225,16 @@ impl NetworkControlStore {
         let localNodeId = CoreNodeIdentityStore::new(storage.clone())
             .initialize()?
             .nodeId;
-        let serializeReplay = !storage.retainPreferencesCache();
+        let boundedStorage = !storage.retainPreferencesCache();
         Ok(Self {
             storage: storage.clone(),
             spaceStore: CoreSpaceStore::new(storage.clone()),
             syncOperationStore: SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH),
-            controlProjection: Self::projectionStore(storage),
+            controlProjection: Self::projectionStore(storage.clone()),
             nodeLocalOnly: false,
             localNodeId,
-            stateCache: Arc::new(Mutex::new(None)),
-            cacheCommands: !serializeReplay,
-            serializeReplay,
+            stateCache: sharedControlState(&storage),
+            boundedStorage,
         })
     }
 
@@ -266,12 +264,6 @@ impl NetworkControlStore {
         store.spaceStore = CoreSpaceStore::newNodeLocal(storage);
         store.nodeLocalOnly = true;
         Ok(store)
-    }
-
-    /// Same durable policy without retaining command trees between calls.
-    pub fn withoutCommandCache(mut self) -> Self {
-        self.cacheCommands = false;
-        self
     }
 
     /// Opens the Space control store over the process-wide runtime storage host.
@@ -321,8 +313,14 @@ impl NetworkControlStore {
     /// Returns the accepted authorization state for the current Space.
     #[allow(non_snake_case)]
     pub fn currentState(&self) -> Result<NetworkControlState, String> {
+        self.withCurrentState(Clone::clone)
+    }
+
+    /// Reads the accepted projection without copying its collections or loading command history.
+    pub fn withCurrentState<R>(&self, read: impl FnOnce(&NetworkControlState) -> R) -> Result<R, String> {
         let space = self.spaceStore.initialize()?;
-        self.materializeState(&space.spaceId)
+        let state = self.acceptedState(&space.spaceId)?;
+        Ok(read(&state))
     }
 
     /// Returns the complete accepted and rejected command audit for the current Space.
@@ -344,25 +342,21 @@ impl NetworkControlStore {
         if let Some(targetNodeId) = targetNodeId {
             validateNodeId(targetNodeId)?;
         }
-        let state = self.currentState()?;
-        Ok(hasCapability(&state, nodeId, capability, targetNodeId))
+        self.withCurrentState(|state| hasCapability(state, nodeId, capability, targetNodeId))
     }
 
     /// Returns whether a node is prohibited from being used as a direct connection or route hop.
     #[allow(non_snake_case)]
     pub fn nodeIsDisconnected(&self, nodeId: &str) -> Result<bool, String> {
         validateNodeId(nodeId)?;
-        Ok(self
-            .currentState()?
-            .disconnectedNodeIds
-            .contains(nodeId))
+        self.withCurrentState(|state| state.disconnectedNodeIds.contains(nodeId))
     }
 
     /// Returns the current Space members explicitly permitted to carry a routed later hop.
     #[allow(non_snake_case)]
     pub fn relayNodeIds(&self) -> Result<BTreeSet<String>, String> {
         let space = self.spaceStore.initialize()?;
-        let state = self.materializeState(&space.spaceId)?;
+        let state = self.acceptedState(&space.spaceId)?;
         Ok(space
             .members
             .into_iter()
@@ -376,7 +370,7 @@ impl NetworkControlStore {
         &self,
     ) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
         let space = self.spaceStore.initialize()?;
-        let state = self.materializeState(&space.spaceId)?;
+        let state = self.acceptedState(&space.spaceId)?;
         let blockedNodeIds = state.disconnectedNodeIds.clone();
         let relayNodeIds = space
             .members
@@ -562,7 +556,7 @@ impl NetworkControlStore {
     /// Every immutable envelope and duplicate is still validated before returning.
     #[allow(non_snake_case)]
     pub fn spaceControlOperation(&self, spaceId: &str, commandId: &str, issuer: &str) -> Result<Option<SyncOperation>, String> {
-        if !self.serializeReplay {
+        if !self.boundedStorage {
             return Ok(self.orderedCommands(spaceId)?.into_iter()
                 .find(|operation| operation.entityId == commandId && operation.originDeviceId == issuer));
         }
@@ -754,7 +748,7 @@ impl NetworkControlStore {
         let _lock = networkControlMutationLock().lock()
             .map_err(|error| format!("Network control mutation lock poisoned: {error}"))?;
         let spaceId = self.spaceStore.space()?.spaceId;
-        let compact = self.nodeLocalOnly && self.serializeReplay;
+        let compact = self.nodeLocalOnly && self.boundedStorage;
         let mut known = if compact {
             // Normally empty after endpoint migration. Preserve compatibility
             // with an endpoint that still has journal authority to reconcile.
@@ -904,7 +898,7 @@ impl NetworkControlStore {
     fn projectControlOperationsForSpaceUnlocked(&self, operations: &[SyncOperation], spaceId: &str) -> Result<(), String> {
         // Validate the full batch before one atomic merge. Encoded history is
         // borrowed, and existing commands are decoded one at a time for equality.
-        if self.serializeReplay {
+        if self.boundedStorage {
             for operation in operations {
                 validateControlOperation(operation)?;
                 if decodeControlOperation(operation)?.spaceId != spaceId {
@@ -1001,7 +995,7 @@ impl NetworkControlStore {
                 payload: serde_json::to_value(record).map_err(|error| error.to_string())?,
                 createdAt: operit_host_api::TimeUtils::currentTimeMillis(), schemaVersion: 1,
             };
-            self.projectControlOperationsUnlocked(std::slice::from_ref(&operation))?;
+            self.projectControlOperationsForSpaceUnlocked(std::slice::from_ref(&operation), spaceId)?;
             return Ok(operation);
         }
         self.syncOperationStore
@@ -1019,35 +1013,36 @@ impl NetworkControlStore {
             .map_err(|error| error.to_string())
     }
 
-    /// Materializes only the accepted state for one current Space identity.
-    #[allow(non_snake_case)]
+    /// Returns an owned projection for callers that need to modify or retain its state.
     fn materializeState(&self, spaceId: &str) -> Result<NetworkControlState, String> {
-        // Constrained Hosts also construct short-lived stores for per-request
-        // authorization. Serialize across those instances, not only clones,
-        // so UI, approval and transport checks cannot each hold a working log.
-        static CONSTRAINED_REPLAY: Mutex<()> = Mutex::new(());
-        let _replay = if self.serializeReplay {
-            Some(CONSTRAINED_REPLAY.lock().map_err(|error| format!("Network control replay poisoned: {error}"))?)
-        } else { None };
-        if self.serializeReplay { return self.materializeCompactState(spaceId); }
+        self.acceptedState(spaceId).map(|state| (*state).clone())
+    }
+
+    /// Shares one accepted projection per storage owner and rebuilds only after authority changes.
+    fn acceptedState(&self, spaceId: &str) -> Result<Arc<NetworkControlState>, String> {
         let mut cache = self.stateCache.lock()
             .map_err(|error| format!("Network control state cache poisoned: {error}"))?;
-        let commands = self.orderedCommands(spaceId)?;
-        if !self.cacheCommands { return self.replayCommands(spaceId, &commands, false).map(|(state, _)| state); }
-        if let Some((cachedSpace, cachedCommands, state)) = cache.as_ref() {
-            if cachedSpace == spaceId && cachedCommands == &commands {
-                return Ok(state.clone());
+        loop {
+            let revision = (self.controlProjection.revision(), self.syncOperationStore.controlRevision());
+            if let Some(snapshot) = cache.as_ref() {
+                if snapshot.revision == revision && snapshot.state.spaceId == spaceId {
+                    return Ok(snapshot.state.clone());
+                }
             }
+            let state = self.replayCurrentState(spaceId)?;
+            if revision != (self.controlProjection.revision(), self.syncOperationStore.controlRevision()) {
+                continue;
+            }
+            let state = Arc::new(state);
+            *cache = Some(ControlStateSnapshot { revision, state: state.clone() });
+            return Ok(state);
         }
-        let (state, _) = self.replayCommands(spaceId, &commands, false)?;
-        *cache = Some((spaceId.to_string(), commands, state.clone()));
-        Ok(state)
     }
 
     /// Keep encoded operations between replay steps instead of retaining every
     /// payload's JSON tree alongside an in-flight Space snapshot. Each operation
     /// still passes the same structural, immutable-conflict and authority checks.
-    fn materializeCompactState(&self, spaceId: &str) -> Result<NetworkControlState, String> {
+    fn replayCurrentState(&self, spaceId: &str) -> Result<NetworkControlState, String> {
         let mut state = NetworkControlState {
             spaceId: spaceId.into(), initialized: false,
             memberNodeIds: BTreeSet::new(), roles: builtinRoles(),
@@ -1130,7 +1125,7 @@ impl NetworkControlStore {
         // typedEntries Vec would retain a second complete collection of payloads
         // and grow oversized (key, operation) elements before this loop begins.
         self.controlProjection.withEncodedEntries(|projection| {
-            if self.serializeReplay {
+            if self.boundedStorage {
                 commands.try_reserve_exact(projection.len())
                     .map_err(|_| "Space control export allocation failed".to_string())?;
             }
@@ -1204,6 +1199,30 @@ impl NetworkControlStore {
         }
         Ok((state, audit))
     }
+}
+
+/// Stores only the accepted state and its source revisions, never a decoded command history.
+struct ControlStateSnapshot {
+    revision: (u64, u64),
+    state: Arc<NetworkControlState>,
+}
+
+/// Shares policy state across independently opened handles without retaining a dead storage owner.
+fn sharedControlState(storage: &Arc<dyn RuntimeStorageHost>) -> Arc<Mutex<Option<ControlStateSnapshot>>> {
+    type Entry = (Weak<dyn RuntimeStorageHost>, Weak<Mutex<Option<ControlStateSnapshot>>>);
+    static STATES: OnceLock<Mutex<Vec<Entry>>> = OnceLock::new();
+    let mut states = STATES.get_or_init(|| Mutex::new(Vec::new())).lock()
+        .expect("Network control registry mutex must not be poisoned");
+    states.retain(|(owner, state)| owner.strong_count() > 0 && state.strong_count() > 0);
+    let owner = Arc::downgrade(storage);
+    for (key, state) in states.iter() {
+        if key.ptr_eq(&owner) {
+            if let Some(state) = state.upgrade() { return state; }
+        }
+    }
+    let state = Arc::new(Mutex::new(None));
+    states.push((owner, Arc::downgrade(&state)));
+    state
 }
 
 /// Returns the process-wide mutex that serializes local policy decisions and writes.

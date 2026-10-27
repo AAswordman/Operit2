@@ -229,22 +229,18 @@ impl PeerStateStore {
         Ok(())
     }
 
+    /// Reads the complete preference object for schema and multi-field mutations.
     fn preferences(&self, path: &str) -> Result<Preferences, String> {
         self.store(path).data().map_err(|error| error.to_string())
     }
+    /// Decodes typed records directly without constructing a second generic JSON tree.
     pub(crate) fn records<T: DeserializeOwned>(
         &self,
         path: &str,
     ) -> Result<BTreeMap<String, T>, String> {
-        self.preferences(path)?
-            .iterEntries()
-            .filter(|(name, _)| *name != PREFERENCES_SCHEMA_VERSION_KEY_NAME)
-            .map(|(name, encoded)| {
-                let record = T::deserialize(encoded)
-                    .map_err(|_| format!("Invalid peer state record at {path}, key {name}"))?;
-                Ok((name.to_owned(), record))
-            })
-            .collect()
+        self.store(path).typedEntries::<T>()
+            .map(|entries| entries.into_iter().collect())
+            .map_err(|error| format!("Invalid peer state records at {path}: {error}"))
     }
 
     /// Decode a scan without the oversized tree nodes of large typed records.
@@ -291,22 +287,18 @@ impl PeerStateStore {
         struct Header {
             version: Option<u32>,
         }
-        let prefs = self.preferences(path)?;
-        let mut records = BTreeMap::new();
-        for (name, encoded) in prefs.iterEntries() {
-            if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
-                continue;
+        self.store(path).withEncodedEntries(|entries| {
+            let mut records = BTreeMap::new();
+            for (name, encoded) in entries {
+                let bytes = encoded.get().as_bytes();
+                let header: Header = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+                if header.version == Some(version) {
+                    let record = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+                    records.insert(name, record);
+                }
             }
-            let header: Header =
-                Header::deserialize(encoded).map_err(|e| e.to_string())?;
-            if header.version == Some(version) {
-                records.insert(
-                    name.to_owned(),
-                    T::deserialize(encoded).map_err(|e| e.to_string())?,
-                );
-            }
-        }
-        Ok(records)
+            Ok(records)
+        }).map_err(|error| error.to_string())?
     }
 
     /// Expiry cleanup and insertion are one durable transaction. Unknown or
@@ -508,17 +500,20 @@ impl PeerStateStore {
 
     /// Returns the persisted local pairing generation, if one was minted.
     pub fn pairingIncarnation(&self) -> Result<Option<String>, String> {
-        let preferences = self.preferences(RUNTIME_LINK_ACCESS_IDENTITY_PATH)?;
-        let encoded = preferences
-            .get(&stringPreferencesKey("record"))
+        #[derive(Deserialize)]
+        struct DeviceInfo {
+            #[serde(default)]
+            pairingIncarnation: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct Identity {
+            deviceInfo: Option<DeviceInfo>,
+        }
+        let record: Identity = self.store(RUNTIME_LINK_ACCESS_IDENTITY_PATH)
+            .typedEntry("record")
+            .map_err(|error| error.to_string())?
             .ok_or_else(|| "Node identity is missing".to_string())?;
-        let record: Value =
-            serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
-        Ok(record
-            .get("deviceInfo")
-            .and_then(|info| info.get("pairingIncarnation"))
-            .and_then(Value::as_str)
-            .map(str::to_owned))
+        Ok(record.deviceInfo.and_then(|info| info.pairingIncarnation))
     }
 
     /// Returns the local pairing generation, minting and persisting one on

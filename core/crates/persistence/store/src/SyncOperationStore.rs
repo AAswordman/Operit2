@@ -383,6 +383,7 @@ pub struct SyncOperationStore {
 
 #[derive(Default)]
 struct SyncOperationStoreSharedState {
+    controlRevision: std::sync::atomic::AtomicU64,
     clock: Mutex<SyncOperationCachedValue<SyncClock>>,
     devices: Mutex<SyncOperationCachedValue<Vec<String>>>,
     entityVersions: Mutex<SyncOperationCachedValue<BTreeMap<String, SyncOperationOrder>>>,
@@ -392,6 +393,24 @@ struct SyncOperationStoreSharedState {
     receiveState: Mutex<SyncOperationCachedValue<ReceiveState>>,
     application: Mutex<()>,
     preferenceOutboxes: Mutex<SyncOperationCachedValue<BTreeMap<String, bool>>>,
+}
+
+/// Invalidates readers before and after a journal write, including uncertain failures.
+struct ControlJournalMutation<'a>(&'a std::sync::atomic::AtomicU64);
+
+impl<'a> ControlJournalMutation<'a> {
+    /// Opens a publication interval while the caller holds the journal mutation lock.
+    fn new(revision: &'a std::sync::atomic::AtomicU64) -> Self {
+        revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Self(revision)
+    }
+}
+
+impl Drop for ControlJournalMutation<'_> {
+    /// Invalidates snapshots observed before the publication interval completed.
+    fn drop(&mut self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
 }
 
 struct SyncOperationCachedValue<T> {
@@ -490,6 +509,11 @@ impl Hash for SyncOperationStoreRegistryKey {
 }
 
 impl SyncOperationStore {
+    /// Identifies committed or interrupted changes to the authority journal.
+    pub(crate) fn controlRevision(&self) -> u64 {
+        self.sharedState.controlRevision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// Creates a sync operation store over an explicit storage host and root path.
     pub fn new(storageHost: Arc<dyn RuntimeStorageHost>, rootPath: impl Into<String>) -> Self {
         let rootPath = rootPath.into();
@@ -759,7 +783,8 @@ impl SyncOperationStore {
                 }
             }
             if !content.is_empty() {
-                self.appendOperationBytes(&originDeviceId, content, &mut operationLog)?;
+                self.appendOperationBytes(&originDeviceId, content, &mut operationLog,
+                    appendedOperations.iter().any(|(operation, _, _)| operation.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
                 for (operation, offset, lineLength) in appendedOperations {
                     operationLog.appended(operation, offset, lineLength, encryptedPreferenceSyncOperation(operation) || storedEncryptedSyncPayload(&operation.payload));
                 }
@@ -1355,6 +1380,7 @@ impl SyncOperationStore {
         }
         let mut nextFloors = floors;
         nextFloors.insert(originDeviceId.to_string(), sequence);
+        let _revision = ControlJournalMutation::new(&self.sharedState.controlRevision);
         self.writeJson(&self.exportFloorsPath(), &nextFloors)?;
         state.value = nextFloors;
         Ok(())
@@ -1584,7 +1610,7 @@ impl SyncOperationStore {
         let storedOperation = self.encodeOperationPayload(operation)?;
         let mut content = serde_json::to_vec(&storedOperation)?;
         content.push(b'\n');
-        self.appendOperationBytes(&operation.originDeviceId, content, index)
+        self.appendOperationBytes(&operation.originDeviceId, content, index, operation.domain == NETWORK_CONTROL_SYNC_DOMAIN)
     }
 
     /// Separates an interrupted tail from the next intact operation and reloads after uncertain writes.
@@ -1593,7 +1619,9 @@ impl SyncOperationStore {
         origin: &str,
         mut content: Vec<u8>,
         index: &mut JournalIndex,
+        authority: bool,
     ) -> Result<u64, SyncOperationStoreError> {
+        let _revision = authority.then(|| ControlJournalMutation::new(&self.sharedState.controlRevision));
         if index.needs_separator { content.insert(0, b'\n'); }
         let writtenBytes = u64::try_from(content.len()).map_err(|_| {
             SyncOperationStoreError::Message(
@@ -1968,6 +1996,7 @@ impl SyncOperationStore {
             );
             sidecar.push('\n');
         }
+        let _revision = ControlJournalMutation::new(&self.sharedState.controlRevision);
         self.storageHost
             .writeBytes(&self.operationsPath(deviceId), kept.as_bytes())?;
         self.storageHost

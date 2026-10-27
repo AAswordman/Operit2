@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 const RUNTIME_WORKER_COUNT: usize = 16;
 const BLOCKING_WORKER_COUNT: usize = 16;
 const NETWORK_WORKER_COUNT: usize = 4;
-const SERVICE_WORKER_COUNT: usize = 16;
+const SERVICE_WORKER_COUNT: usize = if cfg!(feature = "esp32-compat") { 1 } else { 16 };
 const TASK_QUEUE_CAPACITY: usize = 4096;
 
 thread_local! {
@@ -159,69 +159,83 @@ pub(crate) fn spawnTaskPoolWithOptions(
         let (ready, started) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
             .name(format!("{prefix}-{index}"))
-            .stack_size(stackSize)
+            .stack_size(if cfg!(feature = "esp32-compat") {
+                2 * 1024 * 1024
+            } else {
+                stackSize
+            })
             .spawn(move || {
-                HOST_RUNTIME_WORKER.set(stackSize >= 16 * 1024 * 1024);
-                let mut builder = tokio::runtime::Builder::new_current_thread();
-                builder.max_blocking_threads(1).enable_time();
-                if enableIo {
-                    builder.enable_io();
-                }
-                let runtime = match builder.build() {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        let _ = ready.send(Err(error.to_string()));
-                        return;
+                let mut execute = || {
+                    HOST_RUNTIME_WORKER.set(stackSize >= 16 * 1024 * 1024);
+                    let mut builder = tokio::runtime::Builder::new_current_thread();
+                    builder.max_blocking_threads(1).enable_time();
+                    if enableIo {
+                        builder.enable_io();
+                        // Device workers need a bounded desktop readiness batch.
+                        #[cfg(feature = "esp32-compat")]
+                        builder.max_io_events_per_tick(16);
                     }
-                };
-                let _ = ready.send(Ok(()));
-                // The runtime outlives every request and keeps its I/O and
-                // spawned children alive without additional runtime threads.
-                let local = tokio::task::LocalSet::new();
-                local.block_on(&runtime, async {
-                    loop {
-                        // Never hold the queue lock across an await: a local
-                        // future may resume and block this thread while the
-                        // dispatcher waits, stranding the entire shared queue.
-                        let task = {
-                            let mut state =
-                                pending.lock().expect("runtime task queue mutex poisoned");
-                            let selected = (0..count)
-                                .map(|offset| (state.cursor + offset) % count)
-                                .filter(|worker| !state.polling[*worker])
-                                .min_by_key(|worker| state.active[*worker]);
-                            if selected == Some(index) {
-                                let task = state.pending.pop_front();
-                                if task.is_some() {
-                                    state.active[index] += 1;
-                                    state.cursor = (index + 1) % count;
-                                }
-                                task
-                            } else {
-                                None
-                            }
-                        };
-                        let Some(task) = task else {
-                            if updates.changed().await.is_err() {
-                                break;
-                            }
-                            continue;
-                        };
-                        // Both factory and future stay inside the LocalSet panic boundary.
-                        local.spawn_local(TrackedTask {
-                            future: Box::pin(async move { task().await }),
-                            state: pending.clone(),
-                            changed: changed.clone(),
-                            worker: index,
-                        });
-                        if let Some(changed) = changed.upgrade() {
-                            let _ = changed.send(());
+                    let runtime = match builder.build() {
+                        Ok(runtime) => runtime,
+                        Err(error) => {
+                            let _ = ready.send(Err(error.to_string()));
+                            return;
                         }
-                        // Let the LocalSet start the task and keep the receive
-                        // handoff fair when many tasks arrive in one burst.
-                        tokio::task::yield_now().await;
-                    }
-                });
+                    };
+                    let _ = ready.send(Ok(()));
+                    // The runtime outlives every request and keeps its I/O and
+                    // spawned children alive without additional runtime threads.
+                    let local = tokio::task::LocalSet::new();
+                    local.block_on(&runtime, async {
+                        loop {
+                            // Never hold the queue lock across an await: a local
+                            // future may resume and block this thread while the
+                            // dispatcher waits, stranding the entire shared queue.
+                            let task = {
+                                let mut state =
+                                    pending.lock().expect("runtime task queue mutex poisoned");
+                                let selected = (0..count)
+                                    .map(|offset| (state.cursor + offset) % count)
+                                    .filter(|worker| !state.polling[*worker])
+                                    .min_by_key(|worker| state.active[*worker]);
+                                if selected == Some(index) {
+                                    let task = state.pending.pop_front();
+                                    if task.is_some() {
+                                        state.active[index] += 1;
+                                        state.cursor = (index + 1) % count;
+                                    }
+                                    task
+                                } else {
+                                    None
+                                }
+                            };
+                            let Some(task) = task else {
+                                if updates.changed().await.is_err() {
+                                    break;
+                                }
+                                continue;
+                            };
+                            // Both factory and future stay inside the LocalSet panic boundary.
+                            local.spawn_local(TrackedTask {
+                                future: Box::pin(async move { task().await }),
+                                state: pending.clone(),
+                                changed: changed.clone(),
+                                worker: index,
+                            });
+                            if let Some(changed) = changed.upgrade() {
+                                let _ = changed.send(());
+                            }
+                            // Let the LocalSet start the task and keep the receive
+                            // handoff fair when many tasks arrive in one burst.
+                            tokio::task::yield_now().await;
+                        }
+                    });
+                };
+                #[cfg(feature = "esp32-compat")]
+                crate::withStackBudget(stackSize, execute)
+                    .expect("Host worker stack allocation failed");
+                #[cfg(not(feature = "esp32-compat"))]
+                execute();
             })
             .map_err(|e| e.to_string())?;
         started.recv().map_err(|e| e.to_string())??;
@@ -417,20 +431,28 @@ impl NativeHostRuntimeTaskSchedulerHost {
 }
 
 impl NativeHostRuntimeTaskSchedulerHost {
-    /// Runs all native network futures on the same four affine Host workers.
+    /// Uses the device async worker or the desktop network pool selected by this Host profile.
     pub fn scheduleNetworkAsyncTask(
         &self,
         name: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
-        static NETWORK: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
-        let queue = NETWORK
-            .get_or_init(|| spawnTaskPool("operit-network-worker", NETWORK_WORKER_COUNT))
-            .as_ref()
-            .map_err(|error| HostError::new(format!("create network task pool failed: {error}")))?;
-        queue
-            .send(task)
-            .map_err(|_| HostError::new(format!("network task queue is closed or full: {name}")))
+        #[cfg(feature = "esp32-compat")]
+        {
+            use operit_host_api::HostRuntimeTaskSchedulerHost;
+            crate::LocalHostRuntimeTaskSchedulerHost::new()?.scheduleHostRuntimeAsyncTask(name, task)
+        }
+        #[cfg(not(feature = "esp32-compat"))]
+        {
+            static NETWORK: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
+            let queue = NETWORK
+                .get_or_init(|| spawnTaskPool("operit-network-worker", NETWORK_WORKER_COUNT))
+                .as_ref()
+                .map_err(|error| HostError::new(format!("create network task pool failed: {error}")))?;
+            queue
+                .send(task)
+                .map_err(|_| HostError::new(format!("network task queue is closed or full: {name}")))
+        }
     }
 
     /// Isolates Java owner callbacks from Rust callers synchronously waiting for their reply.
@@ -495,7 +517,12 @@ impl NativeHostRuntimeTaskSchedulerHost {
                 .map_err(|_| HostError::new(format!("Host service capacity exhausted: {name}")))?,
         );
         let queue = SERVICES
-            .get_or_init(|| spawnTaskPool("operit-service-worker", SERVICE_WORKER_COUNT))
+            .get_or_init(|| {
+                #[cfg(feature = "esp32-compat")]
+                { spawnTaskPoolWithOptions("operit-service-worker", SERVICE_WORKER_COUNT, 128 * 1024, false) }
+                #[cfg(not(feature = "esp32-compat"))]
+                { spawnTaskPool("operit-service-worker", SERVICE_WORKER_COUNT) }
+            })
             .as_ref()
             .map_err(|error| HostError::new(format!("create service task pool failed: {error}")))?;
         let admitted = tasks

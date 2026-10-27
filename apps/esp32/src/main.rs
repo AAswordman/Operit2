@@ -16,6 +16,7 @@ mod ui;
 #[cfg(target_os = "espidf")]
 mod runtime_host;
 mod runtime_storage_codec;
+mod runtime_storage_host;
 mod runtime_storage_pack;
 #[cfg(target_os = "espidf")]
 mod settings;

@@ -2434,13 +2434,13 @@ impl ChatServiceCore {
     /// Paging uses the message index; it never transfers complete history or tool payloads.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
-    pub async fn chatMessagesWindowFlow(&self, chatId: String, beforeTimestamp: Option<i64>, beforeTextOffset: Option<u32>, textBytes: u32, textLines: u32) -> StateFlow<operit_model::ChatDisplayWindowState::ChatDisplayWindow> {
+    pub async fn chatMessagesWindowFlow(&self, chatId: String, beforeTimestamp: Option<i64>, beforeTextOffset: Option<u32>, textBytes: u32, textLines: u32) -> StateFlow<operit_edge_contract::chat_display::ChatDisplayWindow> {
         let manager = self.chatHistoryDelegate.chatHistoryManager.clone();
         self.localChatMessagesFlow(chatId.clone()).map(move |live| {
             let messages = if let Some(timestamp) = beforeTimestamp {
                 let mut page = match manager.loadChatMessagesDescUpTo(chatId.clone(), timestamp, 14) {
                     Ok(page) => page,
-                    Err(error) => return operit_model::ChatDisplayWindowState::ChatDisplayWindow { messages:Vec::new(), older:None, error:Some(error.to_string()) },
+                    Err(error) => return operit_edge_contract::chat_display::ChatDisplayWindow { messages:Vec::new(), older:None, error:Some(error.to_string()) },
                 };
                 page.reverse(); page
             } else { live };

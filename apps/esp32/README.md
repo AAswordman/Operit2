@@ -1,13 +1,10 @@
 # ESP32 Edge firmware
 
 Space responsibilities are defined in [Edge architecture](../../docs/edge-architecture.md).
-A proposed [Core-managed Space entry protocol](../../docs/edge-core-entry-protocol.md)
-would move full policy history and authorization computation to Core. The first
-stage adds explicit projection version/message-limit negotiation, one-record
-control export to Core, and Space message size checks. It still advertises
-`localReplay`: managed authorization and durable handover are not implemented.
-Current firmware retains local control records. Do not remove that state before
-a verified handover.
+The [bounded Space and display contracts](../../docs/edge-core-entry-protocol.md)
+keep Peer and Space authority on each node. Core projects business messages into
+bounded display text; ESP stores its own identity, pairing, Space control and native
+configuration. The device does not run tools or interpret tool result/status data.
 This document covers the ESP32-2432S028 implementation and firmware build.
 Tooling and acceptance commands are maintained in the
 [editor README](../../tools/esp32-editor/README.md).
@@ -321,10 +318,9 @@ backups. Old requests and source/approval facts remain. Neither the original
 partition nor the logical budget was enlarged. The isolated Core was stopped
 and the serial port released after validation; the device retains its Space.
 
-Core-managed authority, durable handover, arbitrary history growth and broader
-concurrency/lifecycle acceptance remain pending. See the
-[validation record](../../docs/edge-core-entry-protocol.md) for the retained
-failure stages, exact page counts and final results.
+The hardware measurements above describe the recorded firmware image. Simulator
+checks use separately enforced Rust heap and task-stack budgets and are not board
+telemetry. See the [current chain and acceptance scope](../../docs/edge-core-entry-protocol.md).
 
 ## Recovering from an unavailable Space administrator
 

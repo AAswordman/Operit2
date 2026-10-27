@@ -167,44 +167,32 @@ static void text(const node_t *node) {
         x += advance;
     }
 }
-/* RS state | name US is a bounded Core presentation token. No tool body is
- * cached here, and cards use the same history scroll as ordinary chat rows. */
-typedef struct { const char *text; unsigned bytes; char state; bool second; } chat_row_t;
-static const char *tool_end(const char *s) {
-    if((unsigned char)s[0]!=0x1e||!s[1]||s[2]!='|'||!strchr("RSFU",s[1]))return NULL;
-    const char *end=strchr(s+3,0x1f);
-    if(!end||end==s+3||end-s>99)return NULL;
-    for(const char *p=s+3;p<end;++p)if((unsigned char)*p<32)return NULL;
-    return end;
-}
-static bool next_chat_row(const char **cursor,bool *second,chat_row_t *row) {
+/* Display rows contain plain Core-projected text only. */
+typedef struct { const char *text; unsigned bytes; } chat_row_t;
+/** Advances one wrapped line without interpreting chat content. */
+static bool next_chat_row(const char **cursor,chat_row_t *row) {
     const char *s=*cursor;if(!*s)return false;
-    const char *end=tool_end(s);
-    if(end) {
-        *row=(chat_row_t){s+3,(unsigned)(end-s-3),s[1],*second};
-        if(*second){*cursor=end+1;if(**cursor=='\n')++*cursor;}
-        *second=!*second;return true;
-    }
     const char *start=s;int x=0;
     while(*s) {
         const char *before=s;
-        if(tool_end(s))break;
         uint32_t cp=decode(&s);
-        if(cp=='\n'){*cursor=s;*row=(chat_row_t){start,(unsigned)(before-start),0,false};return true;}
+        if(cp=='\n'){*cursor=s;*row=(chat_row_t){start,(unsigned)(before-start)};return true;}
         const mini_glyph_t *g=text_glyph(cp);if(!g)continue;
         if(x+g->advance>CHAT_WRAP){s=before;break;}x+=g->advance;
     }
-    *cursor=s;*row=(chat_row_t){start,(unsigned)(s-start),0,false};return true;
+    *cursor=s;*row=(chat_row_t){start,(unsigned)(s-start)};return true;
 }
 static void follow_chat_tail(void);
+/** Counts wrapped plain-text rows in the volatile chat window. */
 static unsigned chat_lines(void) {
-    const char *s=ui.chat;bool second=false;chat_row_t row;unsigned lines=0;
-    while(next_chat_row(&s,&second,&row))++lines;
+    const char *s=ui.chat;chat_row_t row;unsigned lines=0;
+    while(next_chat_row(&s,&row))++lines;
     return lines?lines:1;
 }
+/** Locates a wrapped text row without interpreting tool metadata. */
 static const char *chat_line(unsigned wanted) {
-    const char *s=ui.chat;bool second=false;chat_row_t row;unsigned line=0;
-    while(next_chat_row(&s,&second,&row)){if(line++==wanted)return row.state?row.text-3:row.text;}
+    const char *s=ui.chat;chat_row_t row;unsigned line=0;
+    while(next_chat_row(&s,&row)){if(line++==wanted)return row.text;}
     return s;
 }
 static const char *plugin_info_line(unsigned wanted) {
@@ -598,16 +586,11 @@ static void outline(int x,int y,int w,int h,uint16_t color) {
 }
 static bool same(const char *a,const char *b){return !strcmp(a,b);}
 static bool is_face(const node_t *n){return same(n->id,"home_face")||same(n->id,"sidebar_face")||same(n->id,"expression_face");}
-static const char *tool_status(char state) {
-    return state=='S'?"成功":state=='F'?"失败":state=='R'?"调用中":"未完成";
-}
-static uint16_t tool_color(char state) {
-    return rgb(state=='S'?0x71e5a2:state=='F'?0xf07878:state=='R'?0xe4c778:0x849c8d);
-}
+/** Paints bounded display text without tool-specific state or cards. */
 static void paint_chat(const node_t *item) {
     if(!ui.chat[0]){text(item);return;}
-    const char *s=ui.chat;bool second=false;chat_row_t row;unsigned line=0;
-    while(next_chat_row(&s,&second,&row)) {
+    const char *s=ui.chat;chat_row_t row;unsigned line=0;
+    while(next_chat_row(&s,&row)) {
         unsigned at=line++;if(at<ui.chat_scroll)continue;
         unsigned visible=at-ui.chat_scroll;if(visible>=CHAT_ROWS)break;
         int y=item->y+(int)visible*21;
@@ -615,17 +598,6 @@ static void paint_chat(const node_t *item) {
         char name[256];unsigned n=row.bytes<sizeof(name)-1?row.bytes:sizeof(name)-1;
         while(n&&((unsigned char)row.text[n]&0xc0)==0x80)--n;
         memcpy(name,row.text,n);name[n]=0;label.text=name;
-        if(row.state) {
-            uint16_t border=rgb(0x344d3d);
-            rect(item->x,y,item->w,21,rgb(0x17271f));
-            rect(item->x,y,1,21,border);rect(item->x+item->w-1,y,1,21,border);
-            rect(item->x,y+(row.second?20:0),item->w,1,border);
-            if(!row.second)draw_icon(ICON_PLUGIN,item->x+5,y+3,16,rgb(0xb1c7b8));
-            label.x+=23;label.w-=26;
-            // The package namespace is routing metadata, not another card field.
-            if(!row.second){const char *short_name=strrchr(name,':');if(short_name&&short_name[1])label.text=short_name+1;}
-            if(row.second){label.text=tool_status(row.state);label.color=tool_color(row.state);}
-        }
         text(&label);
     }
 }
@@ -919,12 +891,13 @@ void operit_ui_chat_send_result(bool ok,const char *error){
     invalidate();
 }
 /* One bounded, volatile window shared by painting and screen inspection. */
+/** Appends one plain display message to the volatile window. */
 void operit_ui_set_message(unsigned index,bool user,const char *text){
     if(index==0)ui.chat[0]=0;
     size_t n=strlen(ui.chat);
     if(n&&n+1<sizeof(ui.chat))ui.chat[n++]='\n';
     ui.chat[n]=0;
-    const char *prefix=tool_end(text)?"":user?"You: ":"AI: ";
+    const char *prefix=user?"You: ":"AI: ";
     size_t count=strlen(prefix);
     if(n+count+1<sizeof(ui.chat)){memcpy(ui.chat+n,prefix,count);n+=count;ui.chat[n]=0;}
     copy(ui.chat+n,sizeof(ui.chat)-n,text);invalidate();
@@ -1070,18 +1043,6 @@ static const char *inspect_format(bool compact) {
         append(",\"action\":");string(n->action);
         if(!compact)append(",\"role\":\"%s\",\"visible\":true,\"clickable\":%s",n->action?"button":"label",n->action?"true":"false");
         append(",\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"enabled\":%s}",n->x,n->y,n->w,n->h,n->enabled?"true":"false");
-    }
-    append("],\"toolCards\":[");
-    if(page()==2&&!ui.sidebar) {
-        const char *s=ui.chat;bool second=false;chat_row_t row;unsigned line=0,count=0;
-        while(next_chat_row(&s,&second,&row)) {
-            unsigned at=line++;
-            if(!row.state||row.second||at+1<ui.chat_scroll||at>=ui.chat_scroll+CHAT_ROWS)continue;
-            char name[100];memcpy(name,row.text,row.bytes);name[row.bytes]=0;
-            append("%s{\"icon\":\"plugin\",\"name\":",count++?",":"");string(name);
-            append(",\"status\":");string(tool_status(row.state));
-            append(",\"statusColor\":%u,\"line\":%u}",(unsigned)tool_color(row.state),at);
-        }
     }
     append("]}");
     return json_ok?debug_json:"{\"renderer\":\"mini\",\"error\":\"inspection capacity exceeded\",\"nodes\":[]}";

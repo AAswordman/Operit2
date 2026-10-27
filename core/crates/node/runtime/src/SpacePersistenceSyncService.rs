@@ -399,7 +399,7 @@ impl SpacePersistenceSyncService {
             // A paired peer outside the Space membership has no business
             // replication pass; the projection exchange was its whole pass.
             if !membershipBeforeExchange.contains(&peerNodeId) {
-                self.recordPeerPassCompleted(&peerNodeId).await;
+                self.recordPeerPassCompleted(&peerNodeId, false).await?;
             }
         }
         let space = self.state.spaceStore.space()?;
@@ -463,7 +463,7 @@ impl SpacePersistenceSyncService {
         } else { pass.await };
         match &result {
             Ok(allowed) => {
-                self.recordPeerPassCompleted(&targetNodeId).await;
+                self.recordPeerPassCompleted(&targetNodeId, *allowed).await?;
                 if *allowed {
                     let pending = self.state.peerGates.lock().map_err(|error| error.to_string())?
                         .get(&targetNodeId).is_some_and(|gate| gate.pendingWork);
@@ -705,17 +705,17 @@ impl SpacePersistenceSyncService {
 
     /// Records one completed full pass: the freshly probed clock and the
     /// current local-state summary become the pass baseline.
-    async fn recordPeerPassCompleted(&self, targetNodeId: &str) {
-        let localStateSummary = self.localStateSummary().await.unwrap_or_default();
-        if let Ok(mut gates) = self.state.peerGates.lock() {
-            let gate = gates.entry(targetNodeId.to_string()).or_default();
-            if let Some(probed) = gate.probedClockSummary.take() {
-                gate.lastRemoteClockSummary = Some(probed);
-            }
-            gate.lastLocalStateSummary = Some(localStateSummary);
-            gate.consecutiveFailures = 0;
-            gate.nextFullSyncAllowedAt = 0;
+    async fn recordPeerPassCompleted(&self, targetNodeId: &str, businessReplication: bool) -> Result<(), String> {
+        let localStateSummary = if businessReplication { Some(self.localStateSummary().await?) } else { None };
+        let mut gates = self.state.peerGates.lock().map_err(|error| error.to_string())?;
+        let gate = gates.entry(targetNodeId.to_string()).or_default();
+        if let Some(probed) = gate.probedClockSummary.take() {
+            gate.lastRemoteClockSummary = Some(probed);
         }
+        gate.lastLocalStateSummary = localStateSummary;
+        gate.consecutiveFailures = 0;
+        gate.nextFullSyncAllowedAt = 0;
+        Ok(())
     }
 
     /// Records one failed full pass and arms the exponential retry backoff.
@@ -1463,8 +1463,7 @@ where
     })?)
 }
 
-/// Only the precise legacy unknown-method response permits the old protocol.
-/// Security, malformed replies, disconnects and unknown versions never downgrade.
+/// Negotiates bounded transport with direct authenticated peers; relayed Core routes use their existing contract.
 async fn projectionProtocol(
     router: &CoreNodeRouter, peer: &str,
 ) -> Result<Option<crate::NodeSpaceService::space_projection::ProjectionProtocol>, String> {
@@ -1479,8 +1478,8 @@ async fn projectionProtocol(
         "projectionProtocol", json!({"version": crate::NodeSpaceService::space_projection::VERSION}))?;
     let response = router.callNode(peer.to_owned(), request).await;
     let mut protocol = crate::NodeSpaceService::space_projection::decodeProtocolResponse(peer, response.result)?;
-    if let Some(protocol) = &mut protocol { protocol.maxMessageBytes = protocol.maxMessageBytes.min(peers.maxMessageBytes()); }
-    Ok(protocol)
+    protocol.maxMessageBytes = protocol.maxMessageBytes.min(peers.maxMessageBytes());
+    Ok(Some(protocol))
 }
 
 /// Invokes one generated service method through the Router.
