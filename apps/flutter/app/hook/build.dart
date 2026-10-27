@@ -804,9 +804,17 @@ String? _rustupDefaultToolchain(Directory rustupHome) {
 
 String _pythonExecutable(Directory repoRoot) {
   if (Platform.isWindows) {
-    return File.fromUri(repoRoot.uri.resolve('.venv/Scripts/python.exe')).path;
+    final venvPython = File.fromUri(repoRoot.uri.resolve('.venv/Scripts/python.exe'));
+    if (venvPython.existsSync()) {
+      return venvPython.path;
+    }
+    return 'python.exe';
   }
-  return File.fromUri(repoRoot.uri.resolve('.venv/bin/python')).path;
+  final venvPython = File.fromUri(repoRoot.uri.resolve('.venv/bin/python'));
+  if (venvPython.existsSync()) {
+    return venvPython.path;
+  }
+  return 'python3';
 }
 
 /// Reads the exact Flutter build target from the hook configuration schema.

@@ -70,6 +70,14 @@ impl SyncClock {
             .iter()
             .all(|(deviceId, sequence)| self.sequenceFor(deviceId) >= *sequence)
     }
+
+    /// Keeps only sequences this device authored. Applied peer operations also
+    /// advance their origins here, but they are not work this device still
+    /// owes its peers, so change summaries exclude them.
+    pub fn retainAuthoredBy(&mut self, deviceId: &str) {
+        self.sequences
+            .retain(|origin, _| origin.starts_with(deviceId));
+    }
 }
 
 /// Supplies operation membership independently of an application's materialization clock.
@@ -1330,6 +1338,14 @@ impl SyncOperationStore {
     /// Reads the local vector clock from storage.
     pub fn localClock(&self) -> Result<SyncClock, SyncOperationStoreError> {
         self.publishPreferenceOutboxes()?;
+        self.currentLocalClock()
+    }
+
+    /// Reads the cached local vector clock without publishing deferred
+    /// preference payloads. Change probes poll this instead of the full
+    /// receipt so an idle peer performs no writes and serializes no journal.
+    #[allow(non_snake_case)]
+    pub fn currentLocalClock(&self) -> Result<SyncClock, SyncOperationStoreError> {
         let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
         Ok(self
             .loadCachedJson(&mut clockState, &self.clockPath())?

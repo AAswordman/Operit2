@@ -84,6 +84,19 @@ impl operit_link::CoreLinkSharedClient for GateTestApplicationClient {
                     serde_json::json!({"ranges":self.gateClock()?.ranges, "protocolVersion":1, "pending":0, "pendingBlobs":[], "errors":self.gateErrors()}),
                 )
                 .map_err(|error| error.to_string()),
+                "syncClockDigest" => operit_link::toCoreValue(serde_json::json!({
+                    "protocolVersion": 1,
+                    // The fixture models one remote process per router, so the
+                    // digest follows the remote's own receipt. Production adds
+                    // the peer-local mutation revision, which cannot be shared
+                    // across two routers living in one test process.
+                    "digest": format!(
+                        "ranges={}#errors={:?}",
+                        serde_json::to_string(&self.gateClock()?.ranges).unwrap_or_default(),
+                        self.gateErrors(),
+                    ),
+                }))
+                .map_err(|error| error.to_string()),
                 "syncOperationsSince" => {
                     let args: serde_json::Value = operit_link::fromCoreValue(request.args)
                         .map_err(|error| error.to_string())?;
@@ -266,10 +279,15 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
     observer.synchronizeOnce().await.unwrap();
     observer.synchronizeOnce().await.unwrap();
     let markersAfterFirstPass = fullPassMarkers(&peers[1]);
-    let probesAfterFirstPass = synchronizedMethodCount(&peers[1], "syncClock");
+    let probesAfterFirstPass = synchronizedMethodCount(&peers[1], "syncClockDigest");
+    let fullClockCallsAfterFirstPass = synchronizedMethodCount(&peers[1], "syncClock");
     assert!(
         markersAfterFirstPass > 0,
         "the first pass must run the full exchanges"
+    );
+    assert!(
+        probesAfterFirstPass > 0,
+        "the settled gate must probe with the compact digest"
     );
 
     // Idle cycles only probe: no full-exchange RPC is repeated.
@@ -281,8 +299,13 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
         "idle cycles must not repeat full-exchange calls"
     );
     assert!(
-        synchronizedMethodCount(&peers[1], "syncClock") > probesAfterFirstPass,
+        synchronizedMethodCount(&peers[1], "syncClockDigest") > probesAfterFirstPass,
         "idle cycles keep probing the remote clock"
+    );
+    assert_eq!(
+        synchronizedMethodCount(&peers[1], "syncClock"),
+        fullClockCallsAfterFirstPass,
+        "idle probes must not move the complete per-entity clock"
     );
 
     // Reconstructing a facade must not construct a second worker or discard
@@ -405,11 +428,11 @@ async fn a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange() {
     // back to a full exchange per cycle, re-exporting the entire journal
     // against an unreachable peer indefinitely.
     for _ in 0..3 {
-        peers[1]
-            .faults
-            .lock()
-            .unwrap()
-            .insert("syncClock".into(), CallFault::BeforeDelivery);
+        {
+            let mut faults = peers[1].faults.lock().unwrap();
+            faults.insert("syncClockDigest".into(), CallFault::BeforeDelivery);
+            faults.insert("syncClock".into(), CallFault::BeforeDelivery);
+        }
         observer.synchronizeOnce().await.unwrap();
         assert_eq!(
             fullPassMarkers(&peers[1]),
@@ -440,12 +463,42 @@ async fn a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange() {
         .faults
         .lock()
         .unwrap()
-        .insert("syncClock".into(), CallFault::BeforeDelivery);
+        .insert("syncClockDigest".into(), CallFault::BeforeDelivery);
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(
         fullPassMarkers(&peers[1]), settled,
         "the settled gate must stay settled"
     );
+}
+
+/// Verifies a rejected digest probe arms backoff without requesting a full clock.
+#[tokio::test]
+async fn rejected_digest_probes_back_off_without_reading_full_clocks() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, _access, peers, _pendingFailure) = gateMesh("sync-rejected-probe");
+    let observer = idleObserver(&routers[1]);
+    observer.synchronizeOnce().await.unwrap();
+    observer.synchronizeOnce().await.unwrap();
+    let markersBefore = fullPassMarkers(&peers[1]);
+    let fullClockCallsBefore = synchronizedMethodCount(&peers[1], "syncClock");
+
+    peers[1].faults.lock().unwrap()
+        .insert("syncClockDigest".into(), CallFault::MethodDenied);
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncClock"), fullClockCallsBefore);
+
+    let probesAfterFailure = synchronizedMethodCount(&peers[1], "syncClockDigest");
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncClockDigest"), probesAfterFailure,
+        "the rejected probe must arm backoff");
+    assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
+
+    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
+    observer.synchronizeOnce().await.unwrap();
+    assert!(fullPassMarkers(&peers[1]) > markersBefore,
+        "a recovered digest probe must reopen the gate after backoff");
 }
 
 /// A preference-only edit must reopen a settled storage-provider gate without
@@ -591,4 +644,36 @@ async fn partial_plugin_failure_keeps_healthy_replication_moving() {
     let settled = fullPassMarkers(&peers[1]);
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), settled);
+}
+
+/// Verifies progress this device only received from peers does not reopen a
+/// settled gate: the local-state summary counts work this device still owes
+/// its peers, not every origin whose ranges advanced when remote operations
+/// applied here.
+#[tokio::test]
+async fn applied_remote_progress_does_not_reopen_a_settled_gate() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, _access, peers, _pendingFailure) = gateMesh("sync-remote-progress");
+    let observer = idleObserver(&routers[1]);
+    observer.synchronizeOnce().await.unwrap();
+    observer.synchronizeOnce().await.unwrap();
+    let settled = fullPassMarkers(&peers[1]);
+
+    // Model an applied peer operation: the clock gains a remote origin this
+    // device never authored anything under.
+    let store = operit_store::SyncOperationStore::SyncOperationStore::new(
+        routers[1].localCore.runtimeStorageHost(),
+        operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH.to_string(),
+    );
+    let mut clock = store.currentLocalClock().unwrap();
+    clock.setSequence("core-remote-applied-peer", 9);
+    store.writeLocalClock(&clock).unwrap();
+
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(
+        fullPassMarkers(&peers[1]),
+        settled,
+        "received progress must not start a pass this device owes nothing to"
+    );
 }

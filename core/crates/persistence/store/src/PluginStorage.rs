@@ -799,7 +799,9 @@ impl PluginStorageSession {
         let Handle::DataStore(store) = owned else { return Err(failure("Preference operations require a DataStore handle")); };
         if matches!(&request, StorageRequest::Close { .. }) {
             self.handles.lock().map_err(|_| failure("Storage handles poisoned"))?.remove(handle);
-            publishSyncMutation();
+            // Closing a handle writes nothing. Publishing here would schedule a
+            // synchronization pass for every plugin read, and the pass itself
+            // opens plugin databases, creating a self-sustaining idle loop.
             return Ok(StorageResponse::Close);
         }
         store.request(request)
@@ -940,7 +942,9 @@ impl PluginStorageSession {
                 .lock()
                 .map_err(|_| failure("Storage handles poisoned"))?
                 .remove(handle);
-            publishSyncMutation();
+            // See requestPreferences: a close has no data to publish, and
+            // treating it as a mutation feeds every plugin read back into the
+            // synchronization scheduler.
             return Ok(StorageResponse::Close);
         }
         let database = match database {

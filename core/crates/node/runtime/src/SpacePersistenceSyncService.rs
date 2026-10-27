@@ -52,7 +52,7 @@ const WORKSPACE_SCAN_IDLE_INTERVAL_MS: u64 = 60_000;
 
 /// Per-peer scheduling state behind the change-gated synchronization floor.
 ///
-/// Every cycle probes each storage-granted member with the cheap `syncClock`
+/// Every cycle probes each storage-granted member with the cheap `syncClockDigest`
 /// RPC and runs the expensive exchanges (Space projection, control log,
 /// business replication, blobs) only when something actually changed for that
 /// peer: the remote clock moved, the local synchronized-state summary moved
@@ -575,17 +575,22 @@ impl SpacePersistenceSyncService {
     /// trigger: the replication journal clock (journal plus chat storage,
     /// mirroring the application clock), projected operations and preferences.
     /// Projected operations advance neither clock, so their count is what
-    /// makes this device push relayed authority to its peers. Read through
-    /// local stores directly: gating must never enter the application
-    /// backend, which non-storage peers are not permitted to reach.
+    /// makes this device push relayed authority to its peers. Device
+    /// preferences have their own revision. The process mutation revision is
+    /// deliberately excluded: opening and closing a storage handle publishes
+    /// it without writing any data, which would schedule a pass per plugin
+    /// read. Read through local stores directly: gating must never enter the
+    /// application backend, which non-storage peers are not permitted to reach.
     async fn localStateSummary(&self) -> Result<String, String> {
         let storageHost = self.state.localRuntime.runtimeStorageHost();
-        let mut clock = operit_store::SyncOperationStore::SyncOperationStore::new(
+        let syncStore = operit_store::SyncOperationStore::SyncOperationStore::new(
             storageHost.clone(),
             RUNTIME_SYNC_DIR_PATH.to_string(),
-        )
-        .localClock()
-        .map_err(|error| error.to_string())?;
+        );
+        let localDeviceId = syncStore.localDeviceId().map_err(|error| error.to_string())?;
+        let mut clock = syncStore
+            .localClock()
+            .map_err(|error| error.to_string())?;
         // The chat storage belongs to the process default store root. A root
         // that was never registered means this process holds no chat state
         // at all, so an empty chat clock is the correct contribution; a real
@@ -615,13 +620,18 @@ impl SpacePersistenceSyncService {
                 }
             }
         }
+        // Operations applied from peers advance their origins in this clock.
+        // Counting that as local progress would open a full pass for every
+        // member whenever any other device writes, even though this device may
+        // have nothing to send. Members fetch another member's operations over
+        // routed links, so a partition catches up when the route returns.
+        clock.retainAuthoredBy(&localDeviceId);
         let control = NetworkControlStore::new(storageHost)?;
         Ok(format!(
-            "{}#{}#{}#{}",
+            "{}#{}#{}",
             serde_json::to_string(&clock).map_err(|error| error.to_string())?,
             control.projectionEntryCount()?,
-            operit_store::DevicePreferencesStore::devicePreferencesMutationRevision(),
-            operit_store::SyncOperationStore::syncMutationRevision()
+            operit_store::DevicePreferencesStore::devicePreferencesMutationRevision()
         ))
     }
 
@@ -691,17 +701,19 @@ impl SpacePersistenceSyncService {
         decision
     }
 
-    /// Reads one peer's synchronization clock through the cheap probe RPC and
-    /// returns its comparable summary.
+    /// Reads the constant-size clock digest used by the peer change gate.
     async fn probeRemoteClockSummary(&self, targetNodeId: &str) -> Result<String, String> {
-        let clock: Value = callRemote(
+        let value: Value = callRemote(
             &self.state.nodeRouter,
             targetNodeId,
-            PeerSyncMethod::SyncClock,
+            PeerSyncMethod::SyncClockDigest,
             Value::Null,
-        )
-        .await?;
-        Ok(summarizeSyncClock(&clock))
+        ).await?;
+        value.get("digest")
+            .and_then(Value::as_str)
+            .filter(|digest| !digest.is_empty())
+            .map(|digest| format!("digest:{digest}"))
+            .ok_or_else(|| "remote synchronization clock digest is missing".to_string())
     }
 
     /// Records one completed full pass: the freshly probed clock and the
@@ -1705,8 +1717,6 @@ fn summarizeSyncClock(value: &Value) -> String {
         value["ranges"], value["pending"], value["errors"]
     )
 }
-
-
 
 /// Records one page's operation ids and reports whether it added a new identity.
 ///
