@@ -1,3 +1,4 @@
+import { readSdkScript } from "../../../../../tools/runtime/compose_scripts.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -6,18 +7,13 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../../../../", import.meta.url));
-const sdk = "core/crates/plugin/sdk/src/toolpkg/";
 
 /** Reads a current exact source path, including generated artifacts, without synthesizing missing files. */
 function source(relative) { return readFileSync(path.join(root, relative), "utf8"); }
 
 /** Extracts the existing Rust-owned JavaScript bootstrap instead of rewriting its registry behavior in the test. */
 function embeddedScript(file, functionName) {
-  const text = source(sdk + file), signature = "pub fn " + functionName + "(";
-  assert.equal(text.split(signature).length, 2);
-  const start = text.indexOf('r#"', text.indexOf(signature)), end = text.indexOf('"#', start + 3);
-  assert.ok(start >= 0 && end > start, "The production bootstrap must contain its actual Rust raw string");
-  return text.slice(start + 3, end);
+  return readSdkScript(file, functionName);
 }
 
 const apiRuntime = embeddedScript("ToolPkgApiRuntimeScript.rs", "buildToolPkgApiRuntimeScript");

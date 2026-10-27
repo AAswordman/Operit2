@@ -464,6 +464,14 @@ void main() {
                   )
                   .args
               as Map;
+      final render = bridge.calls.firstWhere(
+        (call) => call.methodName == 'render',
+      );
+      final runtimeOptions = (render.args as Map)['runtimeOptions'] as Map;
+      expect(
+        runtimeOptions['moduleSpec'],
+        containsPair('screenExport', 'Translation'),
+      );
       expect(invocation['chatId'], 'translation-chat');
       expect(invocation['messageIndex'], 3);
       expect((invocation['message'] as Map)['content'], 'Selected message');
@@ -2793,6 +2801,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
             order: 20,
             dialog: core_proxy.ToolPkgChatMessageMenuDialog(
               screen: 'ui/translate.js',
+              screenExport: 'Translation',
               title: 'Translation dialog',
             ),
           ).toJson(),

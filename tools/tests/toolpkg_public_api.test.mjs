@@ -1,3 +1,4 @@
+import { readSdkScript } from "../runtime/compose_scripts.mjs";
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -14,6 +15,7 @@ function source(path) { return readFileSync(new URL(path, root), 'utf8'); }
 
 /** Extracts production JavaScript embedded in the first Rust raw string. */
 function embedded(path) {
+  if (path.endsWith('/ToolPkgRegistrationBridge.rs')) return readSdkScript('ToolPkgRegistrationBridge.rs');
   const text = source(path);
   const start = text.indexOf('r#"') + 3;
   return text.slice(start, text.indexOf('"#', start));

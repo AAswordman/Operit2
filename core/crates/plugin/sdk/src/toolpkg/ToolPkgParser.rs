@@ -82,6 +82,8 @@ pub struct ToolPkgChatComposerSlotRuntime {
     pub id: String,
     pub slot: String,
     pub screen: String,
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     pub order: i32,
     #[serde(rename = "keepAlive")]
     pub keepAlive: bool,
@@ -154,6 +156,8 @@ pub struct ToolPkgCoreCommandRuntime {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgChatMessageMenuDialogRuntime {
     pub screen: String,
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     pub title: LocalizedText,
 }
 
@@ -272,6 +276,8 @@ pub struct ToolPkgRegisteredChatComposerSlot {
     pub id: String,
     pub slot: String,
     pub screen: String,
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     #[serde(default)]
     pub order: i32,
     #[serde(rename = "keepAlive")]
@@ -352,6 +358,8 @@ pub struct ToolPkgRegisteredCoreCommand {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredChatMessageMenuDialog {
     pub screen: String,
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     #[serde(default)]
     pub title: LocalizedText,
 }
@@ -1324,6 +1332,7 @@ impl ToolPkgArchiveParser {
                 id,
                 slot,
                 screen,
+                screenExport: contribution.screenExport.clone(),
                 order: contribution.order,
                 keepAlive: contribution.keepAlive,
             });
@@ -2125,6 +2134,7 @@ fn validateChatMessageMenuItems(
                 }
                 Some(ToolPkgChatMessageMenuDialogRuntime {
                     screen: normalizedScreenPath,
+                    screenExport: dialog.screenExport.clone(),
                     title: dialog.title.clone(),
                 })
             }
@@ -2638,6 +2648,43 @@ mod logo_tests {
             .expect("logo resource should exist");
 
         assert_eq!(logo.mime, "image/png");
+    }
+}
+
+#[cfg(test)]
+mod module_export_tests {
+    use super::*;
+
+    /// Named dialog and composer exports must survive archive loading and persisted runtime metadata.
+    #[test]
+    fn preserves_named_exports_for_embedded_screens() {
+        let entries = BTreeMap::from([
+            ("manifest.json".to_string(), r#"{"schema_version":1,"toolpkg_id":"exports_fixture","api_version":"2.0.0","main":"main.js"}"#.to_string()),
+            ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
+            ("screen.ui.js".to_string(), "exports.Composer = function() {}; exports.Dialog = function() {};".to_string()),
+        ]);
+        let index = ToolPkgEntryIndex {
+            entryNames: entries.keys().cloned().collect(),
+            entryNamesByNormalizedLowercase: entries.keys().map(|name| (name.clone(), name.clone())).collect(),
+        };
+        let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+            &index, |name| entries.get(name).cloned(), |_| None,
+            ToolPkgSourceType::EXTERNAL, "exports_fixture.toolpkg", false,
+            |_, _| panic!("fixture does not contain subpackages"),
+            |_, _, _, _, _| ToolPkgMainRegistrationParseResult::Success {
+                registration: serde_json::from_value(serde_json::json!({
+                    "chatComposerSlots": [{"id": "composer", "slot": "above_input", "screen": "screen.ui.js", "screenExport": "Composer"}],
+                    "chatMessageMenuItems": [{"id": "menu", "function": "menu", "dialog": {"screen": "screen.ui.js", "screenExport": "Dialog"}}]
+                })).unwrap(),
+            },
+            |name, message| panic!("unexpected package error {name}: {message}"),
+        ).unwrap();
+        let runtime = loaded.containerRuntime;
+        assert_eq!(runtime.chatComposerSlots[0].screenExport.as_deref(), Some("Composer"));
+        assert_eq!(runtime.chatMessageMenuItems[0].dialog.as_ref().unwrap().screenExport.as_deref(), Some("Dialog"));
+        let restored: ToolPkgContainerRuntime = serde_json::from_slice(&serde_json::to_vec(&runtime).unwrap()).unwrap();
+        assert_eq!(restored.chatComposerSlots[0].screenExport.as_deref(), Some("Composer"));
+        assert_eq!(restored.chatMessageMenuItems[0].dialog.as_ref().unwrap().screenExport.as_deref(), Some("Dialog"));
     }
 }
 

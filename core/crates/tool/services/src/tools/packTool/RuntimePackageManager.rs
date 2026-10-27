@@ -1611,6 +1611,7 @@ impl RuntimePackageManager {
                         dialog: item.dialog.map(|dialog| {
                             operit_plugin_sdk::toolpkg::ToolPkgPackageModels::ToolPkgChatMessageMenuDialog {
                                 screen: dialog.screen,
+                                screenExport: dialog.screenExport,
                                 title: dialog.title.resolve(useEnglish),
                             }
                         }),

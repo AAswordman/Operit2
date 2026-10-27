@@ -1,3 +1,4 @@
+import { readSdkScript } from "../runtime/compose_scripts.mjs";
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -7,6 +8,7 @@ const root = new URL('../../', import.meta.url);
 
 /** Reads production JavaScript embedded in a Rust raw string. */
 function embedded(path) {
+  if (path.endsWith('/ToolPkgRegistrationBridge.rs')) return readSdkScript('ToolPkgRegistrationBridge.rs');
   const source = readFileSync(new URL(path, root), 'utf8');
   const start = source.indexOf('r#"') + 3;
   assert.ok(start >= 3, `${path} must contain a runtime script`);

@@ -1,11 +1,11 @@
-import { composeContextScript, composeManifest, composeSource, wrapComposeScript } from "../../runtime/compose_scripts.mjs";
+import { readSdkScript, composeContextScript, composeManifest, composeSource, wrapComposeScript } from "../../runtime/compose_scripts.mjs";
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const root=new URL('../../../',import.meta.url);
 const bridge='core/crates/plugin/javascript-bridge/src/javascript/';
 const sdk='core/crates/plugin/sdk/src/';
 function source(path) {return readFileSync(new URL(path,root),'utf8');}
-function embedded(path) {const text=source(path),start=text.indexOf('r#"')+3;return text.slice(start,text.indexOf('"#',start));}
+function embedded(path) {if (path.endsWith('/ToolPkgRegistrationBridge.rs')) return readSdkScript('ToolPkgRegistrationBridge.rs'); const text=source(path),start=text.indexOf('r#"')+3;return text.slice(start,text.indexOf('"#',start));}
 
 /** Builds lazy descriptors from the production Rust registry. */
 export function lazyBootstrapLibraries() {

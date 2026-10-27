@@ -446,7 +446,11 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredChatComposerSlot {
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.slot, "slot", registryName, index)?;
-        requireNotBlank(&self.screen, "screen", registryName, index)
+        requireNotBlank(&self.screen, "screen", registryName, index)?;
+        if let Some(exportName) = &self.screenExport {
+            requireNotBlank(exportName, "screenExport", registryName, index)?;
+        }
+        Ok(())
     }
 }
 
@@ -561,7 +565,14 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredChatMessageMenuItem {
     /// Validates the id and function of a chat message menu item.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
-        requireNotBlank(&self.function, "function", registryName, index)
+        requireNotBlank(&self.function, "function", registryName, index)?;
+        if let Some(dialog) = &self.dialog {
+            requireNotBlank(&dialog.screen, "dialog.screen", registryName, index)?;
+            if let Some(exportName) = &dialog.screenExport {
+                requireNotBlank(exportName, "dialog.screenExport", registryName, index)?;
+            }
+        }
+        Ok(())
     }
 }
 

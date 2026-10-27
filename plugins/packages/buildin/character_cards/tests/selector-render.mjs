@@ -1,11 +1,10 @@
 import { readSdkScript, wrapComposeScript } from "../../../../../tools/runtime/compose_scripts.mjs";
 import { composeStreamFixture } from '../../../../../tools/tests/support/compose_stream_fixture.mjs';
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
 /** Extracts one real Rust-owned SDK script; this harness does not implement Compose factories or action dispatch. */
-function sdkScript(file, name) { return readSdkScript(file); }
+function sdkScript(file, name) { return readSdkScript(file, name); }
 
 /** Finds exact real nodes in the SDK-serialized tree rather than replacing its rendering with labelled fixture nodes. */
 export function composeNodes(tree, predicate) {
@@ -38,7 +37,10 @@ export function mountRegisteredComposeRoute(plugin, presentation, routeId, hostS
   assert.equal(routes.length, 1); assert.equal(typeof routes[0].screen, "function");
   assert.equal(routes[0].route, "toolpkg:com.operit.character_cards:ui:" + routeId);
   const pageRuntime = plugin.openComposeRoute?.(routeId);
-  const module = { exports: { Screen: pageRuntime?.screen ?? routes[0].screen } };
+  const screen = pageRuntime?.screen ?? routes[0].screen;
+  const exportName = screen.__operit_toolpkg_export_name ?? "default";
+  const module = { exports: { [exportName]: screen } };
+  Object.defineProperty(module.exports, "__operit_compose_entry_export", { value: exportName });
   const context = pageRuntime?.context ?? vm.createContext({ console, setTimeout, clearTimeout });
   context.module = module;
   context.exports = module.exports;

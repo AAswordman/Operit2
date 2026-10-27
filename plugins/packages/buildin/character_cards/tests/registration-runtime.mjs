@@ -1,16 +1,10 @@
+import { readSdkScript } from "../../../../../tools/runtime/compose_scripts.mjs";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 /** Extracts one existing Rust-owned registration script without reimplementing SDK callback serialization. */
 function script(file, name) {
-  const text = readFileSync(fileURLToPath(new URL("../../../../../core/crates/plugin/sdk/src/toolpkg/" + file, import.meta.url)), "utf8");
-  const signature = "pub fn " + name + "(";
-  assert.equal(text.split(signature).length, 2);
-  const start = text.indexOf('r#"', text.indexOf(signature)), end = text.indexOf('"#', start + 3);
-  assert.ok(start >= 0 && end > start, "The actual SDK script must be present");
-  return text.slice(start + 3, end);
+  return readSdkScript(file, name);
 }
 
 /** Serializes only actual main-exported hook definitions through the existing SDK runtime and registration bridge. */

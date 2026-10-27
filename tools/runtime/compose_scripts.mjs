@@ -28,9 +28,10 @@ export function readSdkScript(file, functionName = null) {
   if (file === 'ToolPkgComposeDslBridge.rs') return composeContextScript();
   if (file === 'ToolPkgComposeDslRuntimeScript.rs') return wrapComposeScript();
   const source = composeSource('../' + file);
+  if (file.endsWith('.js')) return source;
   const offset = functionName === null ? 0 : source.indexOf('pub fn ' + functionName + '(');
   if (offset < 0) throw new Error('Unknown SDK script builder: ' + functionName);
   const start = source.indexOf('r#"', offset), end = source.indexOf('"#', start + 3);
   if (start < 0 || end < 0) throw new Error('SDK script has no literal source: ' + file);
-  return source.slice(start + 3, end);
+  return source.slice(start + 3, end).replace('__OPERIT_TOOLPKG_MODULE_EXPORTS__', () => composeSource('../ModuleExports.js'));
 }

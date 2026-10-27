@@ -366,23 +366,13 @@ fn assembleRuntimeBootstrapScript() -> String {
             if (!Object.prototype.hasOwnProperty.call(value.composeDsl, 'screen')) {{
                 return value;
             }}
-            var screenRef = value.composeDsl.screen;
-            var resolved = '';
-            if (typeof screenRef === 'function') {{
-                resolved = __operitText(screenRef.__operit_toolpkg_module_path).trim();
-            }} else if (
-                screenRef &&
-                typeof screenRef === 'object' &&
-                typeof screenRef.default === 'function'
-            ) {{
-                resolved = __operitText(screenRef.default.__operit_toolpkg_module_path).trim();
-            }} else if (typeof screenRef === 'string') {{
-                throw new Error('composeDsl.screen must be a compose_dsl screen function, not a string path');
+            var reference = OperitToolPkgExports.reference(value.composeDsl.screen, 'composeDsl.screen');
+            var spec = value.composeDsl.moduleSpec;
+            if (spec != null && (typeof spec !== 'object' || Array.isArray(spec))) {{
+                throw new Error('composeDsl.moduleSpec must be an object');
             }}
-            if (!resolved) {{
-                throw new Error('composeDsl.screen is missing a toolpkg module path marker');
-            }}
-            value.composeDsl.screen = resolved.replace(/\\/g, '/');
+            value.composeDsl.screen = reference.path;
+            value.composeDsl.moduleSpec = Object.assign({{}}, spec, {{screenExport: reference.name}});
             return value;
         }}
 
@@ -484,23 +474,6 @@ fn assembleRuntimeBootstrapScript() -> String {
             return factory;
         }}
 
-        function __operitTagModuleExports(modulePath, exportsRef) {{
-            if (typeof exportsRef === 'function') {{
-                exportsRef.__operit_toolpkg_module_path = modulePath;
-                return;
-            }}
-            if (!exportsRef || typeof exportsRef !== 'object') {{
-                return;
-            }}
-            exportsRef.__operit_toolpkg_module_path = modulePath;
-            Object.keys(exportsRef).forEach(function(key) {{
-                if (typeof exportsRef[key] === 'function') {{
-                    exportsRef[key].__operit_toolpkg_module_path = modulePath;
-                    exportsRef[key].__operit_toolpkg_export_name = key;
-                }}
-            }});
-        }}
-
         function __operitText(value) {{
             return value == null ? '' : String(value);
         }}
@@ -513,48 +486,9 @@ fn assembleRuntimeBootstrapScript() -> String {
             return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
         }}
 
-        function __operitCreateRegistrationScreenPlaceholder(modulePath) {{
-            function ScreenPlaceholder() {{
-                return null;
-            }}
-            ScreenPlaceholder.__operit_toolpkg_module_path = modulePath;
-            ScreenPlaceholder.__operit_toolpkg_export_name = "default";
-            return ScreenPlaceholder;
-        }}
-
         function __operitIsLocalUiModulePath(modulePath) {{
             var normalized = __operitNormalizePath(modulePath);
             return /\.ui\.js$/i.test(normalized);
-        }}
-
-        function __operitFindTargetFunction(exportsRef, moduleRef, functionName) {{
-            if (exportsRef && typeof exportsRef[functionName] === 'function') {{
-                return exportsRef[functionName];
-            }}
-            if (moduleRef && moduleRef.exports && typeof moduleRef.exports[functionName] === 'function') {{
-                return moduleRef.exports[functionName];
-            }}
-            if (typeof globalThis[functionName] === 'function') {{
-                return globalThis[functionName];
-            }}
-            return null;
-        }}
-
-        function __operitBuildAvailableFunctions(exportsRef, moduleRef) {{
-            var names = [];
-            function collect(target) {{
-                if (!target || typeof target !== 'object') {{
-                    return;
-                }}
-                Object.keys(target).forEach(function(key) {{
-                    if (typeof target[key] === 'function' && names.indexOf(key) < 0) {{
-                        names.push(key);
-                    }}
-                }});
-            }}
-            collect(exportsRef);
-            collect(moduleRef && moduleRef.exports ? moduleRef.exports : null);
-            return names;
         }}
 
         var __operitScriptSources = new Map();
@@ -933,7 +867,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                 var moduleCache = registrationMode ? {{}} : __operitGetModuleInstanceCache();
                 var mainModuleKey = ['instance', 'main', packageTarget + ':' + screenPath, sourceId, 'compose=' + structuredResult].join(':');
                 var module = moduleCache[mainModuleKey];
-                var exports = module && module.exports ? module.exports : null;
+                var exports = module ? module.exports : null;
                 /** Reads CommonJS candidates from the execution resource owner and preserves empty modules. */
                 function readToolPkgModule(modulePath) {{
                     if (!packageTarget) {{
@@ -970,25 +904,16 @@ fn assembleRuntimeBootstrapScript() -> String {
                     }};
                     var factory = __operitGetFactory('module', packageTarget + ':' + modulePath, moduleText, structuredResult);
                     var previousActiveModule = globalThis.__operitActiveModule;
-                    var previousActiveExports = globalThis.__operitActiveModuleExports;
-                    var previousModule = callState.currentModule;
-                    var previousExports = callState.currentModuleExports;
                     globalThis.__operitActiveModule = requiredModule;
-                    globalThis.__operitActiveModuleExports = requiredModule.exports;
-                    callState.currentModule = requiredModule;
-                    callState.currentModuleExports = requiredModule.exports;
                     try {{
                         factory(requiredModule, requiredModule.exports, localRequire, callRuntime);
                     }} catch (error) {{
                         delete moduleCache[moduleKey];
                         throw error;
                     }} finally {{
-                        callState.currentModule = previousModule;
-                        callState.currentModuleExports = previousExports;
                         globalThis.__operitActiveModule = previousActiveModule;
-                        globalThis.__operitActiveModuleExports = previousActiveExports;
                     }}
-                    __operitTagModuleExports(modulePath, requiredModule.exports);
+                    OperitToolPkgExports.tag(modulePath, requiredModule.exports);
                     return requiredModule.exports;
                 }}
                 function requireInternal(moduleName, fromPath) {{
@@ -1025,7 +950,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                     markRequire(request, fromPath || screenPath || '<root>', resolvedPath);
                     markModule(resolvedPath);
                     if (registrationMode && __operitIsLocalUiModulePath(resolvedPath)) {{
-                        return __operitCreateRegistrationScreenPlaceholder(resolvedPath);
+                        return OperitToolPkgExports.placeholder(resolvedPath);
                     }}
                     var loaded = readToolPkgModule(resolvedPath);
                     if (!loaded) {{
@@ -1047,33 +972,20 @@ fn assembleRuntimeBootstrapScript() -> String {
                     var mainFactory = __operitGetFactory('main', packageTarget + ':' + screenPath + ':' + sourceId, scriptText, structuredResult);
                     markStage('execute_main_script');
                     var previousActiveModule = globalThis.__operitActiveModule;
-                    var previousActiveExports = globalThis.__operitActiveModuleExports;
-                    var previousModule = callState.currentModule;
-                    var previousExports = callState.currentModuleExports;
                     globalThis.__operitActiveModule = module;
-                    globalThis.__operitActiveModuleExports = exports;
-                    callState.currentModule = module;
-                    callState.currentModuleExports = exports;
                     try {{
                         mainFactory(module, exports, require, callRuntime);
                     }} catch (error) {{
                         delete moduleCache[mainModuleKey];
                         throw error;
                     }} finally {{
-                        callState.currentModule = previousModule;
-                        callState.currentModuleExports = previousExports;
                         globalThis.__operitActiveModule = previousActiveModule;
-                        globalThis.__operitActiveModuleExports = previousActiveExports;
                     }}
                 }} else {{
-                    if (exports == null) {{
-                        exports = {{}};
-                        module.exports = exports;
-                    }}
                     markStage('reuse_main_script');
                 }}
-                var rootExports = module.exports || exports || {{}};
-                __operitTagModuleExports(screenPath || '<root>', rootExports);
+                var rootExports = module.exports;
+                OperitToolPkgExports.tag(screenPath || '<root>', rootExports);
 
                 var inlineFunctionName = readCallValue('__operit_inline_function_name', '');
                 var inlineFunctionSource = readCallValue('__operit_inline_function_source', '');
@@ -1084,36 +996,26 @@ fn assembleRuntimeBootstrapScript() -> String {
                         throw new Error('inline hook source did not evaluate to function');
                     }}
                     rootExports[inlineFunctionName] = inlineFunction;
-                    module.exports[inlineFunctionName] = inlineFunction;
                 }}
 
-                var targetFunction = __operitFindTargetFunction(rootExports, module, targetFunctionName);
+                var targetFunction = OperitToolPkgExports.get(rootExports, targetFunctionName);
                 if (typeof targetFunction !== 'function') {{
                     emitError(
                         "Function '" +
                             targetFunctionName +
                             "' not found in script. Available functions: " +
-                            __operitBuildAvailableFunctions(rootExports, module).join(', ')
+                            OperitToolPkgExports.names(rootExports).join(', ')
                     );
                     return;
                 }}
                 markStage('invoke_target_function');
                 var invokePreviousActiveModule = globalThis.__operitActiveModule;
-                var invokePreviousActiveExports = globalThis.__operitActiveModuleExports;
-                var previousModule = callState.currentModule;
-                var previousExports = callState.currentModuleExports;
                 globalThis.__operitActiveModule = module;
-                globalThis.__operitActiveModuleExports = rootExports;
-                callState.currentModule = module;
-                callState.currentModuleExports = rootExports;
                 var functionResult;
                 try {{
                     functionResult = targetFunction(params);
                 }} finally {{
-                    callState.currentModule = previousModule;
-                    callState.currentModuleExports = previousExports;
                     globalThis.__operitActiveModule = invokePreviousActiveModule;
-                    globalThis.__operitActiveModuleExports = invokePreviousActiveExports;
                 }}
                 markStage('handle_function_result');
                 // A nested call may have left the shared cursor on its own id; handleAsync

@@ -29,41 +29,12 @@ function observeComposeState(bundle, entry, responseSink) {
   bundle.stateObservers.set(callId, observer);
 }
 
-/// Resolves a registered entry exactly before handling standalone screen-module conventions.
-function resolveComposeEntry() {
-  if (typeof module !== 'undefined' && module && module.exports && Object.prototype.hasOwnProperty.call(module.exports, '__operit_compose_entry_export')) {
-    var exportName = module.exports.__operit_compose_entry_export;
-    var registeredEntry = module.exports[exportName];
-    if (typeof registeredEntry !== 'function') {
-      throw new Error('Registered compose_dsl screen export is not a function: ' + exportName);
-    }
-    return registeredEntry;
-  }
-  if (typeof module !== 'undefined' && module && module.exports) {
-    if (typeof module.exports.default === 'function') {
-      return module.exports.default;
-    }
-    if (typeof module.exports.Screen === 'function') {
-      return module.exports.Screen;
-    }
-  }
-  if (typeof exports !== 'undefined' && exports) {
-    if (typeof exports.default === 'function') {
-      return exports.default;
-    }
-    if (typeof exports.Screen === 'function') {
-      return exports.Screen;
-    }
-  }
-  if (typeof window !== 'undefined') {
-    if (typeof window.default === 'function') {
-      return window.default;
-    }
-    if (typeof window.Screen === 'function') {
-      return window.Screen;
-    }
-  }
-  return null;
+/** Uses the same explicit export contract as tools, hooks and public APIs. */
+function resolveComposeEntry(options) {
+  var name = Object.prototype.hasOwnProperty.call(module.exports, '__operit_compose_entry_export')
+    ? module.exports.__operit_compose_entry_export
+    : options.moduleSpec && options.moduleSpec.screenExport || 'default';
+  return OperitToolPkgExports.require(module.exports, name);
 }
 function renderComposeDsl(runtimeOptions) {
   if (typeof OperitComposeDslRuntime === 'undefined') {
@@ -91,10 +62,7 @@ function renderComposeDsl(runtimeOptions) {
     bundle.updateRuntimeOptions(options);
   }
   if (reuse) OperitComposeReactive.invalidateRoot(bundle.ctx);
-  var entry = resolveComposeEntry();
-  if (typeof entry !== 'function') {
-    throw new Error('compose_dsl entry function not found, expected default export or Screen function');
-  }
+  var entry = resolveComposeEntry(options);
   if (activeCallRuntime) {
     bundle.setCallRuntime(activeCallRuntime);
   }

@@ -33,6 +33,7 @@ impl ToolPkgChatComposerSlotBridge {
                         contributionId: contribution.id.clone(),
                         slot: contribution.slot.clone(),
                         screen: contribution.screen.clone(),
+                        screenExport: contribution.screenExport.clone(),
                         order: contribution.order,
                         keepAlive: contribution.keepAlive,
                     })

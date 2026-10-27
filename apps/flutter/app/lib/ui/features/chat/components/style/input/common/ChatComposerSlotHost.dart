@@ -122,6 +122,8 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
                       initialModuleSpec: <String, Object?>{
                         'id': contribution.contributionId,
                         'screen': contribution.screen,
+                        if (contribution.screenExport != null)
+                          'screenExport': contribution.screenExport,
                         'slot': contribution.slot,
                         'keepAlive': contribution.keepAlive,
                       },

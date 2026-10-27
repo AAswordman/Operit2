@@ -558,6 +558,7 @@ class ToolPkgChatComposerSlotRuntime {
     required this.id,
     required this.slot,
     required this.screen,
+    required this.screenExport,
     required this.order,
     required this.keepAlive,
   });
@@ -567,6 +568,7 @@ class ToolPkgChatComposerSlotRuntime {
     id: value['id'] as String,
     slot: value['slot'] as String,
     screen: value['screen'] as String,
+    screenExport: value['screenExport'] == null ? null : value['screenExport'] as String,
     order: (value['order'] as num).toInt(),
     keepAlive: value['keepAlive'] as bool,
   );
@@ -576,6 +578,7 @@ class ToolPkgChatComposerSlotRuntime {
     'id': id,
     'slot': slot,
     'screen': screen,
+    'screenExport': screenExport == null ? null : screenExport!,
     'order': order,
     'keepAlive': keepAlive,
   };
@@ -583,6 +586,7 @@ class ToolPkgChatComposerSlotRuntime {
   final String id;
   final String slot;
   final String screen;
+  final String? screenExport;
   final int order;
   final bool keepAlive;
 }
@@ -591,22 +595,26 @@ class ToolPkgChatComposerSlotRuntime {
 class ToolPkgChatMessageMenuDialogRuntime {
   const ToolPkgChatMessageMenuDialogRuntime({
     required this.screen,
+    required this.screenExport,
     required this.title,
   });
 
   /// Decodes `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgChatMessageMenuDialogRuntime` from a MessagePack value map.
   factory ToolPkgChatMessageMenuDialogRuntime.fromMessagePackValue(Map<String, Object?> value) => ToolPkgChatMessageMenuDialogRuntime(
     screen: value['screen'] as String,
+    screenExport: value['screenExport'] == null ? null : value['screenExport'] as String,
     title: LocalizedText.fromMessagePackValue(value['title'] as Map<String, Object?>),
   );
 
   /// Encodes this model into a MessagePack-compatible value map.
   Map<String, Object?> toMessagePackValue() => <String, Object?>{
     'screen': screen,
+    'screenExport': screenExport == null ? null : screenExport!,
     'title': title.toMessagePackValue(),
   };
 
   final String screen;
+  final String? screenExport;
   final LocalizedText title;
 }
 

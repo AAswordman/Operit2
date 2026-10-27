@@ -1,3 +1,4 @@
+import { readSdkScript } from "../../../../../tools/runtime/compose_scripts.mjs";
 import { packageRuntime } from "./package-runtime.mjs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -800,12 +801,7 @@ async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = nul
 
 /** Extracts the real Rust-owned SDK registration script without replacing callback serialization. */
 async function policyRegistrationScript(file, functionName) {
-  const source = await readFile(new URL("../../../../../core/crates/plugin/sdk/src/toolpkg/" + file, import.meta.url), "utf8");
-  const signature = "pub fn " + functionName + "(";
-  assert.equal(source.split(signature).length, 2, "Expected exactly one current SDK registration script");
-  const start = source.indexOf('r#"', source.indexOf(signature)), end = source.indexOf('"#', start + 3);
-  assert.ok(start >= 0 && end > start, "The real SDK must supply its current raw JavaScript bootstrap");
-  return source.slice(start + 3, end);
+  return readSdkScript(file, functionName);
 }
 
 /** Serializes the actual main-registered policies through the real SDK's exported-function resolver. */
@@ -828,7 +824,7 @@ async function captureRegisteredPolicies(plugin) {
   assert.throws(
     /** Requires the actual durable-reference resolver to reject a callback absent from all main exports. */
     () => vm.runInContext("ToolPkg.registerToolLifecycleHook({id:'unexported',function:/** Must never run; its unexported identity is rejected at registration. */ function unexportedPolicy() { throw new Error('An unexported policy must not run'); }});", context),
-    /function must be exported from a toolpkg module/,
+    /requires an exported ToolPkg function reference/,
   );
   return captured;
 }

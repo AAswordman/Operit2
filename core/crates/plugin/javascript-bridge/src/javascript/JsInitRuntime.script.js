@@ -140,8 +140,6 @@
         callState.lastRequireRequest = '';
         callState.lastRequireFrom = '';
         callState.lastRequireResolved = '';
-        callState.currentModule = null;
-        callState.currentModuleExports = null;
         callState.timerIds = {};
         callState.previousCallId = '';
         callState.previousCallRuntime = null;
@@ -421,14 +419,6 @@
     expose('__operitBuildRuntimeContext', buildRuntimeContext);
 
     expose('__operitGetActiveModuleExports', function() {
-        if (
-            root.__operitActiveModule &&
-            typeof root.__operitActiveModule === 'object' &&
-            root.__operitActiveModule.exports
-        ) {
-            return root.__operitActiveModule.exports;
-        }
-        var exportsRef = root.__operitActiveModuleExports;
-        return exportsRef && typeof exportsRef === 'object' ? exportsRef : exportsRef || null;
+        return root.__operitActiveModule ? root.__operitActiveModule.exports : null;
     });
 })();

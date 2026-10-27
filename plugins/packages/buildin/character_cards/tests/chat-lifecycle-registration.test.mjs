@@ -1,3 +1,4 @@
+import { readSdkScript } from "../../../../../tools/runtime/compose_scripts.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,11 +15,7 @@ function source(relative) { return readFileSync(path.join(root, relative), "utf8
 
 /** Loads the existing Rust-owned registration JavaScript, not an emulated hook registration implementation. */
 function embedded(file, name) {
-  const text = source(sdk + "toolpkg/" + file), signature = "pub fn " + name + "(";
-  assert.equal(text.split(signature).length, 2);
-  const start = text.indexOf('r#"', text.indexOf(signature)), end = text.indexOf('"#', start + 3);
-  assert.ok(start >= 0 && end > start, "The production registration script must really exist");
-  return text.slice(start + 3, end);
+  return readSdkScript(file, name);
 }
 
 /** Creates only an authenticated registration realm; no business provider, chat store or native runtime is implemented. */
@@ -76,7 +73,7 @@ test("real lifecycle registration serializes module-backed exports and missing e
   assert.match(hooks[0].function, /^__operit_module_ref_hook_creation_[0-9]+$/);
   assert.equal(typeof hooks[0].function_source, "string");
   let received;
-  const handler = vm.runInNewContext("(" + hooks[0].function_source + ")", {
+  const handler = vm.runInNewContext(readSdkScript("ModuleExports.js") + "\n(" + hooks[0].function_source + ")", {
     /** Supplies only the exact exported module function input for testing the real SDK-generated durable wrapper. */
     require(module) {
       assert.equal(module, "./hooks/creation.js");
@@ -88,14 +85,14 @@ test("real lifecycle registration serializes module-backed exports and missing e
   });
   const event = { eventName: "before_create", eventPayload: { chat: { id: "allocated-draft" } } };
   assert.equal(handler(event), event); assert.equal(received, event);
-  const missing = vm.runInNewContext("(" + hooks[0].function_source + ")", {
+  const missing = vm.runInNewContext(readSdkScript("ModuleExports.js") + "\n(" + hooks[0].function_source + ")", {
     /** Tests a genuinely absent declared export rather than supplying a successful fallback function. */
     require(module) { assert.equal(module, "./hooks/creation.js"); return {}; },
   });
   assert.throws(
     /** Requires execution of the actual module wrapper to reject an absent export. */
     () => missing(event),
-    /ToolPkg registered function export not found: initialize/,
+    /ToolPkg module export is not a function: initialize/,
   );
 });
 

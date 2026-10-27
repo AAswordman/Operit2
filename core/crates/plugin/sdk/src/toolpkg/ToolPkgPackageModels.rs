@@ -66,6 +66,7 @@ pub struct ToolPkgChatMessageMenuItem {
 #[allow(non_snake_case)]
 pub struct ToolPkgChatMessageMenuDialog {
     pub screen: String,
+    pub screenExport: Option<String>,
     pub title: String,
 }
 
@@ -134,6 +135,7 @@ pub struct ToolPkgChatComposerSlot {
     pub contributionId: String,
     pub slot: String,
     pub screen: String,
+    pub screenExport: Option<String>,
     pub order: i32,
     pub keepAlive: bool,
 }

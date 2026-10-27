@@ -63,6 +63,25 @@ implementation. Applications implement the SDK traits and inject their own host 
   hooks when host events occur.
 - `javascript::JsExecutionEngine`: host-supplied JavaScript execution contract.
 
+## JavaScript module exports
+
+`toolpkg/ModuleExports.js` owns function lookup and module/export references for tools,
+public APIs, registered callbacks, providers and Compose screens. CommonJS `require()`
+returns the module's actual `module.exports`, preserving callable modules and ordinary
+object or data exports.
+
+Executable entries accept `exports.default = fn`, `exports.Name = fn` with an explicit
+export name, or `module.exports = fn` as the default entry. Named functions attached to
+callable modules are supported too. Lookup only considers the module's own exports;
+it does not search `window`, same-named globals, inherited methods or a stale `exports`
+alias after `module.exports` has been replaced.
+
+Imported callback references retain both their module path and export name so another
+engine can require the original module and preserve its lexical state. Registration
+captures `.ui.js` references without executing UI code, including named references such
+as `screens.Dialog`. Routes, message-menu dialogs, composer slots and XML render results
+carry that export name through runtime metadata to screen execution.
+
 ## Compressed Artifacts
 
 Marketplace publishing performs deterministic release optimization with three Terser compression

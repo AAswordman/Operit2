@@ -493,6 +493,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       'id': item.itemId,
       'runtime': 'compose_dsl',
       'screen': dialog.screen,
+      if (dialog.screenExport != null) 'screenExport': dialog.screenExport,
       'title': dialog.title,
       'toolPkgId': item.containerPackageName,
       'menuItemId': item.itemId,

@@ -1339,11 +1339,11 @@ fn execute_function_with_active_module_context() {
     let script = r#"
         exports.marker = "root-marker";
         exports.inspect_context = function(_params) {
-            return String(globalThis.__operitActiveModuleExports === exports) +
+            return String(__operitGetActiveModuleExports() === exports) +
                 ":" +
                 String(globalThis.__operitActiveModule && globalThis.__operitActiveModule.exports === exports) +
                 ":" +
-                globalThis.__operitActiveModuleExports.marker;
+                __operitGetActiveModuleExports().marker;
         };
     "#;
     let params = testParams();
@@ -2151,7 +2151,7 @@ fn execute_inline_hook_function_source() {
     params.insert(
         "__operit_inline_function_source".to_string(),
         Value::String(
-            r#"function(_params) { return globalThis.__operitActiveModuleExports.marker; }"#
+            r#"function(_params) { return __operitGetActiveModuleExports().marker; }"#
                 .to_string(),
         ),
     );
@@ -2223,6 +2223,60 @@ async fn compose_dsl_default_export_can_capture_later_lexical_constants() {
     assert_eq!(parsed["tree"]["props"]["reasonFontSize"], 11);
     assert_eq!(parsed["tree"]["props"]["iconSize"], 22);
     assert_eq!(parsed["tree"]["props"]["chevronSize"], 16);
+}
+
+/// Registered default entries support CommonJS function exports, including legacy dual exports.
+#[tokio::test(flavor = "current_thread")]
+async fn compose_dsl_registered_commonjs_screen_exports() {
+    for (export_source, entry_name) in [
+        ("module.exports = Screen;", Some("default")),
+        ("exports.default = Screen; module.exports = Screen;", Some("default")),
+        ("exports.default = Screen;", Some("default")),
+        ("exports.Selected = Screen; exports.default = function() { throw Error('wrong entry'); };", Some("Selected")),
+        ("module.exports = Screen;", None),
+    ] {
+        let engine = newTestToolPkgRegistrationEngine();
+        let marker = entry_name.map(|name| format!(
+            "Object.defineProperty(module.exports, '__operit_compose_entry_export', {{value: {}}});",
+            serde_json::to_string(name).unwrap(),
+        )).unwrap_or_default();
+        let script = format!(r#"
+            function Screen(ctx) {{
+                const [count, setCount] = ctx.useState('count', 0);
+                return ctx.UI.Button({{text: String(count), onClick: function() {{ setCount(count + 1); }}}});
+            }}
+            {export_source}
+            {marker}
+        "#);
+        let initial = expect_js_output(engine.renderForAssertions(
+            &script, &testParams(), &BTreeMap::new(), Arc::new(BTreeMap::new()),
+        ).await, export_source);
+        let button = assertionNodes(&initial).iter().find(|node| node["props"]["text"] == "0").copied().unwrap();
+        let action_id = button["props"]["onClick"]["__actionId"].as_str().unwrap();
+        let updated = expect_js_output(engine.actionForAssertions(
+            action_id, None, &testParams(), &BTreeMap::new(), None,
+        ).await, "CommonJS screen action");
+        assert!(assertionNodes(&updated).iter().any(|node| node["props"]["text"] == "1"));
+        engine.destroy();
+    }
+}
+
+/// A registered named entry must not silently fall back to another available screen.
+#[tokio::test(flavor = "current_thread")]
+async fn compose_dsl_registered_missing_named_export_rejects() {
+    for export_source in ["exports.default = Screen;", "exports.default = Screen; module.exports = Screen;"] {
+        let engine = newTestToolPkgRegistrationEngine();
+        let script = format!(r#"
+            function Screen(ctx) {{ return ctx.UI.Text({{text: 'wrong entry'}}); }}
+            {export_source}
+            Object.defineProperty(module.exports, '__operit_compose_entry_export', {{value: 'Missing'}});
+        "#);
+        let error = engine.renderForAssertions(
+            &script, &testParams(), &BTreeMap::new(), Arc::new(BTreeMap::new()),
+        ).await.unwrap_err();
+        assert!(error.to_string().contains("ToolPkg module export is not a function: Missing"));
+        engine.destroy();
+    }
 }
 
 /// Ensures Compose render and actions resolve package modules from the page snapshot without host reentry.
@@ -2544,6 +2598,168 @@ fn execute_function_from_module_exports() {
         expect_js_output(output, "module exports execution"),
         "\"module:exports\""
     );
+}
+
+/// Tools and exported callbacks use the same default/named module contract as Compose.
+#[tokio::test(flavor = "current_thread")]
+async fn execute_commonjs_callable_exports_and_members() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    for (script, name) in [
+        ("module.exports = function(p) { return p.value + 1; };", "default"),
+        ("exports.default = function(p) { return p.value + 1; };", "default"),
+        ("Object.defineProperty(exports, 'run', {value: function(p) { return p.value + 1; }});", "run"),
+        ("module.exports = function() {}; module.exports.run = function(p) { return p.value + 1; };", "run"),
+    ] {
+        let mut params = testParams();
+        params.insert("value".into(), serde_json::json!(41));
+        let output = expect_js_output(engine.execute_script_function(
+            script, name, &params, &BTreeMap::new(), None, true, None,
+        ).await, "CommonJS exported tool");
+        assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!(42));
+    }
+    engine.destroy();
+}
+
+/// A missing export cannot execute stale exports, inherited methods or a same-named global.
+#[tokio::test(flavor = "current_thread")]
+async fn execute_missing_export_rejects_legacy_fallbacks() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    for (script, name) in [
+        ("globalThis.unexported = function() { throw Error('global ran'); };", "unexported"),
+        ("exports.stale = function() { throw Error('stale ran'); }; module.exports = {};", "stale"),
+        ("module.exports = Object.create({inherited: function() { throw Error('prototype ran'); }});", "inherited"),
+        ("module.exports = function() {};", "call"),
+    ] {
+        let error = engine.execute_script_function(
+            script, name, &testParams(), &BTreeMap::new(), None, true, None,
+        ).await.unwrap_err();
+        assert!(error.to_string().contains(&format!("Function '{name}' not found in script")));
+    }
+    engine.destroy();
+}
+
+/// APIs, lifecycle hooks, commands and every provider callback retain a CommonJS function module.
+#[tokio::test(flavor = "current_thread")]
+async fn registered_commonjs_callbacks_survive_module_reload() {
+    let main = r#"
+        const handler = require('./handler"module.js');
+        if (typeof handler !== 'function' || require('./data.js') !== null || require('./data.js') !== null) {
+            throw Error('require must preserve callable and cached data exports');
+        }
+        exports.registerToolPkg = function() {
+            ToolPkg.registerApi({name: 'probe', function: handler});
+            ToolPkg.registerApi({name: 'hidden', function: handler.hidden});
+            ToolPkg.registerApi({name: 'named', function: handler[' named \"quoted\"\\line\n ']});
+            ToolPkg.registerAppLifecycleHook({id: 'init', event: 'application_on_create', function: handler});
+            ToolPkg.registerCoreCommand({id: 'probe', function: handler});
+            ToolPkg.registerAiProvider({id: 'probe', listModels: {function: handler},
+                sendMessage: {function: handler}, testConnection: {function: handler}, calculateInputTokens: {function: handler}});
+            return true;
+        };
+    "#;
+    let resources = Arc::new(BTreeMap::from([("dist/handler\"module.js".into(),
+        r#"const prefix = 'retained'; module.exports = function(p) { return prefix + ':' + p.value; };
+        module.exports[' named \"quoted\"\\line\n '] = function(p) { return prefix + ':' + p.value; };
+        Object.defineProperty(module.exports, 'hidden', {value: function(p) { return prefix + ':' + p.value; }});"#.into()),
+        ("dist/data.js".into(), "module.exports = null;".into())]));
+    let mut params = testParams();
+    params.insert("toolPkgId".into(), Value::String("test.exports".into()));
+    params.insert("__operit_ui_package_name".into(), Value::String("test.exports".into()));
+    params.insert("__operit_script_screen".into(), Value::String("dist/main.js".into()));
+    params.insert("__operit_registration_config_scope".into(), Value::String("device".into()));
+    let registration = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let capture = registration.execute_toolpkg_main_registration_function_with_text_resources(
+        main, "registerToolPkg", &params, Some(resources.clone()),
+    ).expect("CommonJS callback registration");
+    registration.destroy();
+    let mut definitions: Vec<Value> = [&capture.publicApis, &capture.appLifecycleHooks, &capture.coreCommands]
+        .iter().flat_map(|items| items.iter().map(|item| serde_json::from_str(item).unwrap())).collect();
+    let provider: Value = serde_json::from_str(&capture.aiProviders[0]).unwrap();
+    for name in ["listModels", "sendMessage", "testConnection", "calculateInputTokens"] {
+        definitions.push(provider[name].clone());
+    }
+    let engine = super::JsEngine::new_toolpkg_execution_engine(
+        Arc::new(TestPluginConfigExecutionHost::default()), ToolPkgExecutionContext {
+            context_key: "toolpkg_main:test.exports".into(), container_package_name: "test.exports".into(),
+            api_version: "2.0.0".into(), text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: (*resources).clone() }),
+        },
+    ).unwrap();
+    for definition in definitions {
+        let name = definition["function"].as_str().unwrap();
+        params.insert("__operit_inline_function_name".into(), Value::String(name.into()));
+        params.insert("__operit_inline_function_source".into(), definition["function_source"].clone());
+        params.insert("value".into(), serde_json::json!(41));
+        let output = expect_js_output(engine.execute_script_function(
+            main, name, &params, &BTreeMap::new(), None, true, None,
+        ).await, "reloaded registered CommonJS callback");
+        assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!("retained:41"));
+    }
+    engine.destroy();
+}
+
+/// Registration preserves named UI exports without executing their module in the capture realm.
+#[test]
+fn registration_preserves_named_lazy_module_exports() {
+    use operit_plugin_sdk::toolpkg::ToolPkgMainRegistrationScriptParser::ToolPkgMainRegistrationScriptParser;
+    use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgMainRegistrationParseResult;
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let source = r#"
+        const screens = require('./ui/screen.ui.js');
+        exports.menu = function() {};
+        exports.registerToolPkg = function() {
+            ToolPkg.registerUiRoute({id: 'named', runtime: 'compose_dsl', screen: screens.Selected});
+            ToolPkg.registerUiRoute({id: 'default', runtime: 'compose_dsl', screen: screens.default});
+            ToolPkg.registerChatComposerSlot({id: 'composer', slot: 'above_input', screen: screens.Composer});
+            ToolPkg.registerChatMessageMenuItem({id: 'menu', function: exports.menu,
+                dialog: {screen: screens.Dialog}});
+            return true;
+        };
+    "#;
+    let parsed = ToolPkgMainRegistrationScriptParser::parse(source, "test.exports", "dist/main.js", &engine);
+    let ToolPkgMainRegistrationParseResult::Success { registration } = parsed else { panic!("{parsed:?}"); };
+    assert_eq!(registration.uiRoutes[0].screenExport.as_deref(), Some("Selected"));
+    assert_eq!(registration.uiRoutes[1].screenExport.as_deref(), Some("default"));
+    assert_eq!(registration.chatComposerSlots[0].screenExport.as_deref(), Some("Composer"));
+    let dialog = registration.chatMessageMenuItems[0].dialog.as_ref().unwrap();
+    assert_eq!(dialog.screen, "dist/ui/screen.ui.js");
+    assert_eq!(dialog.screenExport.as_deref(), Some("Dialog"));
+    engine.destroy();
+}
+
+/// XML render results retain the exact named export through serialization and screen execution.
+#[tokio::test(flavor = "current_thread")]
+async fn compose_result_preserves_named_screen_export() {
+    let screen = r#"
+        exports.Named = function(ctx) { return ctx.UI.Text({text: 'named screen'}); };
+        exports.default = function() { throw Error('wrong default export'); };
+    "#;
+    let resources = Arc::new(BTreeMap::from([("dist/screen.js".into(), screen.into())]));
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let engine = super::JsEngine::new_toolpkg_execution_engine(
+        Arc::new(TestPluginConfigExecutionHost::default()), ToolPkgExecutionContext {
+            context_key: "toolpkg_main:test.exports".into(), container_package_name: "test.exports".into(),
+            api_version: "2.0.0".into(), text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: (*resources).clone() }),
+        },
+    ).unwrap();
+    let mut params = testParams();
+    params.insert("__operit_ui_package_name".into(), Value::String("test.exports".into()));
+    params.insert("__operit_script_screen".into(), Value::String("dist/main.js".into()));
+    let output = expect_js_output(engine.execute_script_function(
+        "exports.renderXml = function() { return {composeDsl: {screen: require('./screen.js').Named, moduleSpec: {custom: 42, screenExport: 'wrong'}}}; };",
+        "renderXml", &params, &BTreeMap::new(), None, true, None,
+    ).await, "named XML render result");
+    let result: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(result["composeDsl"]["screen"], "dist/screen.js");
+    assert_eq!(result["composeDsl"]["moduleSpec"]["custom"], 42);
+    assert_eq!(result["composeDsl"]["moduleSpec"]["screenExport"], "Named");
+    params.insert("moduleSpec".into(), result["composeDsl"]["moduleSpec"].clone());
+    params.insert("__operit_script_screen".into(), Value::String("dist/screen.js".into()));
+    let rendered = expect_js_output(engine.renderForAssertions(
+        screen, &params, &BTreeMap::new(), resources,
+    ).await, "named XML screen");
+    assert!(assertionNodes(&rendered).iter().any(|node| node["props"]["text"] == "named screen"));
+    engine.destroy();
 }
 
 /// Verifies a package script keeps metadata readable while its executable body is minified.

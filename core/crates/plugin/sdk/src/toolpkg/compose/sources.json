@@ -1,5 +1,6 @@
 {
   "context": [
+    "../ModuleExports.js",
     "Artifact.js",
     "Actions.js",
     "Buffer.js",

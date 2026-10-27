@@ -1,5 +1,5 @@
+import { readSdkScript } from "../../../../../tools/runtime/compose_scripts.mjs";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { createDiskHarness } from "./disk-files.mjs";
@@ -8,12 +8,7 @@ import { importedCallCount, loadModule, plain } from "./runtime.mjs";
 
 /** Extracts the actual current SDK script without recreating its callback-reference or owner validation rules. */
 function sdkScript(file, name) {
-  const source = readFileSync(new URL("../../../../../core/crates/plugin/sdk/src/toolpkg/" + file, import.meta.url), "utf8");
-  const signature = "pub fn " + name + "(";
-  assert.equal(source.split(signature).length, 2);
-  const start = source.indexOf('r#"', source.indexOf(signature)), end = source.indexOf('"#', start + 3);
-  assert.ok(start >= 0 && end > start, "The actual SDK registration script must exist");
-  return source.slice(start + 3, end);
+  return readSdkScript(file, name);
 }
 
 /** Opens only the real SDK registration realm with genuine plugin callbacks; it implements no host business operations. */

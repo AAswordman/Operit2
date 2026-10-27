@@ -459,6 +459,7 @@ data class ToolPkgChatComposerSlotRuntime(
     val id: String,
     val slot: String,
     val screen: String,
+    val screenExport: String?,
     val order: Int,
     val keepAlive: Boolean
 )
@@ -469,6 +470,7 @@ fun decodeToolPkgChatComposerSlotRuntime(value: Any?): ToolPkgChatComposerSlotRu
         id = input["id"] as String as String,
         slot = input["slot"] as String as String,
         screen = input["screen"] as String as String,
+        screenExport = input["screenExport"]?.let { it as String } as String?,
         order = (input["order"] as Number).toInt() as Int,
         keepAlive = input["keepAlive"] as Boolean as Boolean,
     )
@@ -479,12 +481,14 @@ fun ToolPkgChatComposerSlotRuntime.toMessagePackValue(): Map<String, Any?> = map
     "id" to this.id,
     "slot" to this.slot,
     "screen" to this.screen,
+    "screenExport" to this.screenExport?.let { it },
     "order" to this.order,
     "keepAlive" to this.keepAlive,
 )
 
 data class ToolPkgChatMessageMenuDialogRuntime(
     val screen: String,
+    val screenExport: String?,
     val title: LocalizedText
 )
 
@@ -492,6 +496,7 @@ fun decodeToolPkgChatMessageMenuDialogRuntime(value: Any?): ToolPkgChatMessageMe
     val input = value as Map<*, *>
     return ToolPkgChatMessageMenuDialogRuntime(
         screen = input["screen"] as String as String,
+        screenExport = input["screenExport"]?.let { it as String } as String?,
         title = decodeLocalizedText(input["title"]) as LocalizedText,
     )
 }
@@ -499,6 +504,7 @@ fun decodeToolPkgChatMessageMenuDialogRuntime(value: Any?): ToolPkgChatMessageMe
 /** Encodes a typed SDK model into its Link argument representation. */
 fun ToolPkgChatMessageMenuDialogRuntime.toMessagePackValue(): Map<String, Any?> = mapOf(
     "screen" to this.screen,
+    "screenExport" to this.screenExport?.let { it },
     "title" to this.title.toMessagePackValue(),
 )
 

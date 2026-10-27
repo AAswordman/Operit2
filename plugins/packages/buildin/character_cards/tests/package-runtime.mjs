@@ -1,4 +1,4 @@
-import { readSdkScript, wrapComposeScript } from "../../../../../tools/runtime/compose_scripts.mjs";
+import { readSdkScript } from "../../../../../tools/runtime/compose_scripts.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -12,8 +12,7 @@ function engineModuleHelpers() {
   const source = readFileSync(new URL("../../../../../core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs", import.meta.url), "utf8");
   const sections = [
     ["__operitNormalizePath", "__operitDirname"],
-    ["__operitTagModuleExports", "__operitText"],
-    ["__operitCreateRegistrationScreenPlaceholder", "__operitFindTargetFunction"],
+    ["__operitIsLocalUiModulePath", "__operitRegisterScriptSource"],
   ];
   return sections.map(([first, next]) => {
     const start = source.indexOf("        function " + first + "("), end = source.indexOf("        function " + next + "(", start);
@@ -34,7 +33,7 @@ export function packageRuntime(modules, globals = {}, registrationOnly = false) 
   /** Prepares UI source modules with the production compiler before evaluating their exports. */
   function load(modulePath) {
     const normalized = path.posix.normalize(modulePath);
-    if (registrationOnly && context.__operitIsLocalUiModulePath(normalized)) return context.__operitCreateRegistrationScreenPlaceholder(normalized);
+    if (registrationOnly && context.__operitIsLocalUiModulePath(normalized)) return context.OperitToolPkgExports.placeholder(normalized);
     if (cache.has(normalized)) return cache.get(normalized).exports;
     assert.ok(Object.hasOwn(modules, normalized), "Package omitted registered module: " + normalized);
     const module = { exports: {} };
@@ -48,7 +47,7 @@ export function packageRuntime(modules, globals = {}, registrationOnly = false) 
       assert.ok(request.startsWith("."), "Only declared relative modules may be loaded: " + request);
       return load(path.posix.join(path.posix.dirname(normalized), request));
     });
-    context.__operitTagModuleExports(normalized, module.exports);
+    context.OperitToolPkgExports.tag(normalized, module.exports);
     return module.exports;
   }
   return { context, load };
