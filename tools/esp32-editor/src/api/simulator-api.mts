@@ -2,6 +2,9 @@ import {requestUi, takeUiCommands, completeUiCommand} from './ui-debug.mts';
 import {spawn} from 'node:child_process';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createInterface} from 'node:readline';
+import {createServer} from 'node:net';
+import {randomUUID} from 'node:crypto';
+import type {Server, Socket} from 'node:net';
 import {mkdir, copyFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {pathToFileURL} from 'node:url';
@@ -14,6 +17,9 @@ const stateDir = process.env.OPERIT_SIM_STATE_DIR
   ? pathToFileURL(path.resolve(process.env.OPERIT_SIM_STATE_DIR) + path.sep)
   : new URL('../../generated/simulator/', import.meta.url);
 let child: ChildProcessWithoutNullStreams | null = null;
+let ipc: Socket | null = null;
+let ipcServer: Server | null = null;
+const ipcSockets = new Set<Socket>();
 let starting = false;
 let ready = false;
 let output = '';
@@ -22,6 +28,72 @@ let lifecycle = 0;
 let previousExit: Promise<void> = Promise.resolve();
 const pending = new Map<number, {resolve: (value: unknown) => void; reject: (error: Error) => void}>();
 
+/** Releases the editor connection and its single-use loopback listener. */
+function closeIpc(): void {
+  ipc = null;
+  for (const connection of ipcSockets) connection.destroy();
+  ipcSockets.clear();
+  ipcServer?.close();
+  ipcServer = null;
+}
+
+/** Accepts one simulator connection and routes unchanged JSON RPC responses. */
+async function listenForIpc(generation: number, token: string): Promise<string> {
+  const server = createServer(socket => {
+    if (generation !== lifecycle || ipc) { socket.destroy(); return; }
+    let authenticated = false;
+    ipcSockets.add(socket);
+    socket.setNoDelay(true);
+    /** Terminates failed reads and writes while reporting the active connection error. */
+    const fail = (error: Error): void => {
+      if (ipc === socket) output = (output + error.message).slice(-12000);
+      socket.destroy();
+    };
+    socket.on('error', fail);
+    socket.on('close', () => {
+      ipcSockets.delete(socket);
+      if (ipc !== socket) return;
+      ipc = null;
+      ready = false;
+      failPending();
+    });
+    createInterface({input: socket}).on('error', fail).on('line', line => {
+      if (generation !== lifecycle) { socket.destroy(); return; }
+      try {
+        const message = JSON.parse(line) as {ipcToken?: string; ready?: boolean; id?: number; value?: unknown; error?: string};
+        if (!authenticated) {
+          if (message.ipcToken !== token || ipc) { socket.destroy(); return; }
+          authenticated = true;
+          ipc = socket;
+          server.close();
+          if (ipcServer === server) ipcServer = null;
+          return;
+        }
+        if (ipc !== socket) return;
+        if (message.ready) ready = true;
+        if (message.id !== undefined) {
+          const request = pending.get(message.id);
+          pending.delete(message.id);
+          if (message.error) request?.reject(new Error(message.error));
+          else request?.resolve(message.value);
+        }
+      } catch (error) {
+        output = (output + String(error)).slice(-12000);
+        socket.destroy();
+      }
+    });
+  });
+  ipcServer = server;
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('模拟器 IPC 监听失败');
+  return `127.0.0.1:${address.port}`;
+}
+
+/** Selects the externally reachable address advertised by the simulated device. */
 function advertisedAddress(address: string): string {
   const [host, port] = address.split(':');
   if (host !== '0.0.0.0' && host !== '::') return address;
@@ -52,6 +124,7 @@ function advertisedAddress(address: string): string {
   return candidates[0] ? `${candidates[0].address}:${port}` : address;
 }
 
+/** Rejects outstanding commands when their simulator connection ends. */
 function failPending(): void {
   for (const request of pending.values()) request.reject(new Error('模拟设备已停止'));
   pending.clear();
@@ -115,53 +188,49 @@ async function start(): Promise<void> {
       (process.platform === 'win32' ? '.exe' : ''), stateDir));
     await copySimulatorBinary(executable, runPath);
     if (generation !== lifecycle) return;
+    const ipcToken = randomUUID();
+    const ipcAddress = await listenForIpc(generation, ipcToken);
+    if (generation !== lifecycle) { closeIpc(); return; }
     const runtime = spawn(runPath, [], {cwd: root, windowsHide: true,
       env: {...process.env,
+        OPERIT_SIM_IPC_ADDRESS: ipcAddress,
+        OPERIT_SIM_IPC_TOKEN: ipcToken,
         OPERIT_SIM_STATE_DIR: fileURLToPath(stateDir),
         OPERIT_SIM_DISCOVERY_IP: advertisedAddress('0.0.0.0:0').split(':')[0]},
     });
     child = runtime;
     previousExit = new Promise(resolve => runtime.once('close', () => resolve()));
-    runtime.stdin.on('error', e => { output = (output + e.message).slice(-12000); failPending(); });
+    runtime.stdout.on('data', append);
     runtime.stderr.on('data', append);
-    createInterface({input: runtime.stdout}).on('line', line => {
-      try {
-        const message = JSON.parse(line) as {ready?: boolean; id?: number; value?: unknown; error?: string};
-        if (message.ready) ready = true;
-        if (message.id !== undefined) {
-          const request = pending.get(message.id);
-          pending.delete(message.id);
-          if (message.error) request?.reject(new Error(message.error));
-          else request?.resolve(message.value);
-        }
-      } catch { output = (output + line).slice(-12000); }
-    });
     runtime.on('error', e => { output += e.message; });
     runtime.on('close', (code, signal) => {
       output = (output + `\nSimulator exited (code=${code}, signal=${signal})\n`).slice(-12000);
-      if (child === runtime) { child = null; ready = false; failPending(); }
+      if (child === runtime) { child = null; ready = false; closeIpc(); failPending(); }
     });
-  } catch (e) { child = null; output += String(e); }
+  } catch (e) { child = null; ready = false; closeIpc(); failPending(); output += String(e); }
   finally { starting = false; }
 }
 
+/** Stops the owned process and closes all IPC resources. */
 export function stopSimulator(): void {
   lifecycle += 1;
   const processToStop = child;
   child = null;
   ready = false;
+  closeIpc();
   failPending();
   processToStop?.kill();
 }
 
+/** Sends one correlated command over the current simulator connection. */
 async function rpc(command: string, fields = {}, timeoutMs = 5000): Promise<unknown> {
-  if (!child || !ready) throw new Error('请先启动模拟设备并等待编译完成');
+  if (!child || !ready || !ipc) throw new Error('请先启动模拟设备并等待编译完成');
   const id = ++sequence;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { pending.delete(id); reject(new Error('模拟设备响应超时')); }, timeoutMs);
     pending.set(id, {resolve: value => { clearTimeout(timer); resolve(value); },
       reject: error => { clearTimeout(timer); reject(error); }});
-    child!.stdin.write(JSON.stringify({id, command, ...fields}) + '\n');
+    ipc!.write(JSON.stringify({id, command, ...fields}) + '\n');
   });
 }
 

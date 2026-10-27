@@ -18,8 +18,6 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 #[path = "peer/crypto.rs"] mod crypto;
 use crypto::{Channel, MultiplexedChannel, error};
 #[path = "peer/heartbeat.rs"] mod heartbeat;
-#[path = "peer/live_channel.rs"] mod live_channel;
-use live_channel::LiveChannel;
 #[path = "peer/dispatch.rs"] mod dispatch;
 #[path = "peer/space_client.rs"] mod space_client;
 #[path = "peer/availability.rs"] mod availability;
@@ -486,12 +484,10 @@ impl HostRuntimePeerService {
             .ok_or_else(|| error("Host scheduler is not installed"))?;
         let state = Arc::downgrade(&self.state);
         let peer = node.to_owned();
-        let compact = self.state.host.runtimeStorageHost.as_ref().is_some_and(|storage| !storage.retainPreferencesCache());
-        let live = LiveChannel::start(channel, scheduler.clone(), compact, move || {
+        let inbound = dispatch::InboundSide::new(self.clone(), node.into(), pairingId, authorization);
+        let channel = MultiplexedChannel::start(channel, scheduler, inbound, move || {
             if let Some(state) = state.upgrade() { HostRuntimePeerService { state }.refreshPeerAvailability(&peer); }
         })?;
-        let inbound = dispatch::InboundSide::new(self.clone(), node.into(), pairingId, authorization);
-        let channel = MultiplexedChannel::start(live, scheduler, inbound)?;
         if let Err(error) = self.registerChannel(node, &channel) { channel.close().await; return Err(error); }
         Ok(channel)
     }
@@ -1476,9 +1472,8 @@ mod single_channel_tests {
         let encrypted = Channel::new(
             Arc::new(SilentPeer(PeerEndpoint { nodeId: "peer".into(), address: "unused".into() })),
             &[7; 32], b"test", false).unwrap();
-        let live = LiveChannel::start(encrypted, scheduler.clone(), false, || {}).unwrap();
         let side = dispatch::InboundSide::new(service(), "peer".into(), "test".into(), dispatch::Authorization::Inbound);
-        MultiplexedChannel::start(live, scheduler, side).unwrap()
+        MultiplexedChannel::start(encrypted, scheduler, side, || {}).unwrap()
     }
 
     /// A caller cancelled before dispatch cannot open transport or execute its queued request.
@@ -1689,7 +1684,7 @@ mod single_channel_tests {
                 dispatch::serveIncoming(
                     dispatch::InboundSide::new(service, "p1".into(), "pairing".into(), dispatch::Authorization::Inbound),
                     futures_util::stream::unfold(incoming, |mut incoming| async move {
-                        incoming.recv().await.map(|request| (Ok(crypto::StoredMessage::Value(PeerMessage::Request(request))), incoming))
+                        incoming.recv().await.map(|request| (crypto::EncodedMessage::new(PeerMessage::Request(request)), incoming))
                     }),
                     |batch| { responses.send(batch.into_iter().map(|bytes| PeerMessage::decode(&bytes).unwrap()).collect::<Vec<_>>()).unwrap(); std::future::ready(Ok(())) },
                 )

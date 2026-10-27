@@ -26,7 +26,7 @@ operit-node-edge = { path = "../../../core/crates/node/edge" }
 operit-edge-scene = { path = "../../../hosts/common/operit-edge-scene" }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["rt", "macros", "net", "sync", "time", "io-util", "io-std"] }
+tokio = { version = "1", features = ["rt", "macros", "net", "sync", "time", "io-util"] }
 
 # The protocol fixtures share firmware code and its fixed Host worker stack budgets.
 # Match simulator release optimization for the fixture and its Host/runtime dependencies.

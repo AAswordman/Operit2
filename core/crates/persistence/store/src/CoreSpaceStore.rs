@@ -1221,13 +1221,15 @@ impl CoreSpaceStore {
     /// under this device's origin would echo every member's announcement back
     /// to every peer and keep idle snapshots churning.
     fn importTopologyRecord(&self, record: &CoreSpaceTopologyRecord) -> Result<(), String> {
-        let value = serde_json::to_value(record).map_err(|error| error.to_string())?;
+        let (key, value) = self.topologyRecordValue(record)?;
         self.recordStore(format!(
             "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/{}.preferences.json",
             record.nodeId
         ))
         .migrate(|preferences| -> Result<(), PreferencesDataStoreError> {
-            preferences.set(&stringPreferencesKey(CORE_SPACE_RECORD_KEY), value);
+            preferences.remove(&stringPreferencesKey(CORE_SPACE_RECORD_KEY));
+            preferences.remove(&stringPreferencesKey(COMPACT_TOPOLOGY_V1));
+            preferences.set(&stringPreferencesKey(key), value);
             Ok(())
         })
         .map_err(|error| error.to_string())
@@ -1274,17 +1276,23 @@ impl CoreSpaceStore {
         Ok(records)
     }
 
+    /// Encodes local and imported topology using the declared storage scope.
+    fn topologyRecordValue(&self, record: &CoreSpaceTopologyRecord) -> Result<(&'static str, serde_json::Value), String> {
+        validateTopologyRecord(record)?;
+        if !self.recordSyncOperations && self.storage.nodeLocalApplicationHistoryLimit().is_some() {
+            Ok((COMPACT_TOPOLOGY_V1,
+                serde_json::to_value(CompactTopologyV1::from(record)).map_err(|error| error.to_string())?))
+        } else {
+            Ok((CORE_SPACE_RECORD_KEY,
+                serde_json::to_value(record).map_err(|error| error.to_string())?))
+        }
+    }
+
     /// Writes the local CoreNode topology announcement as a synchronized preferences entity.
     fn writeTopologyRecord(&self, record: &CoreSpaceTopologyRecord) -> Result<(), String> {
-        validateTopologyRecord(record)?;
+        let (key, value) = self.topologyRecordValue(record)?;
         let mut preferences = emptyPreferences();
-        if !self.recordSyncOperations && self.storage.nodeLocalApplicationHistoryLimit().is_some() {
-            preferences.set(&stringPreferencesKey(COMPACT_TOPOLOGY_V1),
-                serde_json::to_value(CompactTopologyV1::from(record)).map_err(|error| error.to_string())?);
-        } else {
-            preferences.set(&stringPreferencesKey(CORE_SPACE_RECORD_KEY),
-                serde_json::to_value(record).map_err(|error| error.to_string())?);
-        }
+        preferences.set(&stringPreferencesKey(key), value);
         self.recordStore(
             format!(
                 "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/{}.preferences.json",

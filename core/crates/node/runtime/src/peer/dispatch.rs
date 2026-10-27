@@ -1,6 +1,6 @@
 //! 已鉴权 Link 会话：路由元数据留在标准 args 中，执行仍使用既有 CoreLinkSession。
 use super::*;
-use super::crypto::StoredMessage;
+use super::crypto::EncodedMessage;
 use futures_util::{stream::{self, FuturesUnordered}, FutureExt, Stream, StreamExt};
 
 /// Both native maps and MessagePack struct sequences carry payload args in this slot.
@@ -119,7 +119,7 @@ impl InboundSide {
 #[cfg(test)]
 pub(super) async fn serve(service: HostRuntimePeerService, channel: Arc<Channel>, peer: String, sessionId: String) -> Result<(), CoreLinkError> {
     let incoming = stream::unfold(channel.clone(), |channel| async move {
-        channel.receive().await.transpose().map(|message| (message.map(StoredMessage::Value), channel))
+        channel.receive().await.transpose().map(|message| (message.and_then(EncodedMessage::new), channel))
     });
     let side = InboundSide::new(service, peer, sessionId, Authorization::Inbound);
     serveIncoming(side, incoming, |messages| channel.sendEncodedBatch(messages)).await
@@ -127,13 +127,13 @@ pub(super) async fn serve(service: HostRuntimePeerService, channel: Arc<Channel>
 
 /// Calls have no session stream state. Preserve routing/correlation checks while
 /// allowing a constrained local handler to encode its typed result directly.
-async fn executeCall(side: &InboundSide, request: CoreCallRequest, compact: bool) -> Result<StoredMessage<CoreLinkResponse>, CoreLinkError> {
+async fn executeCall(side: &InboundSide, request: CoreCallRequest, compact: bool) -> Result<EncodedMessage<CoreLinkResponse>, CoreLinkError> {
     let id = request.requestId.clone();
     let response = match decodeRouted::<CoreCallRequest>(request.args, |request| &mut request.args) {
         Ok(routed) if routed.payload.requestId == id => match side.service.state.router.upgrade() {
             Some(router) => {
                 if compact {
-                    if let Some(encoded) = router.prepareRoutedCall(&side.peer, &routed) { return encoded.map(StoredMessage::Encoded); }
+                    if let Some(encoded) = router.prepareRoutedCall(&side.peer, &routed) { return encoded.map(EncodedMessage::fromBytes); }
                 }
                 router.routedCall(side.peer.clone(), routed).await
             },
@@ -142,7 +142,7 @@ async fn executeCall(side: &InboundSide, request: CoreCallRequest, compact: bool
         Ok(_) => CoreCallResponse::err(id, error("Routed correlation mismatch")),
         Err(error) => CoreCallResponse::err(id, error),
     };
-    StoredMessage::new(CoreLinkResponse::Call(response), compact)
+    EncodedMessage::new(CoreLinkResponse::Call(response))
 }
 
 /// Calls have independent correlations and may forward through this same carrier.
@@ -156,7 +156,7 @@ pub(super) async fn serveIncoming<I, S, F>(
     side: InboundSide, incoming: I, send: S,
 ) -> Result<(), CoreLinkError>
 where
-    I: Stream<Item = Result<StoredMessage<PeerMessage>, CoreLinkError>>,
+    I: Stream<Item = Result<EncodedMessage<PeerMessage>, CoreLinkError>>,
     S: Fn(Vec<Vec<u8>>) -> F,
     F: std::future::Future<Output = Result<(), CoreLinkError>>,
 {
@@ -166,9 +166,9 @@ where
     // Stream ordering stays independent of Calls, including forwarded Calls that
     // release an opening Watch or a backpressured Push on this same carrier.
     let session = InboundSide::new(side.service.clone(), side.peer.clone(), side.sessionId.clone(), side.authorization);
-    let (requests, queue) = tokio::sync::mpsc::unbounded_channel::<StoredMessage<CoreLinkRequest>>();
+    let (requests, queue) = tokio::sync::mpsc::unbounded_channel::<EncodedMessage<CoreLinkRequest>>();
     let sessions = stream::unfold((session, queue), |(mut session, mut queue)| async move {
-        enum Item { Request(Option<StoredMessage<CoreLinkRequest>>), Event(Option<Vec<CoreLinkResponse>>) }
+        enum Item { Request(Option<EncodedMessage<CoreLinkRequest>>), Event(Option<Vec<CoreLinkResponse>>) }
         let item = if session.session.hasWatches() {
             tokio::select! {
                 request = queue.recv() => Item::Request(request),
@@ -191,11 +191,11 @@ where
         Some((response, (session, queue)))
     });
     futures_util::pin_mut!(incoming, sessions);
-    type Reply = Result<StoredMessage<CoreLinkResponse>, CoreLinkError>;
+    type Reply = Result<EncodedMessage<CoreLinkResponse>, CoreLinkError>;
     let mut calls = FuturesUnordered::<tokio::sync::oneshot::Receiver<Reply>>::new();
     loop {
         enum Incoming {
-            Message(Option<Result<StoredMessage<PeerMessage>, CoreLinkError>>),
+            Message(Option<Result<EncodedMessage<PeerMessage>, CoreLinkError>>),
             Response(Result<Reply, tokio::sync::oneshot::error::RecvError>),
             Session(Option<Result<Vec<Vec<u8>>, CoreLinkError>>),
         }
@@ -204,7 +204,7 @@ where
             Some(response) = calls.next(), if !calls.is_empty() => Incoming::Response(response),
             response = sessions.next() => Incoming::Session(response),
         };
-        // Queued trees have already become compact bytes on bounded Hosts.
+        // Queued messages retain only their encoded frame on every Host.
         // Recheck revocation at the original boundary, before any request entry
         // or response transmission, without another full tree in memory.
         side.validate()?;
@@ -224,19 +224,17 @@ where
                             _ = completed.closed() => {},
                             response = async {
                                 if let Err(error) = call.validate() {
-                                    return StoredMessage::new(CoreLinkResponse::Call(CoreCallResponse::err(id, error)), compact);
+                                    return EncodedMessage::new(CoreLinkResponse::Call(CoreCallResponse::err(id, error)));
                                 }
                                 if compact {
-                                    if let StoredMessage::Encoded(bytes) = &mut message {
-                                        if let Some(router) = call.service.state.router.upgrade() {
-                                            if let Some(encoded) = router.prepareEncodedCall(&call.peer, bytes) { return encoded.map(StoredMessage::Encoded); }
-                                        }
+                                    if let Some(router) = call.service.state.router.upgrade() {
+                                        if let Some(encoded) = router.prepareEncodedCall(&call.peer, message.bytesMut()) { return encoded.map(EncodedMessage::fromBytes); }
                                     }
                                 }
                                 match message.decodeWith(PeerMessage::decode) {
                                     Ok(PeerMessage::Request(CoreLinkRequest::Call(request))) => executeCall(&call, request, compact).await,
-                                    Ok(_) => StoredMessage::new(CoreLinkResponse::Call(CoreCallResponse::err(id, error("Expected inbound Call"))), compact),
-                                    Err(error) => StoredMessage::new(CoreLinkResponse::Call(CoreCallResponse::err(id, error)), compact),
+                                    Ok(_) => EncodedMessage::new(CoreLinkResponse::Call(CoreCallResponse::err(id, error("Expected inbound Call")))),
+                                    Err(error) => EncodedMessage::new(CoreLinkResponse::Call(CoreCallResponse::err(id, error))),
                                 }
                             } => { let _ = completed.send(response); },
                         }
@@ -244,17 +242,14 @@ where
                     calls.push(result);
                     continue;
                 }
-                match message.decodeWith(PeerMessage::decode)? {
-                    PeerMessage::Request(request) => {
-                        requests.send(StoredMessage::new(request, compact)?).map_err(|_| error("Inbound stream dispatcher stopped"))?;
-                        continue;
-                    },
-                    PeerMessage::Response(_) => return Err(error("Unexpected inbound Link response")),
-                }
+                if message.isResponse()? { return Err(error("Unexpected inbound Link response")); }
+                requests.send(EncodedMessage::fromBytes(message.intoBytes()))
+                    .map_err(|_| error("Inbound stream dispatcher stopped"))?;
+                continue;
             },
             Incoming::Message(Some(Err(error))) | Incoming::Session(Some(Err(error))) => return Err(error),
             Incoming::Message(None) | Incoming::Session(None) => break,
-            Incoming::Response(response) => vec![response.map_err(|_| error("Inbound Call task stopped"))??.intoEncoded()?],
+            Incoming::Response(response) => vec![response.map_err(|_| error("Inbound Call task stopped"))??.intoBytes()],
             Incoming::Session(Some(Ok(responses))) => responses,
         };
         send(responses).await?;

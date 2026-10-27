@@ -9,6 +9,7 @@ mod device_space_ui;
 mod device_speech;
 #[path = "../../../../apps/esp32/src/edge_chat.rs"]
 mod edge_chat;
+mod ipc;
 mod memory;
 #[path = "../../../../apps/esp32/src/runtime_storage_codec.rs"]
 mod runtime_storage_codec;
@@ -28,11 +29,7 @@ use operit_node_runtime::{
     NodeServices::{NodeServices, PeerTransport},
     PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore},
 };
-use std::{
-    io::Write,
-    sync::{Arc, Mutex},
-};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use std::sync::{Arc, Mutex};
 
 /// Routes declared hardware calls through the shared device Host contracts.
 fn nativeCallHandler(
@@ -69,28 +66,6 @@ fn nativeCallHandler(
             })
         })
     })
-}
-
-/// Writes IPC data directly without rebuilding its JSON value tree.
-fn emit(value: impl serde::Serialize) {
-    let mut stdout = std::io::stdout().lock();
-    serde_json::to_writer(&mut stdout, &value).expect("editor IPC closed");
-    writeln!(stdout).expect("editor IPC closed");
-    stdout.flush().expect("editor IPC closed");
-}
-
-/// Borrows command results until their single serialization to the editor.
-#[derive(serde::Serialize)]
-#[serde(untagged)]
-enum Response<'a> {
-    Value {
-        id: &'a serde_json::Value,
-        value: &'a serde_json::Value,
-    },
-    Error {
-        id: &'a serde_json::Value,
-        error: &'a str,
-    },
 }
 
 /// Schedules Space mutations on the firmware-equivalent worker and returns their actual result.
@@ -140,12 +115,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0,
     )))?);
     let backend = storage::FileSnapshotBackend::open(storage::stateDirectory())?;
-    let (device, profile) =
+    let (mut device, profile) =
         operit_host_native_scheduler::withStackBudget(memory::MAIN_STACK_BYTES, || {
             initialize(scheduler, backend)
         })??;
     operit_host_native_scheduler::withStackBudget(memory::MAIN_STACK_BYTES, || {
         device.spaceService.initialize(profile)
+    })??;
+    let network = Box::pin(device.start());
+    operit_host_native_scheduler::withStackBudget(memory::MAIN_STACK_BYTES, || {
+        runtime.block_on(network)
     })??;
     let device: std::pin::Pin<Box<dyn std::future::Future<Output = _>>> = Box::pin(run(device));
     operit_host_native_scheduler::withStackBudget(memory::MAIN_STACK_BYTES, || {
@@ -288,19 +267,12 @@ fn initialize(
 
 /// Polls device services without retaining synchronous initialization temporaries on this stack.
 async fn run(mut device: Simulator) -> Result<(), Box<dyn std::error::Error>> {
-    device
-        .services
-        .peers()
-        .startListening(&[PeerTransport::Tcp])
-        .await?;
-    device.address = PeerStateStore::new(device.storage.clone())
-        .hostConfig()?
-        .ok_or("Simulator listener configuration is missing")?
-        .bindAddress;
-    emit(
+    let mut ipc = ipc::EditorIpc::connect().await?;
+    ipc.send(
         serde_json::json!({"ready": true, "peerServiceAvailable": true,
         "memory": memory::snapshot(), "address": device.address, "deviceId": device.nodeId}),
-    );
+    )
+    .await?;
     // Match the firmware's 500 ms Space route polling. Compiling edge_chat
     // alone does not install a session; pairing and approval must not fake one.
     let mut routePoll = tokio::time::interval(std::time::Duration::from_millis(500));
@@ -324,24 +296,19 @@ async fn run(mut device: Simulator) -> Result<(), Box<dyn std::error::Error>> {
             })
         }),
     )?;
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
     loop {
         let line = tokio::select! {
             _ = routePoll.tick() => { device.poll()?; continue; }
-            line = lines.next_line() => match line? { Some(line) => line, None => break },
+            line = ipc.receive() => match line? { Some(line) => line, None => break },
         };
         let request: serde_json::Value = serde_json::from_str(&line)?;
-        let id = request["id"].clone();
-        let result = device.command(&request).await;
-        match result {
-            Ok(value) => emit(Response::Value {
-                id: &id,
-                value: &value,
-            }),
-            Err(error) => emit(Response::Error {
-                id: &id,
-                error: &error,
-            }),
+        let id = &request["id"];
+        if request["command"] == "state" {
+            let state = Box::pin(device.state()).await;
+            ipc.reply(id, state).await?;
+        } else {
+            let result = device.command(&request).await;
+            ipc.reply(id, result).await?;
         }
     }
     device
@@ -382,7 +349,50 @@ struct Simulator {
     review: Arc<Mutex<ReviewState>>,
 }
 
+/// Borrows stable identifiers and serializes each device snapshot without an outer JSON tree.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SimulatorState<'a> {
+    address: &'a str,
+    sessionId: &'a str,
+    scene: serde_json::Value,
+    speech: serde_json::Value,
+    playback: Vec<serde_json::Value>,
+    coreAccess: serde_json::Value,
+    deviceSpace: serde_json::Value,
+    memory: serde_json::Value,
+    deviceId: &'a str,
+    paired: bool,
+    activePeers: std::collections::BTreeSet<String>,
+    peerServiceAvailable: bool,
+    pairingCode: String,
+    spaceJoinPrompt: String,
+    spaceJoinRequestId: String,
+    spaceJoinAssignmentVersion: u64,
+    error: String,
+    lastAction: String,
+    plugins: serde_json::Value,
+    chat: serde_json::Value,
+    chatPreview: String,
+    chatScreen: String,
+    chatTask: String,
+    chatSendResult: Option<&'a serde_json::Value>,
+}
+
 impl Simulator {
+    /// Activates discovery and listening before the interactive main-loop poll frame exists.
+    async fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.services
+            .peers()
+            .startListening(&[PeerTransport::Tcp])
+            .await?;
+        self.address = PeerStateStore::new(self.storage.clone())
+            .hostConfig()?
+            .ok_or("Simulator listener configuration is missing")?
+            .bindAddress;
+        Ok(())
+    }
+
     /// Applies the same periodic route and device-configuration updates as the firmware.
     fn poll(&mut self) -> Result<(), String> {
         let scope = operit_node_runtime::NodeSpaceService::NodeSpaceContext::spaceStore(
@@ -447,10 +457,9 @@ impl Simulator {
         Ok(())
     }
 
-    /// Builds one bounded editor snapshot without a large asynchronous command frame.
-    async fn state(&mut self) -> Result<serde_json::Value, String> {
+    /// Collects device views once and borrows stable fields until their IPC serialization.
+    async fn state(&mut self) -> Result<SimulatorState<'_>, String> {
         let Self {
-            spaceService,
             sceneService,
             speech,
             nodeId,
@@ -506,94 +515,58 @@ impl Simulator {
             .find(|code| code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()))
             .unwrap_or_default();
         let space_join = self.review.lock().unwrap().pending.clone();
-        let mut value = serde_json::Map::new();
-        value.insert(
-            "address".into(),
-            serde_json::to_value(address).map_err(|e| e.to_string())?,
-        );
-        value.insert(
-            "sessionId".into(),
-            serde_json::to_value(sessionId).map_err(|e| e.to_string())?,
-        );
-        value.insert("scene".into(), sceneService.summary());
-        value.insert("speech".into(), speech.snapshot());
-        value.insert("playback".into(), playback.into());
-        value.insert("coreAccess".into(), coreAccess.lock().await.snapshot());
-        value.insert("deviceSpace".into(), deviceSpaceUi.snapshot());
-        value.insert("memory".into(), memory::snapshot());
-        value.insert(
-            "deviceId".into(),
-            serde_json::to_value(nodeId).map_err(|e| e.to_string())?,
-        );
-        value.insert("paired".into(), paired.into());
-        value.insert(
-            "activePeers".into(),
-            serde_json::to_value(
-                services
-                    .peers()
-                    .activePeerNodeIds()
-                    .map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| e.to_string())?,
-        );
-        value.insert("peerServiceAvailable".into(), true.into());
-        value.insert("pairingCode".into(), pairing_code.into());
-        value.insert(
-            "spaceJoinPrompt".into(),
-            space_join
+        Ok(SimulatorState {
+            address,
+            sessionId,
+            scene: sceneService.summary(),
+            speech: speech.snapshot(),
+            playback,
+            coreAccess: coreAccess.lock().await.snapshot(),
+            deviceSpace: deviceSpaceUi.snapshot(),
+            memory: memory::snapshot(),
+            deviceId: nodeId,
+            paired,
+            activePeers: services
+                .peers()
+                .activePeerNodeIds()
+                .map_err(|e| e.to_string())?,
+            peerServiceAvailable: true,
+            pairingCode: pairing_code,
+            spaceJoinPrompt: space_join
                 .as_ref()
                 .map(|request| {
                     format!(
                         "申请加入空间\n{}\n{}",
                         request.applicantName.chars().take(32).collect::<String>(),
-                        request.spaceName.chars().take(32).collect::<String>()
+                        request.spaceName.chars().take(32).collect::<String>(),
                     )
                 })
-                .unwrap_or_default()
-                .into(),
-        );
-        value.insert(
-            "spaceJoinRequestId".into(),
-            space_join
+                .unwrap_or_default(),
+            spaceJoinRequestId: space_join
                 .as_ref()
-                .map(|r| r.requestId.clone())
-                .unwrap_or_default()
-                .into(),
-        );
-        value.insert(
-            "spaceJoinAssignmentVersion".into(),
-            space_join
+                .map(|request| request.requestId.clone())
+                .unwrap_or_default(),
+            spaceJoinAssignmentVersion: space_join
                 .as_ref()
-                .map(|r| r.assignmentVersion)
-                .unwrap_or(0)
-                .into(),
-        );
-        value.insert("error".into(), error.lock().unwrap().clone().into());
-        value.insert(
-            "lastAction".into(),
-            lastAction.lock().unwrap().clone().into(),
-        );
-        value.insert("plugins".into(), edge_chat::pluginsSnapshot());
-        value.insert("chat".into(), chat_state);
-        value.insert("chatPreview".into(), chat_preview.into());
-        value.insert("chatScreen".into(), chat_screen.into());
-        value.insert("chatTask".into(), edge_chat::taskStatus().into());
-        value.insert(
-            "chatSendResult".into(),
-            serde_json::to_value(sendReceipt.snapshot()).map_err(|e| e.to_string())?,
-        );
-        Ok(serde_json::Value::Object(value))
+                .map(|request| request.assignmentVersion)
+                .unwrap_or(0),
+            error: error.lock().unwrap().clone(),
+            lastAction: lastAction.lock().unwrap().clone(),
+            plugins: edge_chat::pluginsSnapshot(),
+            chat: chat_state,
+            chatPreview: chat_preview,
+            chatScreen: chat_screen,
+            chatTask: edge_chat::taskStatus(),
+            chatSendResult: sendReceipt.snapshot(),
+        })
     }
 
-    /// Executes one editor command without retaining its temporaries in the main event-loop future.
+    /// Executes one editor command before its result enters the IPC serializer.
     fn command<'a>(
         &'a mut self,
         request: &'a serde_json::Value,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + 'a>>
     {
-        if request["command"] == "state" {
-            return Box::pin(self.state());
-        }
         Box::pin(async move {
             let Self {
                 spaceService,
