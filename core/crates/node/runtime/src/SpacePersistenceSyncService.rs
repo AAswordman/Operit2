@@ -566,12 +566,14 @@ impl SpacePersistenceSyncService {
     /// application backend, which non-storage peers are not permitted to reach.
     async fn localStateSummary(&self) -> Result<String, String> {
         let storageHost = self.state.localRuntime.runtimeStorageHost();
-        let mut clock = operit_store::SyncOperationStore::SyncOperationStore::new(
+        let syncStore = operit_store::SyncOperationStore::SyncOperationStore::new(
             storageHost.clone(),
             RUNTIME_SYNC_DIR_PATH.to_string(),
-        )
-        .localClock()
-        .map_err(|error| error.to_string())?;
+        );
+        let localDeviceId = syncStore.localDeviceId().map_err(|error| error.to_string())?;
+        let mut clock = syncStore
+            .localClock()
+            .map_err(|error| error.to_string())?;
         // The chat storage belongs to the process default store root. A root
         // that was never registered means this process holds no chat state
         // at all, so an empty chat clock is the correct contribution; a real
@@ -601,6 +603,12 @@ impl SpacePersistenceSyncService {
                 }
             }
         }
+        // Operations applied from peers advance their origins in this clock.
+        // Counting that as local progress would open a full pass for every
+        // member whenever any other device writes, even though this device may
+        // have nothing to send. Members fetch another member's operations over
+        // routed links, so a partition catches up when the route returns.
+        clock.retainAuthoredBy(&localDeviceId);
         let control = NetworkControlStore::new(storageHost)?;
         Ok(format!(
             "{}#{}#{}",
