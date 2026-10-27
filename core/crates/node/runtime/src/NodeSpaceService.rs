@@ -203,7 +203,7 @@ impl NodeSpaceService {
     pub fn new(storage: Arc<dyn RuntimeStorageHost>, peers: Arc<dyn RuntimePeerService>) -> Result<Arc<Self>, String> {
         let localNodeId = CoreNodeIdentityStore::new(storage.clone()).initialize()?.nodeId;
         Ok(Arc::new(Self {
-            space: CoreSpaceStore::newNodeLocal(storage.clone()), control: NetworkControlStore::newNodeLocal(storage.clone())?.withoutCommandCache(),
+            space: CoreSpaceStore::newNodeLocal(storage.clone()), control: NetworkControlStore::newNodeLocal(storage.clone())?,
             storage, peers, localNodeId,
         }))
     }

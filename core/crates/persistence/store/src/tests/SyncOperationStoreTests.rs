@@ -17,6 +17,7 @@ struct MemoryStorageHost {
     readCount: Arc<AtomicUsize>,
     rangeBytes: Arc<AtomicUsize>,
     forbidWholeJournalReads: Arc<AtomicBool>,
+    forbidControlHistoryReads: Arc<AtomicBool>,
     failAtomic: Arc<AtomicUsize>,
 }
 
@@ -45,6 +46,10 @@ impl RuntimeStorageHost for MemoryStorageHost {
     }
 
     fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
+        if self.forbidControlHistoryReads.load(Ordering::SeqCst)
+            && (path.ends_with(".jsonl") || path.ends_with("space_policy.preferences.json")) {
+            return Err(HostError::new("control query attempted to read authority history"));
+        }
         if self.forbidWholeJournalReads.load(Ordering::SeqCst) && path.ends_with(".jsonl") {
             return Err(HostError::new("unbounded journal read"));
         }
@@ -68,6 +73,10 @@ impl RuntimeStorageHost for MemoryStorageHost {
         offset: u64,
         length: usize,
     ) -> operit_host_api::HostResult<Vec<u8>> {
+        if self.forbidControlHistoryReads.load(Ordering::SeqCst)
+            && (path.ends_with(".jsonl") || path.ends_with("space_policy.preferences.json")) {
+            return Err(HostError::new("control query attempted to read authority history"));
+        }
         if self.forbidWholeJournalReads.load(Ordering::SeqCst) && path.ends_with(".jsonl") {
             assert!(length <= crate::SyncOperationJournal::JOURNAL_READ_BYTES);
         }
@@ -93,6 +102,7 @@ impl RuntimeStorageHost for MemoryStorageHost {
         match self.failAtomic.load(Ordering::SeqCst) {
             1 if path.ends_with("receive_state.json") => return Err(HostError::new("receive ledger commit failed")),
             2 if path.contains("/pending/") => return Err(HostError::new("pending record commit failed")),
+            3 if path.ends_with("clocks.json") => return Err(HostError::new("clock commit failed")),
             _ => {},
         }
         self.writeBytes(path, content)
@@ -1869,5 +1879,321 @@ fn authored_clock_retains_only_local_origins() {
     assert_eq!(
         clock.sequences.keys().cloned().collect::<Vec<_>>(),
         vec!["core-local", "core-local:preferences:abcd", "core-local:sql"]
+    );
+}
+
+/// Queries, including newly opened store handles, must never reopen authority
+/// history after initialization. Unrelated chat writes must not invalidate it.
+#[test]
+fn control_state_reads_skip_history_after_business_writes_and_handle_reopen() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+    let host = Arc::new(MemoryStorageHost::default());
+    let control = NetworkControlStore::new(host.clone()).unwrap();
+    control.bootstrapCurrentSpace().unwrap();
+    control.admitMember("phone".into()).unwrap();
+    let expected = control.currentState().unwrap();
+    drop(control);
+
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let history = (1..=1000)
+        .map(|sequence| {
+            operationFromOrigin(
+                "chat-peer",
+                sequence,
+                "message",
+                &sequence.to_string(),
+                "upsert",
+                json!({"text": "x".repeat(1024)}),
+            )
+        })
+        .collect::<Vec<_>>();
+    journal.appendOperations(&history).unwrap();
+    drop(journal);
+    host.forbidControlHistoryReads.store(true, Ordering::SeqCst);
+    for _ in 0..10 {
+        let reopened = NetworkControlStore::new(host.clone()).unwrap();
+        for _ in 0..100 {
+            assert_eq!(reopened.currentState().unwrap(), expected);
+            assert!(reopened
+                .nodeHasCapability("phone", "runtime.execute", None)
+                .unwrap());
+            assert!(!reopened.nodeIsDisconnected("phone").unwrap());
+        }
+        assert_eq!(reopened.currentSpaceOperations().unwrap().len(), 2);
+    }
+}
+
+fn controlTestCommand(
+    template: &SyncOperation,
+    sequence: i64,
+    createdAt: i64,
+    command: crate::NetworkControlStore::NetworkControlCommand,
+) -> SyncOperation {
+    use crate::NetworkControlStore::NetworkControlCommandRecord;
+    let mut operation = template.clone();
+    operation.opId = format!("{}:{sequence}", operation.originDeviceId);
+    operation.sequence = sequence;
+    operation.createdAt = createdAt;
+    operation.entityId = format!("test-control-{sequence}");
+    let mut record: NetworkControlCommandRecord =
+        serde_json::from_value(template.payload.clone()).unwrap();
+    record.commandId = operation.entityId.clone();
+    record.command = command;
+    operation.payload = serde_json::to_value(record).unwrap();
+    operation
+}
+
+/// State follows deterministic command order, including commands delivered late,
+/// and is already maintained before the next query or duplicate delivery.
+#[test]
+fn control_state_write_path_reorders_late_commands_and_survives_cold_reopen() {
+    use crate::NetworkControlStore::{NetworkControlCommand, NetworkControlStore};
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+    let host = Arc::new(MemoryStorageHost::default());
+    let control = NetworkControlStore::new(host.clone()).unwrap();
+    control.bootstrapCurrentSpace().unwrap();
+    let template = control.admitMember("phone".into()).unwrap();
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let disconnect = controlTestCommand(
+        &template,
+        template.sequence + 1,
+        template.createdAt + 100,
+        NetworkControlCommand::DisconnectNode {
+            nodeId: "phone".into(),
+        },
+    );
+    journal.appendUnobservedOperation(&disconnect).unwrap();
+    assert!(control.nodeIsDisconnected("phone").unwrap());
+    let late = controlTestCommand(
+        &template,
+        template.sequence + 2,
+        template.createdAt + 50,
+        NetworkControlCommand::AdmitMember {
+            nodeId: "phone".into(),
+        },
+    );
+    journal.appendOperations(&[late.clone()]).unwrap();
+    journal.appendUnobservedOperation(&late).unwrap();
+    assert!(
+        control.nodeIsDisconnected("phone").unwrap(),
+        "late reconnect precedes the disconnect"
+    );
+    let reconnect = controlTestCommand(
+        &template,
+        template.sequence + 3,
+        template.createdAt + 200,
+        NetworkControlCommand::AdmitMember {
+            nodeId: "phone".into(),
+        },
+    );
+    journal.appendOperation(&reconnect).unwrap();
+    let expected = control.currentState().unwrap();
+    assert!(!expected.disconnectedNodeIds.contains("phone"));
+    let operations = control.currentSpaceOperations().unwrap();
+    assert_eq!(
+        control
+            .validateSpacePolicy(&expected.spaceId, &operations)
+            .unwrap(),
+        expected
+    );
+
+    // A different host identity over the durable bytes forces startup recovery,
+    // rather than reusing the process-local state maintained above.
+    let cold_host = Arc::new(host.as_ref().clone());
+    let cold = NetworkControlStore::new(cold_host).unwrap();
+    assert_eq!(cold.currentState().unwrap(), expected);
+}
+
+/// A failed receipt commit must not publish authority. Completing a pending-only
+/// command removes it, while completing an archived command preserves its state.
+#[test]
+fn control_state_tracks_atomic_receipts_and_pending_completion() {
+    use crate::NetworkControlStore::{NetworkControlCommand, NetworkControlStore};
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+    let host = Arc::new(MemoryStorageHost::default());
+    let control = NetworkControlStore::new(host.clone()).unwrap();
+    control.bootstrapCurrentSpace().unwrap();
+    let template = control.admitMember("phone".into()).unwrap();
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let disconnect = controlTestCommand(
+        &template,
+        template.sequence + 1,
+        template.createdAt + 1,
+        NetworkControlCommand::DisconnectNode {
+            nodeId: "phone".into(),
+        },
+    );
+    host.failAtomic.store(1, Ordering::SeqCst);
+    assert!(journal.receiveOperations(&[disconnect.clone()]).is_err());
+    assert!(!control.nodeIsDisconnected("phone").unwrap());
+    host.failAtomic.store(0, Ordering::SeqCst);
+    journal.receiveOperations(&[disconnect.clone()]).unwrap();
+    assert!(control.nodeIsDisconnected("phone").unwrap());
+    journal.completeOperations(&[disconnect.clone()]).unwrap();
+    assert!(!control.nodeIsDisconnected("phone").unwrap());
+
+    let later = controlTestCommand(
+        &template,
+        template.sequence + 2,
+        template.createdAt + 2,
+        NetworkControlCommand::DisconnectNode {
+            nodeId: "phone".into(),
+        },
+    );
+    journal.receiveOperations(&[later.clone()]).unwrap();
+    journal.appendUnobservedOperation(&later).unwrap();
+    journal.completeOperations(&[later]).unwrap();
+    assert!(control.nodeIsDisconnected("phone").unwrap());
+}
+
+/// Repair is a mutation too: removing a journal command must immediately update
+/// the existing readers instead of leaving their authorization snapshot stale.
+#[test]
+fn control_state_updates_when_a_command_is_quarantined() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+    let host = Arc::new(MemoryStorageHost::default());
+    let control = NetworkControlStore::new(host.clone()).unwrap();
+    control.bootstrapCurrentSpace().unwrap();
+    control.admitMember("phone".into()).unwrap();
+    let disconnect = control.disconnectNode("phone".into()).unwrap();
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let raw = host
+        .readBytes(&journal.operationsPath(&disconnect.originDeviceId))
+        .unwrap();
+    let mut offset = 0u64;
+    for line in raw.split_inclusive(|byte| *byte == b'\n') {
+        let operation: SyncOperation = serde_json::from_slice(line).unwrap();
+        if operation.opId == disconnect.opId {
+            break;
+        }
+        offset += line.len() as u64;
+    }
+    assert!(control.nodeIsDisconnected("phone").unwrap());
+    journal
+        .quarantineOperationLines(&disconnect.originDeviceId, &[offset])
+        .unwrap();
+    assert!(!control.nodeIsDisconnected("phone").unwrap());
+    assert_eq!(control.currentSpaceOperations().unwrap().len(), 2);
+    host.writeBytes(&journal.operationsPath(&disconnect.originDeviceId), &raw)
+        .unwrap();
+    host.forbidControlHistoryReads.store(true, Ordering::SeqCst);
+    assert!(journal.reloadNetworkControlState().is_err());
+    assert!(
+        control.currentState().is_err(),
+        "failed recovery must not serve old authority"
+    );
+    host.forbidControlHistoryReads
+        .store(false, Ordering::SeqCst);
+    journal.reloadNetworkControlState().unwrap();
+    assert!(control.nodeIsDisconnected("phone").unwrap());
+}
+
+/// Shared read models must stay scoped to the host, even when both use the same
+/// canonical paths, and the registry must never keep a storage host alive.
+#[test]
+fn control_state_is_storage_scoped_without_retaining_hosts() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let first = Arc::new(MemoryStorageHost::default());
+    let second = Arc::new(MemoryStorageHost::default());
+    let a = NetworkControlStore::new(first.clone()).unwrap();
+    let b = NetworkControlStore::new(second.clone()).unwrap();
+    a.bootstrapCurrentSpace().unwrap();
+    b.bootstrapCurrentSpace().unwrap();
+    a.admitMember("only-first".into()).unwrap();
+    assert!(a
+        .currentState()
+        .unwrap()
+        .memberNodeIds
+        .contains("only-first"));
+    assert!(!b
+        .currentState()
+        .unwrap()
+        .memberNodeIds
+        .contains("only-first"));
+    // Verify the control registry's ownership independently of other store
+    // registries: it must retain the model but only weakly reference its host.
+    use crate::NetworkControlReadModel::{ControlReadModels, NetworkControlReadModel};
+    let registryHost: Arc<dyn RuntimeStorageHost> = Arc::new(MemoryStorageHost::default());
+    let weak = Arc::downgrade(&registryHost);
+    let mut registry = ControlReadModels::default();
+    registry.insert(
+        &registryHost,
+        "control",
+        Arc::new(Mutex::new(NetworkControlReadModel::default())),
+    );
+    drop(registryHost);
+    assert!(weak.upgrade().is_none());
+}
+
+/// The journal append can commit before a later metadata write fails. Readers
+/// must follow the durable command rather than retain the pre-write authority.
+#[test]
+fn control_state_follows_durable_append_when_clock_commit_fails() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let host = Arc::new(MemoryStorageHost::default());
+    let control = NetworkControlStore::new(host.clone()).unwrap();
+    control.bootstrapCurrentSpace().unwrap();
+    control.admitMember("phone".into()).unwrap();
+    host.failAtomic.store(3, Ordering::SeqCst);
+    assert!(control.disconnectNode("phone".into()).is_err());
+    assert!(control.nodeIsDisconnected("phone").unwrap());
+    host.failAtomic.store(0, Ordering::SeqCst);
+    let cold = NetworkControlStore::new(Arc::new(host.as_ref().clone())).unwrap();
+    assert_eq!(
+        control.currentState().unwrap(),
+        cold.currentState().unwrap()
+    );
+}
+
+/// Concurrent durable arrivals and new query handles share one publication,
+/// independently of arrival order or the lifetime of temporary stores.
+#[test]
+fn concurrent_control_writes_publish_one_shared_state() {
+    use crate::NetworkControlStore::{NetworkControlCommand, NetworkControlStore};
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+    let host = Arc::new(MemoryStorageHost::default());
+    let control = NetworkControlStore::new(host.clone()).unwrap();
+    control.bootstrapCurrentSpace().unwrap();
+    let template = control.admitMember("phone".into()).unwrap();
+    let start = Arc::new(Barrier::new(5));
+    let mut writers = Vec::new();
+    for worker in 0..4 {
+        let host = host.clone();
+        let template = template.clone();
+        let start = start.clone();
+        writers.push(std::thread::spawn(move || {
+            let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+            start.wait();
+            for index in 0..10 {
+                let ordinal = worker * 10 + index + 1;
+                let operation = controlTestCommand(
+                    &template,
+                    template.sequence + ordinal,
+                    template.createdAt + ordinal,
+                    NetworkControlCommand::PolicyUpdate {
+                        policyId: "test.concurrent".into(),
+                        value: ordinal.to_string(),
+                    },
+                );
+                journal.appendUnobservedOperation(&operation).unwrap();
+                let query = NetworkControlStore::new(host.clone()).unwrap();
+                assert!(query.currentState().unwrap().initialized);
+            }
+        }));
+    }
+    start.wait();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    let state = control.currentState().unwrap();
+    assert_eq!(state.policies["test.concurrent"], "40");
+    let commands = control.currentSpaceOperations().unwrap();
+    assert_eq!(
+        control
+            .validateSpacePolicy(&state.spaceId, &commands)
+            .unwrap(),
+        state
     );
 }

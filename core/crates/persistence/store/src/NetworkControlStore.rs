@@ -10,8 +10,9 @@ use crate::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use crate::CoreSpaceStore::{CoreSpaceDeviceProfile, CoreSpaceStore};
 use crate::RuntimeStorageHost::defaultRuntimeStorageHost;
 use crate::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore};
+use crate::NetworkControlReadModel::{lockControlReadModel, SharedControlReadModel};
 use crate::SyncOperationStore::{
-    NewSyncOperation, SyncClock, SyncOperation, SyncOperationOrder, SyncOperationSemantics,
+    NewSyncOperation, SyncOperation, SyncOperationOrder, SyncOperationSemantics,
     SyncOperationStore,
 };
 
@@ -170,8 +171,7 @@ pub struct NetworkControlStore {
     controlProjection: CoreNodeStateStore,
     nodeLocalOnly: bool,
     localNodeId: String,
-    stateCache: Arc<Mutex<Option<(String, Vec<SyncOperation>, NetworkControlState)>>>,
-    cacheCommands: bool,
+    readModel: SharedControlReadModel,
 }
 
 impl NetworkControlStore {
@@ -180,14 +180,16 @@ impl NetworkControlStore {
         let localNodeId = CoreNodeIdentityStore::new(storage.clone())
             .initialize()?
             .nodeId;
+        let syncOperationStore = SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH);
+        let readModel = syncOperationStore.networkControlReadModel()
+            .map_err(|error| error.to_string())?;
         Ok(Self {
             spaceStore: CoreSpaceStore::new(storage.clone()),
-            syncOperationStore: SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH),
+            syncOperationStore,
             controlProjection: Self::projectionStore(storage),
             nodeLocalOnly: false,
             localNodeId,
-            stateCache: Arc::new(Mutex::new(None)),
-            cacheCommands: true,
+            readModel,
         })
     }
 
@@ -219,12 +221,6 @@ impl NetworkControlStore {
         Ok(store)
     }
 
-    /// Same durable policy without retaining command trees between calls.
-    pub fn withoutCommandCache(mut self) -> Self {
-        self.cacheCommands = false;
-        self
-    }
-
     /// Opens the Space control store over the process-wide runtime storage host.
     pub fn native() -> Result<Self, String> {
         Self::new(defaultRuntimeStorageHost())
@@ -242,7 +238,7 @@ impl NetworkControlStore {
                 "only a new single-device Space can bootstrap its control policy".to_string(),
             );
         }
-        let state = self.materializeState(&space.spaceId)?;
+        let state = self.stateForSpace(&space.spaceId)?;
         if state.initialized {
             return Err("Space control policy is already initialized".to_string());
         }
@@ -252,7 +248,7 @@ impl NetworkControlStore {
                 initialAdminNodeId: self.localNodeId.clone(),
             },
         )?;
-        self.materializeState(&space.spaceId)
+        self.stateForSpace(&space.spaceId)
     }
 
     /// Returns the initialized Space control policy, bootstrapping only the creator's new Space.
@@ -273,7 +269,7 @@ impl NetworkControlStore {
     #[allow(non_snake_case)]
     pub fn currentState(&self) -> Result<NetworkControlState, String> {
         let space = self.spaceStore.initialize()?;
-        self.materializeState(&space.spaceId)
+        self.stateForSpace(&space.spaceId)
     }
 
     /// Returns the complete accepted and rejected command audit for the current Space.
@@ -313,7 +309,7 @@ impl NetworkControlStore {
     #[allow(non_snake_case)]
     pub fn relayNodeIds(&self) -> Result<BTreeSet<String>, String> {
         let space = self.spaceStore.initialize()?;
-        let state = self.materializeState(&space.spaceId)?;
+        let state = self.stateForSpace(&space.spaceId)?;
         Ok(space
             .members
             .into_iter()
@@ -327,7 +323,7 @@ impl NetworkControlStore {
         &self,
     ) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
         let space = self.spaceStore.initialize()?;
-        let state = self.materializeState(&space.spaceId)?;
+        let state = self.stateForSpace(&space.spaceId)?;
         let blockedNodeIds = state.disconnectedNodeIds.clone();
         let relayNodeIds = space
             .members
@@ -398,7 +394,7 @@ impl NetworkControlStore {
     pub fn leaveCurrentSpace(&self) -> Result<Option<SyncOperation>, String> {
         let _lock = networkControlMutationLock().lock().map_err(|error| error.to_string())?;
         let space = self.spaceStore.initialize()?;
-        let state = self.materializeState(&space.spaceId)?;
+        let state = self.stateForSpace(&space.spaceId)?;
         if !state.memberNodeIds.contains(&self.localNodeId) {
             return self.latestLocalDeparture(&space.spaceId);
         }
@@ -410,7 +406,7 @@ impl NetworkControlStore {
     #[allow(non_snake_case)]
     pub fn committedLocalDeparture(&self) -> Result<Option<SyncOperation>, String> {
         let space = self.spaceStore.initialize()?;
-        if self.materializeState(&space.spaceId)?.memberNodeIds.contains(&self.localNodeId) { return Ok(None); }
+        if self.stateForSpace(&space.spaceId)?.memberNodeIds.contains(&self.localNodeId) { return Ok(None); }
         self.latestLocalDeparture(&space.spaceId)
     }
 
@@ -483,7 +479,7 @@ impl NetworkControlStore {
             .lock()
             .map_err(|error| format!("Network control mutation lock poisoned: {error}"))?;
         let space = self.spaceStore.initialize()?;
-        let state = self.materializeState(&space.spaceId)?;
+        let state = self.stateForSpace(&space.spaceId)?;
         let command = NetworkControlCommand::AdmitSpace { sourceSpaceId, identities };
         authorizeCommand(&state, &self.localNodeId, &command)?;
         let commandId = format!("control-review-{reviewKey}");
@@ -594,7 +590,7 @@ impl NetworkControlStore {
             .map_err(|error| format!("Network control mutation lock poisoned: {error}"))?;
         let spaceId = self.spaceStore.space()?.spaceId;
         let known = self.orderedCommands(&spaceId)?;
-        let state = self.replayCommands(&spaceId, &known, false)?.0;
+        let state = self.stateForSpace(&spaceId)?;
         if !state.memberNodeIds.contains(peer)
             || state.disconnectedNodeIds.contains(peer) { return Err("Control source is not an admitted member".into()); }
         let canRelayAuthority = hasCapability(&state, peer, "*", None);
@@ -666,9 +662,11 @@ impl NetworkControlStore {
         // The authority copy must be durable before the first deletion; a failed
         // migration can be retried without losing membership or reviewer rights.
         self.controlProjection.replaceRecoverably(preferences).map_err(|error| error.to_string())?;
+        self.syncOperationStore.replaceProjectedControlOperations(&self.controlProjection, false)?;
         for entry in entries.into_iter().filter(|entry| !entry.isDirectory) {
             storage.delete(&entry.path, false).map_err(|error| error.to_string())?;
         }
+        self.syncOperationStore.replaceProjectedControlOperations(&self.controlProjection, true)?;
         Ok(())
     }
 
@@ -689,7 +687,7 @@ impl NetworkControlStore {
         if !retired.is_empty() {
             for id in retired { preferences.remove(&stringPreferencesKey(&id)); }
             self.controlProjection.replaceRecoverably(preferences).map_err(|e| e.to_string())?;
-            *self.stateCache.lock().map_err(|e| e.to_string())? = None;
+            self.syncOperationStore.replaceProjectedControlOperations(&self.controlProjection, false)?;
         }
         Ok(())
     }
@@ -716,6 +714,7 @@ impl NetworkControlStore {
         }
         if existing.entries() != preferences.entries() {
             self.controlProjection.replaceRecoverably(preferences).map_err(|error| error.to_string())?;
+            self.syncOperationStore.replaceProjectedControlOperations(&self.controlProjection, false)?;
             crate::SyncOperationStore::publishSyncMutation();
         }
         Ok(())
@@ -728,7 +727,7 @@ impl NetworkControlStore {
             .lock()
             .map_err(|error| format!("Network control mutation lock poisoned: {error}"))?;
         let space = self.spaceStore.initialize()?;
-        let state = self.materializeState(&space.spaceId)?;
+        let state = self.stateForSpace(&space.spaceId)?;
         authorizeCommand(&state, &self.localNodeId, &command)?;
         self.appendLocalCommand(&space.spaceId, command)
     }
@@ -798,21 +797,10 @@ impl NetworkControlStore {
             .map_err(|error| error.to_string())
     }
 
-    /// Materializes only the accepted state for one current Space identity.
+    /// Reads the state maintained by committed control mutations.
     #[allow(non_snake_case)]
-    fn materializeState(&self, spaceId: &str) -> Result<NetworkControlState, String> {
-        let commands = self.orderedCommands(spaceId)?;
-        if !self.cacheCommands { return self.replayCommands(spaceId, &commands, false).map(|(state, _)| state); }
-        let mut cache = self.stateCache.lock()
-            .map_err(|error| format!("Network control state cache poisoned: {error}"))?;
-        if let Some((cachedSpace, cachedCommands, state)) = cache.as_ref() {
-            if cachedSpace == spaceId && cachedCommands == &commands {
-                return Ok(state.clone());
-            }
-        }
-        let (state, _) = self.replayCommands(spaceId, &commands, false)?;
-        *cache = Some((spaceId.to_string(), commands, state.clone()));
-        Ok(state)
+    fn stateForSpace(&self, spaceId: &str) -> Result<NetworkControlState, String> {
+        lockControlReadModel(&self.readModel).map_err(|error| error.to_string())?.state(spaceId)
     }
 
     /// Replays the current Space command log in deterministic order and emits its audit decisions.
@@ -827,31 +815,7 @@ impl NetworkControlStore {
     /// Reads the exact policy revision in deterministic authorization order.
     fn orderedCommands(&self, spaceId: &str) -> Result<Vec<SyncOperation>, String> {
         validateSpaceId(spaceId)?;
-        let commands = self
-            .syncOperationStore
-            .operationsSince(
-                &SyncClock::empty(),
-                &[NETWORK_CONTROL_SYNC_DOMAIN.to_string()],
-                usize::MAX,
-            )
-            .map_err(|error| error.to_string())?;
-        let mut unique: BTreeMap<String, SyncOperation> = commands.into_iter()
-            .map(|operation| (operation.opId.clone(), operation)).collect();
-        for (key, encoded) in self.controlProjection.data().map_err(|error| error.to_string())?.entries() {
-            if key == crate::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
-            let operation: SyncOperation = serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
-            validateControlOperation(&operation)?;
-            if let Some(old) = unique.get(&operation.opId) {
-                if old != &operation { return Err("Conflicting immutable Space control operation".into()); }
-            } else { unique.insert(operation.opId.clone(), operation); }
-        }
-        let mut commands = Vec::new();
-        for operation in unique.into_values() {
-            if decodeControlOperation(&operation)?.spaceId == spaceId { commands.push(operation); }
-        }
-        commands
-            .sort_by(|left, right| controlOperationOrder(left).cmp(&controlOperationOrder(right)));
-        Ok(commands)
+        lockControlReadModel(&self.readModel).map_err(|error| error.to_string())?.commands(spaceId)
     }
 
     /// Replays authorization commands and reads display profiles only for explicit audits.
@@ -861,38 +825,51 @@ impl NetworkControlStore {
         commands: &[SyncOperation],
         collectAudit: bool,
     ) -> Result<(NetworkControlState, Vec<NetworkControlAuditRecord>), String> {
-        let mut state = NetworkControlState {
-            spaceId: spaceId.to_string(),
-            initialized: false,
-            memberNodeIds: BTreeSet::new(),
-            roles: builtinRoles(),
-            deviceIdentityIds: BTreeMap::new(),
-            disconnectedNodeIds: BTreeSet::new(),
-            policies: BTreeMap::new(),
+        let profiles = if collectAudit { Some(self.spaceStore.deviceProfiles()?) } else { None };
+        replayControlCommands(spaceId, commands, profiles.as_ref())
+    }
+}
+
+pub(crate) fn emptyControlState(spaceId: &str) -> NetworkControlState {
+    NetworkControlState {
+        spaceId: spaceId.to_string(),
+        initialized: false,
+        memberNodeIds: BTreeSet::new(),
+        roles: builtinRoles(),
+        deviceIdentityIds: BTreeMap::new(),
+        disconnectedNodeIds: BTreeSet::new(),
+        policies: BTreeMap::new(),
+    }
+}
+
+/// Replays only control commands; regular state queries never call this.
+pub(crate) fn replayControlCommands(
+    spaceId: &str,
+    commands: &[SyncOperation],
+    profiles: Option<&BTreeMap<String, CoreSpaceDeviceProfile>>,
+) -> Result<(NetworkControlState, Vec<NetworkControlAuditRecord>), String> {
+    let mut state = emptyControlState(spaceId);
+    let mut audit = Vec::new();
+    for operation in commands {
+        let record = decodeControlOperation(&operation)?;
+        if record.spaceId != spaceId {
+            continue;
+        }
+        let summary = profiles
+            .map(|profiles| controlAuditSummary(&record.command, &state, profiles))
+            .transpose()?;
+        let result = authorizeAndApplyCommand(
+            &mut state,
+            &record,
+            &operation.originDeviceId,
+            isLegacyAdmission(operation),
+        );
+        let (accepted, reason) = match result {
+            Ok(()) => (true, "accepted".to_string()),
+            Err(reason) => (false, reason),
         };
-        let mut audit = Vec::new();
-        let profiles = if collectAudit {
-            self.spaceStore.deviceProfiles()?
-        } else {
-            BTreeMap::new()
-        };
-        for operation in commands {
-            let record = decodeControlOperation(&operation)?;
-            if record.spaceId != spaceId {
-                continue;
-            }
-            let summary = if collectAudit {
-                Some(controlAuditSummary(&record.command, &state, &profiles)?)
-            } else {
-                None
-            };
-            let result = authorizeAndApplyCommand(&mut state, &record, &operation.originDeviceId, isLegacyAdmission(operation));
-            let (accepted, reason) = match result {
-                Ok(()) => (true, "accepted".to_string()),
-                Err(reason) => (false, reason),
-            };
-            if let Some(summary) = summary {
-                audit.push(NetworkControlAuditRecord {
+        if let Some(summary) = summary {
+            audit.push(NetworkControlAuditRecord {
                 commandId: record.commandId,
                 spaceId: record.spaceId,
                 issuerNodeId: record.issuerNodeId,
@@ -902,10 +879,9 @@ impl NetworkControlStore {
                 summary,
                 recordedAt: operation.createdAt,
             });
-            }
         }
-        Ok((state, audit))
     }
+    Ok((state, audit))
 }
 
 /// Returns the process-wide mutex that serializes local policy decisions and writes.
@@ -1034,7 +1010,7 @@ fn controlOperationOrder(operation: &SyncOperation) -> SyncOperationOrder {
 
 /// Decodes one structurally valid control operation into its command payload.
 #[allow(non_snake_case)]
-fn decodeControlOperation(
+pub(crate) fn decodeControlOperation(
     operation: &SyncOperation,
 ) -> Result<NetworkControlCommandRecord, String> {
     validateControlEnvelope(operation)?;

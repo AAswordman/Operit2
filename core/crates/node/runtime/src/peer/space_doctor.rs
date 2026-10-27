@@ -534,6 +534,7 @@ fn runRepair(
                 storage.writeBytes(original, &content).map_err(|error| error.to_string())?;
             }
         }
+        sync.reloadNetworkControlState().map_err(|error| error.to_string())?;
         true
     };
     let _ = updateCounters(service, |counters| {

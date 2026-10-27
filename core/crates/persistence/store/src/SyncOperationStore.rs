@@ -16,6 +16,10 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::NetworkControlStore::NETWORK_CONTROL_SYNC_DOMAIN;
+use crate::NetworkControlReadModel::{
+    beginControlWrite, lockControlReadModel, lockControlReadModels,
+    NetworkControlReadModel, SharedControlReadModel,
+};
 use crate::PreferencesEncryption::PreferencesEncryption;
 use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, runtimeStoragePath};
 use crate::RuntimeStorePaths::RuntimeStorePaths;
@@ -509,6 +513,121 @@ impl SyncOperationStore {
         }
     }
 
+    /// Loads authority once for this host/root. Normal queries use the resulting
+    /// state, and every control mutation below maintains it before returning.
+    pub(crate) fn networkControlReadModel(
+        &self,
+    ) -> Result<SharedControlReadModel, SyncOperationStoreError> {
+        let mut registry = lockControlReadModels()?;
+        if let Some(model) = registry.get(&self.storageHost, &self.rootPath) {
+            return Ok(model);
+        }
+        let model = Arc::new(Mutex::new(self.loadNetworkControlReadModel()?));
+        registry.insert(&self.storageHost, &self.rootPath, model.clone());
+        Ok(model)
+    }
+
+    fn loadNetworkControlReadModel(
+        &self,
+    ) -> Result<NetworkControlReadModel, SyncOperationStoreError> {
+        let journal = self.readJournal(
+            &SyncClock::empty(),
+            JournalQuery {
+                domains: &[NETWORK_CONTROL_SYNC_DOMAIN.into()],
+                projection: JournalProjection::All,
+                export_floors: false,
+                limit: usize::MAX,
+                max_bytes: usize::MAX,
+                retain: None,
+            },
+        )?;
+        let received = {
+            let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
+            self.loadReceiveState(&mut cached)?
+                .pending
+                .values()
+                .filter(|pending| pending.record.domain == NETWORK_CONTROL_SYNC_DOMAIN)
+                .map(|pending| {
+                    self.readRecordAt(
+                        &pending_path(&self.rootPath, &pending.record.op_id),
+                        &pending.record,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let projected = Self::projectedControlOperations(
+            &crate::NetworkControlStore::NetworkControlStore::projectionStore(
+                self.storageHost.clone(),
+            ),
+        )
+        .map_err(SyncOperationStoreError::Message)?;
+        Ok(NetworkControlReadModel::new(journal, received, projected))
+    }
+
+    /// Explicit recovery after restoring authority files outside the normal write
+    /// APIs. Rebuilds existing readers too; ordinary queries never call this.
+    pub fn reloadNetworkControlState(&self) -> Result<(), SyncOperationStoreError> {
+        let mut registry = lockControlReadModels()?;
+        let Some(model) = registry.get(&self.storageHost, &self.rootPath) else {
+            return Ok(());
+        };
+        lockControlReadModel(&model)?.unavailable("Control state is being recovered".into());
+        lockSyncState(&self.sharedState.devices, "devices")?.loaded = false;
+        lockSyncState(&self.sharedState.receiveState, "receive state")?.loaded = false;
+        let logs = lockSyncState(&self.sharedState.operationLogs, "operation log registry")?
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for log in logs {
+            *lockSyncState(&log, "operation log")? = JournalIndex::default();
+        }
+        match self.loadNetworkControlReadModel() {
+            Ok(rebuilt) => *lockControlReadModel(&model)? = rebuilt,
+            Err(error) => {
+                lockControlReadModel(&model)?.unavailable(error.to_string());
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    fn projectedControlOperations(
+        store: &crate::PreferencesDataStore::CoreNodeStateStore,
+    ) -> Result<Vec<SyncOperation>, String> {
+        let mut operations = BTreeMap::<String, SyncOperation>::new();
+        for (key, value) in store.data().map_err(|error| error.to_string())?.entries() {
+            if key == crate::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME {
+                continue;
+            }
+            let operation: SyncOperation =
+                serde_json::from_value(value).map_err(|error| error.to_string())?;
+            if let Some(previous) = operations.insert(operation.opId.clone(), operation.clone()) {
+                if previous != operation {
+                    return Err("Conflicting immutable Space control operation".into());
+                }
+            }
+        }
+        Ok(operations.into_values().collect())
+    }
+
+    /// Called by the durable endpoint/import write path, never by state reads.
+    pub(crate) fn replaceProjectedControlOperations(
+        &self,
+        store: &crate::PreferencesDataStore::CoreNodeStateStore,
+        retire_journal: bool,
+    ) -> Result<(), String> {
+        let mut registry = lockControlReadModels().map_err(|error| error.to_string())?;
+        if let Some(model) = registry.get(&self.storageHost, &self.rootPath) {
+            let projected = Self::projectedControlOperations(store)?;
+            let mut model = lockControlReadModel(&model).map_err(|error| error.to_string())?;
+            model.replace_projected(projected);
+            if retire_journal {
+                model.retire_journal();
+            }
+        }
+        Ok(())
+    }
+
     /// Creates the store inside the canonical runtime sync directory.
     pub fn native(paths: RuntimeStorePaths) -> Self {
         Self::new(
@@ -591,6 +710,9 @@ impl SyncOperationStore {
         originDeviceId: &str,
         operation: NewSyncOperation,
     ) -> Result<SyncOperation, SyncOperationStoreError> {
+        let controlWrite = beginControlWrite(
+            &self.storageHost, &self.rootPath, operation.domain == NETWORK_CONTROL_SYNC_DOMAIN,
+        )?;
         let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
         let operationLog = self.operationLog(originDeviceId)?;
         let mut operationLog = lockSyncState(&operationLog, "operation log")?;
@@ -621,6 +743,9 @@ impl SyncOperationStore {
         operationLog.appended(&op, operationOffset, lineLength, encryptedPreferenceSyncOperation(&op) || storedEncryptedSyncPayload(&op.payload));
         operationLog.highest_sequence = sequence;
         operationLog.byte_length += writtenBytes;
+        if let Some(write) = &controlWrite {
+            write.update(|model| model.append_journal([&op]))?;
+        }
         clock.setSequence(originDeviceId.to_string(), sequence);
         self.writeLocalClockValue(&clock)?;
         clockState.value = clock;
@@ -628,6 +753,7 @@ impl SyncOperationStore {
         drop(clockState);
         self.registerDevice(originDeviceId)?;
         self.recordAppliedOperation(&op)?;
+        drop(controlWrite);
         publishSyncMutation();
         Ok(op)
     }
@@ -695,6 +821,10 @@ impl SyncOperationStore {
         if operations.is_empty() {
             return Ok(());
         }
+        let controlWrite = beginControlWrite(
+            &self.storageHost, &self.rootPath,
+            operations.iter().any(|operation| operation.domain == NETWORK_CONTROL_SYNC_DOMAIN),
+        )?;
         let mut identities = BTreeMap::new();
         for operation in operations {
             if let Some(previous) = identities.insert(&operation.opId, operation) {
@@ -768,6 +898,9 @@ impl SyncOperationStore {
             }
             if !content.is_empty() {
                 self.appendOperationBytes(&originDeviceId, content, &mut operationLog)?;
+                if let Some(write) = &controlWrite {
+                    write.update(|model| model.append_journal(appendedOperations.iter().map(|(operation, _, _)| *operation)))?;
+                }
                 for (operation, offset, lineLength) in appendedOperations {
                     operationLog.appended(operation, offset, lineLength, encryptedPreferenceSyncOperation(operation) || storedEncryptedSyncPayload(&operation.payload));
                 }
@@ -780,6 +913,7 @@ impl SyncOperationStore {
             clockState.value = clock;
         }
         drop(clockState);
+        drop(controlWrite);
         let didMutate = clockChanged || !appendedOrigins.is_empty();
         if didMutate {
             publishSyncMutation();
@@ -807,6 +941,9 @@ impl SyncOperationStore {
         &self,
         operation: &SyncOperation,
     ) -> Result<(), SyncOperationStoreError> {
+        let controlWrite = beginControlWrite(
+            &self.storageHost, &self.rootPath, operation.domain == NETWORK_CONTROL_SYNC_DOMAIN,
+        )?;
         let operationLog = self.operationLog(&operation.originDeviceId)?;
         let mut operationLog = lockSyncState(&operationLog, "operation log")?;
         self.loadOperationLogIndex(&operation.originDeviceId, &mut operationLog)?;
@@ -818,8 +955,12 @@ impl SyncOperationStore {
         let lineLength = writtenBytes - u64::from(operationOffset > operationLog.byte_length);
         operationLog.appended(operation, operationOffset, lineLength, encryptedPreferenceSyncOperation(operation) || storedEncryptedSyncPayload(&operation.payload));
         operationLog.byte_length += writtenBytes;
+        if let Some(write) = &controlWrite {
+            write.update(|model| model.append_journal([operation]))?;
+        }
         drop(operationLog);
         self.registerDevice(&operation.originDeviceId)?;
+        drop(controlWrite);
         publishSyncMutation();
         Ok(())
     }
@@ -1113,6 +1254,10 @@ impl SyncOperationStore {
         &self,
         operations: &[SyncOperation],
     ) -> Result<(), SyncOperationStoreError> {
+        let controlWrite = beginControlWrite(
+            &self.storageHost, &self.rootPath,
+            operations.iter().any(|operation| operation.domain == NETWORK_CONTROL_SYNC_DOMAIN),
+        )?;
         let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
         let mut state = self.loadReceiveState(&mut cached)?.clone();
         let mut changed = false;
@@ -1179,8 +1324,13 @@ impl SyncOperationStore {
         if changed {
             self.writeJson(&self.receiveStatePath(), &state)?;
             cached.value = state;
+            if let Some(write) = &controlWrite {
+                write.update(|model| model.receive(operations.iter()
+                    .filter(|operation| cached.value.pending.contains_key(&operation.opId))))?;
+            }
         }
         drop(cached);
+        drop(controlWrite);
         if changed {
             publishSyncMutation();
         }
@@ -1237,6 +1387,10 @@ impl SyncOperationStore {
         &self,
         operations: &[SyncOperation],
     ) -> Result<(), SyncOperationStoreError> {
+        let controlWrite = beginControlWrite(
+            &self.storageHost, &self.rootPath,
+            operations.iter().any(|operation| operation.domain == NETWORK_CONTROL_SYNC_DOMAIN),
+        )?;
         let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
         let mut state = self.loadReceiveState(&mut cached)?.clone();
         let mut changed = false;
@@ -1246,6 +1400,9 @@ impl SyncOperationStore {
         if changed {
             self.writeJson(&self.receiveStatePath(), &state)?;
             cached.value = state;
+            if let Some(write) = &controlWrite {
+                write.update(|model| model.complete(operations))?;
+            }
         }
         if changed {
             for operation in operations {
@@ -1925,6 +2082,7 @@ impl SyncOperationStore {
         deviceId: &str,
         byteOffsets: &[u64],
     ) -> Result<Vec<QuarantinedOperationLine>, SyncOperationStoreError> {
+        let controlWrite = beginControlWrite(&self.storageHost, &self.rootPath, true)?;
         let operationLog = self.operationLog(deviceId)?;
         let mut index = lockSyncState(&operationLog, "operation log")?;
         let path = self.operationsPath(deviceId);
@@ -1977,9 +2135,20 @@ impl SyncOperationStore {
         }
         self.storageHost
             .writeBytes(&self.operationsPath(deviceId), kept.as_bytes())?;
+        *index = JournalIndex::default();
+        drop(index);
+        if let Some(write) = &controlWrite {
+            match self.scanOperationLog(deviceId) {
+                Ok(repaired) => write.update(|model| model.replace_journal_origin(deviceId, &repaired.operations))?,
+                Err(error) => {
+                    write.update(|model| model.unavailable(error.to_string()))?;
+                    return Err(error);
+                }
+            }
+        }
         self.storageHost
             .writeBytes(&sidecarPath, sidecar.as_bytes())?;
-        *index = JournalIndex::default();
+        drop(controlWrite);
         publishSyncMutation();
         Ok(moved)
     }

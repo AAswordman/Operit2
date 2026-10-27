@@ -12,6 +12,8 @@ pub mod CoreNodeBindingStore;
 pub mod CoreNodeIdentityStore;
 #[path = "CoreSpaceStore.rs"]
 pub mod CoreSpaceStore;
+#[path = "NetworkControlReadModel.rs"]
+mod NetworkControlReadModel;
 #[path = "NetworkControlStore.rs"]
 pub mod NetworkControlStore;
 #[cfg(feature = "full")]
