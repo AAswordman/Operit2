@@ -15,14 +15,27 @@ use crate::SyncOperationStore::{
     SyncOperationStore,
 };
 
-/// One page of the endpoint's immutable control projection. Paging is an export
+/// One page of a Space's immutable control projection. Paging is an export
 /// transport; callers must validate the complete policy before importing it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(non_snake_case)]
-pub struct NodeLocalControlExport {
+pub struct SpaceControlExport {
     pub revision: String,
     pub count: usize,
     pub operation: Option<SyncOperation>,
+}
+
+/// Manifest facts used for transport correlation; these never grant membership.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpaceControlManifest {
+    pub revision: String,
+    pub count: usize,
+}
+
+/// Selects metadata or one explicit page from the same immutable export.
+enum ControlExportQuery<'a> {
+    Manifest,
+    Page { revision: Option<&'a str>, after: Option<&'a str> },
 }
 
 /// Identifies only preference datasets explicitly retired into endpoint-local authority projections.
@@ -571,97 +584,79 @@ impl NetworkControlStore {
         Ok(found)
     }
 
-    /// Export one immutable endpoint authority record without materializing the
-    /// complete policy. The revision covers every byte, including unknown payload
-    /// fields. A changed projection invalidates the caller's cursor.
+    /// Reads the immutable export manifest without materializing an operation payload.
     #[allow(non_snake_case)]
-    pub fn nodeLocalControlExport(
+    pub fn spaceControlManifest(&self, spaceId: &str) -> Result<SpaceControlManifest, String> {
+        self.readSpaceControlProjection(spaceId, ControlExportQuery::Manifest).map(|(manifest, _)| manifest)
+    }
+
+    /// Exports one verified record after releasing the manifest scanner and its parsing frames.
+    #[allow(non_snake_case)]
+    pub fn spaceControlExport(
         &self, spaceId: &str, revision: Option<&str>, after: Option<&str>,
-    ) -> Result<NodeLocalControlExport, String> {
+    ) -> Result<SpaceControlExport, String> {
+        let (manifest, encoded) = self.readSpaceControlProjection(spaceId, ControlExportQuery::Page { revision, after })?;
+        let operation = encoded.map(|json| serde_json::from_str(json.get()))
+            .transpose().map_err(|error| error.to_string())?;
+        Ok(SpaceControlExport { revision: manifest.revision, count: manifest.count, operation })
+    }
+
+    /// Canonicalizes immutable identities once and derives the manifest from every original byte.
+    #[allow(non_snake_case)]
+    fn readSpaceControlProjection(&self, spaceId: &str, query: ControlExportQuery<'_>)
+        -> Result<(SpaceControlManifest, Option<Box<serde_json::value::RawValue>>), String> {
         use sha2::{Digest, Sha256};
         validateSpaceId(spaceId)?;
-        if !self.nodeLocalOnly { return Err("Bounded control export requires an endpoint store".into()); }
-        // Do not silently omit authority from an interrupted legacy migration.
-        // Inspect durable files, not operationsSince: that API publishes
-        // outboxes and can retain a journal cache after legacy retirement.
-        if self.storage.list("runtime/sync/").map_err(|error| error.to_string())?
+        if self.nodeLocalOnly && self.storage.list("runtime/sync/").map_err(|error| error.to_string())?
             .iter().any(|entry| !entry.isDirectory) {
             return Err("SPACE_EXPORT_MIGRATION_REQUIRED: Endpoint journal is not retired".into());
         }
-        // Current projections are written in key/opId order. Stream those
-        // records without allocating the complete expanded file or retaining a
-        // second map. Keep the original digest byte-for-byte; legacy aliases or
-        // unordered JSON use the existing immutable-conflict-aware path below.
+        let mut entries = Vec::new();
+        if self.nodeLocalOnly {
+            self.controlProjection.visitEncodedEntries(|_, json| {
+                let (envelope, record, _) = decodeEncodedControlOperation(json)?;
+                if record.spaceId == spaceId { entries.push((envelope.opId.into_owned(), json.to_owned())); }
+                Ok(())
+            }).map_err(|error| error.to_string())?;
+        } else {
+            for operation in self.spaceOperations(spaceId)? {
+                let json = serde_json::value::to_raw_value(&operation).map_err(|error| error.to_string())?;
+                entries.push((operation.opId, json));
+            }
+        }
+        let mut records: BTreeMap<String, Box<serde_json::value::RawValue>> = BTreeMap::new();
+        for (id, json) in entries {
+            if let Some(old) = records.get(&id) {
+                let old: SyncOperation = serde_json::from_str(old.get()).map_err(|error| error.to_string())?;
+                let incoming: SyncOperation = serde_json::from_str(json.get()).map_err(|error| error.to_string())?;
+                if old != incoming { return Err("Conflicting immutable Space control operation".into()); }
+            } else { records.insert(id, json); }
+        }
         let mut hash = Sha256::new();
         hash.update(b"operit.endpoint-control-export.v1\0");
         hash.update((spaceId.len() as u64).to_be_bytes());
         hash.update(spaceId.as_bytes());
-        let (mut ordered, mut count, mut cursorFound) = (true, 0, after.is_none());
-        let mut previous: Option<String> = None;
-        let mut operation = None;
-        self.controlProjection.visitEncodedEntries(|key, json| {
-            if !ordered { return Ok(()); }
-            let (envelope, record, _) = decodeEncodedControlOperation(json)?;
-            if record.spaceId != spaceId { return Ok(()); }
-            let id = envelope.opId.as_ref();
-            if key != id || previous.as_deref().is_some_and(|old| old >= id) {
-                ordered = false;
-                return Ok(());
-            }
+        for (id, json) in &records {
             for bytes in [id.as_bytes(), json.get().as_bytes()] {
                 hash.update((bytes.len() as u64).to_be_bytes());
                 hash.update(bytes);
             }
-            count += 1;
-            cursorFound |= after == Some(id);
-            if operation.is_none() && after.is_none_or(|cursor| id > cursor) {
-                operation = Some(serde_json::from_str(json.get()).map_err(|error| error.to_string())?);
-            }
-            previous = Some(id.to_owned());
-            Ok(())
-        }).map_err(|error| error.to_string())?;
-        if ordered {
-            let current = format!("{:x}", hash.finalize());
-            if revision.is_some_and(|expected| expected != current) {
-                return Err("SPACE_EXPORT_CHANGED: Restart the endpoint export".into());
-            }
-            if !cursorFound { return Err("SPACE_EXPORT_CURSOR_INVALID: Unknown operation cursor".into()); }
-            return Ok(NodeLocalControlExport { revision: current, count, operation });
         }
-        self.controlProjection.withEncodedEntries(|entries| {
-            let mut records: BTreeMap<String, &serde_json::value::RawValue> = BTreeMap::new();
-            for json in entries.values() {
-                let (envelope, record, _) = decodeEncodedControlOperation(json)?;
-                if record.spaceId != spaceId { continue; }
-                let id = envelope.opId.into_owned();
-                if let Some(old) = records.get(&id) {
-                    let old: SyncOperation = serde_json::from_str(old.get()).map_err(|error| error.to_string())?;
-                    let incoming: SyncOperation = serde_json::from_str(json.get()).map_err(|error| error.to_string())?;
-                    if old != incoming { return Err("Conflicting immutable Space control operation".into()); }
-                } else { records.insert(id, json); }
-            }
-            let mut hash = Sha256::new();
-            hash.update(b"operit.endpoint-control-export.v1\0");
-            hash.update((spaceId.len() as u64).to_be_bytes());
-            hash.update(spaceId.as_bytes());
-            for (id, json) in &records {
-                for bytes in [id.as_bytes(), json.get().as_bytes()] {
-                    hash.update((bytes.len() as u64).to_be_bytes());
-                    hash.update(bytes);
+        let manifest = SpaceControlManifest { revision: format!("{:x}", hash.finalize()), count: records.len() };
+        let operation = match query {
+            ControlExportQuery::Manifest => None,
+            ControlExportQuery::Page { revision, after } => {
+                if revision.is_some_and(|expected| expected != manifest.revision) {
+                    return Err("SPACE_EXPORT_CHANGED: Restart the endpoint export".into());
                 }
+                if after.is_some_and(|id| !records.contains_key(id)) {
+                    return Err("SPACE_EXPORT_CURSOR_INVALID: Unknown operation cursor".into());
+                }
+                let next = records.keys().find(|id| after.is_none_or(|previous| id.as_str() > previous)).cloned();
+                next.and_then(|id| records.remove(&id))
             }
-            let current = format!("{:x}", hash.finalize());
-            if revision.is_some_and(|expected| expected != current) {
-                return Err("SPACE_EXPORT_CHANGED: Restart the endpoint export".into());
-            }
-            if after.is_some_and(|id| !records.contains_key(id)) {
-                return Err("SPACE_EXPORT_CURSOR_INVALID: Unknown operation cursor".into());
-            }
-            let next = records.iter().find(|(id, _)| after.is_none_or(|previous| id.as_str() > previous));
-            let operation = next.map(|(_, json)| serde_json::from_str(json.get()))
-                .transpose().map_err(|error| error.to_string())?;
-            Ok(NodeLocalControlExport { revision: current, count: records.len(), operation })
-        }).map_err(|error| error.to_string())?
+        };
+        Ok((manifest, operation))
     }
 
     /// Counts the peer control operations this store currently projects.

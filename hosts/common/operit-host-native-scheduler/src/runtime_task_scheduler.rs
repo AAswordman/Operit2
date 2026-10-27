@@ -1108,7 +1108,8 @@ mod admission_tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    /// Many independent network waits reuse at most the configured four workers.
+    /// Desktop network waits reuse at most the configured four network workers.
+    #[cfg(not(feature = "esp32-compat"))]
     #[test]
     fn network_futures_share_four_workers() {
         let scheduler = NativeHostRuntimeTaskSchedulerHost::new();

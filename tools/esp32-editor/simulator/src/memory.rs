@@ -1,5 +1,6 @@
 //! A fixed Rust heap and guarded task stacks; desktop memory cannot extend these budgets.
 use linked_list_allocator::LockedHeap;
+use operit_host_native_scheduler::{DEVICE_ASYNC_STACK_BYTES, DEVICE_BLOCKING_STACK_BYTES};
 use operit_node_runtime::HostRuntimePeerService::PeerRuntimeLimits;
 use std::{
     alloc::{GlobalAlloc, Layout},
@@ -90,7 +91,7 @@ pub fn snapshot() -> serde_json::Value {
         "heapPeakBytes": ALLOCATOR.peak.load(Ordering::Relaxed),
         "allocationFailures": ALLOCATOR.failures.load(Ordering::Relaxed),
         "lastFailedAllocationBytes": ALLOCATOR.lastFailure.load(Ordering::Relaxed),
-        "mainStackBytes": MAIN_STACK_BYTES, "asyncStackBytes": 32 * 1024, "blockingStackBytes": 24 * 1024,
+        "mainStackBytes": MAIN_STACK_BYTES, "asyncStackBytes": DEVICE_ASYNC_STACK_BYTES, "blockingStackBytes": DEVICE_BLOCKING_STACK_BYTES,
         "stackEnforcement": "fixed-mapping-with-guard-page",
         "maxPeerMessageBytes": limits.maxMessageBytes, "incomingSessions": limits.incomingSessions,
         "pendingPairings": limits.pendingPairings, "concurrentProbes": limits.concurrentProbes,
@@ -145,8 +146,8 @@ pub fn probe(arguments: &[String]) -> Option<i32> {
             use operit_host_api::HostRuntimeTaskSchedulerHost;
             let budget = match arguments.get(1).map(String::as_str) {
                 Some("main") => MAIN_STACK_BYTES,
-                Some("async") => 32 * 1024,
-                Some("blocking") => 24 * 1024,
+                Some("async") => DEVICE_ASYNC_STACK_BYTES,
+                Some("blocking") => DEVICE_BLOCKING_STACK_BYTES,
                 _ => return Some(2),
             };
             let overflow = mode == "--probe-stack-limit";

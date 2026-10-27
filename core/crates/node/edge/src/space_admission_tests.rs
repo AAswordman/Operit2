@@ -332,8 +332,9 @@ fn print_size(stage: &str, storage: &Storage) {
         println!("  {path}: {} / {} packed", bytes.len(), packed[path].len());
     }
 }
+/// Prunes consent receipts through projections without reloading their command evidence.
 #[tokio::test]
-async fn constrained_gateway_retires_only_old_terminal_receipts_and_retries_failed_cleanup() {
+async fn constrained_gateway_prunes_receipts_without_decoding_or_rewriting_evidence() {
     use operit_store::PreferencesDataStore::{CoreNodeStateStore, stringPreferencesKey};
     let (a_store, _a_router, a_peer, a_space) = node(false);
     let (b_store, _b_router, b_peer, b_space) = node(true);
@@ -355,8 +356,8 @@ async fn constrained_gateway_retires_only_old_terminal_receipts_and_retries_fail
         let outbound = storedRecords(&a_store, "runtime/link_access/space_merge_outbound.preferences.json");
         let sourceOperations = outbound[&request.requestId]["source"]["controlOperations"].clone();
         assert!(!sourceOperations.as_array().unwrap().is_empty(), "outgoing retry lost its source authority");
-        // Simulate receipts and an in-flight application written by older firmware.
-        pending["source"]["controlOperations"] = sourceOperations;
+        // Lists need consent facts only. Evidence remains opaque until a command validates it.
+        pending["source"]["controlOperations"] = serde_json::json!({"unreadableEvidence": true});
         CoreNodeStateStore::newWithStorage(b_store.clone(), path).edit(|prefs| {
             prefs.set(&stringPreferencesKey(&request.requestId), pending.clone());
             for index in 0..6 {
@@ -382,10 +383,11 @@ async fn constrained_gateway_retires_only_old_terminal_receipts_and_retries_fail
         let retained = storedRecords(&b_store, path);
         assert_eq!(retained.len(), 3);
         assert!(retained.contains_key("retired-4") && retained.contains_key("retired-5"));
-        pending["source"]["controlOperations"] = serde_json::json!([]);
-        assert_eq!(retained[&request.requestId], pending, "compaction changed live consent");
+        assert_eq!(retained[&request.requestId], pending, "a list query rewrote application evidence");
+        assert!(b_space.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.is_err(),
+            "a read projection must never authorize undecodable application evidence");
         for id in ["retired-4", "retired-5"] {
-            assert!(retained[id]["accepted"].is_null());
+            assert_eq!(retained[id]["accepted"], before[id]["accepted"], "terminal queries rewrote obsolete evidence");
             for field in ["controlOperations", "deviceProfiles", "topology"] {
                 assert!(retained[id]["source"][field].as_array().unwrap().is_empty());
             }
@@ -1954,7 +1956,7 @@ mod core_edge {
     /// A compact receipt survives restart, but cannot stand in for its exact
     /// admission or an explicit approval. The applicant still verifies policy.
     #[tokio::test]
-    async fn approved_reference_survives_restart_and_rejects_mismatched_admission() {
+    async fn membership_projection_survives_restart_and_rejects_mismatched_admission() {
         use operit_store::PreferencesDataStore::CoreNodeStateStore;
         let _guard = TEST_LOCK.lock().await;
         let mut core = core_node();
@@ -1968,8 +1970,8 @@ mod core_edge {
             let pending = storedRecords(&edge.storage, path)[&request.requestId].clone();
             edge.service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
             let receipt = storedRecords(&edge.storage, path)[&request.requestId].clone();
-            assert_eq!(receipt["acceptedReference"], true);
-            assert!(receipt.get("accepted").is_none());
+            assert!(receipt.get("acceptedReference").is_none());
+            assert!(receipt.get("accepted").is_none(), "membership must be projected from current authority");
             assert_eq!(receipt["source"], pending["source"], "receipt dropped original applicant facts");
             assert_eq!(receipt["profile"], pending["profile"]);
             let now = operit_host_api::TimeUtils::currentTimeMillis();
@@ -2010,11 +2012,13 @@ mod core_edge {
                 "bounded-receipt", NODE_SPACE_TARGET, "joinStatus",
                 operit_link::toCoreValue(request.requestId.clone()).unwrap())).unwrap();
             let wire: serde_json::Value = operit_link::fromCoreValue(wire).unwrap();
-            assert!(wire["accepted"]["controlOperations"].as_array().unwrap().is_empty(),
+            assert!(wire["accepted"].get("controlOperations").is_none(),
                 "approval response duplicated authority instead of using the paged target export");
+            assert!(wire.get("source").is_none(), "response echoed the applicant's evidence");
+            assert!(wire.get("profile").is_none(), "response echoed the applicant's profile");
             assert!(wire.get("acceptedReference").is_none(), "local reference escaped onto the wire");
-            // Corrupt the admission reference, while keeping projected members
-            // and the public Approved status. Neither is sufficient authority.
+            // Corrupt correlation facts while keeping projected members and Approved status.
+            // Current admission authority must still reject the response.
             let prefs = CoreNodeStateStore::newWithStorage(edge.storage.clone(), path);
             for field in ["sourceSpaceId", "approvedDecision", "decisionRevision"] {
                 let mut invalid = receipt.clone();
@@ -2551,11 +2555,15 @@ mod core_edge {
                 .deviceProfiles()
                 .unwrap()
                 .contains_key(&core_id));
-            assert_eq!(
-                *edge.storage.0.lock().unwrap(),
-                before,
-                "recovery fabricated a record without admission authority"
-            );
+            let after = edge.storage.0.lock().unwrap().clone();
+            let changed = before.keys().chain(after.keys()).filter(|key| before.get(*key) != after.get(*key))
+                .collect::<std::collections::BTreeSet<_>>();
+            for key in &changed {
+                eprintln!("changed {key}: before={:?}, after={:?}",
+                    before.get(*key).map(|bytes| String::from_utf8_lossy(bytes)),
+                    after.get(*key).map(|bytes| String::from_utf8_lossy(bytes)));
+            }
+            assert!(changed.is_empty(), "recovery mutated storage without admission authority");
             assert_no_replica(&core, &edge);
         })
         .await;

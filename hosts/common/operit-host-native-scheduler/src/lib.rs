@@ -22,7 +22,9 @@ mod stack_budget;
 pub use stack_budget::withStackBudget;
 
 mod local_task_scheduler;
-pub use local_task_scheduler::LocalHostRuntimeTaskSchedulerHost;
+pub use local_task_scheduler::{
+    LocalHostRuntimeTaskSchedulerHost, DEVICE_ASYNC_STACK_BYTES, DEVICE_BLOCKING_STACK_BYTES,
+};
 
 mod task_handle;
 pub use task_handle::{

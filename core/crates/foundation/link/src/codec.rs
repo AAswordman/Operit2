@@ -334,6 +334,7 @@ pub fn linkMapField<'a>(
         rmp::Marker::Map32 => cursor.number(4)?,
         _ => return Err(FieldCursor::invalid()),
     };
+    let mut selected = None;
     for _ in 0..count {
         let length = match cursor.marker()? {
             rmp::Marker::FixStr(length) => usize::from(length),
@@ -346,10 +347,34 @@ pub fn linkMapField<'a>(
         let start = cursor.at;
         cursor.skip()?;
         if key == field {
-            return Ok(Some(&bytes[start..cursor.at]));
+            if selected.is_some() { return Err(FieldCursor::invalid()); }
+            selected = Some(&bytes[start..cursor.at]);
         }
     }
-    Ok(None)
+    if cursor.at != bytes.len() { return Err(FieldCursor::invalid()); }
+    Ok(selected)
+}
+
+/// Selects a declared struct field from named-map or positional-array encoding.
+#[allow(non_snake_case)]
+pub fn linkStructField<'a>(bytes: &'a [u8], field: &str, index: usize)
+    -> Result<Option<&'a [u8]>, CoreLinkCodecError> {
+    let mut cursor = FieldCursor { bytes, at: 0 };
+    let count = match cursor.marker()? {
+        rmp::Marker::FixMap(_) | rmp::Marker::Map16 | rmp::Marker::Map32 => return linkMapField(bytes, field),
+        rmp::Marker::FixArray(count) => usize::from(count),
+        rmp::Marker::Array16 => cursor.number(2)?,
+        rmp::Marker::Array32 => cursor.number(4)?,
+        _ => return Err(FieldCursor::invalid()),
+    };
+    let mut selected = None;
+    for current in 0..count {
+        let start = cursor.at;
+        cursor.skip()?;
+        if current == index { selected = Some(&bytes[start..cursor.at]); }
+    }
+    if cursor.at != bytes.len() { return Err(FieldCursor::invalid()); }
+    Ok(selected)
 }
 
 /// Advances over encoded values with a counter instead of recursive decoder frames.
@@ -451,6 +476,23 @@ impl<'a> FieldCursor<'a> {
 #[cfg(test)]
 mod field_scan_tests {
     use super::*;
+
+    /// Named and positional structs select the same field without decoding preceding payloads.
+    #[test]
+    fn struct_fields_select_declared_wire_layouts() {
+        for value in [serde_json::json!({"ignore":{"deep":[1,2]},"selected":42}),
+            serde_json::json!([{"deep":[1,2]},42])] {
+            let bytes = encodeLink(value).unwrap();
+            let selected = linkStructField(&bytes, "selected", 1).unwrap().unwrap();
+            assert_eq!(decodeLink::<u32>(selected).unwrap(), 42);
+            assert!(linkStructField(&bytes, "missing", 2).unwrap().is_none());
+            assert!(linkStructField(&bytes[..bytes.len()-1], "selected", 1).is_err());
+        }
+        assert!(linkStructField(&[0xc0], "selected", 0).is_err());
+        let duplicate = [0x82, 0xa1, b'x', 0x01, 0xa1, b'x', 0x02];
+        assert!(linkStructField(&duplicate, "x", 0).is_err());
+        assert!(linkStructField(&[0x91, 0x01, 0x02], "x", 0).is_err());
+    }
 
     /// Scans nested payloads without requiring recursive deserialization or allocating their contents.
     #[test]

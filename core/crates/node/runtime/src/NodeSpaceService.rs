@@ -139,9 +139,8 @@ fn operationsFromJson(mut value: serde_json::Value) -> Result<Vec<SyncOperation>
     Ok(operations)
 }
 
-// Follow the already-authenticated Call route without constructing any header
-// value trees. One recursive seed shares its MessagePack decoder at every level,
-// keeping this bounded-memory path small enough for the fixed flash partition.
+// Decode only business arguments after the authenticated route has been scanned.
+// Header frames never remain on the task stack while decoding authority payloads.
 struct DecodedSpaceArgs {
     metadata: serde_json::Value,
     operations: Vec<SyncOperation>,
@@ -149,21 +148,20 @@ struct DecodedSpaceArgs {
 }
 struct EncodedSpaceArgs<const KIND: u8>(DecodedSpaceArgs);
 // KIND: snapshot = 0, control array = 1, bounded control = 2.
-struct SpaceArgsSeed { level: usize, kind: u8 }
+struct SpaceArgsSeed { kind: u8 }
 struct OperationList(Vec<SyncOperation>);
 impl<'de> Deserialize<'de> for OperationList {
+    /// Decodes the declared business value without reconstructing routing headers.
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct OperationsVisitor;
         impl<'de> serde::de::Visitor<'de> for OperationsVisitor {
             type Value = OperationList;
+            /// Describes the required authority sequence.
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("authority operations") }
+            /// Builds only typed operations while preserving their original payload values.
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut list: A) -> Result<Self::Value, A::Error> {
                 let mut operations = Vec::new();
-                while let Some(mut value) = list.next_element::<serde_json::Value>()? {
-                    let payload = jsonField(&mut value, "payload", 8)
-                        .ok_or_else(|| serde::de::Error::custom("Missing operation payload"))?.take();
-                    let mut operation: SyncOperation = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
-                    operation.payload = payload;
+                while let Some(operation) = list.next_element::<SyncOperation>()? {
                     operations.try_reserve_exact(1).map_err(serde::de::Error::custom)?;
                     operations.push(operation);
                 }
@@ -175,8 +173,9 @@ impl<'de> Deserialize<'de> for OperationList {
 }
 impl<'de> serde::de::DeserializeSeed<'de> for SpaceArgsSeed {
     type Value = DecodedSpaceArgs;
+    /// Decodes the declared business value without reconstructing routing headers.
     fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        if self.level == 4 && self.kind == 1 {
+        if self.kind == 1 {
             return Ok(DecodedSpaceArgs { metadata: serde_json::Value::Null,
                 operations: OperationList::deserialize(deserializer)?.0, departures: Vec::new() });
         }
@@ -184,45 +183,33 @@ impl<'de> serde::de::DeserializeSeed<'de> for SpaceArgsSeed {
     }
 }
 impl SpaceArgsSeed {
+    /// Matches the authority field declared by this command kind.
     fn operationField(&self, key: &str) -> bool {
-        self.level == 4 && key == if self.kind == 0 { "controlOperations" } else { "operations" }
+        key == if self.kind == 0 { "controlOperations" } else { "operations" }
     }
 }
 impl<'de> serde::de::Visitor<'de> for SpaceArgsSeed {
     type Value = DecodedSpaceArgs;
+    /// Describes the required business argument container.
     fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("routed Call arguments") }
+    /// Separates named metadata from typed authority records.
     fn visit_map<A: serde::de::MapAccess<'de>>(self, mut fields: A) -> Result<Self::Value, A::Error> {
-        let mut result = None;
         let mut metadata = serde_json::Map::new();
         let (mut operations, mut departures) = (None, None);
         while let Some(key) = fields.next_key::<String>()? {
-            if self.level < 4 {
-                if key == ["body", "args", "payload", "args"][self.level] {
-                    if result.is_some() { return Err(serde::de::Error::custom("Duplicate routed argument field")); }
-                    result = Some(fields.next_value_seed(SpaceArgsSeed { level: self.level + 1, kind: self.kind })?);
-                } else { fields.next_value::<serde::de::IgnoredAny>()?; }
-            } else if self.operationField(&key) || (self.kind == 0 && key == "departures") {
+            if self.operationField(&key) || (self.kind == 0 && key == "departures") {
                 let slot = if key == "departures" { &mut departures } else { &mut operations };
                 if slot.is_some() { return Err(serde::de::Error::custom("Duplicate authority field")); }
                 *slot = Some(fields.next_value::<OperationList>()?.0);
                 metadata.insert(key, serde_json::Value::Array(Vec::new()));
             } else { metadata.insert(key, fields.next_value()?); }
         }
-        if self.level < 4 { return result.ok_or_else(|| serde::de::Error::custom("Missing routed argument field")); }
         Ok(DecodedSpaceArgs { metadata: serde_json::Value::Object(metadata),
             operations: operations.ok_or_else(|| serde::de::Error::custom("Missing authority operations"))?,
             departures: departures.unwrap_or_default() })
     }
+    /// Separates positional metadata from typed authority records.
     fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut fields: A) -> Result<Self::Value, A::Error> {
-        if self.level < 4 {
-            for _ in 0..[1, 3, 5, 3][self.level] {
-                fields.next_element::<serde::de::IgnoredAny>()?.ok_or_else(|| serde::de::Error::custom("Missing routed argument field"))?;
-            }
-            let result = fields.next_element_seed(SpaceArgsSeed { level: self.level + 1, kind: self.kind })?
-                .ok_or_else(|| serde::de::Error::custom("Missing routed argument field"))?;
-            while fields.next_element::<serde::de::IgnoredAny>()?.is_some() {}
-            return Ok(result);
-        }
         let mut metadata = Vec::new();
         let (mut operations, mut departures) = (None, None);
         for index in 0..if self.kind == 0 { 5 } else { 3 } {
@@ -242,13 +229,33 @@ impl<'de> serde::de::Visitor<'de> for SpaceArgsSeed {
     }
 }
 impl<'de, const KIND: u8> Deserialize<'de> for EncodedSpaceArgs<KIND> {
+    /// Decodes the declared business value without reconstructing routing headers.
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::DeserializeSeed;
-        SpaceArgsSeed { level: 0, kind: KIND }.deserialize(deserializer).map(Self)
+        SpaceArgsSeed { kind: KIND }.deserialize(deserializer).map(Self)
     }
 }
+/// Decodes a required selected field after releasing the enclosing format scanner.
+fn decodeSpaceField<T: serde::de::DeserializeOwned>(bytes: &[u8], name: &str, index: usize) -> Result<T, String> {
+    let field = operit_link::codec::linkStructField(bytes, name, index).map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("Missing Space field: {name}"))?;
+    operit_link::decodeLink(field).map_err(|error| error.to_string())
+}
+
+/// Selects the payload slice without retaining any routing deserializer frames.
+fn encodedSpaceArguments(bytes: &[u8]) -> Result<&[u8], String> {
+    let mut arguments = bytes;
+    for (field, index) in [("body", 1), ("args", 3), ("payload", 5), ("args", 3)] {
+        arguments = operit_link::codec::linkStructField(arguments, field, index)
+            .map_err(|error| error.to_string())?.ok_or("Missing routed argument field")?;
+    }
+    Ok(arguments)
+}
+
+/// Scans authenticated routing fields before entering the business payload decoder.
 fn takeEncodedSpaceArgs<const KIND: u8>(bytes: &mut Vec<u8>) -> Result<DecodedSpaceArgs, String> {
-    let args: EncodedSpaceArgs<KIND> = operit_link::decodeLink(bytes).map_err(|error| error.to_string())?;
+    let arguments = encodedSpaceArguments(bytes)?;
+    let args: EncodedSpaceArgs<KIND> = operit_link::decodeLink(arguments).map_err(|error| error.to_string())?;
     drop(std::mem::take(bytes));
     Ok(args.0)
 }
@@ -546,6 +553,14 @@ impl NodeSpaceService {
             .map_err(spaceCallError);
         encodeTypedReply(id, result.map(OwnedSnapshotReply::from))
     }
+    /// Decodes applicant commands directly and returns the ordinary consent projection.
+    pub fn encodePeerSpaceJoinReply(&self, peer: &str, bytes: &mut Vec<u8>, id: operit_link::CoreRequestId,
+        method: &str) -> Result<Vec<u8>, String> {
+        let result = space_projection::requireEncodedFits(bytes, self.peers.maxMessageBytes())
+            .and_then(|()| space_join::receiveEncoded(self, peer, bytes, method)).map_err(spaceCallError);
+        encodeTypedReply(&id, result)
+    }
+
     /// The router has checked the immutable route header. Decode the same bytes
     /// directly into typed snapshot records and apply the ordinary observation.
     pub fn encodePeerSpaceObservationReply(&self, peer: &str, bytes: &mut Vec<u8>, id: operit_link::CoreRequestId) -> Result<Vec<u8>, String> {

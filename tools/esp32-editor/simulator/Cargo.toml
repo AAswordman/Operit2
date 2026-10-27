@@ -28,10 +28,10 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "macros", "net", "sync", "time", "io-util", "io-std"] }
 
-# The protocol fixtures share firmware async code and its 32 KiB worker stack.
-# Optimize the fixture's nested futures without increasing the device budget.
-[profile.test.package.operit-esp32-simulator]
-opt-level = 1
+# The protocol fixtures share firmware code and its fixed Host worker stack budgets.
+# Match simulator release optimization for the fixture and its Host/runtime dependencies.
+[profile.test]
+opt-level = 3
 
 # The simulator uses sixteen desktop discovery events rather than 1024-entry OS queues.
 # Run ../prepare-simulator.py before invoking Cargo directly.

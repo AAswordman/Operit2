@@ -1899,31 +1899,31 @@ impl CoreNodeStateStore {
         self.typedEntriesMatching(Some(key)).map(|mut entries| entries.pop().map(|(_, record)| record))
     }
 
+    /// Reads selected records without initializing an absent node-local collection.
     fn typedEntriesMatching<T: serde::de::DeserializeOwned>(&self, only: Option<&str>) -> Result<Vec<(String, T)>, PreferencesDataStoreError> {
+        let transaction = self.inner.sharedState.transaction.lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        if !self.inner.storageHost.exists(&self.inner.storagePath)? { return Ok(Vec::new()); }
         if !self.inner.storageHost.retainPreferencesCache() {
-            let transaction = self.inner.sharedState.transaction.lock()
-                .expect("PreferencesDataStore transaction mutex must not be poisoned");
             self.inner.releaseNodeLocalCacheUnlocked();
-            if self.inner.storageHost.exists(&self.inner.storagePath)? {
-                let bytes = self.inner.storageHost.readBytes(&self.inner.storagePath)?;
-                if !bytes.iter().all(u8::is_ascii_whitespace) {
-                    #[derive(Deserialize)]
-                    struct Header {
-                        #[serde(default, rename = "__operit_preferences_schema_version")]
-                        version: Option<Value>,
-                    }
-                    let header: Header = serde_json::from_slice(&bytes)?;
-                    let mut probe = emptyPreferences();
-                    if let Some(version) = header.version {
-                        probe.set(&PreferencesDataStore::schemaVersionKey(), version);
-                    }
-                    if self.inner.schemaIsCurrent(&probe)? {
-                        return deserializeTypedNodeEntries(&bytes, only).map_err(Into::into);
-                    }
+            let bytes = self.inner.storageHost.readBytes(&self.inner.storagePath)?;
+            if !bytes.iter().all(u8::is_ascii_whitespace) {
+                #[derive(Deserialize)]
+                struct Header {
+                    #[serde(default, rename = "__operit_preferences_schema_version")]
+                    version: Option<Value>,
+                }
+                let header: Header = serde_json::from_slice(&bytes)?;
+                let mut probe = emptyPreferences();
+                if let Some(version) = header.version {
+                    probe.set(&PreferencesDataStore::schemaVersionKey(), version);
+                }
+                if self.inner.schemaIsCurrent(&probe)? {
+                    return deserializeTypedNodeEntries(&bytes, only).map_err(Into::into);
                 }
             }
-            drop(transaction);
         }
+        drop(transaction);
         self.data()?.iterEntries()
             .filter(|(key, _)| *key != PREFERENCES_SCHEMA_VERSION_KEY_NAME && only.is_none_or(|selected| *key == selected))
             .map(|(key, value)| T::deserialize(value).map(|value| (key.to_owned(), value)).map_err(Into::into))

@@ -198,8 +198,8 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
         const memory = current.device.memory;
         assert.equal(memory.heapCapacityBytes, 256 * 1024);
         assert.equal(memory.mainStackBytes, 16 * 1024);
-        assert.equal(memory.asyncStackBytes, 32 * 1024);
-        assert.equal(memory.blockingStackBytes, 24 * 1024);
+        assert.equal(memory.asyncStackBytes, 24 * 1024);
+        assert.equal(memory.blockingStackBytes, 20 * 1024);
         assert.equal(memory.stackEnforcement, 'fixed-mapping-with-guard-page');
         assert.equal(memory.allocationFailures, 0, JSON.stringify(memory));
         assert(memory.heapPeakBytes <= memory.heapCapacityBytes, JSON.stringify(memory));

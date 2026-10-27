@@ -152,12 +152,15 @@ impl PeerRouter for EdgePeerRouter {
         };
         Some(result)
     }
+    /// Dispatches authenticated Space payloads directly to their typed command decoder.
     fn prepareEncodedCall(&self, previous: &str, bytes: &mut Vec<u8>) -> Option<Result<Vec<u8>, CoreLinkError>> {
         let (id, request) = operit_node_runtime::NodeSpaceService::encodedSpaceCallHeader(bytes)?;
         let control = request.payload.target == NODE_SPACE_CONTROL_TARGET
             && matches!(request.payload.methodName.as_str(), "exchange" | "exchangeBounded");
         let bounded = request.payload.methodName == "exchangeBounded";
-        if !control && (request.payload.target != NODE_SPACE_TARGET || request.payload.methodName != "observeSpaceSnapshot") { return None; }
+        let applicant = request.payload.target == NODE_SPACE_TARGET
+            && matches!(request.payload.methodName.as_str(), "requestJoin" | "cancelJoin" | "joinStatus");
+        if !control && !applicant && (request.payload.target != NODE_SPACE_TARGET || request.payload.methodName != "observeSpaceSnapshot") { return None; }
         let prepare = || {
             if request.payload.requestId != id { return Err(CoreLinkError::new("PEER_SECURITY", "Routed correlation mismatch")); }
             self.check(&request)?;
@@ -172,7 +175,8 @@ impl PeerRouter for EdgePeerRouter {
             Ok(space) => if control {
                 if bounded { space.encodePeerSpaceBoundedControlReply(previous, bytes, id) }
                 else { space.encodePeerSpaceControlReply(previous, bytes, id) }
-            } else { space.encodePeerSpaceObservationReply(previous, bytes, id) }.map_err(CoreLinkError::internal),
+            } else if applicant { space.encodePeerSpaceJoinReply(previous, bytes, id, &request.payload.methodName) }
+            else { space.encodePeerSpaceObservationReply(previous, bytes, id) }.map_err(CoreLinkError::internal),
             Err(error) => operit_link::encodeLink(operit_link::CoreLinkResponse::Call(CoreCallResponse::err(id, error)))
                 .map_err(|error| CoreLinkError::internal(error.to_string())),
         })

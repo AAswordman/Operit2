@@ -1,4 +1,5 @@
 pub mod server;
+mod connector;
 use futures_util::{SinkExt, StreamExt};
 use operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost;
 pub use server::NativeHttpServerHost;
@@ -819,6 +820,7 @@ fn validateDownloadRequest(request: &HttpDownloadRequest) -> HostResult<()> {
 
 /// Builds an asynchronous client for Host-owned streaming HTTP responses.
 #[allow(non_snake_case)]
+/// Builds a Host client whose connection setup has an independent cancellable poll stack.
 fn buildHttpStreamClient(
     connectTimeoutSeconds: u64,
     readTimeoutSeconds: u64,
@@ -827,7 +829,9 @@ fn buildHttpStreamClient(
     proxyHost: &str,
     proxyPort: u16,
 ) -> HostResult<AsyncClient> {
-    let mut builder = AsyncClient::builder().danger_accept_invalid_certs(ignoreSsl);
+    let mut builder = AsyncClient::builder()
+        .connector_layer(connector::ConnectionTaskLayer)
+        .danger_accept_invalid_certs(ignoreSsl);
     if connectTimeoutSeconds > 0 {
         builder = builder.connect_timeout(Duration::from_secs(connectTimeoutSeconds));
     }

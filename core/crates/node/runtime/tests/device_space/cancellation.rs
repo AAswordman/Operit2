@@ -335,7 +335,7 @@ async fn cancelled_request_cannot_be_resurrected_by_an_in_flight_poll() {
     installTestRuntimeScheduler();
     let pair = IndependentPair::new("cancel-race");
     let request = pair.request().await;
-    let (arrived, release) = pair.aPeer.pauseResponse("requestJoin");
+    let (arrived, release) = pair.aPeer.pauseResponse("joinStatus");
     let id = request.requestId;
     let raced = tokio::time::timeout(Duration::from_secs(5), async {
         tokio::join!(pair.applicant.refreshDeviceSpaceJoin(id.clone()), async {
@@ -596,4 +596,23 @@ async fn delayed_cancellation_response_preserves_joined_state_without_resubmissi
     assertRecordStatus(&pair.a, OUTBOUND_RECORDS, &id, SpaceJoinStatus::Joined);
     assert_eq!(pair.applicant.deviceSpace().unwrap(), pair.receiver.deviceSpace().unwrap());
     assert_eq!(protocolRecords(&pair.a, OUTBOUND_RECORDS)[&id]["cancelRequested"], false);
+}
+
+/// Acknowledged submissions poll only status, including after restart and a failed status exchange.
+#[tokio::test]
+async fn acknowledged_submission_polls_projection_without_resending_evidence() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let pair = IndependentPair::new("projection-poll");
+    let request = pair.request().await;
+    assert_eq!(protocolRecords(&pair.a, OUTBOUND_RECORDS)[&request.requestId]["submitted"], true);
+    let restarted = pair.restartApplicant();
+    for _ in 0..3 {
+        assert_eq!(restarted.refreshDeviceSpaceJoin(request.requestId.clone()).await.unwrap().status, SpaceJoinStatus::Pending);
+    }
+    pair.aPeer.failNext("joinStatus", false);
+    assert!(restarted.refreshDeviceSpaceJoin(request.requestId.clone()).await.is_err());
+    let calls = pair.aPeer.calls.lock().unwrap();
+    assert_eq!(calls.iter().filter(|(_, method)| method == "requestJoin").count(), 1);
+    assert_eq!(calls.iter().filter(|(_, method)| method == "joinStatus").count(), 4);
 }

@@ -393,6 +393,7 @@ impl SpacePersistenceSyncService {
             // stack, including the Windows CLI main thread in debug builds.
             if let Err(error) = Box::pin(self.exchangePairedDeviceSpaceProjection(&peerNodeId)).await {
                 self.recordPeerPassFailed(&peerNodeId);
+                cycleDecisions.insert(peerNodeId.clone(), false);
                 errors.push(format!("CoreNode {peerNodeId} Space projection exchange: {error}"));
                 continue;
             }

@@ -660,15 +660,7 @@ impl CoreSpaceStore {
             if entry.isDirectory {
                 continue;
             }
-            let preferences =
-                self.recordStore(entry.path.clone())
-                    .data()
-                    .map_err(|error| error.to_string())?;
-            let encoded = preferences
-                .get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
-                .ok_or_else(|| format!("Device space profile record is empty: {}", entry.path))?;
-            let profile: CoreSpaceDeviceProfile =
-                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
+            let profile: CoreSpaceDeviceProfile = self.readRecord(&entry.path)?;
             validateDeviceProfile(&profile)?;
             profiles.insert(profile.nodeId.clone(), profile);
         }
@@ -766,15 +758,7 @@ impl CoreSpaceStore {
             if entry.isDirectory {
                 continue;
             }
-            let preferences =
-                self.recordStore(entry.path.clone())
-                    .data()
-                    .map_err(|error| error.to_string())?;
-            let encoded = preferences
-                .get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
-                .ok_or_else(|| format!("Device space presence record is empty: {}", entry.path))?;
-            let presence: CoreSpaceDevicePresence =
-                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
+            let presence: CoreSpaceDevicePresence = self.readRecord(&entry.path)?;
             validateDevicePresence(&presence)?;
             presences.insert(presence.nodeId.clone(), presence);
         }
@@ -1142,15 +1126,7 @@ impl CoreSpaceStore {
             if entry.isDirectory {
                 continue;
             }
-            let preferences =
-                self.recordStore(entry.path.clone())
-                    .data()
-                    .map_err(|error| error.to_string())?;
-            let encoded = preferences
-                .get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
-                .ok_or_else(|| format!("Device space member record is empty: {}", entry.path))?;
-            let record: CoreSpaceMemberRecord =
-                serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
+            let record: CoreSpaceMemberRecord = self.readRecord(&entry.path)?;
             validateMemberRecord(&record)?;
             records.insert(record.nodeId.clone(), record);
         }
@@ -1334,6 +1310,14 @@ impl CoreSpaceStore {
         self.recordStore(
             format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/{nodeId}.preferences.json"),
         )
+    }
+
+    /// Reads a selected Space record directly through its shared schema without a generic JSON tree.
+    fn readRecord<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
+        CoreNodeStateStore::newWithStorage(self.storage.clone(), path)
+            .withSchema(CORE_SPACE_RECORD_VERSION, Self::migrateRecord)
+            .typedEntry(CORE_SPACE_RECORD_KEY).map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("Device space record is empty: {path}"))
     }
 
     /// Opens versioned complete Space records using the declared storage scope.

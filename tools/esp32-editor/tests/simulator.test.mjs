@@ -54,8 +54,8 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   const memory = await (await fetch(base + '/api/simulator/memory')).json();
   assert.equal(memory.heapCapacityBytes, 256 * 1024);
   assert.equal(memory.mainStackBytes, 16 * 1024);
-  assert.equal(memory.asyncStackBytes, 32 * 1024);
-  assert.equal(memory.blockingStackBytes, 24 * 1024);
+  assert.equal(memory.asyncStackBytes, 24 * 1024);
+  assert.equal(memory.blockingStackBytes, 20 * 1024);
   assert(memory.heapPeakBytes >= memory.heapUsedBytes);
   assert.equal(memory.heapFreeBytes + memory.heapUsedBytes, memory.heapCapacityBytes);
   assert.equal(memory.allocationFailures, 0);

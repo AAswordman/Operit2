@@ -2,10 +2,9 @@
 #![allow(non_snake_case)]
 use super::{NodeSpaceContext, CoreSpace, CoreSpaceDeviceProfile,
     CoreSpaceTopologyRecord, CoreSpaceStore, SyncOperation, space_departure};
-#[cfg(any(test, feature = "full"))]
 use super::PeerSpaceSnapshot;
 use operit_link::{CoreValue, fromCoreValue, toCoreValue, encodedLinkSize};
-use operit_store::NetworkControlStore::NodeLocalControlExport;
+use operit_store::NetworkControlStore::SpaceControlExport;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const VERSION: u32 = 1;
@@ -25,9 +24,10 @@ pub(crate) struct ProjectionProtocol {
     pub projectionReference: bool,
 }
 impl ProjectionProtocol {
+    /// Validates peer identity and the explicitly advertised projection capabilities.
     pub fn validate(&self, peer: &str) -> Result<(), String> {
         if self.version != VERSION || self.nodeId != peer || self.authorityMode != "localReplay"
-            || self.maxMessageBytes <= ENVELOPE_BYTES || self.snapshotPaging != self.endpoint
+            || self.maxMessageBytes <= ENVELOPE_BYTES || (self.endpoint && !self.snapshotPaging)
             || (self.projectionReference && !self.snapshotPaging) {
             return Err("SPACE_PROTOCOL_INCOMPATIBLE: Unsupported projection protocol".into());
         }
@@ -41,7 +41,6 @@ pub(crate) struct BoundedControlExchange {
     pub operations: Vec<SyncOperation>,
 }
 
-#[cfg(any(test, feature = "full"))]
 /// Validates the explicit transport contract; peer errors terminate this exchange.
 pub(crate) fn decodeProtocolResponse(
     peer: &str, result: Result<CoreValue, operit_link::CoreLinkError>,
@@ -63,7 +62,7 @@ pub(crate) fn negotiate(service: &dyn NodeSpaceContext, args: CoreValue) -> Resu
     let peers = service.peers()?;
     let protocol = ProjectionProtocol { version: VERSION, nodeId: service.localNodeId(),
         endpoint: service.isSpaceEndpoint(), authorityMode: "localReplay".into(),
-        maxMessageBytes: peers.maxMessageBytes(), snapshotPaging: service.isSpaceEndpoint(),
+        maxMessageBytes: peers.maxMessageBytes(), snapshotPaging: true,
         projectionReference: service.isSpaceEndpoint() };
     protocol.validate(&protocol.nodeId)?;
     toCoreValue(protocol).map_err(|error| error.to_string())
@@ -105,7 +104,7 @@ pub(crate) fn requireEncodedFits(bytes: &[u8], maximum: usize) -> Result<(), Str
     Ok(())
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SnapshotHeader {
     pub space: CoreSpace,
     pub deviceProfiles: Vec<CoreSpaceDeviceProfile>,
@@ -115,7 +114,7 @@ pub(crate) struct SnapshotHeader {
     pub controlCount: usize,
 }
 impl SnapshotHeader {
-    #[cfg(any(test, feature = "full"))]
+    /// Attaches the complete verified export to its correlated metadata.
     pub fn withOperations(self, mut controlOperations: Vec<SyncOperation>) -> PeerSpaceSnapshot {
         controlOperations.sort_by_key(operit_store::SyncOperationStore::SyncOperationOrder::fromOperation);
         PeerSpaceSnapshot { space: self.space, deviceProfiles: self.deviceProfiles,
@@ -129,29 +128,27 @@ pub(crate) struct ControlPageRequest {
     pub after: Option<String>,
 }
 
+/// Projects snapshot metadata without loading the first control operation.
 pub(crate) fn header(service: &dyn NodeSpaceContext, peer: &str) -> Result<SnapshotHeader, String> {
-    if !service.isSpaceEndpoint() { return Err("SPACE_PROTOCOL_INCOMPATIBLE: Paging is endpoint-only".into()); }
     let space = service.spaceStore().space()?;
-    let export = service.networkControlStore().nodeLocalControlExport(&space.spaceId, None, None)?;
-    let NodeLocalControlExport { revision, count, operation } = export;
-    drop(operation);
+    let manifest = service.networkControlStore().spaceControlManifest(&space.spaceId)?;
     let deviceProfiles = service.spaceStore().deviceProfiles()?.into_iter()
         .filter(|(node, _)| space.members.contains(node)).map(|(_, profile)| profile).collect();
     let topology = service.spaceStore().topologyRecords()?.into_iter()
         .filter(|(node, _)| space.members.contains(node)).map(|(_, record)| record).collect();
     let header = SnapshotHeader { space, deviceProfiles, topology,
         departures: space_departure::pending(service, peer)?,
-        controlRevision: revision, controlCount: count };
+        controlRevision: manifest.revision, controlCount: manifest.count };
     requirePayloadFits(&header, service.peers()?.maxMessageBytes())?;
     Ok(header)
 }
+/// Returns one operation correlated to the exact current export manifest.
 pub(crate) fn controlPage(service: &dyn NodeSpaceContext, args: CoreValue) -> Result<CoreValue, String> {
-    if !service.isSpaceEndpoint() { return Err("SPACE_PROTOCOL_INCOMPATIBLE: Paging is endpoint-only".into()); }
     let request: ControlPageRequest = fromCoreValue(args).map_err(|error| error.to_string())?;
     if request.spaceId != service.spaceStore().space()?.spaceId {
         return Err("SPACE_EXPORT_CHANGED: Endpoint Space changed".into());
     }
-    let page = service.networkControlStore().nodeLocalControlExport(&request.spaceId,
+    let page = service.networkControlStore().spaceControlExport(&request.spaceId,
         Some(&request.revision), request.after.as_deref())?;
     requirePayloadFits(&page, service.peers()?.maxMessageBytes())?;
     toCoreValue(page).map_err(|error| error.to_string())
@@ -180,8 +177,10 @@ pub(crate) fn observeProjection(service: &dyn NodeSpaceContext, peer: &str, args
     }
     // Verify the exact policy before any publication. Opening this export also
     // validates all immutable envelopes, including unknown payload fields.
-    drop(service.networkControlStore().nodeLocalControlExport(&local.spaceId,
-        Some(&observation.controlRevision), None)?);
+    let manifest = service.networkControlStore().spaceControlManifest(&local.spaceId)?;
+    if manifest.revision != observation.controlRevision {
+        return Err("SPACE_EXPORT_CHANGED: Space control projection changed".into());
+    }
     let policy = service.networkControlStore().currentState()?;
     for node in &observation.space.members {
         if !policy.memberNodeIds.contains(node) {
@@ -219,7 +218,7 @@ pub(crate) fn requireLegacyControlFits(service: &dyn NodeSpaceContext) -> Result
     requireControlFits(service, &service.spaceStore().space()?.spaceId, 0)
 }
 fn requireControlFits(service: &dyn NodeSpaceContext, space: &str, metadata: usize) -> Result<(), String> {
-    let mut page = service.networkControlStore().nodeLocalControlExport(space, None, None)?;
+    let mut page = service.networkControlStore().spaceControlExport(space, None, None)?;
     let revision = page.revision.clone();
     let maximum = service.peers()?.maxMessageBytes();
     let mut size = metadata.saturating_add(ENVELOPE_BYTES);
@@ -228,36 +227,37 @@ fn requireControlFits(service: &dyn NodeSpaceContext, space: &str, metadata: usi
         if size > maximum {
             return Err("SPACE_MESSAGE_LIMIT: Complete authority exceeds the endpoint limit; bounded export is required".into());
         }
-        page = service.networkControlStore().nodeLocalControlExport(space, Some(&revision), Some(&operation.opId))?;
+        page = service.networkControlStore().spaceControlExport(space, Some(&revision), Some(&operation.opId))?;
     }
     Ok(())
 }
 
-/// Collector lives on Core, where a complete policy can be validated before any
-/// import. An untrusted count/cursor must not cause unbounded or mixed imports.
-#[cfg(any(test, feature = "full"))]
+/// Collects a complete correlated authority export before any local import.
+/// Untrusted counts and cursors cannot authorize partial or mixed snapshots.
 pub(crate) struct SnapshotCollector {
     header: SnapshotHeader,
     operations: Vec<SyncOperation>,
     complete: bool,
 }
-#[cfg(any(test, feature = "full"))]
 impl SnapshotCollector {
+    /// Validates a manifest before allocating any operation collection.
     pub fn new(header: SnapshotHeader) -> Result<Self, String> {
         if header.controlCount > 4096 || header.controlRevision.len() != 64
             || !header.controlRevision.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
-            return Err("SPACE_EXPORT_INVALID: Invalid endpoint export manifest".into());
+            return Err("SPACE_EXPORT_INVALID: Invalid Space export manifest".into());
         }
         Ok(Self { header, operations: Vec::new(), complete: false })
     }
+    /// Builds the next cursor from the last accepted immutable operation.
     pub fn request(&self) -> ControlPageRequest {
         ControlPageRequest { spaceId: self.header.space.spaceId.clone(), revision: self.header.controlRevision.clone(),
             after: self.operations.last().map(|operation| operation.opId.clone()) }
     }
-    pub fn push(&mut self, page: NodeLocalControlExport) -> Result<bool, String> {
+    /// Validates page correlation and strictly increasing immutable operation identities.
+    pub fn push(&mut self, page: SpaceControlExport) -> Result<bool, String> {
         if self.complete { return Err("SPACE_EXPORT_INVALID: Export is already complete".into()); }
         if page.revision != self.header.controlRevision || page.count != self.header.controlCount {
-            return Err("SPACE_EXPORT_CHANGED: Endpoint control projection changed".into());
+            return Err("SPACE_EXPORT_CHANGED: Space control projection changed".into());
         }
         let Some(operation) = page.operation else {
             if self.operations.len() != self.header.controlCount { return Err("SPACE_EXPORT_INVALID: Incomplete control export".into()); }
@@ -271,15 +271,16 @@ impl SnapshotCollector {
         self.operations.push(operation);
         Ok(false)
     }
+    /// Verifies immutable authority and attaches the latest presentation projection.
     pub fn finish(self, current: SnapshotHeader) -> Result<PeerSpaceSnapshot, String> {
-        // Bind profiles, membership, departures and control to the same export;
-        // validation/import happens only after this final consistency check.
         if !self.complete || self.operations.len() != self.header.controlCount
-            || serde_json::to_value(&self.header).map_err(|error| error.to_string())?
-                != serde_json::to_value(current).map_err(|error| error.to_string())? {
-            return Err("SPACE_EXPORT_CHANGED: Endpoint snapshot changed".into());
+            || self.header.space != current.space
+            || self.header.controlRevision != current.controlRevision
+            || self.header.controlCount != current.controlCount
+            || self.header.departures != current.departures {
+            return Err("SPACE_EXPORT_CHANGED: Space authority changed".into());
         }
-        Ok(self.header.withOperations(self.operations))
+        Ok(current.withOperations(self.operations))
     }
 }
 
@@ -299,8 +300,9 @@ mod tests {
             operation: "apply".into(), semantics: operit_store::SyncOperationStore::SyncOperationSemantics::Transaction,
             payload: serde_json::json!({"unknown": ["设备", 7]}), createdAt: 1, schemaVersion: 1 }
     }
-    fn page(count: usize, id: Option<&str>) -> NodeLocalControlExport {
-        NodeLocalControlExport { revision: "a".repeat(64), count, operation: id.map(operation) }
+    /// Creates a page correlated to the fixture manifest.
+    fn page(count: usize, id: Option<&str>) -> SpaceControlExport {
+        SpaceControlExport { revision: "a".repeat(64), count, operation: id.map(operation) }
     }
     #[test]
     fn projection_reference_requires_exact_unique_immutable_operations() {
@@ -338,6 +340,9 @@ mod tests {
         let mut protocol = ProjectionProtocol { version: VERSION, nodeId: "peer".into(), endpoint: true,
             authorityMode: "localReplay".into(), maxMessageBytes: 8192, snapshotPaging: true, projectionReference: true };
         assert!(protocol.validate("peer").is_ok());
+        protocol.endpoint = false;
+        protocol.projectionReference = false;
+        assert!(protocol.validate("peer").is_ok(), "Core exposes the same paged authority contract");
         assert!(protocol.validate("other").is_err());
         protocol.version += 1;
         assert!(protocol.validate("peer").is_err());
@@ -368,6 +373,23 @@ mod tests {
         let mut changed = manifest(0);
         changed.space.spaceRevision += 1;
         assert!(collector.finish(changed).is_err());
+    }
+    /// Presentation changes cannot invalidate stable authority or supply authority themselves.
+    #[test]
+    fn bounded_export_uses_current_presentation_under_unchanged_authority() {
+        let mut collector = SnapshotCollector::new(manifest(0)).unwrap();
+        collector.push(page(0, None)).unwrap();
+        let mut current = manifest(0);
+        current.deviceProfiles.push(CoreSpaceDeviceProfile {
+            nodeId: "core".into(), displayName: "Updated Core".into(), userName: "User".into(),
+            platform: "test".into(), model: "test".into(), coreVersion: None, pairingIncarnation: None, updatedAt: 2,
+        });
+        let snapshot = collector.finish(current.clone()).unwrap();
+        assert_eq!(snapshot.deviceProfiles, current.deviceProfiles);
+        let mut collector = SnapshotCollector::new(manifest(0)).unwrap();
+        collector.push(page(0, None)).unwrap();
+        current.departures.push(operation("departure"));
+        assert!(collector.finish(current).is_err());
     }
     #[test]
     fn bounded_export_rejects_missing_repeated_excess_or_changed_records() {

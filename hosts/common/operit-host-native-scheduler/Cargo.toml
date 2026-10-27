@@ -24,3 +24,7 @@ windows-sys = { version = "0.59", optional = true, features = ["Win32_System_Mem
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["io-util"] }
+
+# Guarded stack tests optimize the executor and task code without changing stack budgets.
+[profile.test]
+opt-level = 3

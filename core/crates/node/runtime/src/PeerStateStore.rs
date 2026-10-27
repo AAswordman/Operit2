@@ -250,21 +250,6 @@ impl PeerStateStore {
             .map_err(|error| error.to_string())
     }
 
-    /// Validate an immutable scan one record at a time, retaining only its small
-    /// summary. Historical receipts must not occupy a second typed collection
-    /// while admission reconciliation and persistence allocate their snapshots.
-    pub(crate) fn recordSummaries<T: DeserializeOwned, R>(
-        &self, path: &str, mut summarize: impl FnMut(T) -> R,
-    ) -> Result<Vec<R>, String> {
-        self.store(path).withEncodedEntries(|entries| {
-            entries.into_iter().map(|(name, encoded)| {
-                let record = serde_json::from_slice::<T>(encoded.get().as_bytes())
-                    .map_err(|error| format!("Invalid peer state record at {path}, key {name}: {error}"))?;
-                Ok(summarize(record))
-            }).collect()
-        }).map_err(|error| error.to_string())?
-    }
-
     /// Re-read one authorization from the current snapshot without decoding
     /// unrelated credentials or cloning their JSON trees.
     pub(crate) fn record<T: DeserializeOwned>(
@@ -843,33 +828,27 @@ mod tests {
             .replace(preferences)
             .unwrap();
     }
+    /// Projection reads validate their selected facts without decoding unrelated evidence.
     #[test]
-    fn summary_scan_releases_each_record_and_rejects_later_malformed_entries() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static RELEASED: AtomicUsize = AtomicUsize::new(0);
+    fn projection_scan_skips_evidence_and_rejects_malformed_selected_fields() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Projection { id: u32 }
         #[derive(Deserialize)]
-        struct Receipt { id: u32, payload: String }
-        impl Drop for Receipt {
-            fn drop(&mut self) { RELEASED.fetch_add(1, Ordering::SeqCst); }
-        }
+        struct FullRecord { id: u32, payload: String }
         let storage = Arc::new(Storage::default());
         let store = PeerStateStore::new(storage.clone());
         let path = RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH;
         for id in 0..8 {
             store.putRecord(path, &id.to_string(),
-                &serde_json::json!({"id": id, "payload": "x".repeat(2048)})).unwrap();
+                &serde_json::json!({"id": id, "payload": {"evidence": ["x".repeat(2048)]}})).unwrap();
         }
-        RELEASED.store(0, Ordering::SeqCst);
-        let ids = store.recordSummaries::<Receipt, _>(path, |receipt| {
-            assert_eq!(RELEASED.load(Ordering::SeqCst), receipt.id as usize);
-            assert_eq!(receipt.payload.len(), 2048);
-            receipt.id
-        }).unwrap();
-        assert_eq!(ids, (0..8).collect::<Vec<_>>());
-        assert_eq!(RELEASED.load(Ordering::SeqCst), 8);
-        store.putRecord(path, "z-broken", &serde_json::json!({"id": 9})).unwrap();
+        let mut records = store.recordValues::<Projection>(path).unwrap();
+        records.sort_by_key(|record| record.id);
+        assert_eq!(records, (0..8).map(|id| Projection { id }).collect::<Vec<_>>());
+        assert!(store.recordValues::<FullRecord>(path).is_err());
+        store.putRecord(path, "z-broken", &serde_json::json!({"payload": "evidence"})).unwrap();
         let before = storage.0.lock().unwrap().clone();
-        assert!(store.recordSummaries::<Receipt, _>(path, |receipt| receipt.id).is_err());
+        assert!(store.recordValues::<Projection>(path).is_err());
         assert_eq!(*storage.0.lock().unwrap(), before);
     }
 

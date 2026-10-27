@@ -1821,13 +1821,16 @@ fn endpoint_control_export_pages_complete_immutable_authority_without_mutation()
     archived.payload["spaceId"] = json!("old-space");
     projection.setTypedEntry(&archived.opId, &archived).unwrap();
     let writes = storage.writeCount();
-    let first = store.nodeLocalControlExport(&state.spaceId, None, None).unwrap();
+    let manifest = store.spaceControlManifest(&state.spaceId).unwrap();
+    let first = store.spaceControlExport(&state.spaceId, None, None).unwrap();
     let revision = first.revision.clone();
+    assert_eq!(manifest.revision, revision);
+    assert_eq!(manifest.count, expected.len());
     assert_eq!(first.count, expected.len());
     let mut after = None;
     let mut actual = Vec::new();
     loop {
-        let page = store.nodeLocalControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap();
+        let page = store.spaceControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap();
         assert_eq!(page.count, expected.len());
         let Some(operation) = page.operation else { break; };
         after = Some(operation.opId.clone());
@@ -1836,13 +1839,13 @@ fn endpoint_control_export_pages_complete_immutable_authority_without_mutation()
     expected.sort_by(|left, right| left.opId.cmp(&right.opId));
     assert_eq!(actual, expected);
     assert_eq!(storage.writeCount(), writes);
-    assert!(store.nodeLocalControlExport(&state.spaceId, Some(&revision), Some("missing")).unwrap_err().contains("CURSOR_INVALID"));
+    assert!(store.spaceControlExport(&state.spaceId, Some(&revision), Some("missing")).unwrap_err().contains("CURSOR_INVALID"));
     store.admitMember("peer-c".into()).unwrap();
-    assert!(store.nodeLocalControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap_err().contains("EXPORT_CHANGED"));
+    assert!(store.spaceControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap_err().contains("EXPORT_CHANGED"));
     let mut conflict = expected[0].clone();
     conflict.payload["futureField"] = json!(false);
     projection.setTypedEntry("conflicting-alias", &conflict).unwrap();
-    assert!(store.nodeLocalControlExport(&state.spaceId, None, None).unwrap_err().contains("Conflicting immutable"));
+    assert!(store.spaceControlExport(&state.spaceId, None, None).unwrap_err().contains("Conflicting immutable"));
 }
 
 /// An endpoint must migrate its legacy journal before advertising a complete export.
@@ -1854,12 +1857,14 @@ fn endpoint_control_export_refuses_to_omit_unmigrated_journal_authority() {
     let state = legacy.bootstrapCurrentSpace().unwrap();
     let expected = legacy.currentSpaceOperations().unwrap();
     let endpoint = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
-    assert!(endpoint.nodeLocalControlExport(&state.spaceId, None, None).unwrap_err().contains("MIGRATION_REQUIRED"));
+    assert!(endpoint.spaceControlExport(&state.spaceId, None, None).unwrap_err().contains("MIGRATION_REQUIRED"));
     endpoint.migrateNodeLocalProjection(storage.as_ref()).unwrap();
-    let page = endpoint.nodeLocalControlExport(&state.spaceId, None, None).unwrap();
+    let page = endpoint.spaceControlExport(&state.spaceId, None, None).unwrap();
     assert_eq!(page.count, expected.len());
     assert_eq!(page.operation, Some(expected[0].clone()));
-    assert!(legacy.nodeLocalControlExport(&state.spaceId, None, None).is_err());
+    let full = legacy.spaceControlExport(&state.spaceId, None, None).unwrap();
+    assert_eq!(full.count, page.count);
+    assert_eq!(full.operation, page.operation);
 }
 
 /// Cold receipt/index construction and every query intent use the same bounded reader.
@@ -2042,7 +2047,7 @@ fn bounded_review_receipts_validate_complete_history_and_local_sequences() {
 /// Paged authority must never allocate a whole expanded policy on current
 /// endpoint files. Its digest and all unknown payload bytes stay compatible.
 #[test]
-fn endpoint_control_export_streams_ranges_with_identical_digest_and_legacy_fallback() {
+fn endpoint_control_export_streams_ranges_with_identical_digest_for_all_key_orders() {
     use crate::NetworkControlStore::NetworkControlStore;
     use sha2::{Digest, Sha256};
     let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
@@ -2072,10 +2077,13 @@ fn endpoint_control_export_streams_ranges_with_identical_digest_and_legacy_fallb
     let original = storage.readBytes(path).unwrap();
     let writes = storage.writeCount();
     storage.forbidWholePolicyReads.store(true, Ordering::SeqCst);
+    let manifest = store.spaceControlManifest(&state.spaceId).unwrap();
+    assert_eq!(manifest.revision, revision);
+    assert_eq!(manifest.count, expected.len());
     let mut after = None;
     let mut actual = Vec::new();
     loop {
-        let page = store.nodeLocalControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap();
+        let page = store.spaceControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap();
         assert_eq!(page.revision, revision);
         assert_eq!(page.count, expected.len());
         let Some(operation) = page.operation else { break; };
@@ -2090,7 +2098,7 @@ fn endpoint_control_export_streams_ranges_with_identical_digest_and_legacy_fallb
     let reversed = format!("{{{}}}", entries.iter().rev().map(|(key, raw)|
         format!("{}:{}", serde_json::to_string(key).unwrap(), raw.get())).collect::<Vec<_>>().join(","));
     storage.writeBytes(path, reversed.as_bytes()).unwrap();
-    let legacy = store.nodeLocalControlExport(&state.spaceId, Some(&revision), None).unwrap();
+    let legacy = store.spaceControlExport(&state.spaceId, Some(&revision), None).unwrap();
     assert_eq!(legacy.operation, expected.first().cloned());
     assert_eq!(storage.readBytes(path).unwrap(), reversed.as_bytes());
 }

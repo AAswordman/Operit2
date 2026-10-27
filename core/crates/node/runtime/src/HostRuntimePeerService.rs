@@ -581,6 +581,30 @@ impl HostRuntimePeerService {
         receiver.await.map_err(|_| error("Peer connection task ended without a result"))?
     }
 
+    /// Executes authenticated transport work on the Host network worker.
+    async fn callOnHost(&self, node: &str, mut request: RoutedCoreRequest<CoreCallRequest>) -> CoreCallResponse {
+        let id = request.payload.requestId.clone();
+        // Relayed origins may reuse IDs; correlation belongs to this outbound hop.
+        let wireId = CoreRequestId(operit_link::nextCoreRouteRequestId("peer-call"));
+        request.payload.requestId = wireId.clone();
+        let result = match self.acquireChannel(node).await {
+            Ok(channel) => match dispatch::routedCall(request) {
+                Ok(wire) => match channel.exchange(CoreLinkRequest::Call(wire)).await {
+                    Ok(CoreLinkResponse::Call(response)) if response.requestId == wireId => Ok(response.result),
+                    Ok(_) => Err(error("Call response mismatch")),
+                    Err(error) => Err(error),
+                },
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        };
+        if result.as_ref().err().is_some_and(failureProvesPeerUnavailable) {
+            self.refreshPeerAvailability(node);
+        }
+        // Remote business errors prove a working authenticated link, not an offline peer.
+        CoreCallResponse { requestId: id, result: result.and_then(|remote| remote) }
+    }
+
     /// Serializes one authenticated establishment per peer under its connection deadline.
     async fn establishChannel(&self, node: &str) -> Result<Arc<MultiplexedChannel>, CoreLinkError> {
         tokio::time::timeout(std::time::Duration::from_millis(CONNECT_DEADLINE_MS), async {
@@ -1046,28 +1070,31 @@ impl RuntimePeerService for HostRuntimePeerService {
         for raw in connections.into_values().flatten().filter_map(|v| v.upgrade()) { raw.close().await; }
         self.state.active.lock().unwrap().clear(); self.changed(); Ok(())
     }
-    /// Sends one correlated call through the authenticated channel without nesting its request state.
-    async fn call(&self, node: &str, mut request: RoutedCoreRequest<CoreCallRequest>) -> CoreCallResponse {
+    /// Keeps transport authorization, exchange and reply decoding on the Host async worker.
+    async fn call(&self, node: &str, request: RoutedCoreRequest<CoreCallRequest>) -> CoreCallResponse {
         let id = request.payload.requestId.clone();
-        // Relayed origins may reuse IDs; correlation belongs to this outbound hop.
-        let wireId = CoreRequestId(operit_link::nextCoreRouteRequestId("peer-call"));
-        request.payload.requestId = wireId.clone();
-        let result = match self.acquireChannel(node).await {
-            Ok(channel) => match dispatch::routedCall(request) {
-                Ok(wire) => match channel.exchange(CoreLinkRequest::Call(wire)).await {
-                    Ok(CoreLinkResponse::Call(response)) if response.requestId == wireId => Ok(response.result),
-                    Ok(_) => Err(error("Call response mismatch")),
-                    Err(error) => Err(error),
-                },
-                Err(error) => Err(error),
+        let result = (|| {
+            let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.as_ref()
+                .ok_or_else(|| error("Host scheduler is not installed"))?;
+            let service = self.clone();
+            let node = node.to_owned();
+            let (mut sender, receiver) = tokio::sync::oneshot::channel();
+            scheduler.scheduleHostRuntimeAsyncTask("peer-call", Box::new(move || Box::pin(async move {
+                tokio::select! {
+                    biased;
+                    _ = sender.closed() => {},
+                    result = service.callOnHost(&node, request) => { let _ = sender.send(result); }
+                }
+            }))).map_err(|e| error(e.to_string()))?;
+            Ok::<_, CoreLinkError>(receiver)
+        })();
+        match result {
+            Ok(receiver) => match receiver.await {
+                Ok(response) => response,
+                Err(_) => CoreCallResponse::err(id, error("Peer call task ended without a result")),
             },
-            Err(error) => Err(error),
-        };
-        if result.as_ref().err().is_some_and(failureProvesPeerUnavailable) {
-            self.refreshPeerAvailability(node);
+            Err(error) => CoreCallResponse::err(id, error),
         }
-        // Remote business errors prove a working authenticated link, not an offline peer.
-        CoreCallResponse { requestId: id, result: result.and_then(|remote| remote) }
     }
     async fn watchSnapshot(&self, node: &str, request: RoutedCoreRequest<CoreWatchRequest>) -> Result<CoreEvent, CoreLinkError> {
         dispatch::watchSnapshot(self, node, request).await
@@ -1411,8 +1438,13 @@ mod single_channel_tests {
         fn list(&self, p: &str) -> HostResult<Vec<operit_host_api::RuntimeStorageEntry>> { Ok(self.0.lock().unwrap().iter().filter(|(k, _)| k.starts_with(p)).map(|(k, v)| operit_host_api::RuntimeStorageEntry { path: k.clone(), isDirectory: false, size: v.len() as i64 }).collect()) }
     }
 
-    /// Creates isolated storage and a router for shared channel tests.
+    /// Creates isolated storage and a router using the native test scheduler.
     pub(super) fn service() -> HostRuntimePeerService {
+        serviceWithScheduler(Arc::new(operit_host_native_common::NativeHostRuntimeTaskSchedulerHost))
+    }
+
+    /// Creates a peer service whose task queue can be controlled by the caller.
+    fn serviceWithScheduler(scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>) -> HostRuntimePeerService {
         static ROUTER: std::sync::OnceLock<Arc<NoRouter>> = std::sync::OnceLock::new();
         let router: Arc<dyn PeerRouter> = ROUTER.get_or_init(|| Arc::new(NoRouter)).clone();
         let storage = Arc::new(Storage::default());
@@ -1421,7 +1453,7 @@ mod single_channel_tests {
             limits: PeerRuntimeLimits::default(),
             host: Arc::new(HostManager {
                 runtimeStorageHost: Some(storage.clone()),
-                hostRuntimeTaskSchedulerHost: Some(Arc::new(operit_host_native_common::NativeHostRuntimeTaskSchedulerHost)),
+                hostRuntimeTaskSchedulerHost: Some(scheduler),
                 ..HostManager::default()
             }),
             link: HostPeerLink::default(),
@@ -1447,6 +1479,25 @@ mod single_channel_tests {
         let live = LiveChannel::start(encrypted, scheduler.clone(), false, || {}).unwrap();
         let side = dispatch::InboundSide::new(service(), "peer".into(), "test".into(), dispatch::Authorization::Inbound);
         MultiplexedChannel::start(live, scheduler, side).unwrap()
+    }
+
+    /// A caller cancelled before dispatch cannot open transport or execute its queued request.
+    #[tokio::test]
+    async fn cancelled_queued_call_releases_host_work_without_delivery() {
+        let scheduler = Arc::new(QueuedScheduler::default());
+        let service = serviceWithScheduler(scheduler.clone());
+        let request = RoutedCoreRequest { spaceId: "test-space".into(), originNodeId: "self".into(),
+            targetNodeId: "peer".into(), ttl: 0, routeKind: operit_link::RoutedCoreRequestKind::Target,
+            payload: CoreCallRequest::new("cancelled", "native.device", "write", CoreValue::Null) };
+        let mut call = Box::pin(service.call("peer", request));
+        assert!(futures_util::poll!(&mut call).is_pending());
+        assert_eq!(scheduler.tasks.lock().unwrap().len(), 1);
+        drop(call);
+        let task = scheduler.tasks.lock().unwrap().pop().unwrap();
+        task().await;
+        assert!(scheduler.tasks.lock().unwrap().is_empty());
+        assert!(service.state.connectLocks.lock().unwrap().is_empty());
+        assert!(service.state.active.lock().unwrap().is_empty());
     }
 
     /// Concurrent operations reuse the inbound carrier even beyond the deleted pool threshold.

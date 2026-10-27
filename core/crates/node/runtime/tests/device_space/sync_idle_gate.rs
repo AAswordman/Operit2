@@ -1,5 +1,6 @@
 use super::*;
 
+/// Counts delivered calls for one synchronization method.
 fn synchronizedMethodCount(peer: &ApprovalMeshPeer, method: &str) -> usize {
     peer.calls
         .lock()
@@ -14,6 +15,8 @@ fn synchronizedMethodCount(peer: &ApprovalMeshPeer, method: &str) -> usize {
 fn fullPassMarkers(peer: &ApprovalMeshPeer) -> usize {
     [
         "snapshot",
+        "snapshotHeader",
+        "snapshotControlPage",
         "observeSpaceSnapshot",
         "exchange",
         "coreVersion",
@@ -26,6 +29,7 @@ fn fullPassMarkers(peer: &ApprovalMeshPeer) -> usize {
     .sum()
 }
 
+/// Creates an observer over the fixture's authoritative stores.
 fn idleObserver(
     router: &CoreNodeRouter,
 ) -> crate::SpacePersistenceSyncService::SpacePersistenceSyncService {
@@ -346,19 +350,20 @@ async fn a_failed_pass_backs_off_before_retrying_the_full_exchange() {
     let (routers, _access, peers, _pendingFailure) = gateMesh("sync-backoff");
     let observer = idleObserver(&routers[1]);
 
-    // One-shot fault: the control exchange with the remote is lost. The
-    // projection snapshot still succeeds, so the failure comes from the
-    // member synchronization leg, which is what arms the backoff.
+    // One-shot fault: the authority page is lost during the member pass.
+    // The cycle must fail and arm backoff without switching protocols.
     peers[1]
         .faults
         .lock()
         .unwrap()
-        .insert("exchange".into(), CallFault::BeforeDelivery);
+        .insert("snapshotControlPage".into(), CallFault::BeforeDelivery);
     assert!(
         observer.synchronizeOnce().await.is_err(),
-        "the failed control exchange must fail the cycle"
+        "the failed authority page must fail the cycle"
     );
     let markersAfterFailure = fullPassMarkers(&peers[1]);
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncApplyOperations"), 0,
+        "failed authority validation must stop business replication in the same cycle");
 
     // The immediate retry is suppressed by the failure backoff.
     observer.synchronizeOnce().await.unwrap();

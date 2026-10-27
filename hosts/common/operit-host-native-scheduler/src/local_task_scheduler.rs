@@ -6,6 +6,9 @@ use operit_host_api::{
 };
 use std::sync::Arc;
 
+pub const DEVICE_ASYNC_STACK_BYTES: usize = 24 * 1024;
+pub const DEVICE_BLOCKING_STACK_BYTES: usize = 20 * 1024;
+
 #[derive(Clone)]
 pub struct LocalHostRuntimeTaskSchedulerHost {
     tasks: Arc<RuntimeTaskQueue>,
@@ -29,17 +32,15 @@ impl LocalHostRuntimeTaskSchedulerHost {
     /// Selects timer-only execution for Host sockets that do not use the Tokio I/O driver.
     fn newWithIo(enableIo: bool) -> HostResult<Self> {
         let stack = if cfg!(any(target_os = "espidf", feature = "esp32-compat")) {
-            32 * 1024
+            DEVICE_ASYNC_STACK_BYTES
         } else {
             2 * 1024 * 1024
         };
         let tasks = spawnTaskPoolWithOptions("operit-host-async", 1, stack, enableIo)
             .map_err(HostError::new)?;
-        // Blocking device calls have a shallower stack than coordination's
-        // nested Link futures. Keep the measured headroom without reserving
-        // another full async stack from the ESP32's shared internal heap.
+        // Consent queries use projections; evidence is decoded only during command execution.
         let blockingStack = if cfg!(any(target_os = "espidf", feature = "esp32-compat")) {
-            24 * 1024
+            DEVICE_BLOCKING_STACK_BYTES
         } else { stack };
         let blocking = spawnTaskPoolWithOptions("operit-host-blocking", 1, blockingStack, enableIo)
             .map_err(HostError::new)?;

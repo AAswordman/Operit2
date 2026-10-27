@@ -69,7 +69,7 @@ npm run test:xtensa --prefix tools/esp32-editor
 ```
 
 Rust 测试覆盖实际固件模块中的会话恢复、迟到结果隔离、独立聊天空间切换和协议行为。
-测试 fixture 在 32 KiB Host worker 下优化编译嵌套 future；这个设置不扩大设备栈，
+测试 fixture 及其 Host/runtime 依赖按模拟器 release 的优化级别编译，在 24 KiB 异步 / 20 KiB 阻塞 Host worker 下运行；这个设置不扩大设备栈，
 也不意味着桌面测试可以测出真机资源余量。
 
 以下集成入口使用独立 Core CLI、Rust Edge 和共享 C/Wasm UI，使用临时身份目录：
@@ -152,16 +152,21 @@ ESP-IDF 前置文件，无需先手动执行一次 Cargo。
 
 模拟器与真机都使用 `PeerRuntimeLimits::constrained()`：消息帧上限 8 KiB，
 入站会话/待配对各 2 个、并发探测 1 个。限制由应用注入，不按桌面/ESP-IDF 编译目标分叉。
-Host worker 使用 32 KiB 栈；Wasm C 栈采用固件的主任务栈配置并开启溢出检查。
-UI 静态 RAM、绘制缓冲和 C 栈由渲染器独立报告，不代表 ESP32 整板堆。
-`/api/simulator/memory` 仅报告 `configured-limits`，不伪造 `freeHeap` 或最大连续块遥测。
+Rust 使用固定的 256 KiB arena；主任务 16 KiB、异步 worker 24 KiB、阻塞 worker
+20 KiB，均使用固定映射和保护页。越界探针在独立进程中检查分配拒绝与栈故障。
+Host 的桌面文件与发现载体不执行业务代码；解析、压缩、空间校验仍受设备任务预算限制。
+Wasm C 栈采用固件的主任务栈配置并开启溢出检查。UI 静态 RAM、绘制缓冲和 C 栈由
+渲染器独立报告，不代表 ESP32 整板堆。
+
+`/api/simulator/memory` 报告 `enforced-budgets`，包括 Rust 实际使用量、空闲量、峰值和
+分配失败次数。真实 CLI 集成每次读取状态都校验预算与零分配失败，并汇总跨重启峰值。
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8766/api/simulator/memory
 ```
 
-桌面进程仍由操作系统分配内存，无法用本机 RSS 证明真机不会 OOM。
-整板堆和 NVS 应通过真实设备 `device:health` 获取。
+这些数值覆盖模拟器的 Rust 分配与任务栈。ESP-IDF、无线、TLS 和驱动的整板开销仍需
+通过真实设备 `device:health` 验证，本机 RSS 不作为真机资源余量。
 
 ## 插件与音频联调
 
