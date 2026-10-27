@@ -803,8 +803,9 @@ impl CoreSpaceStore {
     /// Publishes the local adjacency announcement for one live direct-peer set.
     ///
     /// Peers are replaced with the supplied set - the owning device is the only writer of
-    /// its own record - and every peer without a still-fresh advertisement receives one
-    /// carrying no measured quality yet, so route selection stays at hop count. Returns
+    /// its own record. Once any advertised link is close to expiry the whole set is
+    /// refreshed in one publication, and a peer without a still-fresh advertisement
+    /// carries no measured quality yet, so route selection stays at hop count. Returns
     /// whether the local record changed.
     #[allow(non_snake_case)]
     pub fn publishLocalAdjacency(
@@ -828,7 +829,7 @@ impl CoreSpaceStore {
         let peers = peerSet.into_iter().collect::<Vec<_>>();
         let now = currentTimeMillis();
         let current = self.topologyRecords()?.remove(&identity.nodeId);
-        let mut links = current
+        let retainedTargets = current
             .as_ref()
             .map(|record| {
                 record
@@ -838,45 +839,54 @@ impl CoreSpaceStore {
                         peers.contains(&link.targetNodeId)
                             && link.expiresAt.saturating_sub(now) > refreshMarginMs
                     })
-                    .cloned()
-                    .collect::<Vec<_>>()
+                    .map(|link| link.targetNodeId.clone())
+                    .collect::<BTreeSet<_>>()
             })
             .unwrap_or_default();
-        let retainedTargets = links
-            .iter()
-            .map(|link| link.targetNodeId.clone())
-            .collect::<BTreeSet<_>>();
-        let mut additions = 0_usize;
-        for peerNodeId in peers.iter().filter(|peer| !retainedTargets.contains(*peer)) {
-            let sequence = current
-                .as_ref()
-                .and_then(|record| {
-                    record
-                        .links
-                        .iter()
-                        .find(|link| link.targetNodeId == *peerNodeId)
-                })
-                .map(|link| link.sequence.saturating_add(1))
-                .unwrap_or(1);
-            links.push(CoreSpaceLinkAdvertisement {
-                targetNodeId: peerNodeId.clone(),
-                channelEpoch: LOCAL_DIRECT_PEER_EPOCH.to_string(),
-                sequence,
-                measuredAt: now,
-                expiresAt: now.saturating_add(linkTtlMs),
-                smoothedRttMs: 0,
-                lossPermille: 0,
-                congestionPermille: 0,
-            });
-            additions += 1;
-        }
         let peersUnchanged = current
             .as_ref()
             .map(|record| record.peers.as_slice() == peers.as_slice())
             .unwrap_or(false);
-        if peersUnchanged && additions == 0 {
+        if peersUnchanged && retainedTargets.len() == peers.len() {
             return Ok(false);
         }
+        // Refresh every advertised link together whenever any of them is near
+        // expiry. Rewriting one link per publication would emit a full record
+        // every TTL/peers seconds; refreshing the whole set keeps the next
+        // publication a full refresh interval away and sends one record.
+        let mut links = peers
+            .iter()
+            .map(|peerNodeId| {
+                let existing = current.as_ref().and_then(|record| {
+                    record
+                        .links
+                        .iter()
+                        .find(|link| &link.targetNodeId == peerNodeId)
+                });
+                match existing {
+                    Some(link) => CoreSpaceLinkAdvertisement {
+                        targetNodeId: peerNodeId.clone(),
+                        channelEpoch: link.channelEpoch.clone(),
+                        sequence: link.sequence.saturating_add(1),
+                        measuredAt: now,
+                        expiresAt: now.saturating_add(linkTtlMs),
+                        smoothedRttMs: link.smoothedRttMs,
+                        lossPermille: link.lossPermille,
+                        congestionPermille: link.congestionPermille,
+                    },
+                    None => CoreSpaceLinkAdvertisement {
+                        targetNodeId: peerNodeId.clone(),
+                        channelEpoch: LOCAL_DIRECT_PEER_EPOCH.to_string(),
+                        sequence: 1,
+                        measuredAt: now,
+                        expiresAt: now.saturating_add(linkTtlMs),
+                        smoothedRttMs: 0,
+                        lossPermille: 0,
+                        congestionPermille: 0,
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
         links.sort_by(|left, right| left.targetNodeId.cmp(&right.targetNodeId));
         self.writeTopologyRecord(&CoreSpaceTopologyRecord {
             nodeId: identity.nodeId,
@@ -1180,9 +1190,27 @@ impl CoreSpaceStore {
             if record.nodeId == local || current.get(&record.nodeId).is_some_and(|old| old.updatedAt >= record.updatedAt) {
                 continue;
             }
-            self.writeTopologyRecord(&record)?;
+            self.importTopologyRecord(&record)?;
         }
         Ok(())
+    }
+
+    /// Stores one imported topology announcement without staging a local
+    /// operation. Snapshots already deliver these records over an
+    /// authenticated synchronization channel; publishing the import again
+    /// under this device's origin would echo every member's announcement back
+    /// to every peer and keep idle snapshots churning.
+    fn importTopologyRecord(&self, record: &CoreSpaceTopologyRecord) -> Result<(), String> {
+        let value = serde_json::to_value(record).map_err(|error| error.to_string())?;
+        self.recordStore(format!(
+            "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/{}.preferences.json",
+            record.nodeId
+        ))
+        .migrate(|preferences| -> Result<(), PreferencesDataStoreError> {
+            preferences.set(&stringPreferencesKey(CORE_SPACE_RECORD_KEY), value);
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
     }
 
     /// Reads every synchronized topology announcement visible to this CoreNode.
@@ -2147,6 +2175,56 @@ mod tests {
             .expect("local adjacency record must exist");
         assert!(pruned.peers.is_empty());
         assert!(pruned.links.is_empty());
+    }
+
+    /// Verifies snapshot imports persist remote announcements without
+    /// re-authoring them as local synchronization operations.
+    #[test]
+    fn importing_a_remote_topology_record_publishes_no_local_operation() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        store
+            .initializeNamed("import-space".to_string())
+            .expect("test space must initialize");
+        let localNodeId = CoreNodeIdentityStore::new(host.clone())
+            .initialize()
+            .expect("test node identity must initialize")
+            .nodeId;
+        store
+            .writeTopologyRecord(&CoreSpaceTopologyRecord {
+                nodeId: localNodeId.clone(),
+                peers: vec!["node-peer".to_string()],
+                links: vec![testLink("node-peer", 0)],
+                updatedAt: currentTimeMillis(),
+            })
+            .expect("local topology must publish");
+        let syncStore = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH.to_string());
+        // `localClock` flushes staged preference outboxes exactly like a sync
+        // pass does, so the baseline includes the local publication above.
+        let before = syncStore.localClock().expect("local clock must read");
+        assert!(
+            !before.sequences.is_empty(),
+            "a local publication must advance the clock"
+        );
+
+        let imported = CoreSpaceTopologyRecord {
+            nodeId: "node-remote".to_string(),
+            peers: vec![localNodeId.clone()],
+            links: vec![testLink(&localNodeId, 0)],
+            updatedAt: currentTimeMillis() + 1,
+        };
+        store
+            .importTopologyRecords(vec![imported.clone()])
+            .expect("remote announcement import must succeed");
+        assert_eq!(
+            store.topologyRecords().expect("topology must read")["node-remote"],
+            imported
+        );
+        assert_eq!(
+            syncStore.localClock().expect("local clock must read"),
+            before,
+            "importing a snapshot record must not stage a local operation"
+        );
     }
 
     /// Verifies published adjacency resolves one tree path through the middle device.
