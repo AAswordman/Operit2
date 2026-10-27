@@ -884,12 +884,18 @@ impl OperitApplication {
     /// Only durable operation clocks are fingerprinted. A storage-handle close
     /// publishes a process mutation without writing any operation, so the
     /// mutation revision cannot distinguish real changes from idle opens.
-    /// Device preferences and projected control operations change no clock,
-    /// but the device that made them detects them in its own local-state
-    /// summary and starts the pass that pushes them to its peers.
+    /// Only origins this device authored count as a change: applying a peer's
+    /// operations advances their ranges locally, but that is not new work to
+    /// offer the other members. Device preferences and projected control
+    /// operations change no clock, but the device that made them detects them
+    /// in its own local-state summary and starts the pass that pushes them to
+    /// its peers.
     #[allow(non_snake_case)]
     pub fn syncClockDigest(&self) -> Result<serde_json::Value, String> {
         let store = self.runtimeSyncOperationStore()?;
+        let localDeviceId = store
+            .localDeviceId()
+            .map_err(|error| error.to_string())?;
         let mut clock = store
             .currentLocalClock()
             .map_err(|error| error.to_string())?;
@@ -922,6 +928,13 @@ impl OperitApplication {
                 }
             }
         }
+        // Operations applied from peers advance their origins in this clock.
+        // Fingerprinting every origin would make each applied batch look like
+        // new work to every neighbor, reopening full passes that have nothing
+        // to exchange. Advertise only what this device authored: members
+        // synchronize with each other over routed links, and projected control
+        // operations are advertised through the local-state summary.
+        clock.retainAuthoredBy(&localDeviceId);
         let fingerprint = serde_json::to_vec(&clock).map_err(|error| error.to_string())?;
         let digest = Sha256::digest(&fingerprint);
         Ok(serde_json::json!({

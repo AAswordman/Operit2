@@ -70,6 +70,14 @@ impl SyncClock {
             .iter()
             .all(|(deviceId, sequence)| self.sequenceFor(deviceId) >= *sequence)
     }
+
+    /// Keeps only sequences this device authored. Applied peer operations also
+    /// advance their origins here, but they are not work this device still
+    /// owes its peers, so change summaries exclude them.
+    pub fn retainAuthoredBy(&mut self, deviceId: &str) {
+        self.sequences
+            .retain(|origin, _| origin.starts_with(deviceId));
+    }
 }
 
 /// Supplies operation membership independently of an application's materialization clock.

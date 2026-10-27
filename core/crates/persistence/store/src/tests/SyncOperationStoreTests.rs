@@ -1810,3 +1810,19 @@ fn receive_and_completion_keep_payloads_and_receipts_atomic() {
     assert!(!host.exists(&path).unwrap());
     assert!(store.receipt().unwrap().containsSequence("device-a", 1));
 }
+
+/// Verifies change summaries drop progress this device only learned from peers.
+#[test]
+fn authored_clock_retains_only_local_origins() {
+    let mut clock = SyncClock::empty();
+    clock.setSequence("core-local", 3);
+    clock.setSequence("core-local:sql", 7);
+    clock.setSequence("core-local:preferences:abcd", 2);
+    clock.setSequence("core-remote", 9);
+    clock.setSequence("core-remote:sql", 4);
+    clock.retainAuthoredBy("core-local");
+    assert_eq!(
+        clock.sequences.keys().cloned().collect::<Vec<_>>(),
+        vec!["core-local", "core-local:preferences:abcd", "core-local:sql"]
+    );
+}

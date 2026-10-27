@@ -665,3 +665,35 @@ async fn partial_plugin_failure_keeps_healthy_replication_moving() {
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), settled);
 }
+
+/// Verifies progress this device only received from peers does not reopen a
+/// settled gate: the local-state summary counts work this device still owes
+/// its peers, not every origin whose ranges advanced when remote operations
+/// applied here.
+#[tokio::test]
+async fn applied_remote_progress_does_not_reopen_a_settled_gate() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, _access, peers, _pendingFailure) = gateMesh("sync-remote-progress");
+    let observer = idleObserver(&routers[1]);
+    observer.synchronizeOnce().await.unwrap();
+    observer.synchronizeOnce().await.unwrap();
+    let settled = fullPassMarkers(&peers[1]);
+
+    // Model an applied peer operation: the clock gains a remote origin this
+    // device never authored anything under.
+    let store = operit_store::SyncOperationStore::SyncOperationStore::new(
+        routers[1].localCore.runtimeStorageHost(),
+        operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH.to_string(),
+    );
+    let mut clock = store.currentLocalClock().unwrap();
+    clock.setSequence("core-remote-applied-peer", 9);
+    store.writeLocalClock(&clock).unwrap();
+
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(
+        fullPassMarkers(&peers[1]),
+        settled,
+        "received progress must not start a pass this device owes nothing to"
+    );
+}
