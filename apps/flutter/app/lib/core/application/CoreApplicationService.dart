@@ -66,6 +66,7 @@ class CoreApplicationService with WidgetsBindingObserver {
     PluginHotReload.register(_coreClients);
     WidgetsBinding.instance.addObserver(this);
     _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
+    unawaited(_syncHostSubscriber());
     unawaited(_startRuntimeServices());
     ClientLogger.v(
       'initialize done elapsedMs=${stopwatch.elapsedMilliseconds}',
@@ -77,8 +78,7 @@ class CoreApplicationService with WidgetsBindingObserver {
   /// Forwards Flutter lifecycle changes through the normalized runtime event ingress.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed &&
-        _runtimeManager.runtimeConfigured) {
+    if (state == AppLifecycleState.resumed) {
       unawaited(_syncHostSubscriber());
       unawaited(WorkActivityPresentationService.instance.refreshCapabilities());
     }
@@ -187,13 +187,6 @@ class CoreApplicationService with WidgetsBindingObserver {
   /// Starts host subscriptions and configured node listeners outside the widget lifecycle.
   Future<void> _startRuntimeServicesOnce() async {
     final stopwatch = Stopwatch()..start();
-    if (!_runtimeManager.runtimeConfigured) {
-      ClientLogger.i(
-        'runtime services waiting for configuration',
-        tag: _logTag,
-      );
-      return;
-    }
     try {
       ClientLogger.attachPersistentStorage();
       ClientLogger.v(
