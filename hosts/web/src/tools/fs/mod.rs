@@ -79,6 +79,18 @@ impl FileSystemHost for WebFileSystemHost {
         Ok(Uint8Array::new(&value).to_vec())
     }
 
+    fn readFileBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let value = call_file_system(
+            "readFileBytesRange",
+            &[
+                JsValue::from_str(path),
+                JsValue::from_f64(offset as f64),
+                JsValue::from_f64(length as f64),
+            ],
+        )?;
+        Ok(Uint8Array::new(&value).to_vec())
+    }
+
     fn writeFile(&self, path: &str, content: &str, append: bool) -> HostResult<()> {
         call_file_system(
             "writeFile",
@@ -94,6 +106,14 @@ impl FileSystemHost for WebFileSystemHost {
     fn writeFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         call_file_system(
             "writeFileBytes",
+            &[JsValue::from_str(path), bytes_to_js(content)],
+        )?;
+        Ok(())
+    }
+
+    fn appendFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        call_file_system(
+            "appendFileBytes",
             &[JsValue::from_str(path), bytes_to_js(content)],
         )?;
         Ok(())
