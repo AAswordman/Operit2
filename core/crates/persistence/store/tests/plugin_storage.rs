@@ -1479,21 +1479,35 @@ fn preference_references_do_not_block_independent_plugin_transactions() {
     target.dispose();
 }
 
-/// Queries synchronized source envelopes without exposing runtime metadata or accepting writes.
+/// Queries synchronized source envelopes through the same parameterized CTE shape as memory retrieval.
 #[test]
 fn object_queries_rank_vectors_after_sync_replay() {
     let first = Fixture::new("first");
     let handle = first.open("objects");
-    first.call(json!({"op":"commit","handle":handle,"mutations":[put("source", json!({"record":{"content":"source"},"embedding":{"vector":[1.0,0.0]}}))]})).unwrap();
-    let sql = "WITH query_vector AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each('[1.0,0.0]')) SELECT key,(SELECT sum(q.value*v.value) FROM json_each(o.value,'$.embedding.vector') v JOIN query_vector q ON q.dimension=v.key) AS score FROM plugin_objects o WHERE collection='keys' ORDER BY score DESC LIMIT 1";
-    let query = json!({"op":"query","handle":handle,"statement":{"sql":sql,"params":[]}});
-    let rows = first.call(query).unwrap();
-    assert_eq!(rows[0]["values"][1]["value"], 1.0);
+    first.call(json!({"op":"commit","handle":handle,"mutations":[
+        put("source", json!({"record":{"content":"source"},"embedding":{"vector":[1.0,0.0]}})),
+        put("other", json!({"record":{"content":"other"},"embedding":{"vector":[0.0,1.0]}}))
+    ]})).unwrap();
+    // SQLiteDialect rejects AS MATERIALIZED before SQLite sees the statement.
+    let sql = "WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?1)) SELECT key,(SELECT sum(q.value*v.value) FROM json_each(o.value,'$.embedding.vector') v JOIN query_vector q ON q.dimension=v.key) AS score FROM plugin_objects o WHERE collection='keys' ORDER BY score DESC LIMIT 1";
     let second = Fixture::new("second");
     second.replay(&first.export());
     let other = second.open("objects");
-    assert_eq!(rows, second.call(json!({"op":"query","handle":other,"statement":{"sql":sql,"params":[]}})).unwrap());
-    for statement in ["SELECT * FROM _operit_log", "DELETE FROM plugin_objects", "SELECT * FROM sqlite_master"] {
+    for (vector, expected) in [("[1.0,0.0]", "source"), ("[0.0,1.0]", "other")] {
+        let params = json!([{"kind":"text","value":vector}]);
+        let rows = first.call(json!({"op":"query","handle":handle,"statement":{"sql":sql,"params":params}})).unwrap();
+        assert_eq!(rows[0]["values"][0]["value"], expected);
+        assert_eq!(rows[0]["values"][1]["value"], 1.0);
+        assert_eq!(rows, second.call(json!({"op":"query","handle":other,"statement":{"sql":sql,"params":params}})).unwrap());
+    }
+    for statement in [
+        "SELECT * FROM _operit_log",
+        "DELETE FROM plugin_objects",
+        "SELECT * FROM sqlite_master",
+        "WITH hidden AS (SELECT * FROM _operit_log) SELECT * FROM hidden",
+        "WITH hidden AS (SELECT * FROM sqlite_master) SELECT * FROM hidden",
+        "WITH keys AS (SELECT key FROM plugin_objects) DELETE FROM plugin_objects WHERE key IN (SELECT key FROM keys)",
+    ] {
         assert!(first.call(json!({"op":"query","handle":handle,"statement":{"sql":statement,"params":[]}})).is_err());
     }
     first.dispose(); second.dispose();

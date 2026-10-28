@@ -1339,7 +1339,7 @@ function parameters(options) {
   ];
 }
 var rankedQuery = `
-WITH query_vector AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?9)), scoped AS (
+WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?9)), scoped AS (
   SELECT key,value,json_extract(value,'$.record.id') AS id,
     json_extract(value,'$.record.importance') AS importance,
     json_extract(value,'$.record.updatedAt') AS updatedAt
@@ -3719,7 +3719,7 @@ var DatabaseMemoryRepository = class {
       const semantic = queryEmbedding !== null;
       const space = queryEmbedding === null ? "" : queryEmbedding.space, vector = queryEmbedding === null ? [] : queryEmbedding.vector;
       const rows = yield this.memoryDatabase.query(
-        `WITH query_vector AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?6)), chunks AS (
+        `WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?6)), chunks AS (
       SELECT value,json_extract(value,'$.record.chunkIndex') AS position FROM plugin_objects
       WHERE collection='chunks' AND key>=?1 AND key<?2 AND json_extract(value,'$.record.memoryUuid')=?3
     ), scored AS (
