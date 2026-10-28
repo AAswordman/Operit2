@@ -14,7 +14,7 @@ impl RemoteAnnouncementPreferences {
     }
     /// Registers this owner's typed preference contract for background synchronization.
     pub(crate) fn spaceMergeStore() -> operit_store::PreferenceMerge::PreferenceMergeStore {
-        operit_store::PreferenceMerge::PreferenceMergeStore::values(OperitPaths::customPreferenceStoragePath("remote_announcement_preferences").expect("declared preference path"), false, 2, Self::decodeSyncedEntry)
+        operit_store::PreferenceMerge::PreferenceMergeStore::values(OperitPaths::customPreferenceStoragePath("remote_announcement_preferences").expect("declared preference path"), false, |storage, _| Self::store(storage), Self::decodeSyncedEntry)
     }
 
     /// Decodes historical scalar encodings without creating unrelated default entries.

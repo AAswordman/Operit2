@@ -54,7 +54,7 @@ impl ApiPreferences {
 
     /// Registers the API preference contract independently of its local schema migration lifecycle.
     pub(crate) fn spaceMergeStore() -> operit_store::PreferenceMerge::PreferenceMergeStore {
-        operit_store::PreferenceMerge::PreferenceMergeStore::values(OperitPaths::API_PREFERENCES_PATH, false, 2, Self::decodeSyncedEntry)
+        operit_store::PreferenceMerge::PreferenceMergeStore::values(OperitPaths::API_PREFERENCES_PATH, false, |storage, _| Self::store(storage), Self::decodeSyncedEntry)
     }
 
     /// Converts historical API values to the current typed value contract.

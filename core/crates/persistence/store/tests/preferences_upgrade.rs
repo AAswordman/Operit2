@@ -74,6 +74,18 @@ fn replay_keeps_existing_unjournaled_baseline() {
     .unwrap();
     assert_eq!(local.data().unwrap().get(&key), Some(&json!(15)));
 }
+/// Migrates local historical values through the same contract as the owner's wire decoder.
+fn migrate_old(version: u32, preferences: &mut operit_store::PreferencesDataStore::Preferences) -> Result<(), PreferencesDataStoreError> {
+    if version == 0 {
+        for (key, value) in preferences.entries() {
+            if let Some(encoded) = value.as_str() {
+                preferences.set(&stringPreferencesKey(&key), serde_json::from_str::<serde_json::Value>(encoded)?);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn decode_old(entry: &mut PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
     entry.decodeHistoricalValues(|version, p| {
         if version == 0 {
@@ -111,7 +123,7 @@ fn syncing_new_record_migrates_existing_local_records_before_promoting_schema() 
         .preferenceHistory()
         .unwrap();
     let schema = PreferenceMergeSchema {
-        stores: vec![PreferenceMergeStore::values(path, false, 1, decode_old)],
+        stores: vec![PreferenceMergeStore::values(path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(1, migrate_old), decode_old)],
     };
     applyOperations(a.host.clone(), &schema, &[], &incoming, |_, _| true).unwrap();
     let local = PreferencesDataStore::newWithStorage(a.host.clone(), path).withSchema(1, |_, p| {
@@ -141,7 +153,7 @@ const COUNTER: &str = "runtime/config/preferences/upgrade-counter.preferences.js
 
 fn counter_schema() -> PreferenceMergeSchema {
     PreferenceMergeSchema {
-        stores: vec![PreferenceMergeStore::values(COUNTER, false, 1, decode_old)],
+        stores: vec![PreferenceMergeStore::values(COUNTER, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(1, migrate_old), decode_old)],
     }
 }
 
@@ -222,7 +234,7 @@ fn schema_upgrade_republishes_current_values_without_replaying_old_versions() {
     let operations = history(&source);
     assert!(operations.iter().any(|operation| operation.payload["schemaVersion"] == 42));
     let schema = PreferenceMergeSchema {
-        stores: vec![PreferenceMergeStore::values(COUNTER, false, 42, decode_old)],
+        stores: vec![PreferenceMergeStore::values(COUNTER, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(42, migrate_old), decode_old)],
     };
     for reverse in [false, true] {
         let target = Fixture::new();
@@ -288,7 +300,7 @@ fn failed_migration_preserves_data_schema_and_history_and_can_retry() {
     let before = br#"{"counter":"10"}"#;
     a.host.writeBytesAtomically(COUNTER, before).unwrap();
     let invalid = PreferenceMergeSchema {
-        stores: vec![PreferenceMergeStore::values(COUNTER, false, 1, reject)],
+        stores: vec![PreferenceMergeStore::values(COUNTER, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(1, |_, _| Err(PreferencesDataStoreError::Message("injected migration failure".into()))), reject)],
     };
     assert!(applyOperations(a.host.clone(), &invalid, &[], &[], |_, _| true).is_err());
     assert_eq!(a.host.readBytes(COUNTER).unwrap(), before);
@@ -318,7 +330,13 @@ fn existing_typed_roots_are_not_reimported_or_decoded_as_legacy_strings() {
         )
         .unwrap();
     let schema = PreferenceMergeSchema {
-        stores: vec![PreferenceMergeStore::values(path, false, 1, decode_old)],
+        stores: vec![PreferenceMergeStore::values(path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(1, |_, preferences| {
+            let key = stringPreferencesKey("old");
+            if let Some(encoded) = preferences.getTyped::<String>(&key)? {
+                preferences.set(&key, serde_json::from_str::<serde_json::Value>(&encoded)?);
+            }
+            Ok(())
+        }), decode_old)],
     };
     applyOperations(a.host.clone(), &schema, &[], &[], |_, _| true).unwrap();
     let data = PreferencesDataStore::newWithStorage(a.host.clone(), path)
@@ -537,7 +555,7 @@ fn duplicate_delivery_skips_replay_but_rejects_changed_originals() {
         "storagePath":path,"key":"counter","value":10,"encrypted":false,"formatVersion":2,"schemaVersion":1
     }));
     let schema = PreferenceMergeSchema {
-        stores: vec![PreferenceMergeStore::values(path, false, 1, decode)],
+        stores: vec![PreferenceMergeStore::values(path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(1, migrate_old), decode)],
     };
     applyOperations(fixture.host.clone(), &schema, &[], &[original.clone()], |_,_|true).unwrap();
     let committed = fixture.host.readBytes(path).unwrap();

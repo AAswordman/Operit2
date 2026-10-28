@@ -92,7 +92,7 @@ impl FunctionalConfigManager {
         PreferenceMergeStore {
             path: operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH.to_string(),
             encrypted: false,
-            storageVersion: Some(Self::PREFERENCES_VERSION),
+            open: |storage, path| Self::preferenceStore(storage, path),
             decode: Some(Self::decodeSyncedEntry),
             merge: StoragePreferencesMergeDescriptor {
                 version: 1,

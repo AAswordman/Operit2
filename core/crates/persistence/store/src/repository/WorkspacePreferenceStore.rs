@@ -18,7 +18,13 @@ impl WorkspacePreferenceStore {
     /// Registers the workspace owner's wire decoder independently of opening a local workspace store.
     pub fn preferenceSyncStore() -> crate::PreferenceMerge::PreferenceMergeStore {
         crate::PreferenceMerge::PreferenceMergeStore::values(operit_util::RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH,
-            false, Self::PREFERENCES_VERSION, Self::decodeSyncedEntry)
+            false, Self::openStore, Self::decodeSyncedEntry)
+    }
+
+    /// Opens the same versioned workspace owner for background synchronization.
+    fn openStore(storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
+        PreferencesDataStore::newWithStorage(storage, path)
+            .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences)
     }
 
     /// Imports historical complete workspace records without running initialization migrations.

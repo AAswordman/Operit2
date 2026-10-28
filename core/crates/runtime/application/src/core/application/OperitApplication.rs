@@ -319,12 +319,10 @@ impl OperitApplication {
         AppLogger::v("OperitApplication", "runtime initialization start");
         setHostManager(self.hostManager.clone());
         if let Some(storage) = self.hostManager.runtimeStorageHost.clone() {
-            if let Err(error) =
-                operit_store::ExtensionStore::ExtensionStore::new(storage).migrateLegacyLayout()
-            {
+            if let Err(error) = PreferenceSpaceMerge::layout(storage).prepare() {
                 AppLogger::e(
-                    "ExtensionMigration",
-                    &format!("Legacy data retained; migration will retry: {error}"),
+                    "PreferenceLayout",
+                    &format!("Preference layout migration incomplete: {error}"),
                 );
             }
         }
@@ -953,6 +951,9 @@ impl OperitApplication {
     ) -> Result<serde_json::Value, String> {
         let receipt: SyncReceipt = serde_json::from_value(clock).map_err(|error| error.to_string())?;
         receipt.validate()?;
+        let storage = self.hostManager.runtimeStorageHost.clone()
+            .ok_or("RuntimeStorageHost is not registered for persistent sync")?;
+        PreferenceSpaceMerge::layout(storage).prepare()?;
         let store = self.runtimeSyncOperationStore()?;
         let mut operations = Vec::new();
         let mut errors = Vec::new();
@@ -1068,8 +1069,9 @@ impl OperitApplication {
         let mut errors = Vec::new();
         let mut applied = Vec::new();
         let mut skipped = Vec::new();
+        let mut retiredCount = 0;
         let mut preferenceReferences = std::collections::BTreeMap::new();
-        let preferences = pending
+        let mut preferences = pending
             .iter()
             .filter(|operation| operation.domain == "preferences")
             .cloned()
@@ -1079,14 +1081,27 @@ impl OperitApplication {
                 .iter()
                 .any(|operation| operation.domain == PLUGIN_STORAGE_SYNC_DOMAIN)
         {
-            match store.preferenceMergeHistory() {
-                Err(error) => {
-                    errors.push(format!("preference history: {error}"));
-                }
-                Ok(history) => {
+            let prepared = store
+                .preferenceMergeHistory()
+                .map_err(|error| error.to_string())
+                .and_then(|mut history| {
+                    let count = PreferenceSpaceMerge::layout(storage.clone())
+                        .prepareOperations(&mut history, &mut preferences)?;
+                    Ok((history, count))
+                });
+            match prepared {
+                Err(error) => errors.push(format!("preference preparation: {error}")),
+                Ok((history, count)) => {
+                    retiredCount = count;
                     for outcome in applyIndependentOperations(
                         storage.clone(),
-                        &PreferenceSpaceMerge::schema(&history.iter().chain(&preferences).cloned().collect::<Vec<_>>()),
+                        &PreferenceSpaceMerge::schema(
+                            &history
+                                .iter()
+                                .chain(&preferences)
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                        ),
                         &history,
                         &preferences,
                         |path, key| !isRetiredCharacterPreferenceKey(path, key),
@@ -1118,8 +1133,15 @@ impl OperitApplication {
         {
             let ordered = operation.semantics == SyncOperationSemantics::Transaction;
             let dataset = match synchronizationDataset(operation) {
-                Ok(dataset) => (operation.originDeviceId.clone(), operation.domain.clone(), dataset),
-                Err(error) => { errors.push(format!("dataset op={}: {error}", operation.opId)); continue; }
+                Ok(dataset) => (
+                    operation.originDeviceId.clone(),
+                    operation.domain.clone(),
+                    dataset,
+                ),
+                Err(error) => {
+                    errors.push(format!("dataset op={}: {error}", operation.opId));
+                    continue;
+                }
             };
             if ordered && blocked.contains(&dataset) { continue; }
             let result = (|| -> Result<(), String> {
@@ -1131,7 +1153,9 @@ impl OperitApplication {
                         .map_err(|error| error.to_string())?
                         .applyOperation(operation)
                         .map_err(|error| error.to_string()),
-                    BINDING_SYNC_DOMAIN => self.runtimeBindingStore()?.applySyncedOperation(operation),
+                    BINDING_SYNC_DOMAIN => {
+                        self.runtimeBindingStore()?.applySyncedOperation(operation)
+                    }
                     NETWORK_CONTROL_SYNC_DOMAIN => self
                         .runtimeNetworkControlStore()?
                         .applySyncedOperation(operation),
@@ -1178,13 +1202,14 @@ impl OperitApplication {
                 }
             }
         }
-        let skippedCount = match store.skipOperations(&skipped) {
-            Ok(()) => skipped.len(),
-            Err(error) => {
-                errors.push(format!("skip obsolete preference operations: {error}"));
-                0
-            }
-        };
+        let skippedCount = retiredCount
+            + match store.skipOperations(&skipped) {
+                Ok(()) => skipped.len(),
+                Err(error) => {
+                    errors.push(format!("skip obsolete preference operations: {error}"));
+                    0
+                }
+            };
         if let Err(error) = store.completeOperations(&applied) {
             errors.push(format!("complete pending operations: {error}"));
         }

@@ -50,7 +50,7 @@ impl SttConfigManager {
         PreferenceMergeStore {
             path: path.to_string(),
             encrypted: true,
-            storageVersion: Some(2),
+            open: |storage, path| Self::preferenceStore(storage, path),
             decode: Some(Self::decodeSyncedEntry),
             merge: StoragePreferencesMergeDescriptor {
                 version: 1,

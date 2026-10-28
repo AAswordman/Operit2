@@ -1324,7 +1324,7 @@ impl CoreSpaceStore {
         let node = name.strip_suffix(".preferences.json")?;
         if node.starts_with('.') || validateNodeId(node).is_err() { return None; }
         Some(crate::PreferenceMerge::PreferenceMergeStore::values(
-            path, false, CORE_SPACE_RECORD_VERSION, Self::decodeSyncedRecord,
+            path, false, |storage, path| Self::new(storage).recordStore(path), Self::decodeSyncedRecord,
         ))
     }
 

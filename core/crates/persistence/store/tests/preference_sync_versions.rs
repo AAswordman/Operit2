@@ -193,7 +193,7 @@ fn registered_owner_accepts_its_version_on_a_new_device_without_adopting_sender_
             .unwrap();
         let target = Fixture::new();
         let schema = PreferenceMergeSchema {
-            stores: vec![PreferenceMergeStore::values(PATH, false, 2, current_values)],
+            stores: vec![PreferenceMergeStore::values(PATH, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(2, |_, _| Ok(())), current_values)],
         };
         let outcomes = applyIndependentOperations(
             target.host.clone(),
@@ -215,7 +215,9 @@ fn registered_owner_accepts_its_version_on_a_new_device_without_adopting_sender_
                 Some(&json!(7))
             );
         } else {
-            assert!(!target.host.exists(PATH).unwrap());
+            let local = target.store(PATH, 2);
+            assert_eq!(local.schemaVersion().unwrap(), 2);
+            assert!(local.data().unwrap().get(&stringPreferencesKey("value")).is_none());
         }
     }
 }
@@ -467,4 +469,89 @@ fn future_schema_operations_remain_pending_and_apply_after_local_upgrade() {
             .get(&stringPreferencesKey("future")),
         Some(&json!({"enabled":true}))
     );
+}
+
+/// Opens an encrypted owner once per batch, including alias projection and redelivery.
+#[test]
+fn encrypted_owner_is_reused_within_each_batch_and_reopened_for_the_next() {
+    use operit_host_api::PluginStorage::StoragePreferencesMergeCatalog;
+    use operit_store::SyncOperationStore::SyncOperationSemantics;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static OPENS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Counts owner construction while retaining the real encrypted DataStore migration.
+    fn open(storage: Arc<dyn RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
+        OPENS.fetch_add(1, Ordering::SeqCst);
+        PreferencesDataStore::newEncryptedWithStorage(storage, path)
+            .withSchema(2, |_, _| Ok(()))
+    }
+
+    let source = Fixture::new();
+    PreferencesDataStore::newEncryptedWithStorage(source.host.clone(), PATH)
+        .withSchema(2, |_, _| Ok(()))
+        .edit(|preferences| {
+            preferences.set(
+                &stringPreferencesKey("item_old"),
+                json!({"id":"old","name":"Old"}),
+            );
+            preferences.set(
+                &stringPreferencesKey("item_current"),
+                json!({"id":"current","name":"Current"}),
+            );
+        })
+        .unwrap();
+    let mut incoming = source.history();
+    let mut alias = incoming
+        .iter()
+        .max_by_key(|operation| operation.sequence)
+        .unwrap()
+        .clone();
+    alias.sequence += 1;
+    alias.opId = format!("{}:{}", alias.originDeviceId, alias.sequence);
+    alias.entityType = "entry".into();
+    alias.entityId = serde_json::to_string(&(PATH, "item_old")).unwrap();
+    alias.operation = "alias".into();
+    alias.semantics = SyncOperationSemantics::Transaction;
+    alias.payload = json!({
+        "storagePath":PATH,"key":"item_old","value":"item_current",
+        "encrypted":true,"formatVersion":2,"schemaVersion":2
+    });
+    incoming.push(alias);
+
+    let mut owner = PreferenceMergeStore::values(PATH, true, open, current_values);
+    owner.merge.catalog = Some(StoragePreferencesMergeCatalog {
+        key_prefix: "item_".into(),
+        key_suffix: String::new(),
+        identity_field: "id".into(),
+        name_field: "name".into(),
+        ignored_fields: Vec::new(),
+        retired_keys: Vec::new(),
+    });
+    let schema = PreferenceMergeSchema {
+        stores: vec![owner],
+    };
+    let target = Fixture::new();
+    let received = PreferencesDataStore::newEncryptedWithStorage(target.host.clone(), PATH);
+    for batch in 1..=2 {
+        let outcomes = applyIndependentOperations(
+            target.host.clone(),
+            &schema,
+            &[],
+            &incoming,
+            |_, _| true,
+        );
+        assert!(!outcomes.is_empty());
+        for outcome in outcomes {
+            assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+            assert!(!outcome.skipped);
+        }
+        assert_eq!(OPENS.load(Ordering::SeqCst), batch);
+        let preferences = received.data().unwrap();
+        assert!(!preferences.contains(&stringPreferencesKey("item_old")));
+        assert_eq!(
+            preferences.get(&stringPreferencesKey("item_current")).unwrap()["id"],
+            "current",
+        );
+    }
 }

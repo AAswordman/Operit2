@@ -455,7 +455,7 @@ fn rust_owner_and_plugin_declarations_share_catalog_aliases() {
     native["references"] = json!([]);
     let schema = PreferenceMergeSchema { stores: vec![PreferenceMergeStore {
         path: native_path.to_string(), encrypted: false,
-            storageVersion: None,
+            open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
             decode: None,
         merge: serde_json::from_value(native).unwrap(),
     }] };
@@ -494,7 +494,7 @@ fn shared_declaration_validation_precedes_storage_publication() {
         invalid["references"][0]["path"] = path;
         let schema = PreferenceMergeSchema { stores: vec![PreferenceMergeStore {
             path: fixture.path.clone(), encrypted: false,
-            storageVersion: None,
+            open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
             decode: None,
             merge: serde_json::from_value(invalid.clone()).unwrap(),
         }] };

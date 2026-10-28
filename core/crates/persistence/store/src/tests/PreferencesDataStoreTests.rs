@@ -1859,7 +1859,7 @@ fn identityHistorySchema() -> crate::PreferenceMerge::PreferenceMergeSchema {
         stores: vec![PreferenceMergeStore {
             path: "runtime/config/preferences/identity-history.preferences.json".to_string(),
             encrypted: false,
-            storageVersion: None,
+            open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
             decode: None,
             merge: operit_host_api::PluginStorage::StoragePreferencesMergeDescriptor {
                 version: 1,

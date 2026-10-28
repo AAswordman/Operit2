@@ -2414,23 +2414,6 @@ impl PreferencesSyncedEntry {
         Ok(())
     }
 
-    /// Presents the complete local representation to its owner's historical value decoder.
-    pub(crate) fn storedSnapshot(
-        storagePath: &str,
-        encrypted: bool,
-        preferences: &Preferences,
-    ) -> Result<Self, PreferencesDataStoreError> {
-        Ok(Self {
-            storagePath: storagePath.into(), encrypted,
-            schemaVersion: Some(PreferencesDataStore::readSchemaVersion(preferences)?),
-            contractVersion: None,
-            mutation: PreferencesSyncedMutation::Transaction(preferences.iterEntries()
-                .filter(|(key, _)| *key != PREFERENCES_SCHEMA_VERSION_KEY_NAME)
-                .map(|(key, value)| PreferencesSyncedMutation::SetEntry { key: key.into(), value: value.clone() })
-                .collect()),
-        })
-    }
-
     /// Converts complete historical values through an explicitly supplied owner codec.
     pub fn decodeHistoricalValues<F>(&mut self, decode: F) -> Result<(), PreferencesDataStoreError>
     where
@@ -2780,14 +2763,10 @@ impl PreferencesDataStore {
         Self::readSchemaVersion(&self.data()?)
     }
 
-    /// Reports whether schema migration and initial replication are already durably committed.
-    pub fn isSyncPrepared(&self, expected: u32) -> Result<bool, PreferencesDataStoreError> {
+    /// Reports whether the owner's schema and initial replication are durably committed.
+    pub fn isSyncPrepared(&self) -> Result<bool, PreferencesDataStoreError> {
         let preferences = self.data()?;
-        let actual = Self::readSchemaVersion(&preferences)?;
-        if actual > expected {
-            return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual, expected });
-        }
-        Ok(actual == expected && preferences.replication.initialized)
+        Ok(self.schemaIsCurrent(&preferences)? && preferences.replication.initialized)
     }
 
     /// Decodes each immutable operation once and orders the prepared batch for shared consumers.
@@ -2857,26 +2836,19 @@ impl PreferencesDataStore {
     }
 
     /// Migrates, imports and replays a dataset under the same durable commit and dataset lock.
-    pub(crate) fn materializeSyncedDataset<R, P, F>(
-        storage: Arc<dyn RuntimeStorageHost>,
-        path: &str,
-        encrypted: bool,
+    pub(crate) fn materializeSyncedDataset<R, F>(
+        &self,
         schemaVersion: u32,
         operations: &[SyncOperation],
-        prepare: P,
         materialize: F,
     ) -> Result<R, PreferencesDataStoreError>
     where
-        P: FnOnce(&mut Preferences, &[SyncOperation]) -> Result<(), PreferencesDataStoreError>,
         F: FnOnce(&mut Preferences, &[SyncOperation], bool) -> Result<R, PreferencesDataStoreError>,
     {
-        let store = if encrypted {
-            Self::newEncryptedWithStorage(storage.clone(), path)
-        } else {
-            Self::newWithStorage(storage.clone(), path)
-        };
-        let journal = store.syncOperationStore.as_ref().expect("replicated dataset journal");
-        Self::materializeSyncedSnapshot(storage, path, encrypted, |preferences| {
+        let path = self.storagePath.as_str();
+        let encrypted = self.encryption.is_some();
+        let journal = self.syncOperationStore.as_ref().expect("replicated dataset journal");
+        self.materializeSyncedSnapshot(|preferences| {
             for operation in operations {
                 PreferencesSyncedEntry::fromOperation(operation)?.requireSchemaVersion(schemaVersion)?;
             }
@@ -2885,7 +2857,7 @@ impl PreferencesDataStore {
             // Old schemas stay in the immutable journal, but cannot participate in current replay.
             originals.retain(|operation| operation.payload.get("schemaVersion").and_then(Value::as_u64) == Some(u64::from(schemaVersion)));
             let previous = preferences.clone();
-            prepare(preferences, &originals)?;
+            self.migratePreferencesToCurrentSchema(preferences)?;
             let actual = Self::readSchemaVersion(preferences)?;
             if actual != schemaVersion {
                 return Err(PreferencesDataStoreError::Message(format!(
@@ -2896,7 +2868,7 @@ impl PreferencesDataStore {
                 preferences.replication.initialized = false;
             }
             let baseline = preferences.clone();
-            store.initializeReplicationUnlocked(&baseline, preferences, &originals)?;
+            self.initializeReplicationUnlocked(&baseline, preferences, &originals)?;
             originals.extend_from_slice(operations);
             originals.extend(preferences.replication.outbox.iter().cloned());
             let mut unique = BTreeMap::new();
@@ -2953,32 +2925,29 @@ impl PreferencesDataStore {
 
     /// Stages and atomically publishes exactly one preference dataset before notifying its observers.
     fn materializeSyncedSnapshot<R, F>(
-        storage: Arc<dyn RuntimeStorageHost>,
-        path: &str,
-        encrypted: bool,
+        &self,
         materialize: F,
     ) -> Result<R, PreferencesDataStoreError>
     where
         F: FnOnce(&mut Preferences) -> Result<R, PreferencesDataStoreError>,
     {
-        let store = Self::newNodeLocalWithStorage(storage, path, encrypted);
-        let transaction = store
+        let transaction = self
             .sharedState
             .transaction
             .lock()
             .expect("preferences transaction mutex");
-        store.loadUnlocked()?;
-        let previous = store.loadedPreferences().expect("dataset loaded");
+        self.loadUnlocked()?;
+        let previous = self.loadedPreferences().expect("dataset loaded");
         let mut preferences = previous.clone();
         let result = materialize(&mut preferences)?;
         preferences.pendingMutations.clear();
         let changed = previous != preferences || previous.replication != preferences.replication;
         if changed {
-            store.commitSyncedSnapshotUnlocked(&preferences)?;
+            self.commitSyncedSnapshotUnlocked(&preferences)?;
         }
         drop(transaction);
         if changed {
-            store.notifyChanged();
+            self.notifyChanged();
         }
         Ok(result)
     }
