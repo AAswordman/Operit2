@@ -7,6 +7,9 @@ mod device_preferences;
 mod device_space_ui;
 #[path = "../../../../apps/esp32/src/device_speech.rs"]
 mod device_speech;
+#[cfg(test)]
+#[path = "../../../../apps/esp32/src/wav.rs"]
+mod wav;
 #[path = "../../../../apps/esp32/src/edge_chat.rs"]
 mod edge_chat;
 mod ipc;

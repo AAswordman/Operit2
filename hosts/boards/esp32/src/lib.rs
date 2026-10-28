@@ -15,6 +15,7 @@ pub mod serial;
 #[cfg(any(target_os = "espidf", test))]
 pub mod serial_debug;
 
+pub mod audio;
 pub mod face;
 pub mod mirror_color;
 pub mod pins;

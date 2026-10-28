@@ -235,18 +235,33 @@ impl DeviceSpeech {
         if end { state.recording = false; }
         Ok(())
     }
+    pub fn recordingId(&self) -> Option<String> {
+        let state = self.state.lock().unwrap();
+        if state.recording { state.active.as_ref().map(|active| active.0.clone()) } else { None }
+    }
+    pub fn isRecording(&self, id: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state.recording && state.active.as_ref().is_some_and(|active| active.0 == id)
+    }
     pub async fn appendPcm(&self, pcm: Vec<u8>) -> Result<(), String> {
+        let id = self.recordingId().ok_or("Speech session ended")?;
+        self.appendPcmFor(&id, pcm).await
+    }
+    /// A native capture task keeps its original identity across cancel/restart.
+    pub async fn appendPcmFor(&self, id: &str, pcm: Vec<u8>) -> Result<(), String> {
         if pcm.is_empty() || pcm.len() > BLOCK || pcm.len() % 2 != 0 {
             return Err("Invalid PCM block".into());
         }
-        let id = self.state.lock().unwrap().active.as_ref().ok_or("Speech session ended")?.0.clone();
         let _capture = self.capture.lock().await;
-        self.capturePacket(id, Some(pcm)).await
+        self.capturePacket(id.to_owned(), Some(pcm)).await
     }
     pub async fn finishRecognition(&self) -> Result<(), String> {
-        let id = self.state.lock().unwrap().active.as_ref().ok_or("Speech session ended")?.0.clone();
+        let id = self.recordingId().ok_or("Speech session ended")?;
+        self.finishRecognitionFor(&id).await
+    }
+    pub async fn finishRecognitionFor(&self, id: &str) -> Result<(), String> {
         let _capture = self.capture.lock().await;
-        self.capturePacket(id, None).await
+        self.capturePacket(id.to_owned(), None).await
     }
     pub fn synthesize(&self, text: String) -> Result<String, String> {
         if text.trim().is_empty() || text.len() > 4096 {
@@ -269,6 +284,21 @@ impl DeviceSpeech {
             state.resultId += 1;
         }
         while self.playbackInput.lock().unwrap().try_recv().is_ok() {}
+    }
+    /// The physical UI polls scalars and moves completed text once. Never clone a
+    /// potentially 16 KiB recognition result into JSON on every display tick.
+    pub fn takeNativeUpdate(&self, previous: &mut u64) -> (u32, Option<Result<String, String>>) {
+        let mut state = self.state.lock().unwrap();
+        let phase = if state.recording { 1 } else if state.active.is_some() { 3 } else { 0 };
+        let result = if state.resultId != *previous {
+            *previous = state.resultId;
+            state.text.take().map(Ok).or_else(|| state.error.clone().map(Err))
+        } else { None };
+        (phase, result)
+    }
+    pub fn canPlay(&self, id: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state.error.is_none() && state.active.as_ref().is_none_or(|active| active.0 == id)
     }
     pub fn snapshot(&self) -> serde_json::Value {
         let state = self.state.lock().unwrap();
@@ -437,6 +467,38 @@ mod tests {
             ))
             .await
             .is_err());
+    }
+    #[tokio::test]
+    async fn native_ui_moves_the_complete_recognition_result_only_once() {
+        let service = DeviceSpeech::default();
+        let (mut output, mut input) = connect(&service, "native-ui");
+        packet(&mut output).await;
+        let id = service.beginRecognition().unwrap(); packet(&mut output).await;
+        service.finishRecognitionFor(&id).await.unwrap(); packet(&mut output).await;
+        for _ in 0..8 {
+            input.send(value(serde_json::json!({"id":id,"type":"stt.text","text":"x".repeat(2048)}))).await.unwrap();
+        }
+        input.send(value(serde_json::json!({"id":id,"type":"stt.result","text":""}))).await.unwrap();
+        let mut previous = 0;
+        let (phase, result) = service.takeNativeUpdate(&mut previous);
+        assert_eq!(phase, 0); assert_eq!(result.unwrap().unwrap(), "x".repeat(16384));
+        assert!(service.takeNativeUpdate(&mut previous).1.is_none());
+        assert_eq!(service.snapshot()["text"], serde_json::Value::Null);
+    }
+    #[tokio::test]
+    async fn previous_native_capture_cannot_append_or_finish_a_replacement_recording() {
+        let service = DeviceSpeech::default();
+        let (mut output, _input) = connect(&service, "native-restart");
+        packet(&mut output).await;
+        let old = service.beginRecognition().unwrap(); packet(&mut output).await;
+        service.cancel("cancel".into()); packet(&mut output).await;
+        let next = service.beginRecognition().unwrap(); packet(&mut output).await;
+        assert!(!service.isRecording(&old)); assert!(service.isRecording(&next));
+        assert!(service.appendPcmFor(&old, vec![0, 1]).await.is_err());
+        assert!(service.finishRecognitionFor(&old).await.is_err());
+        assert!(service.isRecording(&next));
+        service.appendPcmFor(&next, vec![2, 3]).await.unwrap();
+        assert_eq!(fields(packet(&mut output).await).unwrap()["id"], CoreValue::String(next));
     }
     #[tokio::test]
     async fn long_recognition_is_published_only_after_all_text_chunks_complete() {

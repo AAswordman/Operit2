@@ -309,6 +309,13 @@ test('settings groups navigate back without emitting service operations',options
   assert.deepEqual(actions,['edge_pair']);
 });
 
+test('offline device settings exposes audio self-test without pretending chat is connected',options,async()=>{
+  const {call,inspect,tap,actions}=await fixture();call('set_connection',['number','number'],[0,0]);
+  tap('sidebar_toggle');tap('sidebar_settings');tap('settings_device');
+  const button=inspect().nodes.find(n=>n.id==='audio_test');assert(button?.enabled);
+  assert.equal(tap('audio_test'),1);assert.deepEqual(actions,['edge_audio_test']);
+});
+
 test('drawer scrim cannot trigger the underlying send, and closing preserves the draft',options,async()=>{
   const {call,inspect,tap,actions,ui}=await fixture();call('set_connection',['number','number'],[1,1]);
   call('set_chat_draft',['string'],['草稿']);tap('sidebar_toggle');

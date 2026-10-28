@@ -17,7 +17,9 @@ operit-host-native-scheduler = { path = "../../hosts/common/operit-host-native-s
 operit-peer-link = { path = "../../core/crates/node/peer-link" }
 operit-edge-contract = { path = "../../core/crates/node/edge-contract" }
 async-trait = "0.1"
-log = "0.4"
+# UART console logging is disabled after boot to protect binary Link frames.
+# Compile out Rust log formatting too; startup errors and USB health remain available.
+log = { version = "0.4", features = ["release_max_level_off"] }
 operit-board-esp32 = { path = "../../hosts/boards/esp32" }
 operit-node-edge = { path = "../../core/crates/node/edge" }
 operit-edge-scene = { path = "../../hosts/common/operit-edge-scene" }
@@ -54,10 +56,11 @@ esp_idf_components = [
   "esp_http_client",
   "espressif__mdns",
   "ui_port",
+  "operit_board_audio",
 ]
 extra_components = [
   { remote_component = { name = "espressif/mdns", version = "1.2.0" } },
-  { component_dirs = ["ui_port"] },
+  { component_dirs = ["ui_port", "../../hosts/boards/esp32/operit_board_audio"] },
 ]
 
 # Remove duplicated code across the shared device runtime without changing the
