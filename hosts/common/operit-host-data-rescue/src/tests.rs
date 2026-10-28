@@ -26,9 +26,19 @@ impl Fixture {
 
     /// Opens and configures the independent maintenance service.
     fn session(&self, secrets: Option<Arc<dyn HostSecretStore>>) -> NativeRescueSession {
+        self.session_for(self.roots(), secrets)
+    }
+
+    /// Configures the production session with one explicit physical storage layout.
+    fn session_for(&self, roots: RescueRoots, secrets: Option<Arc<dyn HostSecretStore>>) -> NativeRescueSession {
         let mut session = NativeRescueSession::open(self.0.join("runtime"), secrets).unwrap();
-        session.execute(json!({"operation": "configure", "roots": self.roots()})).unwrap();
+        session.execute(json!({"operation": "configure", "roots": roots})).unwrap();
         session
+    }
+
+    /// Selects shared or nested runtime and workspace roots for regression coverage.
+    fn layout(&self, runtime: &str, workspaces: &str) -> RescueRoots {
+        RescueRoots { runtime_root: self.0.join(runtime), workspace_root: self.0.join(workspaces), cli_config_root: None }
     }
 }
 impl Drop for Fixture {
@@ -317,9 +327,9 @@ fn ancestor_aliases_share_runtime_and_maintenance_leases() {
     assert_eq!(absolute_root(&aliased_runtime).unwrap(), runtime);
 }
 
-/// Compares physical roots so directory aliases cannot conceal overlapping data trees.
+/// Maps ancestor aliases and nested roots into one physical publication tree.
 #[test]
-fn ancestor_aliases_do_not_hide_overlapping_roots() {
+fn ancestor_aliases_share_overlapping_publication_roots() {
     let fixture = Fixture::new();
     let physical = fixture.0.join("physical");
     fs::create_dir_all(&physical).unwrap();
@@ -330,8 +340,12 @@ fn ancestor_aliases_do_not_hide_overlapping_roots() {
         workspace_root: alias.join("runtime/nested"),
         cli_config_root: None,
     };
-    let error = NativeRescueHost::new(&fixture.0.join("application/runtime"), roots, None).err().unwrap();
-    assert_eq!(error, "Selected storage roots must not overlap");
+    let host = NativeRescueHost::new(&fixture.0.join("application/runtime"), roots, None).unwrap();
+    assert_eq!(host.roots["runtime"], physical.join("runtime"));
+    assert_eq!(host.roots["workspaces"], physical.join("runtime/nested"));
+    let id = uuid::Uuid::new_v4().to_string();
+    assert_eq!(host.staged_path(&id, "runtime/nested/file").unwrap(), host.staged_path(&id, "workspaces/file").unwrap());
+    assert_eq!(host.publication_roots.len(), 3);
 }
 
 /// Rejects root links and linked descendants even when ancestor aliases are accepted.
@@ -362,14 +376,161 @@ fn dangling_ancestor_aliases_are_rejected() {
     assert!(!missing.exists());
 }
 
-/// Rejects overlapping roots before the service can traverse or stage any user data.
+/// Restores shared and nested layouts without duplicate writes or overlapping directory moves.
 #[test]
-fn root_overlap_is_an_explicit_error() {
-    let fixture = Fixture::new();
-    let mut roots = fixture.roots();
-    roots.workspace_root = roots.runtime_root.join("nested-workspace");
-    let mut session = NativeRescueSession::open(fixture.0.join("runtime"), None).unwrap();
-    assert!(session.execute(json!({"operation":"configure","roots":roots})).is_err());
+fn overlapping_roots_roundtrip_and_remain_portable() {
+    for (runtime, workspaces) in [
+        ("runtime", "runtime"),
+        ("runtime", "runtime/workspaces"),
+        ("workspaces/runtime", "workspaces"),
+        ("storage/runtime", "storage/workspaces"),
+        ("client", "client/workspaces"),
+        ("runtime", "secure"),
+    ] {
+        let source = Fixture::new();
+        source.write(&format!("{runtime}/identities/a/data"), &vec![31; 140_000]);
+        source.write(&format!("{workspaces}/identities/a/project/file"), b"workspace payload");
+        source.write("storage/extra", b"extra application data");
+        let source_roots = source.layout(runtime, workspaces);
+        source.write("client/link/local_runtime_storage.json", &serde_json::to_vec(&json!({
+            "confirmed": true, "runtimeRoot": source_roots.runtime_root,
+            "workspaceRoot": source_roots.workspace_root, "identities": [],
+        })).unwrap());
+        let mut exporting = NativeRescueSession::open(source.0.join("runtime"), None).unwrap();
+        exporting.execute(json!({"operation": "configureAutomatic"})).unwrap();
+        let archive = exporting.execute(json!({"operation": "export"})).unwrap();
+        for (target_runtime, target_workspaces) in [(runtime, workspaces), ("runtime", "workspaces")] {
+            let target = Fixture::new();
+            target.write(&format!("{target_runtime}/original"), b"original data");
+            let roots = target.layout(target_runtime, target_workspaces);
+            let mut importing = target.session_for(roots.clone(), None);
+            let id = transfer(&archive, &mut importing);
+            let restored = importing.execute(json!({"operation": "restore", "archiveId": id})).unwrap();
+            assert_eq!(restored["restored"], true);
+            assert_eq!(fs::read(roots.runtime_root.join("identities/a/data")).unwrap(), vec![31; 140_000]);
+            assert_eq!(fs::read(roots.workspace_root.join("identities/a/project/file")).unwrap(), b"workspace payload");
+            assert_eq!(fs::read(target.0.join("storage/extra")).unwrap(), b"extra application data");
+            assert!(!roots.runtime_root.join("original").exists());
+            let retained: Vec<_> = restored["retainedData"].as_array().unwrap().iter()
+                .map(|path| PathBuf::from(path.as_str().unwrap())).collect();
+            assert!(retained.iter().any(|root| {
+                root.join("original").is_file() || root.join("runtime/original").is_file()
+            }));
+            let bootstrap: Value = serde_json::from_slice(&fs::read(target.0.join("client/link/local_runtime_storage.json")).unwrap()).unwrap();
+            assert_eq!(bootstrap["runtimeRoot"], json!(roots.runtime_root));
+            assert_eq!(bootstrap["workspaceRoot"], json!(roots.workspace_root));
+            let completed: Journal = serde_json::from_slice(&fs::read(restored["retainedCatalog"].as_str().unwrap()).unwrap()).unwrap();
+            for (index, plan) in completed.publications.iter().enumerate() {
+                for other in completed.publications.iter().skip(index + 1) {
+                    assert!(!plan.target.starts_with(&other.target) && !other.target.starts_with(&plan.target));
+                }
+            }
+        }
+    }
+}
+
+/// Rejects incompatible payload aliases before staging or changing the original data.
+#[test]
+fn shared_restore_destinations_reject_conflicting_payloads() {
+    let source = Fixture::new();
+    source.write("runtime/same", b"runtime content");
+    source.write("workspaces/same", b"different workspace content");
+    let mut exporting = source.session(None);
+    let archive = exporting.execute(json!({"operation": "export"})).unwrap();
+    let target = Fixture::new();
+    target.write("runtime/original", b"original data");
+    let mut importing = target.session_for(target.layout("runtime", "runtime"), None);
+    let id = transfer(&archive, &mut importing);
+    let error = importing.execute(json!({"operation": "restore", "archiveId": id})).unwrap_err();
+    assert!(error.starts_with("Conflicting archive entries share a destination:"), "{error}");
+    assert_eq!(fs::read(target.0.join("runtime/original")).unwrap(), b"original data");
+    assert!(!target.0.join("runtime/same").exists());
+    assert!(!target.0.join("data-rescue/commit.json").exists());
+}
+
+/// Publishes external CLI profile roots once when they contain runtime and workspace storage.
+#[test]
+fn external_cli_profile_roots_share_one_publication_tree() {
+    let source = Fixture::new();
+    let source_storage = Fixture::new();
+    source_storage.write("profile/runtime/data", &vec![41; 140_000]);
+    source_storage.write("profile/runtime/workspaces/project/file", b"workspace payload");
+    source_storage.write("profile/storage.json", br#"{"runtimeRoot":"old","workspaceRoot":"old"}"#);
+    let source_roots = RescueRoots {
+        runtime_root: source_storage.0.join("profile/runtime"),
+        workspace_root: source_storage.0.join("profile/runtime/workspaces"),
+        cli_config_root: Some(source_storage.0.join("profile")),
+    };
+    let mut exporting = source.session_for(source_roots, None);
+    let archive = exporting.execute(json!({"operation": "export"})).unwrap();
+    let target = Fixture::new();
+    let target_storage = Fixture::new();
+    target_storage.write("profile/original", b"original profile");
+    let target_roots = RescueRoots {
+        runtime_root: target_storage.0.join("profile/runtime"),
+        workspace_root: target_storage.0.join("profile/runtime/workspaces"),
+        cli_config_root: Some(target_storage.0.join("profile")),
+    };
+    let mut importing = target.session_for(target_roots.clone(), None);
+    let id = transfer(&archive, &mut importing);
+    let restored = importing.execute(json!({"operation": "restore", "archiveId": id})).unwrap();
+    assert_eq!(fs::read(target_roots.runtime_root.join("data")).unwrap(), vec![41; 140_000]);
+    assert_eq!(fs::read(target_roots.workspace_root.join("project/file")).unwrap(), b"workspace payload");
+    let profile = target_storage.0.join("profile");
+    let config: Value = serde_json::from_slice(&fs::read(profile.join("storage.json")).unwrap()).unwrap();
+    assert_eq!(config["runtimeRoot"], json!(target_roots.runtime_root));
+    assert_eq!(config["workspaceRoot"], json!(target_roots.workspace_root));
+    let completed: Journal = serde_json::from_slice(&fs::read(restored["retainedCatalog"].as_str().unwrap()).unwrap()).unwrap();
+    let external: Vec<_> = completed.publications.iter().filter(|plan| plan.target.starts_with(&target_storage.0)).collect();
+    assert_eq!(external.len(), 1);
+    assert_eq!(external[0].target, profile);
+    assert_eq!(fs::read(external[0].retained.join("original")).unwrap(), b"original profile");
+}
+
+/// Resumes shared publication trees from recorded roots while retaining their displaced originals.
+#[test]
+fn overlapping_roots_resume_interrupted_publication() {
+    let source = Fixture::new();
+    source.write("runtime/new", b"runtime payload");
+    source.write("workspaces/project/file", b"workspace payload");
+    let exporting_secrets = Arc::new(Secrets::default());
+    exporting_secrets.values.lock().unwrap().insert(SECRET_KEYS[0].into(), b"imported key".to_vec());
+    let mut exporting = source.session(Some(exporting_secrets));
+    let archive = exporting.execute(json!({"operation": "export"})).unwrap();
+    for (runtime, workspaces) in [
+        ("runtime", "runtime"),
+        ("runtime", "runtime/workspaces"),
+        ("storage/runtime", "storage/workspaces"),
+        ("client", "client/workspaces"),
+    ] {
+        let target = Fixture::new();
+        target.write(&format!("{runtime}/original"), b"original payload");
+        let roots = target.layout(runtime, workspaces);
+        let secrets = Arc::new(Secrets::default());
+        secrets.fail_writes.store(true, Ordering::SeqCst);
+        {
+            let mut importing = target.session_for(roots.clone(), Some(secrets.clone()));
+            let id = transfer(&archive, &mut importing);
+            let error = importing.execute(json!({"operation": "restore", "archiveId": id})).unwrap_err();
+            assert!(error.starts_with("injected secret write interruption"), "{error}");
+        }
+        assert!(StorageLease::acquire(&target.0.join("runtime"), false).is_err());
+        secrets.fail_writes.store(false, Ordering::SeqCst);
+        let mut importing = NativeRescueSession::open(target.0.join("runtime"), Some(secrets.clone())).unwrap();
+        let configured = importing.execute(json!({"operation": "configureAutomatic"})).unwrap();
+        assert_eq!(configured["roots"]["runtime"], json!(roots.runtime_root));
+        assert_eq!(configured["roots"]["workspaces"], json!(roots.workspace_root));
+        let restored = importing.execute(json!({"operation": "resumeRestore"})).unwrap();
+        assert_eq!(fs::read(roots.runtime_root.join("new")).unwrap(), b"runtime payload");
+        assert_eq!(fs::read(roots.workspace_root.join("project/file")).unwrap(), b"workspace payload");
+        assert!(restored["retainedData"].as_array().unwrap().iter().any(|path| {
+            let retained = PathBuf::from(path.as_str().unwrap());
+            retained.join("original").is_file() || retained.join("runtime/original").is_file()
+        }));
+        assert_eq!(secrets.readSecret(SECRET_KEYS[0]).unwrap().unwrap(), b"imported key");
+        drop(importing);
+        assert!(StorageLease::acquire(&target.0.join("runtime"), false).is_ok());
+    }
 }
 
 /// Allows vetted platform prefixes to be links while keeping rescue behavior intact.
@@ -426,37 +587,39 @@ fn direct_links_are_still_rejected_at_the_rescue_boundary() {
 #[test]
 fn rescue_exports_portable_preferences_without_mutating_sources() {
     use operit_store::PreferencesEncryption::PreferencesEncryption;
-    let source = Fixture::new();
-    let key = serde_json::to_vec(&json!({
-        "format": "operit.preferences.encryption.key", "version": 1,
-        "algorithm": "XChaCha20Poly1305", "keyId": "portable-test-key",
-        "key": base64::engine::general_purpose::STANDARD_NO_PAD.encode([7u8; 32]),
-    })).unwrap();
-    let cipher = PreferencesEncryption::decodeKeyBytes(&key).unwrap();
-    let storage_path = "runtime/config/preferences/model_configs.preferences.json";
-    let plaintext = br#"{"api_key":"user-owned-token","models":[]}"#;
-    let encrypted = cipher.encrypt(storage_path, plaintext).unwrap();
-    for identity in ["a", "b"] {
-        source.write(&format!("runtime/identities/{identity}/config/preferences/model_configs.preferences.json"), &encrypted);
-    }
-    let secrets = Arc::new(Secrets::default());
-    secrets.values.lock().unwrap().insert(SECRET_KEYS[0].into(), key);
-    let mut exporting = source.session(Some(secrets));
-    let archive = exporting.execute(json!({"operation": "export"})).unwrap();
-    let target = Fixture::new();
-    let mut importing = target.session(Some(Arc::new(Secrets::default())));
-    let id = transfer(&archive, &mut importing);
-    let manifest = importing.execute(json!({"operation": "inspect", "archiveId": id})).unwrap();
-    for identity in ["a", "b"] {
-        let path = format!("runtime/identities/{identity}/config/preferences/model_configs.preferences.json");
-        let record = manifest["files"].as_array().unwrap().iter().find(|file| file["path"] == path).unwrap();
-        assert_eq!(record["byteLength"], plaintext.len());
-        assert_eq!(record["sha256"], format!("{:x}", Sha256::digest(plaintext)));
-        assert_eq!(fs::read(source.0.join(&path)).unwrap(), encrypted);
-    }
-    importing.execute(json!({"operation": "restore", "archiveId": id})).unwrap();
-    for identity in ["a", "b"] {
-        assert_eq!(fs::read(target.0.join(format!("runtime/identities/{identity}/config/preferences/model_configs.preferences.json"))).unwrap(), plaintext);
+    for workspaces in ["workspaces", "runtime"] {
+        let source = Fixture::new();
+        let key = serde_json::to_vec(&json!({
+            "format": "operit.preferences.encryption.key", "version": 1,
+            "algorithm": "XChaCha20Poly1305", "keyId": "portable-test-key",
+            "key": base64::engine::general_purpose::STANDARD_NO_PAD.encode([7u8; 32]),
+        })).unwrap();
+        let cipher = PreferencesEncryption::decodeKeyBytes(&key).unwrap();
+        let storage_path = "runtime/config/preferences/model_configs.preferences.json";
+        let plaintext = br#"{"api_key":"user-owned-token","models":[]}"#;
+        let encrypted = cipher.encrypt(storage_path, plaintext).unwrap();
+        for identity in ["a", "b"] {
+            source.write(&format!("runtime/identities/{identity}/config/preferences/model_configs.preferences.json"), &encrypted);
+        }
+        let secrets = Arc::new(Secrets::default());
+        secrets.values.lock().unwrap().insert(SECRET_KEYS[0].into(), key);
+        let mut exporting = source.session_for(source.layout("runtime", workspaces), Some(secrets));
+        let archive = exporting.execute(json!({"operation": "export"})).unwrap();
+        let target = Fixture::new();
+        let mut importing = target.session_for(target.layout("runtime", workspaces), Some(Arc::new(Secrets::default())));
+        let id = transfer(&archive, &mut importing);
+        let manifest = importing.execute(json!({"operation": "inspect", "archiveId": id})).unwrap();
+        for identity in ["a", "b"] {
+            let path = format!("runtime/identities/{identity}/config/preferences/model_configs.preferences.json");
+            let record = manifest["files"].as_array().unwrap().iter().find(|file| file["path"] == path).unwrap();
+            assert_eq!(record["byteLength"], plaintext.len());
+            assert_eq!(record["sha256"], format!("{:x}", Sha256::digest(plaintext)));
+            assert_eq!(fs::read(source.0.join(&path)).unwrap(), encrypted);
+        }
+        importing.execute(json!({"operation": "restore", "archiveId": id})).unwrap();
+        for identity in ["a", "b"] {
+            assert_eq!(fs::read(target.0.join(format!("runtime/identities/{identity}/config/preferences/model_configs.preferences.json"))).unwrap(), plaintext);
+        }
     }
 }
 
@@ -622,6 +785,22 @@ fn rescue_save_progress_matches_written_archive() {
     assert_eq!(progress.phase, "save");
     assert_eq!(Some(progress.completed), progress.total);
     assert_eq!(progress.completed, fs::metadata(destination).unwrap().len());
+}
+
+/// Rejects saving onto the staged archive before opening or truncating any output file.
+#[test]
+fn rescue_save_rejects_the_staged_archive_destination() {
+    let fixture = Fixture::new();
+    fixture.write("runtime/data", b"original payload");
+    let mut session = fixture.session(None);
+    let archive = session.execute(json!({"operation": "export"})).unwrap();
+    let destination = PathBuf::from(archive["fileReference"].as_str().unwrap());
+    let original = fs::read(&destination).unwrap();
+    let error = session.execute(json!({
+        "operation": "saveArchive", "archiveId": archive["archiveId"], "destination": destination,
+    })).unwrap_err();
+    assert_eq!(error, "Save destination is the staged archive");
+    assert_eq!(fs::read(&destination).unwrap(), original);
 }
 
 /// Uses independent file-backed keys for the base runtime and each isolated identity.

@@ -173,7 +173,7 @@ impl NativeRescueSession {
             uuid::Uuid::parse_str(id).map_err(text)?;
             let destination = PathBuf::from(request["destination"].as_str().ok_or("Missing selected save destination")?);
             let source = PathBuf::from(service.archives.archiveFileReference(id).map_err(text)?);
-            if absolute_root(&source)? == absolute_root(&destination)? { return Err("Save destination is the staged archive".into()); }
+            if archive_file_path(&source)? == archive_file_path(&destination)? { return Err("Save destination is the staged archive".into()); }
             let length = service.archives.sealArchive(id).map_err(text)?;
             let mut output = File::create(destination).map_err(text)?;
             let mut progress = RescueProgress::new("save", Some(length), "bytes");
@@ -196,6 +196,8 @@ impl NativeRescueSession {
 struct NativeRescueHost {
     application: PathBuf,
     roots: BTreeMap<String, PathBuf>,
+    publication_roots: BTreeMap<String, PathBuf>,
+    restore_writers: Mutex<BTreeMap<String, BTreeMap<String, bool>>>,
     secrets: Option<Arc<dyn HostSecretStore>>,
     profile_file_secrets: bool,
     progress: Arc<Mutex<Option<RescueProgress>>>,
@@ -268,6 +270,8 @@ impl NativeRescueHost {
         if nodes.len() > 1_000_000 { return Err("Archive exceeds the filesystem node limit".into()); }
         let mut paths = BTreeMap::new();
         let mut destinations = BTreeSet::new();
+        let mut physical_nodes: BTreeMap<String, &StorageNode> = BTreeMap::new();
+        let payloads: BTreeMap<_, _> = manifest.files.iter().map(|file| (file.path.as_str(), file)).collect();
         for node in &nodes {
             validate_path(&node.path)?;
             if !destinations.insert(portable_destination_key(&node.path)?) || paths.insert(node.path.as_str(), node.directory).is_some() {
@@ -280,6 +284,17 @@ impl NativeRescueHost {
                 return Err("The application namespace root is not archivable".into());
             } else { self.source_path(&node.path)?; }
             if node.unix_mode.is_some_and(|mode| mode & !0o777 != 0) { return Err("Unsupported permission bits in archive".into()); }
+            let destination = self.source_path(&node.path)?.to_string_lossy().to_uppercase();
+            if let Some(previous) = physical_nodes.insert(destination, node) {
+                let same_payload = match (payloads.get(previous.path.as_str()), payloads.get(node.path.as_str())) {
+                    (Some(left), Some(right)) => left.byte_length == right.byte_length && left.sha256 == right.sha256,
+                    (None, None) => true,
+                    _ => false,
+                };
+                if previous.directory != node.directory || previous.unix_mode != node.unix_mode || !same_payload {
+                    return Err(format!("Conflicting archive entries share a destination: {} and {}", previous.path, node.path));
+                }
+            }
         }
         let files: BTreeSet<_> = manifest.files.iter().filter(|file| file.path != SYSTEM_SECRETS).map(|file| file.path.as_str()).collect();
         let declared: BTreeSet<_> = paths.iter().filter_map(|(path, directory)| (!directory).then_some(*path)).collect();
@@ -287,6 +302,12 @@ impl NativeRescueHost {
             return Err("Native filesystem metadata does not match the authenticated payloads".into());
         }
         for node in &nodes {
+            let destination = self.source_path(&node.path)?;
+            for parent in destination.ancestors().skip(1) {
+                if physical_nodes.get(&parent.to_string_lossy().to_uppercase()).is_some_and(|node| !node.directory) {
+                    return Err(format!("Archive destination has a file as its parent: {}", node.path));
+                }
+            }
             for (index, _) in node.path.match_indices('/') {
                 let ancestor = &node.path[..index];
                 if ancestor == "application" { continue; }
@@ -296,13 +317,6 @@ impl NativeRescueHost {
         Ok(nodes)
     }
 
-    /// Resolves a metadata node through its declared root or exact staging namespace.
-    fn staged_node(&self, id: &str, path: &str) -> Result<PathBuf, String> {
-        match self.roots.get(path) {
-            Some(root) => Ok(self.publication(id, path, root.clone())?.staged),
-            None => self.staged_path(id, path),
-        }
-    }
     /// Validates the selected roots before any data can be read or modified.
     fn new(default_runtime: &Path, selected: RescueRoots, secrets: Option<Arc<dyn HostSecretStore>>) -> Result<Self, String> {
         let application = application_root(default_runtime)?;
@@ -310,24 +324,34 @@ impl NativeRescueHost {
         let workspaces = absolute_root(&selected.workspace_root)?;
         let client = application.join("client");
         let secure = runtime.parent().ok_or("Runtime root has no parent")?.join("secure");
-        let mut roots = BTreeMap::from([
+        let mut roots: BTreeMap<String, PathBuf> = BTreeMap::from([
             ("runtime".into(), runtime), ("workspaces".into(), workspaces),
             ("client".into(), client), ("secure".into(), secure),
         ]);
         if let Some(root) = selected.cli_config_root { roots.insert("cli-config".into(), absolute_root(&root)?); }
-        let paths: Vec<_> = roots.values().collect();
-        for (index, path) in paths.iter().enumerate() {
-            for other in paths.iter().skip(index + 1) {
-                if path.starts_with(other) || other.starts_with(path) { return Err("Selected storage roots must not overlap".into()); }
-            }
-            if path.starts_with(application.join("data-rescue")) || application.starts_with(path) {
+        let mut candidates = BTreeMap::new();
+        for (role, root) in &roots {
+            if root.starts_with(application.join("data-rescue")) || application.starts_with(root) {
                 return Err("Selected storage roots overlap maintenance storage".into());
             }
-            if path.starts_with(&application) && path.parent() != Some(application.as_path()) {
-                return Err("Storage roots inside the application directory must be direct children to keep publication namespaces disjoint".into());
-            }
+            let (role, target) = if root.starts_with(&application) {
+                let relative = root.strip_prefix(&application).map_err(text)?;
+                let name = relative.components().next().ok_or("Missing application storage entry")?;
+                let target = application.join(name.as_os_str());
+                let role = match roots.iter().find(|(_, root)| **root == target) {
+                    Some((role, _)) => role.clone(),
+                    None => format!("application-{}", name.as_os_str().to_str().ok_or("Storage directory is not UTF-8")?),
+                };
+                (role, target)
+            } else { (role.clone(), root.clone()) };
+            candidates.insert(role, target);
         }
-        Ok(Self { application, roots, secrets, profile_file_secrets: false, progress: Arc::new(Mutex::new(None)) })
+        let mut publication_roots = BTreeMap::new();
+        for (role, root) in &candidates {
+            if candidates.iter().any(|(other_role, other)| root.starts_with(other) && (root != other || other_role < role)) { continue; }
+            publication_roots.insert(role.clone(), root.clone());
+        }
+        Ok(Self { application, roots, publication_roots, restore_writers: Mutex::new(BTreeMap::new()), secrets, profile_file_secrets: false, progress: Arc::new(Mutex::new(None)) })
     }
 
     /// Returns the private maintenance catalog storage without entering any business service.
@@ -339,6 +363,7 @@ impl NativeRescueHost {
     /// Resolves one archive path only inside a declared source namespace.
     fn source_path(&self, path: &str) -> Result<PathBuf, String> {
         validate_path(path)?;
+        if let Some(root) = self.roots.get(path) { return Ok(root.clone()); }
         let (role, relative) = path.split_once('/').ok_or("A rescue path needs a namespace")?;
         if role == "application" {
             let first = relative.split('/').next().ok_or("Missing application path")?;
@@ -421,22 +446,34 @@ impl NativeRescueHost {
         })
     }
 
-    /// Resolves a staged path through the exact publication plan saved for this import.
+    /// Groups overlapping logical namespaces into one disjoint filesystem publication.
+    fn publication_for_path(&self, id: &str, path: &Path) -> Result<Publication, String> {
+        if let Some((role, root)) = self.publication_roots.iter().find(|(_, root)| path.starts_with(root)) {
+            return self.publication(id, role, root.clone());
+        }
+        let relative = path.strip_prefix(&self.application).map_err(text)?;
+        let name = relative.components().next().ok_or("Missing application publication entry")?.as_os_str();
+        let name = name.to_str().ok_or("Application filename is not UTF-8")?;
+        self.publication(id, &format!("application-{name}"), self.application.join(name))
+    }
+
+    /// Resolves every logical alias into its shared physical staging tree.
     fn staged_path(&self, id: &str, path: &str) -> Result<PathBuf, String> {
+        uuid::Uuid::parse_str(id).map_err(text)?;
         validate_path(path)?;
         if path == SYSTEM_SECRETS { return Ok(self.application.join("data-rescue").join(id).join("host-secrets.json")); }
         let source = self.source_path(path)?;
-        let (role, relative) = path.split_once('/').ok_or("Missing namespace")?;
-        if role == "application" {
-            let mut parts = relative.splitn(2, '/');
-            let top = parts.next().ok_or("Missing application entry")?;
-            let plan = self.publication(id, &format!("application-{top}"), self.application.join(top))?;
-            return match parts.next() { Some(tail) => checked_descendant(&plan.staged, tail), None => Ok(plan.staged) };
-        }
-        let root = self.roots.get(role).ok_or("Unknown namespace")?;
-        let plan = self.publication(id, role, root.clone())?;
-        let _ = source;
-        checked_descendant(&plan.staged, relative)
+        let plan = self.publication_for_path(id, &source)?;
+        let relative = source.strip_prefix(&plan.target).map_err(text)?;
+        if relative.as_os_str().is_empty() { return Ok(plan.staged); }
+        checked_descendant(&plan.staged, relative.to_str().ok_or("Staged filename is not UTF-8")?.replace('\\', "/").as_str())
+    }
+
+    /// Allows exactly one authenticated archive entry to write each physical destination.
+    fn writes_restore_file(&self, id: &str, path: &str) -> Result<bool, String> {
+        self.restore_writers.lock().map_err(text)?.get(id)
+            .ok_or("The restore has not been prepared")?.get(path).copied()
+            .ok_or("The restore payload is not declared in its manifest".into())
     }
 
     /// Writes and flushes the journal atomically before any live directory is changed.
@@ -597,17 +634,19 @@ impl RescueHost for NativeRescueHost {
     /// Decrypts preference payloads using existing Host secrets without changing source files.
     fn export_preferences(&self, path: &str) -> Result<Option<Vec<u8>>, String> {
         use operit_store::PreferencesExport::{exportPreferences, isPreferencesPath, readPreferencesExportKey, MAX_PREFERENCES_EXPORT_BYTES};
-        let segments: Vec<_> = path.split('/').collect();
+        if path == SYSTEM_SECRETS { return Ok(None); }
+        let source = self.source_path(path)?;
+        let Ok(relative) = source.strip_prefix(&self.roots["runtime"]) else { return Ok(None); };
+        let relative = relative.to_str().ok_or("Preferences path is not UTF-8")?.replace('\\', "/");
+        let segments: Vec<_> = relative.split('/').collect();
         let (root, relative) = match segments.as_slice() {
-            ["runtime", "identities", identity, relative @ ..] => (
+            ["identities", identity, relative @ ..] => (
                 self.roots["runtime"].join("identities").join(identity), relative.join("/"),
             ),
-            ["runtime", relative @ ..] => (self.roots["runtime"].clone(), relative.join("/")),
-            _ => return Ok(None),
+            _ => (self.roots["runtime"].clone(), relative),
         };
         let storage_path = format!("runtime/{relative}");
         if !isPreferencesPath(&storage_path) { return Ok(None); }
-        let source = self.source_path(path)?;
         reject_symlink(&source)?;
         let mut content = Vec::new();
         File::open(source).map_err(text)?.take(MAX_PREFERENCES_EXPORT_BYTES as u64 + 1).read_to_end(&mut content).map_err(text)?;
@@ -630,7 +669,7 @@ impl RescueHost for NativeRescueHost {
         let nodes = self.manifest_nodes(manifest)?;
         fs::create_dir_all(self.application.join("data-rescue").join(id)).map_err(text)?;
         for file in &manifest.files { let _ = self.staged_path(id, &file.path)?; }
-        for (role, root) in &self.roots {
+        for (role, root) in &self.publication_roots {
             let staged = self.publication(id, role, root.clone())?.staged;
             if staged.exists() { return Err("Import staging directory already exists".into()); }
             fs::create_dir_all(staged).map_err(text)?;
@@ -638,14 +677,22 @@ impl RescueHost for NativeRescueHost {
         let mut progress = RescueProgress::new("prepareRestore", Some(nodes.iter().filter(|node| node.directory).count() as u64), "items");
         self.report_progress(progress.clone());
         for node in nodes.iter().filter(|node| node.directory) {
-            fs::create_dir_all(self.staged_node(id, &node.path)?).map_err(text)?;
+            fs::create_dir_all(self.staged_path(id, &node.path)?).map_err(text)?;
             progress.advance(self, 1);
         }
+        let mut destinations = BTreeSet::new();
+        let mut writers = BTreeMap::new();
+        for file in &manifest.files {
+            let destination = self.staged_path(id, &file.path)?.to_string_lossy().to_uppercase();
+            writers.insert(file.path.clone(), destinations.insert(destination));
+        }
+        self.restore_writers.lock().map_err(text)?.insert(id.into(), writers);
         Ok(())
     }
 
     /// Appends bounded content only to this import's staging tree.
     fn write_restore(&self, id: &str, path: &str, chunk: &[u8]) -> Result<(), String> {
+        if !self.writes_restore_file(id, path)? { return Ok(()); }
         let path = self.staged_path(id, path)?;
         if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(text)?; }
         private_file(&path, true)?.write_all(chunk).map_err(text)
@@ -653,6 +700,7 @@ impl RescueHost for NativeRescueHost {
 
     /// Creates empty payloads and flushes staged bytes before publication can begin.
     fn finish_restore_file(&self, id: &str, path: &str) -> Result<(), String> {
+        if !self.writes_restore_file(id, path)? { return Ok(()); }
         let path = self.staged_path(id, path)?;
         if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(text)?; }
         private_file(&path, true)?.sync_all().map_err(text)
@@ -669,8 +717,7 @@ impl RescueHost for NativeRescueHost {
             STANDARD.decode(encoded).map_err(text)?;
         }
         if !secrets.is_empty() && self.secrets.is_none() { return Err("This Host does not support importing the archive's system secrets".into()); }
-        let client = self.roots.get("client").ok_or("Client root is missing")?;
-        let bootstrap = self.publication(id, "client", client.clone())?.staged.join("link/local_runtime_storage.json");
+        let bootstrap = self.staged_path(id, "client/link/local_runtime_storage.json")?;
         if bootstrap.is_file() {
             let mut value: Value = serde_json::from_slice(&fs::read(&bootstrap).map_err(text)?).map_err(|error| format!("Imported startup configuration is invalid: {error}"))?;
             value["runtimeRoot"] = json!(self.roots["runtime"]);
@@ -680,8 +727,8 @@ impl RescueHost for NativeRescueHost {
             file.write_all(&bytes).map_err(text)?;
             file.sync_all().map_err(text)?;
         }
-        if let Some(root) = self.roots.get("cli-config") {
-            let config = self.publication(id, "cli-config", root.clone())?.staged.join("storage.json");
+        if self.roots.get("cli-config").is_some() {
+            let config = self.staged_path(id, "cli-config/storage.json")?;
             if config.is_file() {
                 let mut value: Value = serde_json::from_slice(&fs::read(&config).map_err(text)?).map_err(text)?;
                 value["runtimeRoot"] = json!(self.roots["runtime"]);
@@ -692,16 +739,19 @@ impl RescueHost for NativeRescueHost {
             }
         }
         let mut publications = Vec::new();
-        for (role, root) in &self.roots { publications.push(self.publication(id, role, root.clone())?); }
+        for (role, root) in &self.publication_roots { publications.push(self.publication(id, role, root.clone())?); }
         let extras: BTreeSet<String> = nodes.iter().filter_map(|node| node.path.strip_prefix("application/"))
             .filter_map(|path| path.split('/').next()).map(str::to_owned).collect();
         for name in &extras {
-            publications.push(self.publication(id, &format!("application-{name}"), self.application.join(name))?);
+            let target = self.application.join(name);
+            if !publications.iter().any(|plan| plan.target == target) {
+                publications.push(self.publication(id, &format!("application-{name}"), target)?);
+            }
         }
         for entry in fs::read_dir(&self.application).map_err(text)? {
             let entry = entry.map_err(text)?;
             let name = entry.file_name().into_string().map_err(|_| "Application filename is not UTF-8")?;
-            if self.excluded_application_entry(&name) || extras.contains(&name) { continue; }
+            if self.excluded_application_entry(&name) || extras.contains(&name) || publications.iter().any(|plan| plan.target == entry.path()) { continue; }
             reject_symlink(&entry.path())?;
             let mut plan = self.publication(id, &format!("application-remove-{name}"), entry.path())?;
             plan.remove = true;
@@ -717,13 +767,15 @@ impl RescueHost for NativeRescueHost {
         for file in manifest.files.iter().filter(|file| file.path != SYSTEM_SECRETS) {
             verified_files.push(hash_file(&self.staged_path(id, &file.path)?, &file.path, fs::metadata(self.staged_path(id, &file.path)?).map_err(text)?.len(), self, &mut progress)?);
         }
-        for node in nodes.iter().filter(|node| !node.directory) { apply_node_mode(&self.staged_node(id, &node.path)?, node.unix_mode)?; }
-        let mut directories: Vec<_> = nodes.iter().filter(|node| node.directory).collect();
-        directories.sort_by_key(|node| std::cmp::Reverse(node.path.len()));
-        for node in directories {
-            let path = self.staged_node(id, &node.path)?;
+        for node in nodes.iter().filter(|node| !node.directory) { apply_node_mode(&self.staged_path(id, &node.path)?, node.unix_mode)?; }
+        let directories: BTreeMap<_, _> = nodes.iter().filter(|node| node.directory)
+            .map(|node| self.staged_path(id, &node.path).map(|path| (path, node.unix_mode)))
+            .collect::<Result<_, _>>()?;
+        let mut directories: Vec<_> = directories.into_iter().collect();
+        directories.sort_by_key(|(path, _)| std::cmp::Reverse(path.components().count()));
+        for (path, mode) in directories {
             sync_directory(&path)?;
-            apply_node_mode(&path, node.unix_mode)?;
+            apply_node_mode(&path, mode)?;
         }
         let secret_envelope = self.seal_journal_secrets(id, secrets)?;
         fs::remove_file(self.staged_path(id, SYSTEM_SECRETS)?).map_err(text)?;
@@ -739,6 +791,7 @@ impl RescueHost for NativeRescueHost {
             storage_nodes: nodes,
         };
         self.save_journal(&journal)?;
+        self.restore_writers.lock().map_err(text)?.remove(id);
         self.publish(journal)
         })();
         if result.is_err() && !self.application.join("data-rescue/commit.json").exists() {
@@ -761,7 +814,7 @@ impl RescueHost for NativeRescueHost {
             if !targets.insert(&plan.target) || !["prepared", "originalRetained", "published"].contains(&plan.phase.as_str()) { return Err("Duplicate or invalid publication plan".into()); }
             let role = plan.staged.file_name().and_then(|name| name.to_str()).ok_or("Invalid staging name")?
                 .strip_prefix(&format!(".operit-rescue-{}-", journal.id)).ok_or("Invalid journal staging path")?;
-            if let Some(root) = self.roots.get(role) {
+            if let Some(root) = self.publication_roots.get(role) {
                 if plan.target != *root || plan.remove { return Err("Invalid declared-root publication".into()); }
             } else {
                 let prefix = if plan.remove { "application-remove-" } else { "application-" };
@@ -776,16 +829,17 @@ impl RescueHost for NativeRescueHost {
             reject_symlink(&plan.staged)?;
             reject_symlink(&plan.retained)?;
         }
-        for root in self.roots.values() {
+        for root in self.publication_roots.values() {
             if !journal.publications.iter().any(|plan| !plan.remove && &plan.target == root) {
                 return Err("The pending journal omits a selected storage root".into());
             }
         }
         let expected_extras: BTreeSet<_> = journal.storage_nodes.iter()
             .filter_map(|node| node.path.strip_prefix("application/"))
-            .filter_map(|path| path.split('/').next()).collect();
+            .filter_map(|path| path.split('/').next())
+            .filter(|name| !self.publication_roots.values().any(|root| root == &self.application.join(name))).collect();
         let published_extras: BTreeSet<_> = journal.publications.iter()
-            .filter(|plan| !plan.remove && !self.roots.values().any(|root| root == &plan.target))
+            .filter(|plan| !plan.remove && !self.publication_roots.values().any(|root| root == &plan.target))
             .map(|plan| plan.target.file_name().and_then(|name| name.to_str()).ok_or("Invalid application publication target"))
             .collect::<Result<_, _>>()?;
         if expected_extras != published_extras { return Err("The pending journal has inconsistent application destinations".into()); }
@@ -797,7 +851,7 @@ impl RescueHost for NativeRescueHost {
         uuid::Uuid::parse_str(id).map_err(text)?;
         if self.application.join("data-rescue/commit.json").exists() { return Err("Cannot discard a published import journal".into()); }
         let mut parents = vec![self.application.clone()];
-        for root in self.roots.values() {
+        for root in self.publication_roots.values() {
             if let Some(parent) = root.parent() { parents.push(parent.to_path_buf()); }
         }
         parents.sort();
@@ -819,6 +873,7 @@ impl RescueHost for NativeRescueHost {
         let catalog = self.application.join("data-rescue").join(id);
         if catalog.exists() { fs::remove_dir_all(catalog).map_err(text)?; }
         if let Some(store) = &self.secrets { store.deleteSecret(&format!("operit.data-rescue.{id}.journal-key")).map_err(text)?; }
+        self.restore_writers.lock().map_err(text)?.remove(id);
         Ok(())
     }
 }
@@ -942,7 +997,36 @@ fn absolute_root(path: &Path) -> Result<PathBuf, String> {
     // (Android: /data/user/0 <-> /data/data, macOS: /var -> /private/var), and every component
     // below the root is still checked by checked_descendant.
     reject_symlink(path)?;
-    Ok(path.to_path_buf())
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(ancestor) {
+            Ok(_) => {
+                if !fs::metadata(ancestor).map_err(text)?.is_dir() { return Err(format!("Data root is not a directory: {}", ancestor.display())); }
+                let mut resolved = fs::canonicalize(ancestor).map_err(text)?;
+                for name in missing.iter().rev() { resolved.push(name); }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(ancestor.file_name().ok_or("Data root has no directory name")?.to_os_string());
+                ancestor = ancestor.parent().ok_or("Data root has no existing ancestor")?;
+            }
+            Err(error) => return Err(text(error)),
+        }
+    }
+}
+
+/// Resolves an archive file destination without applying directory-only root validation.
+fn archive_file_path(path: &Path) -> Result<PathBuf, String> {
+    reject_symlink(path)?;
+    let parent = absolute_root(path.parent().ok_or("Archive file has no parent directory")?)?;
+    let name = path.file_name().ok_or("Archive file has no filename")?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => fs::canonicalize(path).map_err(text),
+        Ok(_) => Err("Archive destination must be a regular file".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(parent.join(name)),
+        Err(error) => Err(text(error)),
+    }
 }
 
 /// Rejects links between a trusted publication base and one exact payload.
