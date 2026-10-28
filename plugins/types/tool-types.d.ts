@@ -13,7 +13,7 @@ export interface ToolResultMap {
   read_file_part: FilePartContentData;
   read_file_full: FileContentData;
   read_file_binary: BinaryFileContentData;
-  write_file: FileOperationData;
+  write_file: FileApplyResultData;
   write_file_binary: FileOperationData;
   delete_file: FileOperationData;
   file_exists: FileExistsData;
@@ -64,6 +64,7 @@ export interface ToolResultMap {
   get_system_setting: SystemSettingData;
   modify_system_setting: SystemSettingData;
   toast: string;
+  set_clipboard_text: string;
   send_notification: string;
   install_app: AppOperationData;
   uninstall_app: AppOperationData;

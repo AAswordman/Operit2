@@ -11,7 +11,7 @@ pub struct ToolResultMap {
     pub read_file_part: FilePartContentData,
     pub read_file_full: FileContentData,
     pub read_file_binary: BinaryFileContentData,
-    pub write_file: FileOperationData,
+    pub write_file: FileApplyResultData,
     pub write_file_binary: FileOperationData,
     pub delete_file: FileOperationData,
     pub file_exists: FileExistsData,
@@ -62,6 +62,7 @@ pub struct ToolResultMap {
     pub get_system_setting: SystemSettingData,
     pub modify_system_setting: SystemSettingData,
     pub toast: String,
+    pub set_clipboard_text: String,
     pub send_notification: String,
     pub install_app: AppOperationData,
     pub uninstall_app: AppOperationData,
@@ -184,6 +185,7 @@ mod tests {
         assert!(BuiltinToolName::ApplyFile.accepts_runtime_result(&result));
         assert!(BuiltinToolName::CreateFile.accepts_runtime_result(&result));
         assert!(BuiltinToolName::EditFile.accepts_runtime_result(&result));
+        assert!(BuiltinToolName::WriteFile.accepts_runtime_result(&result));
     }
 
     #[test]

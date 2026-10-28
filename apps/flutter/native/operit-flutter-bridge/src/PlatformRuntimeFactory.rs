@@ -52,6 +52,9 @@ pub(crate) fn startBridge(startup: BridgeStartup) -> Result<OperitFlutterBridge,
         .withComposeDslWebViewHost(Arc::new(composeDslHost))
         .withToastHost(Arc::new(
             crate::FlutterOwnerCapabilities::presentFlutterToast,
+        ))
+        .withClipboardHost(Arc::new(
+            crate::FlutterOwnerCapabilities::setFlutterClipboardText,
         ));
     let terminal = context
         .terminalHost
