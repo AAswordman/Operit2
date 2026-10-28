@@ -487,6 +487,13 @@ with the matching ELF. This avoids linking the device-side DWARF symbol reader;
 it does not disable panic reporting or the ESP-IDF abort backtrace. Keep the ELF
 from each flashed build for `xtensa-esp32-elf-addr2line -f -C -e <elf> <addresses>`.
 
+The ESP32 Host scheduler enables Tokio's `rt` executor support without
+`rt-multi-thread`: firmware drives current-thread runtimes on its bounded Host
+workers. Non-ESP32 platforms retain the multi-thread feature and the upstream
+worker naming behavior. Keeping this dependency split explicit prevents desktop
+executor code from consuming the ESP32 code-mapping budget after shared Host
+changes; it does not add another scheduler or change device task admission.
+
 On Xtensa, the overlays keep the Tokio constructor and ring seal/open as named,
 non-inlined functions so LTO cannot erase the ABI inspection boundaries. These
 attributes do not change their Rust signatures or cryptographic operations.
@@ -684,9 +691,22 @@ trip. The latter requires an admitted speech processor and supported WAV output.
 The device and Windows Core used for this check had different Spaces; the
 existing Windows Space was preserved.
 
-The hardware results above precede the WAV/PCM layering cleanup. The revised
-firmware builds successfully at 3,962,080 / 3,997,696 bytes (35,616 bytes free),
-passes the Xtensa ABI checks, and has not yet been flashed for another hardware
-acceptance run. Desktop regression passes 61 simulator tests (including the
-shared WAV decoder), two board audio conversion tests, 116 editor tests and
-eight serial debug tests.
+The hardware results above precede the WAV/PCM layering cleanup and rebase onto
+upstream `main` at `fdf162a2`. The revised firmware builds successfully at
+3,962,448 / 3,997,696 bytes (35,248 bytes free), passes the Xtensa ABI checks,
+and has not yet been flashed for another hardware acceptance run. Its
+`.flash.text` is 3,341,994 / 3,342,304 bytes: the code-mapping region has only
+310 bytes free, separately from the remaining image partition capacity.
+Desktop regression passes 61 simulator tests (including the shared WAV decoder),
+29 board tests (including both audio conversions), 116 editor tests and eight
+serial debug tests.
+
+After the rebase, `npm run test:device-budget --prefix tools/esp32-editor -- --firmware`
+passed end to end, including the fresh firmware/ABI build, fixed heap/stack
+probes and all three authenticated TCP integration scenarios. Standalone chat
+across restart peaked at 208,888 / 262,144 Rust heap bytes; remote chat, storage
+failure recovery and binary speech peaked at 213,088 / 262,144 bytes. Every
+sampled state reported zero allocation failures. The speech integration verified
+65 seconds of PCM/WAV byte volume, recognition text over 8 KiB and ordered TTS
+with deterministic providers; it does not establish physical long recording or
+actual speech recognition quality.
