@@ -1,6 +1,6 @@
 //! Shares one mDNS daemon and one actively refreshable browser per service type.
 
-use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{IfKind, DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
 use operit_host_api::ServiceDiscovery::{
     DiscoveredService, DiscoveryAdvertisement, DiscoveryCallback, DiscoverySubscription,
     ServiceAdvertisement, ServiceDiscoveryHost,
@@ -75,9 +75,13 @@ struct Daemon {
 
 impl Daemon {
     /// Acquires platform resources before opening sockets and monitors daemon errors.
-    fn new(networkLease: Option<NetworkLeaseFactory>) -> HostResult<Self> {
+    fn new(networkLease: Option<NetworkLeaseFactory>, interface: Option<std::net::IpAddr>) -> HostResult<Self> {
         let lease = networkLease.map(|acquire| acquire()).transpose()?;
         let service = ServiceDaemon::new().map_err(hostError)?;
+        if let Some(address) = interface {
+            service.disable_interface(IfKind::All).map_err(hostError)?;
+            service.enable_interface(IfKind::Addr(address)).map_err(hostError)?;
+        }
         let monitor = match service.monitor() {
             Ok(monitor) => monitor,
             Err(error) => {
@@ -152,6 +156,7 @@ impl Drop for Daemon {
 /// Owns native discovery resources shared by Core and Edge callers.
 #[derive(Default)]
 pub struct ServiceDiscoveryProvider {
+    interface: Option<std::net::IpAddr>,
     daemon: OnceLock<Result<Daemon, String>>,
     browsers: Mutex<BTreeMap<String, Arc<Browser>>>,
     networkLease: Option<NetworkLeaseFactory>,
@@ -282,6 +287,11 @@ fn runBrowser(
 }
 
 impl ServiceDiscoveryProvider {
+    /// Restricts discovery to the interface selected by a device embedding.
+    pub fn forInterface(address: std::net::IpAddr) -> Self {
+        Self { interface: Some(address), ..Self::default() }
+    }
+
     /// Installs the embedding Host's multicast resource acquisition policy.
     pub fn withNetworkLease(acquire: NetworkLeaseFactory) -> Self {
         Self {
@@ -294,7 +304,7 @@ impl ServiceDiscoveryProvider {
     fn daemon(&self) -> HostResult<&Daemon> {
         let daemon = self
             .daemon
-            .get_or_init(|| Daemon::new(self.networkLease).map_err(|error| error.to_string()))
+            .get_or_init(|| Daemon::new(self.networkLease, self.interface).map_err(|error| error.to_string()))
             .as_ref()
             .map_err(hostError)?;
         daemon.check()?;

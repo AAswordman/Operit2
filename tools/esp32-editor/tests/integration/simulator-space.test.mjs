@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import http from 'node:http';
-import {mkdtemp, mkdir, readFile, writeFile, rm, readdir, realpath} from 'node:fs/promises';
+import {mkdtemp, mkdir, readFile, writeFile, rm, realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -12,6 +12,7 @@ import {randomUUID} from 'node:crypto';
 import {performDeviceAction} from '../../web/device-actions.ts';
 import {simulatorViewState} from '../../web/device-state.ts';
 import {DeviceView} from '../../web/device-view.ts';
+import {probeSpeech} from './speech-probe.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -77,16 +78,6 @@ class CoreSession {
   }
 }
 
-async function files(directory, prefix = '') {
-  const result = [];
-  for (const item of await readdir(directory, {withFileTypes: true})) {
-    const relative = path.join(prefix, item.name);
-    if (item.isDirectory()) result.push(...await files(path.join(directory, item.name), relative));
-    else result.push(relative.replaceAll('\\', '/'));
-  }
-  return result;
-}
-
 // This opt-in integration test uses a real independent Core CLI, the editor's
 // real TCP Edge child, and the same C renderer compiled to WASM. No fake approval
 // replies, manually written membership, or developer's real profile are used.
@@ -128,7 +119,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
           // for the user's latest request when selecting the fixture response.
           const lastUserIndex = input.messages.findLastIndex(message =>
             message.role === 'user' && !String(message.content).includes('status=') &&
-            /SIM_(CHAT|RECONNECT|CORE_PLUGIN)/.test(JSON.stringify(message.content)));
+            /SIM_(CHAT|RECONNECT|CORE_PLUGIN|EXTERNAL_SYNC|LONG_INPUT)/.test(JSON.stringify(message.content)));
           const lastUser = input.messages[lastUserIndex];
           const pluginTurn = JSON.stringify(lastUser?.content ?? '').includes('SIM_CORE_PLUGIN');
           let text = prompt.includes('SIM_RECONNECT') ? 'SIM_RECONNECT_OK' : 'SIM_CHAT_OK';
@@ -148,8 +139,15 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
               text = '<tool name="daily_life:get_current_date"></tool>';
             }
           }
+          if (String(lastUser?.content).includes('SIM_EXTERNAL_SYNC')) {
+            text = Array.from({length:90}, (_, index) => 'SYNC_LINE_' + String(index).padStart(3, '0')).join('\n');
+          }
+          if (String(lastUser?.content).includes('SIM_LONG_INPUT')) text = 'SIM_LONG_INPUT_OK';
           if (input.stream) {
             res.writeHead(200, {'Content-Type': 'text/event-stream'});
+            // Send more than one small read without exceeding the per-event limit;
+            // the real stream must keep reading through comments to completion.
+            if (input.model === 'sim-direct') res.write((': keepalive ' + 'x'.repeat(480) + '\n\n').repeat(20));
             for (const content of [text.slice(0, 4), text.slice(4)]) {
               res.write('data: ' + JSON.stringify({id: 'sim-chat', object: 'chat.completion.chunk',
                 choices: [{index: 0, delta: {content}, finish_reason: null}]}) + '\n\n');
@@ -172,7 +170,9 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
     let core;
+    let heapPeakBytes = 0;
     t.after(async () => {
+      t.diagnostic(`Enforced device heap peak across restarts: ${heapPeakBytes} / 262144 bytes; every sampled state had zero allocation failures`);
       await core?.stop(); stopSimulator();
       server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
       const cleanup = await realpath(directory);
@@ -192,10 +192,28 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       const response = await fetch(base + route, {method: 'POST', headers: {'Content-Type': 'application/json'},
         body: input === undefined ? undefined : JSON.stringify(input)});
       const value = await response.json();
-      if (!response.ok) throw Error(value.error ?? `HTTP ${response.status}`);
+      if (!response.ok) throw Error((value.error ?? `HTTP ${response.status}`) +
+        "; device: " + JSON.stringify(await state()));
       return value;
     };
-    const state = async () => (await fetch(base + '/api/simulator/state')).json();
+    /** Checks the actual allocator and guarded task budgets throughout every interaction. */
+    const state = async () => {
+      const response = await fetch(base + '/api/simulator/state');
+      const current = await response.json();
+      assert(response.ok, `Simulator state failed: ${JSON.stringify(current)}`);
+      if (current.device) {
+        const memory = current.device.memory;
+        assert.equal(memory.heapCapacityBytes, 256 * 1024);
+        assert.equal(memory.mainStackBytes, 16 * 1024);
+        assert.equal(memory.asyncStackBytes, 24 * 1024);
+        assert.equal(memory.blockingStackBytes, 20 * 1024);
+        assert.equal(memory.stackEnforcement, 'fixed-mapping-with-guard-page');
+        assert.equal(memory.allocationFailures, 0, JSON.stringify(memory));
+        assert(memory.heapPeakBytes <= memory.heapCapacityBytes, JSON.stringify(memory));
+        heapPeakBytes = Math.max(heapPeakBytes, memory.heapPeakBytes);
+      }
+      return current;
+    };
     const waitDevice = async (description, predicate, timeout = 60000) => {
       const deadline = Date.now() + timeout;
       let current;
@@ -266,6 +284,8 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       call('navigate_home'); await tap('sidebar_toggle'); await tap('sidebar_settings'); await tap('settings_space');
     };
     const openReview = async () => {
+      await waitDevice('incoming approval prompt', device => Boolean(device.spaceJoinRequestId));
+      await update();
       if(screen().page === 'Space') return;
       // Error diagnostics can be dismissed without losing the captured request.
       call('action_error',['string'],['']); await openSpace(); await tap('space_review');
@@ -307,11 +327,14 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
         call('set_chat_draft', ['string'], [prompt]);
         actionError = ''; await tap('edge_send'); assert.equal(actionError, '');
         const value = await waitDevice('native streamed reply', device =>
-          !device.chat.generating && device.chat.messages.some(message => message.text === expected));
+          device.chatSendResult?.sendId === sendId && !device.chat.generating &&
+          device.chat.messages.some(message => message.text === expected));
         assert.equal(value.chat.error, null);
         assert.equal(value.chatSendResult.ok, true);
         await update();
         assert(screen().nodes.find(node => node.id === 'chat_text')?.text.includes(expected), 'native reply reaches the rendered chat screen');
+        const memory = (await state()).device.memory;
+        t.diagnostic(`${sendId}: heap peak=${memory.heapPeakBytes}/${memory.heapCapacityBytes}, failures=${memory.allocationFailures}`);
         return value;
       };
       await sendDirect('SIM_CHAT before disconnect', 'SIM_CHAT_OK', 'direct-before');
@@ -328,14 +351,23 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
         const pointer = ui._simulator_frame();
         await writeFile(process.env.OPERIT_SIM_TEST_SCREENSHOT, ui.HEAPU8.subarray(pointer, pointer+320*240*2));
       }
+      const extraTurns = process.env.OPERIT_SIM_TEST_MEMORY_STRESS === '1' ? 12 : 0;
+      for (let turn = 0; turn < extraTurns; turn++) {
+        await sendDirect(`SIM_RECONNECT round ${turn} ${'x'.repeat(160)}`, 'SIM_RECONNECT_OK', `stress-${turn}`);
+        assert.equal(providerRequests.length, 3 + turn, 'each completed turn reached the real HTTP provider');
+      }
+      if (extraTurns) {
+        assert(!providerRequests.at(-1).messages.some(message => message.content === 'SIM_CHAT before disconnect'),
+          'continued standalone chat retires old turns instead of accumulating unlimited context');
+      }
       const directId = standalone.chat.chatId;
       await post('/api/simulator/stop'); await startEdge();
       await waitDevice('direct configuration restored without CLI', device => device.chat.mode === 'direct');
       const rebooted = await sendDirect('SIM_CHAT after ESP restart without CLI', 'SIM_CHAT_OK', 'direct-reboot');
       assert.notEqual(rebooted.chat.chatId, directId, 'transient context is not a hidden chat database');
-      assert.equal(providerRequests.length, 3);
-      const persisted = await files(path.join(edgeDirectory, 'runtime'));
-      assert(persisted.some(file => file.startsWith('node_preferences/')));
+      assert.equal(providerRequests.length, 3 + extraTurns);
+      const persisted = await (await fetch(base + '/api/simulator/storage')).json();
+      assert(persisted.some(file => file.startsWith('runtime/node_preferences/')), persisted.join(', '));
       assert(!persisted.some(file => /(?:\.db(?:-|$)|\.sqlite|(?:^|\/)(?:sync|plugins|extensions)(?:\/|$))/.test(file)),
         'ESP must not receive a chat database, business journal, plugin or file replica: '+persisted.join(', '));
       t.diagnostic('CLI → real TCP pairing → Core approval → formal edge identity → encrypted preference sync → native chat → CLI process exit → standalone streamed chat → ESP restart → standalone chat passed');
@@ -413,6 +445,23 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     }
     if (process.env.OPERIT_SIM_TEST_ACCESS_ONLY === '1') {
       await probeDeviceAccess();
+      const peers = await core.command(['peers']);
+      const membership = await core.command(['space', 'show']);
+      assert(membership.members.includes(node));
+      await post('/api/simulator/stop');
+      await startEdge();
+      const coreNode = membership.members.find(member => member !== node);
+      assert.equal(typeof coreNode, 'string');
+      const restored = await waitDevice('authenticated peer restored after restart', device =>
+        device.paired && device.activePeers.includes(coreNode));
+      // DeviceSpace's prompt is transient UI state. Verify the durable Router scope instead.
+      const access = await post('/api/simulator/core-access', {step: 'request', nodeId: coreNode});
+      assert.equal(access.joined, true, 'persisted local control state authorizes the existing Space');
+      assert.equal(access.request, null, 'restart does not submit another join request');
+      assert.equal(restored.deviceId, node, 'restart preserves the admitted device identity');
+      assert.deepEqual(await core.command(['peers']), peers, 'restart preserves pairing credentials');
+      assert.deepEqual(await core.command(['space', 'show']), membership, 'restart preserves durable membership');
+      t.diagnostic(`admission and restart: heap peak=${heapPeakBytes}/262144, allocation failures=0`);
       return;
     }
     const edgePortArgs={node_id:node,interface_info:{target:'edge.status',method:'read'},args:{}};
@@ -428,8 +477,27 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     const credentials = await core.command(['peers']);
     const request = await core.command(['space', 'join', node]);
     assert.equal(request.status, 'pending');
+    // Exercise storage faults through the real pairing/approval path.
+    const pressureBefore = (await state()).device.storage;
+    assert.equal(pressureBefore.logicalBudgetBytes, 7000);
+    for (const [configuration, error] of [
+      [{otherNamespaceEntries: 630}, /NVS capacity exhausted/],
+      [{otherNamespaceEntries: 213, failAfterMutations: 0}, /Injected NVS write failure/],
+    ]) {
+      await post('/api/simulator/storage-control', configuration);
+      await update(); await openReview();
+      actionError = ''; await tap('edge_space_approve');
+      assert.match(actionError, error, 'storage failure must be reported by the approval UI');
+      assert.deepEqual(await core.command(['peers']), credentials, 'failed admission must retain pairing');
+      const retained = await update();
+      assert.equal(retained.device.paired, true);
+      assert.equal(retained.device.spaceJoinRequestId, request.requestId, 'failed save must retain the review');
+      assert.equal(retained.device.storage.runtimeEntries, pressureBefore.runtimeEntries, 'failed save must not leak staged NVS entries');
+    }
+    await post('/api/simulator/storage-control', {otherNamespaceEntries: 213, failAfterMutations: -1});
     await approve();
     assert.equal((await core.command(['space', 'refresh', request.requestId])).status, 'joined');
+    t.diagnostic('NVS exhaustion and interrupted write surfaced through approval UI; retry admitted the same paired Core');
     const former = await core.command(['space', 'show']);
     assert(former.members.includes(node));
     t.diagnostic('paired using the C-rendered screen code; first UI approval completed');
@@ -437,6 +505,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       device => device.chat.connected && device.chat.chatId && !device.chat.initializing && !device.chat.error);
     assert.match(initialChat.chat.chatId, /^[0-9a-f-]{36}$/i, 'first admitted session has a valid nonempty chat ID');
     t.diagnostic('first chat was provisioned through Core before message/state subscriptions opened');
+    await probeSpeech({core, node, directory, post, waitDevice, t});
     const edgePort=await core.command(['core','tool','exec','edge_execute',JSON.stringify(edgePortArgs)]);
     assert.equal(edgePort.success,true);assert.equal(edgePort.result.nodeId,node);
     assert.equal(edgePort.result.data.boardId,'ESP32-2432S028-SIM');
@@ -492,12 +561,14 @@ ${JSON.stringify(fixtureMetadata)}
     const candidate = more.find(item => item.name === 'com.operit.edge_pixel_pet');
     assert(candidate, 'pixel pet must ship in the Core More packages catalog');
     assert.equal(candidate.type, 'toolpkg'); assert.equal(candidate.loaded, false);
-    assert(!(await core.command(['core','package','list'])).some(item => item.name === 'com.operit.edge_pixel_pet'),
+    assert(!(await core.command(['core','plugin','list'])).some(item => item.name === 'com.operit.edge_pixel_pet'),
       'bundled pet must not be automatically installed');
     const loaded = await core.command(['core','package','load','com.operit.edge_pixel_pet']);
     assert.match(loaded.message, /Successfully imported/);
-    const installed = (await core.command(['core','package','list'])).find(item => item.name === 'com.operit.edge_pixel_pet');
-    assert(installed); assert.equal(installed.enabled, false); assert.equal(installed.enabledByDefault, false);
+    const installed = (await core.command(['core','plugin','list'])).find(item => item.name === 'com.operit.edge_pixel_pet');
+    assert(installed); assert.equal(installed.enabled, false); assert.equal(installed.subpackages, 1);
+    const subpackage = await core.command(['core','package','show','edge_pixel_pet']);
+    assert.equal(subpackage.enabledByDefault, true);
     await core.command(['core','plugin','enable','com.operit.edge_pixel_pet']);
     const pet = async tool => {
       const reply=await core.command(['core','package','exec',`edge_pixel_pet:${tool}`,JSON.stringify({node_id:node})]);
@@ -627,7 +698,7 @@ ${JSON.stringify(fixtureMetadata)}
     await post('/api/simulator/send', {text: 'SIM_CORE_PLUGIN: call the Core daily-life date plugin'});
     const pluginReply = await waitDevice('Core plugin result on Edge', device =>
       device.chat.messages.some(message => message.text.includes('SIM_CORE_PLUGIN_OK ')) &&
-      device.chat.messages.some(message => message.text.includes('\x1eS|daily_life:get_current_date\x1f')) && !device.chat.generating);
+      device.chat.messages.some(message => message.text.includes('【daily_life:get_current_date】')) && !device.chat.generating);
     assert.equal(pluginReply.chat.error, null);
     assert.equal(pluginReply.chat.sending, false);
     assert.equal(providerRequests.length - beforePlugin, 2, 'tool request and model follow-up must both run');
@@ -646,15 +717,36 @@ ${JSON.stringify(fixtureMetadata)}
     await update();
     assert(screen().nodes.find(node => node.id === 'chat_text').text.includes('SIM_CORE_PLUGIN_OK'),
       'plugin reply must reach the rendered Edge UI');
-    assert(screen().toolCards.some(card => card.icon === 'plugin' && card.name === 'daily_life:get_current_date' && card.status === '成功'),
-      'real Core tool execution must render as a named plugin card with success status');
+    while (screen().chatScrollLine > 0 &&
+      !screen().nodes.find(node => node.id === 'chat_text').text.includes('daily_life:get_current_date')) {
+      assert.equal(ui.ccall('operit_ui_debug_swipe', 'number', ['string'], ['down']), 1);
+    }
+    assert(screen().nodes.find(node => node.id === 'chat_text').text.includes('daily_life:get_current_date'),
+      'Core projects the public tool name as scrollable ordinary display text');
     assert(!JSON.stringify(pluginReply.chat.messages).includes('\\"timestamp\\"'), 'raw tool result JSON must not enter Edge display rows');
-    t.diagnostic('Edge chat triggered the real Core daily_life plugin; named success card rendered without raw tool payloads');
+    t.diagnostic('Edge chat triggered the real Core daily_life plugin; public name rendered without tool state or payloads');
     await update();await tap('sidebar_toggle');await tap('sidebar_plugins');
     const pluginList=await waitDevice('enabled Core plugins in Edge page',device=>
       device.plugins?.items?.some(item=>item.id==='com.operit.daily_life')&&!device.plugins.loading);
     const enabledPlugins=(await core.command(['core','plugin','list'])).filter(item=>item.enabled);
-    assert.deepEqual(pluginList.plugins.items.map(item=>item.id).sort(),enabledPlugins.map(item=>item.name).sort());
+    assert.equal(pluginList.plugins.total, enabledPlugins.length);
+    const displayedPlugins = pluginList.plugins.items.map(item => item.id);
+    let pluginPage = pluginList.plugins;
+    while (pluginPage.offset + pluginPage.items.length < pluginPage.total) {
+      await update(); await tap('plugins_next');
+      const offset = pluginPage.offset + 6;
+      pluginPage = (await waitDevice('next bounded plugin page', device =>
+        !device.plugins.loading && device.plugins.offset === offset)).plugins;
+      assert(pluginPage.items.length > 0 && pluginPage.items.length <= 6);
+      displayedPlugins.push(...pluginPage.items.map(item => item.id));
+    }
+    assert.deepEqual(displayedPlugins.sort(), enabledPlugins.map(item => item.name).sort());
+    while (pluginPage.offset > 0) {
+      await update(); await tap('plugins_prev');
+      const offset = pluginPage.offset - 6;
+      pluginPage = (await waitDevice('previous bounded plugin page', device =>
+        !device.plugins.loading && device.plugins.offset === offset)).plugins;
+    }
     assert(!pluginList.plugins.items.some(item=>item.id==='com.operit.workflow'),'disabled plugins are not shown');
     await update();const pluginNodes=screen().nodes.filter(item=>item.id.startsWith('plugin_probe_'));
     assert.equal(new Set(pluginNodes.map(item=>item.rect.x)).size,2);
@@ -684,11 +776,21 @@ ${JSON.stringify(fixtureMetadata)}
     await tap('plugins_test_all');
     const batch=await waitDevice('all enabled plugin connection functions executed',device=>
       !device.plugins.testing&&device.plugins.tested===enabledPlugins.length);
-    assert.equal(batch.plugins.failed,batch.plugins.items.filter(item=>item.status==='failure').length);
+    assert(batch.plugins.failed >= batch.plugins.items.filter(item=>item.status==='failure').length);
+    assert(batch.plugins.failed <= batch.plugins.tested);
     assert(batch.plugins.items.every(item=>item.status==='success'||(item.status==='failure'&&item.testError)),
       'each enabled plugin must report its actual diagnostic result, including optional dependencies');
     assert.equal(batch.plugins.items.find(item=>item.id==='com.operit.daily_life').status,'success');
-    const uiOnlyIndex=batch.plugins.items.findIndex(item=>item.id==='com.operit.thinking_guidance');
+    let uiOnlyPage = batch.plugins;
+    while (!uiOnlyPage.items.some(item => item.id === 'com.operit.thinking_guidance') &&
+      uiOnlyPage.offset + uiOnlyPage.items.length < uiOnlyPage.total) {
+      await update(); await tap('plugins_next');
+      const offset = uiOnlyPage.offset + 6;
+      uiOnlyPage = (await waitDevice('UI-only plugin page', device =>
+        !device.plugins.loading && device.plugins.offset === offset)).plugins;
+    }
+    const uiOnlyIndex = uiOnlyPage.items.findIndex(item => item.id === 'com.operit.thinking_guidance');
+    assert(uiOnlyIndex >= 0);
     await update();await tap('plugin_probe_'+uiOnlyIndex);
     const noTool=await waitDevice('UI-only plugin metadata has no business tools',device=>
       device.plugins.details?.id==='com.operit.thinking_guidance'&&!device.plugins.details.loading);
@@ -741,6 +843,54 @@ ${JSON.stringify(fixtureMetadata)}
     assert.equal(providerRequests.length, requestsBeforeRestart + 1);
     assert.deepEqual(await core.command(['peers']), credentials, 'Core restart must not require pairing again');
     t.diagnostic('Core stop produced offline; restart restored the same chat and a second streamed round-trip without re-pairing');
+
+    // A different UI (the real Core CLI) writes the selected chat. The Edge
+    // observes the owner subscription and pages one long message without replay.
+    const requestsBeforeExternal = providerRequests.length;
+    await core.command(['core', 'chat', 'send', '--chat', chatId, 'SIM_EXTERNAL_SYNC']);
+    let external = await waitDevice('Core-originated long message reaches the Edge', device =>
+      device.chat.messages.some(message => message.text.includes('SYNC_LINE_089')) && !device.chat.generating);
+    const seenLines = new Set();
+    let turns = 0;
+    while (true) {
+      const text = external.chat.messages.map(message => message.text).join('\n');
+      assert(Buffer.byteLength(text) <= 640 + external.chat.messages.length, 'one bounded device display window');
+      for (const match of text.matchAll(/SYNC_LINE_\d{3}/g)) seenLines.add(match[0]);
+      if (seenLines.size === 90) break;
+      assert(external.chat.hasOlder && turns++ < 20, 'the complete long message must be reachable');
+      const previous = JSON.stringify(external.chat.messages);
+      await post('/api/simulator/action', {action:'edge_history_older'});
+      external = await waitDevice('older byte/line page of the same message', device =>
+        JSON.stringify(device.chat.messages) !== previous);
+    }
+    assert.deepEqual([...seenLines].sort(), Array.from({length:90}, (_, index) => 'SYNC_LINE_' + String(index).padStart(3, '0')));
+    while (external.chat.hasNewer) {
+      assert(turns-- > 0);
+      const previous = JSON.stringify(external.chat.messages);
+      await post('/api/simulator/action', {action:'edge_history_newer'});
+      external = await waitDevice('restore the latest long-message page', device =>
+        JSON.stringify(device.chat.messages) !== previous);
+    }
+    assert(external.chat.messages.some(message => message.text.includes('SYNC_LINE_089')));
+    assert.equal(providerRequests.length, requestsBeforeExternal + 1, 'sync and pagination must not replay the send');
+    t.diagnostic('Core CLI wrote the active chat; Edge subscription received it and recovered all 90 lines through bounded pages without resending');
+    const longInput = 'SIM_LONG_INPUT\n' + '流式长文本🙂'.repeat(850) + '\n完整末尾标记';
+    assert(Buffer.byteLength(longInput) > 8192 && Buffer.byteLength(longInput) <= 16384);
+    const beforeLong = providerRequests.length;
+    await post('/api/simulator/send', {text:longInput, sendId:'long-utf8-input'});
+    await waitDevice('complete long text reaches the existing Core generation pipeline',device=>
+      device.chatSendResult?.sendId==='long-utf8-input' && device.chatSendResult.ok &&
+      device.chat.messages.some(message=>message.text==='SIM_LONG_INPUT_OK') && !device.chat.generating);
+    assert.equal(providerRequests.length,beforeLong+1);
+    assert(providerRequests.at(-1).messages.some(message=>
+      JSON.stringify(message.content).includes(longInput.replaceAll('\n','\\n')) ||
+      (typeof message.content==='string' && message.content.includes(longInput))),
+      'provider must receive every UTF-8 character including the final marker');
+    const persistedLong = await core.command(['core','chat','show',chatId]);
+    assert(JSON.stringify(persistedLong).includes('完整末尾标记'));
+    await assert.rejects(post('/api/simulator/send',{text:'字'.repeat(6000)}),/16384/);
+    assert.equal(providerRequests.length,beforeLong+1,'rejected oversized input must not start a turn');
+    t.diagnostic('Long UTF-8 input crossed the 8 KiB frame boundary in 2 KiB chunks; Core provider and history retained the final marker exactly once');
     await leave();
     assert.deepEqual(await core.command(['space', 'show']), former, 'the same Core retains the previous Space');
     const cancelled = await core.command(['space', 'join', node]);
@@ -751,7 +901,7 @@ ${JSON.stringify(fixtureMetadata)}
     actionError = ''; await tap('edge_space_approve');
     assert.match(actionError, /当前没有待审批|no longer awaiting|not.*awaiting/i,
       `stale UI approval must return an ordinary error without killing the simulator: ${actionError}`);
-    assert.equal((await state()).device.spaceJoinPrompt, '');
+    await waitDevice('cancelled review disappears after the shared review poll', device => device.spaceJoinPrompt === '');
     t.diagnostic('Core cancelled the same-Core rejoin; stale approval tap did not crash the simulator');
     const second = await core.command(['space', 'join', node]);
     // Before the next UI poll the rendered button still belongs to the
@@ -778,6 +928,7 @@ ${JSON.stringify(fixtureMetadata)}
     const restarted = await startEdge(); assert.equal(Object.hasOwn(restarted, 'token'), false);
     await update(); await openReview(); assert.equal(screen().page, 'Space', 'approval prompt survives process restart');
     assert.equal((await core.command(['space', 'cancel', pending.requestId])).status, 'cancelled');
+    await waitDevice('cancelled persisted review disappears', device => device.spaceJoinPrompt === '');
     await update(); assert.equal(screen().nodes.some(node => node.id === 'edge_space_approve'), false);
     const third = await core.command(['space', 'join', node]);
     await approve();
@@ -794,12 +945,14 @@ ${JSON.stringify(fixtureMetadata)}
     await core.stop(); await startCore(); await startEdge();
     assert.equal((await core.command(['space', 'refresh', offline.requestId])).status, 'cancelled',
       'ordinary refresh after both restarts must retry the persisted cancellation intent');
+    await waitDevice('offline cancellation removes the review', device => device.spaceJoinPrompt === '');
     await update(); assert.equal(screen().nodes.some(value => value.id === 'edge_space_approve'), false);
     const afterOfflineCancel = await core.command(['space', 'join', node]);
     await approve();
     assert.equal((await core.command(['space', 'refresh', afterOfflineCancel.requestId])).status, 'joined');
     assert.deepEqual(await core.command(['peers']), credentials, 'pairing credentials must not be replaced');
-    const edgeFiles = await files(path.join(edgeDirectory, 'runtime'));
+    const edgeFiles = await (await fetch(base + '/api/simulator/storage')).json();
+    assert(edgeFiles.some(file => file.startsWith('runtime/link_access/')), 'inspect the logical device records');
     assert(!edgeFiles.some(file => /^sync\//.test(file)), 'non-storage Edge must not create business replication journals');
     assert(!edgeFiles.some(file => /(^|\/)(chat|chats|messages|blobs|models)\//.test(file)), 'no business data copied to Edge storage');
     assert.equal(screen().heapBytes, 0); assert(screen().staticBytes < 10 * 1024);
@@ -835,6 +988,7 @@ ${JSON.stringify(fixtureMetadata)}
     const joined = await post('/api/simulator/core-access', {step:'refresh',requestId:incoming.requestId});
     assert.equal(joined.request.status, 'joined');
     assert.equal((await post('/api/simulator/core-access', {step:'request',nodeId:targetCore})).joined, true);
+    await state();
     t.diagnostic('simulated device initiated TCP pairing and a Core-reviewed permission request');
     }
     await probeDeviceAccess();

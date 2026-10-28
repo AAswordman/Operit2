@@ -12,12 +12,15 @@ use serde_json::{json, Value};
 
 #[derive(Clone, Default)]
 struct MemoryStorageHost {
+    releasePreferencesCache: bool,
     files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     writeCount: Arc<AtomicUsize>,
     readCount: Arc<AtomicUsize>,
+    policyReads: Arc<AtomicUsize>,
     rangeBytes: Arc<AtomicUsize>,
     forbidWholeJournalReads: Arc<AtomicBool>,
     forbidControlHistoryReads: Arc<AtomicBool>,
+    forbidWholePolicyReads: Arc<AtomicBool>,
     failAtomic: Arc<AtomicUsize>,
 }
 
@@ -29,6 +32,7 @@ impl MemoryStorageHost {
 }
 
 impl RuntimeStorageHost for MemoryStorageHost {
+    fn retainPreferencesCache(&self) -> bool { !self.releasePreferencesCache }
     /// Confirms synchronous in-memory publication without copying or rewriting bytes.
     fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
         if !self.exists(path)? {
@@ -53,7 +57,11 @@ impl RuntimeStorageHost for MemoryStorageHost {
         if self.forbidWholeJournalReads.load(Ordering::SeqCst) && path.ends_with(".jsonl") {
             return Err(HostError::new("unbounded journal read"));
         }
+        if self.forbidWholePolicyReads.load(Ordering::SeqCst) && path.ends_with("space_policy.preferences.json") {
+            return Err(HostError::new("unbounded policy read"));
+        }
         self.readCount.fetch_add(1, Ordering::SeqCst);
+        if path.ends_with("space_policy.preferences.json") { self.policyReads.fetch_add(1, Ordering::SeqCst); }
         let files = self
             .files
             .lock()
@@ -81,6 +89,7 @@ impl RuntimeStorageHost for MemoryStorageHost {
             assert!(length <= crate::SyncOperationJournal::JOURNAL_READ_BYTES);
         }
         self.readCount.fetch_add(1, Ordering::SeqCst);
+        if path.ends_with("space_policy.preferences.json") { self.policyReads.fetch_add(1, Ordering::SeqCst); }
         let files = self.files.lock().map_err(|error| HostError::new(error.to_string()))?;
         let content = files.get(path).ok_or_else(|| HostError::new("missing runtime storage file"))?;
         let start = usize::try_from(offset)
@@ -414,8 +423,10 @@ fn clearing_identity_resets_to_default_user() {
 #[test]
 fn space_admission_preserves_identity_map_through_retry_and_replay() {
     use crate::NetworkControlStore::{NetworkControlCommand, NetworkControlCommandRecord, NetworkControlRole, NetworkControlStore};
-    let storage = Arc::new(MemoryStorageHost::default());
-    let store = NetworkControlStore::new(storage.clone()).unwrap();
+    for constrained in [false, true] {
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: constrained, ..Default::default() });
+    let store = if constrained { NetworkControlStore::newNodeLocal(storage.clone()).unwrap() }
+        else { NetworkControlStore::new(storage.clone()).unwrap() };
     let bootstrap = store.bootstrapCurrentSpace().unwrap();
     let admin = bootstrap.memberNodeIds.iter().next().unwrap().clone();
     store.defineRole(NetworkControlRole {
@@ -452,14 +463,18 @@ fn space_admission_preserves_identity_map_through_retry_and_replay() {
     }
     assert_eq!(store.validateSpacePolicy(&state.spaceId, &operations).unwrap(), state);
     store.validateSpaceAdmission(&state.spaceId, "source-space", &identities.keys().cloned().collect(), &operations).unwrap();
-    assert_eq!(NetworkControlStore::new(storage).unwrap().currentState().unwrap(), state);
+    let reopened = if constrained { NetworkControlStore::newNodeLocal(storage).unwrap() }
+        else { NetworkControlStore::new(storage).unwrap() };
+    assert_eq!(reopened.currentState().unwrap(), state);
+    }
 }
 
 /// Upgrade an existing join-only reviewer's log, then persist a new admission and reopen both.
 #[test]
 fn legacy_space_admission_survives_upgrade_without_rewriting_history() {
+    for constrained in [false, true] {
     use crate::NetworkControlStore::{NetworkControlCommandRecord, NetworkControlIdentityAssignment, NetworkControlRole, NetworkControlStore};
-    let storage = Arc::new(MemoryStorageHost::default());
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: constrained, ..Default::default() });
     let store = NetworkControlStore::new(storage.clone()).unwrap();
     let space = store.bootstrapCurrentSpace().unwrap();
     store.admitMember("zz-reviewer".into()).unwrap();
@@ -518,6 +533,7 @@ fn legacy_space_admission_survives_upgrade_without_rewriting_history() {
         let mut record = legacy.payload.clone();
         record["command"]["admit_space"] = malformed;
         assert!(serde_json::from_value::<NetworkControlCommandRecord>(record).is_err());
+    }
     }
 }
 
@@ -1760,6 +1776,151 @@ fn intact_operations_survive_retry_after_partial_journal_tail() {
         assert_eq!(restarted.operationsSince(&SyncClock::empty(), &[], 100).unwrap(), vec![first, second]);
     }
 }
+/// A journal/projection duplicate has one replay effect; conflicting immutable
+/// payloads must still fail before any policy state is returned.
+#[test]
+fn control_replay_merges_projection_duplicates_and_rejects_conflicts() {
+    for constrained in [false, true] {
+    use crate::NetworkControlStore::NetworkControlStore;
+    use crate::PreferencesDataStore::stringPreferencesKey;
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: constrained, ..Default::default() });
+    let store = NetworkControlStore::new(storage.clone()).unwrap();
+    store.bootstrapCurrentSpace().unwrap();
+    store.admitMember("peer".into()).unwrap();
+    let before = store.currentSpaceOperations().unwrap();
+    let state = store.currentState().unwrap();
+    let projection = NetworkControlStore::projectionStore(storage);
+    projection.edit(|prefs| {
+        for operation in before.iter().rev() {
+            prefs.set(&stringPreferencesKey(&operation.opId), serde_json::to_value(operation).unwrap());
+        }
+    }).unwrap();
+    assert_eq!(store.currentSpaceOperations().unwrap(), before);
+    assert_eq!(store.currentState().unwrap(), state);
+    let mut conflict = before.last().unwrap().clone();
+    conflict.payload["command"]["admit_member"]["nodeId"] = json!("other");
+    projection.edit(|prefs| prefs.set(&stringPreferencesKey(&conflict.opId), serde_json::to_value(&conflict).unwrap())).unwrap();
+    assert!(store.currentState().unwrap_err().contains("Conflicting immutable"));
+    }
+}
+
+
+/// Compact replay must accept the string-encoded unit command as well as
+/// object-encoded commands and retain its membership effect after reopening.
+#[test]
+fn bounded_control_replay_accepts_leave_space_unit_commands() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let store = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
+    let initial = store.bootstrapCurrentSpace().unwrap();
+    assert!(store.leaveCurrentSpace().unwrap().is_some());
+    let reopened = NetworkControlStore::newNodeLocal(storage).unwrap();
+    let state = reopened.currentState().unwrap();
+    assert_eq!(state.spaceId, initial.spaceId);
+    assert!(state.memberNodeIds.is_empty());
+}
+
+
+/// A constrained endpoint can relay an existing root through an ordinary member,
+/// but cannot accept a changed immutable payload under that root's identity.
+#[test]
+fn bounded_peer_control_repeats_exact_known_authority_and_applies_a_signed_exit() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let store = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
+    store.bootstrapCurrentSpace().unwrap();
+    let bootstrap = store.currentSpaceOperations().unwrap().remove(0);
+    store.admitMember("peer".into()).unwrap();
+    let before = store.currentState().unwrap();
+    // Legacy caches need not use the operation ID as their physical map key.
+    let projection = NetworkControlStore::projectionStore(storage.clone());
+    projection.setTypedEntry("legacy-root-key", &bootstrap).unwrap();
+    projection.removeEntry(&bootstrap.opId).unwrap();
+    store.projectPeerControlOperations("peer", std::slice::from_ref(&bootstrap)).unwrap();
+    assert_eq!(store.currentState().unwrap(), before);
+    let files = storage.files.lock().unwrap().clone();
+    let mut changed = bootstrap.clone();
+    changed.payload["unknownSignedField"] = json!({"changed":true});
+    assert!(store.projectPeerControlOperations("peer", &[changed]).is_err());
+    assert_eq!(*storage.files.lock().unwrap(), files);
+    let mut leave = bootstrap;
+    leave.opId = "peer-leave".into();
+    leave.entityId = leave.opId.clone();
+    leave.originDeviceId = "peer".into();
+    leave.sequence = 1;
+    leave.createdAt = store.currentSpaceOperations().unwrap().iter().map(|operation| operation.createdAt).max().unwrap() + 1;
+    leave.payload = json!({"commandId":leave.entityId, "spaceId":before.spaceId,
+        "issuerNodeId":"peer", "command":"leave_space"});
+    store.projectPeerControlOperations("peer", &[leave]).unwrap();
+    assert!(!store.currentState().unwrap().memberNodeIds.contains("peer"));
+}
+
+/// Export preserves unknown payloads, rejects changed revisions and never writes.
+#[test]
+fn endpoint_control_export_pages_complete_immutable_authority_without_mutation() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let store = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
+    let state = store.bootstrapCurrentSpace().unwrap();
+    store.admitMember("peer-a".into()).unwrap();
+    store.admitMember("peer-b".into()).unwrap();
+    let mut expected = store.currentSpaceOperations().unwrap();
+    let projection = NetworkControlStore::projectionStore(storage.clone());
+    expected[0].payload["futureField"] = json!({"keep": ["设备", null, 7]});
+    projection.setTypedEntry(&expected[0].opId, &expected[0]).unwrap();
+    // A legacy physical key and a semantically equal duplicate must not drop or
+    // duplicate authority. Other Spaces do not leak into this export.
+    projection.setTypedEntry("legacy-alias", &expected[0]).unwrap();
+    let mut archived = expected[0].clone();
+    archived.opId = "archived".into();
+    archived.payload["spaceId"] = json!("old-space");
+    projection.setTypedEntry(&archived.opId, &archived).unwrap();
+    let writes = storage.writeCount();
+    let manifest = store.spaceControlManifest(&state.spaceId).unwrap();
+    let first = store.spaceControlExport(&state.spaceId, None, None).unwrap();
+    let revision = first.revision.clone();
+    assert_eq!(manifest.revision, revision);
+    assert_eq!(manifest.count, expected.len());
+    assert_eq!(first.count, expected.len());
+    let mut after = None;
+    let mut actual = Vec::new();
+    loop {
+        let page = store.spaceControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap();
+        assert_eq!(page.count, expected.len());
+        let Some(operation) = page.operation else { break; };
+        after = Some(operation.opId.clone());
+        actual.push(operation);
+    }
+    expected.sort_by(|left, right| left.opId.cmp(&right.opId));
+    assert_eq!(actual, expected);
+    assert_eq!(storage.writeCount(), writes);
+    assert!(store.spaceControlExport(&state.spaceId, Some(&revision), Some("missing")).unwrap_err().contains("CURSOR_INVALID"));
+    store.admitMember("peer-c".into()).unwrap();
+    assert!(store.spaceControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap_err().contains("EXPORT_CHANGED"));
+    let mut conflict = expected[0].clone();
+    conflict.payload["futureField"] = json!(false);
+    projection.setTypedEntry("conflicting-alias", &conflict).unwrap();
+    assert!(store.spaceControlExport(&state.spaceId, None, None).unwrap_err().contains("Conflicting immutable"));
+}
+
+/// An endpoint must migrate its legacy journal before advertising a complete export.
+#[test]
+fn endpoint_control_export_refuses_to_omit_unmigrated_journal_authority() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let storage = Arc::new(MemoryStorageHost::default());
+    let legacy = NetworkControlStore::new(storage.clone()).unwrap();
+    let state = legacy.bootstrapCurrentSpace().unwrap();
+    let expected = legacy.currentSpaceOperations().unwrap();
+    let endpoint = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
+    assert!(endpoint.spaceControlExport(&state.spaceId, None, None).unwrap_err().contains("MIGRATION_REQUIRED"));
+    endpoint.migrateNodeLocalProjection(storage.as_ref()).unwrap();
+    let page = endpoint.spaceControlExport(&state.spaceId, None, None).unwrap();
+    assert_eq!(page.count, expected.len());
+    assert_eq!(page.operation, Some(expected[0].clone()));
+    let full = legacy.spaceControlExport(&state.spaceId, None, None).unwrap();
+    assert_eq!(full.count, page.count);
+    assert_eq!(full.operation, page.operation);
+}
 
 /// Cold receipt/index construction and every query intent use the same bounded reader.
 #[test]
@@ -1864,6 +2025,186 @@ fn receive_and_completion_keep_payloads_and_receipts_atomic() {
     store.completeOperations(&[incoming]).unwrap();
     assert!(!host.exists(&path).unwrap());
     assert!(store.receipt().unwrap().containsSequence("device-a", 1));
+}
+
+/// The adapted authority reader keeps the bounded journal path without publishing
+/// unrelated preference outboxes, and retains archived/pending export semantics.
+#[test]
+fn archived_control_replay_is_bounded_and_does_not_publish_preference_outboxes() {
+    use crate::PreferencesDataStore::{PreferencesDataStore, stringPreferencesKey};
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+
+    let host = Arc::new(MemoryStorageHost::default());
+    let path = "runtime/config/preferences/control-replay.preferences.json";
+    let preferences = PreferencesDataStore::newWithStorage(host.clone(), path);
+    preferences.edit(|data| data.set(&stringPreferencesKey("theme"), json!("dark"))).unwrap();
+    let committed: Value = serde_json::from_slice(&host.readBytes(path).unwrap()).unwrap();
+    let outbox = &committed["__operit_preferences_replication"]["outbox"];
+    assert!(!outbox.as_array().unwrap().is_empty());
+
+    let store = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let mut archived = operation(1, "command", "archived", "apply",
+        SyncOperationSemantics::Transaction, json!({"permission":"archived"}));
+    archived.domain = NETWORK_CONTROL_SYNC_DOMAIN.to_owned();
+    let business = operation(2, "message", "unrelated", "upsert",
+        SyncOperationSemantics::EntityState, json!({"text":"x".repeat(8192)}));
+    let mut pending = operation(3, "command", "pending", "apply",
+        SyncOperationSemantics::Transaction, json!({"permission":"pending"}));
+    pending.domain = NETWORK_CONTROL_SYNC_DOMAIN.to_owned();
+    store.appendOperations(&[archived.clone(), business]).unwrap();
+    store.receiveOperations(std::slice::from_ref(&pending)).unwrap();
+    drop(store);
+
+    host.forbidWholeJournalReads.store(true, Ordering::SeqCst);
+    let reopened = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let before = host.readBytes(path).unwrap();
+    assert_eq!(reopened.archivedControlOperations().unwrap(), vec![archived, pending.clone()]);
+    assert_eq!(host.readBytes(path).unwrap(), before);
+
+    reopened.setExportFloor("device-a", 1).unwrap();
+    assert_eq!(reopened.archivedControlOperations().unwrap(), vec![pending]);
+    assert_eq!(host.readBytes(path).unwrap(), before);
+    // The fixture has a real pending outbox: an explicit export still publishes it.
+    assert!(reopened.publishPreferenceOutboxes().unwrap().is_empty());
+    let published: Value = serde_json::from_slice(&host.readBytes(path).unwrap()).unwrap();
+    assert!(published["__operit_preferences_replication"]["outbox"].as_array().unwrap().is_empty());
+}
+
+/// Receipt lookup validates immutable conflicts even when the matching receipt
+/// sorts before the conflicting alias, and cannot append another admission.
+#[test]
+fn bounded_review_receipts_validate_complete_history_and_local_sequences() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let store = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
+    let initial = store.bootstrapCurrentSpace().unwrap();
+    let issuer = initial.memberNodeIds.iter().next().unwrap();
+    for index in 0..20 { store.updatePolicy(format!("history-{index}"), "unchanged".into()).unwrap(); }
+    let identities = BTreeMap::from([("esp".into(), "edge".into())]);
+    let receipt = store.admitSpaceForReview("source".into(), identities.clone(), "bounded").unwrap();
+    assert_eq!(receipt.sequence, 22);
+    assert_eq!(store.spaceControlOperation(&initial.spaceId, &receipt.entityId, issuer).unwrap(), Some(receipt.clone()));
+    assert!(store.spaceControlOperation(&initial.spaceId, &receipt.entityId, "other").unwrap().is_none());
+    assert_eq!(store.admitSpaceForReview("source".into(), identities.clone(), "bounded").unwrap(), receipt);
+    let next = store.updatePolicy("after-review".into(), "kept".into()).unwrap();
+    assert_eq!(next.sequence, receipt.sequence + 1);
+    let projection = NetworkControlStore::projectionStore(storage.clone());
+    let mut alias = receipt.clone();
+    alias.payload["futureField"] = json!({"immutable": true});
+    projection.setTypedEntry("zz-conflicting-alias", &alias).unwrap();
+    let writes = storage.writeCount();
+    assert!(store.spaceControlOperation(&initial.spaceId, &receipt.entityId, issuer)
+        .unwrap_err().contains("Conflicting immutable"));
+    assert!(store.admitSpaceForReview("source".into(), identities, "bounded").is_err());
+    assert_eq!(storage.writeCount(), writes);
+}
+
+/// Paged authority must never allocate a whole expanded policy on current
+/// endpoint files. Its digest and all unknown payload bytes stay compatible.
+#[test]
+fn endpoint_control_export_streams_ranges_with_identical_digest_for_all_key_orders() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    use sha2::{Digest, Sha256};
+    let storage = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
+    let store = NetworkControlStore::newNodeLocal(storage.clone()).unwrap();
+    let state = store.bootstrapCurrentSpace().unwrap();
+    for index in 0..12 { store.admitMember(format!("peer-{index}-range-boundary")).unwrap(); }
+    let projection = NetworkControlStore::projectionStore(storage.clone());
+    let mut expected = store.currentSpaceOperations().unwrap();
+    expected[0].payload["futureField"] = json!({"text":"设备  \n \"".repeat(100),"unknown":[null,9]});
+    projection.setTypedEntry(&expected[0].opId, &expected[0]).unwrap();
+    expected.sort_by(|a,b| a.opId.cmp(&b.opId));
+    // The range parser must hash legacy structural whitespace verbatim too.
+    let path = "runtime/link_access/space_policy.preferences.json";
+    let pretty: Value = serde_json::from_slice(&storage.readBytes(path).unwrap()).unwrap();
+    storage.writeBytes(path, &serde_json::to_vec_pretty(&pretty).unwrap()).unwrap();
+    let revision = projection.withEncodedEntries(|entries| {
+        let mut hash = Sha256::new();
+        hash.update(b"operit.endpoint-control-export.v1\0");
+        hash.update((state.spaceId.len() as u64).to_be_bytes()); hash.update(state.spaceId.as_bytes());
+        for (key, raw) in entries {
+            for bytes in [key.as_bytes(), raw.get().as_bytes()] {
+                hash.update((bytes.len() as u64).to_be_bytes()); hash.update(bytes);
+            }
+        }
+        format!("{:x}", hash.finalize())
+    }).unwrap();
+    let original = storage.readBytes(path).unwrap();
+    let writes = storage.writeCount();
+    storage.forbidWholePolicyReads.store(true, Ordering::SeqCst);
+    let manifest = store.spaceControlManifest(&state.spaceId).unwrap();
+    assert_eq!(manifest.revision, revision);
+    assert_eq!(manifest.count, expected.len());
+    let mut after = None;
+    let mut actual = Vec::new();
+    loop {
+        let page = store.spaceControlExport(&state.spaceId, Some(&revision), after.as_deref()).unwrap();
+        assert_eq!(page.revision, revision);
+        assert_eq!(page.count, expected.len());
+        let Some(operation) = page.operation else { break; };
+        after = Some(operation.opId.clone()); actual.push(operation);
+    }
+    assert_eq!(actual, expected);
+    assert_eq!(storage.writeCount(), writes);
+    storage.forbidWholePolicyReads.store(false, Ordering::SeqCst);
+    assert_eq!(storage.readBytes(path).unwrap(), original);
+    // Unordered legacy maps retain the old sorted export and exact digest.
+    let entries: BTreeMap<String, Box<serde_json::value::RawValue>> = serde_json::from_slice(&original).unwrap();
+    let reversed = format!("{{{}}}", entries.iter().rev().map(|(key, raw)|
+        format!("{}:{}", serde_json::to_string(key).unwrap(), raw.get())).collect::<Vec<_>>().join(","));
+    storage.writeBytes(path, reversed.as_bytes()).unwrap();
+    let legacy = store.spaceControlExport(&state.spaceId, Some(&revision), None).unwrap();
+    assert_eq!(legacy.operation, expected.first().cloned());
+    assert_eq!(storage.readBytes(path).unwrap(), reversed.as_bytes());
+}
+
+/// Reopened query handles share the live projection without reading or retaining its history.
+#[test]
+fn control_queries_share_projection_and_observe_revocation() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    for constrained in [false, true] {
+        let host = Arc::new(MemoryStorageHost { releasePreferencesCache: constrained, ..Default::default() });
+        let owner = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+        owner.bootstrapCurrentSpace().unwrap();
+        owner.admitMember("peer".into()).unwrap();
+        for index in 0..32 { owner.updatePolicy("display".into(), index.to_string()).unwrap(); }
+        owner.currentState().unwrap();
+        let reads = host.policyReads.load(Ordering::SeqCst);
+        for _ in 0..32 {
+            let reader = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+            assert!(reader.nodeHasCapability("peer", "runtime.execute", None).unwrap());
+            assert!(!reader.nodeIsDisconnected("peer").unwrap());
+        }
+        assert_eq!(host.policyReads.load(Ordering::SeqCst), reads, "read-only admission checks reread history");
+        let reader = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+        owner.disconnectNode("peer".into()).unwrap();
+        assert!(reader.nodeIsDisconnected("peer").unwrap());
+        owner.removeMember("peer".into()).unwrap();
+        assert!(!reader.nodeHasCapability("peer", "runtime.execute", None).unwrap());
+        owner.admitMember("peer".into()).unwrap();
+        assert!(!reader.nodeIsDisconnected("peer").unwrap());
+    }
+}
+
+/// Direct journal publication invalidates the same projection as node-local imports.
+#[test]
+fn control_projection_observes_independent_journal_appends() {
+    use crate::NetworkControlStore::{NetworkControlStore, NetworkControlCommand, NetworkControlCommandRecord};
+    let host = Arc::new(MemoryStorageHost::default());
+    let owner = NetworkControlStore::new(host.clone()).unwrap();
+    let before = owner.bootstrapCurrentSpace().unwrap();
+    let issuer = before.memberNodeIds.iter().next().unwrap().clone();
+    let journal = SyncOperationStore::new(host.clone(), "runtime/sync");
+    let mutation = journal.appendLocalOperation(&issuer, NewSyncOperation {
+        domain: "network_control".into(), entityType: "command".into(), entityId: "external-policy".into(),
+        operation: "apply".into(), semantics: SyncOperationSemantics::Transaction,
+        payload: serde_json::to_value(NetworkControlCommandRecord {
+            commandId: "external-policy".into(), spaceId: before.spaceId.clone(), issuerNodeId: issuer.clone(),
+            command: NetworkControlCommand::PolicyUpdate { policyId: "external".into(), value: "committed".into() },
+        }).unwrap(),
+    }).unwrap();
+    assert_eq!(mutation.domain, "network_control");
+    assert_eq!(owner.currentState().unwrap().policies.get("external").map(String::as_str), Some("committed"));
 }
 
 /// Verifies change summaries drop progress this device only learned from peers.

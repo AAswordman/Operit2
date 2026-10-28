@@ -9,6 +9,16 @@ use std::collections::BTreeMap;
 use std::sync::{atomic::Ordering, Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
+#[path = "encoded_message.rs"]
+mod encoded_message;
+pub(super) use encoded_message::EncodedMessage;
+use super::heartbeat::{Heartbeat, HeartbeatAction};
+use futures_util::{future::LocalBoxFuture, stream::FuturesUnordered, StreamExt};
+
+const CONTROL_TARGET: &str = "$peer.channel";
+const HEARTBEAT_TICK_MS: u64 = 1_000;
+
+/// Creates a protocol security error at the authenticated channel boundary.
 pub(super) fn error(message: impl Into<String>) -> CoreLinkError {
     CoreLinkError::new("PEER_SECURITY", message)
 }
@@ -284,23 +294,38 @@ impl Channel {
     pub async fn sendBatch(&self, messages: Vec<PeerMessage>) -> Result<(), CoreLinkError> {
         let mut cipher = self.send.lock().await;
         for message in messages {
-            let mut bytes = encodeLink(message).map_err(|e| error(e.to_string()))?;
-            let sequence = cipher.next;
-            cipher.seal(&mut bytes)?;
-            self.raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
-                sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes.into()))))).await.map_err(|message| {
-                if message == operit_peer_link::MESSAGE_TOO_LARGE_ERROR {
-                    CoreLinkError::new("PEER_MESSAGE_TOO_LARGE", message)
-                } else { error(message) }
-            })?;
+            let bytes = encodeLink(message).map_err(|e| error(e.to_string()))?;
+            self.sendEncoded(&mut cipher, bytes).await?;
         }
         Ok(())
+    }
+    /// Preserves the same nonce order and indivisible burst for prepared replies.
+    pub(super) async fn sendEncodedBatch(&self, messages: Vec<Vec<u8>>) -> Result<(), CoreLinkError> {
+        let mut cipher = self.send.lock().await;
+        for bytes in messages { self.sendEncoded(&mut cipher, bytes).await?; }
+        Ok(())
+    }
+    async fn sendEncoded(&self, cipher: &mut Cipher, mut bytes: Vec<u8>) -> Result<(), CoreLinkError> {
+        let sequence = cipher.next;
+        cipher.seal(&mut bytes)?;
+        self.raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
+            sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes.into()))))).await.map_err(|message| {
+            if message == operit_peer_link::MESSAGE_TOO_LARGE_ERROR {
+                CoreLinkError::new("PEER_MESSAGE_TOO_LARGE", message)
+            } else { error(message) }
+        })
     }
     /// Closes the authenticated carrier without retaining another session implementation.
     pub async fn close(&self) { self.raw.close().await; }
 
     /// Receives the next authenticated frame in nonce order.
     pub async fn receive(&self) -> Result<Option<PeerMessage>, CoreLinkError> {
+        self.receiveEncoded().await?
+            .map(|message| message.decodeWith(PeerMessage::decode)).transpose()
+    }
+
+    /// Retains each decrypted frame until its dispatcher or consumer needs the typed payload.
+    pub(super) async fn receiveEncoded(&self) -> Result<Option<EncodedMessage<PeerMessage>>, CoreLinkError> {
         let mut cipher = self.receive.lock().await;
         let Some(message) = self.raw.receive().await.map_err(error)? else { return Ok(None); };
         let PeerMessage::Request(CoreLinkRequest::Call(request)) = message else { return Err(error("Encrypted Call required")); };
@@ -308,11 +333,15 @@ impl Channel {
             return Err(error(format!("Unexpected/replayed session message: expected={}, received={:?}", cipher.next, request.requestId.0.parse::<u64>().ok())));
         }
         let CoreValue::Bytes(bytes) = request.args else { return Err(error("Encrypted bytes required")); };
-        let mut bytes = bytes.to_vec();
+        // Reuse uniquely owned ciphertext. Shared buffers from Host adapters
+        // still copy before mutation, preserving every other reader's bytes.
+        let mut bytes = Vec::from(bytes);
         let nonce = cipher.nonce()?;
         let plaintext = cipher.key.open_in_place(nonce, aead::Aad::from(&cipher.context), &mut bytes)
             .map_err(|_| error("Session authentication tag rejected"))?;
-        decodeLink(plaintext).map(Some).map_err(|e| error(e.to_string()))
+        let length = plaintext.len();
+        bytes.truncate(length);
+        Ok(Some(EncodedMessage::fromBytes(bytes)))
     }
 }
 
@@ -320,12 +349,16 @@ impl Channel {
 /// Multiplexes correlated Call, Watch, and Push responses over one authenticated channel.
 pub(super) struct MultiplexedChannel {
     scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>,
-    channel: Arc<super::LiveChannel>,
-    pending: Mutex<BTreeMap<String, oneshot::Sender<Result<CoreLinkResponse, CoreLinkError>>>>,
-    watches: Mutex<BTreeMap<String, mpsc::UnboundedSender<CoreEvent>>>,
+    channel: Arc<Channel>,
+    pending: StdMutex<
+        BTreeMap<String, oneshot::Sender<Result<EncodedMessage<CoreLinkResponse>, CoreLinkError>>>,
+    >,
+    watches: StdMutex<BTreeMap<String, mpsc::UnboundedSender<EncodedMessage<CoreEvent>>>>,
     failure: StdMutex<Option<CoreLinkError>>,
+    changed: Box<dyn Fn() + Send + Sync>,
+    shutdown: tokio::sync::Notify,
     /// Routes peer requests independently while the shared reader correlates responses.
-    inboundRequests: StdMutex<Option<mpsc::UnboundedSender<CoreLinkRequest>>>,
+    inboundRequests: StdMutex<Option<mpsc::UnboundedSender<EncodedMessage<PeerMessage>>>>,
     /// Signals that this channel's reader has stopped, for the accept path that
     /// closes the connection as soon as its serve call returns.
     stopped: tokio::sync::Notify,
@@ -340,14 +373,24 @@ pub(super) fn diagnostic() -> Option<String> { LAST_ERROR.lock().unwrap_or_else(
 
 impl MultiplexedChannel {
     /// Starts the common response reader and inbound dispatcher for both directions.
-    pub(super) fn start(channel: Arc<super::LiveChannel>, scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>, inbound: super::dispatch::InboundSide) -> Result<Arc<Self>, CoreLinkError> {
+    pub(super) fn start(
+        channel: Arc<Channel>,
+        scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>,
+        inbound: super::dispatch::InboundSide,
+        changed: impl Fn() + Send + Sync + 'static,
+    ) -> Result<Arc<Self>, CoreLinkError> {
+        let now = scheduler
+            .monotonicTimeMillis()
+            .map_err(|failure| error(failure.to_string()))?;
         let (sender, requests) = mpsc::unbounded_channel();
         let multiplexed = Arc::new(Self {
             scheduler: scheduler.clone(),
             channel,
-            pending: Mutex::new(BTreeMap::new()),
-            watches: Mutex::new(BTreeMap::new()),
+            pending: StdMutex::new(BTreeMap::new()),
+            watches: StdMutex::new(BTreeMap::new()),
             failure: StdMutex::new(None),
+            changed: Box::new(changed),
+            shutdown: tokio::sync::Notify::new(),
             inboundRequests: StdMutex::new(Some(sender)),
             stopped: tokio::sync::Notify::new(),
             dispatchStopped: tokio::sync::Notify::new(),
@@ -355,7 +398,7 @@ impl MultiplexedChannel {
         let reader = multiplexed.clone();
         scheduler.scheduleHostRuntimeAsyncTask("peer-multiplexed-reader", Box::new(move || Box::pin(async move {
             if let Err(error) = crate::fault_isolation::link("peer channel reader", async {
-                reader.clone().readLoop().await;
+                reader.clone().readLoop(now).await;
                 Ok(())
             }).await {
                 reader.fail(error).await;
@@ -378,58 +421,91 @@ impl MultiplexedChannel {
     }
 
     /// Returns whether the underlying authenticated channel has failed.
-    pub(super) fn isFailed(&self) -> bool { self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_some() || !self.channel.isAvailable() }
+    pub(super) fn isFailed(&self) -> bool { self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_some() }
 
     /// Identifies the authenticated carrier used by a Space client.
-    pub(super) fn generation(&self) -> u32 { self.channel.channel().generation }
+    pub(super) fn generation(&self) -> u32 {
+        self.channel.generation
+    }
 
     /// Reports the Host transport of this peer's sole carrier.
-    pub(super) fn transport(&self) -> operit_peer_link::PeerTransport { self.channel.raw.transport() }
+    pub(super) fn transport(&self) -> operit_peer_link::PeerTransport {
+        self.channel.raw.transport()
+    }
 
     /// Terminates the carrier and all of its logical streams together.
     pub(super) async fn close(&self) {
         self.fail(error("Authenticated Link channel closed")).await;
-        self.channel.raw.close().await;
     }
 
     /// Sends one correlated Link request and waits for its matching response.
-    pub(super) async fn exchange(&self, request: CoreLinkRequest) -> Result<CoreLinkResponse, CoreLinkError> {
+    pub(super) async fn exchange(
+        &self,
+        request: CoreLinkRequest,
+    ) -> Result<CoreLinkResponse, CoreLinkError> {
         let key = requestKey(&request)?;
         let (sender, receiver) = oneshot::channel();
         {
-            let mut pending = self.pending.lock().await;
-            if pending.contains_key(&key) { return Err(error("Link request correlation is already in flight")); }
+            let mut pending = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if pending.contains_key(&key) {
+                return Err(error("Link request correlation is already in flight"));
+            }
             pending.insert(key.clone(), sender);
         }
-        if let Err(error) = self.channel.send(PeerMessage::Request(request)).await {
-            self.pending.lock().await.remove(&key);
+        if let Err(error) = self.send(PeerMessage::Request(request)).await {
+            self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&key);
             return Err(error);
         }
-        receiver.await.map_err(|_| self.failureOr("Multiplexed response was cancelled"))?
+        receiver
+            .await
+            .map_err(|_| error("Multiplexed response sender closed"))??
+            .decodeWith(decodeLinkResponse)
     }
 
     /// Opens one Watch and routes its future events through the shared reader.
-    pub(super) async fn openWatch(self: &Arc<Self>, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+    pub(super) async fn openWatch(
+        self: &Arc<Self>,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEventStream, CoreLinkError> {
         let requestId = request.requestId.0.clone();
         let (sender, receiver) = mpsc::unbounded_channel();
-        self.watches.lock().await.insert(requestId.clone(), sender);
-        let response = self.exchange(CoreLinkRequest::Watch(CoreLinkWatchRequest::Open(request))).await;
+        self.watches
+            .lock()
+            .unwrap()
+            .insert(requestId.clone(), sender);
+        let response = self
+            .exchange(CoreLinkRequest::Watch(CoreLinkWatchRequest::Open(request)))
+            .await;
         match response {
-            Ok(CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Opened), .. }) => {
-                let stream = CoreEventStream::new(receiver)
-                    .withOnClose(self.watchCloseCallback(requestId.clone()));
+            Ok(CoreLinkResponse::Watch {
+                result: Ok(CoreLinkWatchResponse::Opened),
+                ..
+            }) => {
+                let stream = CoreEventStream::fromMappedReceiver(
+                    receiver,
+                    |event: EncodedMessage<CoreEvent>| {
+                        Some(
+                            event
+                                .decodeWith(decodeLink)
+                                .expect("Locally encoded Watch event must decode"),
+                        )
+                    },
+                )
+                .withOnClose(self.watchCloseCallback(requestId.clone()));
                 Ok(stream)
             }
-            Ok(CoreLinkResponse::Watch { result: Err(error), .. }) => {
-                self.watches.lock().await.remove(&requestId);
+            Ok(CoreLinkResponse::Watch {
+                result: Err(error), ..
+            }) => {
+                self.watches.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&requestId);
                 Err(error)
             }
             Ok(_) => {
-                self.watches.lock().await.remove(&requestId);
+                self.watches.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&requestId);
                 Err(error("Watch open response mismatch"))
             }
             Err(error) => {
-                self.watches.lock().await.remove(&requestId);
+                self.watches.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&requestId);
                 Err(error)
             }
         }
@@ -442,38 +518,47 @@ impl MultiplexedChannel {
         move || {
             let closing = channel.clone();
             if let Err(hostError) = scheduler.scheduleHostRuntimeAsyncTask(
-                "peer-multiplexed-watch-close", Box::new(move || Box::pin(async move {
-                    closing.closeWatch(requestId).await;
-                })),
+                "peer-multiplexed-watch-close",
+                Box::new(move || {
+                    Box::pin(async move {
+                        closing.closeWatch(requestId).await;
+                    })
+                }),
             ) {
-                // Report failure instead of panicking or silently selecting a global executor.
-                *channel.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error(hostError.to_string()));
+                channel.terminate(error(hostError.to_string()));
             }
         }
     }
 
     /// Closes one Watch without closing the shared authenticated channel.
     async fn closeWatch(&self, requestId: String) {
-        self.watches.lock().await.remove(&requestId);
-        let _ = self.exchange(CoreLinkRequest::Watch(CoreLinkWatchRequest::Close {
-            requestId: CoreRequestId::new(requestId),
-        })).await;
+        self.watches.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&requestId);
+        let _ = self
+            .exchange(CoreLinkRequest::Watch(CoreLinkWatchRequest::Close {
+                requestId: CoreRequestId::new(requestId),
+            }))
+            .await;
     }
 
-    /// Fails all logical operations after the authenticated channel ends.
-    async fn fail(&self, error: CoreLinkError) {
+    /// Publishes terminal state and releases every logical operation without suspension.
+    fn terminate(&self, error: CoreLinkError) {
         {
             let mut failure = self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if failure.is_some() { return; }
+            if failure.is_some() {
+                return;
+            }
             *failure = Some(error.clone());
         }
         *LAST_ERROR.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error.message.clone());
-        let mut pending = self.pending.lock().await;
-        let drained = std::mem::take(&mut *pending);
-        for (_, sender) in drained { let _ = sender.send(Err(error.clone())); }
-        self.watches.lock().await.clear();
+        let drained = std::mem::take(&mut *self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+        for (_, sender) in drained {
+            let _ = sender.send(Err(error.clone()));
+        }
+        self.watches.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
         self.inboundRequests.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
         self.dispatchStopped.notify_one();
+        self.shutdown.notify_one();
+        (self.changed)();
     }
 
     /// Returns the terminal channel error or a new local error.
@@ -481,38 +566,158 @@ impl MultiplexedChannel {
         self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone().unwrap_or_else(|| error(message))
     }
 
-    /// Correlates every response this channel carries and forwards the peer's
-    /// calls to the dispatcher, so neither direction can starve the other.
-    async fn readLoop(self: Arc<Self>) {
-        loop {
-            match self.channel.receive().await {
-                Ok(Some(PeerMessage::Response(response))) => self.dispatchResponse(response).await,
-                Ok(Some(PeerMessage::Request(request))) => if let Err(error) = self.forwardInbound(request) {
-                    self.fail(error).await;
-                    break;
-                },
-                Ok(None) => { self.fail(error("Multiplexed channel closed")).await; break; }
-                Err(error) => { self.fail(error).await; break; }
+    /// Releases local state before awaiting transport shutdown.
+    async fn fail(&self, failure: CoreLinkError) {
+        self.terminate(failure);
+        self.channel.raw.close().await;
+    }
+
+    /// Sends one authenticated frame and terminates all logical operations on write failure.
+    async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> {
+        if let Some(failure) = self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone() {
+            return Err(failure);
+        }
+        let result = self.channel.send(message).await;
+        if let Err(failure) = &result {
+            self.fail(failure.clone()).await;
+        }
+        result
+    }
+
+    /// Sends an ordered encoded reply batch through the same authenticated writer.
+    async fn sendEncodedBatch(&self, messages: Vec<Vec<u8>>) -> Result<(), CoreLinkError> {
+        if let Some(failure) = self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone() {
+            return Err(failure);
+        }
+        let result = self.channel.sendEncodedBatch(messages).await;
+        if let Err(failure) = &result {
+            self.fail(failure.clone()).await;
+        }
+        result
+    }
+
+    /// Builds heartbeat controls in the unchanged authenticated Link envelope.
+    fn control(id: String, method: &str) -> PeerMessage {
+        PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
+            id,
+            CONTROL_TARGET,
+            method,
+            CoreValue::Null,
+        )))
+    }
+
+    /// Handles heartbeats and response correlation in the sole authenticated reader.
+    async fn readLoop(self: Arc<Self>, now: u64) {
+        let mut heartbeat = Heartbeat::new(now);
+        let mut writes =
+            FuturesUnordered::<LocalBoxFuture<'static, Result<(), CoreLinkError>>>::new();
+        let mut tick = self.scheduler.waitForHostRuntimeDelay(HEARTBEAT_TICK_MS);
+        let result: Result<(), CoreLinkError> = async {
+            loop {
+                tokio::select! {
+                    _ = self.shutdown.notified() => return Ok(()),
+                    message = self.channel.receiveEncoded() => {
+                        let message = message?.ok_or_else(|| error("Authenticated channel closed"))?;
+                        let now = self.scheduler.monotonicTimeMillis().map_err(|failure| error(failure.to_string()))?;
+                        heartbeat.received(now);
+                        let header = message.callHeader()?;
+                        if header.as_ref().is_some_and(|header| header.control) {
+                            let PeerMessage::Request(CoreLinkRequest::Call(request)) = message.decodeWith(PeerMessage::decode)? else {
+                                return Err(error("Invalid control envelope"));
+                            };
+                            if request.args != CoreValue::Null { return Err(error("Invalid channel control payload")); }
+                            match request.methodName.as_str() {
+                                "ping" => {
+                                    let channel = self.clone();
+                                    writes.push(Box::pin(async move { channel.send(Self::control(request.requestId.0, "pong")).await }));
+                                },
+                                "pong" => heartbeat.pong(&request.requestId.0, now),
+                                _ => return Err(error("Unknown channel control operation")),
+                            }
+                        } else {
+                            self.routeIncoming(message, header).await?;
+                        }
+                    },
+                    result = &mut tick => {
+                        result.map_err(|failure| error(failure.to_string()))?;
+                        tick = self.scheduler.waitForHostRuntimeDelay(HEARTBEAT_TICK_MS);
+                        let now = self.scheduler.monotonicTimeMillis().map_err(|failure| error(failure.to_string()))?;
+                        match heartbeat.tick(now) {
+                            HeartbeatAction::Ping(id) => {
+                                let channel = self.clone();
+                                writes.push(Box::pin(async move { channel.send(Self::control(id, "ping")).await }));
+                            },
+                            HeartbeatAction::Expired => return Err(CoreLinkError::new("PEER_HEARTBEAT_TIMEOUT", "Authenticated channel remained silent through both heartbeat deadlines")),
+                            HeartbeatAction::Suspect | HeartbeatAction::None => {},
+                        }
+                    },
+                    Some(result) = writes.next(), if !writes.is_empty() => result?,
+                }
             }
+        }.await;
+        match result {
+            Err(failure) => self.fail(failure).await,
+            Ok(()) => self.channel.raw.close().await,
         }
         self.stopped.notify_one();
     }
 
     /// Resolves once this channel's reader has stopped, so the side that accepted
     /// the connection keeps it open for as long as the channel serves it.
-    pub(super) async fn waitStopped(&self) { self.stopped.notified().await; }
+    pub(super) async fn waitStopped(&self) {
+        self.stopped.notified().await;
+    }
 
     /// Hands one request from the peer to this channel's dispatcher, keeping this
     /// reader free to correlate the calls made here.
-    fn forwardInbound(&self, request: CoreLinkRequest) -> Result<(), CoreLinkError> {
-        let sender = self.inboundRequests.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+    fn forwardInbound(&self, request: EncodedMessage<PeerMessage>) -> Result<(), CoreLinkError> {
+        let sender = self
+            .inboundRequests
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or_else(|| error("Multiplexed channel received an unexpected request"))?;
-        sender.send(request).map_err(|_| error("Multiplexed channel dispatcher stopped"))
+        sender
+            .send(request)
+            .map_err(|_| error("Multiplexed channel dispatcher stopped"))
+    }
+
+    /// Routes the already inspected frame without a second queue or header decode.
+    async fn routeIncoming(
+        &self,
+        message: EncodedMessage<PeerMessage>,
+        header: Option<encoded_message::CallHeader>,
+    ) -> Result<(), CoreLinkError> {
+        if let Some(header) = header {
+            if header.request {
+                return self.forwardInbound(message);
+            }
+            if let Some(sender) = self
+                .pending
+                .lock()
+                .unwrap()
+                .remove(&format!("call:{}", header.requestId.0))
+            {
+                let _ = sender.send(Ok(EncodedMessage::fromBytes(message.intoBytes())));
+            }
+            return Ok(());
+        }
+        if !message.isResponse()? {
+            return self.forwardInbound(message);
+        }
+        let PeerMessage::Response(response) = message.decodeWith(PeerMessage::decode)? else {
+            return Err(error("Expected Link response"));
+        };
+        self.dispatchResponse(response).await
     }
 
     /// Answers the peer's calls while this reader keeps the other direction
     /// flowing, and flushes the watch events this side owes it.
-    async fn dispatchLoop(self: Arc<Self>, side: super::dispatch::InboundSide, requests: mpsc::UnboundedReceiver<CoreLinkRequest>) {
+    async fn dispatchLoop(
+        self: Arc<Self>,
+        side: super::dispatch::InboundSide,
+        requests: mpsc::UnboundedReceiver<EncodedMessage<PeerMessage>>,
+    ) {
         // Dropping InboundSide also terminates its open Watch/Push sessions.
         // A dispatcher may be awaiting a backpressured Push item when the reader
         // ends, so closing only the request queue is not sufficient.
@@ -521,30 +726,44 @@ impl MultiplexedChannel {
             result = super::dispatch::serveIncoming(
                 side,
                 futures_util::stream::unfold(requests, |mut requests| async move {
-                    requests.recv().await.map(|request| (Ok(PeerMessage::Request(request)), requests))
+                    requests.recv().await.map(|request| (Ok(request), requests))
                 }),
-                |messages| self.channel.sendBatch(messages),
+                |messages| self.sendEncodedBatch(messages),
             ) => if let Err(error) = result {
                 self.fail(error).await;
-                self.channel.raw.close().await;
             },
         }
     }
 
-    /// Routes one response to a pending operation or an open Watch stream.
-    async fn dispatchResponse(&self, response: CoreLinkResponse) {
-        if let CoreLinkResponse::Watch { requestId, result: Ok(CoreLinkWatchResponse::Event(event)) } = &response {
-            if let Some(sender) = self.watches.lock().await.get(&requestId.0).cloned() {
-                let _ = sender.send(event.clone());
-                return;
+    /// Moves ordered Watch events into compact storage and completes pending operations.
+    async fn dispatchResponse(&self, response: CoreLinkResponse) -> Result<(), CoreLinkError> {
+        let response = match response {
+            CoreLinkResponse::Watch {
+                requestId,
+                result: Ok(CoreLinkWatchResponse::Event(event)),
+            } => {
+                if let Some(sender) = self.watches.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&requestId.0) {
+                    let _ = sender.send(EncodedMessage::new(event)?);
+                    return Ok(());
+                }
+                CoreLinkResponse::Watch {
+                    requestId,
+                    result: Ok(CoreLinkWatchResponse::Event(event)),
+                }
             }
+            response => response,
+        };
+        if let CoreLinkResponse::Watch {
+            requestId,
+            result: Ok(CoreLinkWatchResponse::Closed),
+        } = &response
+        {
+            self.watches.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&requestId.0);
         }
-        if let CoreLinkResponse::Watch { requestId, result: Ok(CoreLinkWatchResponse::Closed) } = &response {
-            self.watches.lock().await.remove(&requestId.0);
+        if let Some(sender) = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&responseKey(&response)) {
+            let _ = sender.send(EncodedMessage::new(response));
         }
-        let key = responseKey(&response);
-        let sender = self.pending.lock().await.remove(&key);
-        if let Some(sender) = sender { let _ = sender.send(Ok(response)); }
+        Ok(())
     }
 }
 
@@ -552,11 +771,21 @@ impl MultiplexedChannel {
 fn requestKey(request: &CoreLinkRequest) -> Result<String, CoreLinkError> {
     Ok(match request {
         CoreLinkRequest::Call(request) => format!("call:{}", request.requestId.0),
-        CoreLinkRequest::Watch(CoreLinkWatchRequest::Snapshot(request) | CoreLinkWatchRequest::Open(request)) => format!("watch:{}", request.requestId.0),
-        CoreLinkRequest::Watch(CoreLinkWatchRequest::Close { requestId }) => format!("watch:{}", requestId.0),
-        CoreLinkRequest::Push(CoreLinkPushRequestMessage::Open(request)) => format!("push:{}", request.requestId.0),
-        CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(item)) => format!("push:{}", item.pushId),
-        CoreLinkRequest::Push(CoreLinkPushRequestMessage::Close { pushId }) => format!("push:{}", pushId),
+        CoreLinkRequest::Watch(
+            CoreLinkWatchRequest::Snapshot(request) | CoreLinkWatchRequest::Open(request),
+        ) => format!("watch:{}", request.requestId.0),
+        CoreLinkRequest::Watch(CoreLinkWatchRequest::Close { requestId }) => {
+            format!("watch:{}", requestId.0)
+        }
+        CoreLinkRequest::Push(CoreLinkPushRequestMessage::Open(request)) => {
+            format!("push:{}", request.requestId.0)
+        }
+        CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(item)) => {
+            format!("push:{}", item.pushId)
+        }
+        CoreLinkRequest::Push(CoreLinkPushRequestMessage::Close { pushId }) => {
+            format!("push:{}", pushId)
+        }
     })
 }
 

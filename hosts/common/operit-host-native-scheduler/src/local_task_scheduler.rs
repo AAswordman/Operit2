@@ -6,6 +6,9 @@ use operit_host_api::{
 };
 use std::sync::Arc;
 
+pub const DEVICE_ASYNC_STACK_BYTES: usize = 24 * 1024;
+pub const DEVICE_BLOCKING_STACK_BYTES: usize = 20 * 1024;
+
 #[derive(Clone)]
 pub struct LocalHostRuntimeTaskSchedulerHost {
     tasks: Arc<RuntimeTaskQueue>,
@@ -29,13 +32,17 @@ impl LocalHostRuntimeTaskSchedulerHost {
     /// Selects timer-only execution for Host sockets that do not use the Tokio I/O driver.
     fn newWithIo(enableIo: bool) -> HostResult<Self> {
         let stack = if cfg!(any(target_os = "espidf", feature = "esp32-compat")) {
-            32 * 1024
+            DEVICE_ASYNC_STACK_BYTES
         } else {
             2 * 1024 * 1024
         };
         let tasks = spawnTaskPoolWithOptions("operit-ha", 1, stack, enableIo)
             .map_err(HostError::new)?;
-        let blocking = spawnTaskPoolWithOptions("operit-hb", 1, stack, enableIo)
+        // Consent queries use projections; evidence is decoded only during command execution.
+        let blockingStack = if cfg!(any(target_os = "espidf", feature = "esp32-compat")) {
+            DEVICE_BLOCKING_STACK_BYTES
+        } else { stack };
+        let blocking = spawnTaskPoolWithOptions("operit-host-blocking", 1, blockingStack, enableIo)
             .map_err(HostError::new)?;
         Ok(Self {
             tasks: Arc::new(tasks),
@@ -122,6 +129,26 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Device HTTP work must share the guarded async worker instead of creating desktop runtimes.
+    #[cfg(feature = "esp32-compat")]
+    #[test]
+    fn network_tasks_use_the_device_async_worker() {
+        let local = LocalHostRuntimeTaskSchedulerHost::new().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let deviceSender = sender.clone();
+        local.scheduleHostRuntimeAsyncTask("device-worker", Box::new(move || Box::pin(async move {
+            deviceSender.send(std::thread::current().id()).unwrap();
+        }))).unwrap();
+        crate::NativeHostRuntimeTaskSchedulerHost::new()
+            .scheduleNetworkAsyncTask("device-http", Box::new(move || Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                sender.send(std::thread::current().id()).unwrap();
+            }))).unwrap();
+        let device = receiver.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let network = receiver.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(device, network);
+    }
     /// A blocked device call must leave the asynchronous timer worker available.
     #[test]
     fn blocking_device_work_does_not_stall_async_timers() {

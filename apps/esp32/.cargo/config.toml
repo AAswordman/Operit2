@@ -8,13 +8,16 @@ rustflags = ["--cfg", "espidf_time64", "--cfg", "mio_unsupported_force_poll_poll
 
 [unstable]
 build-std = ["std", "panic_abort"]
+# Keep panic messages and raw backtrace addresses; resolve symbols on the host
+# with the matching ELF instead of shipping a DWARF reader on the device.
+build-std-features = ["backtrace", "panic-unwind", "backtrace-trace-only"]
 
 [env]
 CARGO_WORKSPACE_DIR = { value = ".", relative = true, force = true }
 MCU = "esp32"
 ESP_IDF_VERSION = "v5.3.2"
 ESP_IDF_SDKCONFIG_DEFAULTS = { value = "sdkconfig.defaults", relative = true }
-ESP_IDF_COMPONENTS = "main;app_update;bootloader;driver;fatfs;spiffs;wear_levelling;nvs_flash;esp_event;esp_netif;esp_wifi;esp_http_server;esp_http_client;espressif__mdns;ui_port"
+ESP_IDF_COMPONENTS = "main;app_update;bootloader;driver;fatfs;spiffs;wear_levelling;nvs_flash;esp_event;esp_netif;esp_wifi;esp_http_server;esp_http_client;espressif__mdns;ui_port;operit_board_audio"
 ESP_IDF_GLOB_PARTITIONS_BASE = { value = ".", relative = true, force = true }
 ESP_IDF_GLOB_PARTITIONS_0 = "partitions.csv"
 

@@ -17,7 +17,9 @@ operit-host-native-scheduler = { path = "../../hosts/common/operit-host-native-s
 operit-peer-link = { path = "../../core/crates/node/peer-link" }
 operit-edge-contract = { path = "../../core/crates/node/edge-contract" }
 async-trait = "0.1"
-log = "0.4"
+# UART console logging is disabled after boot to protect binary Link frames.
+# Compile out Rust log formatting too; startup errors and USB health remain available.
+log = { version = "0.4", features = ["release_max_level_off"] }
 operit-board-esp32 = { path = "../../hosts/boards/esp32" }
 operit-node-edge = { path = "../../core/crates/node/edge" }
 operit-edge-scene = { path = "../../hosts/common/operit-edge-scene" }
@@ -54,16 +56,18 @@ esp_idf_components = [
   "esp_http_client",
   "espressif__mdns",
   "ui_port",
+  "operit_board_audio",
 ]
 extra_components = [
   { remote_component = { name = "espressif/mdns", version = "1.2.0" } },
-  { component_dirs = ["ui_port"] },
+  { component_dirs = ["ui_port", "../../hosts/boards/esp32/operit_board_audio"] },
 ]
 
 # Remove duplicated code across the shared device runtime without changing the
 # fixed 4 MB board/partition layout or the package-specific Xtensa workarounds.
 [profile.release]
-lto = "thin"
+opt-level = "z"
+lto = "fat"
 codegen-units = 1
 
 # Xtensa LLVM cannot lower the vectorized UUID hex parser at opt-level 3.
@@ -79,29 +83,7 @@ tokio = { path = ".embuild/tokio-1.53.1" }
 # Prepared by the editor build; keep Poly1305 Rust/C padding within Xtensa ABI.
 ring = { path = ".embuild/ring-0.17.14" }
 
+# The pinned alignment overlay and final ELF ABI check protect Xtensa frames.
+# Optimize Tokio for the same fixed flash budget as the rest of the firmware.
 [profile.release.package.tokio]
-opt-level = 1
-
-# Keep the shared peer runtime within the board's existing 4 MB flash layout.
-[profile.release.package.operit-esp32]
-opt-level = "z"
-[profile.release.package.operit-node-runtime]
-opt-level = "z"
-[profile.release.package.operit-store]
-opt-level = "z"
-[profile.release.package.operit-link]
-opt-level = "z"
-
-# The control-plane JSON adapter must fit the unchanged application partition.
-[profile.release.package.serde_json]
-opt-level = "z"
-[profile.release.package.operit-node-edge]
-opt-level = "z"
-
-[profile.release.package.operit-peer-link]
-opt-level = "z"
-[profile.release.package.operit-host-api]
-opt-level = "z"
-
-[profile.release.package.operit-edge-scene]
 opt-level = "z"

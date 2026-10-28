@@ -9,10 +9,10 @@ use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 /// grant in this fixture) so the doctor has pollution to find. Journal length
 /// is timing-dependent (binding writes land asynchronously), so the line is
 /// located by content, never by index.
-fn corruptLastControlLine(service: &RuntimeRemoteLinkService, deviceId: &str) {
-    let sync = SyncOperationStore::new(service.storage(), RUNTIME_SYNC_DIR_PATH);
+fn corruptLastControlLine(storage: Arc<dyn RuntimeStorageHost>, deviceId: &str) {
+    let sync = SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH);
     let path = sync.operationsPath(deviceId);
-    let content = service.storage().readBytes(&path).unwrap();
+    let content = storage.readBytes(&path).unwrap();
     let lines: Vec<&[u8]> = content.split_inclusive(|byte| *byte == b'\n').collect();
     let mut target = None;
     for (index, line) in lines.iter().enumerate() {
@@ -34,7 +34,7 @@ fn corruptLastControlLine(service: &RuntimeRemoteLinkService, deviceId: &str) {
             corrupted.extend_from_slice(line);
         }
     }
-    service.storage().writeBytes(&path, &corrupted).unwrap();
+    storage.writeBytes(&path, &corrupted).unwrap();
 }
 
 /// Damaged journal lines are diagnosed, repaired reversibly and selfchecked.
@@ -52,10 +52,27 @@ async fn doctor_detects_quarantines_and_selfchecks_damaged_lines() {
     // Corrupt the identity grant (the last control line): the admission
     // survives, so repair must lose exactly one operation while the member
     // stays admitted by the surviving control log.
-    corruptLastControlLine(&service, &local);
+    // Model offline journal damage followed by a process restart. The journal
+    // now retains record offsets while a runtime owns it; directly overwriting
+    // the file under a live index is not a supported append/repair operation.
+    let original = service.storage();
+    let storage: Arc<dyn RuntimeStorageHost> = Arc::new(TestRuntimeStorageHost::default());
+    for entry in original.list("").unwrap() {
+        if !entry.isDirectory {
+            storage.writeBytes(&entry.path, &original.readBytes(&entry.path).unwrap()).unwrap();
+        }
+    }
+    drop(service);
+    drop(router);
+    drop(original);
+    // A fresh Host identity also isolates this restart from process-global test
+    // services that can retain the original runtime's journal handles.
+    corruptLastControlLine(storage.clone(), &local);
+    let router = CoreNodeRouter::new(testLocalRuntime(storage)).unwrap();
+    let service = RuntimeRemoteLinkService::newWithRouter((*router.localCore).clone(), router);
 
     let report = space_doctor::diagnose(&service, false).unwrap();
-    assert!(report.policyReadable, "resilient reads survive one damaged line");
+    assert!(report.policyReadable, "resilient reads survive one damaged line: {:?}", report.policyError);
     let journal = report.journals.iter().find(|journal| journal.deviceId == local).expect("local journal");
     assert_eq!(journal.findings.len(), 1);
     assert!(report.findings.iter().any(|finding| finding.check == "D4_raw_line_scan"));

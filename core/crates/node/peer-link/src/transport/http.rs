@@ -148,11 +148,13 @@ pub(super) async fn connect(
     scheduler
         .scheduleHostRuntimeAsyncTask(
             "peer-http-sender",
-            Box::new(move || Box::pin(async move {
-                let result = sendBatches(&outbox, &tasks, &http, &id, &url).await;
-                outbox.finish(result);
-                let _ = http.closeHttpByteStream(&id);
-            })),
+            Box::new(move || {
+                Box::pin(async move {
+                    let result = sendBatches(&outbox, &tasks, &http, &id, &url).await;
+                    outbox.finish(result);
+                    let _ = http.closeHttpByteStream(&id);
+                })
+            }),
         )
         .map_err(|error| error.to_string())?;
     Ok(FramedPeerConnection::new(
@@ -170,7 +172,10 @@ struct Server {
 }
 #[async_trait]
 impl ByteConnection for Server {
-    fn remoteAddress(&self) -> Option<std::net::SocketAddr> { self.remote }
+    /// Returns the concrete Host-bound transport address.
+    fn remoteAddress(&self) -> Option<std::net::SocketAddr> {
+        self.remote
+    }
     async fn write(&self, bytes: &[u8]) -> Result<(), String> {
         self.incoming.status()?;
         let tx = self
@@ -227,6 +232,7 @@ pub(super) fn response(status: u16) -> ServerResponse {
     *result.status_mut() = http::StatusCode::from_u16(status).unwrap();
     result
 }
+/// Builds HTTP connection endpoints from the actual shared Host binding.
 pub(super) async fn listen(
     registry: &ServerRegistry,
     host: &HostManager,
@@ -236,89 +242,98 @@ pub(super) async fn listen(
     let address = source.address.clone();
     let connections: Connections = Arc::new(StdMutex::new(BTreeMap::new()));
     let (accept, rx) = mpsc::channel(32);
-    let handler: HttpServerHandler = Arc::new(move |request| {
-        let connections = connections.clone();
-        let accept = accept.clone();
-        let source = source.clone();
-        Box::pin(async move {
-            let Some(id) = request
-                .headers()
-                .get(CONNECTION_HEADER)
-                .and_then(|v| v.to_str().ok())
-                .filter(|v| uuid::Uuid::parse_str(v).is_ok())
-                .map(str::to_owned)
-            else {
-                return response(400);
-            };
-            match *request.method() {
-                http::Method::GET => {
-                    let Ok(slot) = accept.try_reserve_owned() else {
-                        return response(503);
-                    };
-                    let (tx, rx) = mpsc::channel(32);
-                    let connection = Arc::new(Server {
-                        remote: request.extensions().get::<operit_host_api::HttpServer::RemoteAddress>().map(|v| v.0),
-                        incoming: Inbox::new(maxMessageBytes),
-                        outgoing: Mutex::new(Some(tx)),
-                    });
-                    {
-                        let mut entries = connections.lock().unwrap();
-                        if entries.contains_key(&id) {
-                            return response(409);
-                        }
-                        if entries.len() >= 128 {
+    let handler = move |boundAddress: &str| {
+        let mut source = source;
+        source.address = boundAddress.to_owned();
+        let handler: HttpServerHandler = Arc::new(move |request| {
+            let connections = connections.clone();
+            let accept = accept.clone();
+            let source = source.clone();
+            Box::pin(async move {
+                let Some(id) = request
+                    .headers()
+                    .get(CONNECTION_HEADER)
+                    .and_then(|v| v.to_str().ok())
+                    .filter(|v| uuid::Uuid::parse_str(v).is_ok())
+                    .map(str::to_owned)
+                else {
+                    return response(400);
+                };
+                match *request.method() {
+                    http::Method::GET => {
+                        let Ok(slot) = accept.try_reserve_owned() else {
                             return response(503);
+                        };
+                        let (tx, rx) = mpsc::channel(32);
+                        let connection = Arc::new(Server {
+                            remote: request
+                                .extensions()
+                                .get::<operit_host_api::HttpServer::RemoteAddress>()
+                                .map(|v| v.0),
+                            incoming: Inbox::new(maxMessageBytes),
+                            outgoing: Mutex::new(Some(tx)),
+                        });
+                        {
+                            let mut entries = connections.lock().unwrap();
+                            if entries.contains_key(&id) {
+                                return response(409);
+                            }
+                            if entries.len() >= 128 {
+                                return response(503);
+                            }
+                            entries.insert(id.clone(), Arc::downgrade(&connection));
                         }
-                        entries.insert(id.clone(), Arc::downgrade(&connection));
+                        let body = ResponseStream {
+                            rx,
+                            id,
+                            connections,
+                        };
+                        slot.send(FramedPeerConnection::new(
+                            source,
+                            PeerEndpoint {
+                                nodeId: String::new(),
+                                address: String::new(),
+                            },
+                            PeerTransport::Http,
+                            connection,
+                            maxMessageBytes,
+                        ) as Arc<dyn PeerConnection>);
+                        let mut result = ServerResponse::new(StreamBody::new(body).boxed_unsync());
+                        result
+                            .headers_mut()
+                            .insert("content-type", "application/octet-stream".parse().unwrap());
+                        result
+                            .headers_mut()
+                            .insert("cache-control", "no-store".parse().unwrap());
+                        result
                     }
-                    let body = ResponseStream {
-                        rx,
-                        id,
-                        connections,
-                    };
-                    slot.send(FramedPeerConnection::new(
-                        source,
-                        PeerEndpoint {
-                            nodeId: String::new(),
-                            address: String::new(),
-                        },
-                        PeerTransport::Http,
-                        connection,
-                        maxMessageBytes,
-                    ) as Arc<dyn PeerConnection>);
-                    let mut result = ServerResponse::new(StreamBody::new(body).boxed_unsync());
-                    result
-                        .headers_mut()
-                        .insert("content-type", "application/octet-stream".parse().unwrap());
-                    result
-                        .headers_mut()
-                        .insert("cache-control", "no-store".parse().unwrap());
-                    result
-                }
-                http::Method::POST => {
-                    let connection = connections.lock().unwrap().get(&id).and_then(Weak::upgrade);
-                    let Some(connection) = connection else {
-                        return response(404);
-                    };
-                    let bytes = match Limited::new(request.into_body(), maxMessageBytes + 4)
-                        .collect()
-                        .await
-                    {
-                        Ok(body) => body.to_bytes(),
-                        Err(_) => return response(413),
-                    };
-                    connection.incoming.put(bytes.to_vec());
-                    if connection.incoming.status().is_err() {
-                        response(410)
-                    } else {
-                        response(204)
+                    http::Method::POST => {
+                        let connection =
+                            connections.lock().unwrap().get(&id).and_then(Weak::upgrade);
+                        let Some(connection) = connection else {
+                            return response(404);
+                        };
+                        let bytes = match Limited::new(request.into_body(), maxMessageBytes + 4)
+                            .collect()
+                            .await
+                        {
+                            Ok(body) => body.to_bytes(),
+                            Err(_) => return response(413),
+                        };
+                        connection.incoming.put(bytes.to_vec());
+                        if connection.incoming.status().is_err() {
+                            response(410)
+                        } else {
+                            response(204)
+                        }
                     }
+                    _ => response(405),
                 }
-                _ => response(405),
-            }
-        })
-    });
-    serve(registry, host, &address, PeerTransport::Http, rx, browserHttpHandler(handler)).await
+            })
+        });
+        browserHttpHandler(handler)
+    };
+    serve(registry, host, &address, PeerTransport::Http, rx, handler).await
 }
 
 /// Allows credential-free browser Link requests without bypassing runtime authentication.
@@ -333,7 +348,10 @@ fn browserHttpHandler(handler: HttpServerHandler) -> HttpServerHandler {
             };
             // Link authentication is carried in encrypted messages, not cookies.
             // CORS only grants access to this transport, never to runtime objects.
-            result.headers_mut().insert("access-control-allow-origin", http::HeaderValue::from_static("*"));
+            result.headers_mut().insert(
+                "access-control-allow-origin",
+                http::HeaderValue::from_static("*"),
+            );
             result
         })
     })
@@ -341,21 +359,33 @@ fn browserHttpHandler(handler: HttpServerHandler) -> HttpServerHandler {
 
 /// Validates the exact methods and headers used by the binary HTTP Link carrier.
 fn browserPreflight(request: &ServerRequest) -> ServerResponse {
-    let method = request.headers().get("access-control-request-method").and_then(|value| value.to_str().ok());
+    let method = request
+        .headers()
+        .get("access-control-request-method")
+        .and_then(|value| value.to_str().ok());
     if !matches!(method, Some("GET" | "POST")) {
         return response(405);
     }
     if let Some(headers) = request.headers().get("access-control-request-headers") {
-        let Ok(headers) = headers.to_str() else { return response(400); };
+        let Ok(headers) = headers.to_str() else {
+            return response(400);
+        };
         if !headers.split(',').map(str::trim).all(|name| {
-            name.eq_ignore_ascii_case("content-type") || name.eq_ignore_ascii_case(CONNECTION_HEADER)
+            name.eq_ignore_ascii_case("content-type")
+                || name.eq_ignore_ascii_case(CONNECTION_HEADER)
         }) {
             return response(400);
         }
     }
     let mut result = response(204);
-    result.headers_mut().insert("access-control-allow-methods", http::HeaderValue::from_static("GET, POST"));
-    result.headers_mut().insert("access-control-allow-headers", http::HeaderValue::from_static("content-type, x-operit-link-connection"));
+    result.headers_mut().insert(
+        "access-control-allow-methods",
+        http::HeaderValue::from_static("GET, POST"),
+    );
+    result.headers_mut().insert(
+        "access-control-allow-headers",
+        http::HeaderValue::from_static("content-type, x-operit-link-connection"),
+    );
     result
 }
 
@@ -423,13 +453,14 @@ impl PeerListener for Listener {
         self.incoming.lock().await.close();
     }
 }
+/// Binds once and installs each carrier handler using the actual bound address.
 pub(super) async fn serve(
     registry: &ServerRegistry,
     host: &HostManager,
     address: &str,
     transport: PeerTransport,
     incoming: mpsc::Receiver<Arc<dyn PeerConnection>>,
-    handler: HttpServerHandler,
+    makeHandler: impl FnOnce(&str) -> HttpServerHandler + Send,
 ) -> Result<Arc<dyn PeerListener>, String> {
     let provider = host
         .httpServerHost
@@ -508,7 +539,7 @@ pub(super) async fn serve(
                 "{transport:?} listener already active at {address}"
             ));
         }
-        handlers.insert(transport, handler);
+        handlers.insert(transport, makeHandler(&server.address));
     }
     Ok(Arc::new(Listener {
         incoming: Mutex::new(incoming),
@@ -517,7 +548,6 @@ pub(super) async fn serve(
         transport,
     }))
 }
-
 
 #[cfg(test)]
 mod browser_cors_tests {
@@ -532,7 +562,11 @@ mod browser_cors_tests {
             .header("origin", "https://operit.example")
             .header("access-control-request-method", method)
             .header("access-control-request-headers", headers)
-            .body(Full::new(Bytes::new()).map_err(|never| match never {}).boxed_unsync())
+            .body(
+                Full::new(Bytes::new())
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+            )
             .unwrap()
     }
 
@@ -549,12 +583,23 @@ mod browser_cors_tests {
             let result = handler(preflight(method, "Content-Type, X-Operit-Link-Connection")).await;
             assert_eq!(result.status(), 204);
             assert_eq!(result.headers()["access-control-allow-origin"], "*");
-            assert_eq!(result.headers()["access-control-allow-methods"], "GET, POST");
-            assert!(!result.headers().contains_key("access-control-allow-credentials"));
+            assert_eq!(
+                result.headers()["access-control-allow-methods"],
+                "GET, POST"
+            );
+            assert!(!result
+                .headers()
+                .contains_key("access-control-allow-credentials"));
         }
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert_eq!(handler(preflight("DELETE", "content-type")).await.status(), 405);
-        assert_eq!(handler(preflight("POST", "authorization")).await.status(), 400);
+        assert_eq!(
+            handler(preflight("DELETE", "content-type")).await.status(),
+            405
+        );
+        assert_eq!(
+            handler(preflight("POST", "authorization")).await.status(),
+            400
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
@@ -563,7 +608,10 @@ mod browser_cors_tests {
     async fn browser_request_keeps_runtime_authentication_and_remote_address() {
         let remote = "127.0.0.1:12456".parse().unwrap();
         let handler = browserHttpHandler(Arc::new(move |request| {
-            assert_eq!(request.extensions().get::<RemoteAddress>().unwrap().0, remote);
+            assert_eq!(
+                request.extensions().get::<RemoteAddress>().unwrap().0,
+                remote
+            );
             Box::pin(async { response(401) })
         }));
         let mut request = preflight("POST", "content-type");
@@ -572,6 +620,8 @@ mod browser_cors_tests {
         let result = handler(request).await;
         assert_eq!(result.status(), 401);
         assert_eq!(result.headers()["access-control-allow-origin"], "*");
-        assert!(!result.headers().contains_key("access-control-allow-credentials"));
+        assert!(!result
+            .headers()
+            .contains_key("access-control-allow-credentials"));
     }
 }

@@ -6,7 +6,9 @@ use operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_IDENTITY_PATH;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore, PreferencesDataStoreError};
+use crate::PreferencesDataStore::{
+    stringPreferencesKey, CoreNodeStateStore, PreferencesDataStoreError,
+};
 use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, defaultRuntimeStorageHostOption};
 
 const CORE_NODE_IDENTITY_RECORD_KEY: &str = "record";
@@ -15,6 +17,23 @@ const CORE_NODE_IDENTITY_RECORD_KEY: &str = "record";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreNodeIdentity {
     pub nodeId: String,
+}
+
+/// Decodes only the identity field from the shared presentation record.
+#[derive(Serialize, Deserialize)]
+struct IdentityRecord {
+    #[serde(rename = "deviceId")]
+    nodeId: String,
+}
+
+impl IdentityRecord {
+    /// Validates the stored identifier without materializing unrelated presentation fields.
+    fn identity(self) -> Result<CoreNodeIdentity, String> {
+        validateNodeId(&self.nodeId)?;
+        Ok(CoreNodeIdentity {
+            nodeId: self.nodeId,
+        })
+    }
 }
 
 /// Owns the stable CoreNode identity shared by runtime, sync, CLI, and Link Access.
@@ -46,20 +65,20 @@ impl CoreNodeIdentityStore {
 
     /// Reads the persisted CoreNode identity.
     pub fn identity(&self) -> Result<CoreNodeIdentity, String> {
-        let preferences = self.dataStore().data().map_err(|error| error.to_string())?;
-        let encoded = preferences
-            .get(&stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY))
-            .ok_or_else(|| "CoreNode identity is not initialized".to_string())?;
-        decodeIdentity(encoded)
+        self.dataStore()
+            .typedEntry::<IdentityRecord>(CORE_NODE_IDENTITY_RECORD_KEY)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "CoreNode identity is not initialized".to_owned())?
+            .identity()
     }
 
-    /// Creates the stable CoreNode identity and returns the persisted value.
+    /// Creates the stable identity only when the shared record has not been initialized.
     pub fn initialize(&self) -> Result<CoreNodeIdentity, String> {
         let store = self.dataStore();
         let mut preferences = store.data().map_err(|error| error.to_string())?;
         if let Some(encoded) = preferences.get(&stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY))
         {
-            if let Ok(identity) = decodeIdentity(encoded) { return Ok(identity); }
+            if let Ok(identity) = serde_json::from_value::<IdentityRecord>(encoded.clone()).map_err(|error| error.to_string()).and_then(IdentityRecord::identity) { return Ok(identity); }
         }
         let identity = CoreNodeIdentity {
             nodeId: format!("core-{}-{}", currentTimeMillis(), Uuid::new_v4().simple()),
@@ -115,7 +134,9 @@ impl CoreNodeIdentityStore {
                             }
                             value => value,
                         };
-                        decodeIdentity(&record).map_err(PreferencesDataStoreError::Message)?;
+                        serde_json::from_value::<IdentityRecord>(record.clone())?
+                            .identity()
+                            .map_err(PreferencesDataStoreError::Message)?;
                         preferences.set(&key, record);
                     }
                     Ok(())
@@ -123,19 +144,6 @@ impl CoreNodeIdentityStore {
                 from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
             })
     }
-}
-
-/// Decodes the shared Link Access identity record into the CoreNode identity projection.
-fn decodeIdentity(encoded: &serde_json::Value) -> Result<CoreNodeIdentity, String> {
-    let record: serde_json::Value =
-        serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
-    let nodeId = record
-        .get("deviceId")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "CoreNode identity record is missing deviceId".to_string())?
-        .to_string();
-    validateNodeId(&nodeId)?;
-    Ok(CoreNodeIdentity { nodeId })
 }
 
 /// Validates one stable CoreNode identifier.

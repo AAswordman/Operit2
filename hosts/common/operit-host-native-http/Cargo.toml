@@ -9,6 +9,7 @@ publish = false
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws"] }
 http-body-util = "0.1"
+tower = "0.5"
 futures-util = "0.3"
 operit-host-native-scheduler = { path = "../operit-host-native-scheduler", default-features = false }
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }

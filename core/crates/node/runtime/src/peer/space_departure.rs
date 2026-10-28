@@ -98,7 +98,11 @@ pub(super) async fn exchange(service: &dyn NodeSpaceContext, peer: &str) -> Resu
     // The former neighbor may still list us in the old Space. This
     // exchange delivers/acks exits; it must never adopt that stale view.
     observe(service, peer, &remote.departures, &remote.controlOperations)?;
-    if pending(service, peer)?.is_empty() && remote.departures.is_empty() { return Ok(()); }
+    let remoteHasDepartures = !remote.departures.is_empty();
+    // The peer's full snapshot is no longer needed. Release it before building
+    // our response and revalidating the authenticated transport's authority.
+    drop(remote);
+    if pending(service, peer)?.is_empty() && !remoteHasDepartures { return Ok(()); }
     let snapshot = peerSpaceSnapshotForPeer(service, peer)?;
     let request = CoreCallRequest::new(operit_link::nextCoreRouteRequestId("space-exit"),
         NODE_SPACE_TARGET, "observeSpaceSnapshot", toCoreValue(snapshot).map_err(|error| error.to_string())?);

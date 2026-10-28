@@ -69,7 +69,7 @@ pub(super) async fn connect(
 }
 pub(super) async fn listen(
     host: &HostManager,
-    source: PeerEndpoint,
+    mut source: PeerEndpoint,
     maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
     let provider = host.tcpHost.as_ref().ok_or("TCP Host is not installed")?;
@@ -77,7 +77,6 @@ pub(super) async fn listen(
         .bind(&source.address)
         .await
         .map_err(|e| e.to_string())?;
-    let mut source = source;
-    source.address = listener.local_address().map_err(|e| e.to_string())?;
+    source.address = listener.local_address().map_err(|error| error.to_string())?;
     Ok(Arc::new(TcpPeerListener { listener, source, maxMessageBytes }))
 }

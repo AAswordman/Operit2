@@ -1,6 +1,8 @@
 //! Device chat UI: native direct execution, with optional remote Core sessions.
 #![allow(non_snake_case)]
 
+use operit_edge_contract::chat_display::ChatDisplayEvent;
+
 use operit_link::CoreLinkSharedClient;
 use operit_link::{
     CoreCallRequest, CoreEventKind, CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET,
@@ -53,12 +55,24 @@ async fn uiTaskCancelled(cancelled: &mut tokio::sync::watch::Receiver<bool>) {
     }
 }
 
-async fn openUiSubscription(
+async fn openUiSubscription<F>(
     cancelled: &tokio::sync::watch::Receiver<bool>,
-    open: impl std::future::Future<Output = Result<operit_link::CoreEventStream, operit_link::CoreLinkError>>,
-) -> Result<Option<operit_link::CoreEventStream>, operit_link::CoreLinkError> {
+    open: impl FnOnce() -> F,
+) -> Result<Option<operit_link::CoreEventStream>, operit_link::CoreLinkError>
+where F: std::future::Future<Output = Result<operit_link::CoreEventStream, operit_link::CoreLinkError>> {
+    static OPENING: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     if *cancelled.borrow() { return Ok(None); }
-    let result = open.await;
+    let mut waiting = cancelled.clone();
+    let opening = tokio::select! {
+        biased;
+        _ = uiTaskCancelled(&mut waiting) => return Ok(None),
+        opening = OPENING.get_or_init(|| tokio::sync::Mutex::new(())).lock() => opening,
+    };
+    if *cancelled.borrow() { return Ok(None); }
+    // Construct the boxed routing/authorization future only after admission.
+    // Await its acknowledgement intact; established streams stay independent.
+    let result = open().await;
+    drop(opening);
     if *cancelled.borrow() {
         // Including late success: release the remote watch without cancelling
         // the acknowledgement transaction or retaining an obsolete UI session.
@@ -155,7 +169,6 @@ impl UiValue {
 struct PageCursor { timestamp: i64, offset: u32 }
 
 struct ChatSession {
-    spaceIdentity: Option<operit_node_runtime::NodeServices::SpaceClientIdentity>,
     client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     services: NodeServices,
     histories: Mutex<UiValue>,
@@ -256,100 +269,70 @@ impl Drop for SubscriptionLifetime {
     }
 }
 
-fn isMissingSpaceRoute(error: &operit_link::CoreLinkError) -> bool {
-    let text = error.to_string();
-    text.contains("SPACE_ROUTE_NOT_FOUND") || text.contains("route is not registered")
-}
-
+/// Opens the single bounded display route and preserves its protocol error.
 async fn watchChatMessages(
     client: &Arc<dyn CoreLinkSharedClient + Send + Sync>,
     chatId: &str,
     cursor: Option<PageCursor>,
 ) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {
-    let args = windowArgs(chatId, cursor);
-    match client
-        .watch(CoreWatchRequest::new(
-            "edge-ui-messages",
-            CORE_INTERNAL_TARGET,
-            "chatMessagesWindowFlow",
-            args,
-        ))
-        .await
-    {
-        Ok(stream) => Ok(stream),
-        Err(error) if isMissingSpaceRoute(&error) => Err(operit_link::CoreLinkError::new(
-            "EDGE_CHAT_UNSUPPORTED",
-            "当前 Core 不支持轻量聊天接口，请升级 Core 后重新连接",
-        )),
-        Err(error) => Err(error),
-    }
+    client.watch(CoreWatchRequest::new(
+        "edge-ui-messages",
+        CORE_INTERNAL_TARGET,
+        "chatMessagesWindowFlow",
+        windowArgs(chatId, cursor),
+    )).await
 }
 
+// Share these small wire builders instead of constructing and copying a JSON
+// tree for each call. Keep one copy in Flash across all UI request paths.
+#[inline(never)]
+fn chatFields(chatId: &str) -> BTreeMap<String, CoreValue> {
+    let mut args = BTreeMap::new();
+    args.insert("chatId".into(), CoreValue::String(chatId.into()));
+    args
+}
+fn chatArgs(chatId: &str) -> CoreValue { CoreValue::Map(chatFields(chatId)) }
+#[inline(never)]
+fn pluginPageArgs(chatId: &str, offset: u32, category: &str) -> CoreValue {
+    let mut args = chatFields(chatId);
+    args.insert("offset".into(), CoreValue::Unsigned(offset as u64));
+    args.insert("category".into(), CoreValue::String(category.into()));
+    CoreValue::Map(args)
+}
+/// Encodes the device's fixed byte and line budget for one display page.
 fn windowArgs(chatId: &str, cursor: Option<PageCursor>) -> CoreValue {
-    operit_link::toCoreValue(serde_json::json!({"chatId":chatId,
-        "beforeTimestamp":cursor.map(|c| c.timestamp), "beforeTextOffset":cursor.map(|c| c.offset),
-        "textBytes":MAX_CHAT_STRING_BYTES, "textLines":MAX_CHAT_LINES})).unwrap()
+    let mut args = chatFields(chatId);
+    args.insert("beforeTimestamp".into(), cursor.map(|c| CoreValue::Signed(c.timestamp)).unwrap_or(CoreValue::Null));
+    args.insert("beforeTextOffset".into(), cursor.map(|c| CoreValue::Unsigned(c.offset as u64)).unwrap_or(CoreValue::Null));
+    args.insert("textBytes".into(), CoreValue::Unsigned(MAX_CHAT_STRING_BYTES as u64));
+    args.insert("textLines".into(), CoreValue::Unsigned(MAX_CHAT_LINES as u64));
+    CoreValue::Map(args)
 }
 
 #[derive(Default, Clone)]
 struct StreamText {
     text: String,
     completed: bool,
-    savepoints: BTreeMap<String, String>,
 }
 
 impl StreamText {
-    fn apply(&mut self, event: &serde_json::Value) {
-        if !event
-            .get("parentBlockId")
-            .unwrap_or(&serde_json::Value::Null)
-            .is_null()
-        {
-            return;
-        }
-        match event.get("type").and_then(|v| v.as_str()) {
-            Some("reset") => {
-                self.text.clear();
-                self.savepoints.clear();
-            }
-            Some("chunk") => appendTail(
-                &mut self.text,
-                event.get("value").and_then(|v| v.as_str()).unwrap_or(""),
-                MAX_CHAT_STRING_BYTES,
-            ),
-            Some("toolStatus") => {
-                // A read-only Core display event replaces the most recent pending
-                // call with this name. No result body or call arguments are retained.
-                let token = event.get("value").and_then(|v| v.as_str()).unwrap_or("");
-                if let Some(name) = toolTokenName(token) {
-                    let running = format!("\x1eR|{name}\x1f");
-                    if let Some(at) = self.text.rfind(&running) {
-                        self.text.replace_range(at..at + running.len(), token);
-                    }
-                }
-            }
-            Some("savepoint") => {
-                if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
-                    if self.savepoints.len() >= 4 {
-                        self.savepoints.clear();
-                    }
-                    self.savepoints.insert(id.into(), self.text.clone());
-                }
-            }
-            Some("rollback") => {
-                if let Some(text) = event
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .and_then(|id| self.savepoints.get(id))
-                {
-                    self.text = text.clone();
-                }
-            }
-            _ => {}
+    /// Decodes fixtures through the same presentation contract as Link.
+    #[cfg(test)]
+    fn applyValue(&mut self, value: &serde_json::Value) {
+        self.apply(serde::Deserialize::deserialize(value).expect("valid display event")).expect("valid display change");
+    }
+
+    /// Applies presentation editing operations without interpreting business messages.
+    fn apply(&mut self, event: ChatDisplayEvent) -> Result<(), String> {
+        match event {
+            ChatDisplayEvent::Chunk { value } => appendTail(&mut self.text, &value, MAX_CHAT_STRING_BYTES),
+            ChatDisplayEvent::Replace { value } => { self.text.clear(); appendTail(&mut self.text, &value, MAX_CHAT_STRING_BYTES); }
+            ChatDisplayEvent::Error { message } => return Err(message),
         }
         if let Some(start) = self.text.match_indices('\n').rev().nth(MAX_CHAT_LINES - 1).map(|(at, _)| at + 1) {
             self.text.drain(..start);
         }
+        Ok(())
     }
 }
 
@@ -463,7 +446,7 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
                 operit_link::CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT.into(),
                 windowArgs(&session.chatId, *session.window.borrow()),
             );
-            let result = openUiSubscription(&cancelled, session
+            let result = openUiSubscription(&cancelled, || session
                 .client
                 .watch(CoreWatchRequest::new(
                     operit_link::nextCoreRouteRequestId("openCoreStream"),
@@ -487,7 +470,10 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
                             .unwrap()
                             .get_mut(&descriptor.streamId)
                         {
-                            text.apply(&serde_json::to_value(event.value).unwrap_or_default());
+                            match operit_link::fromCoreValue::<ChatDisplayEvent>(event.value) {
+                                Ok(event) => { if let Err(error) = text.apply(event) { *session.error.lock().unwrap() = Some(error); break; } },
+                                Err(error) => { *session.error.lock().unwrap() = Some(error.to_string()); break; }
+                            }
                             UI_REVISION.fetch_add(1, Ordering::Relaxed);
                         }
                     }
@@ -568,96 +554,6 @@ fn appendBounded(target: &mut String, value: &str, limit: usize) {
     target.push_str(&value[..end]);
 }
 
-// Presentation delimiters are generated by the chat-owned Core projection.
-// An incomplete token at a bounded page/stream edge must never become prose.
-fn toolTokenName(token: &str) -> Option<&str> {
-    let bytes = token.as_bytes();
-    if bytes.len() < 5 || bytes[0] != 0x1e || bytes[2] != b'|' ||
-        !matches!(bytes[1], b'R' | b'S' | b'F' | b'U') || !token.ends_with('\x1f') {
-        return None;
-    }
-    let name = &token[3..token.len() - 1];
-    (name.len() <= 96 && !name.chars().any(char::is_control)).then_some(name)
-}
-fn completeDisplayTokens(text: &str) -> String {
-    let mut rest = text;
-    if let Some(end) = rest.find('\x1f') {
-        if rest.find('\x1e').is_none_or(|start| start > end) { rest = &rest[end + 1..]; }
-    }
-    let mut output = String::new();
-    while let Some(at) = rest.find('\x1e') {
-        output.push_str(&rest[..at]);
-        rest = &rest[at..];
-        let Some(end) = rest.find('\x1f') else { return output; };
-        let token = &rest[..end + 1];
-        if toolTokenName(token).is_some() { output.push_str(token); }
-        rest = &rest[end + 1..];
-    }
-    output.push_str(rest);
-    output
-}
-
-fn visibleEdgeText(source: &str) -> String {
-    let mut result = String::new();
-    let mut rest = source;
-    while !rest.is_empty() && result.len() < MAX_CHAT_STRING_BYTES {
-        let Some(open) = rest.find('<') else {
-            appendBounded(&mut result, rest, MAX_CHAT_STRING_BYTES);
-            break;
-        };
-        appendBounded(&mut result, &rest[..open], MAX_CHAT_STRING_BYTES);
-        rest = &rest[open..];
-        let Some(close) = rest.find('>') else {
-            break;
-        };
-        let tag = &rest[1..close];
-        let name = tag
-            .trim_start_matches('/')
-            .split(|c: char| c.is_whitespace() || c == '/')
-            .next()
-            .unwrap_or("");
-        if name == "link" && (tag.contains("type=\"image\"") || tag.contains("type='image'")) {
-            let after_tag = &rest[close + 1..];
-            let Some(end) = after_tag.find("</link>") else {
-                break;
-            };
-            appendBounded(&mut result, &rest[..=close], MAX_CHAT_STRING_BYTES);
-            appendBounded(&mut result, "</link>", MAX_CHAT_STRING_BYTES);
-            rest = &after_tag[end + "</link>".len()..];
-            continue;
-        }
-        if name == "tool" && !tag.starts_with('/') {
-            let tool = tag
-                .split_once("name=\"")
-                .and_then(|(_, tail)| tail.split_once('"').map(|(name, _)| name))
-                .or_else(|| {
-                    tag.split_once("name='")
-                        .and_then(|(_, tail)| tail.split_once('\'').map(|(name, _)| name))
-                });
-            if let Some(tool) = tool.filter(|name| !name.is_empty()) {
-                if !result.is_empty() {
-                    appendBounded(&mut result, "\n", MAX_CHAT_STRING_BYTES);
-                }
-                let name: String = tool.chars().filter(|c| !c.is_control() && *c != '<' && *c != '>').take(96).collect();
-                let name = boundedText(&name);
-                let mut end = name.len().min(96);
-                while !name.is_char_boundary(end) { end -= 1; }
-                appendBounded(&mut result, &format!("\x1eR|{}\x1f\n", &name[..end]), MAX_CHAT_STRING_BYTES);
-            }
-        }
-        rest = &rest[close + 1..];
-        if !tag.starts_with('/') && !name.is_empty() {
-            let closing = format!("</{name}>");
-            if let Some(end) = rest.find(&closing) {
-                rest = &rest[end + closing.len()..];
-            } else if !tag.trim_end().ends_with('/') {
-                break;
-            }
-        }
-    }
-    result
-}
-
 /// Bounds payload fields before they are retained by the long-lived chat state.
 /// Collection shape is preserved so subsequent Core deltas still address valid paths.
 fn boundCoreValue(value: &mut CoreValue, depth: usize) {
@@ -723,7 +619,6 @@ fn installSession(
     clear();
     let (window, _) = tokio::sync::watch::channel(None);
     let session = Arc::new(ChatSession {
-        spaceIdentity: services.peers().spaceConnection().map(|c| c.identity),
         client,
         services,
         chatId,
@@ -757,7 +652,7 @@ fn installSession(
             // turn an ordinary read/send into implicit object creation.
             let result = session.client.call(CoreCallRequest::new(
                 operit_link::nextCoreRouteRequestId("ensureRoutedChat"), CORE_INTERNAL_TARGET,
-                "ensureRoutedChat", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
+                "ensureRoutedChat", chatArgs(&session.chatId),
             )).await.result;
             if *cancelled.borrow() || !currentSession(&session) { return; }
             match result {
@@ -785,7 +680,7 @@ fn startSubscriptions(session: Arc<ChatSession>) {
         let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
         loop {
             let cursor = *pageChanges.borrow_and_update();
-            let result = openUiSubscription(&cancelled, watchChatMessages(&session.client, &session.chatId, cursor)).await;
+            let result = openUiSubscription(&cancelled, || watchChatMessages(&session.client, &session.chatId, cursor)).await;
             let mut stream = match result {
                 Ok(None) => return,
                 Ok(Some(stream)) => stream,
@@ -847,9 +742,9 @@ fn startSubscriptions(session: Arc<ChatSession>) {
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
         let session = stateSession;
         let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
-        let result = openUiSubscription(&cancelled, session.client.watch(CoreWatchRequest::new(
+        let result = openUiSubscription(&cancelled, || session.client.watch(CoreWatchRequest::new(
             operit_link::nextCoreRouteRequestId("edge-chat-state"), CORE_INTERNAL_TARGET,
-            "chatStateFlow", operit_link::toCoreValue(serde_json::json!({"chatId": session.chatId})).unwrap(),
+            "chatStateFlow", chatArgs(&session.chatId),
         ))).await;
         match result {
             Ok(None) => return,
@@ -1041,7 +936,7 @@ pub fn pluginsAction(action: &str) -> Result<(), String> {
     spawnNodeUiSubscription(move |_| async move {
         let result = session.client.call(CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId("chatAvailablePlugins"), CORE_INTERNAL_TARGET,
-            "chatAvailablePlugins", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"offset":offset,"category":category})).unwrap(),
+            "chatAvailablePlugins", pluginPageArgs(&session.chatId, offset, category),
         )).await.result;
         if !currentSession(&session) { return; }
         let mut state = session.plugins.lock().unwrap();
@@ -1083,7 +978,12 @@ fn startPluginDetails(session: Arc<ChatSession>, id: String, offset: u32) -> Res
     spawnNodeUiSubscription(move |_| async move {
         let reply = pluginCallDeadline(&session, CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId("chatPluginDetails"), CORE_INTERNAL_TARGET,"chatPluginDetails",
-            operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"packageName":id,"toolOffset":offset})).unwrap(),
+            {
+                let mut args = chatFields(&session.chatId);
+                args.insert("packageName".into(), CoreValue::String(id.clone()));
+                args.insert("toolOffset".into(), CoreValue::Unsigned(offset as u64));
+                CoreValue::Map(args)
+            },
         )).await;
         if !currentSession(&session) {return;}
         let mut state = session.plugins.lock().unwrap();
@@ -1141,8 +1041,12 @@ async fn callPluginTest(session: &Arc<ChatSession>, id: &str, probeId: &str, too
     let started = std::time::Instant::now();
     let result = pluginCallDeadline(session, CoreCallRequest::new(
         probeId, CORE_INTERNAL_TARGET, "chatPluginStatus",
-        operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"packageName":id,
-            "testKind":if tool { "tool" } else { "connection" }})).unwrap(),
+        {
+            let mut args = chatFields(&session.chatId);
+            args.insert("packageName".into(), CoreValue::String(id.into()));
+            args.insert("testKind".into(), CoreValue::String(if tool { "tool" } else { "connection" }.into()));
+            CoreValue::Map(args)
+        },
     )).await;
     let (ok, error) = match result {
         Ok(value) => {
@@ -1207,7 +1111,7 @@ fn startPluginBatch(session: Arc<ChatSession>) -> Result<(), String> {
             if !pluginBatchCurrent(&session, generation, &batchId) { return; }
             let reply = pluginCallDeadline(&session, CoreCallRequest::new(
                 operit_link::nextCoreRouteRequestId("chatAvailablePlugins"), CORE_INTERNAL_TARGET, "chatAvailablePlugins",
-                operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"offset":offset,"category":category})).unwrap(),
+                pluginPageArgs(&session.chatId, offset, category),
             )).await;
             let page = match reply {
                 Ok(value) => serde_json::to_value(value).unwrap_or_default(),
@@ -1255,9 +1159,9 @@ pub fn snapshot() -> serde_json::Value {
         Some(session) => {
             // Do not hold UI state locks while serializing or acquiring another
             // lock: the single-threaded network runtime also updates this state.
-            let streams = session.streams.lock().unwrap().clone();
             let conversations = session.histories.lock().unwrap().display.clone();
-            let messages = renderMessages(session.messages.lock().unwrap().display.clone(), &streams);
+            let rows = session.messages.lock().unwrap().display.clone();
+            let messages = renderMessages(rows, &session.streams.lock().unwrap());
             let error = session.error.lock().unwrap().clone()
                 .or_else(|| session.executionError.lock().unwrap().clone());
             serde_json::json!({
@@ -1279,17 +1183,16 @@ pub fn snapshot() -> serde_json::Value {
     }
 }
 
-/// The title comes from conversation metadata, never from a response body.
-#[cfg(not(target_os = "espidf"))]
-pub fn preview() -> String {
-    let value = snapshot();
-    activeConversation(&value)
+/// Reads the title from the existing display snapshot without constructing another message tree.
+pub fn previewFromSnapshot(value: &serde_json::Value) -> String {
+    activeConversation(value)
         .and_then(|chat| chat["characterCardName"].as_str())
         .filter(|name| !name.is_empty())
         .unwrap_or("Operit")
         .to_string()
 }
 
+/// Selects only the active conversation metadata from a display snapshot.
 fn activeConversation(value: &serde_json::Value) -> Option<&serde_json::Value> {
     value["conversations"]
         .as_array()?
@@ -1313,9 +1216,9 @@ pub fn conversationsAction() -> Result<(), String> {
     *session.conversationsError.lock().unwrap() = None;
     let owner = session.clone();
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
-        let result = openUiSubscription(&cancelled, session.client.watch(CoreWatchRequest::new(
+        let result = openUiSubscription(&cancelled, || session.client.watch(CoreWatchRequest::new(
             operit_link::nextCoreRouteRequestId("edge-chat-list"), CORE_INTERNAL_TARGET,
-            "routedChatListFlow", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
+            "routedChatListFlow", chatArgs(&session.chatId),
         ))).await;
         let error = match result {
             Ok(None) => return,
@@ -1437,20 +1340,21 @@ pub fn newChat() -> Result<(), String> {
     if session.sending.swap(true, Ordering::AcqRel) {
         return Err("请等待当前操作完成".into());
     }
-    let value = snapshot();
-    let current = activeConversation(&value).cloned().unwrap_or_default();
+    let current = session.histories.lock().unwrap().display.as_array()
+        .and_then(|items| items.iter().find(|item| item["id"] == session.chatId))
+        .cloned().unwrap_or_default();
     spawnNodeUiTask(move || async move {
+        let mut args = chatFields(&session.chatId);
+        for key in ["characterCardName", "group", "characterGroupId"] {
+            args.insert(key.into(), operit_link::toCoreValue(&current[key]).unwrap());
+        }
         let response = session
             .client
             .call(CoreCallRequest::new(
                 operit_link::nextCoreRouteRequestId("createRoutedChat"),
                 CORE_INTERNAL_TARGET,
                 "createRoutedChat",
-                operit_link::toCoreValue(serde_json::json!({
-                    "chatId":session.chatId, "characterCardName":current["characterCardName"],
-                    "group":current["group"], "characterGroupId":current["characterGroupId"],
-                }))
-                .unwrap(),
+                CoreValue::Map(args),
             ))
             .await;
         session.sending.store(false, Ordering::Release);
@@ -1515,13 +1419,7 @@ pub fn taskStatus() -> String {
     "就绪".into()
 }
 
-/// Empty/error state only; actual messages are rendered as individual rows.
-#[cfg(not(target_os = "espidf"))]
-pub fn screenText() -> String {
-    let value = snapshot();
-    screenTextFromSnapshot(&value)
-}
-
+/// Reads empty and error display text from the already materialized chat snapshot.
 pub fn screenTextFromSnapshot(value: &serde_json::Value) -> String {
     if let Some(error) = value["error"].as_str() {
         return error.to_string();
@@ -1546,6 +1444,7 @@ fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) ->
 
 // Cache only display rows for the UI thread. It must not decode a second full
 // message tree concurrently with the UART reader on this small device.
+/// Copies presentation rows without parsing message markup or tool metadata.
 fn projectMessages(value: &CoreValue) -> serde_json::Value {
     let CoreValue::List(items) = value else {
         return serde_json::json!([]);
@@ -1564,7 +1463,7 @@ fn projectMessages(value: &CoreValue) -> serde_json::Value {
             },
             _ => "",
         };
-        let text = completeDisplayTokens(&displayText(&text));
+
         if text.trim().is_empty() && streamId.is_empty() {
             continue;
         }
@@ -1577,12 +1476,13 @@ fn projectMessages(value: &CoreValue) -> serde_json::Value {
     serde_json::Value::Array(result)
 }
 
+/// Combines the latest snapshot and stream tail within one shared display budget.
 fn renderMessages(mut rows: serde_json::Value, streams: &BTreeMap<String, StreamText>) -> serde_json::Value {
     let Some(items) = rows.as_array_mut() else { return serde_json::json!([]); };
     for row in items.iter_mut() {
         if let Some(stream) = row["streamId"].as_str().and_then(|id| streams.get(id)) {
             if !stream.completed && !stream.text.is_empty() {
-                let text = completeDisplayTokens(&displayText(&visibleEdgeText(&stream.text)));
+                let text = boundedText(&stream.text);
                 row["text"] = serde_json::Value::String(text);
             }
         }
@@ -1599,9 +1499,6 @@ fn renderMessages(mut rows: serde_json::Value, streams: &BTreeMap<String, Stream
         let lineStart = text.match_indices('\n').rev().nth(lines - 1).map(|(at, _)| at + 1).unwrap_or(0);
         let mut start = text.len().saturating_sub(bytes).max(lineStart);
         while !text.is_char_boundary(start) { start += 1; }
-        if let Some(end) = text[start..].find('\x1f') {
-            if text[start..].find('\x1e').is_none_or(|open| open > end) { start += end + 1; }
-        }
         let tail = &text[start..];
         bytes = bytes.saturating_sub(tail.len());
         lines = lines.saturating_sub(1 + tail.matches('\n').count());
@@ -1704,6 +1601,7 @@ pub fn send(text: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("消息不能为空".into());
     }
+    if text.len() > 16384 { return Err("消息超过 16384 字节，请拆分发送".into()); }
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -1737,22 +1635,47 @@ pub fn send(text: String) -> Result<(), String> {
 }
 
 async fn sendImageMessage(session: &ChatSession, text: String) -> Result<(), String> {
-    let args = operit_link::toCoreValue(serde_json::json!({
-        "promptFunctionType": "CHAT", "roleCardIdOverride": null,
-        "chatIdOverride": session.chatId, "messageText": text,
-        "proxySenderNameOverride": null, "chatProviderIdOverride": null,
-        "chatModelIdOverride": null, "attachments": [], "replyToMessage": null,
-        "turnOptions": {"persistTurn": true, "notifyReply": null, "hideUserMessage": false,
-            "disableWarning": false, "chatInputSubmitRequestedHandled": false},
-    }))
-    .unwrap();
+    // Construct Link values directly: avoid duplicating the input through a
+    // JSON value tree on the device, and keep the firmware serializer small.
+    let mut args = BTreeMap::new();
+    for key in ["participantId", "proxySenderNameOverride", "chatProviderIdOverride",
+        "chatModelIdOverride", "replyToMessage"] {
+        args.insert(key.into(), CoreValue::Null);
+    }
+    args.insert("promptFunctionType".into(), CoreValue::String("CHAT".into()));
+    args.insert("chatIdOverride".into(), CoreValue::String(session.chatId.clone()));
+    args.insert("attachments".into(), CoreValue::List(Vec::new()));
+    let mut options = BTreeMap::new();
+    for (key, enabled) in [("persistTurn", true), ("hideUserMessage", false),
+        ("disableWarning", false), ("chatInputSubmitRequestedHandled", false)] {
+        options.insert(key.into(), CoreValue::Bool(enabled));
+    }
+    options.insert("notifyReply".into(), CoreValue::Null);
+    args.insert("turnOptions".into(), CoreValue::Map(options));
+    if text.len() > 2048 {
+        args.insert("expectedByteLength".into(), CoreValue::Unsigned(text.len() as u64));
+        let mut upload = session.client.openPush(operit_link::CorePushRequest::new(
+            operit_link::nextCoreRouteRequestId("sendUserMessageStream"),
+            CORE_INTERNAL_TARGET, "sendUserMessageStream").withArgs(CoreValue::Map(args)))
+            .await.map_err(|e| e.to_string())?;
+        let mut offset = 0;
+        while offset < text.len() {
+            let mut end = (offset + 2048).min(text.len());
+            while !text.is_char_boundary(end) { end -= 1; }
+            upload.send(CoreValue::String(text[offset..end].to_owned())).await.map_err(|e| e.to_string())?;
+            offset = end;
+        }
+        upload.send(CoreValue::String(String::new())).await.map_err(|e| e.to_string())?;
+        return upload.close().await.map_err(|e| e.to_string());
+    }
+    args.insert("messageText".into(), CoreValue::String(text));
     session
         .client
         .call(CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId("sendUserMessage"),
             CORE_INTERNAL_TARGET,
             "sendUserMessage",
-            args,
+            CoreValue::Map(args),
         ))
         .await
         .result
@@ -1767,15 +1690,15 @@ mod tests {
     #[test]
     fn streaming_reply_keeps_a_bounded_utf8_tail_without_freezing() {
         let mut text=StreamText::default();
-        for _ in 0..1000 { text.apply(&serde_json::json!({"type":"chunk","value":"增量同步的文字"})); assert!(text.text.len()<=MAX_CHAT_STRING_BYTES); }
-        text.apply(&serde_json::json!({"type":"chunk","value":"最新的结束标记"}));
+        for _ in 0..1000 { text.applyValue(&serde_json::json!({"type":"chunk","value":"增量同步的文字"})); assert!(text.text.len()<=MAX_CHAT_STRING_BYTES); }
+        text.applyValue(&serde_json::json!({"type":"chunk","value":"最新的结束标记"}));
         assert!(text.text.ends_with("最新的结束标记"));
         assert!(text.text.is_char_boundary(text.text.len()));
         let CoreValue::Map(args)=windowArgs("chat",Some(PageCursor{timestamp:123,offset:456})) else {panic!()};
         assert_eq!(args["textBytes"],CoreValue::Unsigned(MAX_CHAT_STRING_BYTES as u64));
         assert_eq!(args["textLines"],CoreValue::Unsigned(MAX_CHAT_LINES as u64));
         for n in 0..100 {
-            text.apply(&serde_json::json!({"type":"chunk","value":format!("\n短行-{n}")}));
+            text.applyValue(&serde_json::json!({"type":"chunk","value":format!("\n短行-{n}")}));
             assert!(1 + text.text.matches('\n').count() <= MAX_CHAT_LINES);
         }
         assert!(text.text.ends_with("短行-99"));
@@ -1870,7 +1793,7 @@ mod tests {
             {"sender":"ai", "text":"", "images":[], "streamId":"live"},
         ]);
         let mut stream = StreamText::default();
-        stream.apply(&serde_json::json!({"type":"chunk", "value":"新的回复\n".repeat(120)+"最新终点"}));
+        stream.applyValue(&serde_json::json!({"type":"chunk", "value":"新的回复\n".repeat(120)+"最新终点"}));
         let rows = renderMessages(rows, &BTreeMap::from([("live".into(), stream)]));
         let rows = rows.as_array().unwrap();
         let bytes: usize = rows.iter().map(|r| r["text"].as_str().unwrap().len()).sum();
@@ -1905,7 +1828,7 @@ mod tests {
         }
         let abandoned_open = abandoned.clone();
         let closed_watch = closed.clone();
-        let mut opening = Box::pin(openUiSubscription(&cancelled, async move {
+        let mut opening = Box::pin(openUiSubscription(&cancelled, || async move {
             let mut request = InFlight(abandoned_open, false);
             reply.await.unwrap();
             request.1 = true;
@@ -1913,6 +1836,19 @@ mod tests {
             Ok(stream.withOnClose(move || { closed_watch.fetch_add(1, Ordering::SeqCst); }))
         }));
         poll_fn(|cx| { assert!(opening.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
+        // A second open must not construct its boxed routing future while the
+        // first acknowledgement is pending, and a cancelled waiter opens nothing.
+        let (cancel_waiter, waiter) = tokio::sync::watch::channel(false);
+        let constructed = AtomicBool::new(false);
+        let mut queued = Box::pin(openUiSubscription(&waiter, || {
+            constructed.store(true, Ordering::SeqCst);
+            async { Ok(operit_link::CoreEventStream::channel().1) }
+        }));
+        poll_fn(|cx| { assert!(queued.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
+        assert!(!constructed.load(Ordering::SeqCst));
+        cancel_waiter.send(true).unwrap();
+        assert!(queued.await.unwrap().is_none());
+        assert!(!constructed.load(Ordering::SeqCst));
         cancel.send(true).unwrap(); // Final message removes the in-flight descriptor.
         poll_fn(|cx| { assert!(opening.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
         assert_eq!(abandoned.load(Ordering::SeqCst), 0, "never abandon an in-flight Link transaction");
@@ -1926,7 +1862,7 @@ mod tests {
     async fn already_cancelled_subscription_does_not_open_remote_watch() {
         let (cancel, cancelled) = tokio::sync::watch::channel(false);
         cancel.send(true).unwrap();
-        assert!(openUiSubscription(&cancelled, async { panic!("must not open cancelled watch") }).await.unwrap().is_none());
+        assert!(openUiSubscription(&cancelled, || async { panic!("must not open cancelled watch") }).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -1964,19 +1900,17 @@ mod tests {
         assert!(message.is_char_boundary(message.len()));
     }
     #[test]
-    fn replyStreamHandlesRollbackWithoutDuplicatingRendererChunks() {
+    /// Replaces discarded display text without storing source revisions on the device.
+    fn projected_replacement_removes_discarded_text_without_retaining_revision_history() {
         let mut text = StreamText::default();
         for event in [
-            serde_json::json!({"type":"reset"}),
+            serde_json::json!({"type":"replace","value":""}),
             serde_json::json!({"type":"chunk","value":"你好"}),
-            serde_json::json!({"type":"savepoint","id":"a"}),
             serde_json::json!({"type":"chunk","value":"错误分支"}),
-            serde_json::json!({"type":"rollback","id":"a"}),
-            serde_json::json!({"type":"markdownBlockChunk","value":"重复渲染数据"}),
-            serde_json::json!({"type":"chunk","parentBlockId":1,"value":"嵌套块"}),
+            serde_json::json!({"type":"replace","value":"你好"}),
             serde_json::json!({"type":"chunk","value":"，世界"}),
         ] {
-            text.apply(&event);
+            text.applyValue(&event);
         }
         assert_eq!(text.text, "你好，世界");
         let messages = operit_link::toCoreValue(serde_json::json!([{
@@ -2000,80 +1934,9 @@ pub fn takeSendResult() -> Option<Result<(), String>> {
     result
 }
 
-/// The fixed renderer is text-only. Preserve image-only messages as visible
-/// placeholders instead of stripping links into an invisible preview list.
-fn displayText(text: &str) -> String {
-    let mut output = String::new();
-    let mut rest = text;
-    while let Some(start) = rest.find("<link ") {
-        output.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let Some(end) = rest.find('>') else { break; };
-        let header = &rest[6..end];
-        if header.split_whitespace().any(|part| part == "type=\"image\"" || part == "type='image'") {
-            output.push_str("[图片：请在 Core 端查看]");
-            rest = &rest[end + 1..];
-            rest = rest.strip_prefix("</link>").unwrap_or(rest);
-        } else {
-            output.push_str(&rest[..end + 1]);
-            rest = &rest[end + 1..];
-        }
-    }
-    output.push_str(rest);
-    output
-}
-
-#[cfg(test)]
-mod attachment_display_tests {
-    use super::*;
-    #[test]
-    fn text_only_renderer_keeps_image_messages_visible() {
-        assert_eq!(displayText("<link type=\"image\" id=\"a\"></link>"), "[图片：请在 Core 端查看]");
-        assert_eq!(displayText("前<link id='a' type='image'></link>后"), "前[图片：请在 Core 端查看]后");
-        assert_eq!(displayText("<link type=\"file\" id=\"a\"></link>"), "<link type=\"file\" id=\"a\"></link>");
-        assert_eq!(displayText("前<link type=\"image\""), "前<link type=\"image\"");
-    }
-}
-
-
 #[cfg(all(test, not(target_os = "espidf")))]
 #[path = "edge_chat_session_tests.rs"]
 mod session_tests;
-
-#[cfg(test)]
-mod plugin_card_tests {
-    use super::*;
-    #[test]
-    fn live_tool_status_replaces_pending_card_and_survives_savepoint_rollback() {
-        let mut stream = StreamText::default();
-        stream.apply(&serde_json::json!({"type":"chunk","value":"\x1eR|daily_life:get_current_date\x1f\n"}));
-        stream.apply(&serde_json::json!({"type":"savepoint","id":"before-result"}));
-        stream.apply(&serde_json::json!({"type":"toolStatus","value":"\x1eS|daily_life:get_current_date\x1f"}));
-        assert_eq!(stream.text.matches('\x1e').count(), 1);
-        assert!(stream.text.contains("\x1eS|"));
-        stream.apply(&serde_json::json!({"type":"rollback","id":"before-result"}));
-        assert!(stream.text.contains("\x1eR|"));
-        stream.apply(&serde_json::json!({"type":"toolStatus","value":"\x1eF|daily_life:get_current_date\x1f"}));
-        assert!(stream.text.contains("\x1eF|"));
-        stream.apply(&serde_json::json!({"type":"toolStatus","value":"\x1eS|wrong_tool\x1f"}));
-        assert!(!stream.text.contains("wrong_tool"));
-        stream.apply(&serde_json::json!({"type":"reset"})); assert!(stream.text.is_empty());
-    }
-    #[test]
-    fn completed_stream_yields_to_final_core_status_and_bounded_tokens_remain_complete() {
-        let mut streams = BTreeMap::new();
-        streams.insert("s".into(), StreamText {text:"\x1eR|date\x1f".into(), completed:true, ..Default::default()});
-        let rows = renderMessages(serde_json::json!([{"sender":"ai","text":"\x1eS|date\x1f","streamId":"s"}]), &streams);
-        assert_eq!(rows[0]["text"], "\x1eS|date\x1f");
-        assert_eq!(completeDisplayTokens("cut-name\x1f\nreply"), "\nreply");
-        assert_eq!(completeDisplayTokens("reply\n\x1eR|partial"), "reply\n");
-        let large = format!("{}\x1eR|{}\x1f\n{}", "a".repeat(600), "x".repeat(96), "b".repeat(600));
-        let rows = renderMessages(serde_json::json!([{"sender":"ai","text":large}]), &BTreeMap::new());
-        let text = rows[0]["text"].as_str().unwrap();
-        assert!(text.len() <= MAX_CHAT_STRING_BYTES);
-        assert_eq!(text.matches('\x1e').count(), text.matches('\x1f').count());
-    }
-}
 
 #[cfg(test)]
 mod conversation_tests {

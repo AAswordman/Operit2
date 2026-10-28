@@ -7,7 +7,12 @@ mod device_preferences;
 #[cfg(target_os = "espidf")]
 mod device_http;
 mod device_speech;
+#[cfg(target_os = "espidf")]
+mod audio;
+#[cfg(target_os = "espidf")]
+mod wav;
 mod device_space_ui;
+mod space_work;
 #[cfg(target_os = "espidf")]
 mod device_services;
 #[cfg(target_os = "espidf")]
@@ -15,6 +20,7 @@ mod ui;
 #[cfg(target_os = "espidf")]
 mod runtime_host;
 mod runtime_storage_codec;
+mod runtime_storage_host;
 mod runtime_storage_pack;
 #[cfg(target_os = "espidf")]
 mod settings;
@@ -60,7 +66,11 @@ fn initializeAllocationDiagnostic() {
 #[cfg(target_os = "espidf")]
 fn main() {
     if let Err(error) = runFirmware(None) {
-        log::error!("operit-esp32 failed: {}", error.message);
+        // Startup has not handed UART to Link yet. Use the ROM formatter rather
+        // than linking Rust's buffered stderr solely for this fatal diagnostic.
+        unsafe { esp_idf_hal::sys::esp_rom_printf(
+            b"operit-esp32 startup failed: %.*s\n\0".as_ptr().cast(),
+            error.message.len().min(512) as i32, error.message.as_ptr().cast::<std::ffi::c_char>()); }
         // A recoverable storage/configuration error must not become a rapid
         // reboot loop that prevents diagnostics or replacement firmware.
         loop {
@@ -306,11 +316,14 @@ fn runFirmware(
         NodeServices::new(peerService.clone()), spaceService.clone(), scheduler.clone(),
     );
     let speech = Arc::new(device_speech::DeviceSpeech::default());
+    audio::install(scheduler.clone(),speech.clone());
     let (speechOutput, speechInput) = speech.handlers();
     let preferenceSpace = spaceService.clone();
     scheduler.scheduleHostRuntimeAsyncTask("device-preferences", Box::new(move || Box::pin(async move {
         loop {
-            let _ = preferenceSpace.synchronizePreferences().await;
+            if let Some(_work) = space_work::try_acquire() {
+                let _ = preferenceSpace.synchronizePreferences().await;
+            }
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
     })))?;
@@ -385,6 +398,8 @@ fn runFirmware(
     };
     updateStatus(&mut ui, &status, crate::edge_chat::isConnected(), paired);
     ui.pump(1);
+    let mut lastSpeechResult=0;
+    let mut pendingSpeechResult = None;
     let mut lastExpression = status.snapshot().expression;
     let mut lastStatusRevision = status.revision();
     let mut lastEdgeReady = crate::edge_chat::isConnected();
@@ -411,8 +426,10 @@ fn runFirmware(
         // The shared UI runtime receives the sampled touch directly.
         ui.setTouch(point.map(|sample| (sample.x, sample.y)));
         ui.pump(20);
-        deviceSpaceUi.poll();
-        ui.setDeviceSpaceState(&deviceSpaceUi.snapshot());
+        if !spaceJoinUi.isBusy() {
+            deviceSpaceUi.poll();
+            ui.setDeviceSpaceState(&deviceSpaceUi.snapshot());
+        }
         spaceJoinUi.pump(&mut ui);
         crate::device_services::pumpUi(&mut ui);
         for mut action in ui.drainActions() {
@@ -542,9 +559,10 @@ fn runFirmware(
                     }
                 }
                 "edge_voice" => {
-                    // This board has no microphone capture driver installed.
-                    // Native microphone drivers feed DeviceSpeech directly.
-                    ui.actionError("此硬件未配置麦克风采集驱动");
+                    if let Err(error)=audio::toggleRecording() {ui.actionError(&error);}
+                }
+                "edge_audio_test" => {
+                    if let Err(error)=audio::test() {ui.actionError(&error);}
                 }
                 "edge_send" => {
                     let draft = ui.chatDraft();
@@ -556,12 +574,23 @@ fn runFirmware(
                 _ => log::debug!("operit-esp32 UI action: {action}"),
             }
         }
-        if speech.takePlayback().is_some() {
-            speech.cancel("此硬件未配置音频播放驱动".into());
-            ui.actionError("此硬件未配置音频播放驱动");
+        audio::pump();
+        if let Some(result)=audio::takeResult() {
+            if let Err(error)=result {ui.actionError(&error);}
         }
-        let speechState = speech.snapshot();
-        ui.setSpeechState(speechState["phase"].as_u64().unwrap_or(0) as u32);
+        // Scalar speech state remains responsive while native audio owns the
+        // device work guard. Defer chat materialization until that guard releases.
+        let (phase, result) = speech.takeNativeUpdate(&mut lastSpeechResult);
+        ui.setSpeechState(phase);
+        if result.is_some() { pendingSpeechResult = result; }
+        if !spaceJoinUi.isBusy() && !deviceSpaceUi.isBusy() {
+            if let Some(result)=pendingSpeechResult.take() {
+                match result {
+                    Ok(text)=>if let Err(error)=crate::edge_chat::send(text) {ui.actionError(&error);},
+                    Err(error)=>ui.actionError(&error),
+                }
+            }
+        }
         if let Some(result) = crate::edge_chat::takeSendResult() {
             ui.chatSendResult(result);
         }
@@ -571,9 +600,17 @@ fn runFirmware(
                 status.setExpression(face.expression);
             }
         }
+        // Connection status is presentation state: poll it with route refresh,
+        // not twice per rendered frame. Every routed operation still validates
+        // its current Space entry and authorization before dispatch.
+        let mut edgeReady = lastEdgeReady;
+        let spaceStateBusy = spaceJoinUi.isBusy() || deviceSpaceUi.isBusy();
+        // A review/merge can hold a source and a target snapshot. Display-only
+        // checks must not allocate another policy replay beside that work.
+        // Keep the previous indicators until the shared operation completes.
         // Poll first so a newly accepted Core carrier is reflected on the
         // display in the same loop iteration.
-        if std::time::Instant::now() >= nextChatRoutePoll {
+        if !spaceStateBusy && std::time::Instant::now() >= nextChatRoutePoll {
             nextChatRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
             let settings = (|| {
                 let scope = operit_node_runtime::NodeSpaceService::NodeSpaceContext::spaceStore(spaceService.as_ref())
@@ -594,8 +631,8 @@ fn runFirmware(
                 }
             }
             chatRoute.poll(NodeServices::new(peerService.clone()));
+            edgeReady = crate::edge_chat::isConnected();
         }
-        let edgeReady = crate::edge_chat::isConnected();
         let mut pairingChanged = false;
         loop {
             match peerChanges.try_recv() {
@@ -608,7 +645,7 @@ fn runFirmware(
         let now = std::time::Instant::now();
         // Changes are immediate; a slow fallback poll also expires displayed codes.
         // Never deserialize the entire node database every 20ms UI frame.
-        let paired = if pairingChanged || now >= nextPairingPoll {
+        let paired = if !spaceStateBusy && (pairingChanged || now >= nextPairingPoll) {
             nextPairingPoll = now + std::time::Duration::from_secs(1);
             match pairingState() {
                 Ok((paired, codes)) => {
@@ -635,7 +672,7 @@ fn runFirmware(
             lastPaired = paired;
         }
         let chatRevision = crate::edge_chat::revision();
-        let chatConnected = crate::edge_chat::isConnected();
+        let chatConnected = edgeReady;
         if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
             let chatState = crate::edge_chat::snapshot();
             ui.setChatState(&chatState);

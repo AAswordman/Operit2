@@ -135,3 +135,14 @@ test('browser projects the device-space controller and clears stale candidates o
   assert(!JSON.stringify(inspect()).includes('真实 Core'));
   assert.equal(inspect().page,'SpaceManage');
 });
+
+test('complete speech input reaches its owner while C receives only a display preview',async()=>{
+  const {ui}=await fixture();const received=[];
+  const view=new DeviceView(ui,new ScenePreview(),()=>{},text=>received.push(text));
+  const text='长语音识别结果🙂'.repeat(400)+'最终标记';
+  view.update({sessionId:'long',running:true,paired:true,speech:{resultId:1,text}});
+  ui._operit_ui_set_connection(1,1);ui.ccall('operit_ui_submit_chat',null,[],[]);
+  const preview=ui.ccall('operit_ui_chat_draft','string',[],[]);
+  assert.deepEqual(received,[text]);assert(Buffer.byteLength(preview)<=511);
+  assert(text.startsWith(preview));assert(!preview.includes('�'));
+});

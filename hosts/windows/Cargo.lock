@@ -1432,6 +1432,7 @@ dependencies = [
  "reqwest",
  "tokio",
  "tokio-tungstenite",
+ "tower",
 ]
 
 [[package]]

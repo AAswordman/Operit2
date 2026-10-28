@@ -913,7 +913,7 @@ fn resolved_holder_metadata(access: &ObjectAccess) -> Option<(&str, &str)> {
 /// Detached chat windows bind the same generated object schema as the main
 /// window, so their slot identity is carried in `__core_instance_id` rather
 /// than in the generated target.
-fn render_resolved_holder_lookup(
+pub(super) fn render_resolved_holder_lookup(
     object: &SourceObject,
     resolver_method: &str,
     object_id: &str,

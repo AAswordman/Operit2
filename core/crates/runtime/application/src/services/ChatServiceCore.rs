@@ -567,6 +567,30 @@ impl ChatServiceCore {
         Ok(())
     }
 
+    /// Receives bounded UTF-8 chunks, then enters the existing turn pipeline.
+    /// An explicit empty commit chunk plus EOF is required; an interrupted
+    /// upload must never turn its received prefix into a chat message.
+    #[operit_route_macros::operit_core_route(binding = chatIdOverride)]
+    pub async fn sendUserMessageStream(
+        &mut self,
+        promptFunctionType: PromptFunctionType,
+        participantId: Option<String>,
+        chatIdOverride: Option<String>,
+        expectedByteLength: i64,
+        proxySenderNameOverride: Option<String>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
+        attachments: Vec<AttachmentInfo>,
+        replyToMessage: Option<ChatMessage>,
+        turnOptions: ChatTurnOptions,
+        text: operit_util::stream::ReverseStream::ReverseStream<String>,
+    ) -> Result<(), String> {
+        let messageText = super::chat_input_stream::receive(text, expectedByteLength).await?;
+        self.sendUserMessage(promptFunctionType, participantId, chatIdOverride, messageText,
+            proxySenderNameOverride, chatProviderIdOverride, chatModelIdOverride,
+            attachments, replyToMessage, turnOptions).await
+    }
+
     /// Starts the actual originating generation or returns an explicit hook ownership decision for native receipt observers.
     pub(crate) async fn startUserMessage(
         &mut self,
@@ -2431,13 +2455,13 @@ impl ChatServiceCore {
     /// Paging uses the message index; it never transfers complete history or tool payloads.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
-    pub async fn chatMessagesWindowFlow(&self, chatId: String, beforeTimestamp: Option<i64>, beforeTextOffset: Option<u32>, textBytes: u32, textLines: u32) -> StateFlow<operit_model::ChatDisplayWindowState::ChatDisplayWindow> {
+    pub async fn chatMessagesWindowFlow(&self, chatId: String, beforeTimestamp: Option<i64>, beforeTextOffset: Option<u32>, textBytes: u32, textLines: u32) -> StateFlow<operit_edge_contract::chat_display::ChatDisplayWindow> {
         let manager = self.chatHistoryDelegate.chatHistoryManager.clone();
         self.localChatMessagesFlow(chatId.clone()).map(move |live| {
             let messages = if let Some(timestamp) = beforeTimestamp {
                 let mut page = match manager.loadChatMessagesDescUpTo(chatId.clone(), timestamp, 14) {
                     Ok(page) => page,
-                    Err(error) => return operit_model::ChatDisplayWindowState::ChatDisplayWindow { messages:Vec::new(), older:None, error:Some(error.to_string()) },
+                    Err(error) => return operit_edge_contract::chat_display::ChatDisplayWindow { messages:Vec::new(), older:None, error:Some(error.to_string()) },
                 };
                 page.reverse(); page
             } else { live };

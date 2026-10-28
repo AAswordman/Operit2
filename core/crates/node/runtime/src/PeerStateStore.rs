@@ -251,6 +251,7 @@ impl PeerStateStore {
         Ok(())
     }
 
+    /// Reads the complete preference object for schema and multi-field mutations.
     fn preferences(&self, path: &str) -> Result<Preferences, String> {
         self.store(path).data().map_err(|error| error.to_string())
     }
@@ -264,25 +265,18 @@ impl PeerStateStore {
     }
 
     /// Reads only the requested record; another broken request has no bearing on this one.
-    pub(crate) fn record<T: DeserializeOwned>(&self, path: &str, id: &str) -> Result<Option<T>, String> {
-        self.preferences(path)?.get(&stringPreferencesKey(id)).cloned()
-            .map(|value| serde_json::from_value(value)
-                .map_err(|error| format!("Invalid peer state record at {path}, key {id}: {error}")))
-            .transpose()
-    }
 
     /// Read-only enumeration isolates malformed rows. Security cleanup uses the strict reader below.
     pub(crate) fn independentRecords<T: DeserializeOwned>(&self, path: &str) -> Result<BTreeMap<String, T>, String> {
-        let preferences = self.preferences(path)?;
         let mut records = BTreeMap::new();
-        for (name, value) in preferences.iterEntries() {
-            if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
-            match serde_json::from_value(value.clone()) {
+        self.store(path).visitEncodedEntries(|name, encoded| {
+            match serde_json::from_str(encoded.get()) {
                 Ok(record) => { records.insert(name.to_owned(), record); },
                 Err(error) => { operit_util::AppLogger::AppLogger::w("PeerStateStore",
                     &format!("Invalid peer state record at {path}, key {name}: {error}")); },
             }
-        }
+            Ok(())
+        }).map_err(|error| error.to_string())?;
         Ok(records)
     }
 
@@ -290,15 +284,27 @@ impl PeerStateStore {
         &self,
         path: &str,
     ) -> Result<BTreeMap<String, T>, String> {
-        self.preferences(path)?
-            .iterEntries()
-            .filter(|(name, _)| *name != PREFERENCES_SCHEMA_VERSION_KEY_NAME)
-            .map(|(name, encoded)| {
-                let record = serde_json::from_value(encoded.clone())
-                    .map_err(|_| format!("Invalid peer state record at {path}, key {name}"))?;
-                Ok((name.to_owned(), record))
-            })
-            .collect()
+        self.store(path).typedEntries::<T>()
+            .map(|entries| entries.into_iter().collect())
+            .map_err(|error| format!("Invalid peer state records at {path}: {error}"))
+    }
+
+    /// Decode a scan without the oversized tree nodes of large typed records.
+    pub(crate) fn recordValues<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, String> {
+        self.store(path).typedEntries::<T>()
+            .map(|entries| entries.into_iter().map(|(_, record)| record).collect())
+            .map_err(|error| error.to_string())
+    }
+
+    /// Re-read one authorization from the current snapshot without decoding
+    /// unrelated credentials or cloning their JSON trees.
+    pub(crate) fn record<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        id: &str,
+    ) -> Result<Option<T>, String> {
+        self.store(path).typedEntry(id)
+            .map_err(|error| format!("Invalid peer state record at {path}, key {id}: {error}"))
     }
 
     /// Inspect only the version before decoding a record; do not build a JSON
@@ -312,22 +318,18 @@ impl PeerStateStore {
         struct Header {
             version: Option<u32>,
         }
-        let prefs = self.preferences(path)?;
-        let mut records = BTreeMap::new();
-        for (name, encoded) in prefs.iterEntries() {
-            if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
-                continue;
+        self.store(path).withEncodedEntries(|entries| {
+            let mut records = BTreeMap::new();
+            for (name, encoded) in entries {
+                let bytes = encoded.get().as_bytes();
+                let header: Header = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+                if header.version == Some(version) {
+                    let record = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+                    records.insert(name, record);
+                }
             }
-            let header: Header =
-                serde_json::from_value(encoded.clone()).map_err(|e| e.to_string())?;
-            if header.version == Some(version) {
-                records.insert(
-                    name.to_owned(),
-                    serde_json::from_value(encoded.clone()).map_err(|e| e.to_string())?,
-                );
-            }
-        }
-        Ok(records)
+            Ok(records)
+        }).map_err(|error| error.to_string())?
     }
 
     /// Expiry cleanup and insertion are one durable transaction. Unknown or
@@ -354,7 +356,7 @@ impl PeerStateStore {
                     if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                         continue;
                     }
-                    if let Ok(header) = serde_json::from_value::<Header>(record.clone()) {
+                    if let Ok(header) = Header::deserialize(record) {
                         if header.version == PAIRING_SERVICE_VERSION && header.expires <= now {
                             expired.push(name.to_owned());
                             continue;
@@ -402,7 +404,7 @@ impl PeerStateStore {
                             if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
                                 return None;
                             }
-                            let header = serde_json::from_value::<Header>(record.clone()).ok()?;
+                            let header = Header::deserialize(record).ok()?;
                             (header.version == Some(PAIRING_SERVICE_VERSION))
                                 .then(|| name.to_owned())
                         })
@@ -424,17 +426,17 @@ impl PeerStateStore {
         id: &str,
         value: &T,
     ) -> Result<(), String> {
-        let encoded = serde_json::to_value(value).map_err(|e| e.to_string())?;
         self.store(path)
-            .edit(|prefs| prefs.set(&stringPreferencesKey(id), encoded))
+            .setTypedEntry(id, value)
             .map_err(|e| e.to_string())
     }
+    /// Mutable join receipts may normalize old whitespace together, so a
+    /// partially upgraded file does not compress worse than either version.
+    pub(crate) fn putCompactRecord<T: Serialize>(&self, path: &str, id: &str, value: &T) -> Result<(), String> {
+        self.store(path).setTypedEntryCompactingJson(id, value).map_err(|e| e.to_string())
+    }
     pub(crate) fn deleteRecord(&self, path: &str, id: &str) -> Result<(), String> {
-        self.store(path)
-            .edit(|prefs| {
-                prefs.remove(&stringPreferencesKey(id));
-            })
-            .map_err(|e| e.to_string())
+        self.store(path).removeEntry(id).map_err(|e| e.to_string())
     }
 
     /// Refreshes the host-owned platform while preserving the configured name and unknown fields.
@@ -529,17 +531,20 @@ impl PeerStateStore {
 
     /// Returns the persisted local pairing generation, if one was minted.
     pub fn pairingIncarnation(&self) -> Result<Option<String>, String> {
-        let preferences = self.preferences(RUNTIME_LINK_ACCESS_IDENTITY_PATH)?;
-        let encoded = preferences
-            .get(&stringPreferencesKey("record"))
+        #[derive(Deserialize)]
+        struct DeviceInfo {
+            #[serde(default)]
+            pairingIncarnation: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct Identity {
+            deviceInfo: Option<DeviceInfo>,
+        }
+        let record: Identity = self.store(RUNTIME_LINK_ACCESS_IDENTITY_PATH)
+            .typedEntry("record")
+            .map_err(|error| error.to_string())?
             .ok_or_else(|| "Node identity is missing".to_string())?;
-        let record: Value =
-            serde_json::from_value(encoded.clone()).map_err(|error| error.to_string())?;
-        Ok(record
-            .get("deviceInfo")
-            .and_then(|info| info.get("pairingIncarnation"))
-            .and_then(Value::as_str)
-            .map(str::to_owned))
+        Ok(record.deviceInfo.and_then(|info| info.pairingIncarnation))
     }
 
     /// Returns the local pairing generation, minting and persisting one on
@@ -869,6 +874,50 @@ mod tests {
             .replace(preferences)
             .unwrap();
     }
+    /// Projection reads validate their selected facts without decoding unrelated evidence.
+    #[test]
+    fn projection_scan_skips_evidence_and_rejects_malformed_selected_fields() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Projection { id: u32 }
+        #[derive(Deserialize)]
+        struct FullRecord { id: u32, payload: String }
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        let path = RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH;
+        for id in 0..8 {
+            store.putRecord(path, &id.to_string(),
+                &serde_json::json!({"id": id, "payload": {"evidence": ["x".repeat(2048)]}})).unwrap();
+        }
+        let mut records = store.recordValues::<Projection>(path).unwrap();
+        records.sort_by_key(|record| record.id);
+        assert_eq!(records, (0..8).map(|id| Projection { id }).collect::<Vec<_>>());
+        assert!(store.recordValues::<FullRecord>(path).is_err());
+        store.putRecord(path, "z-broken", &serde_json::json!({"payload": "evidence"})).unwrap();
+        let before = storage.0.lock().unwrap().clone();
+        assert!(store.recordValues::<Projection>(path).is_err());
+        assert_eq!(*storage.0.lock().unwrap(), before);
+    }
+
+    #[test]
+    fn single_record_reads_current_snapshot_and_rejects_malformed_credentials() {
+        #[derive(Debug, Deserialize, Serialize, PartialEq)]
+        struct Credential { deviceId: String, sessionSecret: String }
+        let store = PeerStateStore::new(Arc::new(Storage::default()));
+        let path = RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH;
+        let credential = Credential { deviceId: "peer".into(), sessionSecret: "first".into() };
+        store.putRecord(path, "current", &credential).unwrap();
+        assert_eq!(store.record::<Credential>(path, "current").unwrap(), Some(credential));
+        assert!(store.record::<Credential>(path, "missing").unwrap().is_none());
+        assert!(store.record::<Credential>(path, PREFERENCES_SCHEMA_VERSION_KEY_NAME).unwrap().is_none());
+        store.putRecord(path, "current", &serde_json::json!({"invalid": true})).unwrap();
+        assert!(store.record::<Credential>(path, "current").is_err());
+        let replacement = Credential { deviceId: "peer".into(), sessionSecret: "renewed".into() };
+        store.putRecord(path, "current", &replacement).unwrap();
+        assert_eq!(store.record::<Credential>(path, "current").unwrap(), Some(replacement));
+        store.deleteRecord(path, "current").unwrap();
+        assert!(store.record::<Credential>(path, "current").unwrap().is_none());
+    }
+
     #[test]
     fn unsynchronized_boot_discards_only_inflight_pairings_and_keeps_credentials() {
         let storage = Arc::new(Storage::default());

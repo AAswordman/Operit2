@@ -117,7 +117,10 @@ impl Drop for Server {
 }
 #[async_trait]
 impl ByteConnection for Server {
-    fn remoteAddress(&self) -> Option<std::net::SocketAddr> { self.remote }
+    /// Returns the concrete Host-bound transport address.
+    fn remoteAddress(&self) -> Option<std::net::SocketAddr> {
+        self.remote
+    }
     async fn write(&self, bytes: &[u8]) -> Result<(), String> {
         self.inbox.status()?;
         let (tx, rx) = oneshot::channel();
@@ -136,6 +139,7 @@ impl ByteConnection for Server {
         self.inbox.finish(Ok(()));
     }
 }
+/// Builds WebSocket connection endpoints from the actual shared Host binding.
 pub(super) async fn listen(
     registry: &super::http::ServerRegistry,
     host: &HostManager,
@@ -144,18 +148,24 @@ pub(super) async fn listen(
 ) -> Result<Arc<dyn PeerListener>, String> {
     let address = source.address.clone();
     let (tx, rx) = mpsc::channel(32);
-    let handler: HttpServerHandler = Arc::new(move |mut request| {
-        let tx = tx.clone();
-        let source = source.clone();
-        Box::pin(async move {
-            let remote = request.extensions().get::<operit_host_api::HttpServer::RemoteAddress>().map(|v| v.0);
-            let Some(upgrade) = request.extensions_mut().remove::<WebSocketUpgrade>() else {
-                return super::http::response(400);
-            };
-            let Ok(slot) = tx.try_reserve_owned() else {
-                return super::http::response(503);
-            };
-            upgrade.accept(Box::new(move |mut socket| Box::pin(async move {
+    let handler = move |boundAddress: &str| {
+        let mut source = source;
+        source.address = boundAddress.to_owned();
+        let handler: HttpServerHandler = Arc::new(move |mut request| {
+            let tx = tx.clone();
+            let source = source.clone();
+            Box::pin(async move {
+                let remote = request
+                    .extensions()
+                    .get::<operit_host_api::HttpServer::RemoteAddress>()
+                    .map(|v| v.0);
+                let Some(upgrade) = request.extensions_mut().remove::<WebSocketUpgrade>() else {
+                    return super::http::response(400);
+                };
+                let Ok(slot) = tx.try_reserve_owned() else {
+                    return super::http::response(503);
+                };
+                upgrade.accept(Box::new(move |mut socket| Box::pin(async move {
                 let (output, mut outgoing) = mpsc::channel::<(Vec<u8>, oneshot::Sender<Result<(), String>>)>(32);
                 let (stop, mut stopped) = tokio::sync::watch::channel(false);
                 let inbox = Inbox::new(maxMessageBytes);
@@ -193,8 +203,10 @@ pub(super) async fn listen(
                 }
                 inbox.finish(result);
             }))).unwrap_or_else(|_| super::http::response(500))
-        })
-    });
+            })
+        });
+        handler
+    };
     // bind address belongs to the listener, not a remote websocket URL.
     super::http::serve(
         registry,

@@ -2510,6 +2510,7 @@ dependencies = [
  "reqwest",
  "tokio",
  "tokio-tungstenite",
+ "tower",
 ]
 
 [[package]]
@@ -2608,6 +2609,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "operit-host-api",
+ "rmp",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -2825,6 +2827,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "operit-command-core",
+ "operit-edge-contract",
  "operit-host-api",
  "operit-link",
  "operit-local-models",

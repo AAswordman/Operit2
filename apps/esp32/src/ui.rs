@@ -150,14 +150,8 @@ impl Esp32Ui {
     /// Advances animations and flushes pending display regions.
     pub fn pump(&mut self, elapsedMs: u32) {
         if let Some(scene) = &self.context.scene {
-            let state = scene.summary();
-            unsafe {
-                operit_ui_set_scene(
-                    state["active"].as_bool().unwrap_or(false),
-                    state["revision"].as_u64().unwrap_or(0) as u32,
-                    scene.tick(),
-                );
-            }
+            let (active, revision) = scene.render_state();
+            unsafe { operit_ui_set_scene(active, revision, scene.tick()); }
         }
         unsafe { operit_ui_pump(elapsedMs) };
     }
@@ -365,6 +359,11 @@ impl Esp32Ui {
             5 if request.argument().is_empty() => {
                 let snapshot = crate::runtimeHealthSnapshot().to_string();
                 io.respond(request.id(), snapshot.as_bytes());
+            }
+            7 => {
+                let result=std::str::from_utf8(request.argument()).map_err(|e|e.to_string()).and_then(crate::audio::debug);
+                let value=result.unwrap_or_else(|error|serde_json::json!({"error":error})).to_string();
+                io.respond(request.id(),value.as_bytes());
             }
             6 => {
                 let result = std::str::from_utf8(request.argument()).map_err(|e| e.to_string())

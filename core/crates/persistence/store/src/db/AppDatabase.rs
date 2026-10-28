@@ -887,9 +887,7 @@ fn parseLegacyMessageParts(
     content: String,
 ) -> Result<Vec<MessagePartEntity>, SqliteStoreError> {
     let parts = match sender.as_str() {
-        "ai" => {
-            MessagePartCodec::parseAssistantMarkup(&content).map_err(SqliteStoreError::Message)?
-        }
+        "ai" => MessagePartCodec::parseAssistantMarkupForImport(&content),
         "user" | "summary" => vec![MessagePart::markdown("part-0".to_string(), 0, content)],
         unsupported => {
             return Err(SqliteStoreError::Message(format!(

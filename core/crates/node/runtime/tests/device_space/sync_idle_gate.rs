@@ -1,5 +1,6 @@
 use super::*;
 
+/// Counts delivered calls for one synchronization method.
 fn synchronizedMethodCount(peer: &ApprovalMeshPeer, method: &str) -> usize {
     peer.calls
         .lock()
@@ -14,6 +15,8 @@ fn synchronizedMethodCount(peer: &ApprovalMeshPeer, method: &str) -> usize {
 fn fullPassMarkers(peer: &ApprovalMeshPeer) -> usize {
     [
         "snapshot",
+        "snapshotHeader",
+        "snapshotControlPage",
         "observeSpaceSnapshot",
         "exchange",
         "coreVersion",
@@ -26,6 +29,7 @@ fn fullPassMarkers(peer: &ApprovalMeshPeer) -> usize {
     .sum()
 }
 
+/// Creates an observer over the fixture's authoritative stores.
 fn idleObserver(
     router: &CoreNodeRouter,
 ) -> crate::SpacePersistenceSyncService::SpacePersistenceSyncService {
@@ -369,19 +373,20 @@ async fn a_failed_pass_backs_off_before_retrying_the_full_exchange() {
     let (routers, _access, peers, _pendingFailure) = gateMesh("sync-backoff");
     let observer = idleObserver(&routers[1]);
 
-    // One-shot fault: the control exchange with the remote is lost. The
-    // projection snapshot still succeeds, so the failure comes from the
-    // member synchronization leg, which is what arms the backoff.
+    // One-shot fault: the authority page is lost during the member pass.
+    // The cycle must fail and arm backoff without switching protocols.
     peers[1]
         .faults
         .lock()
         .unwrap()
-        .insert("exchange".into(), CallFault::BeforeDelivery);
+        .insert("snapshotControlPage".into(), CallFault::BeforeDelivery);
     assert!(
         observer.synchronizeOnce().await.is_err(),
-        "the failed control exchange must fail the cycle"
+        "the failed authority page must fail the cycle"
     );
     let markersAfterFailure = fullPassMarkers(&peers[1]);
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncApplyOperations"), 0,
+        "failed authority validation must stop business replication in the same cycle");
 
     // The immediate retry is suppressed by the failure backoff.
     observer.synchronizeOnce().await.unwrap();
@@ -466,59 +471,34 @@ async fn a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange() {
     );
 }
 
-/// A peer that predates the digest method must still answer the full clock
-/// probe. The first fallback switches the observed summary format and costs one
-/// pass; later fallback cycles settle exactly like digest probes.
+/// Verifies a rejected digest probe arms backoff without requesting a full clock.
 #[tokio::test]
-async fn legacy_peers_answer_full_clock_probes_and_settle() {
+async fn rejected_digest_probes_back_off_without_reading_full_clocks() {
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
-    let (routers, _access, peers, _pendingFailure) = gateMesh("sync-legacy-probe");
+    let (routers, _access, peers, _pendingFailure) = gateMesh("sync-rejected-probe");
     let observer = idleObserver(&routers[1]);
     observer.synchronizeOnce().await.unwrap();
     observer.synchronizeOnce().await.unwrap();
     let markersBefore = fullPassMarkers(&peers[1]);
     let fullClockCallsBefore = synchronizedMethodCount(&peers[1], "syncClock");
 
-    // The old peer denies the digest method but still serves the full clock.
-    let fallbackFault = |peers: &[Arc<ApprovalMeshPeer>]| {
-        peers[1]
-            .faults
-            .lock()
-            .unwrap()
-            .insert("syncClockDigest".into(), CallFault::MethodDenied);
-    };
-    fallbackFault(&peers);
+    peers[1].faults.lock().unwrap()
+        .insert("syncClockDigest".into(), CallFault::MethodDenied);
     observer.synchronizeOnce().await.unwrap();
-    assert!(
-        fullPassMarkers(&peers[1]) > markersBefore,
-        "switching from the digest to the full-clock summary may cost one pass"
-    );
-    assert!(
-        synchronizedMethodCount(&peers[1], "syncClock") > fullClockCallsBefore,
-        "the fallback must read the full clock"
-    );
-    let settled = fullPassMarkers(&peers[1]);
+    assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncClock"), fullClockCallsBefore);
 
-    for _ in 0..2 {
-        fallbackFault(&peers);
-        observer.synchronizeOnce().await.unwrap();
-        assert_eq!(
-            fullPassMarkers(&peers[1]),
-            settled,
-            "a stable legacy full-clock probe must keep idling"
-        );
-    }
+    let probesAfterFailure = synchronizedMethodCount(&peers[1], "syncClockDigest");
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncClockDigest"), probesAfterFailure,
+        "the rejected probe must arm backoff");
+    assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
 
-    // The peer upgrades: the digest format returns and settles after one pass.
+    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
     observer.synchronizeOnce().await.unwrap();
-    assert!(
-        fullPassMarkers(&peers[1]) > settled,
-        "the first digest after a legacy baseline may cost one pass"
-    );
-    let settled = fullPassMarkers(&peers[1]);
-    observer.synchronizeOnce().await.unwrap();
-    assert_eq!(fullPassMarkers(&peers[1]), settled);
+    assert!(fullPassMarkers(&peers[1]) > markersBefore,
+        "a recovered digest probe must reopen the gate after backoff");
 }
 
 /// A preference-only edit must reopen a settled storage-provider gate without

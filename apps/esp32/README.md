@@ -1,6 +1,10 @@
 # ESP32 Edge firmware
 
 Space responsibilities are defined in [Edge architecture](../../docs/edge-architecture.md).
+The [bounded Space and display contracts](../../docs/edge-core-entry-protocol.md)
+keep Peer and Space authority on each node. Core projects business messages into
+bounded display text; ESP stores its own identity, pairing, Space control and native
+configuration. The device does not run tools or interpret tool result/status data.
 This document covers the ESP32-2432S028 implementation and firmware build.
 Tooling and acceptance commands are maintained in the
 [editor README](../../tools/esp32-editor/README.md).
@@ -65,15 +69,186 @@ See [CLI commands](../../docs/cli-network-control.md).
 
 Without a `chat` configuration, the optional remote Core mode below remains
 available. Existing STT/TTS Stream/ReverseStream processing is retained. The
-ESP32-2432S028 firmware still has no microphone capture or speaker playback
-driver, so independent text chat does not imply verified physical voice I/O.
+ESP32-2432S028 firmware includes the board audio adapter described below.
+Independent text chat does not imply a connected STT/TTS processor or verified
+physical voice I/O.
 
 ## Memory and connection lifetime
 
-- The firmware's Edge worker uses a 32 KiB stack; the previous 6 KiB stack
-  overflowed while processing pairing requests.
+- The firmware's asynchronous Edge worker uses a 32 KiB stack; the previous
+  6 KiB stack overflowed while processing pairing requests. The separate
+  blocking worker reserves 24 KiB, leaving 8 KiB more internal heap for node
+  state and Link operations. Health diagnostics expose the responding task's
+  stack high-water mark for hardware verification. The main UI task reserves
+  16 KiB for synchronous authorization and storage decoding; the previous
+  12 KiB reservation overflowed on the constrained-cache read path.
+- The display frame loop reads scene activity and revision as scalar fields,
+  avoiding a temporary JSON object on every frame while admission is running.
+- Idle UART input and TCP accept poll every 10 ms, reducing wakeups on the
+  shared worker so FreeRTOS idle work can run. Active byte-stream backpressure
+  keeps the existing shorter retry interval.
 - The optional RGB332 diagnostic mirror is disabled to leave heap space for
   pairing. The physical TFT remains enabled.
+- Runtime NVS writes stage one changed record and stream unchanged records from
+  a compact sorted index. They do not clone the full index during Space admission.
+  Index growth is reserved before writing; the in-memory change becomes visible
+  only after the alternate bank is published. Failed writes preserve the old
+  snapshot. The ONV3 envelope and 7000-byte logical storage limit are unchanged.
+  Packed records now use format 2, with an immutable 847-byte dictionary of
+  public JSON field names stored in firmware Flash. The dictionary does not
+  consume a separate heap buffer. Legacy raw (0) and LZSS (1) records remain
+  readable. Opening storage compacts legacy records one at a time in memory;
+  the next successful ordinary transaction publishes the new representation.
+  A failed transaction keeps the previous bank authoritative. Decoded record
+  contents, identities, pairing secrets and Space policy remain unchanged.
+  Firmware predating record format 2 cannot read newly published snapshots;
+  preserve a matching firmware/NVS backup when testing a downgrade.
+  Node-local edits move unshared parsed records into the transaction instead
+  of cloning retained JSON trees. A weak mutation witness detects unchanged
+  edits without pinning the old tree; external immutable snapshots still receive
+  copy-on-write protection. Failed edits reload the unchanged durable snapshot.
+  Records serialize by reference with unindented JSON on constrained node-local
+  stores to avoid large temporary formatting buffers; desktop formatting remains
+  unchanged. Constrained serialization measures the complete encoding first and
+  fallibly reserves its exact size once, avoiding simultaneous old/new buffers
+  during growth. Capacity failure returns an error before NVS publication.
+  Edits and record replacements stage schema migration in the same atomic write,
+  so a failed first publication cannot leave a schema-only record behind.
+  Background approval polls persist only reconciliation changes; completed or
+  otherwise unchanged requests are not rewritten on every poll. Constrained
+  gateways retain two recent terminal application receipts, pruning older ones
+  before admitting more work. Pending, approving and approved handoffs remain
+  durable. Full Core keeps its complete application history. Record deletions
+  use the same transaction and atomic publication as record updates.
+- The NVS Host opts out of retaining parsed preference caches after their last
+  store handle closes. Node-state reads also release the shared decoded cache
+  when returning an immutable snapshot, so long-lived policy services cannot
+  pin large JSON trees. Committed and unchanged node-local edits release the
+  cache as well, including while a store handle remains open. Concurrent handles
+  still share a transaction lock; subsequent reads reload durable bytes from
+  the compressed NVS cache.
+  During node-local updates, the transaction releases the old decoded cache
+  before serialization. Failed publication invalidates that cache so every live
+  handle reloads the unchanged durable snapshot; existing immutable snapshots
+  remain valid. Temporary policy Stores also honor this memory policy.
+  Desktop storage keeps its existing persistent cache policy.
+  Approval and policy replay scans validate the current node-state schema and
+  decode typed records
+  directly from durable bytes, without an intermediate JSON tree or large tree
+  nodes for typed application records. Single-record reads skip unrelated
+  payloads, including retained join history. Single-record updates borrow the
+  unchanged JSON payloads and serialize the replacement directly, reserving the
+  measured output size once. They retain the shared transaction lock and atomic
+  publication boundary; failed writes leave all durable records intact. Whole
+  node-state replacements validate the old schema and retain replication metadata
+  without expanding the old business payloads. Policy projection tracks inserted
+  commands instead of retaining a second full JSON snapshot for comparison.
+  Immutable control imports borrow the old encoded map and decode existing
+  commands one at a time for equality. Authenticated endpoint imports also
+  compare old commands one at a time while holding the incoming batch, and
+  release validation state before publication. Every command and duplicate in the batch
+  is validated before one atomic publication; unchanged syncs do not write NVS.
+  Older schemas still use the existing migration transaction; newer schemas are
+  rejected. Obsolete Space policy caches are validated record by record before
+  any deletion; current Space authority is retained, including on retry after
+  a failed deletion.
+- Constrained receiving endpoints retain the source membership, profiles and
+  topology needed for live consent and approval recovery. After first receiving
+  and observing source departures, they omit the duplicate source command log
+  from the durable application. Applicants keep their original submission for
+  retries, even if a gateway returns a compacted record. Terminal endpoint
+  receipts retain identity and status without an obsolete accepted snapshot.
+  Review polling compacts legacy receipts before growing recovered membership;
+  the current authority log and active consent remain intact.
+- Node-local member retirement releases obsolete profile and topology records
+  before rewriting the remaining membership revision. Its membership marker is
+  removed last so failed cleanup can retry. Startup completes persisted removal
+  effects from the authority log even if the departing peer is offline. Full
+  Core membership tombstones and history retain their existing behavior.
+- Constrained Hosts serialize policy materialization across temporary store
+  instances, preventing UI, approval and authenticated transport checks from
+  simultaneously retaining complete replay working sets. Authorization replay
+  borrows encoded payloads from an immutable byte snapshot and decodes commands
+  directly, avoiding a generic JSON value tree during replay; full snapshot
+  exports decode projection entries directly into their final operation vector,
+  avoiding a second collection of decoded payloads. Constrained replay/export
+  vectors reserve their known entry bound without geometric growth; reservation
+  failures return an error. Immutable conflicts,
+  legacy admission compatibility, ordering and revocation checks remain enforced.
+  UI connection indicators poll with the existing 500 ms route refresh. While
+  an admission or pairing UI operation is busy, background route, settings and
+  pairing-indicator refreshes keep their previous display values instead of
+  allocating another working set. Each actual routed operation still validates
+  current authorization.
+- Device Space UI workflows run on the blocking worker. A device-local async
+  permit covers initialization, review, pairing, joining and local exit, including
+  their network waits. Periodic preference synchronization takes that same
+  permit only when available and skips busy ticks, avoiding a second authority
+  working set during approval. Display refreshes also defer while it is held.
+  Shared peer connection, availability, inbound request dispatch and reply
+  delivery remain independent so local workflows can await network responses.
+  Approval polling validates historical receipts one at a time, retains only
+  small summaries, and reloads live requests individually. Completed history does
+  not accumulate in a second typed collection during reconciliation; malformed
+  entries still fail validation before pruning or other writes.
+- Constrained Edge snapshot and control-exchange replies serialize typed
+  authority records directly into the existing standard Call response. Each
+  encoded operation releases its payload before the next operation is written;
+  the serializer runs once and preserves the standard map/sequence format.
+  Snapshot import also releases each accepted control payload before the next
+  durable operation, after validating the complete incoming policy.
+  Incoming Space snapshots and control batches decode
+  their queued envelope with the existing JSON record decoder, then consume it
+  into typed authority records. Operation payloads move unchanged into those
+  records, and the consumed input frame is released before policy replay or
+  publication. This avoids an intermediate Link value tree and reuses the
+  durable decoder to fit the application partition. The shared channel still validates current
+  authorization before execution and transmission; the prepared snapshot path
+  retains the ordinary destination, route-kind, direct-origin, TTL and pairing
+  checks. Control exchange also retains current Space scope and admitted-member
+  checks, and shares the ordinary authority import and removal effects. Other
+  handlers use the ordinary dispatcher.
+- Routed Call/Watch/Push envelopes move the owned argument subtree through
+  serialization and parsing. Only the small route metadata is reconstructed,
+  including for MessagePack struct sequences; metadata validation and correlation
+  checks still run before dispatch. The existing envelope encoding is unchanged.
+- Authenticated requests re-read only their current session credential, using
+  direct typed decoding on the constrained Host. This avoids copying all credentials
+  while preserving authorization checks after pairing revocation.
+- Constrained Hosts retain standard MessagePack bytes in pending inbound and
+  worker queues. The authenticated reader inspects only Call correlation and
+  control fields, skipping the business payload; queued Calls expand on their
+  execution worker and Call replies expand at their waiting consumer. Heartbeat
+  controls still bypass business dispatch. Completed replies are encoded before
+  the final authorization check and transferred to the
+  encrypted writer without rebuilding a value tree. Calls keep independent
+  execution, while Watch/Push ordering and the cipher lock across each response
+  batch remain intact. Credential revocation is checked at the existing entry
+  and transmission boundaries. Desktop request queues keep their value storage.
+- Peer transport decoding reads the existing request/response envelopes directly,
+  avoiding the generic untagged-union buffer for encrypted payloads. Owned byte
+  frames retain binary fields as shared slices of the received allocation;
+  borrowed decoding still copies. The explicit decode scope restores its parent
+  on nested decoding and failure, and releases its source when decoding ends. Decryption
+  reuses uniquely owned ciphertext and copies shared buffers before mutation.
+  Departure exchange releases the remote snapshot before constructing the local
+  reply. Space snapshot replies consume each authority payload while building
+  the Link value tree, instead of retaining two complete decoded copies. Control
+  exchange drops the received operation vector before building its response.
+  Snapshot reconciliation reads local membership without exporting a second
+  local snapshot and releases received authority payloads before replaying local
+  removal effects. Exchanges without remote leave/remove commands skip that
+  otherwise redundant removal replay. Policy validation sorts references to
+  received operations rather than cloning their payloads. ESP-IDF MessagePack
+  output grows in bounded blocks while the source tree is alive, avoiding a
+  second large allocation during buffer doubling. Serialization still runs
+  once, including stream source capture. Wire encoding, nonce checks and
+  authorization remain unchanged.
+- Device UI watch subscriptions open one at a time. Their boxed route and
+  authorization futures are constructed after the opening permit is acquired;
+  established streams still receive independently. Waiting opens can cancel
+  without sending a request, while an in-flight acknowledgement always finishes
+  before its stream is closed.
 - Native Core requests share a process-lifetime Tokio executor so the saved
   pairing socket and background receivers survive between commands. The Rust
   DLL requires a native rebuild and application restart, not Dart hot reload.
@@ -116,10 +291,54 @@ The hardware smoke tool requires an already paired/admitted device and does not
 complete first-pairing or full-chat acceptance. See the editor's verification
 commands and distinguish simulator, build and physical-device results.
 
+### Build and simulator verification (2026-10-28)
+
+The Edge changes target upstream `review/pr356-edge-space-sync-memory` at
+`269d910d`. After rebasing the remaining device changes onto that dedicated
+branch and consolidating repeated node-local schema checks, the complete
+`npm run test:device-budget --prefix tools/esp32-editor -- --firmware` gate passed:
+firmware and Xtensa ABI checks, shared C/Wasm UI, TypeScript, fixed heap/stack
+probes, and three authenticated TCP scenarios covering pairing/admission/restart,
+standalone chat across restart, and remote chat with storage recovery and speech.
+The standalone scenario peaked at 208,224 / 262,144 Rust heap bytes; remote chat,
+storage recovery and speech peaked at 212,840 / 262,144 bytes. Every sampled state
+reported zero allocation failures. Desktop regression passed 61 simulator tests,
+29 board tests, 116 editor tests and eight serial debug tests.
+
+The built image uses **3,945,104 / 3,997,696 bytes** (**52,592 free**).
+Its `.flash.text` uses **3,324,810 / 3,342,304 bytes** (**17,494 free**): code mapping
+and image partition capacity are separate limits. This image has not yet been
+flashed for another hardware acceptance run.
+
+Speech integration verified 65 seconds of PCM/WAV byte volume, recognition text
+over 8 KiB and ordered multi-segment TTS with deterministic providers. These
+checks cover transport behavior; physical long recording and actual recognition
+quality require hardware validation. Simulator heap/stack measurements exclude
+ESP-IDF, Wi-Fi, TLS and native driver overhead.
+
+### Hardware verification (2026-10-28)
+
+The earlier hardware-tested image preserved identity, pairing, Wi-Fi and the
+existing Space. With the [audio wiring below](#native-inmp441-and-onboard-speaker),
+the user confirmed an audible test tone. Duplicate-start rejection, intentional
+stop/restart and 20 consecutive short self-tests passed, with 44,544–46,080
+captured left-channel samples per test and no RX/queue overflow, observed reset
+or recorded allocation failure. Lowest free heap was 16,684 bytes; free heap
+after tests was 70,456–75,768 bytes. Capture resources were released on close.
+
+Those timed self-tests precede the WAV/PCM layering cleanup and upstream rebase.
+They establish short acquisition and restart behavior, without verifying queued
+recording tails, microphone acoustic quality, physical long recording or a Core
+STT/TTS round trip. The board and Windows Core had different Spaces; the existing
+Windows Space was preserved. A successful DMA write alone does not establish
+audible playback, and nonzero microphone samples do not establish recognition
+quality. See the [current chain and acceptance scope](../../docs/edge-core-entry-protocol.md).
+
 ## Recovering from an unavailable Space administrator
 
 Pairing and Space membership are independent. Unpairing does not silently leave
-or merge a Space. On the device, open **Status → 退出空间 → 确认退出** to leave an
+or merge a Space. On the device, open **Settings → Device Space → Space and
+pairing management → Leave current device Space → Confirm** to leave an
 unavailable old Space. This uses the shared local Space-exit transition, creates
 a singleton policy immediately, and retains identity, Wi-Fi and direct pairing.
 Obsolete local review records and completed applications from the abandoned
@@ -248,9 +467,34 @@ These are dependency-source overlays, not an unmodified upstream build, and
 must be reviewed when updating the pinned versions or compiler. Desktop
 builds do not use them.
 
-The firmware release uses Thin LTO to fit the existing 4 MB board and application
-partition. A single codegen unit keeps the Windows linker command within its
-length limit; package-specific Tokio and UUID optimization settings remain.
+The firmware release uses Fat LTO and size optimization across its Rust packages
+to fit the existing 4 MB board and application partition. ESP32 console timestamps use direct UTC clock fields;
+desktop logs retain their local-time formatter. A single codegen unit keeps the
+Windows linker command within its length limit. UUID retains `opt-level = 1`
+for the Xtensa hex-parser workaround. Tokio now uses `opt-level = "z"`, with
+its pinned alignment overlay and final ELF ABI checks still required.
+
+Peer transport decoding selects the existing Call / Watch / Push envelope with
+the shared constant-stack field scanner, then decodes its typed body. Owned
+frames retain binary fields as shared ranges. Compatibility tests compare every
+request lifecycle and success/error response against the original Serde codec,
+including rejected positional struct variants. Serializer/decoder entrypoints
+remain out of line so Fat LTO can share each instantiation across callers.
+The built-in font retains all 4,168 glyphs and bitmap bytes in packed nine-byte
+records; table tests check each field width and bitmap boundary.
+
+The ESP32 standard library uses `backtrace-trace-only`: panic diagnostics and
+raw backtrace addresses remain available, while symbol lookup runs on the host
+with the matching ELF. This avoids linking the device-side DWARF symbol reader;
+it does not disable panic reporting or the ESP-IDF abort backtrace. Keep the ELF
+from each flashed build for `xtensa-esp32-elf-addr2line -f -C -e <elf> <addresses>`.
+
+The ESP32 Host scheduler enables Tokio's `rt` executor support without
+`rt-multi-thread`: firmware drives current-thread runtimes on its bounded Host
+workers. Non-ESP32 platforms retain the multi-thread feature and the upstream
+worker naming behavior. Keeping this dependency split explicit prevents desktop
+executor code from consuming the ESP32 code-mapping budget after shared Host
+changes; it does not add another scheduler or change device task admission.
 
 On Xtensa, the overlays keep the Tokio constructor and ring seal/open as named,
 non-inlined functions so LTO cannot erase the ABI inspection boundaries. These
@@ -347,3 +591,93 @@ refreshed automatically. Pairing, approval and membership remain separate.
 A retained remote pairing is replaced only after a fresh code succeeds; unpair
 itself remains local-only. No new Link wire encoding, transport or Host API is
 introduced.
+
+### Long input and speech transport
+
+The C draft remains a 511-byte UTF-8 display/input buffer. The browser owns its
+complete draft separately (up to 16,384 bytes); native input without that owner
+rejects overflow explicitly. Remote chat sends above 2,048 bytes use the existing
+Link Push / ReverseStream transport, in UTF-8 chunks of at most 2,048 bytes. Core
+validates length, explicit commit and EOF, then delegates to `sendUserMessage`.
+Incomplete input never submits its received prefix. This requires the matching
+Core route. Edge retains a bounded temporary input string, not a persisted full
+transcript. Direct model input retains its existing 2,048-byte limit.
+
+Speech capture and playback use four-slot queues of at most 4,096-byte audio
+blocks. Capture awaits capacity and invalidates outstanding sends on disconnect
+or cancellation. Speech protocol v2 also returns recognition text in 2,048-byte
+chunks; only the final result publishes the complete bounded draft (16,384 bytes
+maximum). The Core example processor owns up to 300 seconds of PCM and WAV
+assembly. Device TTS input is limited to 4,096 UTF-8 bytes and Core calls the
+existing provider in text segments of at most 1,024 bytes. Provider recording
+limits and actual recognition/playback quality remain separate from transport
+validation. The native adapter below is specific to the documented wiring;
+transport tests do not substitute for physical recording/playback acceptance.
+
+
+## Native INMP441 and onboard speaker
+
+The board audio adapter uses the existing speech protocol, not a second speech
+service. The supported wiring is INMP441 VDD=3.3V, GND=GND, L/R=GND (left),
+SCK/BCLK=GPIO27, WS=GPIO22, SD=GPIO35. GPIO21 remains the display backlight;
+do not connect the microphone clock there. The passive speaker uses the board's
+two-pin amplified speaker connector driven by DAC GPIO26.
+
+Capture runs on I2S1 at 16 kHz, with 32-bit stereo slots (64 bit clocks/frame).
+Only the left slot is converted to mono PCM16, with DC removal, bounded gain and
+saturation. A priority-10 native task drains DMA independently of Host workflows.
+Its fixed 32-block queue retains 512 ms of high-16-bit mono input and raw signal
+statistics in 16,768 bytes; the original PCM filter uses exactly those same high
+bits, so conversion is unchanged. Its 3 KiB stack, queue and scratch storage are
+released on close. Four DMA descriptors of 256 stereo frames provide a fixed
+8 KiB / 64 ms hardware ring. The ISR and its callback remain in IRAM during
+Flash cache suspension. DMA and PCM queue overflow fail capture explicitly.
+Audio also shares the existing device-work guard with background Space/NVS
+materialization. The existing Host worker sends PCM incrementally through
+`DeviceSpeech` with backpressure and request identity; there is no second Rust
+runtime or full-recording buffer. Statistics are published once per block and
+speech phase updates remain responsive. Completed text waits for local state
+work to finish before entering chat. Press the
+chat microphone again to stop; capture is limited to 300 seconds. Recognition
+requires a connected Core speech processor, and its completed text enters the
+existing chat send path once.
+
+Playback uses the GPIO26 DAC continuous driver / I2S0 and starts as PCM arrives.
+The initial gain is one quarter. Supported Core output is uncompressed PCM16 WAV,
+8–48 kHz, mono or stereo (downmixed). WAV headers, metadata and sample frames may
+cross transport blocks; only fixed parser/sample buffers are retained. MP3, Opus,
+and other compressed audio are rejected explicitly rather than sent as PCM noise.
+The Core provider must be configured to return a supported WAV format.
+
+The firmware application owns WAV parsing in `src/wav.rs` and speech/session
+orchestration in `src/audio.rs` and `src/device_speech.rs`. The streaming decoder
+emits mono PCM16 independently of hardware; the simulator tests this same source.
+`hosts/boards/esp32` owns native I2S/DAC resources, acquisition buffering and signal
+conversion, including the final PCM16-to-DAC8 conversion. It does not parse WAV
+or Core speech packets.
+
+In Settings → Device operations, **Audio self-test** works without a Space or
+speech processor: it plays a quiet 250 ms tone, then captures roughly three seconds
+of microphone sample statistics. It does not save or upload the recording.
+USB diagnostics expose the same test and status:
+
+```powershell
+python tools/esp32-editor/device-debug.py audio --port COM24 --text test
+python tools/esp32-editor/device-debug.py audio --port COM24 --text status
+```
+
+Use the actual attached COM port and close any other UART owner first. Tests
+report sample count, nonzero samples, left/right raw peak, clipping, sums and driver
+errors. A successful DMA write does not prove audible sound; nonzero microphone
+samples do not prove recognition quality. Hardware results must be recorded
+separately from desktop unit/transport tests.
+
+With an admitted Core speech processor attached, USB `audio --text "speak 你好"`
+requests synthesis through the existing processor and plays returned PCM16 WAV.
+The standalone hardware self-test does not establish this Core round trip.
+Firmware release builds omit Rust console log formatting and IDF info/warning
+logs that are disabled at runtime once Link owns UART; early startup failures,
+C error logs, UI errors, allocation evidence and USB diagnostics remain available.
+
+Recorded build, simulator and hardware results are maintained in
+[Verification and current limitations](#verification-and-current-limitations).

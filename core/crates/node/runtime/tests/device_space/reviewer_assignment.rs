@@ -131,6 +131,13 @@ async fn nearest_authorized_reviewer_only_then_offline_transfer_and_remote_decis
     assert_eq!(request.reviewerDeviceId.as_deref(), Some("mesh-near"));
     assert_eq!(request.reviewerHops, Some(2));
     assert_eq!(near.incomingDeviceSpaceJoins().await.unwrap().len(), 1);
+    let inbox = protocolRecords(&nearRouter, REVIEW_RECORDS);
+    let projection = &inbox[&request.requestId];
+    assert!(projection.get("profile").is_none(), "review list copied applicant profile evidence");
+    assert!(projection["source"].get("controlOperations").is_none(), "review list copied authority history");
+    assert!(projection["source"].get("deviceProfiles").is_none(), "review list copied applicant profiles");
+    assert!(projection["source"].get("topology").is_none(), "review list copied applicant topology");
+    assert_eq!(projection["source"]["space"]["members"], serde_json::json!(["mesh-applicant"]));
     assert!(far.incomingDeviceSpaceJoins().await.unwrap().is_empty());
     assert!(gateway.incomingDeviceSpaceJoins().await.unwrap().is_empty());
     peers[1].disconnectPeer("mesh-near").await.unwrap();

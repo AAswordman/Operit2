@@ -26,6 +26,7 @@ pub(crate) struct NetworkControlReadModel {
     states: BTreeMap<String, NetworkControlState>,
     errors: BTreeMap<String, String>,
     recovery_error: Option<String>,
+    pub(crate) projection_revision: u64,
 }
 
 impl NetworkControlReadModel {
@@ -165,7 +166,7 @@ impl NetworkControlReadModel {
                     // authorization reads for every other Space on this node.
                     for conflicting in [previous, operation] {
                         if let Some(space) = conflicting.payload.get("spaceId").and_then(serde_json::Value::as_str) {
-                            self.errors.insert(space.into(), format!("Space {space}: conflicting control operation {}", operation.opId));
+                            self.errors.insert(space.into(), format!("Space {space}: Conflicting immutable control operation {}", operation.opId));
                         }
                     }
                 }
@@ -187,7 +188,7 @@ impl NetworkControlReadModel {
         }
         for (space_id, commands) in &mut self.commands {
             commands.sort_by_key(SyncOperationOrder::fromOperation);
-            match replayControlCommands(space_id, commands, None) {
+            match replayControlCommands(space_id, commands.iter(), None) {
                 Ok((state, _)) => { self.states.insert(space_id.clone(), state); }
                 Err(error) => { self.errors.insert(space_id.clone(), format!("Space {space_id} control replay: {error}")); }
             }
@@ -333,6 +334,6 @@ mod tests {
         conflicting.createdAt += 1;
         let model = NetworkControlReadModel::new(vec![good, first], Vec::new(), vec![conflicting]);
         assert!(model.state("healthy").unwrap().initialized);
-        assert!(model.state("broken").unwrap_err().contains("conflicting"));
+        assert!(model.state("broken").unwrap_err().contains("Conflicting immutable"));
     }
 }

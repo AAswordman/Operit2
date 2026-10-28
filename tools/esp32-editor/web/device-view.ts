@@ -1,3 +1,4 @@
+import {draftPreview} from './chat-draft.ts';
 import type {DeviceState} from './device-state.js';
 import type {RuntimeModule} from './types.js';
 
@@ -13,12 +14,15 @@ export class DeviceView {
   private lastSpeechResult?: number;
   private runtime: RuntimeModule;
   private scene: SceneAdapter;
+  private onSpeechText?: (text: string) => void;
   private onSendResult: (ok: boolean, error?: string, sendId?: string | null) => void;
   constructor(runtime: RuntimeModule, scene: SceneAdapter,
-    onSendResult: (ok: boolean, error?: string, sendId?: string | null) => void) {
+    onSendResult: (ok: boolean, error?: string, sendId?: string | null) => void,
+    onSpeechText?: (text: string) => void) {
     this.runtime = runtime;
     this.scene = scene;
     this.onSendResult = onSendResult;
+    this.onSpeechText = onSpeechText;
   }
 
   update(state: DeviceState): void {
@@ -48,7 +52,11 @@ export class DeviceView {
     runtime.ccall('operit_ui_set_chat_identity', null, ['string', 'string'], [chat.chatId ?? '', character]);
     if (speech?.resultId !== undefined && speech.resultId !== this.lastSpeechResult) {
       this.lastSpeechResult = speech.resultId;
-      if (speech.text) runtime.ccall('operit_ui_set_chat_draft', null, ['string'], [speech.text]);
+      if (speech.text) {
+        this.onSpeechText?.(speech.text);
+        runtime.ccall('operit_ui_set_chat_draft', null, ['string'],
+          [this.onSpeechText ? draftPreview(speech.text) : speech.text]);
+      }
       if (speech.error) runtime.ccall('operit_ui_action_error', null, ['string'], [speech.error]);
     }
     const messages = (chat.messages ?? []).filter(message => message.text?.trim()).slice(-12);

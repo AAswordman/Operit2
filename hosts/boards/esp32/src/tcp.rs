@@ -95,8 +95,9 @@ impl TcpListener for Esp32TcpListener {
                     Err(error) => return Err(HostError::new(error.to_string())),
                 }
             }
+            // Accepting new peers can poll more slowly than an active byte stream.
             defaultHostRuntimeTaskSchedulerHost()
-                .waitForHostRuntimeDelay(2)
+                .waitForHostRuntimeDelay(10)
                 .await?;
         }
     }

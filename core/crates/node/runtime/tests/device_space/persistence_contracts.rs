@@ -178,6 +178,8 @@ async fn file_sync_rejects_node_local_and_path_escape_entities_without_writes() 
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
     let (node, _) = approvalService("file-boundary");
+    // Reading the export clock explicitly settles fixture preference outboxes;
+    // capture the byte-exact baseline after this permitted setup publication.
     let beforeClock = operationStore(&node).localClock().unwrap();
     let before = durableFiles(&node);
     for path in [

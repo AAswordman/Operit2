@@ -58,3 +58,31 @@ test('state-driven expression selector does not advertise inactive preview optio
   assert(!/<option>(happy|sad|sleepy)<\/option>/.test(selector[1]));
   assert(app.includes('expressionSelect.disabled = true;'));
 });
+
+// The packed firmware table must retain every metric and address every bitmap pixel.
+test('bundled glyphs fit their compact records without truncation', async () => {
+  const font = await read('apps/esp32/ui_port/mini_font.h');
+  let count = 0;
+  for (const table of ['text', 'digits']) {
+    const bitmap = new RegExp(`mini_${table}_bitmap\\[\\] = \\{([\\s\\S]*?)\\};`).exec(font);
+    const glyphs = new RegExp(`mini_${table}_glyphs\\[\\] = \\{([\\s\\S]*?)\\};`).exec(font);
+    assert(bitmap && glyphs, `${table}: missing font table`);
+    const bytes = bitmap[1].match(/\d+/g).map(Number);
+    assert(bytes.every(byte => byte >= 0 && byte <= 255));
+    let previous = -1;
+    for (const match of glyphs[1].matchAll(/\{([\d,\-]+)\}/g)) {
+      const values = match[1].split(',').map(Number);
+      assert.equal(values.length, 10);
+      const [cp, offset, advance, w, h, bpp, line, baseline, x, y] = values;
+      assert(cp > previous && cp <= 0xffff, `${table}: ordered BMP codepoint ${cp}`);
+      previous = cp;
+      assert(offset >= 0 && offset < (1 << 17));
+      assert([advance, w, h, bpp, line, baseline].every((v, i) =>
+        v >= 0 && v < (1 << [5, 4, 5, 2, 5, 3][i])));
+      assert([x, y].every(v => v >= -16 && v <= 15));
+      assert(offset + Math.ceil(w * h * bpp / 8) <= bytes.length, `${table}: bitmap bounds for ${cp}`);
+      count++;
+    }
+  }
+  assert.equal(count, 4168, 'retain the complete text and digit character set');
+});

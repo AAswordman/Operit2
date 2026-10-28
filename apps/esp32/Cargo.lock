@@ -1664,6 +1664,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "operit-host-api",
+ "rmp",
  "rmp-serde",
  "serde",
  "serde_bytes",

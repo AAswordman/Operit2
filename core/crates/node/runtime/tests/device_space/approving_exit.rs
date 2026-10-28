@@ -59,11 +59,11 @@ fn reviewingRecord(reviewer: &str, targetSpaceId: &str, version: u64) -> join::R
             topology: Vec::new(),
             departures: Vec::new(),
         },
-        accepted: None,
         unavailableSince: None,
         approvedDecision: Some(true),
         decisionRevision: Some(2),
         cancelRequested: false,
+        submitted: false,
     }
 }
 
@@ -104,7 +104,6 @@ async fn committed_approving_decision_is_pinned_and_locally_recovered() {
     // Any later reconcile rebuilds the projection and the applicant receipt.
     join::reconcile(&service, &mut record).unwrap();
     assert_eq!(record.request.status, SpaceJoinStatus::Approved);
-    assert!(record.accepted.is_some());
     assert!(router.spaceStore.initialize().unwrap().members.contains(&"gx-applicant".to_string()));
     assert!(router.networkControlStore.currentState().unwrap().memberNodeIds.contains("gx-applicant"));
 }
@@ -167,5 +166,4 @@ async fn committed_but_excluded_decision_is_not_forged_into_approval() {
 
     join::reconcile(&service, &mut record).unwrap();
     assert_eq!(record.request.status, SpaceJoinStatus::Approving);
-    assert!(record.accepted.is_none());
 }

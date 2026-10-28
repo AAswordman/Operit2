@@ -6,7 +6,7 @@ import {mkdtemp, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 
-test('editor starts real TCP device, serves firmware UI, pairs by code and stops listener', {timeout: 120000}, async t => {
+test('editor starts real TCP device, serves firmware UI, pairs by code and stops listener', {timeout: 300000}, async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'operit-sim-api-'));
   process.env.OPERIT_SIM_STATE_DIR = dir;
   process.env.OPERIT_SIM_BIND = '127.0.0.1:0';
@@ -24,14 +24,16 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   assert.equal((await fetch(base + '/api/simulator/state', {headers: {Origin: 'https://example.com'}})).status, 403);
   const state = async () => (await fetch(base + '/api/simulator/state')).json();
   async function ready() {
-    const deadline = Date.now() + 90000;
+    // Include a cold release build; device RPC and memory budgets remain unchanged.
+    const deadline = Date.now() + 180000;
+    let current;
     while (Date.now() < deadline) {
-      const current = await state();
+      current = await state();
       if (current.ready) return current;
       if (!current.running) throw Error(current.output);
       await new Promise(resolve => setTimeout(resolve, 200));
     }
-    throw Error('Simulator did not become ready');
+    throw Error(`Simulator did not become ready: ${JSON.stringify(current)}`);
   }
   assert.equal((await fetch(base + '/api/simulator/start', {method: 'POST'})).status, 202);
   // Startup creates persistent files asynchronously before the child is spawned.
@@ -46,13 +48,19 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   assert.match(first.device.sessionId, /^[0-9a-f-]{36}$/);
   assert.equal((await state()).device.sessionId, first.device.sessionId);
   assert.equal(first.device.memory.profile, 'esp32-2432s028');
-  assert.equal(first.device.memory.kind, 'configured-limits');
+  assert.equal(first.device.memory.kind, 'enforced-budgets');
   assert.equal(first.device.memory.maxPeerMessageBytes, 8192);
-  assert.equal(first.device.memory.liveTelemetry, false);
+  assert.equal(first.device.memory.liveTelemetry, true);
   assert.equal(first.device.memory.freeHeap, undefined);
   assert.equal(first.device.memory.largest8BitBlock, undefined);
   const memory = await (await fetch(base + '/api/simulator/memory')).json();
-  assert.deepEqual(memory, first.device.memory);
+  assert.equal(memory.heapCapacityBytes, 256 * 1024);
+  assert.equal(memory.mainStackBytes, 16 * 1024);
+  assert.equal(memory.asyncStackBytes, 24 * 1024);
+  assert.equal(memory.blockingStackBytes, 20 * 1024);
+  assert(memory.heapPeakBytes >= memory.heapUsedBytes);
+  assert.equal(memory.heapFreeBytes + memory.heapUsedBytes, memory.heapCapacityBytes);
+  assert.equal(memory.allocationFailures, 0);
   assert.equal(Object.hasOwn(first, 'token'), false);
   await assert.rejects(stat(path.join(dir, 'token')), {code: 'ENOENT'});
   const runtimeData = path.join(dir, 'runtime');
@@ -65,6 +73,20 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
     body:JSON.stringify({text:'test',sendId:'x'.repeat(65)})});
   assert.equal(invalidSend.status,400);
   assert.match((await invalidSend.json()).error,/发送编号/);
+
+  // The emoji's UTF-8 bytes arrive in separate HTTP reads. Decoding each
+  // chunk separately would replace it and incorrectly exceed the text limit.
+  const fragmentedBody=Buffer.from(JSON.stringify({text:'a'.repeat(16380)+'🙂'}));
+  const split=fragmentedBody.indexOf(Buffer.from('🙂'))+1;
+  const fragmented=await new Promise((resolve,reject)=>{
+    const req=http.request(base+'/api/simulator/send',{method:'POST',headers:{'Content-Type':'application/json'}},res=>{
+      let body='';res.on('data',chunk=>body+=chunk);res.on('end',()=>resolve({status:res.statusCode,...JSON.parse(body)}));
+    });
+    req.on('error',reject);req.write(fragmentedBody.subarray(0,split));
+    setTimeout(()=>req.end(fragmentedBody.subarray(split)),10);
+  });
+  assert.equal(fragmented.status,400);
+  assert.match(fragmented.error,/尚未连接/,'valid UTF-8 at the input limit must survive fragmented HTTP reads');
 
   const invalidImage = await fetch(base + '/api/simulator/send-image', {method:'POST',headers:{'Content-Type':'text/plain'},body:'not an image'});
   assert.equal(invalidImage.status,400);

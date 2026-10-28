@@ -727,3 +727,25 @@ async fn a_member_that_missed_multiple_removals_forgets_the_latest_generation() 
         "the latest revoked generation must revoke the pairing made under it"
     );
 }
+
+/// Projection negotiation is direct-only; an admitted Core still receives
+/// authority through a relay without inventing a direct pairing to the issuer.
+#[tokio::test]
+async fn bounded_projection_negotiation_preserves_indirect_core_authority_sync() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, access, peers) = revocationMesh("bounded-multihop", 4,
+        &[(0, 1), (1, 2), (0, 3)]);
+    let removed = routers[3].localNodeId();
+    access[0].removeDeviceSpaceMember(removed.clone()).await.unwrap();
+    assert!(routers[2].networkControlStore.currentState().unwrap().memberNodeIds.contains(&removed));
+    assert!(!peers[2].hasPairing(&routers[0].localNodeId(), PairingDirection::Either).unwrap());
+    peers[2].calls.lock().unwrap().clear();
+    let sync = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+        routers[2].localCore.clone(), routers[2].clone(), routers[2].spaceStore.clone());
+    sync.synchronizeReachablePeer(routers[0].localNodeId(), 512).await.unwrap();
+    assert!(!routers[2].networkControlStore.currentState().unwrap().memberNodeIds.contains(&removed));
+    let calls = peers[2].calls.lock().unwrap();
+    assert!(calls.iter().any(|(peer, method)| peer == &routers[1].localNodeId() && method == "exchange"));
+    assert!(!calls.iter().any(|(_, method)| method == "projectionProtocol"));
+}

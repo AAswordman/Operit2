@@ -29,7 +29,7 @@ test('mini UI uses under 10 KiB static RAM, a 1280-byte strip, and no UI heap',o
   assert.equal(state.renderer,'mini');assert(state.staticBytes<10*1024);
   assert.equal(state.drawBytes,1280);assert.equal(state.heapBytes,0);
   for(const name of ['used','total','free','largest','peak'])assert.equal(ui['_simulator_heap_'+name](),0);
-  assert.equal(ui._simulator_stack_size(),12*1024);
+  assert.equal(ui._simulator_stack_size(),16*1024);
 });
 test('pairing digits remain in device space and show only validated six-digit codes',options,async()=>{
   const f=await fixture(),{call,inspect}=f;
@@ -309,6 +309,13 @@ test('settings groups navigate back without emitting service operations',options
   assert.deepEqual(actions,['edge_pair']);
 });
 
+test('offline device settings exposes audio self-test without pretending chat is connected',options,async()=>{
+  const {call,inspect,tap,actions}=await fixture();call('set_connection',['number','number'],[0,0]);
+  tap('sidebar_toggle');tap('sidebar_settings');tap('settings_device');
+  const button=inspect().nodes.find(n=>n.id==='audio_test');assert(button?.enabled);
+  assert.equal(tap('audio_test'),1);assert.deepEqual(actions,['edge_audio_test']);
+});
+
 test('drawer scrim cannot trigger the underlying send, and closing preserves the draft',options,async()=>{
   const {call,inspect,tap,actions,ui}=await fixture();call('set_connection',['number','number'],[1,1]);
   call('set_chat_draft',['string'],['草稿']);tap('sidebar_toggle');
@@ -360,26 +367,14 @@ test('plugin names remain UTF-8 bounded and offline clears actionable stale rows
   assert(inspect().nodes.some(node=>node.id==='plugins_empty'&&node.text==='等待 Core 连接'));
 });
 
-test('chat tool wrappers show a plugin icon, tool name and colored status in the shared scroll',options,async()=>{
+test('chat renders Core-projected names as ordinary bounded display text',options,async()=>{
   const {call,inspect,frame,ui}=await fixture();call('set_paired',['number'],[1]);
-  const states=[['R','调用中',0xe4c778],['S','成功',0x71e5a2],['F','失败',0xf07878],['U','未完成',0x849c8d]];
-  const rgb565=c=>((c>>8)&0xf800)|((c>>5)&0x07e0)|((c>>3)&31);
-  const frames=[];
-  for(const [state,label,color] of states){
-    call('set_message',['number','number','string'],[0,0,`\x1e${state}|daily_life:get_current_date\x1f`]);
-    call('finish_messages',['number'],[1]);
-    const snapshot=inspect();assert.equal(snapshot.chatCachedLines,2);
-    assert.deepEqual(snapshot.toolCards,[{icon:'plugin',name:'daily_life:get_current_date',status:label,statusColor:rgb565(color),line:0}]);
-    frames.push(frame().toString('hex'));
-  }
-  assert.equal(new Set(frames).size,4,'all states must actually paint different pixels');
-  call('set_message',['number','number','string'],[0,0,'前文\n'.repeat(8)+'\x1eS|daily_life:get_current_date\x1f\n后文']);
-  call('finish_messages',['number'],[1]);assert.equal(inspect().toolCards.length,1);
-  assert.equal(ui.ccall('operit_ui_debug_swipe','number',['string'],['down']),1);
-  frame();assert.equal(inspect().toolCards.length,0);
-  assert.equal(ui.ccall('operit_ui_debug_swipe','number',['string'],['up']),1);
-  frame();assert.equal(inspect().toolCards.length,1);
-  assert(inspect().staticBytes<10*1024);assert.equal(ui._simulator_heap_used(),0);
+  const text='正文\n【daily_life:get_current_date】\n结束';
+  call('set_message',['number','number','string'],[0,0,text]);call('finish_messages',['number'],[1]);
+  frame();const snapshot=inspect();
+  assert(snapshot.nodes.find(node=>node.id==='chat_text').text.includes('【daily_life:get_current_date】'));
+  assert.equal(Object.hasOwn(snapshot,'toolCards'),false);
+  assert(snapshot.staticBytes<10*1024);assert.equal(ui._simulator_heap_used(),0);
 });
 
 test('white top-right lightning runs all connectivity tests while plugin cells open a modal',options,async()=>{
@@ -576,4 +571,14 @@ test('device space discovery and numeric keypad forward exact bounded pairing ac
   tap('space_join');assert.equal(actions.at(-1),'edge_pair_cancel');
   update(0,'申请已取消');tap('space_manage');assert.equal(tap('space_join'),1);assert.equal(actions.at(-1),'edge_space_join');
   assert(inspect().staticBytes<10*1024);
+});
+
+test('native overlong input reports an error instead of sending a truncated prefix',async()=>{
+  const {ui,call,actions,inspect}=await fixture();
+  ui._operit_ui_set_connection(1,1);
+  call('set_chat_draft',['string'],['字'.repeat(200)]);call('submit_chat');
+  assert.deepEqual(actions,[]);
+  assert(inspect().nodes.some(n=>n.id==='error'&&n.text.includes('草稿容量')));
+  call('set_chat_draft',['string'],['短消息']);call('submit_chat');
+  assert.deepEqual(actions,['edge_send']);
 });

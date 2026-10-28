@@ -1,3 +1,4 @@
+import {draftPreview, checkedDraft} from './chat-draft.ts';
 import type {DeviceState} from './device-state.js';
 import {ScenePreview} from './scene-renderer.js';
 import {DeviceView} from './device-view.js';
@@ -53,13 +54,13 @@ let pendingSend: string | undefined;
 let latestDeviceState: DeviceState | null = null;
 const composer = document.createElement('form');
 composer.className = 'host-composer';
-composer.innerHTML = '<label><input name="message" aria-label="消息" maxlength="120" autocomplete="off" placeholder="输入后发送到屏幕中的当前对话"></label><button type="submit">发送</button><label class="image-picker">发送图片（PNG/JPEG，≤512 KiB）<input id="host-image" type="file" accept="image/png,image/jpeg"></label><output aria-live="polite"></output>';
+composer.innerHTML = '<label><textarea name="message" rows="2" aria-label="消息" maxlength="16384" placeholder="输入后发送到屏幕中的当前对话"></textarea></label><button type="submit">发送</button><label class="image-picker">发送图片（PNG/JPEG，≤512 KiB）<input id="host-image" type="file" accept="image/png,image/jpeg"></label><output aria-live="polite"></output>';
 stage.after(composer);
-const hostInput = composer.querySelector<HTMLInputElement>('input')!;
+const hostInput = composer.querySelector<HTMLTextAreaElement>('textarea')!;
 const hostStatus = composer.querySelector<HTMLOutputElement>('output')!;
 const hostImage = composer.querySelector<HTMLInputElement>('#host-image')!;
 const speech = new DeviceSpeech(message => {hostStatus.textContent=message;});
-const speakButton = document.createElement('button');speakButton.type='button';speakButton.textContent='朗读最新回复';
+const speakButton = document.createElement('button');speakButton.type='button';speakButton.textContent='朗读当前显示的回复';
 composer.append(speakButton);
 speakButton.addEventListener('click', () => {
   const message = latestDeviceState?.chat?.messages?.filter(item=>item.sender!=='user'&&item.text?.trim()).at(-1);
@@ -85,15 +86,27 @@ hostImage.addEventListener('change', async () => {
   finally { hostImage.disabled = false; hostImage.value = ''; }
 });
 let submittedHostText = '';
+hostInput.addEventListener('input', () => {
+  if (!runtime || pendingSend) return;
+  try { submittedHostText = checkedDraft(hostInput.value);
+    runtime.ccall('operit_ui_set_chat_draft', null, ['string'], [draftPreview(submittedHostText)]);
+  } catch (error) { hostStatus.textContent = errorMessage(error);
+    runtime.ccall('operit_ui_set_chat_draft', null, ['string'], ['']); }
+});
 composer.addEventListener('submit', event => {
   event.preventDefault();
   if (!runtime || pendingSend || window.operitEditor?.isEditing()) return;
-  submittedHostText = hostInput.value;
-  runtime.ccall('operit_ui_set_chat_draft', null, ['string'], [hostInput.value]);
+  try { submittedHostText = checkedDraft(hostInput.value); }
+  catch (error) { hostStatus.textContent = errorMessage(error); return; }
+  runtime.ccall('operit_ui_set_chat_draft', null, ['string'], [draftPreview(submittedHostText)]);
   runtime.ccall('operit_ui_submit_chat', null, [], []);
 });
 window.addEventListener('operit-simulator-state', event => {
   const state = (event as CustomEvent<DeviceState>).detail;
+  if (latestDeviceState && (latestDeviceState.sessionId !== state.sessionId ||
+      (latestDeviceState.chat?.chatId && state.chat?.chatId && latestDeviceState.chat.chatId !== state.chat.chatId))) {
+    submittedHostText = ''; hostInput.value = '';
+  }
   latestDeviceState = state;
   speech.update(state);
   wifiInput.disabled = !!state.running;
@@ -244,7 +257,8 @@ function handleRuntimeAction(value: string): void {
   log('自绘 UI action: ' + value);
   if (value === 'edge_voice') { void speech.action(); return; }
   if (value === 'edge_send') {
-    const text = activeRuntime().ccall('operit_ui_chat_draft', 'string', [], []);
+    const preview = activeRuntime().ccall('operit_ui_chat_draft', 'string', [], []);
+    const text = draftPreview(submittedHostText) === preview ? submittedHostText : preview;
     hostStatus.textContent = '发送中';
     const sendId = crypto.randomUUID();
     pendingSend = sendId;
@@ -348,7 +362,7 @@ async function initialize(): Promise<void> {
   applyControls();
   deviceView = new DeviceView(runtime, scenePreview, (ok, error, sendId) => {
     if (sendId === pendingSend) finishSend(ok, error);
-  });
+  }, text => { hostInput.value = text; submittedHostText = text; });
   deviceView.update(latestDeviceState ?? {});
   syncTheme();
   sourceLabel.textContent = `共用源码：${manifest.source ?? 'apps/esp32/ui_port/operit_mini_ui.c'} / 自绘 UI`;

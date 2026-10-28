@@ -9,14 +9,27 @@ publish = false
 default = ["javascript"]
 javascript = ["dep:v8"]
 # Desktop simulator mode that uses the ESP32 host worker stack budget.
-esp32-compat = []
+esp32-compat = ["dep:corosensei", "dep:windows-sys"]
 
 [dependencies]
+corosensei = { version = "0.3.4", optional = true }
 bytes = "1"
 serde_json = "1"
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
-tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "sync", "time"] }
 v8 = { version = "152.2.0", optional = true }
+
+# ESP32 drives current-thread runtimes on its bounded Host workers. Do not link
+# Tokio's desktop multi-thread executor into firmware; native platforms keep it.
+[target.'cfg(not(target_os = "espidf"))'.dependencies]
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", optional = true, features = ["Win32_System_Memory", "Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["io-util"] }
+
+# Guarded stack tests optimize the executor and task code without changing stack budgets.
+[profile.test]
+opt-level = 3

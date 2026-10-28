@@ -1,7 +1,11 @@
+import {simulatorBuildArguments, simulatorExecutable} from '../simulator-build.mts';
 import {requestUi, takeUiCommands, completeUiCommand} from './ui-debug.mts';
 import {spawn} from 'node:child_process';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createInterface} from 'node:readline';
+import {createServer} from 'node:net';
+import {randomUUID} from 'node:crypto';
+import type {Server, Socket} from 'node:net';
 import {mkdir, copyFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {pathToFileURL} from 'node:url';
@@ -9,11 +13,25 @@ import path from 'node:path';
 import {networkInterfaces} from 'node:os';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 
+async function jsonBody(req: IncomingMessage, limit: number, message: string): Promise<unknown> {
+  const chunks: Buffer[] = []; let length = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    length += bytes.length;
+    if (length > limit) throw new Error(message);
+    chunks.push(bytes);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+}
+
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const stateDir = process.env.OPERIT_SIM_STATE_DIR
   ? pathToFileURL(path.resolve(process.env.OPERIT_SIM_STATE_DIR) + path.sep)
   : new URL('../../generated/simulator/', import.meta.url);
 let child: ChildProcessWithoutNullStreams | null = null;
+let ipc: Socket | null = null;
+let ipcServer: Server | null = null;
+const ipcSockets = new Set<Socket>();
 let starting = false;
 let ready = false;
 let output = '';
@@ -22,6 +40,72 @@ let lifecycle = 0;
 let previousExit: Promise<void> = Promise.resolve();
 const pending = new Map<number, {resolve: (value: unknown) => void; reject: (error: Error) => void}>();
 
+/** Releases the editor connection and its single-use loopback listener. */
+function closeIpc(): void {
+  ipc = null;
+  for (const connection of ipcSockets) connection.destroy();
+  ipcSockets.clear();
+  ipcServer?.close();
+  ipcServer = null;
+}
+
+/** Accepts one simulator connection and routes unchanged JSON RPC responses. */
+async function listenForIpc(generation: number, token: string): Promise<string> {
+  const server = createServer(socket => {
+    if (generation !== lifecycle || ipc) { socket.destroy(); return; }
+    let authenticated = false;
+    ipcSockets.add(socket);
+    socket.setNoDelay(true);
+    /** Terminates failed reads and writes while reporting the active connection error. */
+    const fail = (error: Error): void => {
+      if (ipc === socket) output = (output + error.message).slice(-12000);
+      socket.destroy();
+    };
+    socket.on('error', fail);
+    socket.on('close', () => {
+      ipcSockets.delete(socket);
+      if (ipc !== socket) return;
+      ipc = null;
+      ready = false;
+      failPending();
+    });
+    createInterface({input: socket}).on('error', fail).on('line', line => {
+      if (generation !== lifecycle) { socket.destroy(); return; }
+      try {
+        const message = JSON.parse(line) as {ipcToken?: string; ready?: boolean; id?: number; value?: unknown; error?: string};
+        if (!authenticated) {
+          if (message.ipcToken !== token || ipc) { socket.destroy(); return; }
+          authenticated = true;
+          ipc = socket;
+          server.close();
+          if (ipcServer === server) ipcServer = null;
+          return;
+        }
+        if (ipc !== socket) return;
+        if (message.ready) ready = true;
+        if (message.id !== undefined) {
+          const request = pending.get(message.id);
+          pending.delete(message.id);
+          if (message.error) request?.reject(new Error(message.error));
+          else request?.resolve(message.value);
+        }
+      } catch (error) {
+        output = (output + String(error)).slice(-12000);
+        socket.destroy();
+      }
+    });
+  });
+  ipcServer = server;
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('模拟器 IPC 监听失败');
+  return `127.0.0.1:${address.port}`;
+}
+
+/** Selects the externally reachable address advertised by the simulated device. */
 function advertisedAddress(address: string): string {
   const [host, port] = address.split(':');
   if (host !== '0.0.0.0' && host !== '::') return address;
@@ -52,6 +136,7 @@ function advertisedAddress(address: string): string {
   return candidates[0] ? `${candidates[0].address}:${port}` : address;
 }
 
+/** Rejects outstanding commands when their simulator connection ends. */
 function failPending(): void {
   for (const request of pending.values()) request.reject(new Error('模拟设备已停止'));
   pending.clear();
@@ -71,6 +156,7 @@ export async function copySimulatorBinary(source: string, destination: string,
   }
 }
 
+/** Prepares the bounded desktop Host dependencies and owns the current simulator process. */
 async function start(): Promise<void> {
   if (child || starting) return;
   starting = true;
@@ -82,8 +168,18 @@ async function start(): Promise<void> {
     output = '';
     ready = false;
     // Spawn the binary directly so stop and editor shutdown own the real process.
-    const build = spawn('cargo', ['build', '--release', '--manifest-path', 'tools/esp32-editor/simulator/Cargo.toml',
-      '--target-dir', fileURLToPath(new URL('../../simulator/target/', import.meta.url))], {
+    const python = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+    const prepare = spawn(python, ['-X', 'utf8', 'tools/esp32-editor/prepare-simulator.py'], {
+      cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    child = prepare;
+    await new Promise<void>((resolve, reject) => {
+      prepare.once('error', reject);
+      prepare.stderr.on('data', chunk => { output = (output + chunk.toString()).slice(-12000); });
+      prepare.once('close', code => code === 0 ? resolve() : reject(new Error('模拟器依赖准备失败，请查看日志')));
+    });
+    if (child !== prepare || generation !== lifecycle) return;
+    const build = spawn('cargo', simulatorBuildArguments, {
       cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
     });
     child = build;
@@ -95,60 +191,56 @@ async function start(): Promise<void> {
       build.once('close', code => code === 0 ? resolve() : reject(new Error('模拟器编译失败，请查看日志')));
     });
     if (child !== build) return;
-    const executable = fileURLToPath(new URL('../../simulator/target/release/operit-esp32-simulator' +
-      (process.platform === 'win32' ? '.exe' : ''), import.meta.url));
-    // Keep the executable separate from NativeRuntimeStorageHost's runtime/
+    const executable = simulatorExecutable;
+    // Keep the executable separate from the packed storage carrier's runtime/
     // directory. On Unix an extensionless 'runtime' binary occupies that path.
     const runPath = fileURLToPath(new URL('operit-esp32-simulator' +
       (process.platform === 'win32' ? '.exe' : ''), stateDir));
     await copySimulatorBinary(executable, runPath);
     if (generation !== lifecycle) return;
+    const ipcToken = randomUUID();
+    const ipcAddress = await listenForIpc(generation, ipcToken);
+    if (generation !== lifecycle) { closeIpc(); return; }
     const runtime = spawn(runPath, [], {cwd: root, windowsHide: true,
       env: {...process.env,
+        OPERIT_SIM_IPC_ADDRESS: ipcAddress,
+        OPERIT_SIM_IPC_TOKEN: ipcToken,
         OPERIT_SIM_STATE_DIR: fileURLToPath(stateDir),
-        OPERIT_SIM_STATE: fileURLToPath(new URL('pairing.json', stateDir))},
+        OPERIT_SIM_DISCOVERY_IP: advertisedAddress('0.0.0.0:0').split(':')[0]},
     });
     child = runtime;
     previousExit = new Promise(resolve => runtime.once('close', () => resolve()));
-    runtime.stdin.on('error', e => { output = (output + e.message).slice(-12000); failPending(); });
+    runtime.stdout.on('data', append);
     runtime.stderr.on('data', append);
-    createInterface({input: runtime.stdout}).on('line', line => {
-      try {
-        const message = JSON.parse(line) as {ready?: boolean; id?: number; value?: unknown; error?: string};
-        if (message.ready) ready = true;
-        if (message.id !== undefined) {
-          const request = pending.get(message.id);
-          pending.delete(message.id);
-          if (message.error) request?.reject(new Error(message.error));
-          else request?.resolve(message.value);
-        }
-      } catch { output = (output + line).slice(-12000); }
-    });
     runtime.on('error', e => { output += e.message; });
-    runtime.on('close', () => {
-      if (child === runtime) { child = null; ready = false; failPending(); }
+    runtime.on('close', (code, signal) => {
+      output = (output + `\nSimulator exited (code=${code}, signal=${signal})\n`).slice(-12000);
+      if (child === runtime) { child = null; ready = false; closeIpc(); failPending(); }
     });
-  } catch (e) { child = null; output += String(e); }
+  } catch (e) { child = null; ready = false; closeIpc(); failPending(); output += String(e); }
   finally { starting = false; }
 }
 
+/** Stops the owned process and closes all IPC resources. */
 export function stopSimulator(): void {
   lifecycle += 1;
   const processToStop = child;
   child = null;
   ready = false;
+  closeIpc();
   failPending();
   processToStop?.kill();
 }
 
+/** Sends one correlated command over the current simulator connection. */
 async function rpc(command: string, fields = {}, timeoutMs = 5000): Promise<unknown> {
-  if (!child || !ready) throw new Error('请先启动模拟设备并等待编译完成');
+  if (!child || !ready || !ipc) throw new Error('请先启动模拟设备并等待编译完成');
   const id = ++sequence;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { pending.delete(id); reject(new Error('模拟设备响应超时')); }, timeoutMs);
     pending.set(id, {resolve: value => { clearTimeout(timer); resolve(value); },
       reject: error => { clearTimeout(timer); reject(error); }});
-    child!.stdin.write(JSON.stringify({id, command, ...fields}) + '\n');
+    ipc!.write(JSON.stringify({id, command, ...fields}) + '\n');
   });
 }
 
@@ -175,10 +267,14 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, device});
-    } else if (url.pathname === '/api/simulator/speech' && req.method === 'POST') {
+    } else if (url.pathname === '/api/simulator/storage' && req.method === 'GET') {
+      reply(200, await rpc('storageRecords'));
+    } else if (url.pathname === '/api/simulator/storage-control' && req.method === 'POST') {
       let body = '';
-      for await (const chunk of req) { body += String(chunk); if (Buffer.byteLength(body) > 24000) throw new Error('语音请求过长'); }
-      const input = JSON.parse(body) as Record<string, unknown>;
+      for await (const chunk of req) { body += String(chunk); if (Buffer.byteLength(body) > 1024) throw new Error('存储测试配置过长'); }
+      reply(200, await rpc('storageControl', {configuration: JSON.parse(body)}));
+    } else if (url.pathname === '/api/simulator/speech' && req.method === 'POST') {
+      const input = await jsonBody(req, 24000, '语音请求过长') as Record<string, unknown>;
       reply(200, await rpc('speech', input));
     } else if (url.pathname === '/api/simulator/core-access'  && req.method === 'POST') {
       let body = '';
@@ -239,14 +335,10 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         reply(200, await requestUi('swipe', {direction: input.direction}));
       }
     } else if (['/api/simulator/action', '/api/simulator/send'].includes(url.pathname) && req.method === 'POST') {
-      let body = '';
-      for await (const chunk of req) {
-        body += String(chunk);
-        if (Buffer.byteLength(body) > 8192) throw new Error('消息过长');
-      }
-      const input = JSON.parse(body) as {action?: unknown; text?: unknown; sendId?: unknown; requestId?: unknown; assignmentVersion?: unknown; inputId?: unknown};
+      const input = await jsonBody(req, 100000, '消息过长') as {action?: unknown; text?: unknown; sendId?: unknown; requestId?: unknown; assignmentVersion?: unknown; inputId?: unknown};
       if (url.pathname.endsWith('/send')) {
         if (typeof input.text !== 'string') throw new Error('缺少消息内容');
+        if (Buffer.byteLength(input.text) > 16384) throw new Error('消息超过 16384 字节，请拆分发送');
         if (input.sendId !== undefined && (typeof input.sendId !== 'string' || input.sendId.length > 64)) throw new Error('无效的发送编号');
         reply(200, await rpc('send', {text: input.text, sendId: input.sendId}));
         return true;
@@ -267,6 +359,6 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
       }
       reply(200, await rpc('action', action));
     } else reply(404, {error: 'Unknown simulator endpoint'});
-  } catch (e) { reply(400, {error: String(e)}); }
+  } catch (e) { reply(400, {error: String(e), running: child !== null, ready, output}); }
   return true;
 }

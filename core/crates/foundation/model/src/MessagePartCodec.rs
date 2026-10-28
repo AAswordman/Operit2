@@ -289,9 +289,14 @@ impl AssistantMarkupStreamState {
         &self.parts
     }
 
+    /// Validates the completed response without copying its semantic parts.
+    pub fn complete(&mut self) -> Result<(), String> {
+        self.consumePending(true)
+    }
+
     /// Completes parsing once the provider response stream has closed.
     pub fn finish(&mut self) -> Result<Vec<MessagePart>, String> {
-        self.consumePending(true)?;
+        self.complete()?;
         Ok(self.parts.clone())
     }
 
@@ -308,8 +313,7 @@ impl AssistantMarkupStreamState {
                     continue;
                 }
                 if isFinal {
-                    self.completeUnclosedThinkingAsMarkdown();
-                    continue;
+                    return Err("assistant thinking tag is incomplete".into());
                 }
                 let retainedLength =
                     asciiCaseInsensitiveSuffixPrefixLength(&self.pending, &closeTag);
@@ -339,8 +343,7 @@ impl AssistantMarkupStreamState {
             let Some(openEndOffset) = self.pending.find('>') else {
                 if self.isPotentialSemanticOpening() {
                     if isFinal {
-                        let content = std::mem::take(&mut self.pending);
-                        self.appendMarkdownContent(&content);
+                        return Err("assistant semantic opening tag is incomplete".into());
                     }
                     return Ok(());
                 }
@@ -389,8 +392,13 @@ impl AssistantMarkupStreamState {
                 findAsciiCaseInsensitive(&self.pending[openEnd..], &closeTag)
             else {
                 if isFinal {
-                    let content = std::mem::take(&mut self.pending);
-                    self.appendMarkdownContent(&content);
+                    // Historical storage includes unfinished output as literal source.
+                    if self.preserveUnsupportedTags {
+                        let content = std::mem::take(&mut self.pending);
+                        self.appendMarkdownContent(&content);
+                        return Ok(());
+                    }
+                    return Err(format!("assistant semantic tag is incomplete: {tagName}"));
                 }
                 return Ok(());
             };
@@ -405,14 +413,7 @@ impl AssistantMarkupStreamState {
                 "status" => MessagePartCodec::parseStatus(partId, sequence, &raw),
                 _ => unreachable!("semantic tag classification must match its parser"),
             };
-            let part = match parsedPart {
-                Ok(part) => part,
-                Err(_) => {
-                    self.appendMarkdownContent(&raw);
-                    self.pending = self.pending[rawEnd..].to_string();
-                    continue;
-                }
-            };
+            let part = parsedPart?;
             self.parts.push(part);
             self.pending = self.pending[rawEnd..].to_string();
         }
@@ -454,23 +455,6 @@ impl AssistantMarkupStreamState {
             .expect("an active thinking tag must have a thinking part");
         assert_eq!(part.kind, MessagePartKind::Thinking);
         part.content.push_str(content);
-    }
-
-    /// Converts an unfinished thinking block back into the literal assistant text.
-    fn completeUnclosedThinkingAsMarkdown(&mut self) {
-        let openingTag = self
-            .activeThinkingOpenTag
-            .take()
-            .expect("unfinished thinking blocks retain their opening tag");
-        let pending = std::mem::take(&mut self.pending);
-        self.activeThinkingCloseTag = None;
-        let part = self
-            .parts
-            .last_mut()
-            .expect("unfinished thinking blocks retain their message part");
-        assert_eq!(part.kind, MessagePartKind::Thinking);
-        part.kind = MessagePartKind::Markdown;
-        part.content = format!("{openingTag}{}{pending}", part.content);
     }
 
     /// Appends the first pending byte to Markdown text to make parsing progress.
@@ -778,43 +762,15 @@ mod tests {
         assert_eq!(parts[0].content, "");
     }
 
-    /// Verifies unfinished generated tool markup remains literal assistant text.
+    /// Live semantic markup errors remain errors instead of becoming visible protocol payloads.
     #[test]
-    fn parses_unclosed_generated_tool_tag_as_markdown() {
-        let content = "Before<tool_G543 name=\"read_file\"><param name=\"path\">a.txt</param>";
-        let parts = MessagePartCodec::parseAssistantMarkup(content)
-            .expect("unfinished generated tool markup must remain representable");
-
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[0].content, content);
-    }
-
-    /// Verifies unfinished thinking markup remains literal assistant text.
-    #[test]
-    fn parses_unclosed_thinking_tag_as_markdown() {
-        let content = "Before<think>partial reasoning</thi";
-        let parts = MessagePartCodec::parseAssistantMarkup(content)
-            .expect("unfinished thinking markup must remain representable");
-
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[0].content, "Before");
-        assert_eq!(parts[1].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[1].content, "<think>partial reasoning</thi");
-    }
-
-    /// Verifies malformed complete tool markup remains visible assistant text.
-    #[test]
-    fn parses_malformed_tool_parameter_as_markdown() {
-        let content =
-            "Before<tool name=\"search\"><param name=\"various_search</param></tool>After";
-        let parts = MessagePartCodec::parseAssistantMarkup(content)
-            .expect("malformed tool markup must remain representable");
-
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[0].content, content);
+    fn rejects_incomplete_and_malformed_live_semantic_markup() {
+        for content in [
+            "Before<tool_G543 name=\"read_file\"><param name=\"path\">a.txt</param>",
+            "Before<think>partial reasoning</thi",
+            "Before<tool name=\"search\"><param name=\"various_search</param></tool>After",
+            "Before<tool_result name=\"search\" status=\"success\">PRIVATE-RESULT</tool_result>",
+        ] { assert!(MessagePartCodec::parseAssistantMarkup(content).is_err(), "{content}"); }
     }
 
     /// Verifies that visible text excludes internal thinking and tool protocol payloads.

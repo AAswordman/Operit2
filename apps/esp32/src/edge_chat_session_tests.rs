@@ -73,6 +73,8 @@ impl CoreLinkSharedClient for Client {
                     "streamId":"reply", "target":CORE_STREAM_TARGET, "propertyName":"events", "args":{}
                 }}
             }], "older":null, "error":null})).unwrap()
+        } else if request.target == CORE_STREAM_TARGET {
+            operit_link::toCoreValue(ChatDisplayEvent::Chunk { value: String::new() }).unwrap()
         } else if request.propertyName == "routedChatListFlow" {
             CoreValue::List(Vec::new())
         } else {

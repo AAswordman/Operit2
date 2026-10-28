@@ -43,11 +43,11 @@ fn record(status: SpaceJoinStatus) -> Record {
             topology: Vec::new(),
             departures: Vec::new(),
         },
-        accepted: None,
         unavailableSince: None,
         approvedDecision: None,
         decisionRevision: None,
         cancelRequested: false,
+        submitted: false,
     }
 }
 /// Verifies late polling responses cannot undo cancellation or an in-progress decision.
@@ -93,14 +93,14 @@ fn only_pending_requests_expire_not_committed_or_claimed_decisions() {
         SpaceJoinStatus::Rejected,
     ] {
         let mut r = record(status.clone());
-        expire(&mut r, 101, "target");
+        expire(&mut r.request, &r.targetSpaceId, 101, "target");
         assert_eq!(r.request.status, status);
     }
     let mut r = record(SpaceJoinStatus::Pending);
-    expire(&mut r, 101, "target");
+    expire(&mut r.request, &r.targetSpaceId, 101, "target");
     assert_eq!(r.request.status, SpaceJoinStatus::Expired);
     let mut r = record(SpaceJoinStatus::Pending);
-    expire(&mut r, 1, "another");
+    expire(&mut r.request, &r.targetSpaceId, 1, "another");
     assert_eq!(r.request.status, SpaceJoinStatus::Cancelled);
 }
 /// Exercises hop distances use directed edges and do not transit ordinary members through the device-space contract fixture.
@@ -153,13 +153,13 @@ fn every_terminal_request_resists_every_late_response_status() {
 #[test]
 fn expiry_boundary_is_inclusive_and_claimed_approval_survives_space_change() {
     let mut pending = record(SpaceJoinStatus::Pending);
-    expire(&mut pending, 99, "target");
+    expire(&mut pending.request, &pending.targetSpaceId, 99, "target");
     assert_eq!(pending.request.status, SpaceJoinStatus::Pending);
-    expire(&mut pending, 100, "target");
+    expire(&mut pending.request, &pending.targetSpaceId, 100, "target");
     assert_eq!(pending.request.status, SpaceJoinStatus::Expired);
     for status in [SpaceJoinStatus::Approving, SpaceJoinStatus::Approved] {
         let mut claimed = record(status.clone());
-        expire(&mut claimed, i64::MAX, "another-space");
+        expire(&mut claimed.request, &claimed.targetSpaceId, i64::MAX, "another-space");
         assert_eq!(claimed.request.status, status);
     }
 }

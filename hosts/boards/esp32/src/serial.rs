@@ -114,6 +114,24 @@ struct UartConnection {
     io: StdMutex<()>,
     closed: AtomicBool,
 }
+impl UartConnection {
+    /// The caller owns writer. Keep unsent debug bytes in the shared mailbox
+    /// across cancellation, and finish them before any subsequent Link write.
+    async fn flush_debug_response(&self) -> HostResult<()> {
+        loop {
+            let done = self.debug.write_response(|bytes| {
+                let _io = self.io.lock().map_err(|error| HostError::new(error.to_string()))?;
+                if self.closed.load(Ordering::Acquire) {
+                    return Err(HostError::new("Board UART connection is closed"));
+                }
+                self.uart.write(bytes)
+            })?;
+            if done { return Ok(()); }
+            defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(2).await?;
+        }
+    }
+}
+
 #[async_trait]
 impl SerialPortConnection for UartConnection {
     async fn read(&self) -> HostResult<Option<Vec<u8>>> {
@@ -123,9 +141,9 @@ impl SerialPortConnection for UartConnection {
         // Framing already handles split messages, so 512 bytes is sufficient.
         let mut bytes = vec![0; 512];
         loop {
-            if let Some(response) = self.debug.take_response() {
-                // Shares the same write lock as Link; frames cannot interleave.
-                self.write(&response).await?;
+            {
+                let _writer = self.writer.lock().await;
+                self.flush_debug_response().await?;
             }
             let count = {
                 let _io = self
@@ -142,13 +160,15 @@ impl SerialPortConnection for UartConnection {
                 bytes.truncate(count);
                 return Ok(Some(bytes));
             }
+            // Idle input does not need a 500 Hz wakeup on the shared device worker.
             defaultHostRuntimeTaskSchedulerHost()
-                .waitForHostRuntimeDelay(2)
+                .waitForHostRuntimeDelay(10)
                 .await?;
         }
     }
     async fn write(&self, bytes: &[u8]) -> HostResult<()> {
         let _writer = self.writer.lock().await;
+        self.flush_debug_response().await?;
         let mut offset = 0;
         loop {
             let count = {
@@ -203,6 +223,7 @@ mod tests {
         input: StdMutex<VecDeque<u8>>,
         output: StdMutex<Vec<u8>>,
         tx_pending: std::sync::atomic::AtomicUsize,
+        write_budget: StdMutex<Option<usize>>,
     }
     impl UartIo for Uart {
         fn read(&self, bytes: &mut [u8]) -> HostResult<usize> {
@@ -214,7 +235,9 @@ mod tests {
             Ok(count)
         }
         fn write(&self, bytes: &[u8]) -> HostResult<usize> {
-            let count = bytes.len().min(3);
+            let mut budget = self.write_budget.lock().unwrap();
+            let count = bytes.len().min(3).min(budget.unwrap_or(usize::MAX));
+            if let Some(remaining) = budget.as_mut() { *remaining -= count; }
             self.output
                 .lock()
                 .unwrap()
@@ -299,6 +322,42 @@ mod tests {
         closing.await;
         assert_eq!(uart.tx_pending.load(Ordering::Acquire), 0);
         assert!(host.open("uart0", 115200).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancelled_read_preserves_debug_reply_before_read_or_link_write() {
+        for resume_with_write in [false, true] {
+            let (host, uart) = host();
+            let debug = host.debug_io();
+            let connection = host.open("uart0", 115200).await.unwrap();
+            let request = [79, 80, 68, 49, 0, 0, 0, 5, 0, 0, 0, 1, 1, 168, 62, 246, 202];
+            uart.input.lock().unwrap().extend(request);
+            connection.read().await.unwrap();
+            let request = debug.take_request().unwrap();
+            debug.respond(request.id(), b"{}");
+            *uart.write_budget.lock().unwrap() = Some(3);
+            let mut reading = Box::pin(connection.read());
+            poll_fn(|cx| {
+                assert!(reading.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            }).await;
+            assert_eq!(*uart.output.lock().unwrap(), b"OPD");
+            drop(reading); // Link's idle timeout cancels the read during TX.
+            *uart.write_budget.lock().unwrap() = None;
+            if resume_with_write {
+                connection.write(b"next Link frame").await.unwrap();
+            } else {
+                uart.input.lock().unwrap().extend(b"next input");
+                assert_eq!(connection.read().await.unwrap().unwrap(), b"next input");
+            }
+            let output = uart.output.lock().unwrap();
+            assert!(output.len() >= 18, "cancelled read lost the rest of the debug reply");
+            assert_eq!(&output[..4], b"OPD2", "the debug reply must resume at its saved offset");
+            assert_eq!(u32::from_be_bytes(output[4..8].try_into().unwrap()), 6);
+            assert_eq!(&output[8..14], b"\0\0\0\x01{}");
+            assert_eq!(output.len(), 18 + if resume_with_write { b"next Link frame".len() } else { 0 });
+            if resume_with_write { assert_eq!(&output[18..], b"next Link frame"); }
+        }
     }
 
     #[tokio::test]

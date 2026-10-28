@@ -3,6 +3,15 @@
   "rustTestFilter": "device_space",
   "suites": [
     {
+      "file": "approving_exit.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "committed_approving_decision_is_pinned_and_locally_recovered",
+        "uncommitted_approving_decision_reassigns_after_grace",
+        "committed_but_excluded_decision_is_not_forged_into_approval"
+      ]
+    },
+    {
       "file": "cancellation.rs",
       "level": "real-router-isolated-host",
       "cases": [
@@ -21,12 +30,45 @@
       ]
     },
     {
+      "file": "convergence_properties.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "pairwise_reconciliation_converges_for_random_histories"
+      ]
+    },
+    {
+      "file": "departure.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "departure_is_self_authored_and_relayed_without_moving_other_members",
+        "departure_survives_reopen_until_the_neighbor_has_the_exact_receipt",
+        "departure_of_the_last_admin_does_not_promote_or_move_other_devices",
+        "departure_recovers_a_crash_before_the_local_space_switch"
+      ]
+    },
+    {
+      "file": "doctor.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "doctor_detects_quarantines_and_selfchecks_damaged_lines",
+        "doctor_reports_member_record_vs_replay_divergence"
+      ]
+    },
+    {
       "file": "facade_state.rs",
       "level": "facade-state",
       "cases": [
         "space_join_preserves_identity_members_and_exact_revision",
         "overview_subscription_stops_worker_after_last_watch_is_dropped",
         "paired_device_statuses_follow_active_peer_links_only"
+      ]
+    },
+    {
+      "file": "fixtures.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "direct_removal_retires_the_removed_device_and_drops_every_pairing",
+        "bridge_removal_reaches_the_far_side_through_the_captured_route"
       ]
     },
     {
@@ -38,7 +80,11 @@
         "leaving_joined_space_initializes_admin_and_rejoining_requires_approval",
         "repeated_leave_initializes_each_new_space_once_without_changing_old_policy",
         "two_applicants_withdraw_one_approve_other_without_cross_request_mutation",
-        "lost_submission_reply_reuses_request_and_does_not_duplicate_receiver_inbox"
+        "lost_submission_reply_reuses_request_and_does_not_duplicate_receiver_inbox",
+        "join_request_retires_stale_membership_and_applies_as_its_own_space",
+        "reconciliation_restores_members_the_shared_log_admits",
+        "gateway_rejects_a_submission_whose_source_equals_the_target_space",
+        "rejoin_after_only_the_applicant_leaves_starts_a_fresh_review"
       ]
     },
     {
@@ -70,7 +116,8 @@
         "policy_replay_converges_with_duplicate_reversed_and_rotated_delivery",
         "forged_policy_issuer_never_grants_capability",
         "clearing_the_last_administrator_is_rejected_without_a_policy_write",
-        "permission_revocation_invalidates_a_stale_reviewer_action"
+        "permission_revocation_invalidates_a_stale_reviewer_action",
+        "review_admission_rejects_a_self_referential_space_before_the_log_append"
       ]
     },
     {
@@ -86,10 +133,39 @@
       ]
     },
     {
+      "file": "reconcile_protocol.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "paged_reconciliation_converges_over_multiple_rounds",
+        "first_contact_full_offer_discovers_v2_and_converges",
+        "legacy_offer_receives_full_reply",
+        "oversize_offer_is_refused_and_counted",
+        "oversized_id_sets_still_terminate_as_converged"
+      ]
+    },
+    {
       "file": "reviewer_assignment.rs",
       "level": "real-router-controlled-transport",
       "cases": [
         "nearest_authorized_reviewer_only_then_offline_transfer_and_remote_decision"
+      ]
+    },
+    {
+      "file": "revocation_notice.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "members_forget_a_removed_device_after_applying_the_removal",
+        "removal_notice_is_best_effort_when_the_target_is_offline",
+        "control_exchange_rejects_relayed_foreign_authority_commands",
+        "removed_device_rejoins_after_pairing_again",
+        "stale_removed_device_heals_into_its_own_space_when_reapplying",
+        "readmitted_device_survives_its_own_removal_record_in_history",
+        "historical_removal_replay_keeps_the_fresh_pairing_of_a_reapplicant",
+        "readmitted_device_survives_replayed_history_on_every_replica",
+        "a_late_learner_keeps_the_pairing_made_after_the_removal",
+        "a_member_forgets_the_removed_device_when_the_snapshot_arrives_first",
+        "a_member_that_missed_multiple_removals_forgets_the_latest_generation",
+        "bounded_projection_negotiation_preserves_indirect_core_authority_sync"
       ]
     },
     {
@@ -99,7 +175,7 @@
         "multi_hop_cycle_partition_and_reconnect_preserve_space_membership",
         "removing_relay_capability_blocks_transit_but_not_direct_access",
         "exhausted_route_ttl_is_rejected_without_forwarding",
-        "revoked_target_cannot_be_reached_through_still_connected_peers",
+        "removed_target_cannot_be_reached_through_still_connected_peers",
         "binding_owner_changes_replicate_and_reject_stale_writers"
       ]
     },
@@ -112,10 +188,32 @@
       ]
     },
     {
+      "file": "sync_idle_gate.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "idle_cycles_probe_clocks_without_repeating_full_exchanges",
+        "a_failed_pass_backs_off_before_retrying_the_full_exchange",
+        "preference_edits_reopen_a_settled_storage_provider_gate",
+        "partial_plugin_failure_keeps_healthy_replication_moving"
+      ]
+    },
+    {
+      "file": "topology_publication.rs",
+      "level": "real-router-isolated-host",
+      "cases": [
+        "tree_topology_publication_routes_between_leaves",
+        "tree_topology_prunes_a_dropped_direct_link"
+      ]
+    },
+    {
       "file": "transports.rs",
       "level": "real-host-transports",
       "cases": [
         "real_tcp_single_pairing_uses_one_bidirectional_channel",
+        "real_tcp_single_channel_with_ipv6_listener",
+        "real_tcp_single_channel_with_wildcard_listener",
+        "real_tcp_space_remove_deletes_pairing_and_allows_repairing",
+        "real_tcp_listener_gate_reports_revocation_to_dialer",
         "outbound_only_hosts_pair_over_http_and_websocket",
         "listener_capabilities_validate_all_transports_before_binding",
         "core_discovery_returns_only_unpaired_devices_for_all_callers"

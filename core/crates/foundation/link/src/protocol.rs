@@ -416,7 +416,10 @@ impl<'de> Visitor<'de> for CoreValueVisitor {
 
     /// Decodes a borrowed binary value.
     fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E> {
-        Ok(CoreValue::Bytes(crate::CoreBytes::copy_from_slice(value)))
+        Ok(CoreValue::Bytes(
+            crate::codec::retain_decoded_slice(value)
+                .unwrap_or_else(|| crate::CoreBytes::copy_from_slice(value)),
+        ))
     }
 
     /// Resolves a native shared-buffer extension only inside its explicit decode scope.
@@ -1105,15 +1108,9 @@ impl CoreLinkError {
     }
 
     #[track_caller]
-    /// Creates an internal link error annotated with caller location and backtrace.
+    /// Creates a bounded internal link error with its exact caller location.
     pub fn internal(message: impl Into<String>) -> Self {
         let caller = std::panic::Location::caller();
-        // ESP-IDF's Xtensa unwind wrapper aborts instead of returning a
-        // backtrace. Reporting a recoverable error must never reset the board.
-        #[cfg(not(target_os = "espidf"))]
-        let backtrace = Some(format!("{:#}", std::backtrace::Backtrace::force_capture()));
-        #[cfg(target_os = "espidf")]
-        let backtrace = None;
         Self {
             code: "INTERNAL_ERROR".to_string(),
             message: message.into(),
@@ -1123,8 +1120,7 @@ impl CoreLinkError {
                 line: caller.line(),
                 column: caller.column(),
             }),
-            // Full formatting retains instruction addresses even without debug symbols.
-            backtrace,
+            backtrace: None,
         }
     }
 }
@@ -1203,9 +1199,6 @@ mod protocol_tests {
         let location = error.location.as_ref().unwrap();
         assert_eq!(location.line, line);
         assert_eq!(location.file, file!());
-        #[cfg(not(target_os = "espidf"))]
-        assert!(error.backtrace.is_some());
-        #[cfg(target_os = "espidf")]
         assert!(error.backtrace.is_none());
     }
 }

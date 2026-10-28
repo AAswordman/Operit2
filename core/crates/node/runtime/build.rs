@@ -34,7 +34,7 @@ fn main() {
 fn scan_source_tree(
     runtime_root: &Path,
     path: &Path,
-    declarations: &mut BTreeSet<(String, String, String, String, String, String, String, String)>,
+    declarations: &mut BTreeSet<(String, String, String, String, String, String, String, String, String)>,
 ) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
@@ -65,11 +65,16 @@ fn scan_source_tree(
                 };
                 let targetType =
                     generated_target_type(runtime_root, &entry_path, &item_impl.self_ty);
-                let routeKind = if function.sig.inputs.iter().any(|argument| {
-                    let syn::FnArg::Typed(argument) = argument else { return false };
-                    let Type::Path(path) = argument.ty.as_ref() else { return false };
-                    path.path.segments.last().is_some_and(|segment| segment.ident == "ReverseStream")
-                }) { "push".to_string() } else { route_kind(&function.sig.output) };
+                let reverseItem = function.sig.inputs.iter().find_map(|argument| {
+                    let syn::FnArg::Typed(argument) = argument else { return None };
+                    let Type::Path(path) = argument.ty.as_ref() else { return None };
+                    let segment = path.path.segments.last()?;
+                    if segment.ident != "ReverseStream" { return None; }
+                    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else { return None };
+                    let syn::GenericArgument::Type(ty) = args.args.first()? else { return None };
+                    Some(quote::quote!(#ty).to_string())
+                }).unwrap_or_default();
+                let routeKind = if reverseItem.is_empty() { route_kind(&function.sig.output) } else { "push".to_string() };
                 let (permissionScope, permissionCapability) = route_permission(&function.attrs)
                     .unwrap_or_else(|| ("Caller".to_string(), String::new()));
                 let lifecycle = route_lifecycle(&function.attrs);
@@ -82,6 +87,7 @@ fn scan_source_tree(
                     permissionScope,
                     permissionCapability,
                     route_creation(&function.attrs),
+                    reverseItem,
                 ));
             }
         }
@@ -256,13 +262,13 @@ fn return_type_is_state_flow(output: &ReturnType) -> bool {
 
 /// Renders server-owned route lookup functions from annotation declarations.
 fn render_route_catalog(
-    declarations: &BTreeSet<(String, String, String, String, String, String, String, String)>,
+    declarations: &BTreeSet<(String, String, String, String, String, String, String, String, String)>,
 ) -> String {
     let mut output = String::new();
     output.push_str("/// Resolves one annotation-generated Space route by its wire route ID.\n");
     output.push_str("pub fn generated_space_route_for_id(routeId: &str, methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match (routeId, methodName) {\n");
-    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability) in
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem) in
         declarations
     {
         let routeId = format!("space/{targetType}/{method}");
@@ -274,7 +280,7 @@ fn render_route_catalog(
     output.push_str("/// Resolves one internal annotation route without a Proxy object address.\n");
     output.push_str("pub fn generated_space_route_for_method(methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match methodName {\n");
-    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability) in
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem) in
         declarations
     {
         let routeId = format!("space/{targetType}/{method}");
@@ -286,7 +292,7 @@ fn render_route_catalog(
     output.push_str("/// Resolves the generated Space route registered for one lifecycle hook.\n");
     output.push_str("pub fn generated_space_lifecycle_route(lifecycle: GeneratedRouteLifecycle) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match lifecycle {\n");
-    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability) in
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability, createBindingCapability, _reverseItem) in
         declarations
     {
         let routeId = format!("space/{targetType}/{method}");
@@ -309,7 +315,7 @@ fn render_route_catalog(
         "/// Resolves one annotation-generated Space route from a standard Link push request.\n",
     );
     output.push_str("pub fn generated_space_push_route(request: &operit_link::CorePushRequest) -> Option<GeneratedSpaceRoute> { let route = if request.target == operit_link::CORE_INTERNAL_TARGET { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(&request.target, &request.methodName) }?; match route.methodName {\n");
-    for (method, _, _, kind, _, _, _, _) in declarations {
+    for (method, _, _, kind, _, _, _, _, _) in declarations {
         if kind == "push" { output.push_str(&format!("{method:?} => Some(route),\n")); }
     }
     output.push_str("_ => None, } }\n\n");
@@ -317,7 +323,7 @@ fn render_route_catalog(
         .push_str("/// Resolves one request using route declarations from runtime annotations.\n");
     output.push_str("fn generated_route_for_request(methodName: &str, args: &operit_link::CoreValue) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {\n");
     output.push_str("    let bindingArgument = match methodName {\n");
-    for (method, binding, _, _, _, _, _, _) in declarations {
+    for (method, binding, _, _, _, _, _, _, _) in declarations {
         output.push_str(&format!("        {method:?} => Some({binding:?}),\n"));
     }
     output.push_str("        _ => None,\n    };\n");
@@ -354,6 +360,7 @@ fn render_space_dispatch(
         String,
         String,
         String,
+        String,
     )>,
 ) -> String {
     let mut output = String::new();
@@ -362,7 +369,7 @@ fn render_space_dispatch(
     );
     output.push_str("pub async fn generated_space_call_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.methodName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem) in declarations {
         if routeKind == "call" {
             output.push_str(&format!(
                 "        {method:?} => Box::pin(generated_space_call_on_chat_core_{method}(core, request)).await,\n"
@@ -370,7 +377,7 @@ fn render_space_dispatch(
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&request.registryKey())),\n    }\n}\n\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem) in declarations {
         if routeKind == "call" {
             output.push_str(&format!(
                 "/// Dispatches one generated Space call method on the runtime's main ChatServiceCore.\nasync fn generated_space_call_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    core.__operit_core_route_call_{method}(request).await\n}}\n\n"
@@ -382,13 +389,13 @@ fn render_space_dispatch(
     );
     output.push_str("pub async fn generated_space_watch_snapshot_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!("        {method:?} => Box::pin(generated_space_watch_snapshot_on_chat_core_{method}(core, request)).await,\n"));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n    }\n}\n\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!(
                 "/// Reads one generated Space watch snapshot method on the runtime's main ChatServiceCore.\nasync fn generated_space_watch_snapshot_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    core.__operit_core_route_watch_snapshot_{method}(request).await\n}}\n\n"
@@ -398,7 +405,7 @@ fn render_space_dispatch(
     output.push_str("/// Opens one generated Space watch on the runtime's main ChatServiceCore.\n");
     output.push_str("pub async fn generated_space_watch_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!(
                 "        {method:?} => Box::pin(generated_space_watch_on_chat_core_{method}(core, request, attachmentAdopter)).await,\n"
@@ -406,12 +413,39 @@ fn render_space_dispatch(
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n    }\n}\n\n");
-    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle, _permissionScope, _permissionCapability, _, _reverseItem) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!(
                 "/// Opens one generated Space watch method on the runtime's main ChatServiceCore.\nasync fn generated_space_watch_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n    core.__operit_core_route_watch_{method}(request, attachmentAdopter).await\n}}\n\n"
             ));
         }
     }
+    output.push_str("/// Opens an annotated, authorized Space input on the existing main chat runtime.\n");
+    output.push_str("pub fn generated_space_push_on_chat_core(holder: std::sync::Arc<tokio::sync::Mutex<operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder>>, request: operit_link::CorePushRequest) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {\n    match request.methodName.as_str() {\n");
+    for (method, _, _, routeKind, _, _, _, _, item) in declarations {
+        if routeKind != "push" { continue; }
+        output.push_str(&format!(r#"        {method:?} => {{
+            let (sender, input) = operit_rslink_runtime::core_reverse_stream_channel::<{item}>();
+            let (mut completion, result) = tokio::sync::oneshot::channel();
+            operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
+                operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(),
+                "operit-space-reverse-stream", Box::new(move || Box::pin(async move {{
+                    let outcome = tokio::select! {{
+                        biased;
+                        _ = completion.closed() => return,
+                        outcome = async {{
+                            let mut holder = holder.lock().await;
+                            holder.getCore(operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot::MAIN)
+                                .__operit_core_route_push_{method}(request, input).await
+                        }} => outcome,
+                    }};
+                    let _ = completion.send(outcome);
+                }})),
+            ).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;
+            Ok(Box::new(operit_rslink_runtime::CoreReverseStreamSession::new(sender, result)))
+        }}
+"#));
+    }
+    output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&request.methodName)),\n    }\n}\n");
     output
 }

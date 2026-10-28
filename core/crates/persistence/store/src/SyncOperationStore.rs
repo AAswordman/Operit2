@@ -395,6 +395,7 @@ pub struct SyncOperationStore {
 
 #[derive(Default)]
 struct SyncOperationStoreSharedState {
+    controlRevision: AtomicU64,
     clock: Mutex<SyncOperationCachedValue<SyncClock>>,
     devices: Mutex<SyncOperationCachedValue<Vec<String>>>,
     entityVersions: Mutex<SyncOperationCachedValue<BTreeMap<String, SyncOperationOrder>>>,
@@ -404,6 +405,24 @@ struct SyncOperationStoreSharedState {
     receiveState: Mutex<SyncOperationCachedValue<ReceiveState>>,
     application: Mutex<()>,
     preferenceOutboxes: Mutex<SyncOperationCachedValue<BTreeMap<String, bool>>>,
+}
+
+/// Invalidates readers before and after a journal write, including uncertain failures.
+struct ControlJournalMutation<'a>(&'a AtomicU64);
+
+impl<'a> ControlJournalMutation<'a> {
+    /// Opens a publication interval while the caller holds the journal mutation lock.
+    fn new(revision: &'a AtomicU64) -> Self {
+        revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Self(revision)
+    }
+}
+
+impl Drop for ControlJournalMutation<'_> {
+    /// Invalidates snapshots observed before the publication interval completed.
+    fn drop(&mut self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
 }
 
 struct SyncOperationCachedValue<T> {
@@ -502,6 +521,11 @@ impl Hash for SyncOperationStoreRegistryKey {
 }
 
 impl SyncOperationStore {
+    /// Identifies committed or interrupted changes to the authority journal.
+    pub(crate) fn controlRevision(&self) -> u64 {
+        self.sharedState.controlRevision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// Creates a sync operation store over an explicit storage host and root path.
     pub fn new(storageHost: Arc<dyn RuntimeStorageHost>, rootPath: impl Into<String>) -> Self {
         let rootPath = rootPath.into();
@@ -520,6 +544,17 @@ impl SyncOperationStore {
     ) -> Result<SharedControlReadModel, SyncOperationStoreError> {
         let mut registry = lockControlReadModels()?;
         if let Some(model) = registry.get(&self.storageHost, &self.rootPath) {
+            let projection = crate::NetworkControlStore::NetworkControlStore::projectionStore(
+                self.storageHost.clone(),
+            );
+            let mut state = lockControlReadModel(&model)?;
+            if state.projection_revision != projection.revision() {
+                let projected = Self::projectedControlOperations(&projection)
+                    .map_err(SyncOperationStoreError::Message)?;
+                state.replace_projected(projected);
+                state.projection_revision = projection.revision();
+            }
+            drop(state);
             return Ok(model);
         }
         let model = Arc::new(Mutex::new(self.loadNetworkControlReadModel()?));
@@ -561,7 +596,11 @@ impl SyncOperationStore {
             ),
         )
         .map_err(SyncOperationStoreError::Message)?;
-        Ok(NetworkControlReadModel::new(journal, received, projected))
+        let mut model = NetworkControlReadModel::new(journal, received, projected);
+        model.projection_revision = crate::NetworkControlStore::NetworkControlStore::projectionStore(
+            self.storageHost.clone(),
+        ).revision();
+        Ok(model)
     }
 
     /// Explicit recovery after restoring authority files outside the normal write
@@ -621,6 +660,7 @@ impl SyncOperationStore {
             let projected = Self::projectedControlOperations(store)?;
             let mut model = lockControlReadModel(&model).map_err(|error| error.to_string())?;
             model.replace_projected(projected);
+            model.projection_revision = store.revision();
             if retire_journal {
                 model.retire_journal();
             }
@@ -897,7 +937,8 @@ impl SyncOperationStore {
                 }
             }
             if !content.is_empty() {
-                self.appendOperationBytes(&originDeviceId, content, &mut operationLog)?;
+                self.appendOperationBytes(&originDeviceId, content, &mut operationLog,
+                    appendedOperations.iter().any(|(operation, _, _)| operation.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
                 if let Some(write) = &controlWrite {
                     write.update(|model| model.append_journal(appendedOperations.iter().map(|(operation, _, _)| *operation)))?;
                 }
@@ -1014,6 +1055,23 @@ impl SyncOperationStore {
                 limit,
                 max_bytes: maxBytes,
                 retain: Some(&retain),
+            },
+        )
+    }
+
+    /// Permission replay reads committed authority only. It must not publish
+    /// unrelated preference outboxes while checking a pairing or routing a Call.
+    /// Preserve the existing control export floors and compaction semantics.
+    pub(crate) fn archivedControlOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.readJournal(
+            &SyncClock::empty(),
+            JournalQuery {
+                domains: &[NETWORK_CONTROL_SYNC_DOMAIN.to_owned()],
+                projection: JournalProjection::All,
+                export_floors: true,
+                limit: usize::MAX,
+                max_bytes: usize::MAX,
+                retain: None,
             },
         )
     }
@@ -1529,6 +1587,7 @@ impl SyncOperationStore {
         }
         let mut nextFloors = floors;
         nextFloors.insert(originDeviceId.to_string(), sequence);
+        let _revision = ControlJournalMutation::new(&self.sharedState.controlRevision);
         self.writeJson(&self.exportFloorsPath(), &nextFloors)?;
         state.value = nextFloors;
         Ok(())
@@ -1758,7 +1817,7 @@ impl SyncOperationStore {
         let storedOperation = self.encodeOperationPayload(operation)?;
         let mut content = serde_json::to_vec(&storedOperation)?;
         content.push(b'\n');
-        self.appendOperationBytes(&operation.originDeviceId, content, index)
+        self.appendOperationBytes(&operation.originDeviceId, content, index, operation.domain == NETWORK_CONTROL_SYNC_DOMAIN)
     }
 
     /// Separates an interrupted tail from the next intact operation and reloads after uncertain writes.
@@ -1767,7 +1826,9 @@ impl SyncOperationStore {
         origin: &str,
         mut content: Vec<u8>,
         index: &mut JournalIndex,
+        authority: bool,
     ) -> Result<u64, SyncOperationStoreError> {
+        let _revision = authority.then(|| ControlJournalMutation::new(&self.sharedState.controlRevision));
         if index.needs_separator { content.insert(0, b'\n'); }
         let writtenBytes = u64::try_from(content.len()).map_err(|_| {
             SyncOperationStoreError::Message(
@@ -2143,6 +2204,7 @@ impl SyncOperationStore {
             );
             sidecar.push('\n');
         }
+        let _revision = ControlJournalMutation::new(&self.sharedState.controlRevision);
         self.storageHost
             .writeBytes(&self.operationsPath(deviceId), kept.as_bytes())?;
         *index = JournalIndex::default();
