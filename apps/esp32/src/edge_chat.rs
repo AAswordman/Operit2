@@ -283,11 +283,30 @@ async fn watchChatMessages(
     )).await
 }
 
+// Share these small wire builders instead of constructing and copying a JSON
+// tree for each call. Keep one copy in Flash across all UI request paths.
+#[inline(never)]
+fn chatFields(chatId: &str) -> BTreeMap<String, CoreValue> {
+    let mut args = BTreeMap::new();
+    args.insert("chatId".into(), CoreValue::String(chatId.into()));
+    args
+}
+fn chatArgs(chatId: &str) -> CoreValue { CoreValue::Map(chatFields(chatId)) }
+#[inline(never)]
+fn pluginPageArgs(chatId: &str, offset: u32, category: &str) -> CoreValue {
+    let mut args = chatFields(chatId);
+    args.insert("offset".into(), CoreValue::Unsigned(offset as u64));
+    args.insert("category".into(), CoreValue::String(category.into()));
+    CoreValue::Map(args)
+}
 /// Encodes the device's fixed byte and line budget for one display page.
 fn windowArgs(chatId: &str, cursor: Option<PageCursor>) -> CoreValue {
-    operit_link::toCoreValue(serde_json::json!({"chatId":chatId,
-        "beforeTimestamp":cursor.map(|c| c.timestamp), "beforeTextOffset":cursor.map(|c| c.offset),
-        "textBytes":MAX_CHAT_STRING_BYTES, "textLines":MAX_CHAT_LINES})).unwrap()
+    let mut args = chatFields(chatId);
+    args.insert("beforeTimestamp".into(), cursor.map(|c| CoreValue::Signed(c.timestamp)).unwrap_or(CoreValue::Null));
+    args.insert("beforeTextOffset".into(), cursor.map(|c| CoreValue::Unsigned(c.offset as u64)).unwrap_or(CoreValue::Null));
+    args.insert("textBytes".into(), CoreValue::Unsigned(MAX_CHAT_STRING_BYTES as u64));
+    args.insert("textLines".into(), CoreValue::Unsigned(MAX_CHAT_LINES as u64));
+    CoreValue::Map(args)
 }
 
 #[derive(Default, Clone)]
@@ -633,7 +652,7 @@ fn installSession(
             // turn an ordinary read/send into implicit object creation.
             let result = session.client.call(CoreCallRequest::new(
                 operit_link::nextCoreRouteRequestId("ensureRoutedChat"), CORE_INTERNAL_TARGET,
-                "ensureRoutedChat", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
+                "ensureRoutedChat", chatArgs(&session.chatId),
             )).await.result;
             if *cancelled.borrow() || !currentSession(&session) { return; }
             match result {
@@ -725,7 +744,7 @@ fn startSubscriptions(session: Arc<ChatSession>) {
         let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
         let result = openUiSubscription(&cancelled, || session.client.watch(CoreWatchRequest::new(
             operit_link::nextCoreRouteRequestId("edge-chat-state"), CORE_INTERNAL_TARGET,
-            "chatStateFlow", operit_link::toCoreValue(serde_json::json!({"chatId": session.chatId})).unwrap(),
+            "chatStateFlow", chatArgs(&session.chatId),
         ))).await;
         match result {
             Ok(None) => return,
@@ -917,7 +936,7 @@ pub fn pluginsAction(action: &str) -> Result<(), String> {
     spawnNodeUiSubscription(move |_| async move {
         let result = session.client.call(CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId("chatAvailablePlugins"), CORE_INTERNAL_TARGET,
-            "chatAvailablePlugins", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"offset":offset,"category":category})).unwrap(),
+            "chatAvailablePlugins", pluginPageArgs(&session.chatId, offset, category),
         )).await.result;
         if !currentSession(&session) { return; }
         let mut state = session.plugins.lock().unwrap();
@@ -959,7 +978,12 @@ fn startPluginDetails(session: Arc<ChatSession>, id: String, offset: u32) -> Res
     spawnNodeUiSubscription(move |_| async move {
         let reply = pluginCallDeadline(&session, CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId("chatPluginDetails"), CORE_INTERNAL_TARGET,"chatPluginDetails",
-            operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"packageName":id,"toolOffset":offset})).unwrap(),
+            {
+                let mut args = chatFields(&session.chatId);
+                args.insert("packageName".into(), CoreValue::String(id.clone()));
+                args.insert("toolOffset".into(), CoreValue::Unsigned(offset as u64));
+                CoreValue::Map(args)
+            },
         )).await;
         if !currentSession(&session) {return;}
         let mut state = session.plugins.lock().unwrap();
@@ -1017,8 +1041,12 @@ async fn callPluginTest(session: &Arc<ChatSession>, id: &str, probeId: &str, too
     let started = std::time::Instant::now();
     let result = pluginCallDeadline(session, CoreCallRequest::new(
         probeId, CORE_INTERNAL_TARGET, "chatPluginStatus",
-        operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"packageName":id,
-            "testKind":if tool { "tool" } else { "connection" }})).unwrap(),
+        {
+            let mut args = chatFields(&session.chatId);
+            args.insert("packageName".into(), CoreValue::String(id.into()));
+            args.insert("testKind".into(), CoreValue::String(if tool { "tool" } else { "connection" }.into()));
+            CoreValue::Map(args)
+        },
     )).await;
     let (ok, error) = match result {
         Ok(value) => {
@@ -1083,7 +1111,7 @@ fn startPluginBatch(session: Arc<ChatSession>) -> Result<(), String> {
             if !pluginBatchCurrent(&session, generation, &batchId) { return; }
             let reply = pluginCallDeadline(&session, CoreCallRequest::new(
                 operit_link::nextCoreRouteRequestId("chatAvailablePlugins"), CORE_INTERNAL_TARGET, "chatAvailablePlugins",
-                operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"offset":offset,"category":category})).unwrap(),
+                pluginPageArgs(&session.chatId, offset, category),
             )).await;
             let page = match reply {
                 Ok(value) => serde_json::to_value(value).unwrap_or_default(),
@@ -1190,7 +1218,7 @@ pub fn conversationsAction() -> Result<(), String> {
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
         let result = openUiSubscription(&cancelled, || session.client.watch(CoreWatchRequest::new(
             operit_link::nextCoreRouteRequestId("edge-chat-list"), CORE_INTERNAL_TARGET,
-            "routedChatListFlow", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
+            "routedChatListFlow", chatArgs(&session.chatId),
         ))).await;
         let error = match result {
             Ok(None) => return,
@@ -1316,17 +1344,17 @@ pub fn newChat() -> Result<(), String> {
         .and_then(|items| items.iter().find(|item| item["id"] == session.chatId))
         .cloned().unwrap_or_default();
     spawnNodeUiTask(move || async move {
+        let mut args = chatFields(&session.chatId);
+        for key in ["characterCardName", "group", "characterGroupId"] {
+            args.insert(key.into(), operit_link::toCoreValue(&current[key]).unwrap());
+        }
         let response = session
             .client
             .call(CoreCallRequest::new(
                 operit_link::nextCoreRouteRequestId("createRoutedChat"),
                 CORE_INTERNAL_TARGET,
                 "createRoutedChat",
-                operit_link::toCoreValue(serde_json::json!({
-                    "chatId":session.chatId, "characterCardName":current["characterCardName"],
-                    "group":current["group"], "characterGroupId":current["characterGroupId"],
-                }))
-                .unwrap(),
+                CoreValue::Map(args),
             ))
             .await;
         session.sending.store(false, Ordering::Release);
@@ -1573,6 +1601,7 @@ pub fn send(text: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("消息不能为空".into());
     }
+    if text.len() > 16384 { return Err("消息超过 16384 字节，请拆分发送".into()); }
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -1606,22 +1635,47 @@ pub fn send(text: String) -> Result<(), String> {
 }
 
 async fn sendImageMessage(session: &ChatSession, text: String) -> Result<(), String> {
-    let args = operit_link::toCoreValue(serde_json::json!({
-        "promptFunctionType": "CHAT", "roleCardIdOverride": null,
-        "chatIdOverride": session.chatId, "messageText": text,
-        "proxySenderNameOverride": null, "chatProviderIdOverride": null,
-        "chatModelIdOverride": null, "attachments": [], "replyToMessage": null,
-        "turnOptions": {"persistTurn": true, "notifyReply": null, "hideUserMessage": false,
-            "disableWarning": false, "chatInputSubmitRequestedHandled": false},
-    }))
-    .unwrap();
+    // Construct Link values directly: avoid duplicating the input through a
+    // JSON value tree on the device, and keep the firmware serializer small.
+    let mut args = BTreeMap::new();
+    for key in ["participantId", "proxySenderNameOverride", "chatProviderIdOverride",
+        "chatModelIdOverride", "replyToMessage"] {
+        args.insert(key.into(), CoreValue::Null);
+    }
+    args.insert("promptFunctionType".into(), CoreValue::String("CHAT".into()));
+    args.insert("chatIdOverride".into(), CoreValue::String(session.chatId.clone()));
+    args.insert("attachments".into(), CoreValue::List(Vec::new()));
+    let mut options = BTreeMap::new();
+    for (key, enabled) in [("persistTurn", true), ("hideUserMessage", false),
+        ("disableWarning", false), ("chatInputSubmitRequestedHandled", false)] {
+        options.insert(key.into(), CoreValue::Bool(enabled));
+    }
+    options.insert("notifyReply".into(), CoreValue::Null);
+    args.insert("turnOptions".into(), CoreValue::Map(options));
+    if text.len() > 2048 {
+        args.insert("expectedByteLength".into(), CoreValue::Unsigned(text.len() as u64));
+        let mut upload = session.client.openPush(operit_link::CorePushRequest::new(
+            operit_link::nextCoreRouteRequestId("sendUserMessageStream"),
+            CORE_INTERNAL_TARGET, "sendUserMessageStream").withArgs(CoreValue::Map(args)))
+            .await.map_err(|e| e.to_string())?;
+        let mut offset = 0;
+        while offset < text.len() {
+            let mut end = (offset + 2048).min(text.len());
+            while !text.is_char_boundary(end) { end -= 1; }
+            upload.send(CoreValue::String(text[offset..end].to_owned())).await.map_err(|e| e.to_string())?;
+            offset = end;
+        }
+        upload.send(CoreValue::String(String::new())).await.map_err(|e| e.to_string())?;
+        return upload.close().await.map_err(|e| e.to_string());
+    }
+    args.insert("messageText".into(), CoreValue::String(text));
     session
         .client
         .call(CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId("sendUserMessage"),
             CORE_INTERNAL_TARGET,
             "sendUserMessage",
-            args,
+            CoreValue::Map(args),
         ))
         .await
         .result

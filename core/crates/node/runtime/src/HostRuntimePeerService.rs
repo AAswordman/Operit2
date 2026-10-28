@@ -647,8 +647,7 @@ impl HostRuntimePeerService {
         }
         if hello.purpose == "session" {
             if let Err(revoked) = self.requirePeerConnectionAllowed(&hello.nodeId) {
-                // 回报撤销原因而不是静默断开：静默关闭会被客户端误报成
-                // PEER_SECURITY correlation mismatch，无法与传输故障区分。
+                // 回报明确的撤销原因；静默关闭只会留下连接已结束的错误。
                 return sendError(&raw, helloRequest.requestId, revoked).await;
             }
         }
@@ -833,6 +832,7 @@ async fn rawCall<T: Serialize, R: serde::de::DeserializeOwned>(raw: &Arc<dyn Pee
     } else { raw.receive().await };
     match response.map_err(error)? {
         Some(PeerMessage::Response(CoreLinkResponse::Call(r))) if r.requestId == id => fromCoreValue(r.result?).map_err(|e| error(e.to_string())),
+        None => Err(CoreLinkError::new("PEER_CONNECTION_CLOSED", "Peer ended the stream before handshake")),
         _ => Err(error("Pairing response correlation mismatch")),
     }
 }
@@ -1801,4 +1801,60 @@ mod single_channel_tests {
         }).await.expect("a forwarding call must not serialize unrelated calls behind it");
     }
 
+}
+
+
+#[cfg(test)]
+mod handshake_response_tests {
+    use super::*;
+    enum Outcome { Closed, WrongId, Denied, Accepted }
+    struct ReplyPeer {
+        endpoint: PeerEndpoint,
+        outcome: Outcome,
+        id: Mutex<Option<CoreRequestId>>,
+    }
+    #[async_trait]
+    impl PeerConnection for ReplyPeer {
+        fn source(&self) -> &PeerEndpoint { &self.endpoint }
+        fn target(&self) -> &PeerEndpoint { &self.endpoint }
+        fn transport(&self) -> PeerTransport { PeerTransport::Tcp }
+        async fn send(&self, message: PeerMessage) -> Result<(), String> {
+            if let PeerMessage::Request(CoreLinkRequest::Call(request)) = message {
+                *self.id.lock().unwrap() = Some(request.requestId);
+                Ok(())
+            } else { panic!("handshake must send a Call") }
+        }
+        async fn receive(&self) -> Result<Option<PeerMessage>, String> {
+            let id = self.id.lock().unwrap().clone().expect("send before receive");
+            let response = match self.outcome {
+                Outcome::Closed => return Ok(None),
+                Outcome::WrongId => CoreCallResponse::ok(CoreRequestId::new("wrong-response-id"), CoreValue::Null),
+                Outcome::Denied => CoreCallResponse::err(id, CoreLinkError::new("PEER_REVOKED", "Authorization revoked")),
+                Outcome::Accepted => CoreCallResponse::ok(id, CoreValue::Null),
+            };
+            Ok(Some(PeerMessage::Response(CoreLinkResponse::Call(response))))
+        }
+        async fn close(&self) {}
+    }
+    fn peer(outcome: Outcome) -> Arc<dyn PeerConnection> {
+        Arc::new(ReplyPeer {
+            endpoint: PeerEndpoint { nodeId: "board".into(), address: "test".into() },
+            outcome, id: Mutex::new(None),
+        })
+    }
+    #[tokio::test]
+    async fn eof_during_pairing_is_a_closed_connection_not_a_correlation_error() {
+        let failure = rawCall::<_, CoreValue>(&peer(Outcome::Closed), "hello", &CoreValue::Null).await.unwrap_err();
+        assert_eq!(failure.code, "PEER_CONNECTION_CLOSED");
+        assert!(failureProvesPeerUnavailable(&failure));
+    }
+    #[tokio::test]
+    async fn response_ids_remain_strict_and_authorization_errors_are_preserved() {
+        let failure = rawCall::<_, CoreValue>(&peer(Outcome::WrongId), "hello", &CoreValue::Null).await.unwrap_err();
+        assert_eq!(failure.code, "PEER_SECURITY");
+        assert!(failure.message.contains("correlation mismatch"));
+        let denied = rawCall::<_, CoreValue>(&peer(Outcome::Denied), "hello", &CoreValue::Null).await.unwrap_err();
+        assert_eq!(denied.code, "PEER_REVOKED");
+        assert_eq!(rawCall::<_, CoreValue>(&peer(Outcome::Accepted), "hello", &CoreValue::Null).await.unwrap(), CoreValue::Null);
+    }
 }

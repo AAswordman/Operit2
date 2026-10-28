@@ -85,6 +85,25 @@ npm run test:standalone --prefix tools/esp32-editor
 关闭 CLI，再验证设备继续请求模型及重启后恢复配置。模型服务使用确定性 HTTP fixture。
 可通过 `OPERIT_SIM_TEST_CLI` 指定已构建的兼容 CLI，避免每次重建 Core。
 
+一次运行固定设备预算的验收入口：
+
+```powershell
+npm run test:device-budget --prefix tools/esp32-editor
+npm run test:device-budget --prefix tools/esp32-editor -- --firmware
+```
+
+入口复用上游的 256 KiB Rust 堆、16/24/20 KiB 主/异步/阻塞任务栈及 7,000 字节
+持久化预算。它依次构建预览、检查 TypeScript、运行共享固件模块和编辑器测试，
+同步已有插件包并构建当前 Core CLI，然后验证配对入空间、独立聊天、额外十二轮对话及重启。
+`--firmware` 还先构建 ESP32 固件并检查 Xtensa ABI；两种入口均不会烧录设备。
+堆探针直接占用同一个固定分配区，制造隔开的 8 KiB 空洞，检查总空闲足够时
+12 KiB 连续分配仍会失败，释放相邻块后又能成功。栈越界在独立子进程中由保护页检测。
+构建、编辑器启动和探针共用同一份锁定的 release 模拟器产物。
+这些测试约束 Rust 内存，不包含真机 ESP-IDF、Wi-Fi、TLS 和 NVS 的整板资源占用。
+HTTP 继续使用上游的连接任务层；请求构造及握手也复用同一个可取消任务工具，
+在原有受限异步工作线程上独立轮询，避免叠加调用方栈帧。取消仍会终止在途请求，
+超时分类、代理、重定向、TLS 验证和上游默认 HTTP 读缓冲保持有效。
+
 测试不能替代实机验收。`npm run test:hardware` 要求设备已经完成配对和入空间，
 检查加密调用、UI、堆/NVS 等声明的场景；它不负责首次配对和完整聊天验收。
 
@@ -138,7 +157,10 @@ ESP-IDF 前置文件，无需先手动执行一次 Cargo。
 它保存的是运行时的真实状态，快照切换会清理旧/未发布的块；不再运行退役布局的双槽写入流程。
 有意累积的有效身份/成员/记录仍受 NVS 容量上限约束。不能用每次全擦掩盖运行时泄漏。
 
-运行时 NVS 只支持当前格式：`snapshot_v2` 提交标记、ONV3 路径压缩封装、2 KiB 压缩块。
+运行时 NVS 只支持当前封装：`snapshot_v2` 提交标记、ONV3 路径压缩封装、2 KiB 压缩块。
+封装内记录可读取 raw 0、LZSS 1 和字典 LZSS 2；新写入使用 0/2，旧记录仅在压缩后
+更小时升级，下一次正常事务才发布。格式 2 的不可变字段名字典保存在 Flash，不改变
+解码后的记录，也不提高 7,000 字节预算。旧固件无法读取已发布的格式 2，降级需匹配备份。
 旧 JSON/base64、ONV2、1 KiB 块和未压缩快照的读取/迁移已删除；遇到不支持的格式会报错，
 不会自动迁移、当成空节点重建或擦除数据。普通烧录保留分区不代表支持旧存储格式。
 健康日志会定期输出 `nvs_used` / `nvs_free` / `nvs_available` / `nvs_total`，与
@@ -168,6 +190,24 @@ Invoke-RestMethod http://127.0.0.1:8766/api/simulator/memory
 这些数值覆盖模拟器的 Rust 分配与任务栈。ESP-IDF、无线、TLS 和驱动的整板开销仍需
 通过真实设备 `device:health` 验证，本机 RSS 不作为真机资源余量。
 
+模拟器复用固件的 7,000 字节快照限制、压缩记录和双 bank 提交流程。状态中的 `storage`
+额外报告 NVS 条目模型：24 KiB 分区共 756 条，预留 126 条用于回收，默认其他命名空间
+占用 213 条。213 是压力模型的初始值；不会自动读取当前真机，不能作为当前实测值。
+模型计入两个 bank、blob 和提交标记，但不模拟 ESP-IDF 的精确页布局及回收时序。
+
+可通过仅模拟器提供的接口增加其他命名空间占用，或注入一次写入失败：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8766/api/simulator/storage-control -Method Post -ContentType application/json -Body '{"otherNamespaceEntries":630}'
+Invoke-RestMethod http://127.0.0.1:8766/api/simulator/storage-control -Method Post -ContentType application/json -Body '{"otherNamespaceEntries":213,"failAfterMutations":0}'
+Invoke-RestMethod http://127.0.0.1:8766/api/simulator/storage-control -Method Post -ContentType application/json -Body '{"otherNamespaceEntries":213,"failAfterMutations":-1}'
+```
+
+`failAfterMutations: 0` 使下一次块写入或提交标记发布失败；正数允许相应次数的成功修改后
+失败，`-1` 关闭故障注入。故障只触发一次，不阻止清理和重试。参数在进程重启后恢复默认，
+不写入设备记录。集成测试通过真实配对、审批界面验证容量不足和写入失败，再用原配对重试。
+文件后端测试还逐个覆盖块写入、发布失败和重启，检查旧身份与原提交标记保持有效。
+
 ## 插件与音频联调
 
 宿主插件使用现有 Call / Watch / Push 访问设备。配置编辑、设备本地交互和需要持续
@@ -177,5 +217,23 @@ Invoke-RestMethod http://127.0.0.1:8766/api/simulator/memory
 
 模拟器注册应用自有的 `operit.device.speech` Watch / Push 示例协议，可连接
 [语音处理插件](../../plugins/packages/examples/device_speech_processor/README.md)。
-通用音频通道可用不表示真实板卡已提供麦克风或扬声器，也不表示聊天麦克风按钮已经
-接入完整识别流程；请按具体入口和实际驱动分别验证。
+`test:space` 使用真实 Core JavaScript 插件与加密 TCP，验证处理端断开后的重连、三轮
+STT/TTS 请求、4096 字节二进制块、上传/播放背压和逐字节一致性。额外运行实际处理插件逻辑，
+通过真实加密 TCP 验证 65 秒 PCM 数据量、WAV 字节、超过 8 KiB 的分块识别文字和多段 TTS。
+共享固件和插件单元测试还验证 300 秒 PCM 数据量。测试使用确定性识别/合成供应商，
+不验证外部语音识别/合成服务的质量。浏览器为模拟器提供麦克风和扬声器；状态每次最多
+取出一块音频，避免 Base64 和 IPC JSON 同时复制整队列而耗尽设备堆。
+
+ESP32-2432S028 固件新增 INMP441（SCK=27、WS=22、SD=35、L/R 接地）与板载
+GPIO26 DAC 喇叭适配，详见[原生音频接线与自检](../../apps/esp32/README.md#native-inmp441-and-onboard-speaker)。
+设备设置页的音频自检不依赖 Core；USB `device-debug.py audio --text test|status`
+可查看真实采样统计。语音识别/合成仍需要连接原有处理插件，硬件播放要求 PCM16 WAV。
+协议或驱动单元测试通过不能替代实际接线、录放音及完整语音验收。
+
+## 长文本与显示窗口
+
+浏览器完整草稿最多 16384 UTF-8 字节，C 渲染器只保留最多 511 字节预览。浏览器提交时发送完整输入，不能把预览作为正文。原生输入接口没有外部草稿所有者，超过 511 字节会明确拒绝，避免悄悄发出前缀。直接模型模式继续执行原有 2048 字节输入限制；超限保留浏览器草稿并报错。
+
+远端消息超过 2048 字节时，Edge 通过现有 Link Push / ReverseStream 向 Core 的 `sendUserMessageStream` 逐块传送，单块最多 2048 UTF-8 字节。设备当前保留有上限的临时输入字符串，完整输入不写入 NVS。Core 校验声明长度、分块上限、显式空提交包及 EOF 后，调用原有 `sendUserMessage`，复用权限、输入钩子、历史和生成逻辑。中断、缺块、提交后追加数据或 30 秒无输入都会失败，不提交已收到的前缀；不会自动重发不确定的聊天操作。需要配套的新 Core；旧 Core 缺少该方法时明确报错。
+
+聊天显示的 640 字节窗口和分页保持原有设计。长回复在 Core 保留全文，Edge 按页读取；显示窗口截短不代表正文丢失。“朗读当前显示的回复”使用该窗口中的片段，不等同于朗读 Core 中保存的完整长回复。集成测试验证超过 8 KiB 的中文/emoji 输入完整到达模型供应商并进入 Core 历史，末尾标记只提交一次。

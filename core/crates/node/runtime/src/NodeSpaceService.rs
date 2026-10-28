@@ -284,12 +284,13 @@ fn snapshotFromJson(mut value: serde_json::Value) -> Result<PeerSpaceSnapshot, S
 #[derive(Deserialize)]
 struct EncodedCall<A> { requestId: operit_link::CoreRequestId, target: String, methodName: String, args: A }
 #[derive(Deserialize)]
-#[serde(tag = "type", content = "body")]
-enum EncodedEnvelope<A> { Call(EncodedCall<A>) }
+enum EncodedCallTag { Call }
 
 /// Peeks route metadata only; payloads are skipped without allocating a value tree.
 pub fn encodedSpaceCallHeader(bytes: &[u8]) -> Option<(operit_link::CoreRequestId, RoutedCoreRequest<CoreCallRequest>)> {
-    let EncodedEnvelope::Call(outer): EncodedEnvelope<RoutedCoreRequest<EncodedCall<serde::de::IgnoredAny>>> = operit_link::decodeLink(bytes).ok()?;
+    let _: EncodedCallTag = decodeSpaceField(bytes, "type", 0).ok()?;
+    let body = operit_link::codec::linkStructField(bytes, "body", 1).ok()??;
+    let outer: EncodedCall<RoutedCoreRequest<EncodedCall<serde::de::IgnoredAny>>> = operit_link::decodeLink(body).ok()?;
     let routed = outer.args;
     Some((outer.requestId, RoutedCoreRequest {
         spaceId: routed.spaceId, originNodeId: routed.originNodeId, targetNodeId: routed.targetNodeId,

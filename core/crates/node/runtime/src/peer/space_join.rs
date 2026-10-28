@@ -1417,15 +1417,27 @@ async fn joinSnapshot(service: &dyn NodeSpaceContext, node: &str) -> Result<Peer
     )).await;
     let protocol = space_projection::decodeProtocolResponse(node, response.result)?;
     if !protocol.snapshotPaging { return Err("SPACE_PROTOCOL_INCOMPATIBLE: Joining requires authority paging".into()); }
-    let header: SnapshotHeader = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
-    let mut collector = SnapshotCollector::new(header)?;
-    loop {
-        let page = callPeerSpace(service, node, "snapshotControlPage",
-            toCoreValue(collector.request()).map_err(|e| e.to_string())?).await?;
-        if collector.push(page)? { break; }
+    // A departure/control update may race a paged read. Restart only this
+    // read-only export; never retry admission writes or an uncertain decision.
+    // The negotiated paging protocol stays valid across snapshot revisions.
+    for attempt in 0..3 {
+        let result = async {
+            let header: SnapshotHeader = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
+            let mut collector = SnapshotCollector::new(header)?;
+            loop {
+                let page = callPeerSpace(service, node, "snapshotControlPage",
+                    toCoreValue(collector.request()).map_err(|e| e.to_string())?).await?;
+                if collector.push(page)? { break; }
+            }
+            let current = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
+            collector.finish(current)
+        }.await;
+        match result {
+            Err(error) if attempt < 2 && error.starts_with("SPACE_EXPORT_CHANGED:") => continue,
+            result => return result,
+        }
     }
-    let current = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
-    collector.finish(current)
+    unreachable!()
 }
 
 /// Calls one explicit Space method on the directly paired peer.
@@ -1455,5 +1467,68 @@ mod pairing_generation_tests {
         // its own pairing, and the older revocation never shadows the newer.
         assert!(removalForgetsPairing(Some("inc-b"), &[Some("inc-a".into()), Some("inc-b".into())]));
         assert!(!removalForgetsPairing(Some("inc-c"), &[Some("inc-a".into()), Some("inc-b".into())]));
+    }
+}
+
+#[cfg(test)]
+mod snapshot_retry_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Export {
+        changes: usize,
+        terminal: bool,
+        reads: AtomicUsize,
+        protocols: AtomicUsize,
+    }
+    #[async_trait::async_trait(?Send)]
+    impl NodeSpaceContext for Export {
+        fn storage(&self) -> Arc<dyn operit_host_api::RuntimeStorageHost> { panic!("read-only export") }
+        fn spaceStore(&self) -> &CoreSpaceStore { panic!("read-only export") }
+        fn networkControlStore(&self) -> &NetworkControlStore { panic!("read-only export") }
+        fn peers(&self) -> Result<Arc<dyn crate::RuntimePeerService::RuntimePeerService>, String> { panic!("read-only export") }
+        fn localNodeId(&self) -> String { "local".into() }
+        fn nodeIsReachable(&self, _: &str) -> Result<bool, String> { panic!("read-only export") }
+        async fn callNode(&self, _: String, request: CoreCallRequest) -> CoreCallResponse {
+            let value = match request.methodName.as_str() {
+                "projectionProtocol" => {
+                    self.protocols.fetch_add(1, Ordering::SeqCst);
+                    if self.terminal { return CoreCallResponse::err(request.requestId,
+                        operit_link::CoreLinkError::new("PEER_PERMISSION", "denied")); }
+                    serde_json::json!({"version":1,"nodeId":"peer","endpoint":true,
+                        "authorityMode":"localReplay","maxMessageBytes":8192,"snapshotPaging":true})
+                }
+                "snapshotHeader" => {
+                    let read = self.reads.fetch_add(1, Ordering::SeqCst).min(self.changes);
+                    serde_json::json!({"space":{"spaceId":"space","spaceName":"Space","spaceRevision":1,"members":["peer"]},
+                        "deviceProfiles":[],"topology":[],"departures":[],"controlRevision":format!("{read:064x}"),"controlCount":0})
+                }
+                "snapshotControlPage" => {
+                    let args: serde_json::Value = fromCoreValue(request.args).unwrap();
+                    serde_json::json!({"revision":args["revision"],"count":0,"operation":null})
+                }
+                other => panic!("snapshot retry attempted a mutation: {other}"),
+            };
+            CoreCallResponse::ok(request.requestId, toCoreValue(value).unwrap())
+        }
+    }
+    fn export(changes: usize, terminal: bool) -> Export {
+        Export { changes, terminal, reads: AtomicUsize::new(0), protocols: AtomicUsize::new(0) }
+    }
+    #[tokio::test]
+    async fn changed_export_restarts_from_a_fresh_header_without_writing_admission() {
+        let source = export(1, false);
+        let snapshot = joinSnapshot(&source, "peer").await.unwrap();
+        assert_eq!(snapshot.space.spaceId, "space");
+        assert_eq!(source.reads.load(Ordering::SeqCst), 4);
+        assert_eq!(source.protocols.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn export_retry_is_bounded_and_permission_errors_are_not_retried() {
+        let source = export(usize::MAX, false);
+        assert!(joinSnapshot(&source, "peer").await.err().unwrap().starts_with("SPACE_EXPORT_CHANGED:"));
+        assert_eq!(source.reads.load(Ordering::SeqCst), 6);
+        let source = export(0, true);
+        assert!(joinSnapshot(&source, "peer").await.err().unwrap().contains("PEER_PERMISSION"));
+        assert_eq!(source.protocols.load(Ordering::SeqCst), 1);
     }
 }

@@ -176,7 +176,7 @@ where
             }
         } else { Item::Request(queue.recv().await) };
         let response = match item {
-            Item::Request(Some(request)) => match session.validate().and_then(|_| request.decodeWith(decodeLink)) {
+            Item::Request(Some(request)) => match session.validate().and_then(|_| request.decodeWith(decodeLinkRequest)) {
                 Err(error) => Err(error),
                 Ok(request) => {
                     let mut responses = vec![session.session.dispatch(request).await];

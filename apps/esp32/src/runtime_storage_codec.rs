@@ -17,6 +17,16 @@ impl Files {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Upgrade legacy record compression one record at a time. The committed
+    /// bank is unchanged until an ordinary storage transaction publishes it.
+    pub fn compact_records(&mut self) -> HostResult<()> {
+        for (_, bytes) in &mut self.records {
+            if bytes.first() == Some(&2) { continue; }
+            let compact = pack::pack(&pack::unpack(bytes)?)?;
+            if compact.len() < bytes.len() { *bytes = compact; }
+        }
+        Ok(())
+    }
     pub fn len(&self) -> usize {
         self.records.len()
     }
@@ -473,6 +483,48 @@ impl<F: FnMut(usize, &[u8]) -> io::Result<()>> Write for ChunkWriter<F> {
 pub(crate) mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    #[test]
+    fn legacy_record_compaction_preserves_authority_across_failed_commit_and_reboot() {
+        let mut files = Files::new();
+        for index in 0..12 {
+            let raw = format!(r#"{{"__operit_preferences_schema_version":3,"record":{{"nodeId":"core-{index}","spaceId":"space-existing","pairingIncarnation":"inc-{index}","displayName":"Test device {index}","platform":"test","model":"test","coreVersion":"test","joinedAt":1,"updatedAt":1}}}}"#).into_bytes();
+            // Format 0 was emitted by the previous firmware; read it verbatim.
+            let mut legacy = vec![0];
+            legacy.extend_from_slice(&(raw.len() as u16).to_le_bytes());
+            legacy.extend_from_slice(&raw);
+            files.insert(format!("runtime/space/members/core-{index}.preferences.json"), legacy).unwrap();
+        }
+        let original = files.clone();
+        let mut nvs = PhysicalNvs::default();
+        let mut active = None;
+        let bank = commit_snapshot_transaction(&files, active, &mut nvs).unwrap();
+        active = Some(bank);
+        let selected = nvs.selected();
+        files.compact_records().unwrap();
+        assert_eq!(nvs.selected(), selected, "compaction must not publish by itself");
+        let before: usize = original.iter().map(|(_, bytes)| bytes.len()).sum();
+        let after: usize = files.iter().map(|(_, bytes)| bytes.len()).sum();
+        assert!(before - after > 1000, "membership records must leave room for admission");
+        let compacted = files.clone();
+        files.compact_records().unwrap();
+        assert_eq!(files, compacted);
+        for (path, bytes) in original.iter() {
+            assert_eq!(pack::unpack(bytes).unwrap(), pack::unpack(files.get(path).unwrap()).unwrap());
+        }
+        let change = || FileChange::Put { path: "runtime/new".into(), bytes: pack::pack(b"new").unwrap() };
+        nvs.fail_publish = true;
+        assert!(commit_file_change(&mut files, &mut active, change(), &mut nvs).is_err());
+        assert_eq!(nvs.selected(), selected);
+        assert_eq!(files, compacted);
+        assert_eq!(decode_packed_files(&nvs.selected()).unwrap(), original);
+        nvs.fail_publish = false;
+        commit_file_change(&mut files, &mut active, change(), &mut nvs).unwrap();
+        let recovered = decode_packed_files(&nvs.selected()).unwrap();
+        for (path, bytes) in original.iter() {
+            assert_eq!(pack::unpack(bytes).unwrap(), pack::unpack(recovered.get(path).unwrap()).unwrap());
+        }
+        assert_eq!(pack::unpack(recovered.get("runtime/new").unwrap()).unwrap(), b"new");
+    }
     #[test]
     fn packed_snapshot_round_trip_and_commit_failure_are_bounded() {
         let files: Files = [("runtime/test".into(), vec![1, 2, 3])].into();

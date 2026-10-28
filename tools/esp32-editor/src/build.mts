@@ -223,8 +223,11 @@ async function buildFirmware(): Promise<string> {
   const stampPath = path.join(out, 'firmware-ui.sha');
   const uiHash = await hashFiles([
     ...await filesWithSuffix(ui, '.c'), ...await filesWithSuffix(ui, '.h'),
+    ...await filesWithSuffix(path.join(root, 'hosts/boards/esp32/operit_board_audio'), '.c'),
+    path.join(root, 'hosts/boards/esp32/operit_board_audio/CMakeLists.txt'),
     path.join(ui, 'CMakeLists.txt'), path.join(firmwareRoot, 'Cargo.toml'),
     path.join(firmwareRoot, '.cargo/config.toml'),
+    path.join(firmwareRoot, 'sdkconfig.defaults'),
   ]);
   const stamp = existsSync(stampPath) ? await readFile(stampPath, 'utf8') : '';
   if (stamp !== uiHash) {
@@ -345,6 +348,11 @@ const runtimeFiles = [
   ...await filesWithSuffix(ui, '.h'),
   ...await filesWithSuffix(ui, '.inc'), ...await filesWithSuffix(ui, '.svg'),
   ...await filesWithSuffix(path.join(root, 'apps/esp32/src'), '.rs'),
+  ...await filesWithSuffix(path.join(root, 'hosts/boards/esp32/src'), '.rs'),
+  ...await filesWithSuffix(path.join(root, 'hosts/boards/esp32/operit_board_audio'), '.c'),
+  path.join(firmwareRoot, 'Cargo.toml'), path.join(firmwareRoot, '.cargo/config.toml'),
+  path.join(firmwareRoot, 'sdkconfig.defaults'),
+  path.join(root, 'hosts/boards/esp32/operit_board_audio/CMakeLists.txt'),
   path.join(root, 'apps/esp32/partitions.csv'),
 ];
 const manifest: Record<string, unknown> = {

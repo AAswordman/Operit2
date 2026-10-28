@@ -7,6 +7,9 @@ mod device_preferences;
 mod device_space_ui;
 #[path = "../../../../apps/esp32/src/device_speech.rs"]
 mod device_speech;
+#[cfg(test)]
+#[path = "../../../../apps/esp32/src/wav.rs"]
+mod wav;
 #[path = "../../../../apps/esp32/src/edge_chat.rs"]
 mod edge_chat;
 mod ipc;
@@ -23,6 +26,7 @@ mod space_work;
 #[path = "../../../../apps/esp32/src/standalone_chat.rs"]
 mod standalone_chat;
 mod storage;
+mod storage_pressure;
 use operit_link::protocol::LinkDeviceInfo;
 use operit_node_edge::PeerRouter::EdgePeerRouter;
 use operit_node_runtime::{
@@ -150,6 +154,7 @@ fn initialize(
     let lastAction = Arc::new(Mutex::new(String::new()));
     let configuredAddress =
         std::env::var("OPERIT_SIM_BIND").unwrap_or_else(|_| "0.0.0.0:18765".into());
+    let storageControl = backend.control();
     let storage = storage::DeviceStorage::open(backend)?;
     let discoveryEnabled = std::env::var("OPERIT_SIM_DISCOVERY")
         .map_or(true, |value| value != "false" && value != "0");
@@ -250,6 +255,7 @@ fn initialize(
             speech,
             hostManager,
             storage,
+            storageControl,
             nodeId,
             address,
             error,
@@ -337,6 +343,7 @@ struct Simulator {
     speech: Arc<device_speech::DeviceSpeech>,
     hostManager: operit_host_api::HostManager::HostManager,
     storage: Arc<storage::DeviceStorage>,
+    storageControl: storage_pressure::StorageControl,
     nodeId: String,
     address: String,
     error: Arc<Mutex<String>>,
@@ -361,6 +368,7 @@ struct SimulatorState<'a> {
     coreAccess: serde_json::Value,
     deviceSpace: serde_json::Value,
     memory: serde_json::Value,
+    storage: serde_json::Value,
     deviceId: &'a str,
     paired: bool,
     activePeers: std::collections::BTreeSet<String>,
@@ -480,7 +488,10 @@ impl Simulator {
             .map_err(|e| e.to_string())?
             .is_empty();
         let mut playback = Vec::new();
-        while let Some(packet) = speech.takePlayback() {
+        // One bounded audio block per observation. Draining the whole playback
+        // queue here would duplicate several blocks as base64 plus the IPC JSON
+        // buffer and exhaust the same device heap we are trying to simulate.
+        if let Some(packet) = speech.takePlayback() {
             let mut packet = match packet {
                 operit_link::CoreValue::Map(p) => p,
                 _ => unreachable!(),
@@ -518,6 +529,7 @@ impl Simulator {
         Ok(SimulatorState {
             address,
             sessionId,
+            storage: self.storageControl.snapshot(),
             scene: sceneService.summary(),
             speech: speech.snapshot(),
             playback,
@@ -610,6 +622,7 @@ impl Simulator {
                 },
                 Some("sceneView") => Ok(sceneService.visual_snapshot()),
                 Some("memory") => Ok(memory::snapshot()),
+                Some("storageControl") => self.storageControl.configure(request["configuration"].clone()).map_err(|e| e.to_string()),
                 Some("storageRecords") => {
                     use operit_host_api::RuntimeStorageHost;
                     let records = self.storage.list("").map_err(|e| e.to_string())?;
@@ -743,7 +756,7 @@ impl Simulator {
                     }
                     .await
                 }
-                Some("speech") => (|| {
+                Some("speech") => async {
                     if let Some(id) = request["requestId"].as_str() {
                         if speech.snapshot()["requestId"].as_str() != Some(id) {
                             return Err("Speech request expired".into());
@@ -763,11 +776,11 @@ impl Simulator {
                                 .decode(request["audio"].as_str().unwrap_or(""))
                                 .map_err(|e| e.to_string())?;
                             speech
-                                .appendPcm(pcm)
+                                .appendPcm(pcm).await
                                 .map(|_| serde_json::json!({"ok":true}))
                         }
                         "finish" => speech
-                            .finishRecognition()
+                            .finishRecognition().await
                             .map(|_| serde_json::json!({"ok":true})),
                         "cancel" => {
                             speech.cancel(
@@ -780,7 +793,7 @@ impl Simulator {
                             .map(|id| serde_json::json!({"requestId":id})),
                         _ => Err("Unknown speech operation".into()),
                     }
-                })(),
+                }.await,
                 Some("sendImage") => (|| {
                     use base64::Engine;
                     let encoded = request["bytes"].as_str().unwrap_or("");

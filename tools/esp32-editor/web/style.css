@@ -992,7 +992,7 @@ footer {
 
 .host-composer { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 12px 0; }
 .host-composer label { flex: 1; min-width: 160px; font-size: 12px; }
-.host-composer input { display: block; width: 100%; margin-top: 6px; }
+.host-composer input,.host-composer textarea { display: block; width: 100%; margin-top: 6px; }
 .host-composer output { flex-basis: 100%; font-size: 12px; }
 .host-composer .image-picker { flex-basis: 100%; font-size: 12px; }
 .host-composer .image-picker input { max-width: 100%; }

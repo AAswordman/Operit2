@@ -26,9 +26,10 @@ function parameters(options: MemorySearchOptions): Storage.SqlValue[] {
     options.query, JSON.stringify(lexicalTerms(options.query))];
 }
 
-/** Scores persisted source vectors and lexical matches entirely inside one SQLite snapshot. */
+/** Scores persisted source vectors and lexical matches entirely inside one SQLite snapshot.
+ * Keep CTEs free of materialization hints: the host SQL validator uses SQLiteDialect. */
 const rankedQuery = `
-WITH query_vector AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?9)), scoped AS (
+WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?9)), scoped AS (
   SELECT key,value,json_extract(value,'$.record.id') AS id,
     json_extract(value,'$.record.importance') AS importance,
     json_extract(value,'$.record.updatedAt') AS updatedAt

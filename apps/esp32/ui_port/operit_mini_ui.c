@@ -346,6 +346,7 @@ static void scene(void) {
     } else if (page()==11) {
         icon_node("edge_new","新建对话","edge_new",14,66,292,44,ui.connected&&!ui.sending&&!ui.speech_phase,ICON_CHAT);
         icon_node("operations_space","设备空间与配对","space_settings",14,122,292,44,true,ICON_SPACE);
+        icon_node("audio_test","音频自检（短提示音与采样）","edge_audio_test",14,178,292,44,true,ICON_DEVICE);
     } else if (page()==14) {
         static const char *ids[]={"space_peer_0","space_peer_1","space_peer_2"};
         static const char *actions[]={"edge_pair_candidate:0","edge_pair_candidate:1","edge_pair_candidate:2"};
@@ -859,7 +860,13 @@ SETTER(chat_task,task)
 void operit_ui_set_speech_state(unsigned phase){
     if(phase>3)phase=0;if(ui.speech_phase!=phase){ui.speech_phase=(uint8_t)phase;invalidate();}
 }
-SETTER(chat_draft,draft)
+void operit_ui_set_chat_draft(const char *value){
+    if(value&&strlen(value)>=sizeof(ui.draft)){
+        ui.draft[0]=0;
+        copy(ui.error,sizeof(ui.error),"输入超过设备草稿容量，请分段发送");invalidate();return;
+    }
+    if(copy(ui.draft,sizeof(ui.draft),value))invalidate();
+}
 void operit_ui_action_error(const char *value){if(copy(ui.error,sizeof(ui.error),value))invalidate();}
 void operit_ui_set_chat_preview(const char *value){(void)value;}
 void operit_ui_set_chat_identity(const char *id,const char *character){

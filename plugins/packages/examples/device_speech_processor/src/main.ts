@@ -7,7 +7,7 @@ async function command(input: {operation: string; node_id?: string}): Promise<an
     if (input.operation === 'stop') { device?.cancel(); return {stopped: true}; }
     if (input.operation !== 'start' || !input.node_id) throw new Error('Select a device node');
     if (running) throw new Error('Stop the current processor first');
-    device = Tools.device(input.node_id, {timeoutMs: 120000});
+    device = Tools.device(input.node_id, {timeoutMs: 600000});
     const channel = await device.transport.open({target: 'operit.device.speech', method: 'results',
         property: 'requests', args: {session: `${Date.now()}-${Math.random()}`}});
     lastError = undefined;

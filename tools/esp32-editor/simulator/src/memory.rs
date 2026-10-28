@@ -125,6 +125,56 @@ pub fn probe(arguments: &[String]) -> Option<i32> {
                 1
             })
         }
+        Some("--probe-heap-fragmentation") => {
+            // Fill the actual arena, then leave isolated 8 KiB holes. Total
+            // free memory must not permit a larger contiguous allocation.
+            const BLOCK: usize = 8 * 1024;
+            let layout = Layout::from_size_align(BLOCK, 16).unwrap();
+            let larger = Layout::from_size_align(BLOCK + BLOCK / 2, 16).unwrap();
+            let mut blocks = [ptr::null_mut(); HEAP_BYTES / BLOCK];
+            let mut count: usize = 0;
+            for slot in &mut blocks {
+                let block = unsafe { ALLOCATOR.alloc(layout) };
+                if block.is_null() {
+                    break;
+                }
+                *slot = block;
+                count += 1;
+            }
+            // Retain the final block so no hole joins the trailing free space.
+            for slot in blocks[..count.saturating_sub(1)].iter_mut().step_by(2) {
+                unsafe { ALLOCATOR.dealloc(*slot, layout) };
+                *slot = ptr::null_mut();
+            }
+            let free = ALLOCATOR.heap.lock().free();
+            let fragmented = unsafe { ALLOCATOR.alloc(larger) };
+            let rejected = fragmented.is_null();
+            if !fragmented.is_null() {
+                unsafe { ALLOCATOR.dealloc(fragmented, larger) };
+            }
+            for block in blocks {
+                if !block.is_null() {
+                    unsafe { ALLOCATOR.dealloc(block, layout) };
+                }
+            }
+            // The same request must work once neighboring holes coalesce.
+            let recovered = unsafe { ALLOCATOR.alloc(larger) };
+            let reused = !recovered.is_null();
+            if reused {
+                unsafe { ALLOCATOR.dealloc(recovered, larger) };
+            }
+            eprintln!(
+                "Fragmentation probe: blocks={count}, free={free}, request={}, rejected={rejected}, reused={reused}",
+                larger.size()
+            );
+            Some(
+                if count >= 4 && free > larger.size() && rejected && reused {
+                    0
+                } else {
+                    1
+                },
+            )
+        }
         Some("--probe-heap-fit") => {
             let mut bytes = Vec::new();
             if bytes.try_reserve_exact(HEAP_BYTES / 2).is_err() {

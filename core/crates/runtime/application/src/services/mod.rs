@@ -82,3 +82,5 @@ pub mod WorkActivityService;
 
 #[path = "LocalLlmService.rs"]
 pub(crate) mod LocalLlmService;
+
+mod chat_input_stream;

@@ -28,7 +28,8 @@
     "test:device-debug": "python -X utf8 -m unittest discover -s tests -p test_device_*.py",
     "test:xtensa": "python -X utf8 -m unittest discover -s tests -p test_xtensa_overlay.py",
     "device:draft": "node --experimental-strip-types src/device.mts draft",
-    "device:session": "python -X utf8 device-session.py"
+    "device:session": "python -X utf8 device-session.py",
+    "test:device-budget": "node --experimental-strip-types src/device-budget.mts"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

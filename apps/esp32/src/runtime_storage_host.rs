@@ -28,7 +28,7 @@ impl<B: RuntimeStorageBackend> PackedRuntimeStorageHost<B> {
     pub fn open(mut backend: B) -> HostResult<Arc<Self>> {
         let marker = backend.marker()?;
         let snapshot = marker.map(|value| (value & 1) as u8);
-        let files = match marker {
+        let mut files = match marker {
             Some(marker) => {
                 let length = codec::snapshot_length(marker)?;
                 let mut buffer = Vec::new();
@@ -45,6 +45,7 @@ impl<B: RuntimeStorageBackend> PackedRuntimeStorageHost<B> {
             }
             None => Files::new(),
         };
+        files.compact_records()?;
         codec::recover_snapshot(&mut backend, snapshot)?;
         Ok(Arc::new(Self {
             state: Mutex::new(StorageState {

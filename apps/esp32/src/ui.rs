@@ -360,6 +360,11 @@ impl Esp32Ui {
                 let snapshot = crate::runtimeHealthSnapshot().to_string();
                 io.respond(request.id(), snapshot.as_bytes());
             }
+            7 => {
+                let result=std::str::from_utf8(request.argument()).map_err(|e|e.to_string()).and_then(crate::audio::debug);
+                let value=result.unwrap_or_else(|error|serde_json::json!({"error":error})).to_string();
+                io.respond(request.id(),value.as_bytes());
+            }
             6 => {
                 let result = std::str::from_utf8(request.argument()).map_err(|e| e.to_string())
                     .and_then(|argument| self.debugOperation("draft", argument));

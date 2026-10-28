@@ -69,8 +69,9 @@ See [CLI commands](../../docs/cli-network-control.md).
 
 Without a `chat` configuration, the optional remote Core mode below remains
 available. Existing STT/TTS Stream/ReverseStream processing is retained. The
-ESP32-2432S028 firmware still has no microphone capture or speaker playback
-driver, so independent text chat does not imply verified physical voice I/O.
+ESP32-2432S028 firmware includes the board audio adapter described below.
+Independent text chat does not imply a connected STT/TTS processor or verified
+physical voice I/O.
 
 ## Memory and connection lifetime
 
@@ -92,7 +93,16 @@ driver, so independent text chat does not imply verified physical voice I/O.
   a compact sorted index. They do not clone the full index during Space admission.
   Index growth is reserved before writing; the in-memory change becomes visible
   only after the alternate bank is published. Failed writes preserve the old
-  snapshot. The ONV3 format and 7000-byte logical storage limit are unchanged.
+  snapshot. The ONV3 envelope and 7000-byte logical storage limit are unchanged.
+  Packed records now use format 2, with an immutable 847-byte dictionary of
+  public JSON field names stored in firmware Flash. The dictionary does not
+  consume a separate heap buffer. Legacy raw (0) and LZSS (1) records remain
+  readable. Opening storage compacts legacy records one at a time in memory;
+  the next successful ordinary transaction publishes the new representation.
+  A failed transaction keeps the previous bank authoritative. Decoded record
+  contents, identities, pairing secrets and Space policy remain unchanged.
+  Firmware predating record format 2 cannot read newly published snapshots;
+  preserve a matching firmware/NVS backup when testing a downgrade.
   Node-local edits move unshared parsed records into the transaction instead
   of cloning retained JSON trees. A weak mutation witness detects unchanged
   edits without pinning the old tree; external immutable snapshots still receive
@@ -281,46 +291,48 @@ The hardware smoke tool requires an already paired/admitted device and does not
 complete first-pairing or full-chat acceptance. See the editor's verification
 commands and distinguish simulator, build and physical-device results.
 
-Physical validation on 2026-10-25 used an isolated Core and UART/TCP, preserving
-identity, pairing, Wi-Fi, the existing Space and the layout partition. The v72
-image completed one sync but failed its immediate repeat; the first upstream
-merge then exceeded the application partition by 38,352 bytes. These are
-historical results, not the current build status.
+### Build and simulator verification (2026-10-28)
 
-Building the standard library with `backtrace-trace-only` brought the image
-inside the original partition. With the matching-policy `observeSpaceProjection`
-reply and boxed Core projection future, v74 passed five consecutive full sync
-rounds (28.936–39.186 seconds), with actual paging verified on every round.
-There were no resets, allocation failures or session errors during those rounds;
-minimum free heap was 18,892 bytes and NVS use remained stable. This verifies
-repeated synchronization with identical authority history only.
+The Edge changes target upstream `review/pr356-edge-space-sync-memory` at
+`269d910d`. After rebasing the remaining device changes onto that dedicated
+branch and consolidating repeated node-local schema checks, the complete
+`npm run test:device-budget --prefix tools/esp32-editor -- --firmware` gate passed:
+firmware and Xtensa ABI checks, shared C/Wasm UI, TypeScript, fixed heap/stack
+probes, and three authenticated TCP scenarios covering pairing/admission/restart,
+standalone chat across restart, and remote chat with storage recovery and speech.
+The standalone scenario peaked at 208,224 / 262,144 Rust heap bytes; remote chat,
+storage recovery and speech peaked at 212,840 / 262,144 bytes. Every sampled state
+reported zero allocation failures. Desktop regression passed 61 simulator tests,
+29 board tests, 116 editor tests and eight serial debug tests.
 
-Subsequent Core leave/rejoin attempts exposed approval OOM, receipt/topology
-storage failures, and a full-policy allocation hidden inside paged export.
-Compact approval references, lossless local topology encoding, and range-based
-permission-page scans address those failures. The original explicit approval
-completed using the same request, and Core adopted the original Edge Space at
-revision 13 with both members. The approval reply carries membership; Core
-fetches and verifies the complete current authority separately before adoption.
+The built image uses **3,945,104 / 3,997,696 bytes** (**52,592 free**).
+Its `.flash.text` uses **3,324,810 / 3,342,304 bytes** (**17,494 free**): code mapping
+and image partition capacity are separate limits. This image has not yet been
+flashed for another hardware acceptance run.
 
-Final v87 hardware validation on 2026-10-26 passed five consecutive real paged
-syncs (54.472–57.788 seconds), then two more after restarting both peers. Each
-round verified actual page/header calls, with no resets, allocation failures or
-session errors. Minimum free heap was 18,284 bytes. The original request stayed
-`joined`, the original two-member Space survived restart, and the chat page
-returned to connected/ready. This verifies the existing interrupted approval's
-recovery and repeated synchronization at the tested history size.
+Speech integration verified 65 seconds of PCM/WAV byte volume, recognition text
+over 8 KiB and ordered multi-segment TTS with deterministic providers. These
+checks cover transport behavior; physical long recording and actual recognition
+quality require hardware validation. Simulator heap/stack measurements exclude
+ESP-IDF, Wi-Fi, TLS and native driver overhead.
 
-The image uses **3,972,592 / 3,997,696 bytes** (**25,104 free**). The final logical
-snapshot uses **6,940 / 7,000 bytes** (**60 free**). Identity, pairing and encryption
-key contents were preserved; layout and authority-history bytes match their
-backups. Old requests and source/approval facts remain. Neither the original
-partition nor the logical budget was enlarged. The isolated Core was stopped
-and the serial port released after validation; the device retains its Space.
+### Hardware verification (2026-10-28)
 
-The hardware measurements above describe the recorded firmware image. Simulator
-checks use separately enforced Rust heap and task-stack budgets and are not board
-telemetry. See the [current chain and acceptance scope](../../docs/edge-core-entry-protocol.md).
+The earlier hardware-tested image preserved identity, pairing, Wi-Fi and the
+existing Space. With the [audio wiring below](#native-inmp441-and-onboard-speaker),
+the user confirmed an audible test tone. Duplicate-start rejection, intentional
+stop/restart and 20 consecutive short self-tests passed, with 44,544–46,080
+captured left-channel samples per test and no RX/queue overflow, observed reset
+or recorded allocation failure. Lowest free heap was 16,684 bytes; free heap
+after tests was 70,456–75,768 bytes. Capture resources were released on close.
+
+Those timed self-tests precede the WAV/PCM layering cleanup and upstream rebase.
+They establish short acquisition and restart behavior, without verifying queued
+recording tails, microphone acoustic quality, physical long recording or a Core
+STT/TTS round trip. The board and Windows Core had different Spaces; the existing
+Windows Space was preserved. A successful DMA write alone does not establish
+audible playback, and nonzero microphone samples do not establish recognition
+quality. See the [current chain and acceptance scope](../../docs/edge-core-entry-protocol.md).
 
 ## Recovering from an unavailable Space administrator
 
@@ -458,13 +470,31 @@ builds do not use them.
 The firmware release uses Fat LTO and size optimization across its Rust packages
 to fit the existing 4 MB board and application partition. ESP32 console timestamps use direct UTC clock fields;
 desktop logs retain their local-time formatter. A single codegen unit keeps the
-Windows linker command within its length limit; package-specific Tokio and UUID optimization settings remain.
+Windows linker command within its length limit. UUID retains `opt-level = 1`
+for the Xtensa hex-parser workaround. Tokio now uses `opt-level = "z"`, with
+its pinned alignment overlay and final ELF ABI checks still required.
+
+Peer transport decoding selects the existing Call / Watch / Push envelope with
+the shared constant-stack field scanner, then decodes its typed body. Owned
+frames retain binary fields as shared ranges. Compatibility tests compare every
+request lifecycle and success/error response against the original Serde codec,
+including rejected positional struct variants. Serializer/decoder entrypoints
+remain out of line so Fat LTO can share each instantiation across callers.
+The built-in font retains all 4,168 glyphs and bitmap bytes in packed nine-byte
+records; table tests check each field width and bitmap boundary.
 
 The ESP32 standard library uses `backtrace-trace-only`: panic diagnostics and
 raw backtrace addresses remain available, while symbol lookup runs on the host
 with the matching ELF. This avoids linking the device-side DWARF symbol reader;
 it does not disable panic reporting or the ESP-IDF abort backtrace. Keep the ELF
 from each flashed build for `xtensa-esp32-elf-addr2line -f -C -e <elf> <addresses>`.
+
+The ESP32 Host scheduler enables Tokio's `rt` executor support without
+`rt-multi-thread`: firmware drives current-thread runtimes on its bounded Host
+workers. Non-ESP32 platforms retain the multi-thread feature and the upstream
+worker naming behavior. Keeping this dependency split explicit prevents desktop
+executor code from consuming the ESP32 code-mapping budget after shared Host
+changes; it does not add another scheduler or change device task admission.
 
 On Xtensa, the overlays keep the Tokio constructor and ring seal/open as named,
 non-inlined functions so LTO cannot erase the ABI inspection boundaries. These
@@ -561,3 +591,93 @@ refreshed automatically. Pairing, approval and membership remain separate.
 A retained remote pairing is replaced only after a fresh code succeeds; unpair
 itself remains local-only. No new Link wire encoding, transport or Host API is
 introduced.
+
+### Long input and speech transport
+
+The C draft remains a 511-byte UTF-8 display/input buffer. The browser owns its
+complete draft separately (up to 16,384 bytes); native input without that owner
+rejects overflow explicitly. Remote chat sends above 2,048 bytes use the existing
+Link Push / ReverseStream transport, in UTF-8 chunks of at most 2,048 bytes. Core
+validates length, explicit commit and EOF, then delegates to `sendUserMessage`.
+Incomplete input never submits its received prefix. This requires the matching
+Core route. Edge retains a bounded temporary input string, not a persisted full
+transcript. Direct model input retains its existing 2,048-byte limit.
+
+Speech capture and playback use four-slot queues of at most 4,096-byte audio
+blocks. Capture awaits capacity and invalidates outstanding sends on disconnect
+or cancellation. Speech protocol v2 also returns recognition text in 2,048-byte
+chunks; only the final result publishes the complete bounded draft (16,384 bytes
+maximum). The Core example processor owns up to 300 seconds of PCM and WAV
+assembly. Device TTS input is limited to 4,096 UTF-8 bytes and Core calls the
+existing provider in text segments of at most 1,024 bytes. Provider recording
+limits and actual recognition/playback quality remain separate from transport
+validation. The native adapter below is specific to the documented wiring;
+transport tests do not substitute for physical recording/playback acceptance.
+
+
+## Native INMP441 and onboard speaker
+
+The board audio adapter uses the existing speech protocol, not a second speech
+service. The supported wiring is INMP441 VDD=3.3V, GND=GND, L/R=GND (left),
+SCK/BCLK=GPIO27, WS=GPIO22, SD=GPIO35. GPIO21 remains the display backlight;
+do not connect the microphone clock there. The passive speaker uses the board's
+two-pin amplified speaker connector driven by DAC GPIO26.
+
+Capture runs on I2S1 at 16 kHz, with 32-bit stereo slots (64 bit clocks/frame).
+Only the left slot is converted to mono PCM16, with DC removal, bounded gain and
+saturation. A priority-10 native task drains DMA independently of Host workflows.
+Its fixed 32-block queue retains 512 ms of high-16-bit mono input and raw signal
+statistics in 16,768 bytes; the original PCM filter uses exactly those same high
+bits, so conversion is unchanged. Its 3 KiB stack, queue and scratch storage are
+released on close. Four DMA descriptors of 256 stereo frames provide a fixed
+8 KiB / 64 ms hardware ring. The ISR and its callback remain in IRAM during
+Flash cache suspension. DMA and PCM queue overflow fail capture explicitly.
+Audio also shares the existing device-work guard with background Space/NVS
+materialization. The existing Host worker sends PCM incrementally through
+`DeviceSpeech` with backpressure and request identity; there is no second Rust
+runtime or full-recording buffer. Statistics are published once per block and
+speech phase updates remain responsive. Completed text waits for local state
+work to finish before entering chat. Press the
+chat microphone again to stop; capture is limited to 300 seconds. Recognition
+requires a connected Core speech processor, and its completed text enters the
+existing chat send path once.
+
+Playback uses the GPIO26 DAC continuous driver / I2S0 and starts as PCM arrives.
+The initial gain is one quarter. Supported Core output is uncompressed PCM16 WAV,
+8–48 kHz, mono or stereo (downmixed). WAV headers, metadata and sample frames may
+cross transport blocks; only fixed parser/sample buffers are retained. MP3, Opus,
+and other compressed audio are rejected explicitly rather than sent as PCM noise.
+The Core provider must be configured to return a supported WAV format.
+
+The firmware application owns WAV parsing in `src/wav.rs` and speech/session
+orchestration in `src/audio.rs` and `src/device_speech.rs`. The streaming decoder
+emits mono PCM16 independently of hardware; the simulator tests this same source.
+`hosts/boards/esp32` owns native I2S/DAC resources, acquisition buffering and signal
+conversion, including the final PCM16-to-DAC8 conversion. It does not parse WAV
+or Core speech packets.
+
+In Settings → Device operations, **Audio self-test** works without a Space or
+speech processor: it plays a quiet 250 ms tone, then captures roughly three seconds
+of microphone sample statistics. It does not save or upload the recording.
+USB diagnostics expose the same test and status:
+
+```powershell
+python tools/esp32-editor/device-debug.py audio --port COM24 --text test
+python tools/esp32-editor/device-debug.py audio --port COM24 --text status
+```
+
+Use the actual attached COM port and close any other UART owner first. Tests
+report sample count, nonzero samples, left/right raw peak, clipping, sums and driver
+errors. A successful DMA write does not prove audible sound; nonzero microphone
+samples do not prove recognition quality. Hardware results must be recorded
+separately from desktop unit/transport tests.
+
+With an admitted Core speech processor attached, USB `audio --text "speak 你好"`
+requests synthesis through the existing processor and plays returned PCM16 WAV.
+The standalone hardware self-test does not establish this Core round trip.
+Firmware release builds omit Rust console log formatting and IDF info/warning
+logs that are disabled at runtime once Link owns UART; early startup failures,
+C error logs, UI errors, allocation evidence and USB diagnostics remain available.
+
+Recorded build, simulator and hardware results are maintained in
+[Verification and current limitations](#verification-and-current-limitations).

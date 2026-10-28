@@ -13,7 +13,7 @@ import time
 import zlib
 
 MAX_RESPONSE = 16 * 1024
-OPS = {'screen': 1, 'tree': 2, 'tap': 3, 'swipe': 4, 'health': 5, 'draft': 6}
+OPS = {'screen': 1, 'tree': 2, 'tap': 3, 'swipe': 4, 'health': 5, 'draft': 6, 'audio': 7}
 
 
 def request_frame(request_id, operation, argument=''):
@@ -132,7 +132,7 @@ def main():
     if args.operation in ('screen', 'tree', 'health') and (args.target or args.direction):
         parser.error('screen/tree do not take targets')
     try:
-        argument = args.text if args.operation == 'draft' else args.target or args.direction
+        argument = args.text if args.operation in ('draft','audio') else args.target or args.direction
         value = bridge_debug(args.bridge, args.operation, argument, args.timeout) if args.bridge else debug_device(args.port, args.operation, argument, args.timeout)
         print(json.dumps(value, ensure_ascii=False, indent=2))
     except Exception as error:

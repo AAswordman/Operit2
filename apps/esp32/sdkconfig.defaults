@@ -5,7 +5,10 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+# Runtime disables console logs once binary Link owns UART. Keep C errors,
+# and return driver errors without linking their repeated ESP_RETURN_ON_* log text.
+CONFIG_LOG_DEFAULT_LEVEL_ERROR=y
+CONFIG_COMPILER_OPTIMIZATION_CHECKS_SILENT=y
 CONFIG_ESP_WIFI_ENABLED=y
 CONFIG_ESP_WIFI_STA_ENABLED=y
 # Keep Wi-Fi RX buffers proportional to this low-memory Edge device.
@@ -18,3 +21,6 @@ CONFIG_SPIFFS=y
 
 # Native device requests verify HTTPS using the ESP-IDF certificate bundle.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# Keep microphone DMA interrupts running during Flash/NVS cache stalls.
+CONFIG_I2S_ISR_IRAM_SAFE=y
