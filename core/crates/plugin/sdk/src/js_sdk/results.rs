@@ -2125,6 +2125,8 @@ impl FileApplyResultData {
             .map(String::as_str)
             .chain(std::iter::once(self.aiDiffInstructions.as_str()))
         {
+            let mut additions = 0;
+            let mut deletions = 0;
             for line in candidate.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with("Changes: +")
@@ -2132,6 +2134,14 @@ impl FileApplyResultData {
                 {
                     return Some(trimmed.to_string());
                 }
+                if line.starts_with('+') && !line.starts_with("+++") {
+                    additions += 1;
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    deletions += 1;
+                }
+            }
+            if additions > 0 || deletions > 0 {
+                return Some(format!("Changes: +{additions} -{deletions} lines"));
             }
         }
         None

@@ -2,6 +2,7 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:operit2/core/web_visit/WebVisitModels.dart';
 import 'package:operit_folder_access/operit_folder_access.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 
@@ -13,9 +14,14 @@ import 'browser/automation/WorkspaceWebVisitContent.dart';
 import 'WorkspaceFileBrowserContent.dart';
 import 'WorkspaceFilePreviewContent.dart';
 import 'WorkspaceHomeContent.dart';
+import 'WorkspaceDiffContent.dart';
 import 'WorkspaceOverviewModels.dart';
 import 'WorkspaceTabModels.dart';
+import 'browser/WorkspaceBrowserViewStore.dart';
 import 'terminal/WorkspaceTerminalContent.dart';
+import 'terminal/WorkspaceTerminalSessions.dart';
+import '../WorkspaceShell.dart';
+import 'WorkspaceDiffReview.dart';
 import '../../../../main/screens/OperitScreens.dart';
 
 class WorkspaceTabContent extends StatelessWidget {
@@ -26,6 +32,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.workspaceUsage,
     required this.terminalSessionCountListenable,
     required this.browserSessionCountListenable,
+    this.terminalSessionsListenable,
     required this.onListWorkspaceFiles,
     required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
@@ -40,6 +47,11 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onOpenTerminalSessions,
     required this.onOpenBrowserSessions,
     required this.onOpenBrowser,
+    this.onSelectTerminalSession,
+    this.onCloseTerminalSession,
+    this.onSelectBrowserTab,
+    this.onCloseBrowserSession,
+    required this.onFinishWebVisit,
     required this.onActivateCurrentTab,
     required this.onCloseCurrentTab,
     required this.onOpenWorkspaceCreator,
@@ -47,6 +59,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onChooseExistingWorkspace,
     required this.onUnbindWorkspace,
     required this.splitMarkdownContent,
+    this.onOpenDiff,
   });
 
   final WorkspaceTab tab;
@@ -54,6 +67,8 @@ class WorkspaceTabContent extends StatelessWidget {
   final WorkspaceOverviewUsage workspaceUsage;
   final ValueListenable<int> terminalSessionCountListenable;
   final ValueListenable<int> browserSessionCountListenable;
+  final ValueListenable<List<WorkspaceTerminalSessionInfo>>?
+  terminalSessionsListenable;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
   final Future<List<WorkspaceFileEntry>> Function(String path)
@@ -76,6 +91,12 @@ class WorkspaceTabContent extends StatelessWidget {
     String? workspaceHtmlPath,
   })
   onOpenBrowser;
+  final ValueChanged<WorkspaceTerminalSessionInfo>? onSelectTerminalSession;
+  final ValueChanged<WorkspaceTerminalSessionInfo>? onCloseTerminalSession;
+  final ValueChanged<WorkspaceBrowserTabState>? onSelectBrowserTab;
+  final ValueChanged<String>? onCloseBrowserSession;
+  final void Function(WorkspaceTab tab, WebVisitResponse response)
+  onFinishWebVisit;
   final VoidCallback onActivateCurrentTab;
   final VoidCallback onCloseCurrentTab;
   final VoidCallback onOpenWorkspaceCreator;
@@ -83,6 +104,7 @@ class WorkspaceTabContent extends StatelessWidget {
   final VoidCallback onChooseExistingWorkspace;
   final VoidCallback onUnbindWorkspace;
   final MarkdownContentSplitter splitMarkdownContent;
+  final VoidCallback? onOpenDiff;
 
   /// Builds the selected tab with shared workspace capability callbacks.
   @override
@@ -95,6 +117,7 @@ class WorkspaceTabContent extends StatelessWidget {
           workspaceUsage: workspaceUsage,
           terminalSessionCountListenable: terminalSessionCountListenable,
           browserSessionCountListenable: browserSessionCountListenable,
+          terminalSessionsListenable: terminalSessionsListenable,
           onOpenFolder: onOpenFolder,
           onAddFolder: onAddFolder,
           onCreateWorkspace: onOpenWorkspaceCreator,
@@ -104,6 +127,11 @@ class WorkspaceTabContent extends StatelessWidget {
           onOpenTerminalSessions: onOpenTerminalSessions,
           onOpenBrowserSessions: onOpenBrowserSessions,
           onOpenBrowser: () => onOpenBrowser(),
+          onSelectTerminalSession: onSelectTerminalSession,
+          onCloseTerminalSession: onCloseTerminalSession,
+          onSelectBrowserTab: onSelectBrowserTab,
+          onCloseBrowserSession: onCloseBrowserSession,
+          onOpenDiff: onOpenDiff,
         );
       case WorkspaceTabKind.workspacePicker:
         return WorkspaceFileBrowserContent(
@@ -153,6 +181,7 @@ class WorkspaceTabContent extends StatelessWidget {
         );
       case WorkspaceTabKind.browser:
         return WorkspaceBrowserContent(
+          sessionId: tab.browserSessionId,
           workspacePath: workspacePath,
           initialUrl: tab.url,
           initialUserAgent: tab.userAgent,
@@ -176,7 +205,10 @@ class WorkspaceTabContent extends StatelessWidget {
             subtitle: 'visit_web 请求未指定。',
           );
         }
-        return WorkspaceWebVisitContent(request: request);
+        return WorkspaceWebVisitContent(
+          request: request,
+          onFinished: (response) => onFinishWebVisit(tab, response),
+        );
       case WorkspaceTabKind.filePreview:
         return WorkspaceFilePreviewContent(
           tab: tab,
@@ -185,6 +217,19 @@ class WorkspaceTabContent extends StatelessWidget {
           onOpenWorkspaceFile: onOpenWorkspaceFile,
           onOpenBrowser: onOpenBrowser,
           splitMarkdownContent: splitMarkdownContent,
+        );
+      case WorkspaceTabKind.diff:
+        final review = tab.diffReview ??
+            WorkspaceShell.session.latestDiffReview ??
+            const WorkspaceDiffReview(files: <WorkspaceDiffFile>[]);
+        return WorkspaceDiffContent(
+          key: ValueKey<String>(
+            'diff:${tab.identityToken ?? ''}:${workspacePath ?? ''}:${review.files.map((file) => '${file.path}:${file.diffContent.length}').join('|')}',
+          ),
+          review: review,
+          workspacePath: workspacePath,
+          onListWorkspaceFiles: onListWorkspaceFiles,
+          onReadWorkspaceTextFile: onReadWorkspaceTextFile,
         );
       case WorkspaceTabKind.plugin:
         final packageName = tab.pluginPackageName;

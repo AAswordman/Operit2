@@ -20,6 +20,7 @@ import 'MessageCopyPreview.dart';
 import 'ChatScrollNavigator.dart';
 import 'NewChatIntro.dart';
 import 'style/ThemedChatMessage.dart';
+import 'part/TurnDiffSummary.dart';
 
 const Duration _navigatorHideDelay = Duration(milliseconds: 1200);
 const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
@@ -266,6 +267,7 @@ class _ChatAreaState extends State<ChatArea>
           animation: Listenable.merge(<Listenable>[
             _messageAnchorsNotifier,
             _viewportHeightNotifier,
+            widget.scrollController,
           ]),
           builder: (context, _) {
             final messageAnchors = _messageAnchorsNotifier.value;
@@ -549,6 +551,7 @@ class _ChatAreaState extends State<ChatArea>
       }
       final scrollController = widget.scrollController;
       if (scrollController.hasClients &&
+          scrollController.positions.length == 1 &&
           scrollController.position.isScrollingNotifier.value) {
         _scheduleNavigatorHide();
         return;
@@ -617,7 +620,9 @@ class _ChatAreaState extends State<ChatArea>
         !widget.autoScrollToBottomListenable.value ||
         widget.hasNewerDisplayHistory ||
         widget.isLoadingDisplayWindow ||
-        !widget.scrollController.hasClients) {
+        !widget.scrollController.hasClients ||
+        widget.scrollController.positions.length != 1 ||
+        !widget.scrollController.position.hasPixels) {
       _stopBottomFollow();
       return;
     }
@@ -701,8 +706,14 @@ class _ChatAreaState extends State<ChatArea>
       await widget.onShowLatestDisplayWindow();
       return;
     }
-    await widget.scrollController.animateTo(
-      widget.scrollController.position.maxScrollExtent,
+    final scroll = widget.scrollController;
+    if (!scroll.hasClients ||
+        scroll.positions.length != 1 ||
+        !scroll.position.hasPixels) {
+      return;
+    }
+    await scroll.animateTo(
+      scroll.position.maxScrollExtent,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
     );
@@ -770,7 +781,10 @@ class _ChatAreaState extends State<ChatArea>
 
   /// Collects render anchors for currently visible chat message rows.
   void _collectMessageAnchors() {
-    if (!widget.scrollController.hasClients) {
+    final scroll = widget.scrollController;
+    if (!scroll.hasClients ||
+        scroll.positions.length != 1 ||
+        !scroll.position.hasPixels) {
       return;
     }
     final viewportContext = _viewportKey.currentContext;
@@ -787,16 +801,21 @@ class _ChatAreaState extends State<ChatArea>
       if (rowBox == null || !rowBox.attached || !rowBox.hasSize) {
         continue;
       }
-      final localTop = rowBox
-          .localToGlobal(Offset.zero, ancestor: viewportBox)
-          .dy;
-      anchors[message.timestamp] = ChatScrollMessageAnchor(
-        timestamp: message.timestamp,
-        index: index,
-        key: key,
-        absoluteTopPx: widget.scrollController.offset + localTop,
-        heightPx: rowBox.size.height,
-      );
+      try {
+        final localTop = rowBox
+            .localToGlobal(Offset.zero, ancestor: viewportBox)
+            .dy;
+        anchors[message.timestamp] = ChatScrollMessageAnchor(
+          timestamp: message.timestamp,
+          index: index,
+          key: key,
+          absoluteTopPx: scroll.offset + localTop,
+          heightPx: rowBox.size.height,
+        );
+      } catch (_) {
+        // Skip rows that are being unmounted or detached from viewportBox during resize
+        continue;
+      }
     }
     _messageAnchorsNotifier.value = anchors;
   }
@@ -975,6 +994,9 @@ class _ChatAreaState extends State<ChatArea>
       onEditSummary: widget.onSelectMessageToEdit,
       enableDialogs: !selectionMode,
     );
+    final turnReview = !isStreaming && message.sender == 'ai'
+        ? reviewForMessage(message)
+        : null;
     final messageContent = _SelectableMessageFrame(
       selected: selected,
       selectionMode: selectionMode,
@@ -982,6 +1004,13 @@ class _ChatAreaState extends State<ChatArea>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           chatMessage,
+          if (turnReview != null &&
+              turnReview.files.isNotEmpty &&
+              !selectionMode)
+            TurnDiffSummary(
+              review: turnReview,
+              onUndo: () => widget.onRollbackToMessage(message.timestamp),
+            ),
           if (message.sender == 'ai' && message.variantCount > 1)
             _MessageVariantSwitcher(
               message: message,
