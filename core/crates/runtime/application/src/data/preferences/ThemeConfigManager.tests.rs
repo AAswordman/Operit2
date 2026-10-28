@@ -141,7 +141,7 @@ fn complete_snapshot_round_trips_all_ordinary_keys() {
         "untouched".to_string(),
     );
     let value = snapshot();
-    assert_eq!(value.len(), 78);
+    assert_eq!(value.len(), 77);
     validateThemePreferenceSnapshot(&value).unwrap();
     writeThemePreferenceSnapshot(&mut preferences, &value).unwrap();
     assertThemePreferenceSnapshot(&preferences, &value).unwrap();
@@ -192,7 +192,8 @@ fn invalid_types_enums_and_ranges_are_rejected() {
         ("backgroundImageUri", json!({})),
         ("themeMode", json!("unknown")),
         ("backgroundMediaType", json!("audio")),
-        ("chatStyle", json!("unknown")),
+        ("userChatStyle", json!("unknown")),
+        ("aiChatStyle", json!("unknown")),
         ("inputStyle", json!("unknown")),
         ("bubbleAiImageRenderMode", json!("unknown")),
         ("avatarShape", json!("unknown")),

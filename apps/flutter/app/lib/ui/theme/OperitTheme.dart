@@ -557,7 +557,8 @@ class OperitThemeController {
   /// Persists a partial update through synchronized Space appearance preferences.
   Future<void> saveThemeSettings({
     String? inputStyle,
-    String? chatStyle,
+    String? userChatStyle,
+    String? aiChatStyle,
     bool? bubbleShowAvatar,
     bool? bubbleWideLayoutEnabled,
     bool? bubbleUserRoundedCornersEnabled,
@@ -634,7 +635,8 @@ class OperitThemeController {
   }) async {
     await _preferencesManager.saveThemeSettings(
       inputStyle: inputStyle,
-      chatStyle: chatStyle,
+      userChatStyle: userChatStyle,
+      aiChatStyle: aiChatStyle,
       bubbleShowAvatar: bubbleShowAvatar,
       bubbleWideLayoutEnabled: bubbleWideLayoutEnabled,
       bubbleUserRoundedCornersEnabled: bubbleUserRoundedCornersEnabled,
@@ -857,7 +859,8 @@ ThemePreferenceSnapshot _themePreferenceSnapshotWith(
     inputSendAssetSize: snapshot.inputSendAssetSize,
     inputStopAsset: snapshot.inputStopAsset,
     inputStopAssetSize: snapshot.inputStopAssetSize,
-    chatStyle: snapshot.chatStyle,
+    userChatStyle: snapshot.userChatStyle,
+    aiChatStyle: snapshot.aiChatStyle,
     bubbleShowAvatar: snapshot.bubbleShowAvatar,
     bubbleWideLayoutEnabled: snapshot.bubbleWideLayoutEnabled,
     cursorUserBubbleColor: snapshot.cursorUserBubbleColor,
@@ -1294,7 +1297,7 @@ const List<String> _monospaceFontFamilyFallback = <String>[
   'monospace',
 ];
 
-const Color _brandSeedColor = Color(0xFFBBDEFB);
+const Color _brandSeedColor = Color(0xFF3B82F6);
 
 /// Builds one Material color scheme and applies the secondary accent color.
 ColorScheme _seedColorScheme(
@@ -1318,11 +1321,46 @@ ColorScheme _seedColorScheme(
     brightness: brightness,
     dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot,
   );
-  if (!themePreferenceSnapshot.useCustomColors ||
-      themePreferenceSnapshot.customSecondaryColor == null) {
-    return scheme;
+
+  final isDark = brightness == Brightness.dark;
+  final customSecondary = themePreferenceSnapshot.useCustomColors &&
+          themePreferenceSnapshot.customSecondaryColor != null
+      ? Color(themePreferenceSnapshot.customSecondaryColor!)
+      : null;
+
+  // Decouple neutral surface tones from seed color to eliminate cyan/teal tint,
+  // providing a clean, professional neutral dark palette and crisp neutral light palette.
+  if (isDark) {
+    return scheme.copyWith(
+      surface: const Color(0xFF161616),
+      surfaceDim: const Color(0xFF121212),
+      surfaceBright: const Color(0xFF262626),
+      surfaceContainerLowest: const Color(0xFF0D0E10),
+      surfaceContainerLow: const Color(0xFF131314),
+      surfaceContainer: const Color(0xFF18181A),
+      surfaceContainerHigh: const Color(0xFF202023),
+      surfaceContainerHighest: const Color(0xFF26272B),
+      outline: const Color(0xFF4C4D53),
+      outlineVariant: const Color(0xFF262628),
+      onSurface: const Color(0xFFECECEC),
+      onSurfaceVariant: const Color(0xFFA0A1A7),
+      secondary: customSecondary ?? scheme.secondary,
+    );
+  } else {
+    return scheme.copyWith(
+      surface: const Color(0xFFFFFFFF),
+      surfaceDim: const Color(0xFFEDEDF0),
+      surfaceBright: const Color(0xFFFFFFFF),
+      surfaceContainerLowest: const Color(0xFFFFFFFF),
+      surfaceContainerLow: const Color(0xFFF7F8F9),
+      surfaceContainer: const Color(0xFFF0F2F5),
+      surfaceContainerHigh: const Color(0xFFE8EAEF),
+      surfaceContainerHighest: const Color(0xFFE0E3E8),
+      outline: const Color(0xFF8F929A),
+      outlineVariant: const Color(0xFFE2E4E8),
+      onSurface: const Color(0xFF1B1C1E),
+      onSurfaceVariant: const Color(0xFF5A5C63),
+      secondary: customSecondary ?? scheme.secondary,
+    );
   }
-  return scheme.copyWith(
-    secondary: Color(themePreferenceSnapshot.customSecondaryColor!),
-  );
 }

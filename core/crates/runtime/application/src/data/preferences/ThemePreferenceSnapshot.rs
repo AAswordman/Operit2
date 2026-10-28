@@ -107,11 +107,6 @@ pub(crate) const SNAPSHOT_FIELDS: &[SnapshotField] = &[
         kind: FieldKind::Enum(&["classic", "agent"]),
     },
     SnapshotField {
-        json_key: "chatStyle",
-        preference_key: "chat_style",
-        kind: FieldKind::Enum(&["cursor", "bubble"]),
-    },
-    SnapshotField {
         json_key: "bubbleShowAvatar",
         preference_key: "bubble_show_avatar",
         kind: FieldKind::Boolean,
@@ -517,6 +512,11 @@ pub(crate) const EXTENDED_SNAPSHOT_FIELDS: &[SnapshotField] = &[
     SnapshotField { json_key: "inputSendAssetSize", preference_key: "input_send_asset_size", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
     SnapshotField { json_key: "inputStopAsset", preference_key: "input_stop_asset", kind: FieldKind::OptionalString },
     SnapshotField { json_key: "inputStopAssetSize", preference_key: "input_stop_asset_size", kind: FieldKind::Number { min: 0.0, max: f64::MAX } },
+    // The single released chatStyle stays valid so saved configurations from
+    // before the per-role split still apply; its value is inert for new builds.
+    SnapshotField { json_key: "chatStyle", preference_key: "chat_style", kind: FieldKind::Enum(&["cursor", "bubble"]) },
+    SnapshotField { json_key: "userChatStyle", preference_key: "user_chat_style", kind: FieldKind::Enum(&["cursor", "bubble"]) },
+    SnapshotField { json_key: "aiChatStyle", preference_key: "ai_chat_style", kind: FieldKind::Enum(&["cursor", "bubble"]) },
 ];
 
 /// Enumerates the declared ordinary appearance fields without inferring key names.

@@ -1,17 +1,21 @@
 // ignore_for_file: file_names
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../common/ChatAvatarImage.dart';
-import '../../../../../common/markdown/MarkdownImageRenderer.dart';
 import '../../../../../theme/OperitTheme.dart';
 import '../../../../../theme/OperitThemeAssets.dart';
-import '../../attachments/AttachmentViewerDialog.dart';
+import '../../attachments/ChatMessageImageAttachments.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 import 'BubbleSurface.dart';
+
+export '../../attachments/ChatMessageImageAttachments.dart'
+    show AttachmentData, ChatMessageAttachments, ChatMessageImageAttachments;
 
 class BubbleUserMessageComposable extends StatefulWidget {
   const BubbleUserMessageComposable({
@@ -76,9 +80,8 @@ class _BubbleUserMessageComposableState
       snapshot,
       isUser: true,
     );
-    final effectiveBubbleImageStyle = isHiddenPlaceholder
-        ? null
-        : widget.bubbleImageStyle;
+    final effectiveBubbleImageStyle =
+        isHiddenPlaceholder ? null : widget.bubbleImageStyle;
     final bubbleShape = widget.bubbleRoundedCornersEnabled
         ? const BorderRadius.all(Radius.circular(16))
         : BorderRadius.zero;
@@ -97,15 +100,10 @@ class _BubbleUserMessageComposableState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          if (!isHiddenPlaceholder)
-            _UserMessagePreBubbleContent(
-              parseResult: parseResult,
-              textColor: textColor,
-              backgroundColor: backgroundColor,
-              enableDialogs: widget.enableDialogs,
-            ),
           if (snapshot.bubbleWideLayoutEnabled)
             _WideUserBubbleLayout(
+              parseResult: parseResult,
+              enableDialogs: widget.enableDialogs,
               shouldShowAvatar: shouldShowAvatar,
               shouldShowResolvedName: shouldShowResolvedName,
               resolvedDisplayName: resolvedDisplayName,
@@ -124,10 +122,11 @@ class _BubbleUserMessageComposableState
               contentPadding: contentPadding,
               isHiddenPlaceholder: isHiddenPlaceholder,
               textContent: parseResult.processedText,
-              enableImagePreview: widget.enableDialogs,
             )
           else
             _NormalUserBubbleLayout(
+              parseResult: parseResult,
+              enableDialogs: widget.enableDialogs,
               shouldShowAvatar: shouldShowAvatar,
               shouldShowResolvedName: shouldShowResolvedName,
               resolvedDisplayName: resolvedDisplayName,
@@ -146,7 +145,6 @@ class _BubbleUserMessageComposableState
               contentPadding: contentPadding,
               isHiddenPlaceholder: isHiddenPlaceholder,
               textContent: parseResult.processedText,
-              enableImagePreview: widget.enableDialogs,
             ),
         ],
       ),
@@ -154,106 +152,143 @@ class _BubbleUserMessageComposableState
   }
 }
 
-class _UserMessagePreBubbleContent extends StatelessWidget {
-  const _UserMessagePreBubbleContent({
+class _UserBubbleWithAttachments extends StatefulWidget {
+  const _UserBubbleWithAttachments({
     required this.parseResult,
-    required this.textColor,
-    required this.backgroundColor,
     required this.enableDialogs,
+    required this.maxBubbleWidth,
+    required this.backgroundColor,
+    required this.textColor,
+    required this.bubbleShape,
+    required this.imageStyle,
+    required this.transparentSurface,
+    required this.contentPadding,
+    required this.isHiddenPlaceholder,
+    required this.textContent,
   });
 
   final MessageParseResult parseResult;
-  final Color textColor;
-  final Color backgroundColor;
   final bool enableDialogs;
+  final double maxBubbleWidth;
+  final Color backgroundColor;
+  final Color textColor;
+  final BorderRadius bubbleShape;
+  final BubbleImageStyle? imageStyle;
+  final bool transparentSurface;
+  final EdgeInsets contentPadding;
+  final bool isHiddenPlaceholder;
+  final String textContent;
+
+  @override
+  State<_UserBubbleWithAttachments> createState() =>
+      _UserBubbleWithAttachmentsState();
+}
+
+class _UserBubbleWithAttachmentsState
+    extends State<_UserBubbleWithAttachments> {
+  final GlobalKey _bubbleKey = GlobalKey();
+  double? _measuredBubbleWidth;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleMeasure();
+  }
+
+  @override
+  void didUpdateWidget(covariant _UserBubbleWithAttachments oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.textContent != widget.textContent ||
+        oldWidget.maxBubbleWidth != widget.maxBubbleWidth ||
+        oldWidget.parseResult != widget.parseResult) {
+      _scheduleMeasure();
+    }
+  }
+
+  void _scheduleMeasure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final renderBox =
+          _bubbleKey.currentContext?.findRenderObject() as RenderBox?;
+      if (renderBox != null && renderBox.hasSize) {
+        final width = renderBox.size.width;
+        if (_measuredBubbleWidth == null ||
+            (_measuredBubbleWidth! - width).abs() > 0.5) {
+          setState(() {
+            _measuredBubbleWidth = width;
+          });
+        }
+      }
+    });
+  }
+
+  double? _calculateInitialBubbleWidth(BuildContext context) {
+    if (widget.isHiddenPlaceholder) {
+      return 220.0;
+    }
+    if (widget.textContent.isEmpty) {
+      return 44.0;
+    }
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: widget.textContent,
+        style: Theme.of(context)
+            .textTheme
+            .bodyMedium
+            ?.copyWith(color: widget.textColor),
+      ),
+      textDirection: Directionality.of(context),
+    )..layout(
+        maxWidth: (widget.maxBubbleWidth - widget.contentPadding.horizontal)
+            .clamp(0.0, double.infinity),
+      );
+    return (textPainter.width + widget.contentPadding.horizontal)
+        .clamp(44.0, widget.maxBubbleWidth);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final effectiveBubbleWidth =
+        _measuredBubbleWidth ?? _calculateInitialBubbleWidth(context);
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (parseResult.replyInfo != null)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: <Widget>[
-              Flexible(
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 32, bottom: 4),
-                  child: _ReplyInfoView(replyInfo: parseResult.replyInfo!),
-                ),
-              ),
-            ],
-          ),
-        if (parseResult.imageLinks.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 32, bottom: 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: <Widget>[
-                for (final imageLink in parseResult.imageLinks)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: AttachmentTag(
-                      attachment: AttachmentData(
-                        id: imageLink.id,
-                        filename: 'Image',
-                        type: 'image/*',
-                        mediaPoolType: 'image',
-                      ),
-                      textColor: textColor,
-                      backgroundColor: backgroundColor,
-                      enabled: enableDialogs,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        if (parseResult.trailingAttachments.isNotEmpty)
+        if (widget.parseResult.replyInfo != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: <Widget>[
-                Flexible(
-                  child: Wrap(
-                    alignment: WrapAlignment.end,
-                    spacing: 4,
-                    runSpacing: 4,
-                    children: <Widget>[
-                      for (final attachment in parseResult.trailingAttachments)
-                        AttachmentTag(
-                          attachment: attachment,
-                          textColor: textColor,
-                          backgroundColor: backgroundColor,
-                          enabled: enableDialogs,
-                          onClick: (attachmentData) {
-                            final chatAttachment = ChatAttachment(
-                              id: attachmentData.id,
-                              filename: attachmentData.filename,
-                              mimeType: attachmentData.type,
-                              size: attachmentData.size,
-                              content: attachmentData.content,
-                              mediaPoolType: attachmentData.mediaPoolType,
-                            );
-                            showDialog<void>(
-                              context: context,
-                              builder: (dialogContext) =>
-                                  AttachmentViewerDialog(
-                                    visible: true,
-                                    attachment: chatAttachment,
-                                    onDismiss: () {
-                                      Navigator.of(dialogContext).pop();
-                                    },
-                                  ),
-                            );
-                          },
-                        ),
-                    ],
-                  ),
-                ),
-              ],
+            child: _ReplyInfoView(replyInfo: widget.parseResult.replyInfo!),
+          ),
+        if (widget.parseResult.attachments.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: ChatMessageAttachments(
+              attachments: widget.parseResult.attachments,
+              enableDialogs: widget.enableDialogs,
+              bubbleWidth: effectiveBubbleWidth,
+              isBubbleMode: true,
             ),
           ),
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: widget.maxBubbleWidth,
+            minHeight: 44,
+          ),
+          child: Container(
+            key: _bubbleKey,
+            child: _UserBubbleBody(
+              backgroundColor: widget.backgroundColor,
+              textColor: widget.textColor,
+              bubbleShape: widget.bubbleShape,
+              imageStyle: widget.imageStyle,
+              transparentSurface: widget.transparentSurface,
+              contentPadding: widget.contentPadding,
+              isHiddenPlaceholder: widget.isHiddenPlaceholder,
+              textContent: widget.textContent,
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -261,6 +296,8 @@ class _UserMessagePreBubbleContent extends StatelessWidget {
 
 class _WideUserBubbleLayout extends StatelessWidget {
   const _WideUserBubbleLayout({
+    required this.parseResult,
+    required this.enableDialogs,
     required this.shouldShowAvatar,
     required this.shouldShowResolvedName,
     required this.resolvedDisplayName,
@@ -276,9 +313,10 @@ class _WideUserBubbleLayout extends StatelessWidget {
     required this.contentPadding,
     required this.isHiddenPlaceholder,
     required this.textContent,
-    required this.enableImagePreview,
   });
 
+  final MessageParseResult parseResult;
+  final bool enableDialogs;
   final bool shouldShowAvatar;
   final bool shouldShowResolvedName;
   final String? resolvedDisplayName;
@@ -294,7 +332,6 @@ class _WideUserBubbleLayout extends StatelessWidget {
   final EdgeInsets contentPadding;
   final bool isHiddenPlaceholder;
   final String textContent;
-  final bool enableImagePreview;
 
   @override
   Widget build(BuildContext context) {
@@ -341,27 +378,21 @@ class _WideUserBubbleLayout extends StatelessWidget {
               final maxBubbleWidth = isHiddenPlaceholder
                   ? constraints.maxWidth.clamp(0, 320).toDouble()
                   : constraints.maxWidth;
-              return Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: <Widget>[
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: maxBubbleWidth,
-                      minHeight: 44,
-                    ),
-                    child: _UserBubbleBody(
-                      backgroundColor: backgroundColor,
-                      textColor: textColor,
-                      bubbleShape: bubbleShape,
-                      imageStyle: imageStyle,
-                      transparentSurface: transparentSurface,
-                      contentPadding: contentPadding,
-                      isHiddenPlaceholder: isHiddenPlaceholder,
-                      textContent: textContent,
-                      enableImagePreview: enableImagePreview,
-                    ),
-                  ),
-                ],
+              return Align(
+                alignment: Alignment.centerRight,
+                child: _UserBubbleWithAttachments(
+                  parseResult: parseResult,
+                  enableDialogs: enableDialogs,
+                  maxBubbleWidth: maxBubbleWidth,
+                  backgroundColor: backgroundColor,
+                  textColor: textColor,
+                  bubbleShape: bubbleShape,
+                  imageStyle: imageStyle,
+                  transparentSurface: transparentSurface,
+                  contentPadding: contentPadding,
+                  isHiddenPlaceholder: isHiddenPlaceholder,
+                  textContent: textContent,
+                ),
               );
             },
           ),
@@ -373,6 +404,8 @@ class _WideUserBubbleLayout extends StatelessWidget {
 
 class _NormalUserBubbleLayout extends StatelessWidget {
   const _NormalUserBubbleLayout({
+    required this.parseResult,
+    required this.enableDialogs,
     required this.shouldShowAvatar,
     required this.shouldShowResolvedName,
     required this.resolvedDisplayName,
@@ -388,9 +421,10 @@ class _NormalUserBubbleLayout extends StatelessWidget {
     required this.contentPadding,
     required this.isHiddenPlaceholder,
     required this.textContent,
-    required this.enableImagePreview,
   });
 
+  final MessageParseResult parseResult;
+  final bool enableDialogs;
   final bool shouldShowAvatar;
   final bool shouldShowResolvedName;
   final String? resolvedDisplayName;
@@ -406,7 +440,6 @@ class _NormalUserBubbleLayout extends StatelessWidget {
   final EdgeInsets contentPadding;
   final bool isHiddenPlaceholder;
   final String textContent;
-  final bool enableImagePreview;
 
   @override
   Widget build(BuildContext context) {
@@ -448,22 +481,18 @@ class _NormalUserBubbleLayout extends StatelessWidget {
                           : constraints.maxWidth * 0.85;
                       return Align(
                         alignment: Alignment.centerRight,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: maxBubbleWidth,
-                            minHeight: 44,
-                          ),
-                          child: _UserBubbleBody(
-                            backgroundColor: backgroundColor,
-                            textColor: textColor,
-                            bubbleShape: bubbleShape,
-                            imageStyle: imageStyle,
-                            transparentSurface: transparentSurface,
-                            contentPadding: contentPadding,
-                            isHiddenPlaceholder: isHiddenPlaceholder,
-                            textContent: textContent,
-                            enableImagePreview: enableImagePreview,
-                          ),
+                        child: _UserBubbleWithAttachments(
+                          parseResult: parseResult,
+                          enableDialogs: enableDialogs,
+                          maxBubbleWidth: maxBubbleWidth,
+                          backgroundColor: backgroundColor,
+                          textColor: textColor,
+                          bubbleShape: bubbleShape,
+                          imageStyle: imageStyle,
+                          transparentSurface: transparentSurface,
+                          contentPadding: contentPadding,
+                          isHiddenPlaceholder: isHiddenPlaceholder,
+                          textContent: textContent,
                         ),
                       );
                     },
@@ -497,7 +526,6 @@ class _UserBubbleBody extends StatelessWidget {
     required this.contentPadding,
     required this.isHiddenPlaceholder,
     required this.textContent,
-    required this.enableImagePreview,
   });
 
   final Color backgroundColor;
@@ -508,18 +536,9 @@ class _UserBubbleBody extends StatelessWidget {
   final EdgeInsets contentPadding;
   final bool isHiddenPlaceholder;
   final String textContent;
-  final bool enableImagePreview;
 
   @override
   Widget build(BuildContext context) {
-    if (!isHiddenPlaceholder && isStandaloneMarkdownImage(textContent.trim())) {
-      return MarkdownImageRenderer(
-        imageMarkdown: textContent.trim(),
-        textColor: textColor,
-        maxImageHeight: 320,
-        enablePreview: enableImagePreview,
-      );
-    }
     return BubbleSurface(
       color: backgroundColor,
       borderRadius: bubbleShape,
@@ -633,6 +652,9 @@ class MessageParseResult {
   const MessageParseResult({
     required this.processedText,
     required this.trailingAttachments,
+    this.attachments = const <AttachmentData>[],
+    this.imageAttachments = const <AttachmentData>[],
+    this.nonImageAttachments = const <AttachmentData>[],
     this.replyInfo,
     this.imageLinks = const <ImageLinkData>[],
     this.proxySenderName,
@@ -640,6 +662,9 @@ class MessageParseResult {
 
   final String processedText;
   final List<AttachmentData> trailingAttachments;
+  final List<AttachmentData> attachments;
+  final List<AttachmentData> imageAttachments;
+  final List<AttachmentData> nonImageAttachments;
   final ReplyInfo? replyInfo;
   final List<ImageLinkData> imageLinks;
   final String? proxySenderName;
@@ -663,28 +688,82 @@ class ImageLinkData {
   final String id;
 }
 
-class AttachmentData {
-  const AttachmentData({
-    required this.id,
-    required this.filename,
-    required this.type,
-    this.size = 0,
-    this.content = '',
-    this.mediaPoolType,
-  });
-
-  final String id;
-  final String filename;
-  final String type;
-  final int size;
-  final String content;
-  final String? mediaPoolType;
-}
-
 class _AttachmentMatch {
   const _AttachmentMatch(this.match);
 
   final RegExpMatch match;
+}
+
+MessageParseResult _buildMessageParseResult({
+  required String text,
+  required List<AttachmentData> rawAttachments,
+  required List<ImageLinkData> imageLinks,
+  required ReplyInfo? replyInfo,
+  required String? proxySenderName,
+}) {
+  final rawImageAttachments = <AttachmentData>[];
+  final nonImageAttachments = <AttachmentData>[];
+  for (final att in rawAttachments) {
+    if (att.type == 'application/vnd.workspace-context+xml' ||
+        att.id == 'workspace_context') {
+      continue;
+    }
+    if (att.isImage) {
+      rawImageAttachments.add(att);
+    } else {
+      nonImageAttachments.add(att);
+    }
+  }
+
+  final imageAttachments = <AttachmentData>[];
+  final linkCount = imageLinks.length;
+  final rawCount = rawImageAttachments.length;
+  final maxCount = math.max(linkCount, rawCount);
+
+  for (var i = 0; i < maxCount; i++) {
+    final link = i < linkCount ? imageLinks[i] : null;
+    final raw = i < rawCount ? rawImageAttachments[i] : null;
+
+    if (link != null && raw != null) {
+      imageAttachments.add(
+        AttachmentData(
+          id: link.id,
+          filename: raw.filename,
+          type: raw.type,
+          size: raw.size,
+          content: raw.content,
+          mediaPoolType: 'image',
+        ),
+      );
+    } else if (link != null) {
+      imageAttachments.add(
+        AttachmentData(
+          id: link.id,
+          filename: 'Image',
+          type: 'image/*',
+          mediaPoolType: 'image',
+        ),
+      );
+    } else if (raw != null) {
+      imageAttachments.add(raw);
+    }
+  }
+
+  final allAttachments = <AttachmentData>[
+    ...imageAttachments,
+    ...nonImageAttachments,
+  ];
+
+  return MessageParseResult(
+    processedText: text,
+    trailingAttachments: nonImageAttachments,
+    attachments: allAttachments,
+    imageAttachments: imageAttachments,
+    nonImageAttachments: nonImageAttachments,
+    replyInfo: replyInfo,
+    imageLinks: imageLinks,
+    proxySenderName: proxySenderName,
+  );
 }
 
 /// Extracts message decorations and trims the remaining display text.
@@ -740,33 +819,20 @@ MessageParseResult parseMessageContent(String content) {
         .trim();
   }
 
-  final workspaceAttachments = <AttachmentData>[];
   final workspaceMatch = ChatMarkupRegex.workspaceAttachmentTag.firstMatch(
     cleanedContent,
   );
   if (workspaceMatch != null) {
     final workspaceContent = workspaceMatch.group(0)!;
-    workspaceAttachments.add(
-      AttachmentData(
-        id: 'workspace_context',
-        filename: 'Workspace',
-        type: 'application/vnd.workspace-context+xml',
-        size: workspaceContent.length,
-        content: workspaceContent,
-      ),
-    );
     cleanedContent = cleanedContent.replaceFirst(workspaceContent, '').trim();
   }
 
   if (!cleanedContent.contains('<attachment')) {
-    return MessageParseResult(
-      processedText: cleanedContent,
-      trailingAttachments: <AttachmentData>[
-        ...workspaceAttachments,
-        ...mediaLinkAttachments,
-      ],
-      replyInfo: replyInfo,
+    return _buildMessageParseResult(
+      text: cleanedContent,
+      rawAttachments: mediaLinkAttachments,
       imageLinks: imageLinks,
+      replyInfo: replyInfo,
       proxySenderName: proxySenderName,
     );
   }
@@ -790,14 +856,11 @@ MessageParseResult parseMessageContent(String content) {
   }
 
   if (matches.isEmpty) {
-    return MessageParseResult(
-      processedText: cleanedContent,
-      trailingAttachments: <AttachmentData>[
-        ...workspaceAttachments,
-        ...mediaLinkAttachments,
-      ],
-      replyInfo: replyInfo,
+    return _buildMessageParseResult(
+      text: cleanedContent,
+      rawAttachments: mediaLinkAttachments,
       imageLinks: imageLinks,
+      replyInfo: replyInfo,
       proxySenderName: proxySenderName,
     );
   }
@@ -865,15 +928,14 @@ MessageParseResult parseMessageContent(String content) {
     messageText.write(cleanedContent.substring(lastIndex));
   }
 
-  return MessageParseResult(
-    processedText: messageText.toString().trim(),
-    trailingAttachments: <AttachmentData>[
-      ...workspaceAttachments,
+  return _buildMessageParseResult(
+    text: messageText.toString().trim(),
+    rawAttachments: <AttachmentData>[
       ...mediaLinkAttachments,
       ...trailingAttachments,
     ],
-    replyInfo: replyInfo,
     imageLinks: imageLinks,
+    replyInfo: replyInfo,
     proxySenderName: proxySenderName,
   );
 }

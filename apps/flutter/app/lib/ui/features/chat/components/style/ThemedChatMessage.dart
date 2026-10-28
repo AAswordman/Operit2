@@ -66,7 +66,12 @@ Widget buildThemedChatMessage({
     );
   }
   final identityAvatarUri = readChatMessageIdentity(message)?.avatarUri;
-  if (snapshot.chatStyle != UserPreferencesManager.CHAT_STYLE_BUBBLE) {
+  // User messages pick their own style; AI, summary and system messages share
+  // the AI style.
+  final chatStyle = message.sender == 'user'
+      ? snapshot.userChatStyle
+      : snapshot.aiChatStyle;
+  if (chatStyle != UserPreferencesManager.CHAT_STYLE_BUBBLE) {
     return CursorStyleChatMessage(
       key: key,
       message: message,
