@@ -61,6 +61,12 @@ const COMMAND_SPECS: &[TuiCommandSpec] = &[
         options: &[],
     },
     TuiCommandSpec {
+        name: "diff",
+        usage: "/diff [file]",
+        description_key: TuiTextKey::CommandDiffDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
         name: "new",
         usage: "/new [source <chat-id>] [input <json-object>]",
         description_key: TuiTextKey::CommandNewDescription,
