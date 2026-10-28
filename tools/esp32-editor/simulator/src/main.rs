@@ -753,7 +753,7 @@ impl Simulator {
                     }
                     .await
                 }
-                Some("speech") => (|| {
+                Some("speech") => async {
                     if let Some(id) = request["requestId"].as_str() {
                         if speech.snapshot()["requestId"].as_str() != Some(id) {
                             return Err("Speech request expired".into());
@@ -773,11 +773,11 @@ impl Simulator {
                                 .decode(request["audio"].as_str().unwrap_or(""))
                                 .map_err(|e| e.to_string())?;
                             speech
-                                .appendPcm(pcm)
+                                .appendPcm(pcm).await
                                 .map(|_| serde_json::json!({"ok":true}))
                         }
                         "finish" => speech
-                            .finishRecognition()
+                            .finishRecognition().await
                             .map(|_| serde_json::json!({"ok":true})),
                         "cancel" => {
                             speech.cancel(
@@ -790,7 +790,7 @@ impl Simulator {
                             .map(|id| serde_json::json!({"requestId":id})),
                         _ => Err("Unknown speech operation".into()),
                     }
-                })(),
+                }.await,
                 Some("sendImage") => (|| {
                     use base64::Engine;
                     let encoded = request["bytes"].as_str().unwrap_or("");

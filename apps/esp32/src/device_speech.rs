@@ -6,7 +6,7 @@ use operit_link::{
     CoreValue, CoreWatchRequest,
 };
 use operit_node_edge::{EdgePushHandler, EdgeWatchHandler};
-use std::sync::{Arc, Mutex};
+use std::{collections::BTreeMap, sync::{Arc, Mutex}};
 use tokio::sync::mpsc;
 const TARGET: &str = "operit.device.speech";
 const BLOCK: usize = 4096;
@@ -19,12 +19,15 @@ struct State {
     recording: bool,
     resultId: u64,
     text: Option<String>,
+    pendingText: String,
     error: Option<String>,
 }
 /// Bounded, device-owned session. No Core speech routes, leases, or plugin runtime.
 #[derive(Clone)]
 pub struct DeviceSpeech {
     state: Arc<Mutex<State>>,
+    capture: Arc<tokio::sync::Mutex<()>>,
+    changed: tokio::sync::watch::Sender<bool>,
     playback: mpsc::Sender<CoreValue>,
     playbackInput: Arc<Mutex<mpsc::Receiver<CoreValue>>>,
 }
@@ -33,6 +36,8 @@ impl Default for DeviceSpeech {
         let (playback, input) = mpsc::channel(4);
         Self {
             state: Arc::new(Mutex::new(State::default())),
+            capture: Arc::new(tokio::sync::Mutex::new(())),
+            changed: tokio::sync::watch::channel(false).0,
             playback,
             playbackInput: Arc::new(Mutex::new(input)),
         }
@@ -58,8 +63,17 @@ fn fields(
         _ => Err(error("Expected object")),
     }
 }
+#[cfg(test)]
 fn value(value: serde_json::Value) -> CoreValue {
     operit_link::toCoreValue(value).unwrap()
+}
+// Share one small wire builder across capture, cancellation and TTS. Avoid
+// constructing a JSON tree and copying it back into Link values on the device.
+#[inline(never)]
+fn packetFields(kind: &str) -> BTreeMap<String, CoreValue> {
+    let mut fields = BTreeMap::new();
+    fields.insert("type".into(), CoreValue::String(kind.into()));
+    fields
 }
 impl DeviceSpeech {
     pub fn handlers(&self) -> (Arc<EdgeWatchHandler>, Arc<EdgePushHandler>) {
@@ -90,13 +104,15 @@ impl DeviceSpeech {
             return Err(error("A speech processor is already connected"));
         }
         let (sender, stream) = CoreEventStream::boundedChannel(4);
+        let mut ready = packetFields("ready");
+        ready.insert("protocol".into(), CoreValue::Unsigned(2));
         sender
             .try_send(CoreEvent {
                 requestId: Some(request.requestId),
                 target: TARGET.into(),
                 propertyName: "requests".into(),
                 kind: CoreEventKind::Snapshot,
-                value: value(serde_json::json!({"type":"ready","protocol":1})),
+                value: CoreValue::Map(ready),
             })
             .unwrap();
         state.processor = Some((session.clone(), sender));
@@ -134,6 +150,8 @@ impl DeviceSpeech {
         }
         state.processor = None;
         state.inputOpen = false;
+        state.pendingText = String::new();
+        self.changed.send_replace(true);
         if state.active.take().is_some() {
             while self.playbackInput.lock().unwrap().try_recv().is_ok() {}
             state.recording = false;
@@ -161,7 +179,7 @@ impl DeviceSpeech {
         }
         Ok(())
     }
-    fn begin(&self, operation: &str, payload: serde_json::Value) -> Result<String, String> {
+    fn begin(&self, operation: &str, mut payload: BTreeMap<String, CoreValue>) -> Result<String, String> {
         let mut state = self.state.lock().unwrap();
         if !state.inputOpen {
             return Err("请先连接语音处理插件".into());
@@ -173,81 +191,80 @@ impl DeviceSpeech {
             while self.playbackInput.lock().unwrap().try_recv().is_ok() {}
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let mut payload = payload.as_object().unwrap().clone();
-        payload.insert("id".into(), id.clone().into());
-        payload.insert("type".into(), operation.into());
-        Self::emit(&mut state, value(payload.into()))?;
+        payload.insert("id".into(), CoreValue::String(id.clone()));
+        Self::emit(&mut state, CoreValue::Map(payload))?;
         state.active = Some((id.clone(), operation.into()));
         state.text = None;
+        state.pendingText = String::new();
         state.error = None;
         state.recording = operation == "stt.begin";
         Ok(id)
     }
     /// Native capture supplies 16 kHz, mono, signed 16-bit PCM in bounded blocks.
     pub fn beginRecognition(&self) -> Result<String, String> {
-        self.begin(
-            "stt.begin",
-            serde_json::json!({"sampleRate":16000,"channels":1,"bitsPerSample":16}),
-        )
+        let mut payload = packetFields("stt.begin");
+        for (key, number) in [("sampleRate", 16000), ("channels", 1), ("bitsPerSample", 16)] {
+            payload.insert(key.into(), CoreValue::Unsigned(number));
+        }
+        self.begin("stt.begin", payload)
     }
-    pub fn appendPcm(&self, pcm: Vec<u8>) -> Result<(), String> {
+    // Capture callers await this bounded queue. Never hold the state lock while
+    // waiting: disconnect/cancel must invalidate an outstanding reservation.
+    async fn capturePacket(&self, id: String, pcm: Option<Vec<u8>>) -> Result<(), String> {
+        let mut changed = self.changed.subscribe();
+        let sender = {
+            let state = self.state.lock().unwrap();
+            if !state.recording { return Err("Microphone is not recording".into()); }
+            if state.active.as_ref().map(|p| &p.0) != Some(&id) { return Err("Speech request expired".into()); }
+            state.processor.as_ref().ok_or("Speech processor disconnected")?.1.clone()
+        };
+        let permit = tokio::select! {
+            result = sender.reserve() => result.map_err(|_| "Speech processor disconnected")?,
+            _ = changed.changed() => return Err("Speech request expired".into()),
+        };
+        let mut state = self.state.lock().unwrap();
+        if !state.recording || state.active.as_ref().map(|p| p.0.as_str()) != Some(id.as_str()) {
+            return Err("Speech request expired".into());
+        }
+        let end = pcm.is_none();
+        let mut packet = packetFields(if end {"stt.end"} else {"stt.data"});
+        packet.insert("id".into(), CoreValue::String(id));
+        if let Some(pcm) = pcm { packet.insert("audio".into(), CoreValue::Bytes(pcm.into())); }
+        permit.send(CoreEvent { requestId: None, target: TARGET.into(), propertyName: "requests".into(),
+            kind: CoreEventKind::Changed, value: CoreValue::Map(packet) });
+        if end { state.recording = false; }
+        Ok(())
+    }
+    pub async fn appendPcm(&self, pcm: Vec<u8>) -> Result<(), String> {
         if pcm.is_empty() || pcm.len() > BLOCK || pcm.len() % 2 != 0 {
             return Err("Invalid PCM block".into());
         }
-        let mut state = self.state.lock().unwrap();
-        if !state.recording {
-            return Err("Microphone is not recording".into());
-        }
-        let id = state
-            .active
-            .as_ref()
-            .ok_or("Speech session ended")?
-            .0
-            .clone();
-        let mut packet = fields(value(serde_json::json!({"type":"stt.data","id":id}))).unwrap();
-        packet.insert("audio".into(), CoreValue::Bytes(pcm.into()));
-        if let Err(message) = Self::emit(&mut state, CoreValue::Map(packet)) {
-            state.active = None;
-            state.recording = false;
-            state.error = Some(message.clone());
-            state.resultId += 1;
-            return Err(message);
-        }
-        Ok(())
+        let id = self.state.lock().unwrap().active.as_ref().ok_or("Speech session ended")?.0.clone();
+        let _capture = self.capture.lock().await;
+        self.capturePacket(id, Some(pcm)).await
     }
-    pub fn finishRecognition(&self) -> Result<(), String> {
-        let mut state = self.state.lock().unwrap();
-        if !state.recording {
-            return Err("Microphone is not recording".into());
-        }
-        let id = state.active.as_ref().unwrap().0.clone();
-        if let Err(message) = Self::emit(
-            &mut state,
-            value(serde_json::json!({"type":"stt.end","id":id})),
-        ) {
-            state.active = None;
-            state.recording = false;
-            state.error = Some(message.clone());
-            state.resultId += 1;
-            return Err(message);
-        }
-        state.recording = false;
-        Ok(())
+    pub async fn finishRecognition(&self) -> Result<(), String> {
+        let id = self.state.lock().unwrap().active.as_ref().ok_or("Speech session ended")?.0.clone();
+        let _capture = self.capture.lock().await;
+        self.capturePacket(id, None).await
     }
     pub fn synthesize(&self, text: String) -> Result<String, String> {
-        if text.trim().is_empty() || text.len() > 16384 {
+        if text.trim().is_empty() || text.len() > 4096 {
             return Err("Invalid speech text".into());
         }
-        self.begin("tts", serde_json::json!({"text":text}))
+        let mut payload = packetFields("tts");
+        payload.insert("text".into(), CoreValue::String(text));
+        self.begin("tts", payload)
     }
     pub fn cancel(&self, message: String) {
         let mut state = self.state.lock().unwrap();
+        self.changed.send_replace(true);
         if let Some((id, _)) = state.active.take() {
-            let _ = Self::emit(
-                &mut state,
-                value(serde_json::json!({"type":"cancel","id":id})),
-            );
+            let mut payload = packetFields("cancel");
+            payload.insert("id".into(), CoreValue::String(id));
+            let _ = Self::emit(&mut state, CoreValue::Map(payload));
             state.recording = false;
+            state.pendingText = String::new();
             state.error = Some(message);
             state.resultId += 1;
         }
@@ -277,21 +294,41 @@ impl DeviceSpeech {
             }
             let operation = &state.active.as_ref().unwrap().1;
             match kind.as_str() {
-                "stt.result" if operation == "stt.begin" => {
+                "stt.text" if operation == "stt.begin" && !state.recording => {
                     let text = string(&packet, "text")?;
-                    if text.len() > 16384 {
+                    if text.is_empty() || text.len() > 2048 || state.pendingText.len() + text.len() > 16384 {
+                        return Err(error("Invalid recognized text chunk"));
+                    }
+                    // Vec's geometric growth can otherwise reserve almost 32 KiB
+                    // for a 16 KiB result after several non-power-of-two chunks.
+                    state.pendingText.try_reserve_exact(text.len())
+                        .map_err(|_| error("Recognized text allocation failed"))?;
+                    state.pendingText.push_str(text);
+                    return Ok(());
+                }
+                "stt.result" if operation == "stt.begin" && !state.recording => {
+                    let text = string(&packet, "text")?;
+                    if state.pendingText.len() + text.len() > 16384 {
                         return Err(error("Recognized text exceeds device capacity"));
                     }
-                    state.text = Some(text.to_owned());
+                    // Vec's geometric growth can otherwise reserve almost 32 KiB
+                    // for a 16 KiB result after several non-power-of-two chunks.
+                    state.pendingText.try_reserve_exact(text.len())
+                        .map_err(|_| error("Recognized text allocation failed"))?;
+                    state.pendingText.push_str(text);
+                    state.text = Some(std::mem::take(&mut state.pendingText));
                     state.active = None;
                     state.recording = false;
+                    self.changed.send_replace(true);
                     state.resultId += 1;
                     return Ok(());
                 }
                 "error" => {
+                    state.pendingText = String::new();
                     state.error = Some(string(&packet, "error")?.chars().take(256).collect());
                     state.active = None;
                     state.recording = false;
+                    self.changed.send_replace(true);
                     state.resultId += 1;
                     return Ok(());
                 }
@@ -344,6 +381,7 @@ impl CoreLinkPushSession for Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
     fn connect(
         service: &DeviceSpeech,
         session: &str,
@@ -378,12 +416,12 @@ mod tests {
             CoreValue::String("stt.begin".into())
         );
         let pcm = vec![0, 128, 255, 127];
-        service.appendPcm(pcm.clone()).unwrap();
+        service.appendPcm(pcm.clone()).await.unwrap();
         assert_eq!(
             fields(packet(&mut output).await).unwrap()["audio"],
             CoreValue::Bytes(pcm.into())
         );
-        service.finishRecognition().unwrap();
+        service.finishRecognition().await.unwrap();
         packet(&mut output).await;
         input
             .send(value(
@@ -399,6 +437,23 @@ mod tests {
             ))
             .await
             .is_err());
+    }
+    #[tokio::test]
+    async fn long_recognition_is_published_only_after_all_text_chunks_complete() {
+        let service = DeviceSpeech::default();
+        let (mut output, mut input) = connect(&service, "long-text");
+        packet(&mut output).await;
+        let id = service.beginRecognition().unwrap(); packet(&mut output).await;
+        service.finishRecognition().await.unwrap(); packet(&mut output).await;
+        let chunk = "字".repeat(682);
+        for _ in 0..8 {
+            input.send(value(serde_json::json!({"type":"stt.text","id":id,"text":chunk}))).await.unwrap();
+            assert!(service.snapshot()["text"].is_null(), "partial input became a submitted draft");
+        }
+        input.send(value(serde_json::json!({"type":"stt.result","id":id,"text":"0123456789abcdef"}))).await.unwrap();
+        assert_eq!(service.snapshot()["text"], chunk.repeat(8) + "0123456789abcdef");
+        assert!(service.state.lock().unwrap().text.as_ref().unwrap().capacity() <= 16384);
+        assert!(input.send(value(serde_json::json!({"type":"stt.text","id":id,"text":"stale"}))).await.is_err());
     }
     #[tokio::test]
     async fn synthesis_returns_exact_binary_and_completion_to_device_playback() {
@@ -433,27 +488,58 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn disconnect_and_overrun_fail_explicitly_and_allow_a_new_processor() {
+    async fn capture_waits_for_space_and_disconnect_releases_waiter() {
         let service = DeviceSpeech::default();
-        let (mut output, input) = connect(&service, "three");
+        let (mut output, input) = connect(&service, "capture");
         packet(&mut output).await;
         service.beginRecognition().unwrap();
+        for _ in 0..3 { service.appendPcm(vec![1, 2]).await.unwrap(); }
+        let append = service.appendPcm(vec![3, 4]);
+        tokio::pin!(append);
+        assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(append.as_mut().poll(cx).is_pending())).await);
+        assert_eq!(service.snapshot()["ready"], true);
+        packet(&mut output).await;
+        append.await.unwrap();
+        let finish = service.finishRecognition();
+        tokio::pin!(finish);
+        assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(finish.as_mut().poll(cx).is_pending())).await);
         drop(input);
+        assert!(finish.await.is_err());
         assert_eq!(service.snapshot()["phase"], 0);
-        assert!(service.snapshot()["error"]
-            .as_str()
-            .unwrap()
-            .contains("断开"));
         drop(output);
-        let (mut output, _input) = connect(&service, "four");
+        let (_output, _input) = connect(&service, "reconnected");
+        assert!(service.beginRecognition().is_ok());
+    }
+    #[tokio::test]
+    async fn five_minutes_of_pcm_is_ordered_with_a_slow_bounded_consumer() {
+        let service = DeviceSpeech::default();
+        let (mut output, _input) = connect(&service, "long-capture");
         packet(&mut output).await;
         service.beginRecognition().unwrap();
-        for _ in 0..3 {
-            service.appendPcm(vec![1, 2]).unwrap();
-        }
-        assert!(service.appendPcm(vec![1, 2]).is_err());
-        assert_eq!(service.snapshot()["phase"], 0);
-        assert!(service.appendPcm(vec![1, 2]).is_err());
+        const TOTAL: usize = 16000 * 2 * 300;
+        let producer = async {
+            for offset in (0..TOTAL).step_by(BLOCK) {
+                let pcm = (offset..(offset + BLOCK).min(TOTAL)).map(|i| (i % 251) as u8).collect();
+                service.appendPcm(pcm).await.unwrap();
+            }
+            service.finishRecognition().await.unwrap();
+        };
+        let consumer = async {
+            let mut received = 0;
+            loop {
+                tokio::task::yield_now().await;
+                let p = fields(packet(&mut output).await).unwrap();
+                if p["type"] == CoreValue::String("stt.end".into()) { break; }
+                if let Some(CoreValue::Bytes(bytes)) = p.get("audio") {
+                    assert!(bytes.len() <= BLOCK);
+                    for byte in bytes.iter() { assert_eq!(*byte, (received % 251) as u8); received += 1; }
+                }
+            }
+            assert_eq!(received, TOTAL);
+        };
+        tokio::join!(producer, consumer);
+        assert_eq!(service.snapshot()["ready"], true);
+        assert_eq!(service.snapshot()["phase"], 3);
     }
     #[tokio::test]
     async fn cancelled_backpressured_audio_never_enters_the_next_request() {

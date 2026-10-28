@@ -74,6 +74,20 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   assert.equal(invalidSend.status,400);
   assert.match((await invalidSend.json()).error,/发送编号/);
 
+  // The emoji's UTF-8 bytes arrive in separate HTTP reads. Decoding each
+  // chunk separately would replace it and incorrectly exceed the text limit.
+  const fragmentedBody=Buffer.from(JSON.stringify({text:'a'.repeat(16380)+'🙂'}));
+  const split=fragmentedBody.indexOf(Buffer.from('🙂'))+1;
+  const fragmented=await new Promise((resolve,reject)=>{
+    const req=http.request(base+'/api/simulator/send',{method:'POST',headers:{'Content-Type':'application/json'}},res=>{
+      let body='';res.on('data',chunk=>body+=chunk);res.on('end',()=>resolve({status:res.statusCode,...JSON.parse(body)}));
+    });
+    req.on('error',reject);req.write(fragmentedBody.subarray(0,split));
+    setTimeout(()=>req.end(fragmentedBody.subarray(split)),10);
+  });
+  assert.equal(fragmented.status,400);
+  assert.match(fragmented.error,/尚未连接/,'valid UTF-8 at the input limit must survive fragmented HTTP reads');
+
   const invalidImage = await fetch(base + '/api/simulator/send-image', {method:'POST',headers:{'Content-Type':'text/plain'},body:'not an image'});
   assert.equal(invalidImage.status,400);
   assert.match((await invalidImage.json()).error,/PNG\/JPEG/);

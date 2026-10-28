@@ -13,6 +13,17 @@ import path from 'node:path';
 import {networkInterfaces} from 'node:os';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 
+async function jsonBody(req: IncomingMessage, limit: number, message: string): Promise<unknown> {
+  const chunks: Buffer[] = []; let length = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    length += bytes.length;
+    if (length > limit) throw new Error(message);
+    chunks.push(bytes);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+}
+
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const stateDir = process.env.OPERIT_SIM_STATE_DIR
   ? pathToFileURL(path.resolve(process.env.OPERIT_SIM_STATE_DIR) + path.sep)
@@ -263,9 +274,7 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
       for await (const chunk of req) { body += String(chunk); if (Buffer.byteLength(body) > 1024) throw new Error('存储测试配置过长'); }
       reply(200, await rpc('storageControl', {configuration: JSON.parse(body)}));
     } else if (url.pathname === '/api/simulator/speech' && req.method === 'POST') {
-      let body = '';
-      for await (const chunk of req) { body += String(chunk); if (Buffer.byteLength(body) > 24000) throw new Error('语音请求过长'); }
-      const input = JSON.parse(body) as Record<string, unknown>;
+      const input = await jsonBody(req, 24000, '语音请求过长') as Record<string, unknown>;
       reply(200, await rpc('speech', input));
     } else if (url.pathname === '/api/simulator/core-access'  && req.method === 'POST') {
       let body = '';
@@ -326,14 +335,10 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         reply(200, await requestUi('swipe', {direction: input.direction}));
       }
     } else if (['/api/simulator/action', '/api/simulator/send'].includes(url.pathname) && req.method === 'POST') {
-      let body = '';
-      for await (const chunk of req) {
-        body += String(chunk);
-        if (Buffer.byteLength(body) > 8192) throw new Error('消息过长');
-      }
-      const input = JSON.parse(body) as {action?: unknown; text?: unknown; sendId?: unknown; requestId?: unknown; assignmentVersion?: unknown; inputId?: unknown};
+      const input = await jsonBody(req, 100000, '消息过长') as {action?: unknown; text?: unknown; sendId?: unknown; requestId?: unknown; assignmentVersion?: unknown; inputId?: unknown};
       if (url.pathname.endsWith('/send')) {
         if (typeof input.text !== 'string') throw new Error('缺少消息内容');
+        if (Buffer.byteLength(input.text) > 16384) throw new Error('消息超过 16384 字节，请拆分发送');
         if (input.sendId !== undefined && (typeof input.sendId !== 'string' || input.sendId.length > 64)) throw new Error('无效的发送编号');
         reply(200, await rpc('send', {text: input.text, sendId: input.sendId}));
         return true;

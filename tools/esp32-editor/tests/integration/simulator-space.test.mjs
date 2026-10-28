@@ -119,7 +119,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
           // for the user's latest request when selecting the fixture response.
           const lastUserIndex = input.messages.findLastIndex(message =>
             message.role === 'user' && !String(message.content).includes('status=') &&
-            /SIM_(CHAT|RECONNECT|CORE_PLUGIN|EXTERNAL_SYNC)/.test(JSON.stringify(message.content)));
+            /SIM_(CHAT|RECONNECT|CORE_PLUGIN|EXTERNAL_SYNC|LONG_INPUT)/.test(JSON.stringify(message.content)));
           const lastUser = input.messages[lastUserIndex];
           const pluginTurn = JSON.stringify(lastUser?.content ?? '').includes('SIM_CORE_PLUGIN');
           let text = prompt.includes('SIM_RECONNECT') ? 'SIM_RECONNECT_OK' : 'SIM_CHAT_OK';
@@ -142,6 +142,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
           if (String(lastUser?.content).includes('SIM_EXTERNAL_SYNC')) {
             text = Array.from({length:90}, (_, index) => 'SYNC_LINE_' + String(index).padStart(3, '0')).join('\n');
           }
+          if (String(lastUser?.content).includes('SIM_LONG_INPUT')) text = 'SIM_LONG_INPUT_OK';
           if (input.stream) {
             res.writeHead(200, {'Content-Type': 'text/event-stream'});
             // Send more than one small read without exceeding the per-event limit;
@@ -873,6 +874,23 @@ ${JSON.stringify(fixtureMetadata)}
     assert(external.chat.messages.some(message => message.text.includes('SYNC_LINE_089')));
     assert.equal(providerRequests.length, requestsBeforeExternal + 1, 'sync and pagination must not replay the send');
     t.diagnostic('Core CLI wrote the active chat; Edge subscription received it and recovered all 90 lines through bounded pages without resending');
+    const longInput = 'SIM_LONG_INPUT\n' + '流式长文本🙂'.repeat(850) + '\n完整末尾标记';
+    assert(Buffer.byteLength(longInput) > 8192 && Buffer.byteLength(longInput) <= 16384);
+    const beforeLong = providerRequests.length;
+    await post('/api/simulator/send', {text:longInput, sendId:'long-utf8-input'});
+    await waitDevice('complete long text reaches the existing Core generation pipeline',device=>
+      device.chatSendResult?.sendId==='long-utf8-input' && device.chatSendResult.ok &&
+      device.chat.messages.some(message=>message.text==='SIM_LONG_INPUT_OK') && !device.chat.generating);
+    assert.equal(providerRequests.length,beforeLong+1);
+    assert(providerRequests.at(-1).messages.some(message=>
+      JSON.stringify(message.content).includes(longInput.replaceAll('\n','\\n')) ||
+      (typeof message.content==='string' && message.content.includes(longInput))),
+      'provider must receive every UTF-8 character including the final marker');
+    const persistedLong = await core.command(['core','chat','show',chatId]);
+    assert(JSON.stringify(persistedLong).includes('完整末尾标记'));
+    await assert.rejects(post('/api/simulator/send',{text:'字'.repeat(6000)}),/16384/);
+    assert.equal(providerRequests.length,beforeLong+1,'rejected oversized input must not start a turn');
+    t.diagnostic('Long UTF-8 input crossed the 8 KiB frame boundary in 2 KiB chunks; Core provider and history retained the final marker exactly once');
     await leave();
     assert.deepEqual(await core.command(['space', 'show']), former, 'the same Core retains the previous Space');
     const cancelled = await core.command(['space', 'join', node]);

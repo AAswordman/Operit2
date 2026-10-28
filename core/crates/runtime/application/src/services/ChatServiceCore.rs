@@ -567,6 +567,30 @@ impl ChatServiceCore {
         Ok(())
     }
 
+    /// Receives bounded UTF-8 chunks, then enters the existing turn pipeline.
+    /// An explicit empty commit chunk plus EOF is required; an interrupted
+    /// upload must never turn its received prefix into a chat message.
+    #[operit_route_macros::operit_core_route(binding = chatIdOverride)]
+    pub async fn sendUserMessageStream(
+        &mut self,
+        promptFunctionType: PromptFunctionType,
+        participantId: Option<String>,
+        chatIdOverride: Option<String>,
+        expectedByteLength: i64,
+        proxySenderNameOverride: Option<String>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
+        attachments: Vec<AttachmentInfo>,
+        replyToMessage: Option<ChatMessage>,
+        turnOptions: ChatTurnOptions,
+        text: operit_util::stream::ReverseStream::ReverseStream<String>,
+    ) -> Result<(), String> {
+        let messageText = super::chat_input_stream::receive(text, expectedByteLength).await?;
+        self.sendUserMessage(promptFunctionType, participantId, chatIdOverride, messageText,
+            proxySenderNameOverride, chatProviderIdOverride, chatModelIdOverride,
+            attachments, replyToMessage, turnOptions).await
+    }
+
     /// Starts the actual originating generation or returns an explicit hook ownership decision for native receipt observers.
     pub(crate) async fn startUserMessage(
         &mut self,

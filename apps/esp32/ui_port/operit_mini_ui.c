@@ -859,7 +859,13 @@ SETTER(chat_task,task)
 void operit_ui_set_speech_state(unsigned phase){
     if(phase>3)phase=0;if(ui.speech_phase!=phase){ui.speech_phase=(uint8_t)phase;invalidate();}
 }
-SETTER(chat_draft,draft)
+void operit_ui_set_chat_draft(const char *value){
+    if(value&&strlen(value)>=sizeof(ui.draft)){
+        ui.draft[0]=0;
+        copy(ui.error,sizeof(ui.error),"输入超过设备草稿容量，请分段发送");invalidate();return;
+    }
+    if(copy(ui.draft,sizeof(ui.draft),value))invalidate();
+}
 void operit_ui_action_error(const char *value){if(copy(ui.error,sizeof(ui.error),value))invalidate();}
 void operit_ui_set_chat_preview(const char *value){(void)value;}
 void operit_ui_set_chat_identity(const char *id,const char *character){

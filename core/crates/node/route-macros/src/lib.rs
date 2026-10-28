@@ -272,8 +272,33 @@ fn expand_core_route(
         }
     };
 
-    let route_helpers = if reverse_argument.is_some() {
+    let route_helpers = if let Some(input) = reverse_argument {
+        let push_helper_name = format_ident!("__operit_core_route_push_{}", original_name);
+        let input_type = function.sig.inputs.iter().find_map(|arg| match arg {
+            FnArg::Typed(arg) if matches!(arg.pat.as_ref(), Pat::Ident(p) if p.ident == *input) => Some(arg.ty.clone()),
+            _ => None,
+        }).expect("reverse input type");
+        let decode = function.sig.inputs.iter().filter_map(|arg| match arg {
+            FnArg::Typed(arg) => match arg.pat.as_ref() {
+                Pat::Ident(p) if p.ident != *input => {
+                    let name = &p.ident; let ty = owned_decode_type(&arg.ty);
+                    Some(quote! { let #name: #ty = operit_rslink_runtime::decode_core_arg(&mut __core_args, stringify!(#name))?; })
+                }
+                _ => None,
+            },
+            _ => None,
+        });
         quote! {
+            /// Consumes one authorized typed input using the service's local implementation.
+            #[doc(hidden)]
+            #visibility async fn #push_helper_name(
+                &mut self, request: operit_link::CorePushRequest, #input: #input_type,
+            ) -> Result<(), operit_link::CoreLinkError> {
+                let mut __core_args = operit_rslink_runtime::object_args(request.args)?;
+                #(#decode)*
+                #call_expression.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
+            }
+
             /// Rejects value calls to a service whose input is a ReverseStream.
             #[doc(hidden)]
             #visibility async fn #call_helper_name(

@@ -565,3 +565,13 @@ test('device space discovery and numeric keypad forward exact bounded pairing ac
   update(0,'申请已取消');tap('space_manage');assert.equal(tap('space_join'),1);assert.equal(actions.at(-1),'edge_space_join');
   assert(inspect().staticBytes<10*1024);
 });
+
+test('native overlong input reports an error instead of sending a truncated prefix',async()=>{
+  const {ui,call,actions,inspect}=await fixture();
+  ui._operit_ui_set_connection(1,1);
+  call('set_chat_draft',['string'],['字'.repeat(200)]);call('submit_chat');
+  assert.deepEqual(actions,[]);
+  assert(inspect().nodes.some(n=>n.id==='error'&&n.text.includes('草稿容量')));
+  call('set_chat_draft',['string'],['短消息']);call('submit_chat');
+  assert.deepEqual(actions,['edge_send']);
+});

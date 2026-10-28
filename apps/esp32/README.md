@@ -581,3 +581,24 @@ refreshed automatically. Pairing, approval and membership remain separate.
 A retained remote pairing is replaced only after a fresh code succeeds; unpair
 itself remains local-only. No new Link wire encoding, transport or Host API is
 introduced.
+
+### Long input and speech transport
+
+The C draft remains a 511-byte UTF-8 display/input buffer. The browser owns its
+complete draft separately (up to 16,384 bytes); native input without that owner
+rejects overflow explicitly. Remote chat sends above 2,048 bytes use the existing
+Link Push / ReverseStream transport, in UTF-8 chunks of at most 2,048 bytes. Core
+validates length, explicit commit and EOF, then delegates to `sendUserMessage`.
+Incomplete input never submits its received prefix. This requires the matching
+Core route. Edge retains a bounded temporary input string, not a persisted full
+transcript. Direct model input retains its existing 2,048-byte limit.
+
+Speech capture and playback use four-slot queues of at most 4,096-byte audio
+blocks. Capture awaits capacity and invalidates outstanding sends on disconnect
+or cancellation. Speech protocol v2 also returns recognition text in 2,048-byte
+chunks; only the final result publishes the complete bounded draft (16,384 bytes
+maximum). The Core example processor owns up to 300 seconds of PCM and WAV
+assembly. Device TTS input is limited to 4,096 UTF-8 bytes and Core calls the
+existing provider in text segments of at most 1,024 bytes. Provider recording
+limits and actual recognition/playback quality remain separate from transport
+validation. This board still has no configured microphone or speaker driver.
