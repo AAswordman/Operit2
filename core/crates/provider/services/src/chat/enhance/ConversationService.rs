@@ -490,6 +490,48 @@ impl ConversationService {
         };
         let summaryChunks = collect_stream_chunks(summaryStream).await;
         let mut summaryContent = removeThinkingContent(&summaryChunks.join("").trim().to_string());
+        if !checkpointTemplateMatches(&summaryContent) {
+            let nudgeTurn = PromptTurn::new(
+                PromptTurnKind::USER,
+                FunctionalPrompts::boundaryNudge(useEnglish).to_string(),
+            );
+            let nudgedHistory = {
+                let mut history = preparedHistory.clone();
+                let nudge = nudgeTurn.clone();
+                history.push(PromptTurn {
+                    kind: PromptTurnKind::ASSISTANT,
+                    content: summaryContent.clone(),
+                    tool_name: None,
+                    metadata: HashMap::new(),
+                });
+                history.push(nudge);
+                history
+            };
+            let nudgeStream = {
+                let mut service = summaryService.lock().await;
+                service
+                    .send_message(SendMessageRequest {
+                        chat_history: nudgedHistory,
+                        model_parameters: Vec::new(),
+                        enable_thinking: false,
+                        thinking_quality_level: 1,
+                        thinking_configurations: "[]".to_string(),
+                        thinking_option_id: String::new(),
+                        stream: true,
+                        available_tools: Vec::new(),
+                        preserve_think_in_history: false,
+                        enable_retry: true,
+                        on_non_fatal_error: None,
+                        on_tool_invocation: None,
+                    })
+                    .await?
+            };
+            let nudgeChunks = collect_stream_chunks(nudgeStream).await;
+            let nudgedContent = removeThinkingContent(&nudgeChunks.join("").trim().to_string());
+            if checkpointTemplateMatches(&nudgedContent) {
+                summaryContent = nudgedContent;
+            }
+        }
         let (summaryInputTokens, summaryCachedInputTokens, summaryOutputTokens) = {
             let service = summaryService.lock().await;
             (
@@ -530,8 +572,10 @@ impl ConversationService {
         summaryContent = afterGenerateContext.summary_result.expect(
             "SummaryHookContext.summary_result must be present after after_generate_summary",
         );
-        if summaryContent.trim().is_empty() {
-            return Ok("Conversation Summary: Unable to generate valid summary.".to_string());
+        if summaryContent.trim().is_empty() || !checkpointTemplateMatches(&summaryContent) {
+            return Err(AiServiceError::RequestFailed(
+                "Compaction checkpoint did not match the required template".to_string(),
+            ));
         }
         self.runtime_context
             .support()
@@ -805,6 +849,38 @@ fn buildSummaryPreparedHistory(
     prepared.extend(chatHistory);
     prepared.push(PromptTurn::new(PromptTurnKind::USER, summaryPrompt));
     prepared
+}
+
+/// Reports whether one summary reply carries the required checkpoint template:
+/// the checkpoint title line plus every bracketed section heading.
+fn checkpointTemplateMatches(reply: &str) -> bool {
+    let title = if reply.contains("==========对话检查点==========") {
+        true
+    } else {
+        reply.contains("==========Conversation Checkpoint==========")
+    };
+    if !title {
+        return false;
+    }
+    let cn_sections = [
+        "【核心任务状态】",
+        "【用户消息与约束】",
+        "【关键文件与代码】",
+        "【错误与修复】",
+        "【互动情节与设定】",
+        "【下一步】",
+    ];
+    let en_sections = [
+        "[Core Task Status]",
+        "[User Messages & Constraints]",
+        "[Key Files & Code]",
+        "[Errors & Fixes]",
+        "[Interaction & Scenario]",
+        "[Next Move]",
+    ];
+    let all_cn = cn_sections.iter().all(|section| reply.contains(section));
+    let all_en = en_sections.iter().all(|section| reply.contains(section));
+    all_cn || all_en
 }
 
 #[allow(non_snake_case)]

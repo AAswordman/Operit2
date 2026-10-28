@@ -237,9 +237,13 @@ impl ClaudeProvider {
         let mut open_tool_use_ids: Vec<String> = Vec::new();
         for turn in provider_ready_history {
             match turn.kind {
-                PromptTurnKind::SYSTEM | PromptTurnKind::SUMMARY => {
+                PromptTurnKind::SYSTEM => {
                     system_parts.push(strip_responses_protocol_markup(&turn.content))
                 }
+                PromptTurnKind::SUMMARY => messages.push(json!({
+                    "role": "user",
+                    "content": self.build_content_array(&turn.content),
+                })),
                 PromptTurnKind::USER => messages.push(
                     json!({"role": "user", "content": self.build_content_array(&turn.content)}),
                 ),
