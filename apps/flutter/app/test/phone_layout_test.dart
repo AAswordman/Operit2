@@ -3,6 +3,7 @@ import 'support/native_sidebar_bridge.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/interactions/DrawerGestureExclusion.dart';
 import 'package:operit2/ui/main/components/DrawerContent.dart';
@@ -343,6 +344,56 @@ void main() {
       },
     );
     testWidgets(
+      'hidden running conversation stops scheduling frames (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(drawerOpen.dispose);
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: const SizedBox.expand(),
+          drawerState: const DrawerConversationState(
+            loading: false,
+            activeStreamingChatIds: {'running-chat'},
+            histories: [
+              core.ChatHistoryListItem(
+                id: 'running-chat',
+                title: 'Running chat',
+                updatedAt: '2026-10-28T00:00:00Z',
+                displayOrder: 0,
+                parentChatId: null,
+                group: null,
+                workspaceId: null,
+                workspaceName: null,
+                locked: false,
+                pinned: false,
+              ),
+            ],
+          ),
+        );
+        final indicator = find.byKey(
+          const ValueKey<String>('conversation-running-indicator'),
+        );
+        final element = tester.element(indicator);
+        expect(TickerMode.valuesOf(element).enabled, isFalse);
+        expect(tester.binding.transientCallbackCount, 0);
+
+        drawerOpen.value = true;
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(TickerMode.valuesOf(tester.element(indicator)).enabled, isTrue);
+        expect(tester.binding.transientCallbackCount, greaterThan(0));
+
+        drawerOpen.value = false;
+        await tester.pumpAndSettle();
+        expect(tester.element(indicator), same(element));
+        expect(TickerMode.valuesOf(element).enabled, isFalse);
+        expect(tester.binding.transientCallbackCount, 0);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
       'preserves drawer state across transitions (effects: $enableNavigationAnimation)',
       (tester) async {
         final drawerOpen = ValueNotifier<bool>(false);
@@ -412,14 +463,15 @@ Future<void> _pumpSwipeTestLayout(
   required ValueNotifier<bool> drawerOpen,
   required bool enableNavigationAnimation,
   required Widget content,
+  DrawerConversationState drawerState = const DrawerConversationState(
+    loading: false,
+  ),
 }) async {
   tester.view.physicalSize = const Size(400, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final conversations = ValueNotifier<DrawerConversationState>(
-    const DrawerConversationState(loading: false),
-  );
+  final conversations = ValueNotifier<DrawerConversationState>(drawerState);
   addTearDown(conversations.dispose);
   await tester.pumpWidget(
     OperitTheme(

@@ -124,58 +124,63 @@ class _TabletLayoutState extends State<TabletLayout> {
           curve: Curves.fastOutSlowIn,
           width: targetSidebarWidth,
           height: double.infinity,
-          child: ThemeDesktopSidebarSurface(
-            color: appearance.containerColor,
-            transparentSurface: appearance.transparentSurfaceEnabled,
-            child: AnimatedSwitcher(
-              duration: _sidebarContentFadeDuration,
-              child: _isSidebarContentExpanded
-                  ? ValueListenableBuilder<DrawerConversationState>(
-                      key: const ValueKey<String>('expandedSidebarContent'),
-                      valueListenable: widget.drawerConversationState,
-                      builder: (context, drawerState, _) {
-                        return DrawerContent(
-                          bridge: widget.bridge,
-                          key: const ValueKey<String>('expandedDrawerContent'),
-                          navigationEntries: widget.navigationEntries,
-                          pluginEntries: widget.pluginSidebarEntries,
-                          selectedRouteId: widget.selectedRouteId,
-                          appearance: appearance,
-                          histories: drawerState.histories,
-                          activeStreamingChatIds:
-                              drawerState.activeStreamingChatIds,
-                          currentChatId: drawerState.currentChatId,
-                          errorMessage: drawerState.errorMessage,
-                          loading: drawerState.loading,
-                          onNavigationEntrySelected:
-                              widget.onNavigationEntrySelected,
-                          onConversationActivated:
-                              widget.onConversationActivated,
-                        );
-                      },
-                    )
-                  : ValueListenableBuilder<DrawerConversationState>(
-                      key: const ValueKey<String>('collapsedSidebarContent'),
-                      valueListenable: widget.drawerConversationState,
-                      builder: (context, drawerState, _) {
-                        return CollapsedDrawerContent(
-                          bridge: widget.bridge,
-                          navigationEntries: widget.navigationEntries,
-                          pluginEntries: widget.pluginSidebarEntries,
-                          selectedRouteId: widget.selectedRouteId,
-                          appearance: appearance,
-                          currentChatId: drawerState.currentChatId,
-                          onNavigationEntrySelected:
-                              widget.onNavigationEntrySelected,
-                          onConversationActivated:
-                              widget.onConversationActivated,
-                        );
-                      },
-                    ),
+          child: RepaintBoundary(
+            // Sidebar state and status animations repaint independently of chat.
+            child: ThemeDesktopSidebarSurface(
+              color: appearance.containerColor,
+              transparentSurface: appearance.transparentSurfaceEnabled,
+              child: AnimatedSwitcher(
+                duration: _sidebarContentFadeDuration,
+                child: _isSidebarContentExpanded
+                    ? ValueListenableBuilder<DrawerConversationState>(
+                        key: const ValueKey<String>('expandedSidebarContent'),
+                        valueListenable: widget.drawerConversationState,
+                        builder: (context, drawerState, _) {
+                          return DrawerContent(
+                            bridge: widget.bridge,
+                            key: const ValueKey<String>(
+                              'expandedDrawerContent',
+                            ),
+                            navigationEntries: widget.navigationEntries,
+                            pluginEntries: widget.pluginSidebarEntries,
+                            selectedRouteId: widget.selectedRouteId,
+                            appearance: appearance,
+                            histories: drawerState.histories,
+                            activeStreamingChatIds:
+                                drawerState.activeStreamingChatIds,
+                            currentChatId: drawerState.currentChatId,
+                            errorMessage: drawerState.errorMessage,
+                            loading: drawerState.loading,
+                            onNavigationEntrySelected:
+                                widget.onNavigationEntrySelected,
+                            onConversationActivated:
+                                widget.onConversationActivated,
+                          );
+                        },
+                      )
+                    : ValueListenableBuilder<DrawerConversationState>(
+                        key: const ValueKey<String>('collapsedSidebarContent'),
+                        valueListenable: widget.drawerConversationState,
+                        builder: (context, drawerState, _) {
+                          return CollapsedDrawerContent(
+                            bridge: widget.bridge,
+                            navigationEntries: widget.navigationEntries,
+                            pluginEntries: widget.pluginSidebarEntries,
+                            selectedRouteId: widget.selectedRouteId,
+                            appearance: appearance,
+                            currentChatId: drawerState.currentChatId,
+                            onNavigationEntrySelected:
+                                widget.onNavigationEntrySelected,
+                            onConversationActivated:
+                                widget.onConversationActivated,
+                          );
+                        },
+                      ),
+              ),
             ),
           ),
         ),
-        Expanded(child: widget.content),
+        Expanded(child: RepaintBoundary(child: widget.content)),
       ],
     );
   }

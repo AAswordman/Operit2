@@ -334,36 +334,42 @@ class _PhoneLayoutState extends State<PhoneLayout>
                 top: 0,
                 bottom: 0,
                 width: widget.drawerWidth,
-                child: Transform.translate(
-                  // A fixed Stack slot keeps drag frames in the paint phase.
-                  offset: Offset(drawerOffset, 0),
-                  child: Transform.scale(
-                    alignment: Alignment.centerLeft,
-                    scale: drawerScale,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        boxShadow: <BoxShadow>[
-                          if (drawerProgress > 0.001)
-                            BoxShadow(
-                              blurRadius: sidebarShadowBlur,
-                              // Keep the translucent drawer interior clear.
-                              blurStyle: BlurStyle.outer,
-                              color: Colors.black.withValues(alpha: 0.12),
+                child: TickerMode(
+                  enabled: isDrawerOpen,
+                  child: Transform.translate(
+                    // A fixed Stack slot keeps drag frames in the paint phase.
+                    offset: Offset(drawerOffset, 0),
+                    child: Transform.scale(
+                      alignment: Alignment.centerLeft,
+                      scale: drawerScale,
+                      child: RepaintBoundary(
+                        // Isolate the complete sidebar surface as well as its controls.
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            boxShadow: <BoxShadow>[
+                              if (drawerProgress > 0.001)
+                                BoxShadow(
+                                  blurRadius: sidebarShadowBlur,
+                                  // Keep the translucent drawer interior clear.
+                                  blurStyle: BlurStyle.outer,
+                                  color: Colors.black.withValues(alpha: 0.12),
+                                ),
+                            ],
+                          ),
+                          child: OperitGlassSurface(
+                            color: appearance.containerColor,
+                            layer: OperitGlassSurfaceLayer.panel,
+                            transparentAlpha: 0.035,
+                            borderRadius: const BorderRadiusDirectional.only(
+                              topEnd: Radius.circular(16),
+                              bottomEnd: Radius.circular(16),
+                            ).resolve(Directionality.of(context)),
+                            // Fade controls without isolating the backdrop.
+                            child: Opacity(
+                              opacity: clampedDrawerContentAlpha,
+                              child: animatedChild.drawerContent,
                             ),
-                        ],
-                      ),
-                      child: OperitGlassSurface(
-                        color: appearance.containerColor,
-                        layer: OperitGlassSurfaceLayer.panel,
-                        transparentAlpha: 0.035,
-                        borderRadius: const BorderRadiusDirectional.only(
-                          topEnd: Radius.circular(16),
-                          bottomEnd: Radius.circular(16),
-                        ).resolve(Directionality.of(context)),
-                        // Fade controls without isolating the backdrop.
-                        child: Opacity(
-                          opacity: clampedDrawerContentAlpha,
-                          child: animatedChild.drawerContent,
+                          ),
                         ),
                       ),
                     ),
