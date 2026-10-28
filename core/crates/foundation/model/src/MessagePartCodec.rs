@@ -51,6 +51,11 @@ impl MessagePartCodec {
                 MessagePartKind::ToolCall => Self::appendToolCallMarkup(&mut markup, part),
                 MessagePartKind::ToolResult => Self::appendToolResultMarkup(&mut markup, part),
                 MessagePartKind::Status => Self::appendStatusMarkup(&mut markup, part),
+                MessagePartKind::InteractiveUi => {
+                    markup.push_str("<openui>");
+                    markup.push_str(&part.content);
+                    markup.push_str("</openui>");
+                }
             }
         }
         markup
@@ -399,6 +404,17 @@ impl AssistantMarkupStreamState {
             let raw = self.pending[..rawEnd].to_string();
             let sequence = self.parts.len() as i32;
             let partId = MessagePartCodec::partId(sequence);
+            if normalizedTagName == "openui" {
+                let body = self.pending[openEnd..closeStart].to_string();
+                self.parts.push(MessagePart::interactiveUi(
+                    partId,
+                    sequence,
+                    body,
+                ));
+                self.pending = self.pending[rawEnd..].to_string();
+                continue;
+            }
+
             let parsedPart = match normalizedTagName.as_str() {
                 "tool" => MessagePartCodec::parseToolCall(partId, sequence, &raw),
                 "tool_result" => MessagePartCodec::parseToolResult(partId, sequence, &raw),
@@ -504,7 +520,7 @@ impl AssistantMarkupStreamState {
             return isSemanticTagName(&normalized);
         }
         isSemanticTagName(&normalized)
-            || ["think", "thinking", "tool", "tool_result", "status"]
+            || ["think", "thinking", "tool", "tool_result", "status", "openui"]
                 .iter()
                 .any(|name| name.starts_with(&normalized))
     }
@@ -523,7 +539,7 @@ fn isSemanticTagName(tagName: &str) -> bool {
 fn isSemanticTag(tagName: &str) -> bool {
     matches!(
         tagName,
-        "think" | "thinking" | "tool" | "tool_result" | "status"
+        "think" | "thinking" | "tool" | "tool_result" | "status" | "openui"
     )
 }
 
@@ -557,6 +573,20 @@ fn asciiCaseInsensitiveSuffixPrefixLength(content: &str, closingTag: &str) -> us
 #[cfg(test)]
 mod tests {
     use super::{AssistantMarkupStreamState, MessagePartCodec, MessagePartKind};
+
+    /// OpenUI program blocks become semantic parts instead of Markdown math.
+    #[test]
+    fn openui_block_becomes_interactive_ui_part() {
+        let program = "$steps = 3\nroot = Card([])";
+        let source = format!("before\n<openui>{program}</openui>\nafter");
+        let parts = MessagePartCodec::parseAssistantMarkup(&source).unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
+        assert_eq!(parts[1].kind, MessagePartKind::InteractiveUi);
+        assert_eq!(parts[1].content, program);
+        assert_eq!(parts[2].kind, MessagePartKind::Markdown);
+        assert_eq!(MessagePartCodec::assistantMarkup(&parts), source);
+    }
 
     /// Historical self-closing tags must survive import exactly, not reject a chat.
     #[test]
