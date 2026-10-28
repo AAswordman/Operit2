@@ -1,6 +1,8 @@
 package app.operit
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -37,6 +39,18 @@ class AndroidRuntimeHost(context: Context) {
 
     /** JNI worker entry point for capability-backed filesystem resources. */
     fun fileSystemResourceOperation(request: String): String = documentFileSystem.execute(request)
+
+    /** Keeps Wi-Fi multicast reception enabled for the native discovery daemon's lifetime. */
+    fun acquireDiscoveryMulticastLock(): WifiManager.MulticastLock? {
+        if (!applicationContext.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI)) {
+            return null
+        }
+        val manager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        return manager.createMulticastLock("operit-service-discovery").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
 
     /** Installs storage roots and accepts repeated identical configuration. */
     fun setStorageRoots(runtimePath: String?, workspacePath: String?) {

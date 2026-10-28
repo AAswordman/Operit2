@@ -39,6 +39,12 @@
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Operit2 records speech for text recognition.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_operit-link._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Operit2 uses the local network to discover and connect to nearby devices in your device space.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

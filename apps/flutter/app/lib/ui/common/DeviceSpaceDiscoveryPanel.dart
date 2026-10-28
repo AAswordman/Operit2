@@ -237,7 +237,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     _setBusy(true, scanning: true);
     try {
       final peers = await widget.clients.server.runtimeRemoteLinkService
-          .discoverPeers(timeoutMs: 2000);
+          .discoverPeers(timeoutMs: 5000);
       final onlyNodeId = widget.onlyNodeId;
       if (mounted) {
         setState(() {

@@ -43,10 +43,10 @@
 	<string>Operit2 uses the camera to capture photos for chat attachments.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_operit._tcp</string>
+		<string>_operit-link._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Operit2 uses the local network to discover and connect to nearby Operit devices for Web Access.</string>
+	<string>Operit2 uses the local network to discover and connect to nearby devices in your device space.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Operit2 records speech for text recognition.</string>
 	<key>UIApplicationSceneManifest</key>

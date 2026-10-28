@@ -1,5 +1,8 @@
 #![allow(non_snake_case)]
 
+#[cfg(target_os = "macos")]
+pub use operit_host_apple_native::AppleServiceDiscoveryHost as MacosServiceDiscoveryHost;
+
 #[cfg(all(feature = "daemon", target_os = "macos"))]
 #[path = "../../unix/daemon.rs"]
 pub mod daemon;
@@ -68,7 +71,7 @@ pub fn createRuntimeHostManager(
     .withHostRuntimeEventHost(Arc::new(MacosHostRuntimeEventHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(MacosHostRuntimeEventSchedulerHost::new()))
     .withHostJavaScriptRuntimeHost(Arc::new(MacosHostJavaScriptRuntimeHost::new()))
-    .withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()))
+    .withServiceDiscoveryHost(Arc::new(operit_host_apple_native::AppleServiceDiscoveryHost::default()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(MacosHostRuntimeTaskSchedulerHost::new()))
     .withPluginSdkIpcHost(Arc::new(MacosPluginSdkIpcHost::new()))
 }

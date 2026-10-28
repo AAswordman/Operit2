@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+pub use operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider as LinuxServiceDiscoveryHost;
+
 #[cfg(all(feature = "daemon", target_os = "linux"))]
 #[path = "../../unix/daemon.rs"]
 pub mod daemon;

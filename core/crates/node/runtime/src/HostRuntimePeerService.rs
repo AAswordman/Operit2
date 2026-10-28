@@ -763,7 +763,11 @@ impl RuntimePeerService for HostRuntimePeerService {
         let records = rx.await.map_err(|_| error("Discovery cancelled"))?.map_err(|e| error(e.to_string()))?;
         let pairedNodeIds = self.state.store.pairedPeers(&self.state.nodeId).map_err(error)?
             .into_iter().map(|peer| peer.nodeId).collect::<BTreeSet<_>>();
-        Ok(discoveredPeers(records, &self.state.nodeId, &pairedNodeIds))
+        let recordCount = records.len();
+        let peers = discoveredPeers(records, &self.state.nodeId, &pairedNodeIds);
+        operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+            "LAN discovery completed records={recordCount} paired={} candidates={}", pairedNodeIds.len(), peers.len()));
+        Ok(peers)
     }
     /// Checks the known identity and the handshake result before creating a pairing transaction.
     async fn startPairing(&self, target: PeerEndpoint, transport: Option<PeerTransport>) -> Result<PendingPairing, CoreLinkError> {
@@ -1108,10 +1112,19 @@ fn discoveredPeers(records: Vec<operit_host_api::ServiceDiscovery::DiscoveredSer
     pairedNodeIds: &BTreeSet<String>,
 ) -> Vec<DiscoveredPeer> {
     let mut peers = BTreeMap::new();
+    let (mut local, mut paired, mut invalid) = (0, 0, 0);
     for record in records {
-        let Some(node) = record.properties.get("nodeId").filter(|n| n.as_str() != localNodeId) else { continue; };
-        if pairedNodeIds.contains(node) { continue; }
-        let modes = record.properties.get("transports").map(String::as_str).unwrap_or("tcp");
+        let [Some(node), Some(displayName), Some(modes)] = ["nodeId", "displayName", "transports"]
+            .map(|key| record.properties.get(key).filter(|value| !value.is_empty())) else {
+                invalid += 1;
+                operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!(
+                    "Ignoring incomplete LAN advertisement service={}", record.fullName));
+                continue;
+            };
+        if node == localNodeId { local += 1; continue; }
+        if pairedNodeIds.contains(node) { paired += 1; continue; }
+        if record.port == 0 { invalid += 1; continue; }
+        let mut valid = false;
         for mode in modes.split(',') {
             for ip in &record.addresses {
                 if ip.is_unspecified() || ip.is_multicast()
@@ -1120,8 +1133,8 @@ fn discoveredPeers(records: Vec<operit_host_api::ServiceDiscovery::DiscoveredSer
                 }
                 let socket = std::net::SocketAddr::new(*ip, record.port).to_string();
                 let address = match mode { "http" => format!("http://{socket}/link"), "ws" => format!("ws://{socket}/link"), "tcp" => socket, _ => continue };
-                let candidate = DiscoveredPeer { nodeId: node.clone(), address,
-                    displayName: record.properties.get("displayName").cloned().unwrap_or_else(|| node.clone()) };
+                let candidate = DiscoveredPeer { nodeId: node.clone(), address, displayName: displayName.clone() };
+                valid = true;
                 // One device, not one row per NIC, IP family and transport.
                 let rank = discoveryEndpointRank(*ip, mode);
                 if peers.get(node).is_none_or(|(old, _)| rank < *old) {
@@ -1129,7 +1142,10 @@ fn discoveredPeers(records: Vec<operit_host_api::ServiceDiscovery::DiscoveredSer
                 }
             }
         }
+        if !valid { invalid += 1; }
     }
+    operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+        "LAN discovery filtering local={local} paired={paired} invalid={invalid} candidates={}", peers.len()));
     peers.into_values().map(|(_, peer)| peer).collect()
 }
 
@@ -1189,6 +1205,26 @@ mod discovery_ranking_tests {
         let rank = |ip: &str| discoveryEndpointRank(ip.parse().unwrap(), "http");
         assert!(rank("192.168.1.2") < rank("fd00::2"));
         assert!(rank("fd00::2") < rank("127.0.0.1"));
+    }
+
+    /// Rejects incomplete advertisements rather than inventing a transport or device name.
+    #[test]
+    fn rejects_incomplete_advertisements() {
+        use operit_host_api::ServiceDiscovery::DiscoveredService;
+        let record = DiscoveredService {
+            fullName: "test".into(), hostname: "test.local.".into(), port: 37195,
+            addresses: vec!["192.168.8.2".parse().unwrap()],
+            properties: [("nodeId".into(), "peer".into()), ("displayName".into(), "Peer".into()),
+                ("transports".into(), "http".into())].into(),
+        };
+        for key in ["nodeId", "displayName", "transports"] {
+            let mut incomplete = record.clone();
+            incomplete.properties.remove(key);
+            assert!(super::discoveredPeers(vec![incomplete], "self", &BTreeSet::new()).is_empty());
+        }
+        let mut invalid = record;
+        invalid.port = 0;
+        assert!(super::discoveredPeers(vec![invalid], "self", &BTreeSet::new()).is_empty());
     }
 }
 

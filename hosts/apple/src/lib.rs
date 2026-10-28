@@ -4,6 +4,10 @@
 #[path = "../../common/chromium_browser.rs"]
 pub mod chromium_browser;
 pub mod tools;
+#[cfg(target_vendor = "apple")]
+mod service_discovery;
+#[cfg(target_vendor = "apple")]
+pub use service_discovery::AppleServiceDiscoveryHost;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod logging;
 #[cfg(any(target_os = "macos", target_os = "ios"))]

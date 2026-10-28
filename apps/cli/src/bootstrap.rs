@@ -18,6 +18,7 @@ use operit_host_linux_native::{
     LinuxHttpHost as NativeHttpHost, LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxPluginSdkIpcHost as NativePluginSdkIpcHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
+    LinuxServiceDiscoveryHost as NativeServiceDiscoveryHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
     LinuxWebVisitHost as NativeWebVisitHost,
 };
@@ -31,6 +32,7 @@ use operit_host_macos_native::{
     MacosHttpHost as NativeHttpHost, MacosManagedRuntimeHost as NativeManagedRuntimeHost,
     MacosPluginSdkIpcHost as NativePluginSdkIpcHost,
     MacosRuntimeStorageHost as NativeRuntimeStorageHost,
+    MacosServiceDiscoveryHost as NativeServiceDiscoveryHost,
     MacosSystemOperationHost as NativeSystemOperationHost, MacosTerminalHost as NativeTerminalHost,
     MacosWebVisitHost as NativeWebVisitHost,
 };
@@ -47,6 +49,7 @@ use operit_host_windows_native::{
     WindowsHttpHost as NativeHttpHost, WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsPluginSdkIpcHost as NativePluginSdkIpcHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
+    WindowsServiceDiscoveryHost as NativeServiceDiscoveryHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
 };
@@ -162,7 +165,7 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withServiceDiscoveryHost(Arc::new(
-        operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default(),
+        NativeServiceDiscoveryHost::default(),
     ));
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     {

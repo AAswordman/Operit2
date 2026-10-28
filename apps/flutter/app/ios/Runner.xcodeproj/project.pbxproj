@@ -609,6 +609,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-loperit_flutter_bridge",
+					"-ldns_sd",
 					"-Wl,-force_load,$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/liblinux.a",
 					"-Wl,-force_load,$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/libiSHLinux.a",
 					"-liSHLinuxUser",
@@ -820,6 +821,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-loperit_flutter_bridge",
+					"-ldns_sd",
 					"-Wl,-force_load,$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/liblinux.a",
 					"-Wl,-force_load,$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/libiSHLinux.a",
 					"-liSHLinuxUser",
@@ -870,6 +872,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-loperit_flutter_bridge",
+					"-ldns_sd",
 					"-Wl,-force_load,$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/liblinux.a",
 					"-Wl,-force_load,$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/libiSHLinux.a",
 					"-liSHLinuxUser",

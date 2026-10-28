@@ -260,6 +260,7 @@ name = "operit-host-native-common"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "flume",
  "mdns-sd",
  "operit-host-api",
  "tokio",

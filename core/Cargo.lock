@@ -1975,6 +1975,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "flume",
  "mdns-sd",
  "operit-host-api",
  "operit-host-native-filesystem",

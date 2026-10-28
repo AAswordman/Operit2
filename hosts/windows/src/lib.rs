@@ -1,3 +1,5 @@
+pub use operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider as WindowsServiceDiscoveryHost;
+
 #[cfg(feature = "daemon")]
 pub mod daemon;
 

@@ -1678,6 +1678,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "flume",
  "libc",
  "mdns-sd",
  "operit-host-api",

@@ -28,6 +28,8 @@ mod runtime_event_scheduler;
 mod runtime_storage;
 #[cfg(target_os = "android")]
 mod secret_store;
+#[cfg(target_os = "android")]
+mod service_discovery;
 mod system_operation;
 mod terminal;
 mod tts_playback;
@@ -105,7 +107,7 @@ pub fn createRuntimeHostManager(
     .withLocalInferenceHost(Arc::new(AndroidLocalInferenceHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(AndroidHostRuntimeEventSchedulerHost::new()))
     .withHostJavaScriptRuntimeHost(Arc::new(AndroidHostJavaScriptRuntimeHost::new()))
-    .withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()))
+    .withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::withNetworkLease(service_discovery::acquireMulticastLease)))
     .withHostRuntimeTaskSchedulerHost(Arc::new(AndroidHostRuntimeTaskSchedulerHost::new()))
     .withPluginSdkIpcHost(Arc::new(AndroidPluginSdkIpcHost::new()))
 }
