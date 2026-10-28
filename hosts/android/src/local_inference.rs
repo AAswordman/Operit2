@@ -52,7 +52,7 @@ where
             "Android local inference request serialization failed: {error}"
         ))
     })?;
-    let mut env = bridge.vm.attach_current_thread().map_err(|error| {
+    let mut env = crate::attachCurrentThread(&bridge.vm).map_err(|error| {
         HostError::new(format!(
             "Android local inference thread attachment failed: {error}"
         ))

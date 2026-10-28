@@ -28,7 +28,7 @@ for arch in $ARCHS; do
   mkdir -p "$out_dir/$arch"
   rustup target add "$rust_target"
 
-  RUSTFLAGS="-Awarnings" cargo rustc \
+  "$repo_root/.venv/bin/python" "$repo_root/tools/build_scripts/cargo_build.py" cargo rustc \
     --manifest-path "$crate_dir/Cargo.toml" \
     --release \
     --target "$rust_target" \

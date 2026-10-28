@@ -170,6 +170,8 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles"
   COMMAND ${CMAKE_COMMAND}
     "-DOPERIT_BUILD_CONFIG=$<CONFIG>"
+    "-DOPERIT_REPO_ROOT=${OPERIT_REPO_ROOT}"
+    "-DOPERIT_PLUGIN_SYNC_PYTHON=${OPERIT_PLUGIN_SYNC_PYTHON}"
     "-DOPERIT_CARGO_EXECUTABLE=${OPERIT_CARGO_EXECUTABLE}"
     "-DOPERIT_CARGO_HOME=${OPERIT_CARGO_HOME}"
     "-DOPERIT_RUSTUP_HOME=${OPERIT_RUSTUP_HOME}"
@@ -184,6 +186,7 @@ add_custom_command(
   DEPENDS
     "${OPERIT_PLUGIN_SYNC_STAMP}"
     "${CMAKE_CURRENT_SOURCE_DIR}/operit_flutter_bridge_build.cmake"
+    "${OPERIT_REPO_ROOT}/tools/build_scripts/cargo_build.py"
     ${OPERIT_NATIVE_INPUTS}
   COMMENT "Building the Operit Flutter Rust bridge"
   VERBATIM

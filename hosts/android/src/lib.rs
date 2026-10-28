@@ -16,6 +16,8 @@ mod filesystem;
 mod document_filesystem;
 mod http;
 #[cfg(target_os = "android")]
+mod jni_thread;
+#[cfg(target_os = "android")]
 mod local_inference;
 #[cfg(target_os = "android")]
 mod logging;
@@ -36,6 +38,8 @@ pub use audio_playback::{AndroidAudioPlaybackHost, AndroidMusicCommand};
 pub use bluetooth::AndroidBluetoothHost;
 pub use filesystem::AndroidFileSystemHost;
 pub use http::AndroidHttpHost;
+#[cfg(target_os = "android")]
+pub use jni_thread::attachCurrentThread;
 #[cfg(target_os = "android")]
 pub use local_inference::AndroidLocalInferenceHost;
 #[cfg(target_os = "android")]

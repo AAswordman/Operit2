@@ -1067,6 +1067,7 @@ impl OperitApplication {
             .ok_or("RuntimeStorageHost is not registered for persistent sync")?;
         let mut errors = Vec::new();
         let mut applied = Vec::new();
+        let mut skipped = Vec::new();
         let mut preferenceReferences = std::collections::BTreeMap::new();
         let preferences = pending
             .iter()
@@ -1092,8 +1093,12 @@ impl OperitApplication {
                     ) {
                         match outcome.result {
                             Ok(map) => {
-                                preferenceReferences.extend(map);
-                                applied.extend(outcome.operations);
+                                if outcome.skipped {
+                                    skipped.extend(outcome.operations);
+                                } else {
+                                    preferenceReferences.extend(map);
+                                    applied.extend(outcome.operations);
+                                }
                             }
                             Err(error) => {
                                 errors.push(format!(
@@ -1173,6 +1178,13 @@ impl OperitApplication {
                 }
             }
         }
+        let skippedCount = match store.skipOperations(&skipped) {
+            Ok(()) => skipped.len(),
+            Err(error) => {
+                errors.push(format!("skip obsolete preference operations: {error}"));
+                0
+            }
+        };
         if let Err(error) = store.completeOperations(&applied) {
             errors.push(format!("complete pending operations: {error}"));
         }
@@ -1203,7 +1215,7 @@ impl OperitApplication {
             );
         }
         Ok(
-            serde_json::json!({ "received": operations.len(), "applied": applied.len(), "pending": remaining, "errors": errors }),
+            serde_json::json!({ "received": operations.len(), "applied": applied.len(), "skipped": skippedCount, "pending": remaining, "errors": errors }),
         )
     }
 

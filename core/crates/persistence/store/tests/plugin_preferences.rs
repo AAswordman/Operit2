@@ -88,7 +88,7 @@ fn aliasOperation(path: &str, source: &str, target: &str) -> SyncOperation {
         domain: "preferences".into(), entityType: "entry".into(),
         entityId: serde_json::to_string(&(path, &key)).unwrap(), operation: "alias".into(),
         semantics: operit_store::SyncOperationStore::SyncOperationSemantics::Transaction,
-        payload: json!({"storagePath":path,"key":key,"value":format!("card_{target}"),"encrypted":false,"formatVersion":2}),
+        payload: json!({"storagePath":path,"key":key,"value":format!("card_{target}"),"encrypted":false,"formatVersion":2,"schemaVersion":0}),
         createdAt: operit_host_api::TimeUtils::tryCurrentTimeMillis().unwrap(), schemaVersion: 1,
     }
 }
@@ -219,19 +219,23 @@ fn declarations_preserve_stable_ids_and_local_storage_version_boundaries() {
     first.finish(&left,&token,json!([set(&format!("card_{small}"),json!({"id":small,"name":"Same","text":"identical","updatedAt":1})),set("selection",json!([small]))]),2).unwrap();
     let token=second.begin(&right);
     second.finish(&right,&token,json!([set(&format!("card_{large}"),json!({"id":large,"name":"Same","text":"identical","updatedAt":2})),set("selection",json!([large]))]),2).unwrap();
-    let leftHistory=first.history();let rightHistory=second.history();
+    PreferencesDataStore::newWithStorage(receiver.host.clone(), &receiver.path)
+        .withSchema(2, |_, _| Ok(())).data().unwrap();
+    let leftOriginal=first.history();let rightOriginal=second.history();
+    let leftHistory=leftOriginal.iter().filter(|op| op.payload["schemaVersion"] == 2).cloned().collect::<Vec<_>>();
+    let rightHistory=rightOriginal.iter().filter(|op| op.payload["schemaVersion"] == 2).cloned().collect::<Vec<_>>();
     let schema=PreferenceMergeSchema::default();
     let refs=PreferenceMerge::applyOperations(receiver.host.clone(),&schema,&leftHistory,&rightHistory,|_,_|true).unwrap();
     assert!(refs.is_empty());
     let handle=receiver.open();let snapshot=receiver.data(&handle);
-    assert_eq!(snapshot["schemaVersion"],0);
+    assert_eq!(snapshot["schemaVersion"],2);
     assert!(snapshot["values"].get(format!("card_{small}")).is_some());
     assert!(snapshot["values"].get(format!("card_{large}")).is_some());
     let order = operit_store::SyncOperationStore::SyncOperationOrder::fromOperation;
     let selected = if order(leftHistory.last().unwrap()) < order(rightHistory.last().unwrap()) { large } else { small };
     assert_eq!(snapshot["values"]["selection"],json!([selected]));
     assert!(snapshot["values"].get("__operit_preferences_merge").is_none());
-    assert_eq!(first.history(),leftHistory);assert_eq!(second.history(),rightHistory);
+    assert_eq!(first.history(),leftOriginal);assert_eq!(second.history(),rightOriginal);
     let mut changed=descriptor(&receiver.path);changed["catalog"]["nameField"]=json!("title");
     assert!(receiver.call(json!({"op":"open_preferences","path":receiver.path,"merge":changed})).is_err());
     first.dispose();second.dispose();receiver.dispose();

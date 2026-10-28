@@ -16,6 +16,7 @@ function fixture(options = {}) {
       async http(request) {
         http.push(request);
         let response;
+        if (request.url === "https://bots.qq.com/app/getAppAccessToken" && request.body.clientSecret === options.rejectSecret) return { statusCode: 401, content: "invalid credentials" };
         if (request.url === "https://bots.qq.com/app/getAppAccessToken") response = { access_token: "token", expires_in: "7200" };
         else if (request.url.endsWith("/gateway/bot")) response = { url: "wss://gateway.example" };
         else if (request.url.endsWith("/users/@me")) response = { id: "bot" };
@@ -172,4 +173,66 @@ test("QQBot sends the first stable sentence while the native Chat is still gener
   await f.complete(f.service.receive({ action: "auto_stop" }));
   assert.deepEqual(f.cancelled, ["chat-1"]);
   await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("reply role choices use public character APIs and expose only display names and selections", async () => {
+  const config = load("model").defaultConfig(), calls = [];
+  const service = load("service", {
+    PluginConfig: { async use() { return config; } },
+    ToolPkg: { async callDependency(packageName, method, input) {
+      calls.push({ packageName, method, input: plain(input) });
+      if (method === "character.list") return [{ id: "alice", name: "爱丽丝", prompt: "private prompt" }];
+      if (method === "group.list") return [{ id: "friends", name: "朋友们", members: ["alice"] }];
+      throw new Error(`Unexpected method ${method}`);
+    } },
+  });
+  const result = await service.receive({ action: "reply_roles" });
+  assert.deepEqual(plain(result), { success: true, roles: [
+    { selection: "card:alice", name: "爱丽丝" }, { selection: "group:friends", name: "朋友们（角色组）" },
+  ] });
+  assert.deepEqual(calls, [
+    { packageName: "com.operit.character_cards", method: "character.list", input: {} },
+    { packageName: "com.operit.character_cards", method: "group.list", input: {} },
+  ]);
+});
+
+test("setup can persist replies while stopped and then verify new credentials and start together", async () => {
+  const f = fixture();
+  const saved = await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, start_now: false, character_selection: "card:chosen", ai_timeout_ms: 30000 } }));
+  assert.equal(saved.status.autoReply.running, false);
+  assert.equal(f.socket.opened.length, 0);
+  const started = await f.complete(f.service.receive({ action: "configure", params: { app_id: "new-app", app_secret: "new-secret", listener_enabled: true, test_connection: true } }));
+  assert.equal(started.status.service.status, "ready");
+  assert.equal(started.status.autoReply.running, true);
+  assert.equal(started.status.autoReply.config.characterSelection, "card:chosen");
+  assert.equal(started.status.autoReply.config.aiTimeoutMs, 30000);
+  const tokenRequest = f.http.find(request => request.url.endsWith("/getAppAccessToken"));
+  assert.deepEqual(plain(tokenRequest.body), { appId: "new-app", clientSecret: "new-secret" });
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+
+test("failed credential validation preserves the working connection and persisted configuration", async () => {
+  const f = fixture({ rejectSecret: "wrong-secret" });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true } }));
+  const before = plain(f.config), flushes = f.flushes();
+  await assert.rejects(f.complete(f.service.receive({ action: "configure", params: { app_id: "wrong-app", app_secret: "wrong-secret", listener_enabled: true, test_connection: true } })), /QQ HTTP 401/);
+  assert.deepEqual(plain(f.config), before);
+  assert.equal(f.flushes(), flushes);
+  assert.equal(f.socket.closed.length, 0);
+  const status = await f.service.receive({ action: "status" });
+  assert.equal(status.status.service.status, "ready");
+  assert.equal(status.status.autoReply.running, true);
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("failed first connection validation does not enable startup or persist incorrect credentials", async () => {
+  const f = fixture({ rejectSecret: "wrong-secret" });
+  await assert.rejects(f.complete(f.service.receive({ action: "configure", params: { app_id: "wrong-app", app_secret: "wrong-secret", listener_enabled: true, test_connection: true } })), /QQ HTTP 401/);
+  assert.equal(f.config.listenerEnabled, false);
+  assert.equal(f.config.appId, "app");
+  assert.equal(f.config.appSecret, "private-secret");
+  assert.equal(f.flushes(), 0);
+  assert.equal(f.socket.opened.length, 0);
 });

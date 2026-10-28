@@ -33,9 +33,9 @@ impl LocalHostRuntimeTaskSchedulerHost {
         } else {
             2 * 1024 * 1024
         };
-        let tasks = spawnTaskPoolWithOptions("operit-host-async", 1, stack, enableIo)
+        let tasks = spawnTaskPoolWithOptions("operit-ha", 1, stack, enableIo)
             .map_err(HostError::new)?;
-        let blocking = spawnTaskPoolWithOptions("operit-host-blocking", 1, stack, enableIo)
+        let blocking = spawnTaskPoolWithOptions("operit-hb", 1, stack, enableIo)
             .map_err(HostError::new)?;
         Ok(Self {
             tasks: Arc::new(tasks),

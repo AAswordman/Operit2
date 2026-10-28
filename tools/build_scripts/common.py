@@ -9,6 +9,7 @@ import tarfile
 from pathlib import Path
 
 from release_artifacts import release_asset_name
+from cargo_build import cargo_build_environment
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -36,6 +37,8 @@ def run(command: list[str | Path], cwd: Path = REPO_ROOT, env: dict[str, str] | 
     merged_env = os.environ.copy()
     if env:
         merged_env.update(env)
+    if Path(command[0]).name.lower() in ("cargo", "cargo.exe"):
+        merged_env = cargo_build_environment(command, merged_env, cwd=cwd)
     subprocess_options: dict[str, object] = {}
     if os.name == "nt":
         startupinfo = subprocess.STARTUPINFO()

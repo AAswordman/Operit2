@@ -7,7 +7,7 @@ use serde_json::Value;
 pub(crate) fn call(request: Value) -> HostResult<Value> {
     use jni::objects::{JObject, JString, JValue};
     let bridge = crate::secret_store::androidHostSecretStoreBridge()?;
-    let mut env = bridge.vm.attach_current_thread().map_err(|e| HostError::new(e.to_string()))?;
+    let mut env = crate::attachCurrentThread(&bridge.vm).map_err(|e| HostError::new(e.to_string()))?;
     let encoded = env.new_string(request.to_string()).map_err(|e| HostError::new(e.to_string()))?;
     let argument = JObject::from(encoded);
     let result = env.call_method(bridge.host.as_obj(), "fileSystemResourceOperation",

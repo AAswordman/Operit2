@@ -20,9 +20,7 @@ struct JavaBridge {
 impl JavaBridge {
     /// Releases the Java binding reference associated with a native pipe session.
     fn release(&self) -> HostResult<()> {
-        let mut env = self
-            .vm
-            .attach_current_thread()
+        let mut env = crate::attachCurrentThread(&self.vm)
             .map_err(|e| HostError::new(e.to_string()))?;
         env.call_method(self.host.as_obj(), "release", "()V", &[])
             .map_err(|e| HostError::new(e.to_string()))?;
@@ -109,9 +107,7 @@ impl PluginSdkIpcHost for AndroidPluginSdkIpcHost {
     /// Starts the activation Activity and waits for its ready Binder result.
     fn activate(&self, endpoint: PluginSdkIpcEndpoint) -> HostResult<()> {
         let bridge = Self::bridge(&endpoint)?;
-        let mut env = bridge
-            .vm
-            .attach_current_thread()
+        let mut env = crate::attachCurrentThread(&bridge.vm)
             .map_err(|e| HostError::new(e.to_string()))?;
         env.call_method(bridge.host.as_obj(), "activate", "()V", &[])
             .map_err(|e| HostError::new(e.to_string()))?;
@@ -144,9 +140,7 @@ impl PluginSdkIpcHost for AndroidPluginSdkIpcHost {
         callbacks: PluginSdkIpcSessionCallbacks,
     ) -> HostResult<PluginSdkIpcSessionId> {
         let bridge = Self::bridge(&endpoint)?;
-        let mut env = bridge
-            .vm
-            .attach_current_thread()
+        let mut env = crate::attachCurrentThread(&bridge.vm)
             .map_err(|e| HostError::new(e.to_string()))?;
         let result = env
             .call_method(bridge.host.as_obj(), "open", "()[I", &[])

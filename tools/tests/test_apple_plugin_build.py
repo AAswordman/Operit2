@@ -1,6 +1,8 @@
 """Exercise Apple build entry points without invoking Xcode or compiling Rust."""
 
 import os
+import shutil
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -28,6 +30,9 @@ class ApplePluginBuildTests(unittest.TestCase):
             commands = root / "commands"
             commands.mkdir()
             log = root / "calls.log"
+            cargo_wrapper = root / "tools/build_scripts/cargo_build.py"
+            cargo_wrapper.parent.mkdir(parents=True)
+            shutil.copy2(REPO_ROOT / "tools/build_scripts/cargo_build.py", cargo_wrapper)
 
             def stub(path, body):
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +55,7 @@ case "$(basename "$1")" in
     test "$3" = --env-file
     printf 'export RUSTY_V8_ARCHIVE=/verified/%s/library.a\\nexport RUSTY_V8_SRC_BINDING_PATH=/verified/%s/bindings.rs\\n' "$target" "$target" > "$4"
     ;;
+  cargo_build.py) exec "$OPERIT_TEST_PYTHON" "$@" ;;
   *) exit 99 ;;
 esac
 """)
@@ -61,6 +67,11 @@ if test "$PLATFORM_NAME" != macosx; then
     *) exit 98 ;;
   esac
 fi
+test -z "${RUSTFLAGS:-}"
+case "$CARGO_ENCODED_RUSTFLAGS" in
+  *"--remap-path-prefix=$OPERIT_TEST_REPO_ROOT=/operit"*) ;;
+  *) exit 97 ;;
+esac
 printf 'cargo %s\\n' "$*" >> "$OPERIT_TEST_CALL_LOG"
 """)
             for target in targets:
@@ -72,6 +83,7 @@ printf 'cargo %s\\n' "$*" >> "$OPERIT_TEST_CALL_LOG"
                 ["/bin/sh", str(REPO_ROOT / "apps/flutter/app" / platform / "build_rust_bridge.sh")],
                 env={**os.environ, "PROJECT_DIR": str(project), "PLATFORM_NAME": sdk,
                      "ARCHS": archs, "PATH": f"{commands}{os.pathsep}{os.environ['PATH']}",
+                     "OPERIT_TEST_PYTHON": sys.executable, "OPERIT_TEST_REPO_ROOT": str(root),
                      "OPERIT_TEST_CALL_LOG": str(log), "OPERIT_TEST_SYNC_EXIT": str(sync_exit),
                      "OPERIT_TEST_V8_EXIT": str(v8_exit)},
                 capture_output=True, text=True, check=False,

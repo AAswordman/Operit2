@@ -2197,3 +2197,47 @@ fn concurrent_control_writes_publish_one_shared_state() {
         state
     );
 }
+
+
+/// Skipping only finishes after the immutable original and receive ledger are durable.
+#[test]
+fn skipped_preference_completion_preserves_pending_on_failure_and_receipts_on_retry() {
+    for failure in [1, 3] {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = SyncOperationStore::new(host.clone(), "skip-atomic");
+        let mut incoming = operation(
+            1,
+            "settings",
+            "settings",
+            "set",
+            SyncOperationSemantics::EntityState,
+            json!({"storagePath":"runtime/config/preferences/skipped.preferences.json", "key":"settings", "value":true, "encrypted":false, "formatVersion":2, "schemaVersion":1}),
+        );
+        incoming.domain = "preferences".into();
+        store
+            .receiveOperations(std::slice::from_ref(&incoming))
+            .unwrap();
+        let pendingPath = pending_path("skip-atomic", &incoming.opId);
+        host.failAtomic.store(failure, Ordering::SeqCst);
+        assert!(store
+            .skipOperations(std::slice::from_ref(&incoming))
+            .is_err());
+        assert_eq!(store.pendingOperations().unwrap(), vec![incoming.clone()]);
+        assert!(host.exists(&pendingPath).unwrap());
+        assert_eq!(store.preferenceHistory().unwrap(), vec![incoming.clone()]);
+        host.failAtomic.store(0, Ordering::SeqCst);
+        store
+            .skipOperations(std::slice::from_ref(&incoming))
+            .unwrap();
+        assert_eq!(store.pendingOperationCount().unwrap(), 0);
+        assert!(!host.exists(&pendingPath).unwrap());
+        assert!(store.receipt().unwrap().containsSequence("device-a", 1));
+        drop(store);
+        let reopened = SyncOperationStore::new(host, "skip-atomic");
+        reopened
+            .receiveOperations(std::slice::from_ref(&incoming))
+            .unwrap();
+        assert_eq!(reopened.pendingOperationCount().unwrap(), 0);
+        assert_eq!(reopened.preferenceHistory().unwrap(), vec![incoming]);
+    }
+}

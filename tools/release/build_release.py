@@ -33,6 +33,7 @@ RUNTIME_MANIFEST = REPO_ROOT / "core" / "crates" / "runtime" / "application" / "
 BUILD_SCRIPTS_DIR = REPO_ROOT / "tools" / "build_scripts"
 sys.path.insert(0, str(BUILD_SCRIPTS_DIR))
 from common import prepare_plugin_assets, verify_cli_plugin_assets
+from cargo_build import cargo_build_environment
 from release_artifacts import release_asset_name, validate_release_assets
 DEFAULT_GITHUB_ENV = SECRETS_DIR / "github.env"
 DEFAULT_RELEASE_REPO = "AAswordman/Operit2"
@@ -142,6 +143,8 @@ CLI_ALL_TARGETS = tuple(
 
 def run(command, cwd=REPO_ROOT, env=None):
     print(">> " + " ".join(str(part) for part in command), flush=True)
+    if Path(command[0]).name.lower() in ("cargo", "cargo.exe"):
+        env = cargo_build_environment(command, os.environ if env is None else env, cwd=cwd)
     subprocess.run([str(part) for part in command], cwd=cwd, env=env, check=True)
 
 
@@ -885,7 +888,7 @@ set -e
 cd {repo}
 {dependency_check}
 rustup target add {triple}
-cargo build --release --target {triple} --manifest-path apps/cli/Cargo.toml
+python3 tools/build_scripts/cargo_build.py cargo build --release --target {triple} --manifest-path apps/cli/Cargo.toml
 rm -rf {work}
 mkdir -p {work} {dist}
 cp apps/cli/target/{triple}/release/{binary_name} {work}/{binary_name}

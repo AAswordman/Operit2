@@ -50,6 +50,7 @@ export interface AutoReplyParams { enabled?: boolean; c2c_enabled?: boolean; gro
 export type Request =
   | { action: "configure"; params: ConfigureParams }
   | { action: "status" }
+  | { action: "reply_roles" }
   | { action: "test" }
   | { action: "start"; restart?: boolean }
   | { action: "stop" }
@@ -62,6 +63,7 @@ export type Request =
   | { action: "auto_start" }
   | { action: "auto_stop" }
   | { action: "auto_once" };
+export interface ReplyRole { selection: string; name: string }
 export interface Status {
   waifuProfile: string;
   configured: boolean;
@@ -74,6 +76,7 @@ export interface Status {
 }
 export type Response =
   | { success: true; status: Status }
+  | { success: true; roles: ReplyRole[] }
   | { success: true; returnedCount: number; remainingCount: number; events: InboundEvent[] }
   | { success: true; clearedCount: number }
   | { success: true; response: JsonObject };

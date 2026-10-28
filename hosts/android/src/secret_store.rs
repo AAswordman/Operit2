@@ -58,9 +58,7 @@ pub(crate) fn androidHostSystemLanguageCode() -> HostResult<String> {
 impl AndroidHostSecretStoreBridge {
     /// Reads the system language code from the Java Android runtime host.
     pub fn systemLanguageCode(&self) -> HostResult<String> {
-        let mut env = self
-            .vm
-            .attach_current_thread()
+        let mut env = crate::attachCurrentThread(&self.vm)
             .map_err(|error| jniHostError("attaching current thread", error))?;
         let value = env
             .call_method(
@@ -87,9 +85,7 @@ impl AndroidHostSecretStoreBridge {
 
     /// Reads secret bytes from the Java Android host.
     pub fn readSecret(&self, key: &str) -> HostResult<Option<Vec<u8>>> {
-        let mut env = self
-            .vm
-            .attach_current_thread()
+        let mut env = crate::attachCurrentThread(&self.vm)
             .map_err(|error| jniHostError("attaching current thread", error))?;
         let key = env
             .new_string(key)
@@ -117,9 +113,7 @@ impl AndroidHostSecretStoreBridge {
 
     /// Writes secret bytes through the Java Android host.
     pub fn writeSecret(&self, key: &str, content: &[u8]) -> HostResult<()> {
-        let mut env = self
-            .vm
-            .attach_current_thread()
+        let mut env = crate::attachCurrentThread(&self.vm)
             .map_err(|error| jniHostError("attaching current thread", error))?;
         let key = env
             .new_string(key)
@@ -141,9 +135,7 @@ impl AndroidHostSecretStoreBridge {
 
     /// Deletes secret bytes through the Java Android host.
     pub fn deleteSecret(&self, key: &str) -> HostResult<()> {
-        let mut env = self
-            .vm
-            .attach_current_thread()
+        let mut env = crate::attachCurrentThread(&self.vm)
             .map_err(|error| jniHostError("attaching current thread", error))?;
         let key = env
             .new_string(key)
@@ -164,9 +156,7 @@ impl AndroidHostSecretStoreBridge {
         &self,
         schedules: &[HostRuntimeEventSchedule],
     ) -> HostResult<()> {
-        let mut env = self
-            .vm
-            .attach_current_thread()
+        let mut env = crate::attachCurrentThread(&self.vm)
             .map_err(|error| jniHostError("attaching current thread", error))?;
         let schedulesJson = serde_json::to_string(schedules)
             .map_err(|error| jniHostError("encoding runtime event schedules", error))?;

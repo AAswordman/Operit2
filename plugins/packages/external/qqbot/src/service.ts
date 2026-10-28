@@ -2,7 +2,7 @@ import { getSettings as waifuSettings, stream as waifuStream } from "./dependenc
 import { attachments } from "./attachments.js";
 import { QQGateway } from "./gateway.js";
 import { QQOpenApi } from "./openapi.js";
-import { CHANNEL, MAX_EVENTS, defaultConfig, errorText, integer, nonblank, text, type AutoReplyParams, type Config, type ConfigureParams, type InboundEvent, type ReceiveParams, type Request, type Response, type Status } from "./model.js";
+import { CHANNEL, MAX_EVENTS, defaultConfig, errorText, integer, nonblank, text, type AutoReplyParams, type Config, type ConfigureParams, type InboundEvent, type ReceiveParams, type Request, type Response, type ReplyRole, type Status } from "./model.js";
 
 /** Owns configuration, Gateway events and AI work in the package main runtime. */
 class QQBotService {
@@ -25,7 +25,7 @@ class QQBotService {
   }
 
   /** Binds all HTTP calls to the ordinary cross-platform networking SDK. */
-  private createApi(): QQOpenApi { return new QQOpenApi(this.config, { request: options => Tools.Net.http(options) }); }
+  private createApi(config: Config = this.config): QQOpenApi { return new QQOpenApi(config, { request: options => Tools.Net.http(options) }); }
 
   /** Binds socket handles and ordered dispatches to the current main engine. */
   private createGateway(): QQGateway {
@@ -73,12 +73,12 @@ class QQBotService {
     if (params.use_sandbox !== undefined) { if (typeof params.use_sandbox !== "boolean") throw new Error("use_sandbox must be boolean"); next.useSandbox = params.use_sandbox; }
     if (params.listener_enabled !== undefined) { if (typeof params.listener_enabled !== "boolean") throw new Error("listener_enabled must be boolean"); next.listenerEnabled = params.listener_enabled; }
     if (next.listenerEnabled) { nonblank(next.appId, "AppID"); nonblank(next.appSecret, "AppSecret"); }
+    if (params.test_connection === true) await this.createApi({ ...this.config, ...next }).test();
     const changed = next.appId !== this.config.appId || next.appSecret !== this.config.appSecret || next.useSandbox !== this.config.useSandbox;
     if (changed || !next.listenerEnabled || params.restart_service === true) await this.stopRuntime();
     Object.assign(this.config, next);
     if (changed) { this.api = this.createApi(); this.gateway = this.createGateway(); }
     await PluginConfig.flush(this.config);
-    if (params.test_connection === true) await this.api.test();
     if (next.listenerEnabled) await this.start(false);
   }
 
@@ -220,6 +220,17 @@ class QQBotService {
     switch (request.action) {
       case "configure": await this.configure(request.params); break;
       case "status": break;
+      case "reply_roles": {
+        const [cards, groups] = await Promise.all([
+          ToolPkg.callDependency<Record<string, never>, { id: string; name: string }[]>("com.operit.character_cards", "character.list", {}),
+          ToolPkg.callDependency<Record<string, never>, { id: string; name: string }[]>("com.operit.character_cards", "group.list", {}),
+        ]);
+        const roles: ReplyRole[] = [
+          ...cards.map(card => ({ selection: `card:${card.id}`, name: card.name })),
+          ...groups.map(group => ({ selection: `group:${group.id}`, name: `${group.name}（角色组）` })),
+        ];
+        return { success: true, roles };
+      }
       case "test": return { success: true, response: await this.api.test() };
       case "start":
         nonblank(this.config.appId, "AppID"); nonblank(this.config.appSecret, "AppSecret");

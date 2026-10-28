@@ -1382,6 +1382,16 @@ impl SyncOperationStore {
         Ok(())
     }
 
+    /// Retains skipped originals durably before ending their replay intent, without applying values.
+    pub fn skipOperations(
+        &self,
+        operations: &[SyncOperation],
+    ) -> Result<(), SyncOperationStoreError> {
+        self.appendOperations(operations)?;
+        self.flushOperations(operations)?;
+        self.completeOperations(operations)
+    }
+
     /// Clears completed replay intent while retaining its receipt independently of native logs.
     pub fn completeOperations(
         &self,

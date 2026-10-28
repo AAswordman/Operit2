@@ -27,7 +27,7 @@ class QQBotService {
         this.gateway = this.createGateway();
     }
     /** Binds all HTTP calls to the ordinary cross-platform networking SDK. */
-    createApi() { return new openapi_js_1.QQOpenApi(this.config, { request: options => Tools.Net.http(options) }); }
+    createApi(config = this.config) { return new openapi_js_1.QQOpenApi(config, { request: options => Tools.Net.http(options) }); }
     /** Binds socket handles and ordered dispatches to the current main engine. */
     createGateway() {
         return new gateway_js_1.QQGateway(this.api, { request: request => Tools.Net.webSocket(request) }, event => this.enqueue(event));
@@ -88,6 +88,8 @@ class QQBotService {
             (0, model_js_1.nonblank)(next.appId, "AppID");
             (0, model_js_1.nonblank)(next.appSecret, "AppSecret");
         }
+        if (params.test_connection === true)
+            await this.createApi({ ...this.config, ...next }).test();
         const changed = next.appId !== this.config.appId || next.appSecret !== this.config.appSecret || next.useSandbox !== this.config.useSandbox;
         if (changed || !next.listenerEnabled || params.restart_service === true)
             await this.stopRuntime();
@@ -97,8 +99,6 @@ class QQBotService {
             this.gateway = this.createGateway();
         }
         await PluginConfig.flush(this.config);
-        if (params.test_connection === true)
-            await this.api.test();
         if (next.listenerEnabled)
             await this.start(false);
     }
@@ -289,6 +289,17 @@ class QQBotService {
                 await this.configure(request.params);
                 break;
             case "status": break;
+            case "reply_roles": {
+                const [cards, groups] = await Promise.all([
+                    ToolPkg.callDependency("com.operit.character_cards", "character.list", {}),
+                    ToolPkg.callDependency("com.operit.character_cards", "group.list", {}),
+                ]);
+                const roles = [
+                    ...cards.map(card => ({ selection: `card:${card.id}`, name: card.name })),
+                    ...groups.map(group => ({ selection: `group:${group.id}`, name: `${group.name}（角色组）` })),
+                ];
+                return { success: true, roles };
+            }
             case "test": return { success: true, response: await this.api.test() };
             case "start":
                 (0, model_js_1.nonblank)(this.config.appId, "AppID");

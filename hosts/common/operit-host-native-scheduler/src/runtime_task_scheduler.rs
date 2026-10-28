@@ -20,8 +20,9 @@ pub(crate) fn hasManagedWorkerStack() -> bool {
     HOST_RUNTIME_WORKER.get()
 }
 
-const RUNTIME_WORKER_PREFIX: &str = "operit-runtime-worker";
-const BLOCKING_WORKER_PREFIX: &str = "operit-runtime-blocking-worker";
+// Keep role, index, and the auxiliary "-b" suffix within Android's 15-byte limit.
+const RUNTIME_WORKER_PREFIX: &str = "operit-rt";
+const BLOCKING_WORKER_PREFIX: &str = "operit-blk";
 
 /// Owns the process-wide coordination and blocking pools.
 ///
@@ -195,7 +196,12 @@ pub(crate) fn spawnTaskPoolWithOptions(
             .spawn(move || {
                 HOST_RUNTIME_WORKER.set(stackSize >= 16 * 1024 * 1024);
                 let mut builder = tokio::runtime::Builder::new_current_thread();
-                builder.max_blocking_threads(1).enable_time();
+                // Tokio uses this name for its lazily spawned blocking helper;
+                // the affine dispatcher keeps the outer Rust thread's name.
+                builder
+                    .thread_name(format!("{prefix}-{index}-b"))
+                    .max_blocking_threads(1)
+                    .enable_time();
                 if enableIo {
                     builder.enable_io();
                 }
@@ -294,6 +300,30 @@ mod tests {
     use super::*;
     use std::{rc::Rc, sync::mpsc, time::Duration};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Tokio's lazy blocking worker must retain its pool identity in native profiles.
+    #[test]
+    fn affine_and_tokio_blocking_workers_have_distinct_names() {
+        let pool =
+            spawnTaskPoolWithOptions(BLOCKING_WORKER_PREFIX, 1, 2 * 1024 * 1024, false).unwrap();
+        let (sender, receiver) = mpsc::channel();
+        pool.send(Box::new(move || {
+            Box::pin(async move {
+                let owner = std::thread::current().name().unwrap().to_string();
+                let helper = tokio::task::spawn_blocking(|| {
+                    std::thread::current().name().unwrap().to_string()
+                })
+                .await
+                .unwrap();
+                sender.send((owner, helper)).unwrap();
+            })
+        }))
+        .unwrap();
+        let (owner, helper) = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(owner, "operit-blk-0");
+        assert_eq!(helper, "operit-blk-0-b");
+        assert!(owner.len() <= 15 && helper.len() <= 15);
+    }
 
     /// Queue state changes with no ready work must not wake idle dispatchers.
     #[test]
@@ -503,7 +533,7 @@ impl NativeHostRuntimeTaskSchedulerHost {
     ) -> HostResult<()> {
         static NETWORK: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
         let queue = NETWORK
-            .get_or_init(|| spawnTaskPool("operit-network-worker", NETWORK_WORKER_COUNT))
+            .get_or_init(|| spawnTaskPool("operit-net", NETWORK_WORKER_COUNT))
             .as_ref()
             .map_err(|error| HostError::new(format!("create network task pool failed: {error}")))?;
         queue
@@ -515,7 +545,7 @@ impl NativeHostRuntimeTaskSchedulerHost {
     pub fn scheduleOwnerTask(&self, name: &str, task: HostRuntimeTask) -> HostResult<()> {
         static OWNERS: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
         let queue = OWNERS
-            .get_or_init(|| spawnTaskPool("operit-owner-worker", 8))
+            .get_or_init(|| spawnTaskPool("operit-own", 8))
             .as_ref()
             .map_err(|error| HostError::new(format!("create owner task pool failed: {error}")))?;
         queue
@@ -538,10 +568,10 @@ impl NativeHostRuntimeTaskSchedulerHost {
         static COMPILERS: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
         let queue = match kind {
             operit_host_api::HostJavaScriptRuntimeStateKind::Execution => {
-                ENGINES.get_or_init(|| spawnTaskPool("operit-javascript-worker", 4))
+                ENGINES.get_or_init(|| spawnTaskPool("operit-js", 4))
             }
             operit_host_api::HostJavaScriptRuntimeStateKind::Compilation => {
-                COMPILERS.get_or_init(|| spawnTaskPool("operit-javascript-compiler", 1))
+                COMPILERS.get_or_init(|| spawnTaskPool("operit-jsc", 1))
             }
         }
         .as_ref()
@@ -573,7 +603,7 @@ impl NativeHostRuntimeTaskSchedulerHost {
                 .map_err(|_| HostError::new(format!("Host service capacity exhausted: {name}")))?,
         );
         let queue = SERVICES
-            .get_or_init(|| spawnTaskPool("operit-service-worker", SERVICE_WORKER_COUNT))
+            .get_or_init(|| spawnTaskPool("operit-svc", SERVICE_WORKER_COUNT))
             .as_ref()
             .map_err(|error| HostError::new(format!("create service task pool failed: {error}")))?;
         let admitted = tasks
@@ -604,7 +634,7 @@ impl NativeHostRuntimeTaskSchedulerHost {
     ) -> HostResult<T> {
         static PLATFORM: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
         let queue = PLATFORM
-            .get_or_init(|| spawnTaskPool("operit-platform-worker", 1))
+            .get_or_init(|| spawnTaskPool("operit-plat", 1))
             .as_ref()
             .map_err(|error| {
                 HostError::new(format!("create platform task pool failed: {error}"))
@@ -1194,7 +1224,7 @@ mod admission_tests {
         assert!(!owners.is_empty() && owners.len() <= NETWORK_WORKER_COUNT);
         assert!(owners
             .iter()
-            .all(|(_, name)| name.starts_with("operit-network-worker-")));
+            .all(|(_, name)| name.starts_with("operit-net-")));
         for release in releases {
             release.send(()).unwrap();
         }

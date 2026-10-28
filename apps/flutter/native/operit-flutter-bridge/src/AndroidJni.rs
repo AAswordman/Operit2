@@ -387,8 +387,7 @@ pub(crate) fn install_work_presentation(
     }
     let id = operit_runtime::services::WorkActivityService::subscribeWorkUpdates(move |encoded| {
         let delivery = (|| -> Result<(), String> {
-            let mut env = vm
-                .attach_current_thread()
+            let mut env = operit_host_android_native::attachCurrentThread(&vm)
                 .map_err(|error| error.to_string())?;
             let encoded = env.new_string(encoded).map_err(|error| error.to_string())?;
             let result = env.call_method(

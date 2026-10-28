@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.qqbot_bundle",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": {
@@ -25,6 +25,10 @@
     {
       "id": "com.operit.waifu",
       "min_version": "1.0.0"
+    },
+    {
+      "id": "com.operit.character_cards",
+      "min_version": "0.1.0"
     }
   ]
 }

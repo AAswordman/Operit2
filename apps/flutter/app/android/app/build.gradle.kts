@@ -351,6 +351,8 @@ androidComponents {
                     }
                 }
                 val cargoArguments = mutableListOf(
+                    operitPluginSyncPython.absolutePath,
+                    operitRepoRoot.resolve("tools/build_scripts/cargo_build.py").absolutePath,
                     "cargo",
                     "rustc",
                     "--lib",

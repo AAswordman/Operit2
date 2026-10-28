@@ -17,7 +17,7 @@ fn retainedJavaTask(
     let vm = env.get_java_vm().map_err(|error| error.to_string())?;
     Ok(Box::new(move || {
         let result = (|| -> jni::errors::Result<()> {
-            let mut env = vm.attach_current_thread()?;
+            let mut env = operit_host_android_native::attachCurrentThread(&vm)?;
             let result = env.with_local_frame(16, |env| -> jni::errors::Result<()> {
                 env.call_static_method("java/lang/Thread", "interrupted", "()Z", &[])?;
                 let result = env.call_method(task.as_obj(), "run", "()V", &[]);

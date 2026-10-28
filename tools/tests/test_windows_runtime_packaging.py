@@ -79,6 +79,8 @@ class FlutterRuntimeStagingTests(unittest.TestCase):
         return subprocess.run([
             "cmake", f"-DOPERIT_BUILD_CONFIG={config}",
             f"-DOPERIT_CARGO_EXECUTABLE={self.cargo.as_posix()}",
+            f"-DOPERIT_REPO_ROOT={REPO_ROOT.as_posix()}",
+            f"-DOPERIT_PLUGIN_SYNC_PYTHON={Path(sys.executable).as_posix()}",
             f"-DOPERIT_FLUTTER_BRIDGE_CRATE={self.crate.as_posix()}",
             f"-DOPERIT_OUTPUT_DIRECTORY={self.output.as_posix()}",
             "-P", str(REPO_ROOT / "apps/flutter/app/windows/runner/operit_flutter_bridge_build.cmake"),

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
@@ -16,6 +17,7 @@ class _Bridge extends OperitRuntimeBridge {
   final events = StreamController<CoreEvent>.broadcast();
   final calls = <String>[];
   final watches = <String>[];
+  int spaceFailures = 0;
 
   void emit(String property, Object? value) => events.add(
     CoreEvent.raw(
@@ -33,6 +35,14 @@ class _Bridge extends OperitRuntimeBridge {
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
     watches.add(request.propertyName);
+    if (request.propertyName == 'deviceSpaceSnapshotFlow' &&
+        spaceFailures > 0) {
+      spaceFailures--;
+      return Stream<CoreEvent>.error(
+        StateError('Device space connection record is empty'),
+        StackTrace.empty,
+      );
+    }
     return events.stream.where((e) => e.propertyName == request.propertyName);
   }
 
@@ -74,10 +84,14 @@ core.SpaceSyncProgress progress({
 }
 
 void main() {
+  setUpAll(ClientLogger.initialize);
   late _Bridge bridge;
-  Future<void> mount(WidgetTester tester) async {
-    bridge = _Bridge();
-    addTearDown(bridge.events.close);
+  Future<void> mount(WidgetTester tester, {int spaceFailures = 0}) async {
+    bridge = _Bridge()..spaceFailures = spaceFailures;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await bridge.events.close();
+    });
     tester.binding.platformDispatcher.localesTestValue = const [Locale('zh')];
     addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
     await tester.pumpWidget(
@@ -128,6 +142,76 @@ void main() {
     await tester.pump();
     await tester.pump();
   }
+
+  testWidgets(
+    'failed space watch retries without becoming an unhandled error',
+    (tester) async {
+      await mount(tester, spaceFailures: 1);
+      expect(tester.takeException(), isNull);
+      expect(
+        bridge.watches.where((name) => name == 'deviceSpaceSnapshotFlow'),
+        hasLength(1),
+      );
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(
+        bridge.watches.where((name) => name == 'deviceSpaceSnapshotFlow'),
+        hasLength(2),
+      );
+      await emitSync(tester, progress());
+      bridge.emit('deviceSpaceSnapshotFlow', {
+        'space': {
+          'spaceId': 'new-space',
+          'spaceName': '新空间',
+          'spaceRevision': 1,
+          'members': ['self'],
+        },
+        'topology': {
+          'currentDeviceId': 'self',
+          'devices': [],
+          'connections': [],
+        },
+      });
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('正在同步'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'activity stream errors are logged and other progress stays usable',
+    (tester) async {
+      await mount(tester);
+      bridge.events.addError(
+        StateError('watch delivery failed'),
+        StackTrace.current,
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      await emitPackages(tester);
+      expect(find.text('加载扩展'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(
+        bridge.watches.where((name) => name == 'deviceSpaceSnapshotFlow'),
+        hasLength(2),
+      );
+    },
+  );
+
+  testWidgets('disposing cancels pending space watch retries', (tester) async {
+    await mount(tester, spaceFailures: 1);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 30));
+    expect(
+      bridge.watches.where((name) => name == 'deviceSpaceSnapshotFlow'),
+      hasLength(1),
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('idle and small sync snapshots stay silent', (tester) async {
     await mount(tester);

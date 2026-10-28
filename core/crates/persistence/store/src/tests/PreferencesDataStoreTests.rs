@@ -149,6 +149,7 @@ struct MemoryStorageHost {
     blockedWrite: Arc<Mutex<Option<BlockedWrite>>>,
     failedWrites: Arc<Mutex<BTreeSet<String>>>,
     failedFlushes: Arc<Mutex<BTreeSet<String>>>,
+    observedWrites: Arc<Mutex<Option<(String, Sender<Vec<u8>>)>>>,
 }
 
 struct BlockedWrite {
@@ -157,6 +158,13 @@ struct BlockedWrite {
 }
 
 impl MemoryStorageHost {
+    /// Captures each committed snapshot for one file, including intermediate writes.
+    fn observeWrites(&self, path: &str) -> Receiver<Vec<u8>> {
+        let (sender, receiver) = channel();
+        *self.observedWrites.lock().unwrap() = Some((path.to_string(), sender));
+        receiver
+    }
+
     /// Returns how many storage read operations this host has served.
     fn readCount(&self) -> usize {
         self.readCount.load(Ordering::SeqCst)
@@ -262,6 +270,12 @@ impl RuntimeStorageHost for MemoryStorageHost {
             .lock()
             .map_err(|error| HostError::new(error.to_string()))?;
         files.insert(path.to_string(), content.to_vec());
+        drop(files);
+        if let Some((observedPath, sender)) = &*self.observedWrites.lock().unwrap() {
+            if observedPath == path {
+                let _ = sender.send(content.to_vec());
+            }
+        }
         Ok(())
     }
 
@@ -389,6 +403,123 @@ fn preferences_schema_runs_sequential_migrations_atomically() {
     );
     store.data().expect("current schema read");
     assert_eq!(host.writeCount(), 1);
+}
+
+/// The first visible file must contain its complete record, even with a schema upgrade.
+#[test]
+fn schema_first_record_write_never_publishes_an_empty_record() {
+    for replicated in [false, true] {
+        for mode in ["replace", "edit", "migrate"] {
+            let host = Arc::new(MemoryStorageHost::default());
+            let path =
+                format!("runtime/space/topology/atomic-{replicated}-{mode}.preferences.json");
+            let snapshots = host.observeWrites(&path);
+            let store = if replicated {
+                PreferencesDataStore::newWithStorage(host.clone(), &path)
+            } else {
+                PreferencesDataStore::newNodeLocalWithStorage(host.clone(), &path, false)
+            }
+            .withSchema(1, |_, _| Ok(()));
+            let record = json!({"nodeId":"node-local", "peers":[], "links":[], "updatedAt":1});
+            match mode {
+                "replace" => {
+                    let mut preferences = Preferences::default();
+                    preferences.set(&stringPreferencesKey("record"), record.clone());
+                    store.replace(preferences).unwrap();
+                }
+                "edit" => store
+                    .edit(|p| p.set(&stringPreferencesKey("record"), record.clone()))
+                    .unwrap(),
+                "migrate" => store
+                    .migrate(|p| -> Result<(), PreferencesDataStoreError> {
+                        p.set(&stringPreferencesKey("record"), record.clone());
+                        Ok(())
+                    })
+                    .unwrap(),
+                _ => unreachable!(),
+            }
+            let snapshots = snapshots.try_iter().collect::<Vec<_>>();
+            assert!(!snapshots.is_empty());
+            for snapshot in &snapshots {
+                let value: Value = serde_json::from_slice(snapshot).unwrap();
+                assert_eq!(
+                    value.get("record"),
+                    Some(&record),
+                    "{mode} (replicated={replicated}) published an incomplete record: {value}"
+                );
+            }
+            assert_eq!(
+                snapshots.len(),
+                1,
+                "a complete record must have one publication point"
+            );
+            assert_eq!(
+                store.data().unwrap().get(&stringPreferencesKey("record")),
+                Some(&record)
+            );
+        }
+    }
+}
+
+/// A schema change still commits when the business edit is a no-op, without exporting an operation.
+#[test]
+fn schema_upgrade_with_unchanged_record_still_commits_once() {
+    for mode in ["replace", "edit", "migrate"] {
+        let host = Arc::new(MemoryStorageHost::default());
+        let path = format!("runtime/space/topology/schema-noop-{mode}.preferences.json");
+        let record = json!({"nodeId":"local", "peers":[], "links":[], "updatedAt":1});
+        host.writeBytes(
+            &path,
+            &serde_json::to_vec(&json!({
+                PREFERENCES_SCHEMA_VERSION_KEY_NAME: 1, "record": record,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let snapshots = host.observeWrites(&path);
+        let store =
+            PreferencesDataStore::newWithStorage(host.clone(), &path).withSchema(2, |_, _| Ok(()));
+        match mode {
+            "replace" => {
+                let mut p = Preferences::default();
+                p.set(&stringPreferencesKey("record"), record.clone());
+                store.replace(p).unwrap();
+            }
+            "edit" => store.edit(|_| {}).unwrap(),
+            "migrate" => store
+                .migrate(|_| -> Result<(), PreferencesDataStoreError> { Ok(()) })
+                .unwrap(),
+            _ => unreachable!(),
+        }
+        assert_eq!(snapshots.try_iter().count(), 1);
+        let persisted: Value = serde_json::from_slice(&host.readBytes(&path).unwrap()).unwrap();
+        assert_eq!(persisted[PREFERENCES_SCHEMA_VERSION_KEY_NAME], 2);
+        assert_eq!(persisted["record"], record);
+        assert!(SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH)
+            .preferenceHistory()
+            .unwrap()
+            .is_empty());
+    }
+}
+
+/// A failed business edit must not leave a schema-only file that breaks the next startup.
+#[test]
+fn schema_first_record_failed_edit_leaves_no_placeholder() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let path = "runtime/space/topology/failed-record.preferences.json";
+    let store =
+        PreferencesDataStore::newWithStorage(host.clone(), path).withSchema(1, |_, _| Ok(()));
+    let result = store.migrate(|p| -> Result<(), PreferencesDataStoreError> {
+        p.set(&stringPreferencesKey("record"), json!({"nodeId":"local"}));
+        Err(PreferencesDataStoreError::Message(
+            "injected edit failure".into(),
+        ))
+    });
+    assert!(result.is_err());
+    assert!(
+        !host.exists(path).unwrap(),
+        "failed initialization must not publish a placeholder"
+    );
 }
 
 #[test]
@@ -1312,7 +1443,7 @@ fn nativePreferenceOperation(
         (
             serde_json::to_string(&(path, keys)).unwrap(),
             json!({
-                "storagePath":path, "encrypted":false, "formatVersion":2,
+                "storagePath":path, "encrypted":false, "formatVersion":2, "schemaVersion":0,
                 "entries":entries.into_iter().map(|(key, value)| json!({"key":key,"operation":"set","value":value})).collect::<Vec<_>>()
             }),
         )
@@ -1320,7 +1451,7 @@ fn nativePreferenceOperation(
         (
             super::preferenceMutationEntityId(path, entries[0].0, &[]).unwrap(),
             json!({
-                "storagePath":path, "encrypted":false, "formatVersion":2, "key":entries[0].0,"value":entries[0].1
+                "storagePath":path, "encrypted":false, "formatVersion":2, "schemaVersion":0, "key":entries[0].0,"value":entries[0].1
             }),
         )
     };
@@ -1557,9 +1688,9 @@ fn preference_replay_history_is_independent_of_the_export_floor() {
     );
 }
 
-/// Historical wire representation does not prohibit applying a valid value to a migrated local store.
+/// Unversioned historical data cannot enter a locally upgraded preference file.
 #[test]
-fn historical_payload_preserves_the_local_storage_schema() {
+fn historical_payload_is_skipped_after_a_local_schema_upgrade() {
     let path = "runtime/config/preferences/stale-owner.preferences.json";
     let host = Arc::new(MemoryStorageHost::default());
     let store = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, false)
@@ -1570,11 +1701,11 @@ fn historical_payload_preserves_the_local_storage_schema() {
     crate::PreferenceMerge::applyOperations(host, &Default::default(), &[], &[old], |_, _| {
         true
     })
-    .unwrap();
+    .expect("an obsolete preference is terminally skipped");
     assert_eq!(store.schemaVersion().unwrap(), 2);
     assert_eq!(
         store.data().unwrap().get(&stringPreferencesKey("setting")),
-        Some(&json!(true))
+        None
     );
 }
 
@@ -1583,6 +1714,9 @@ fn historical_payload_preserves_the_local_storage_schema() {
 fn replay_orders_native_history_without_copying_storage_versions() {
     let path = "runtime/config/preferences/native-version-replay.preferences.json";
     let host = Arc::new(MemoryStorageHost::default());
+    let local = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, false)
+        .withSchema(4, |_, _| Ok(()));
+    local.data().unwrap();
     let mut old = nativePreferenceOperation(
         path,
         vec![("A", json!({"name":"old"})), ("B", json!(true))],
@@ -1610,13 +1744,13 @@ fn replay_orders_native_history_without_copying_storage_versions() {
         &[old],
         |_, _| true,
     )
-    .unwrap();
+    .expect("old-schema history is terminally skipped");
     let result = PreferencesDataStore::newNodeLocalWithStorage(host, path, false)
         .data()
         .unwrap();
     assert_eq!(
         result.get(&stringPreferencesKey(PREFERENCES_SCHEMA_VERSION_KEY_NAME)),
-        None
+        Some(&json!(4))
     );
     assert_eq!(
         result.get(&stringPreferencesKey("A")),
@@ -1963,9 +2097,9 @@ fn transport_completion_never_coalesces_stable_identities() {
     assert_eq!(journal.preferenceHistory().unwrap(), history);
 }
 
-/// A storage-version difference cannot discard an offline transaction from another origin.
+/// An offline delta from a different schema cannot mutate a current-version counter.
 #[test]
-fn offline_old_schema_increment_is_applied_after_a_local_upgrade() {
+fn offline_old_schema_increment_is_skipped_after_a_local_upgrade() {
     let host = Arc::new(MemoryStorageHost::default());
     let path = "runtime/config/preferences/offline-counter.preferences.json";
     let store = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, false)
@@ -1982,17 +2116,18 @@ fn offline_old_schema_increment_is_applied_after_a_local_upgrade() {
     offline.semantics = crate::SyncOperationStore::SyncOperationSemantics::Transaction;
     let operations = vec![baseline, offline];
     for _ in 0..2 {
-        crate::PreferenceMerge::applyOperations(
+        let outcomes = crate::PreferenceMerge::applyIndependentOperations(
             host.clone(),
             &Default::default(),
             &[],
             &operations,
             |_, _| true,
-        )
-        .unwrap();
+        );
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.skipped).count(), 1);
+        assert!(outcomes.iter().all(|outcome| outcome.result.is_ok()));
         assert_eq!(
             store.data().unwrap().get(&stringPreferencesKey("counter")),
-            Some(&json!(12))
+            Some(&json!(10))
         );
         assert_eq!(store.schemaVersion().unwrap(), 4);
     }
@@ -2000,7 +2135,7 @@ fn offline_old_schema_increment_is_applied_after_a_local_upgrade() {
         SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH)
             .preferenceHistory()
             .unwrap(),
-        operations
+        vec![operations[0].clone()]
     );
 }
 
@@ -2284,7 +2419,7 @@ fn local_preference_order_advances_past_remote_logical_time() {
         .find(|operation| operation.originDeviceId != "test")
         .unwrap();
     assert!(local.payload["logicalTime"].as_i64().unwrap() > future);
-    assert!(local.payload.get("schemaVersion").is_none());
+    assert_eq!(local.payload["schemaVersion"], json!(0));
 }
 
 /// A failed alias-owner commit cannot redirect a successfully committed external reference.

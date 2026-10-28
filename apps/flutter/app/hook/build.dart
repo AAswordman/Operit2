@@ -95,6 +95,10 @@ void main(List<String> args) async {
     }, excludeGeneratedOutputs: true);
     await _addDirectoryFileDependencies(output, webRuntimeSourceDir, {'.ts'});
     output.dependencies.add(webRuntimeTypescriptConfig.uri);
+    final cargoBuildScript = File.fromUri(
+      repoRoot.uri.resolve('tools/build_scripts/cargo_build.py'),
+    );
+    output.dependencies.add(cargoBuildScript.uri);
 
     await _run(_pythonExecutable(repoRoot), [
       syncScript.path,
@@ -120,8 +124,15 @@ void main(List<String> args) async {
       ], workingDirectory: repoRoot.path);
       await _invalidateWebRuntimeArtifacts([webBuildDir]);
       await _run(
-        'cargo',
-        const ['build', '--release', '--target', 'wasm32-unknown-unknown'],
+        _pythonExecutable(repoRoot),
+        [
+          cargoBuildScript.path,
+          _command('cargo'),
+          'build',
+          '--release',
+          '--target',
+          'wasm32-unknown-unknown',
+        ],
         workingDirectory: bridgeCrate.path,
         environment: await _wasmCargoEnvironment(repoRoot),
       );
@@ -804,7 +815,9 @@ String? _rustupDefaultToolchain(Directory rustupHome) {
 
 String _pythonExecutable(Directory repoRoot) {
   if (Platform.isWindows) {
-    final venvPython = File.fromUri(repoRoot.uri.resolve('.venv/Scripts/python.exe'));
+    final venvPython = File.fromUri(
+      repoRoot.uri.resolve('.venv/Scripts/python.exe'),
+    );
     if (venvPython.existsSync()) {
       return venvPython.path;
     }

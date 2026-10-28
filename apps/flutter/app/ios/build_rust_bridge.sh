@@ -38,7 +38,7 @@ for arch in $ARCHS; do
     --target "$rust_target" --env-file "$v8_env"
   . "$v8_env"
 
-  RUSTFLAGS="-Awarnings" cargo rustc \
+  "$repo_root/.venv/bin/python" "$repo_root/tools/build_scripts/cargo_build.py" cargo rustc \
     --manifest-path "$crate_dir/Cargo.toml" \
     --release \
     --target "$rust_target" \
