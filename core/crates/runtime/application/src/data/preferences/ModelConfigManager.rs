@@ -1,5 +1,4 @@
-use operit_host_api::PluginStorage::{StoragePreferencesMergeCatalog, StoragePreferencesMergeDescriptor};
-use operit_store::PreferenceMerge::PreferenceMergeStore;
+
 use std::path::PathBuf;
 
 use std::collections::HashSet;
@@ -92,7 +91,7 @@ impl ModelConfigManager {
     }
 
     /// Imports each historical provider value with its declared encoding and preserves its stable identity.
-    fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+    pub(crate) fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
         entry.decodeHistoricalValues(|version, values| {
             if version > Self::PREFERENCES_VERSION {
                 return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
@@ -115,29 +114,7 @@ impl ModelConfigManager {
         })
     }
 
-    /// Declares this owner's catalog and references using the shared merge contract.
-    pub(crate) fn spaceMergeStore() -> PreferenceMergeStore {
-        let path = operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH;
-        PreferenceMergeStore {
-            path: path.to_string(),
-            encrypted: true,
-            open: |storage, path| Self::preferenceStore(storage, path),
-            decode: Some(Self::decodeSyncedEntry),
-            merge: StoragePreferencesMergeDescriptor {
-                version: 1,
-                catalog: Some(StoragePreferencesMergeCatalog {
-                    key_prefix: "provider_".to_string(),
-                    key_suffix: "".to_string(),
-                    identity_field: "id".to_string(),
-                    name_field: "name".to_string(),
-                    ignored_fields: vec!["createdAt".to_string(), "updatedAt".to_string()],
-                    retired_keys: vec!["provider_list".to_string()],
-                }),
-                references: vec![],
-                projection: None,
-            },
-        }
-    }
+
 
     const PREFERENCES_VERSION: u32 = 5;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;

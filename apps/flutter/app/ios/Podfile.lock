@@ -12,6 +12,9 @@ PODS:
     - Flutter
   - integration_test (0.0.1):
     - Flutter
+  - mobile_scanner (7.0.0):
+    - Flutter
+    - FlutterMacOS
   - operit_keep_alive (0.1.0):
     - Flutter
   - package_info_plus (0.4.5):
@@ -36,6 +39,7 @@ DEPENDENCIES:
   - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
   - integration_test (from `.symlinks/plugins/integration_test/ios`)
+  - mobile_scanner (from `.symlinks/plugins/mobile_scanner/darwin`)
   - operit_keep_alive (from `.symlinks/plugins/operit_keep_alive/ios`)
   - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
   - printing (from `.symlinks/plugins/printing/ios`)
@@ -57,6 +61,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/image_picker_ios/ios"
   integration_test:
     :path: ".symlinks/plugins/integration_test/ios"
+  mobile_scanner:
+    :path: ".symlinks/plugins/mobile_scanner/darwin"
   operit_keep_alive:
     :path: ".symlinks/plugins/operit_keep_alive/ios"
   package_info_plus:
@@ -79,6 +85,7 @@ SPEC CHECKSUMS:
   geolocator_apple: 66b711889fd333205763b83c9dcf0a57a28c7afd
   image_picker_ios: 4f2f91b01abdb52842a8e277617df877e40f905b
   integration_test: 252f60fa39af5e17c3aa9899d35d908a0721b573
+  mobile_scanner: 77265f3dc8d580810e91849d4a0811a90467ed5e
   operit_keep_alive: a08349ef11bc1577dd06fb7396e520682ff09acc
   package_info_plus: c0502532a26c7662a62a356cebe2692ec5fe4ec4
   printing: 233e1b73bd1f4a05615548e9b5a324c98588640b

@@ -213,13 +213,29 @@ class CoreApplicationService with WidgetsBindingObserver {
         return;
       }
       final deviceInfo = await RuntimeDeviceInfoProvider.current();
-      await _coreClients.server.runtimeRemoteLinkService.initializeDeviceInfo(
-        supplied: deviceInfo,
-      );
-      await _coreClients.server.runtimeRemoteLinkService
-          .updateCurrentDeviceUserName(
-            userName: _runtimeManager.activeIdentity.name,
+      Future<void> spaceStep(String operation, Future<void> Function() run) async {
+        try {
+          await run();
+        } catch (error, stackTrace) {
+          ClientLogger.e(
+            operation,
+            tag: _logTag,
+            error: error,
+            stackTrace: stackTrace,
           );
+        }
+      }
+      await spaceStep('Initialize Space device presentation', () async {
+        await _coreClients.server.runtimeRemoteLinkService.initializeDeviceInfo(
+          supplied: deviceInfo,
+        );
+      });
+      await spaceStep('Update Space device user name', () async {
+        await _coreClients.server.runtimeRemoteLinkService
+            .updateCurrentDeviceUserName(
+              userName: _runtimeManager.activeIdentity.name,
+            );
+      });
       // 配置和监听生命周期归 runtime；Dart 只调用生成的类型化 Proxy。
       final peerService = _coreClients.server.runtimeRemoteLinkService;
       final config = await peerService.localHostConfig();
@@ -234,7 +250,9 @@ class CoreApplicationService with WidgetsBindingObserver {
       if (transports.isNotEmpty) {
         await peerService.startListening(transports: transports);
       }
-      await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();
+      await spaceStep('Start Space synchronization', () async {
+        await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();
+      });
       ClientLogger.i(
         'runtime services start done elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,

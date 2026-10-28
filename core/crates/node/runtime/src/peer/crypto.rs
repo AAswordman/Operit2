@@ -336,7 +336,7 @@ pub(super) struct MultiplexedChannel {
 static LAST_ERROR: StdMutex<Option<String>> = StdMutex::new(None);
 
 /// Reports the first terminal failure from the shared channel implementation.
-pub(super) fn diagnostic() -> Option<String> { LAST_ERROR.lock().unwrap().clone() }
+pub(super) fn diagnostic() -> Option<String> { LAST_ERROR.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone() }
 
 impl MultiplexedChannel {
     /// Starts the common response reader and inbound dispatcher for both directions.
@@ -354,17 +354,31 @@ impl MultiplexedChannel {
         });
         let reader = multiplexed.clone();
         scheduler.scheduleHostRuntimeAsyncTask("peer-multiplexed-reader", Box::new(move || Box::pin(async move {
-            reader.readLoop().await;
+            if let Err(error) = crate::fault_isolation::link("peer channel reader", async {
+                reader.clone().readLoop().await;
+                Ok(())
+            }).await {
+                reader.fail(error).await;
+                reader.stopped.notify_one();
+                reader.channel.raw.close().await;
+            }
         }))).map_err(|hostError| error(hostError.to_string()))?;
         let dispatch = multiplexed.clone();
         scheduler.scheduleHostRuntimeAsyncTask("peer-multiplexed-dispatch", Box::new(move || Box::pin(async move {
-            dispatch.dispatchLoop(inbound, requests).await;
+            if let Err(error) = crate::fault_isolation::link("peer channel dispatcher", async {
+                dispatch.clone().dispatchLoop(inbound, requests).await;
+                Ok(())
+            }).await {
+                dispatch.fail(error).await;
+                dispatch.stopped.notify_one();
+                dispatch.channel.raw.close().await;
+            }
         }))).map_err(|hostError| error(hostError.to_string()))?;
         Ok(multiplexed)
     }
 
     /// Returns whether the underlying authenticated channel has failed.
-    pub(super) fn isFailed(&self) -> bool { self.failure.lock().unwrap().is_some() || !self.channel.isAvailable() }
+    pub(super) fn isFailed(&self) -> bool { self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_some() || !self.channel.isAvailable() }
 
     /// Identifies the authenticated carrier used by a Space client.
     pub(super) fn generation(&self) -> u32 { self.channel.channel().generation }
@@ -433,7 +447,7 @@ impl MultiplexedChannel {
                 })),
             ) {
                 // Report failure instead of panicking or silently selecting a global executor.
-                *channel.failure.lock().unwrap() = Some(error(hostError.to_string()));
+                *channel.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error(hostError.to_string()));
             }
         }
     }
@@ -449,22 +463,22 @@ impl MultiplexedChannel {
     /// Fails all logical operations after the authenticated channel ends.
     async fn fail(&self, error: CoreLinkError) {
         {
-            let mut failure = self.failure.lock().unwrap();
+            let mut failure = self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if failure.is_some() { return; }
             *failure = Some(error.clone());
         }
-        *LAST_ERROR.lock().unwrap() = Some(error.message.clone());
+        *LAST_ERROR.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error.message.clone());
         let mut pending = self.pending.lock().await;
         let drained = std::mem::take(&mut *pending);
         for (_, sender) in drained { let _ = sender.send(Err(error.clone())); }
         self.watches.lock().await.clear();
-        self.inboundRequests.lock().unwrap().take();
+        self.inboundRequests.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
         self.dispatchStopped.notify_one();
     }
 
     /// Returns the terminal channel error or a new local error.
     fn failureOr(&self, message: &str) -> CoreLinkError {
-        self.failure.lock().unwrap().clone().unwrap_or_else(|| error(message))
+        self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone().unwrap_or_else(|| error(message))
     }
 
     /// Correlates every response this channel carries and forwards the peer's
@@ -491,7 +505,7 @@ impl MultiplexedChannel {
     /// Hands one request from the peer to this channel's dispatcher, keeping this
     /// reader free to correlate the calls made here.
     fn forwardInbound(&self, request: CoreLinkRequest) -> Result<(), CoreLinkError> {
-        let sender = self.inboundRequests.lock().unwrap().clone()
+        let sender = self.inboundRequests.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
             .ok_or_else(|| error("Multiplexed channel received an unexpected request"))?;
         sender.send(request).map_err(|_| error("Multiplexed channel dispatcher stopped"))
     }

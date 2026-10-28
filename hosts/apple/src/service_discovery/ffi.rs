@@ -62,7 +62,9 @@ pub type RegisterReply = unsafe extern "C" fn(
     *mut c_void,
 );
 
-#[cfg_attr(target_vendor = "apple", link(name = "dns_sd"))]
+// DNS-SD symbols are exported by libSystem on Apple platforms. New SDKs no longer
+// ship the separate libdns_sd linker stub.
+#[cfg_attr(target_vendor = "apple", link(name = "System"))]
 extern "C" {
     /// Opens one shared connection to the system Bonjour daemon.
     pub fn DNSServiceCreateConnection(service: *mut ServiceRef) -> i32;

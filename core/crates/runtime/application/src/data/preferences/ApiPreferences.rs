@@ -52,13 +52,10 @@ impl ApiPreferences {
             .withSchema(2, Self::migratePreferences)
     }
 
-    /// Registers the API preference contract independently of its local schema migration lifecycle.
-    pub(crate) fn spaceMergeStore() -> operit_store::PreferenceMerge::PreferenceMergeStore {
-        operit_store::PreferenceMerge::PreferenceMergeStore::values(OperitPaths::API_PREFERENCES_PATH, false, |storage, _| Self::store(storage), Self::decodeSyncedEntry)
-    }
+
 
     /// Converts historical API values to the current typed value contract.
-    fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+    pub(crate) fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
         entry.decodeHistoricalValues(|version, values| {
             if version > 2 { return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: 2 }); }
             if version < 2 { Self::migratePreferences(1, values)?; }

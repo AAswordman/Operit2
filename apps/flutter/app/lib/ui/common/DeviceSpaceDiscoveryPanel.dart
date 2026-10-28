@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'SpaceJoinWidgets.dart';
+import 'PeerQrCodeDialog.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -208,6 +209,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   bool _busy = false;
   bool _scanning = false;
   String? _error;
+  String? _discoveryError;
   List<generated.DiscoveredPeer> _peers = [];
 
   /// Starts discovery after the dialog has entered the widget tree.
@@ -222,19 +224,21 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   }
 
   /// Updates action availability and the explicit discovery status.
-  void _setBusy(bool busy, {bool scanning = false}) {
+  void _setBusy(bool busy) {
     if (!mounted) return;
     setState(() {
       _busy = busy;
-      _scanning = scanning;
       if (busy) _error = null;
     });
   }
 
   /// Refreshes nearby devices without displaying a progress bar.
   Future<void> _scan() async {
-    if (_busy) return;
-    _setBusy(true, scanning: true);
+    if (_busy || _scanning) return;
+    setState(() {
+      _scanning = true;
+      _discoveryError = null;
+    });
     try {
       final peers = await widget.clients.server.runtimeRemoteLinkService
           .discoverPeers(timeoutMs: 5000);
@@ -246,32 +250,37 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
               : peers
                     .where((peer) => peer.nodeId == onlyNodeId)
                     .toList(growable: false);
-          _error = null;
+          _discoveryError = null;
         });
       }
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _discoveryError = error.toString());
     } finally {
-      _setBusy(false);
+      if (mounted) setState(() => _scanning = false);
     }
   }
 
   /// Pairs the selected device or opens explicit address entry.
-  Future<void> _pair([generated.DiscoveredPeer? peer]) async {
+  Future<void> _pair([
+    generated.DiscoveredPeer? peer,
+    String? connectionCode,
+  ]) async {
     if (_busy) return;
     final l10n = AppLocalizations.of(context)!;
     _setBusy(true);
     try {
       final _RemotePairResult? result;
-      if (peer == null) {
+      if (peer == null && connectionCode == null) {
         result = await _RemotePairDialog.show(context, clients: widget.clients);
       } else {
-        final pending = await widget.clients.server.runtimeRemoteLinkService
-            .startPairing(
-              address: peer.address,
-              nodeId: peer.nodeId,
-              transport: peerEndpointTransport(peer.address),
-            );
+        final service = widget.clients.server.runtimeRemoteLinkService;
+        final pending = connectionCode != null
+            ? await service.startPairingFromCode(code: connectionCode)
+            : await service.startPairing(
+                address: peer!.address,
+                nodeId: peer.nodeId,
+                transport: peerEndpointTransport(peer.address),
+              );
         if (!mounted) {
           await widget.clients.server.runtimeRemoteLinkService.cancelPairing(
             pairingId: pending.pairingId,
@@ -322,6 +331,98 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     } finally {
       _setBusy(false);
     }
+  }
+
+  Future<void> _openQr(PeerQrMode mode) async {
+    if (_busy) return;
+    _setBusy(true);
+    String? code;
+    try {
+      code = await showPeerQrCodeDialog(
+        context,
+        clients: widget.clients,
+        mode: mode,
+        onlyNodeId: widget.onlyNodeId,
+      );
+    } finally {
+      _setBusy(false);
+    }
+    if (mounted && code != null) await _pair(null, code);
+  }
+
+  Widget _qrActions(AppLocalizations l10n) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow =
+                  constraints.maxWidth < 300 ||
+                  MediaQuery.textScalerOf(context).scale(1) > 1.4;
+              final width = narrow
+                  ? constraints.maxWidth
+                  : (constraints.maxWidth - 12) / 2;
+              Widget action(PeerQrMode mode, IconData icon, String text) =>
+                  SizedBox(
+                    width: width,
+                    child: Material(
+                      color: colors.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(16),
+                      child: InkWell(
+                        onTap: _busy ? null : () => _openQr(mode),
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 18,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(icon, color: colors.primary, size: 24),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  text,
+                                  style: Theme.of(context).textTheme.labelLarge,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+              return Wrap(
+                spacing: 12,
+                runSpacing: 10,
+                children: [
+                  action(
+                    PeerQrMode.scan,
+                    Icons.qr_code_scanner_rounded,
+                    l10n.peerQrScan,
+                  ),
+                  action(
+                    PeerQrMode.show,
+                    Icons.qr_code_rounded,
+                    l10n.peerQrShow,
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          Text(
+            l10n.peerQrMethodsHint,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Reports whether one device already belongs to this device's Space.
@@ -447,7 +548,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   }
 
   /// Keeps discovery errors readable inside the scrollable device content.
-  Widget _buildError(BuildContext context) {
+  Widget _buildError(BuildContext context, String error) {
     final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -465,7 +566,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  _error!,
+                  error,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: colors.onErrorContainer,
                   ),
@@ -493,7 +594,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       titleActions: [
         IconButton(
           tooltip: l10n.refresh,
-          onPressed: _busy ? null : _scan,
+          onPressed: _busy || _scanning ? null : _scan,
           icon: const Icon(Icons.refresh_rounded),
         ),
       ],
@@ -523,8 +624,17 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
               ),
             ),
           ),
-          if (_error != null) SliverToBoxAdapter(child: _buildError(context)),
-          if (_peers.isEmpty && _error == null)
+          SliverToBoxAdapter(child: _qrActions(l10n)),
+          if (_error != null)
+            SliverToBoxAdapter(child: _buildError(context, _error!)),
+          if (_discoveryError != null)
+            SliverToBoxAdapter(
+              child: _buildError(
+                context,
+                l10n.devicePickerDiscoveryFailed(_discoveryError!),
+              ),
+            ),
+          if (_peers.isEmpty && _error == null && _discoveryError == null)
             SliverToBoxAdapter(child: _buildEmptyState(context)),
           if (_peers.isNotEmpty)
             SliverList.separated(

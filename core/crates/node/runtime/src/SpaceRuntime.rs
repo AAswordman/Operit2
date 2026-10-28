@@ -31,7 +31,7 @@ impl SpaceStreamPool {
         let mut sources = self
             .sources
             .lock()
-            .expect("Space stream pool mutex poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !sources.contains_key(&attachment.streamId) {
             sources.insert(attachment.streamId, attachment.source);
         }
@@ -173,7 +173,7 @@ impl SpaceRuntime {
             .streamPool
             .sources
             .lock()
-            .expect("Space stream pool mutex poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&streamId)
             .cloned()
             .ok_or_else(|| CoreLinkError::watchNotFound(&request.registryKey()))?;

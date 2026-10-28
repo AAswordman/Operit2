@@ -1138,7 +1138,7 @@ fn synchronized_themes_preserve_independent_identity_records() {
     let history = targetJournal.preferenceHistory().unwrap();
     operit_store::PreferenceMerge::applyOperations(
         target.host.clone(),
-        &operit_store::PreferenceMerge::PreferenceMergeSchema::default(),
+        &crate::data::preferences::PreferenceSpaceMerge::schema(&operations),
         &history,
         &operations,
         |_, _| true,
@@ -1146,8 +1146,17 @@ fn synchronized_themes_preserve_independent_identity_records() {
     .unwrap();
     let manager = target.manager();
     assert_eq!(manager.list().unwrap().len(), 2);
-    assert_eq!(manager.get(first.id.clone()).unwrap(), first);
-    assert_eq!(manager.get(second.id.clone()).unwrap(), second);
+    let mut mergedFirst = manager.get(first.id.clone()).unwrap();
+    let mut mergedSecond = manager.get(second.id.clone()).unwrap();
+    // The shared catalog resolves duplicate display names while preserving
+    // both identities, snapshots, and timestamps.
+    let mut names = vec![mergedFirst.name.clone(), mergedSecond.name.clone()];
+    names.sort();
+    assert_eq!(names, vec!["Shared name", "Shared name（1）"]);
+    mergedFirst.name = first.name.clone();
+    mergedSecond.name = second.name.clone();
+    assert_eq!(mergedFirst, first);
+    assert_eq!(mergedSecond, second);
 }
 
 /// Repairs installed schema-one, schema-two and schema-three color representations before any active-theme validation.

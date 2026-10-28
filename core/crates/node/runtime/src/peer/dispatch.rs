@@ -212,7 +212,7 @@ impl CoreLinkPushSession for Push {
     async fn send(&mut self, args: CoreValue) -> Result<(), CoreLinkError> {
         let sequence = self.next;
         self.next = sequence.checked_add(1).ok_or_else(|| error("Push sequence exhausted"))?;
-        match self.channel.as_ref().unwrap().exchange(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(CorePushItem {
+        match self.channel.as_ref().ok_or_else(|| error("Push session is closed"))?.exchange(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(CorePushItem {
             pushId: self.id.clone(), sequence, args,
         }))).await? {
             CoreLinkResponse::Push { pushId, result: Ok(CoreLinkPushResponse::ItemAccepted { sequence: accepted }) }
@@ -224,7 +224,7 @@ impl CoreLinkPushSession for Push {
 
     /// Closes one logical Push session while retaining the shared channel.
     async fn close(mut self: Box<Self>) -> Result<(), CoreLinkError> {
-        let channel = self.channel.take().unwrap();
+        let channel = self.channel.take().ok_or_else(|| error("Push session is closed"))?;
         let result = channel.exchange(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Close {
             pushId: self.id.clone(),
         })).await;

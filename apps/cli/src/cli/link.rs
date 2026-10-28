@@ -35,6 +35,7 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         Some("pair-start" | "pair-finish" | "pair-cancel" | "unpair" | "peers" | "prompts" | "listen") => {
             run_node_pairing_command(args).await
         }
+        Some("qr") => run_link_qr(&args[1..]).await,
         Some("session") => run_link_session(&args[1..]).await,
         Some("discover") => run_link_discover_command(&args[1..]).await,
         Some("space") => run_link_space_command(&args[1..]).await,
@@ -47,6 +48,94 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Reuses the current owner, or keeps an explicitly created listener alive until Ctrl-C.
+async fn run_link_qr(args: &[String]) -> Result<(), String> {
+    if let Some(code) = crate::daemon::owner_peer_connection_code().await {
+        if !args.is_empty() {
+            return Err("A Core is already running. Use 'link qr' without listener options to display its live code.".into());
+        }
+        return print_connection_qr(&code?);
+    }
+    let application = create_cli_core_application_configured("server", configure_link_core).await?;
+    let result = async {
+        let mut listenerArgs = args.to_vec();
+        if listenerArgs.first().map_or(true, |arg| arg.starts_with("--")) {
+            listenerArgs.insert(0, "http".into());
+        }
+        let duration = start_node_listener(&application, &listenerArgs).await?;
+        print_connection_qr(&application.accessServices().peerConnectionCode().await?)?;
+        if !cli_json_mode() {
+            eprintln!("Keep this command running while connecting. Press Ctrl-C to stop.");
+            eprintln!("The pairing code will appear here when the other device connects.");
+        }
+        let deadline = async {
+            if let Some(ms) = duration { tokio::time::sleep(Duration::from_millis(ms)).await; }
+            else { std::future::pending::<()>().await; }
+        };
+        tokio::pin!(deadline);
+        let mut tick = tokio::time::interval(Duration::from_millis(500));
+        let mut shown = std::collections::BTreeSet::new();
+        loop {
+            tokio::select! {
+                signal = tokio::signal::ctrl_c() => { signal.map_err(|error| error.to_string())?; break; }
+                _ = &mut deadline => break,
+                _ = tick.tick() => {
+                    for prompt in application.accessServices().pairingPrompts()? {
+                        if shown.insert(prompt.pairingId.clone()) {
+                            if cli_json_mode() { emit_cli_json(serde_json::json!({"pairingPrompt": prompt})); }
+                            else { println!("Pairing: {} ({})   {}", prompt.displayName, prompt.peerNodeId, prompt.confirmationCode); }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }.await;
+    application.shutdown().await;
+    result
+}
+
+fn print_connection_qr(code: &str) -> Result<(), String> {
+    let info = operit_node_runtime::PeerConnectionCode::decode(code, "").map_err(|error| error.to_string())?;
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({"connectionCode": code, "device": info}));
+        return Ok(());
+    }
+    let rendered = render_connection_qr(code)?;
+    println!("{} ({})", info.displayName, info.nodeId);
+    if let Ok((width, _)) = crossterm::terminal::size() {
+        let needed = qrcode::QrCode::with_error_correction_level(code.as_bytes(), qrcode::EcLevel::L)
+            .map_err(|error| error.to_string())?.width() + 8;
+        if usize::from(width) < needed { eprintln!("Widen the terminal to at least {needed} columns to scan this QR code."); }
+    }
+    print!("{rendered}");
+    println!("{code}");
+    println!("Scan with Operit → Add device → Scan code. Pairing and Space approval still apply.");
+    io::stdout().flush().map_err(|error| error.to_string())
+}
+
+/// Two modules per terminal row. Explicit black/white colors and a four-module quiet zone
+/// keep the QR readable in both light and dark terminals.
+fn render_connection_qr(code: &str) -> Result<String, String> {
+    use qrcode::{types::Color, EcLevel, QrCode};
+    let qr = QrCode::with_error_correction_level(code.as_bytes(), EcLevel::L)
+        .map_err(|error| error.to_string())?;
+    let side = qr.width() + 8;
+    let dark = |x: usize, y: usize| x >= 4 && y >= 4 && x < side - 4 && y < side - 4
+        && qr[(x - 4, y - 4)] == Color::Dark;
+    let mut output = String::new();
+    for y in (0..side).step_by(2) {
+        output.push_str("\x1b[30;107m");
+        for x in 0..side {
+            output.push(match (dark(x, y), dark(x, y + 1)) {
+                (false, false) => ' ', (true, true) => '█', (true, false) => '▀', (false, true) => '▄',
+            });
+        }
+        output.push_str("\x1b[0m\n");
+    }
+    Ok(output)
 }
 
 /// CLI 只解析输入和展示结果；配对直接调用应用注入的 RuntimePeerService。
@@ -150,7 +239,7 @@ fn parse_session_command(line: &str) -> Result<Vec<String>, String> {
 async fn run_link_session_inner(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
     start_node_listener(application, args).await?;
     if !cli_json_mode() {
-        println!("Commands: pair-start/pair-finish/prompts/peers, space ..., control ..., core ..., quit");
+        println!("Commands: qr/pair-code/pair-start/pair-finish/prompts/peers, space ..., control ..., core ..., quit");
         println!("For arguments containing spaces, enter a JSON array, e.g. [\"space\",\"rename\",\"My Space\"]");
     }
     let (sender, mut receiver) = tokio::sync::mpsc::channel(16);
@@ -186,6 +275,14 @@ async fn run_link_session_inner(application: &operit_core_application::CoreAppli
 
 async fn execute_link_session_command(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("qr") if args.len() == 1 => {
+            print_connection_qr(&application.accessServices().peerConnectionCode().await?)
+        }
+        Some("pair-code") if args.len() == 2 => {
+            let pending = application.accessServices().startPairingFromCode(args[1].clone()).await?;
+            emit_cli_json(serde_json::to_value(pending).map_err(|error| error.to_string())?);
+            Ok(())
+        }
         Some("space") => execute_link_space_command(application, &args[1..]).await,
         Some("control") => execute_link_control_command(application, &args[1..]).await,
         Some("edge-call") => execute_link_edge_call_command(application, &args[1..]).await,
@@ -1095,6 +1192,8 @@ pub(crate) fn print_link_usage() {
         return;
     }
     println!("operit2 cli link discover [--timeout-ms <ms>]");
+    println!("operit2 cli link qr [http|ws|tcp] [--bind <host:port>] [--no-discovery]  # terminal QR; reuses daemon/TUI when running");
+    println!("  In a live link session: qr | pair-code <connection-code>");
     println!("operit2 cli link doctor [--repair]  # shared-Space health diagnosis and repair");
     println!("operit2 cli link pair-start <node-id> <address> <http|ws|tcp|serial|bluetooth>");
     println!("operit2 cli link pair-finish <pairing-id> <code>");

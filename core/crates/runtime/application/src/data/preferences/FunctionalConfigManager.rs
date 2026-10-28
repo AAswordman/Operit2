@@ -1,5 +1,4 @@
-use operit_store::PreferenceMerge::PreferenceMergeStore;
-use operit_host_api::PluginStorage::{StoragePreferencesMergeDescriptor, StoragePreferencesMergeKey, StoragePreferencesMergePathSegment, StoragePreferencesMergeReference};
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -74,7 +73,7 @@ impl FunctionalConfigManager {
     }
 
     /// Converts historical binding values without creating unrelated default bindings.
-    fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
+    pub(crate) fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
         entry.decodeHistoricalValues(|version, values| {
             if version > Self::PREFERENCES_VERSION {
                 return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
@@ -87,26 +86,7 @@ impl FunctionalConfigManager {
         })
     }
 
-    /// Declares provider UUID references using the same contract as plugin owners.
-    pub(crate) fn spaceMergeStore() -> PreferenceMergeStore {
-        PreferenceMergeStore {
-            path: operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH.to_string(),
-            encrypted: false,
-            open: |storage, path| Self::preferenceStore(storage, path),
-            decode: Some(Self::decodeSyncedEntry),
-            merge: StoragePreferencesMergeDescriptor {
-                version: 1,
-                catalog: None,
-                references: vec![StoragePreferencesMergeReference {
-                    key: StoragePreferencesMergeKey::Exact { key: "function_model_binding".to_string() },
-                    path: vec![StoragePreferencesMergePathSegment::ObjectValues,
-                        StoragePreferencesMergePathSegment::Field { name: "providerId".to_string() }],
-                    target: operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH.to_string(),
-                }],
-                projection: None,
-            },
-        }
-    }
+
 
     const PREFERENCES_VERSION: u32 = 3;
 

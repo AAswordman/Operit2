@@ -139,7 +139,7 @@ impl SpacePersistenceSyncService {
         nodeRouter: CoreNodeRouter,
             spaceStore: CoreSpaceStore,
     ) -> Self {
-        let mut services = persistenceServices().lock().expect("Space sync registry lock poisoned");
+        let mut services = persistenceServices().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let nodeId = nodeRouter.localNodeId();
         if let Some(state) = services.get(&nodeId).and_then(Weak::upgrade)
             .filter(|state| state.localRuntime.sharesApplicationWith(&localRuntime)) {
@@ -203,9 +203,13 @@ impl SpacePersistenceSyncService {
             .map_err(|error| format!("Space sync subscription lock poisoned: {error}"))? =
             Some(subscription);
 
-        if let Err(error) = self.startWorkspaceScanner().and_then(|_| self.startPeerChangeWatcher()) {
-            let _ = self.stop();
-            return Err(error);
+        for (context, result) in [
+            ("workspace scanner", self.startWorkspaceScanner()),
+            ("peer change watcher", self.startPeerChangeWatcher()),
+        ] {
+            if let Err(error) = result {
+                operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService", &format!("{context}: {error}"));
+            }
         }
         operit_util::AppLogger::AppLogger::v(
             "SpacePersistenceSyncService",
@@ -269,7 +273,7 @@ impl SpacePersistenceSyncService {
                     if !state.active.load(Ordering::Acquire) { break; }
                     let service = SpacePersistenceSyncService { state };
                     let mut changes = 0;
-                    if let Err(error) = service.workspaceFiles().scan().map(|scanned| changes = scanned) {
+                    if let Err(error) = crate::fault_isolation::run("workspace file scanner", || service.workspaceFiles().scan().map(|scanned| changes = scanned)) {
                         operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService",
                             &format!("Workspace scan failed; no missing-file deletions published: {error}"));
                     }
@@ -342,7 +346,10 @@ impl SpacePersistenceSyncService {
                 );
             }
         }
-        self.workspaceFiles().scan()?;
+        let mut errors = Vec::new();
+        if let Err(error) = crate::fault_isolation::run("scan workspace files", || self.workspaceFiles().scan().map(|_| ())) {
+            errors.push(error);
+        }
         let services = self.state.nodeRouter.nodeServices()?;
         let activePeers = services.peers().activePeerNodeIds().map_err(|error| error.to_string())?;
         let localNodeId = self.state.nodeRouter.localNodeId();
@@ -375,13 +382,17 @@ impl SpacePersistenceSyncService {
         }
         let service = crate::RuntimeRemoteLinkService::RuntimeRemoteLinkService::newWithRouter(
             (*self.state.localRuntime).clone(), self.state.nodeRouter.clone());
-        let mut errors = crate::NodeSpaceService::space_departure::synchronize(&service).await.err().into_iter().collect::<Vec<_>>();
+        if let Err(error) = crate::fault_isolation::operation("deliver Space departures",
+            crate::NodeSpaceService::space_departure::synchronize(&service)).await { errors.push(error); }
         let localStateSummary = self.localStateSummary().await?;
         let mut cycleDecisions = BTreeMap::<String, bool>::new();
         let membershipBeforeExchange = self.state.spaceStore.space()?.members.into_iter().collect::<BTreeSet<_>>();
         for peerNodeId in services.peers().outboundPeerNodeIds().map_err(|error| error.to_string())? {
-            if !activePeers.contains(&peerNodeId) || control.nodeIsDisconnected(&peerNodeId)? {
-                continue;
+            if !activePeers.contains(&peerNodeId) { continue; }
+            match control.nodeIsDisconnected(&peerNodeId) {
+                Ok(false) => {},
+                Ok(true) => continue,
+                Err(error) => { errors.push(format!("Peer {peerNodeId} connection policy: {error}")); continue; }
             }
             if !self
                 .peerPassRequired(&peerNodeId, &localStateSummary, &mut cycleDecisions)
@@ -389,7 +400,8 @@ impl SpacePersistenceSyncService {
             {
                 continue;
             }
-            if let Err(error) = self.exchangePairedDeviceSpaceProjection(&peerNodeId).await {
+            if let Err(error) = crate::fault_isolation::operation(&format!("Peer {peerNodeId} Space projection"),
+                self.exchangePairedDeviceSpaceProjection(&peerNodeId)).await {
                 self.recordPeerPassFailed(&peerNodeId);
                 errors.push(format!("CoreNode {peerNodeId} Space projection exchange: {error}"));
                 continue;
@@ -406,7 +418,10 @@ impl SpacePersistenceSyncService {
             if targetNodeId == localNodeId {
                 continue;
             }
-            let reachable = self.state.nodeRouter.nodeIsReachable(&targetNodeId)?;
+            let reachable = match self.state.nodeRouter.nodeIsReachable(&targetNodeId) {
+                Ok(reachable) => reachable,
+                Err(error) => { errors.push(format!("Peer {targetNodeId} reachability: {error}")); continue; }
+            };
             if !reachable {
                 continue;
             }
@@ -447,7 +462,8 @@ impl SpacePersistenceSyncService {
         let space = self.state.spaceStore.space()?;
         self.state.progress.retain(&space.spaceId, &space.members);
         self.state.progress.begin(&targetNodeId, &space.spaceId);
-        let pass = self.synchronizePeer(&targetNodeId, limit);
+        let context = format!("Peer {targetNodeId} persistence synchronization");
+        let pass = crate::fault_isolation::operation(&context, self.synchronizePeer(&targetNodeId, limit));
         tokio::pin!(pass);
         let result = if let Some(delayMs) = self.state.progress.revealDelayMs(&targetNodeId) {
             tokio::select! {
@@ -1261,7 +1277,7 @@ impl SpacePersistenceSyncService {
                         ),
                         operit_util::AppLogger::VERBOSE_LEVEL_5,
                     );
-                    match service.synchronizeOnce().await {
+                    match crate::fault_isolation::operation("Space synchronization pass", service.synchronizeOnce()).await {
                         Ok(()) => {
                             operit_util::AppLogger::AppLogger::v_with_level(
                                 "SpacePersistenceSyncService",

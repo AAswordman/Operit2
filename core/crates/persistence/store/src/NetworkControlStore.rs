@@ -1,3 +1,4 @@
+use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_CONTROL_PROJECTION_PATH, RUNTIME_SPACE_MEMBERS_DIR_PATH, RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -10,7 +11,7 @@ use crate::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use crate::CoreSpaceStore::{CoreSpaceDeviceProfile, CoreSpaceStore};
 use crate::RuntimeStorageHost::defaultRuntimeStorageHost;
 use crate::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore};
-use crate::NetworkControlReadModel::{lockControlReadModel, SharedControlReadModel};
+use crate::NetworkControlReadModel::{lockControlReadModel};
 use crate::SyncOperationStore::{
     NewSyncOperation, SyncOperation, SyncOperationOrder, SyncOperationSemantics,
     SyncOperationStore,
@@ -18,10 +19,10 @@ use crate::SyncOperationStore::{
 
 /// Identifies only preference datasets explicitly retired into endpoint-local authority projections.
 fn endpointProjectionPreferencePath(path: &str) -> bool {
-    ["runtime/space/members/", "runtime/space/device_profiles/",
+    [RUNTIME_SPACE_MEMBERS_DIR_PATH, RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
         operit_util::RuntimeStorageLayout::RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH,
         operit_util::RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH]
-        .iter().any(|prefix| path.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with('/') || prefix.ends_with('/'))
+        .iter().any(|prefix| path.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with('/'))
             && path.ends_with(".preferences.json"))
 }
 
@@ -171,7 +172,6 @@ pub struct NetworkControlStore {
     controlProjection: CoreNodeStateStore,
     nodeLocalOnly: bool,
     localNodeId: String,
-    readModel: SharedControlReadModel,
 }
 
 impl NetworkControlStore {
@@ -180,22 +180,25 @@ impl NetworkControlStore {
         let localNodeId = CoreNodeIdentityStore::new(storage.clone())
             .initialize()?
             .nodeId;
+        Ok(Self::withLocalNodeId(storage, localNodeId))
+    }
+
+    /// Constructs the handle without reading or replaying Space data.
+    #[allow(non_snake_case)]
+    pub fn withLocalNodeId(storage: Arc<dyn RuntimeStorageHost>, localNodeId: String) -> Self {
         let syncOperationStore = SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH);
-        let readModel = syncOperationStore.networkControlReadModel()
-            .map_err(|error| error.to_string())?;
-        Ok(Self {
+        Self {
             spaceStore: CoreSpaceStore::new(storage.clone()),
             syncOperationStore,
             controlProjection: Self::projectionStore(storage),
             nodeLocalOnly: false,
             localNodeId,
-            readModel,
-        })
+        }
     }
 
     /// Opens the versioned local projection of synchronized control operations.
     pub fn projectionStore(storage: Arc<dyn RuntimeStorageHost>) -> CoreNodeStateStore {
-        CoreNodeStateStore::newWithStorage(storage, "runtime/link_access/space_policy.preferences.json")
+        CoreNodeStateStore::newWithStorage(storage, RUNTIME_SPACE_CONTROL_PROJECTION_PATH)
             .withSchema(2, |version, preferences| match version {
                 0 => Ok(()),
                 1 => {
@@ -209,6 +212,15 @@ impl NetworkControlStore {
                 }
                 from => Err(crate::PreferencesDataStore::PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
             })
+    }
+
+    /// Drops the endpoint's old projection by path, even if it cannot decode.
+    /// Full Core journals are scoped by Space id and retain their business history.
+    #[allow(non_snake_case)]
+    pub fn resetLocalProjection(&self) -> Result<(), String> {
+        let _lock = networkControlMutationLock().lock().map_err(|error| error.to_string())?;
+        self.controlProjection.delete().map_err(|error| error.to_string())?;
+        self.syncOperationStore.replaceProjectedControlOperations(&self.controlProjection, self.nodeLocalOnly)
     }
 
     /// Endpoint authority is durable node-local control state, not a business
@@ -800,7 +812,7 @@ impl NetworkControlStore {
     /// Reads the state maintained by committed control mutations.
     #[allow(non_snake_case)]
     fn stateForSpace(&self, spaceId: &str) -> Result<NetworkControlState, String> {
-        lockControlReadModel(&self.readModel).map_err(|error| error.to_string())?.state(spaceId)
+        lockControlReadModel(&self.syncOperationStore.networkControlReadModel().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?.state(spaceId)
     }
 
     /// Replays the current Space command log in deterministic order and emits its audit decisions.
@@ -815,7 +827,7 @@ impl NetworkControlStore {
     /// Reads the exact policy revision in deterministic authorization order.
     fn orderedCommands(&self, spaceId: &str) -> Result<Vec<SyncOperation>, String> {
         validateSpaceId(spaceId)?;
-        lockControlReadModel(&self.readModel).map_err(|error| error.to_string())?.commands(spaceId)
+        lockControlReadModel(&self.syncOperationStore.networkControlReadModel().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?.commands(spaceId)
     }
 
     /// Replays authorization commands and reads display profiles only for explicit audits.

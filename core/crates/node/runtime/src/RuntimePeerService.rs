@@ -32,6 +32,11 @@ pub trait RuntimePeerService: Send + Sync {
         timeoutMs: u64,
     ) -> Result<Vec<super::NodeServices::DiscoveredPeer>, CoreLinkError>;
 
+    /// Returns addresses of active listeners, without enabling listeners or multicast discovery.
+    async fn pairingAddresses(&self) -> Result<Vec<String>, CoreLinkError> {
+        Err(CoreLinkError::new("PAIRING_QR_UNAVAILABLE", "This Host cannot share listener addresses"))
+    }
+
     /// Starts pairing over PeerLink using ephemeral keys and identity-bound proofs.
     /// Every transport requires confirmation with the code shown by the receiving device.
     /// Pairing grants no Space membership or business-call authorization.

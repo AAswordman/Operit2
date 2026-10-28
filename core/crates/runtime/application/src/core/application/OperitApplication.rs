@@ -953,10 +953,12 @@ impl OperitApplication {
         receipt.validate()?;
         let storage = self.hostManager.runtimeStorageHost.clone()
             .ok_or("RuntimeStorageHost is not registered for persistent sync")?;
-        PreferenceSpaceMerge::layout(storage).prepare()?;
+        let mut errors = Vec::new();
+        if let Err(error) = PreferenceSpaceMerge::layout(storage).prepare() {
+            errors.push(format!("preference layout: {error}"));
+        }
         let store = self.runtimeSyncOperationStore()?;
         let mut operations = Vec::new();
-        let mut errors = Vec::new();
         let mut failedDomains = std::collections::BTreeSet::new();
         match store.operationsSinceWithBudget(
             &receipt,
@@ -1085,8 +1087,14 @@ impl OperitApplication {
                 .preferenceMergeHistory()
                 .map_err(|error| error.to_string())
                 .and_then(|mut history| {
-                    let count = PreferenceSpaceMerge::layout(storage.clone())
-                        .prepareOperations(&mut history, &mut preferences)?;
+                    let count = match PreferenceSpaceMerge::layout(storage.clone())
+                        .prepareOperations(&mut history, &mut preferences) {
+                        Ok(count) => count,
+                        Err(error) => {
+                            errors.push(format!("preference layout: {error}"));
+                            0
+                        }
+                    };
                     Ok((history, count))
                 });
             match prepared {

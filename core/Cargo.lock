@@ -1976,6 +1976,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "flume",
+ "if-addrs",
  "mdns-sd",
  "operit-host-api",
  "operit-host-native-filesystem",
@@ -2168,6 +2169,7 @@ dependencies = [
  "spake2",
  "syn 2.0.117",
  "tokio",
+ "url",
  "uuid",
 ]
 

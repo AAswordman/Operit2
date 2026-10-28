@@ -355,6 +355,10 @@ impl Drop for Advertisement {
 }
 
 impl ServiceDiscoveryHost for ServiceDiscoveryProvider {
+    fn localAddresses(&self) -> HostResult<Vec<std::net::IpAddr>> {
+        localNetworkAddresses()
+    }
+
     /// Declares the multicast advertisements implemented by this provider.
     fn supportsAdvertisement(&self) -> bool {
         true
@@ -607,4 +611,13 @@ mod tests {
         assert_eq!(connection.peer_addr().unwrap().ip(), *ip);
         drop(advertisement);
     }
+}
+
+/// Interface enumeration does not start the discovery daemon or acquire multicast resources.
+pub fn localNetworkAddresses() -> HostResult<Vec<std::net::IpAddr>> {
+    let mut addresses = if_addrs::get_if_addrs().map_err(hostError)?
+        .into_iter().map(|interface| interface.ip()).collect::<Vec<_>>();
+    addresses.sort();
+    addresses.dedup();
+    Ok(addresses)
 }

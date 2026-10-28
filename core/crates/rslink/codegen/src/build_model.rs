@@ -61,6 +61,7 @@ pub enum ObjectAccess {
     ContextRefGetInstanceArcMutexConstruct,
     CoreProxyConstruct,
     CoreNodeLocalRuntimeConstruct,
+    ResultCoreNodeLocalRuntimeConstruct,
     StorePathsConstruct,
     ResultStorePathsConstruct,
     FactoryMethodConstruct {
@@ -91,6 +92,7 @@ impl ObjectAccess {
                 | ObjectAccess::ContextRefGetInstanceArcMutexConstruct
                 | ObjectAccess::CoreProxyConstruct
                 | ObjectAccess::CoreNodeLocalRuntimeConstruct
+                | ObjectAccess::ResultCoreNodeLocalRuntimeConstruct
                 | ObjectAccess::StorePathsConstruct
                 | ObjectAccess::ResultStorePathsConstruct
                 | ObjectAccess::FactoryMethodConstruct { .. }

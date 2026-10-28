@@ -70,3 +70,40 @@ confirm both network listeners are enabled, grant Apple's Local Network access,
 refresh the add-device dialog, and complete code-confirmed pairing. Verify both
 the discovered identity and the advertised endpoint in the logs. Physical
 Android and Apple permission/lifecycle behavior requires on-device validation.
+
+## QR connections
+
+The add-device dialog offers **Scan code** and **Show connection code** separately
+from the discovery scan. Camera capture, importing a PNG/JPEG/WebP image, and
+pasting connection information all use the runtime's same versioned decoder.
+Camera capture is available on Android, iOS, macOS, and web; other hosts can
+import an image or paste the code. A detected device is shown for confirmation
+before starting any network connection.
+
+A connection code contains only the node ID, display name, and public network
+listener addresses. It does not include a pairing code, credential, or Space
+admission. The initiator must still enter the receiver's six-digit pairing code
+and follow the existing Space join approval flow. A focused direct-link dialog
+accepts only the selected device's node ID.
+
+Addresses come from active listener sockets and the Host's current network
+interfaces. Wildcard binds, port zero, loopback, and unscoped IPv6 link-local
+addresses are never published. The Host enumerates interfaces without starting
+an mDNS browser or advertisement, so QR connections work with discovery off.
+A code does not bypass a firewall or create connectivity between isolated
+networks. Refresh the code after the network or listening port changes.
+
+The CLI renders a black-on-white terminal QR with a four-module quiet zone:
+
+```sh
+operit2 cli link qr
+operit2 cli link qr http --no-discovery
+```
+
+The first form reuses an existing daemon/TUI owner when one is running. Otherwise
+it starts an HTTP listener and keeps it alive until Ctrl-C. Listener options
+apply only when creating this foreground listener. `--json` emits the connection
+information without terminal escape sequences. In an interactive
+`operit2 cli link session http --no-discovery`, use `qr` to show the same code,
+`pair-code <connection-code>` to initiate pairing, and the existing pairing and
+`space` commands to confirm connections and manage join approval.

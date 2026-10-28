@@ -2106,6 +2106,7 @@ dependencies = [
  "operit-proxy-local",
  "operit-runtime",
  "operit-tools",
+ "operit-util",
  "serde_json",
  "tokio",
 ]
@@ -2304,6 +2305,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "flume",
+ "if-addrs",
  "libc",
  "mdns-sd",
  "operit-host-api",
@@ -2532,6 +2534,7 @@ dependencies = [
  "spake2",
  "syn 2.0.117",
  "tokio",
+ "url",
  "uuid",
 ]
 

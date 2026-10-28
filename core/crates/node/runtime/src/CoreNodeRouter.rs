@@ -153,23 +153,41 @@ impl CoreNodeLocalRuntime {
 
     /// Executes one local Core call through the local shared client.
     pub async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+        let context = format!("Space request {}::{} [{}]", request.target, request.methodName, request.requestId.0);
+        let correlation = request.requestId.clone();
+        crate::fault_isolation::call(&context, correlation, async {
         self.sharedClient.call(request).await
+
+        }).await
     }
 
     /// Executes one local application call without entering the Core service dispatcher.
     pub async fn callApplication(&self, request: CoreCallRequest) -> CoreCallResponse {
+        let context = format!("Space request {}::{} [{}]", request.target, request.methodName, request.requestId.0);
+        let correlation = request.requestId.clone();
+        crate::fault_isolation::call(&context, correlation, async {
         self.applicationClient.call(request).await
+
+        }).await
     }
 
     /// Reads one local Core watch snapshot through the local shared client.
     #[allow(non_snake_case)]
     async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.target, request.propertyName, request.requestId.0);
+        crate::fault_isolation::link(&context, async {
         self.sharedClient.watchSnapshot(request).await
+
+        }).await
     }
 
     /// Opens one local Core watch through the local shared client.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.target, request.propertyName, request.requestId.0);
+        crate::fault_isolation::link(&context, async {
         self.sharedClient.watch(request).await
+
+        }).await
     }
 
     /// Opens one local Core push through the supplied capability.
@@ -183,7 +201,12 @@ impl CoreNodeLocalRuntime {
 
     /// Executes one Space call in the server-owned Space route namespace.
     pub(crate) async fn callSpace(&self, request: CoreCallRequest) -> CoreCallResponse {
+        let context = format!("Space request {}::{} [{}]", request.target, request.methodName, request.requestId.0);
+        let correlation = request.requestId.clone();
+        crate::fault_isolation::call(&context, correlation, async {
         self.spaceRuntime.call(request).await
+
+        }).await
     }
 
     /// Reads one Space watch snapshot in the server-owned Space route namespace.
@@ -191,7 +214,11 @@ impl CoreNodeLocalRuntime {
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEvent, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.target, request.propertyName, request.requestId.0);
+        crate::fault_isolation::link(&context, async {
         self.spaceRuntime.watchSnapshot(request).await
+
+        }).await
     }
 
     /// Opens one Space watch in the server-owned Space route namespace.
@@ -199,7 +226,11 @@ impl CoreNodeLocalRuntime {
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEventStream, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.target, request.propertyName, request.requestId.0);
+        crate::fault_isolation::link(&context, async {
         self.spaceRuntime.watch(request).await
+
+        }).await
     }
 
     /// Opens one Space push in the server-owned Space route namespace.
@@ -265,10 +296,9 @@ impl CoreNodeRouter {
     }
 
     /// Creates a router over the local Core and its runtime-owned Link Access records.
-    pub fn new(localCore: CoreNodeLocalRuntime) -> Self {
+    pub fn new(localCore: CoreNodeLocalRuntime) -> Result<Self, String> {
         let bindingStore = Arc::new(
-            CoreNodeBindingStore::new(localCore.runtimeStorageHost())
-                .expect("CoreNodeRouter requires persistent Binding storage"),
+            CoreNodeBindingStore::new(localCore.runtimeStorageHost())? ,
         );
         Self::newWithRuntime(Arc::new(localCore), bindingStore)
     }
@@ -278,17 +308,15 @@ impl CoreNodeRouter {
     fn newWithRuntime(
         localCore: Arc<CoreNodeLocalRuntime>,
         bindingStore: Arc<dyn CoreNodeBindingRuntime>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let localNodeId = CoreNodeIdentityStore::new(localCore.runtimeStorageHost())
-            .initialize()
-            .expect("CoreNodeRouter requires a CoreNode identity")
+            .initialize()?
             .nodeId;
         let spaceStore = CoreSpaceStore::new(localCore.runtimeStorageHost());
-        let networkControlStore = NetworkControlStore::new(localCore.runtimeStorageHost())
-            .expect("CoreNodeRouter requires network control storage");
-        spaceStore
-            .initialize()
-            .expect("CoreNodeRouter requires an initialized Space");
+        let networkControlStore = NetworkControlStore::withLocalNodeId(localCore.runtimeStorageHost(), localNodeId.clone());
+        if let Err(error) = crate::fault_isolation::run("initialize Space membership", || spaceStore.initialize().map(|_| ())) {
+            AppLogger::w("CoreNodeRouter", &error);
+        }
         let peerServices = localCore.peerServices.clone();
         localCore
             .bindCoreNodeToolRuntime(Arc::new(CoreNodeToolRouteRuntime {
@@ -297,7 +325,7 @@ impl CoreNodeRouter {
                 spaceStore: spaceStore.clone(),
                 networkControlStore: networkControlStore.clone(),
             }))
-            .expect("CoreNodeRouter requires tool routing state registration");
+            .map_err(|error| error.to_string())?;
         let router = Self {
             deviceToolService: Arc::new(std::sync::OnceLock::new()),
             peerServices,
@@ -308,7 +336,7 @@ impl CoreNodeRouter {
             networkControlStore,
         };
         operit_link::installCoreRouteRuntime(Arc::new(router.clone()));
-        router
+        Ok(router)
     }
 
     /// Returns the stable identity of the CoreNode that owns this router.
@@ -1898,6 +1926,9 @@ impl CoreNodeRouter {
         previousNodeId: String,
         request: RoutedCoreRequest<CoreCallRequest>,
     ) -> CoreCallResponse {
+        let context = format!("Space request {}::{} [{}]", request.payload.target, request.payload.methodName, request.payload.requestId.0);
+        let correlation = request.payload.requestId.clone();
+        crate::fault_isolation::call(&context, correlation, async {
         let requestId = request.payload.requestId.clone();
         if let Err(error) = requireRoutableTarget(&request.payload.target) {
             return CoreCallResponse::err(requestId, error);
@@ -1974,6 +2005,8 @@ impl CoreNodeRouter {
             Ok(false) => self.forwardCall(Some(&previousNodeId), request).await,
             Err(error) => CoreCallResponse::err(requestId, error),
         }
+
+        }).await
     }
 
     /// Executes or forwards one routed watch snapshot.
@@ -1983,6 +2016,8 @@ impl CoreNodeRouter {
         previousNodeId: String,
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEvent, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.payload.target, request.payload.propertyName, request.payload.requestId.0);
+        crate::fault_isolation::link(&context, async {
         // 节点控制 Service 是本机 Proxy 表面；远端只能进入业务路由。
         requireRoutableTarget(&request.payload.target)?;
 
@@ -2000,6 +2035,8 @@ impl CoreNodeRouter {
             };
         }
         self.forwardWatchSnapshot(Some(&previousNodeId), request).await
+
+        }).await
     }
 
     /// Executes or forwards one routed watch.
@@ -2009,6 +2046,8 @@ impl CoreNodeRouter {
         previousNodeId: String,
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEventStream, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.payload.target, request.payload.propertyName, request.payload.requestId.0);
+        crate::fault_isolation::link(&context, async {
         // 节点控制 Service 是本机 Proxy 表面；远端只能进入业务路由。
         requireRoutableTarget(&request.payload.target)?;
 
@@ -2047,6 +2086,8 @@ impl CoreNodeRouter {
             };
         }
         self.forwardWatch(Some(&previousNodeId), request).await
+
+        }).await
     }
 
     /// Executes or forwards one routed push open.
@@ -2056,6 +2097,8 @@ impl CoreNodeRouter {
         previousNodeId: String,
         request: RoutedCoreRequest<CorePushRequest>,
     ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.payload.target, request.payload.methodName, request.payload.requestId.0);
+        crate::fault_isolation::link(&context, async {
         // 节点控制 Service 是本机 Proxy 表面；远端只能进入业务路由。
         requireRoutableTarget(&request.payload.target)?;
 
@@ -2083,6 +2126,8 @@ impl CoreNodeRouter {
             };
         }
         self.forwardPush(Some(&previousNodeId), request).await
+
+        }).await
     }
 }
 
@@ -2090,6 +2135,9 @@ impl CoreNodeRouter {
 impl CoreLinkSharedClient for CoreNodeRouter {
     /// Executes a one-shot request on the CoreNode selected by generated metadata.
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+        let context = format!("Space request {}::{} [{}]", request.target, request.methodName, request.requestId.0);
+        let correlation = request.requestId.clone();
+        crate::fault_isolation::call(&context, correlation, async {
         let requestId = request.requestId.clone();
         let generatedRoute = match crate::generated_core_call_route(&request) {
             Ok(route) => route,
@@ -2149,11 +2197,15 @@ impl CoreLinkSharedClient for CoreNodeRouter {
             ),
         );
         response
+
+        }).await
     }
 
     /// Reads a watch snapshot on the CoreNode selected by generated metadata.
     #[allow(non_snake_case)]
     async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.target, request.propertyName, request.requestId.0);
+        crate::fault_isolation::link(&context, async {
         let route = crate::generated_core_watch_route(&request)?;
         if let GeneratedCoreRoute::Binding { key, .. } = &route {
             operit_util::AppLogger::AppLogger::trace(
@@ -2176,10 +2228,14 @@ impl CoreLinkSharedClient for CoreNodeRouter {
             return operit_link::withCoreForceLocal(self.localCore.watchSnapshot(request)).await;
         }
         self.watchNodeSnapshot(targetNodeId, request).await
+
+        }).await
     }
 
     /// Opens a watch stream on the CoreNode selected by generated metadata.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.target, request.propertyName, request.requestId.0);
+        crate::fault_isolation::link(&context, async {
         if request.target == DEVICE_TOOL_TARGET {
             return self.openDeviceToolWatch(request, self.localNodeId.clone(), RoutedCoreRequestKind::Target);
         }
@@ -2253,6 +2309,8 @@ impl CoreLinkSharedClient for CoreNodeRouter {
             return operit_link::withCoreForceLocal(self.localCore.watch(request)).await;
         }
         self.watchNode(targetNodeId, request).await
+
+        }).await
     }
 
     /// Opens one input stream on the CoreNode selected by generated routing metadata.
@@ -2260,7 +2318,11 @@ impl CoreLinkSharedClient for CoreNodeRouter {
         &self,
         request: operit_link::CorePushRequest,
     ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
+        let context = format!("Space request {}::{} [{}]", request.target, request.methodName, request.requestId.0);
+        crate::fault_isolation::link(&context, async {
         self.openPushSession(request).await
+
+        }).await
     }
 }
 
@@ -3221,7 +3283,7 @@ mod tests {
             )
             .unwrap();
         let runtime = testLocalRuntime(storage.clone());
-        let router = CoreNodeRouter::new(runtime.clone());
+        let router = CoreNodeRouter::new(runtime.clone()).unwrap();
         let peers = TestPeerService::new(localId.clone(), peerId.clone(), Arc::new(TestClientEndpoint));
         peers.close();
         router.installNodeServices(NodeServices::new(peers)).unwrap();
@@ -3721,22 +3783,24 @@ mod tests {
         let worker = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
             router.localCore.clone(), router.clone(), router.spaceStore.clone(),
         );
-        let before = router.localCore.runtimeStorageHost().readBytes("runtime/sync/clocks.json").unwrap();
+        let syncStore = operit_store::SyncOperationStore::SyncOperationStore::new(
+            router.localCore.runtimeStorageHost(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
+        let before = syncStore.localClock().unwrap();
         assert!(!worker.storageReplicationAllowed("worker-peer").unwrap());
         worker.synchronizeReachablePeer("worker-peer".into(), 512).await.unwrap();
         assert_eq!(endpoint.callCount.load(Ordering::SeqCst), 2);
-        assert_eq!(router.localCore.runtimeStorageHost().readBytes("runtime/sync/clocks.json").unwrap(), before);
+        assert_eq!(syncStore.localClock().unwrap(), before);
         grantTestReplicaRole(&router.networkControlStore, "worker-peer");
         assert!(router.requirePeerStorageProviders("worker-local", "worker-peer").is_ok());
         let mut profile = router.spaceStore.deviceProfiles().unwrap().remove("worker-peer").unwrap();
         profile.coreVersion = None; profile.updatedAt += 1;
         router.spaceStore.importDeviceProfiles(vec![profile.clone()]).unwrap();
-        let before = router.localCore.runtimeStorageHost().readBytes("runtime/sync/clocks.json").unwrap();
+        let before = syncStore.localClock().unwrap();
         // A lightweight endpoint has no Core store even with a broad user role.
         assert!(!worker.storageReplicationAllowed("worker-peer").unwrap());
         worker.synchronizeReachablePeer("worker-peer".into(), 512).await.unwrap();
         assert_eq!(endpoint.methodNames(), vec!["exchange", "exchangePreferences", "exchange", "exchangePreferences"]);
-        assert_eq!(router.localCore.runtimeStorageHost().readBytes("runtime/sync/clocks.json").unwrap(), before,
+        assert_eq!(syncStore.localClock().unwrap(), before,
             "skipped initial sync must not reset/advance replication clocks");
         profile.coreVersion = Some("test-core-version".into()); profile.updatedAt += 1;
         router.spaceStore.importDeviceProfiles(vec![profile]).unwrap();
@@ -3969,7 +4033,7 @@ mod tests {
         CoreNodeIdentityStore::new(storage.clone())
             .writeNodeId(localNodeId.to_string())
             .expect("test node identity must be writable");
-        CoreNodeRouter::new(testLocalRuntime(storage))
+        CoreNodeRouter::new(testLocalRuntime(storage)).unwrap()
     }
 
     /// Returns the sender feeding the long-lived local Tokio executor used by host tasks.
@@ -5464,13 +5528,12 @@ mod tests {
                 stream.descriptor.args.clone(),
             ))
             .expect("real live embedded ChatMessage stream must reopen through CoreNodeRouter");
-        let reset = receiveEvent(&mut openedStream).await;
-        assert_eq!(reset.kind, CoreEventKind::Changed);
-        let resetEvent: MarkdownStreamEvent =
-            operit_link::fromCoreValue(reset.value).expect("Markdown reset event must decode");
-        assert_eq!(resetEvent.eventType, "reset");
+        // Each observer creates its own renderer and replays ordered chunks.
+        // A fresh renderer does not restore a snapshot or emit an initial reset.
         let replay = receiveEvent(&mut openedStream).await;
+        assert_eq!(replay.kind, CoreEventKind::Changed);
         let replayEvent: MarkdownStreamEvent = operit_link::fromCoreValue(replay.value).unwrap();
+        assert_eq!(replayEvent.chatId, "chat-message-stream:real-chat-live-route-test");
         assert_eq!(replayEvent.eventType, "chunk");
         assert_eq!(replayEvent.value.as_deref(), Some("already streaming before joining"));
         // Emit only after replay arrived, so this verifies a live subscription,

@@ -59,18 +59,15 @@ impl CoreNodeIdentityStore {
         let mut preferences = store.data().map_err(|error| error.to_string())?;
         if let Some(encoded) = preferences.get(&stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY))
         {
-            return decodeIdentity(encoded);
+            if let Ok(identity) = decodeIdentity(encoded) { return Ok(identity); }
         }
         let identity = CoreNodeIdentity {
             nodeId: format!("core-{}-{}", currentTimeMillis(), Uuid::new_v4().simple()),
         };
-        preferences.set(
-            &stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY),
-            serde_json::to_value(&serde_json::json!({
-                "deviceId": identity.nodeId.clone(),
-            }))
-            .map_err(|error| error.to_string())?,
-        );
+        let key = stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY);
+        let mut record = preferences.get(&key).and_then(serde_json::Value::as_object).cloned().unwrap_or_default();
+        record.insert("deviceId".into(), serde_json::Value::String(identity.nodeId.clone()));
+        preferences.set(&key, serde_json::Value::Object(record));
         store
             .replace(preferences)
             .map_err(|error| error.to_string())?;

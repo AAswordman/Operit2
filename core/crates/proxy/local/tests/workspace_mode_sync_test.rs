@@ -345,7 +345,7 @@ async fn space_modes_survive_plugin_reload_without_workspace_state() {
             let proxy = operit_proxy_local::LocalCoreProxy::new(app);
             let router = Arc::new(operit_node_runtime::CoreNodeRouter::CoreNodeRouter::new(
                 proxy.coreNodeLocalRuntime(),
-            ));
+            ).unwrap());
             let peers = operit_node_runtime::HostRuntimePeerService::HostRuntimePeerService::new(
                 Arc::new(host),
                 &router,
@@ -375,7 +375,7 @@ async fn space_modes_survive_plugin_reload_without_workspace_state() {
             );
             let watch_router = operit_node_runtime::CoreNodeRouter::CoreNodeRouter::new(
                 proxy.coreNodeLocalRuntime(),
-            );
+            ).unwrap();
             verify_decorated_goal_routes(&router, &watch_router, &chat_id).await;
             verify_decorated_reverse_stream(&router, &chat_id).await;
             assert_mode_state(&snapshot(), &chat_id, false).await;

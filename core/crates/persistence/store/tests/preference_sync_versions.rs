@@ -57,6 +57,16 @@ fn current_values(_: &mut PreferencesSyncedEntry) -> Result<(), PreferencesDataS
     Ok(())
 }
 
+/// Declares just the paths used by the calling fixture.
+fn fixture_merge_schema(paths: &[&str]) -> PreferenceMergeSchema {
+    PreferenceMergeSchema {
+        stores: paths.iter().map(|path| PreferenceMergeStore::values(
+            *path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path),
+            |_| Ok(()),
+        )).collect(),
+    }
+}
+
 #[test]
 fn outbound_entries_transactions_and_imported_baselines_carry_the_preference_version() {
     let source = Fixture::new();
@@ -109,7 +119,7 @@ fn older_newer_and_unversioned_data_do_not_change_local_values_or_schema() {
         let before = target.host.readBytes(PATH).unwrap();
         let outcomes = applyIndependentOperations(
             target.host.clone(),
-            &Default::default(),
+            &fixture_merge_schema(&[PATH]),
             &[],
             &incoming,
             |_, _| true,
@@ -156,7 +166,7 @@ fn matching_data_and_unrelated_files_commit_even_when_old_data_is_skipped() {
     incoming.extend(source.history());
     let outcomes = applyIndependentOperations(
         target.host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[PATH, other_path]),
         &[],
         &incoming,
         |_, _| true,
@@ -242,7 +252,7 @@ fn replay_does_not_resurrect_an_archived_operation_from_an_older_schema() {
     for _ in 0..2 {
         let outcomes = applyIndependentOperations(
             target.host.clone(),
-            &Default::default(),
+            &fixture_merge_schema(&[PATH]),
             &legacy,
             &source.history(),
             |_, _| true,
@@ -280,7 +290,7 @@ fn local_migration_republishes_existing_values_in_the_new_schema() {
     local.data().unwrap();
     let outcomes = applyIndependentOperations(
         target.host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[PATH]),
         &[],
         &incoming,
         |_, _| true,
@@ -313,7 +323,7 @@ fn missing_wire_version_does_not_match_an_unversioned_local_file() {
     let target = Fixture::new();
     let outcomes = applyIndependentOperations(
         target.host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[PATH]),
         &[],
         &incoming,
         |_, _| true,
@@ -363,7 +373,7 @@ fn obsolete_and_unversioned_operations_leave_pending_and_never_reenter_after_red
         assert_eq!(pending, incoming);
         let outcomes = applyIndependentOperations(
             target.host.clone(),
-            &Default::default(),
+            &fixture_merge_schema(&[PATH]),
             &[],
             &pending,
             |_, _| true,
@@ -400,7 +410,7 @@ fn obsolete_and_unversioned_operations_leave_pending_and_never_reenter_after_red
             .unwrap();
         let outcomes = applyIndependentOperations(
             reopenedHost.clone(),
-            &Default::default(),
+            &fixture_merge_schema(&[PATH]),
             &reopened.preferenceMergeHistory().unwrap(),
             &current.history(),
             |_, _| true,
@@ -438,7 +448,7 @@ fn future_schema_operations_remain_pending_and_apply_after_local_upgrade() {
     journal.receiveOperations(&incoming).unwrap();
     let outcomes = applyIndependentOperations(
         target.host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[PATH]),
         &[],
         &journal.pendingOperations().unwrap(),
         |_, _| true,
@@ -452,7 +462,7 @@ fn future_schema_operations_remain_pending_and_apply_after_local_upgrade() {
     upgraded.data().unwrap();
     let outcomes = applyIndependentOperations(
         target.host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[PATH]),
         &[],
         &journal.pendingOperations().unwrap(),
         |_, _| true,
@@ -554,4 +564,102 @@ fn encrypted_owner_is_reused_within_each_batch_and_reopened_for_the_next() {
             "current",
         );
     }
+}
+
+/// Extra native files have no merge authority, even when they contain plausible preference metadata.
+#[test]
+fn undeclared_files_are_skipped_without_opening_or_creating_them() {
+    for existing in [false, true] {
+        let source = Fixture::new();
+        let unknown = format!("{}/someone-elses.preferences.json", operit_util::RuntimeStorageLayout::CONFIG_PREFERENCES_DIR_PATH);
+        let unknown = unknown.as_str();
+        source.store(unknown, 99)
+            .edit(|values| values.set(&stringPreferencesKey("extra"), true)).unwrap();
+        let mut incoming = source.history();
+        // Even encryption metadata must not make the receiver open an unowned file.
+        for operation in &mut incoming { operation.payload["encrypted"] = json!(true); }
+        let target = Fixture::new();
+        if existing { target.host.writeBytes(unknown, b"this is not our preference format").unwrap(); }
+        let journal = SyncOperationStore::new(target.host.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
+        let outcomes = applyIndependentOperations(target.host.clone(), &PreferenceMergeSchema::default(),
+            &[], &incoming, |_, _| true);
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].skipped && outcomes[0].result.is_ok());
+        assert!(!target.host.exists(operit_util::RuntimeStorageLayout::PREFERENCES_ENCRYPTION_KEY_PATH).unwrap());
+        journal.receiveOperations(&incoming).unwrap();
+        journal.skipOperations(&outcomes[0].operations).unwrap();
+        journal.receiveOperations(&incoming).unwrap();
+        assert_eq!(journal.pendingOperationCount().unwrap(), 0);
+        if existing {
+            assert_eq!(target.host.readBytes(unknown).unwrap(), b"this is not our preference format");
+        } else {
+            assert!(!target.host.exists(unknown).unwrap());
+        }
+    }
+}
+
+/// One unknown path and one broken owned file leave an independent owned file free to commit.
+#[test]
+fn unknown_and_broken_files_do_not_block_a_healthy_declared_owner() {
+    let source = Fixture::new();
+    let broken = format!("{}/broken-owned.preferences.json", operit_util::RuntimeStorageLayout::CONFIG_PREFERENCES_DIR_PATH);
+    let broken = broken.as_str();
+    let unknown = format!("{}/unowned.preferences.json", operit_util::RuntimeStorageLayout::CONFIG_PREFERENCES_DIR_PATH);
+    let unknown = unknown.as_str();
+    for path in [PATH, broken, unknown] {
+        source.store(path, 2).edit(|values| values.set(&stringPreferencesKey("healthy"), true)).unwrap();
+    }
+    let target = Fixture::new();
+    target.host.writeBytes(broken, b"broken").unwrap();
+    target.host.writeBytes(unknown, b"unrelated format").unwrap();
+    let schema = PreferenceMergeSchema { stores: [PATH, broken].into_iter().map(|path|
+        PreferenceMergeStore::values(path, false,
+            |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(2, |_, _| Ok(())),
+            current_values)).collect() };
+    let outcomes = applyIndependentOperations(target.host.clone(), &schema, &[], &source.history(), |_, _| true);
+    let outcome = |path| outcomes.iter().find(|outcome| outcome.paths.contains(path)).unwrap();
+    assert!(outcome(unknown).skipped && outcome(unknown).result.is_ok());
+    assert!(outcome(broken).result.is_err());
+    assert!(!outcome(PATH).skipped && outcome(PATH).result.is_ok());
+    assert_eq!(target.store(PATH, 2).data().unwrap().get(&stringPreferencesKey("healthy")), Some(&json!(true)));
+    assert_eq!(target.host.readBytes(broken).unwrap(), b"broken");
+    assert_eq!(target.host.readBytes(unknown).unwrap(), b"unrelated format");
+}
+
+/// A migration panic is limited to its owner and does not latch that file into a failed state.
+#[test]
+fn a_panicking_migration_leaves_other_owners_and_the_next_attempt_usable() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static FAIL_ONCE: AtomicBool = AtomicBool::new(true);
+    fn migrate(_: u32, values: &mut operit_store::PreferencesDataStore::Preferences)
+        -> Result<(), PreferencesDataStoreError> {
+        if FAIL_ONCE.swap(false, Ordering::SeqCst) {
+            values.set(&stringPreferencesKey("partial"), true);
+            panic!("injected preference migration panic");
+        }
+        Ok(())
+    }
+    let flaky = format!("{}/flaky-owner.preferences.json", operit_util::RuntimeStorageLayout::CONFIG_PREFERENCES_DIR_PATH);
+    let flaky = flaky.as_str();
+    let source = Fixture::new();
+    for path in [PATH, flaky] {
+        source.store(path, 1).edit(|values| values.set(&stringPreferencesKey("ready"), true)).unwrap();
+    }
+    let target = Fixture::new();
+    let schema = PreferenceMergeSchema { stores: vec![
+        PreferenceMergeStore::values(PATH, false,
+            |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(1, |_, _| Ok(())), current_values),
+        PreferenceMergeStore::values(flaky, false,
+            |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(1, migrate), current_values),
+    ] };
+    let incoming = source.history();
+    let first = applyIndependentOperations(target.host.clone(), &schema, &[], &incoming, |_, _| true);
+    assert!(first.iter().any(|outcome| outcome.paths.contains(flaky) && outcome.result.as_ref().unwrap_err().contains("migration panic")));
+    assert!(first.iter().any(|outcome| outcome.paths.contains(PATH) && outcome.result.is_ok()));
+    assert_eq!(target.store(PATH, 1).data().unwrap().get(&stringPreferencesKey("ready")), Some(&json!(true)));
+    let second = applyIndependentOperations(target.host.clone(), &schema, &[], &incoming, |_, _| true);
+    assert!(second.iter().all(|outcome| !outcome.skipped && outcome.result.is_ok()), "{:?}", second.iter().map(|outcome| &outcome.result).collect::<Vec<_>>());
+    let data = target.store(flaky, 1).data().unwrap();
+    assert_eq!(data.get(&stringPreferencesKey("ready")), Some(&json!(true)));
+    assert!(!data.contains(&stringPreferencesKey("partial")));
 }

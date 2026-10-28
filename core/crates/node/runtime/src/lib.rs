@@ -87,6 +87,8 @@ pub mod HostRuntimePeerService;
 #[cfg(feature = "peer-runtime")]
 pub mod NodeSpaceService;
 #[cfg(feature = "peer-runtime")]
+mod fault_isolation;
+#[cfg(feature = "peer-runtime")]
 mod space_policy;
 pub mod NodeServices;
 #[cfg(feature = "peer-state")]
@@ -167,3 +169,6 @@ mod tests {
         assert!(generated_space_route_for_id("device/unknown", route.methodName).is_none());
     }
 }
+
+#[cfg(feature = "peer-runtime")]
+pub mod PeerConnectionCode;

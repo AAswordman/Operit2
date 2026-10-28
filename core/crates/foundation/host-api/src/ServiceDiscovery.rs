@@ -29,6 +29,12 @@ pub struct ServiceAdvertisement {
 
 /// Owns service browsers and their operating-system resources.
 pub trait ServiceDiscoveryHost: Send + Sync {
+    /// Enumerates this Host's interface addresses without browsing or advertising.
+    /// QR connections must work even when multicast discovery is disabled.
+    fn localAddresses(&self) -> HostResult<Vec<IpAddr>> {
+        Err(crate::HostError::new("This Host cannot enumerate local network addresses"))
+    }
+
     /// Declares advertisement support independently of browsing discovered services.
     fn supportsAdvertisement(&self) -> bool;
     fn advertise(&self, _service: ServiceAdvertisement) -> HostResult<Box<dyn DiscoveryAdvertisement>> {

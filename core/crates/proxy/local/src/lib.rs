@@ -330,7 +330,7 @@ impl CoreLinkSharedClient for LocalCoreProxy {
             request.requestId.0, request.target, request.propertyName
         );
         let (result, attachments) = operit_link::withCoreStreamCapture(
-            generated_dispatch_core_proxy_watch_snapshot_async(self, request),
+            operit_link::isolation::future(&context, generated_dispatch_core_proxy_watch_snapshot_async(self, request)),
         )
         .await;
         self.adoptCoreStreamAttachments(attachments);
@@ -348,7 +348,7 @@ impl CoreLinkSharedClient for LocalCoreProxy {
             "watch request={} object={} property={}",
             request.requestId.0, request.target, request.propertyName
         );
-        generated_dispatch_core_proxy_watch_async(self, request)
+        operit_link::isolation::future(&context, generated_dispatch_core_proxy_watch_async(self, request))
             .await
             .map_err(|mut error| {
                 error.message = format!("{} [{context}]", error.message);
@@ -421,9 +421,10 @@ impl LocalApplicationBridgeTarget for LocalCoreProxy {
 impl LocalCoreProxy {
     #[allow(non_snake_case)]
     async fn dispatchCall(&self, request: CoreCallRequest) -> Result<CoreValue, CoreLinkError> {
-        let (result, attachments) =
-            operit_link::withCoreStreamCapture(generated_dispatch_core_proxy_call(self, request))
-                .await;
+        let context = format!("Local request {}::{} [{}]", request.target, request.methodName, request.requestId.0);
+        let (result, attachments) = operit_link::withCoreStreamCapture(
+            operit_link::isolation::future(&context, generated_dispatch_core_proxy_call(self, request)),
+        ).await;
         self.adoptCoreStreamAttachments(attachments);
         result
     }
@@ -442,8 +443,9 @@ impl LocalCoreProxy {
 
     #[allow(non_snake_case)]
     fn dispatchWatchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        let context = format!("Local watch snapshot {}::{} [{}]", request.target, request.propertyName, request.requestId.0);
         let (result, attachments) = operit_link::withCoreStreamCaptureSync(|| {
-            generated_dispatch_core_proxy_watch_snapshot(self, request)
+            operit_link::isolation::sync(&context, || generated_dispatch_core_proxy_watch_snapshot(self, request))
         });
         self.adoptCoreStreamAttachments(attachments);
         result
@@ -454,7 +456,8 @@ impl LocalCoreProxy {
         if request.target == operit_link::CORE_STREAM_TARGET {
             return self.openCoreStreamWatch(request);
         }
-        generated_dispatch_core_proxy_watch(self, request)
+        let context = format!("Local watch {}::{} [{}]", request.target, request.propertyName, request.requestId.0);
+        operit_link::isolation::sync(&context, || generated_dispatch_core_proxy_watch(self, request))
     }
 
     /// Transfers serialized stream sources into this proxy's owned pool.

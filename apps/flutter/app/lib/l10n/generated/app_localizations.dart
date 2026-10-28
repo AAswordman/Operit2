@@ -7238,6 +7238,12 @@ abstract class AppLocalizations {
   /// **'Nearby devices'**
   String get devicePickerNearby;
 
+  /// No description provided for @devicePickerDiscoveryFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearby device discovery failed: {error}'**
+  String devicePickerDiscoveryFailed(String error);
+
   /// No description provided for @devicePickerEmpty.
   ///
   /// In en, this message translates to:
@@ -7771,6 +7777,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Loading extensions'**
   String get runtimeActivityLoadingPackages;
+
+  /// No description provided for @peerQrTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'QR connection'**
+  String get peerQrTitle;
+
+  /// No description provided for @peerQrScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan code'**
+  String get peerQrScan;
+
+  /// No description provided for @peerQrShow.
+  ///
+  /// In en, this message translates to:
+  /// **'My code'**
+  String get peerQrShow;
+
+  /// No description provided for @peerQrShowHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan this code on another device to connect to this device.'**
+  String get peerQrShowHint;
+
+  /// No description provided for @peerQrScanHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan the Operit connection code on the other device.'**
+  String get peerQrScanHint;
+
+  /// No description provided for @peerQrTrustHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The code shares connection addresses only. Pairing still requires the code shown on the other device; joining a space still requires approval.'**
+  String get peerQrTrustHint;
+
+  /// No description provided for @peerQrListenerRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable receiving connections in connection settings and connect to a network first.'**
+  String get peerQrListenerRequired;
+
+  /// No description provided for @peerQrCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy connection info'**
+  String get peerQrCopy;
+
+  /// No description provided for @peerQrCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get peerQrCopied;
+
+  /// No description provided for @peerQrImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import QR image'**
+  String get peerQrImport;
+
+  /// No description provided for @peerQrPaste.
+  ///
+  /// In en, this message translates to:
+  /// **'Or paste connection info'**
+  String get peerQrPaste;
+
+  /// No description provided for @peerQrRead.
+  ///
+  /// In en, this message translates to:
+  /// **'Read connection info'**
+  String get peerQrRead;
+
+  /// No description provided for @peerQrWrongDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'This code belongs to a different device. Scan the code for the selected device.'**
+  String get peerQrWrongDevice;
+
+  /// No description provided for @peerQrImageInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'No QR code could be read. Choose a clear QR image smaller than 16 MB.'**
+  String get peerQrImageInvalid;
+
+  /// No description provided for @peerQrCameraUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera scanning is unavailable. Import a QR image or paste connection info instead.'**
+  String get peerQrCameraUnavailable;
+
+  /// No description provided for @peerQrCameraPermission.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera access is required. Allow it in system settings, or import a QR image.'**
+  String get peerQrCameraPermission;
+
+  /// No description provided for @peerQrDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect device'**
+  String get peerQrDevice;
+
+  /// No description provided for @peerQrScanAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan another code'**
+  String get peerQrScanAgain;
+
+  /// No description provided for @peerQrMethodsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Can’t find the device? Connect with a QR code.'**
+  String get peerQrMethodsHint;
 }
 
 class _AppLocalizationsDelegate

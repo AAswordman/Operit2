@@ -218,7 +218,7 @@ void main() {
     expect(find.text('扫描中…'), findsOneWidget);
     expect(
       tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed,
-      isNull,
+      isNotNull,
     );
     discovery.complete(encodeCoreLink([0, <Object?>[]]));
     await tester.pumpAndSettle();
@@ -357,7 +357,10 @@ void main() {
     await tester.pumpAndSettle();
     discovery.completeError(StateError('Discovery unavailable'));
     await tester.pumpAndSettle();
-    expect(find.text('Bad state: Discovery unavailable'), findsOneWidget);
+    expect(
+      find.text('附近设备发现失败：Bad state: Discovery unavailable'),
+      findsOneWidget,
+    );
     expect(find.text('暂未发现附近设备'), findsNothing);
     expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
     expect(
@@ -371,7 +374,10 @@ void main() {
     bridge.discovery = null;
     await tester.tap(find.byTooltip('刷新'));
     await tester.pumpAndSettle();
-    expect(find.text('Bad state: Discovery unavailable'), findsNothing);
+    expect(
+      find.text('附近设备发现失败：Bad state: Discovery unavailable'),
+      findsNothing,
+    );
     expect(find.text('我的 iPhone'), findsOneWidget);
     await dispose(tester, bridge);
   });

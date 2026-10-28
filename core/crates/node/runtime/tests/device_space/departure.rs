@@ -1,3 +1,4 @@
+use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_DEPARTURES_PATH, RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH};
 use super::*;
 use crate::NodeSpaceService::{space_departure, peerSpaceSnapshotForPeer};
 
@@ -99,4 +100,54 @@ async fn departure_recovers_a_crash_before_the_local_space_switch() {
     assert_eq!(space_departure::pending(&reopened, &a).unwrap(), vec![operation]);
     crate::NodeSpaceService::space_join::recoverLocalDeparture(&reopened).unwrap();
     assert_eq!(reopened.deviceSpace().unwrap(), recovered);
+}
+
+/// Malformed old application state must not veto an explicit local departure.
+#[tokio::test]
+async fn departure_discards_corrupt_approval_records_and_missing_local_profile() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, services, _) = revocationMesh("exit-corrupt", 2, &[(0,1)]);
+    let local = routers[1].localNodeId();
+    let storage = routers[1].localCore.runtimeStorageHost();
+    let original = services[1].deviceSpace().unwrap();
+    for path in [
+        crate::NodeSpaceService::space_join::INBOUND,
+        crate::NodeSpaceService::space_join::OUTBOUND,
+        crate::NodeSpaceService::space_join::INBOX,
+        crate::NodeSpaceService::space_join::RESULTS,
+        RUNTIME_SPACE_DEPARTURES_PATH,
+    ] {
+        storage.writeBytes(path, b"invalid JSON").unwrap();
+    }
+    operit_store::PreferencesDataStore::CoreNodeStateStore::newWithStorage(storage.clone(),
+        format!("{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/{local}.preferences.json")).delete().unwrap();
+    let fresh = services[1].leaveDeviceSpace().unwrap();
+    assert_ne!(fresh.spaceId, original.spaceId);
+    assert_eq!(fresh.members, vec![local.clone()]);
+    assert_eq!(routers[1].networkControlStore.currentState().unwrap().memberNodeIds, BTreeSet::from([local.clone()]));
+    assert_eq!(services[1].deviceSpaceTopology().unwrap().devices.len(), 1);
+    for path in [crate::NodeSpaceService::space_join::INBOUND, crate::NodeSpaceService::space_join::OUTBOUND,
+        crate::NodeSpaceService::space_join::INBOX, crate::NodeSpaceService::space_join::RESULTS] {
+        assert!(!storage.exists(path).unwrap());
+    }
+    assert_eq!(RuntimeRemoteLinkService::newWithRouter((*routers[1].localCore).clone(), routers[1].clone()).deviceSpace().unwrap(), fresh);
+}
+
+/// A missing remote profile changes only that device's presentation.
+#[tokio::test]
+async fn topology_keeps_other_members_when_one_profile_is_missing() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, services, _) = revocationMesh("profile-missing", 3, &[(0,1),(1,2)]);
+    let missing = routers[1].localNodeId();
+    let before = services[0].deviceSpaceTopology().unwrap();
+    operit_store::PreferencesDataStore::CoreNodeStateStore::newWithStorage(routers[0].localCore.runtimeStorageHost(),
+        format!("{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/{missing}.preferences.json")).delete().unwrap();
+    let after = services[0].deviceSpaceTopology().unwrap();
+    assert_eq!(after.devices.len(), before.devices.len());
+    assert_eq!(after.devices.iter().find(|device| device.deviceId == missing).unwrap().deviceName, missing);
+    for device in before.devices.iter().filter(|device| device.deviceId != missing) {
+        assert_eq!(after.devices.iter().find(|other| other.deviceId == device.deviceId).unwrap(), device);
+    }
 }

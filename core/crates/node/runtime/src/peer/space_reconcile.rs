@@ -10,6 +10,7 @@
 //! capability discovery is cached per peer, so mixed fleets converge on v2
 //! after first contact without ever breaking v1.
 
+use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_RECONCILE_CAPS_PATH};
 use super::*;
 use crate::PeerStateStore::PeerStateStore;
 use operit_store::NetworkControlStore::NetworkControlCommandRecord;
@@ -28,7 +29,7 @@ const MAX_RECONCILE_PAGE_BYTES: usize = 4 * 1024 * 1024;
 /// Page budget both sides declare by default: fits a constrained 8KB link
 /// with room for the envelope, so legitimate catch-up cannot kill the link.
 const DEFAULT_RECONCILE_PAGE_BYTES: usize = 6 * 1024;
-const RECONCILE_CAPS_PATH: &str = "runtime/link_access/space_reconcile_caps.preferences.json";
+const RECONCILE_CAPS_PATH: &str = RUNTIME_SPACE_RECONCILE_CAPS_PATH;
 
 #[derive(Serialize, Deserialize)]
 struct ReconciliationOffer {

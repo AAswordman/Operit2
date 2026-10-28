@@ -1,12 +1,13 @@
 //! A local exit survives the Space switch and is retried over ordinary paired
 //! snapshot exchanges. Once a neighbor has the receipt in its control log, the
 //! receipt travels through the existing same-Space synchronization paths.
+use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_DEPARTURES_PATH};
 use super::*;
 use crate::PeerStateStore::PeerStateStore;
 use operit_store::NetworkControlStore::{NetworkControlCommand, NetworkControlCommandRecord};
 use std::collections::BTreeSet;
 
-const PENDING: &str = "runtime/link_access/space_departures.preferences.json";
+const PENDING: &str = RUNTIME_SPACE_DEPARTURES_PATH;
 
 #[derive(Serialize, Deserialize)]
 struct Departure {

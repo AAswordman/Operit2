@@ -20,6 +20,7 @@ impl Drop for Input {
 #[async_trait]
 impl CoreLinkPushSession for Input {
     async fn send(&mut self, value: CoreValue) -> Result<(), CoreLinkError> {
+        if value == CoreValue::String("panic".into()) { panic!("broken push item"); }
         if value == CoreValue::String("fail".into()) {
             return Err(CoreLinkError::new("SERVICE_FAILED", "Test service failure"));
         }
@@ -41,6 +42,10 @@ fn watch(id: &str) -> CoreWatchRequest {
 #[async_trait(?Send)]
 impl CoreLinkClient for Client {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
+        if request.methodName == "panic" {
+            tokio::task::yield_now().await;
+            panic!("broken call after await");
+        }
         CoreCallResponse::ok(request.requestId, request.args)
     }
     async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
@@ -247,4 +252,55 @@ fn protocol_has_only_three_operation_families() {
         let value = serde_json::json!({"type": tag, "body": {}});
         assert!(decodeLink::<CoreLinkRequest>(&encodeLink(&value).unwrap()).is_err(), "{tag}");
     }
+}
+
+#[tokio::test]
+async fn a_call_panic_returns_its_correlation_and_the_next_call_still_runs() {
+    let (mut session, _) = session(8);
+    let failed = session.dispatch(CoreLinkRequest::Call(CoreCallRequest::new("bad-call", "test", "panic", CoreValue::Null))).await;
+    match failed {
+        CoreLinkResponse::Call(CoreCallResponse { requestId, result: Err(error) }) => {
+            assert_eq!(requestId.0, "bad-call");
+            assert_eq!(error.code, "LINK_OPERATION_PANIC");
+            assert!(error.message.contains("broken call after await"));
+        },
+        other => panic!("Unexpected response: {other:?}"),
+    }
+    let good = session.dispatch(CoreLinkRequest::Call(CoreCallRequest::new("next-call", "test", "echo", CoreValue::String("ok".into())))).await;
+    assert!(matches!(good, CoreLinkResponse::Call(CoreCallResponse { result: Ok(CoreValue::String(value)), .. }) if value == "ok"));
+}
+
+#[tokio::test]
+async fn a_push_panic_retires_only_that_stream_and_other_pushes_still_work() {
+    let (mut session, _) = session(8);
+    session.dispatch(open_push("broken")).await;
+    session.dispatch(open_push("healthy")).await;
+    assert_push_error(session.dispatch(item("broken", 0, CoreValue::String("panic".into()))).await, "broken", "LINK_OPERATION_PANIC");
+    assert_push_error(session.dispatch(item("broken", 0, CoreValue::Null)).await, "broken", "LINK_PUSH_NOT_FOUND");
+    assert!(matches!(session.dispatch(item("healthy", 0, CoreValue::Null)).await,
+        CoreLinkResponse::Push { result: Ok(CoreLinkPushResponse::ItemAccepted { sequence: 0 }), .. }));
+    assert!(matches!(session.dispatch(open_push("broken")).await,
+        CoreLinkResponse::Push { result: Ok(CoreLinkPushResponse::Opened), .. }));
+}
+
+#[tokio::test]
+async fn a_watch_mapping_panic_keeps_other_watches_and_allows_reopening() {
+    let (mut session, state) = session(8);
+    session.dispatch(open_watch("healthy")).await;
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<CoreEvent>();
+    session.watches.insert(CoreRequestId::new("broken"), CoreEventStream::fromMappedReceiver(receiver, |_| panic!("broken watch value")));
+    sender.send(event("broken")).unwrap();
+    match session.nextWatchEvent().await.unwrap() {
+        CoreLinkResponse::Watch { requestId, result: Err(error) } => {
+            assert_eq!(requestId.0, "broken");
+            assert_eq!(error.code, "LINK_OPERATION_PANIC");
+            assert!(error.message.contains("broken watch value"));
+        },
+        other => panic!("Unexpected response: {other:?}"),
+    }
+    state.events.lock().unwrap()["healthy"].send(event("healthy")).unwrap();
+    assert!(matches!(session.nextWatchEvent().await.unwrap(),
+        CoreLinkResponse::Watch { requestId, result: Ok(CoreLinkWatchResponse::Event(_)) } if requestId.0 == "healthy"));
+    assert!(matches!(session.dispatch(open_watch("broken")).await,
+        CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Opened), .. }));
 }

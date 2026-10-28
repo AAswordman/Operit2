@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+operit-util = { path = "../../foundation/util" }
 operit-host-api = { path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
 operit-node-runtime = { path = "../../node/runtime" }
@@ -21,7 +22,6 @@ serde_json.workspace = true
 [dev-dependencies]
 async-trait.workspace = true
 operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage", "tcp"] }
-operit-util = { path = "../../foundation/util" }
 
 operit-node-edge = { path = "../../node/edge" }
 operit-model = { path = "../../foundation/model" }

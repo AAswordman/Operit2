@@ -447,6 +447,13 @@ async fn handle_request(
             shutdown.send_replace(true);
             ControlResponse::ok()
         }
+        "peer-connection-code" => {
+            let mut proxy = GeneratedCoreProxy::new(SharedLocalCore(client));
+            match proxy.server_runtime_remote_link_service().peerConnectionCode().await {
+                Ok(code) => ControlResponse::output(code, String::new()),
+                Err(error) => ControlResponse::error(error.to_string()),
+            }
+        }
         "run" => {
             if request.argv.is_empty() {
                 return ControlResponse::error("run requires argv");
@@ -460,6 +467,22 @@ async fn handle_request(
         }
         other => ControlResponse::error(format!("unknown control operation: {other}")),
     }
+}
+
+/// Reads the live owner's listener coordinates. A failed owner is never replaced by a second Core.
+pub(crate) async fn owner_peer_connection_code() -> Option<Result<String, String>> {
+    let paths = match DaemonPaths::for_active_identity() {
+        Ok(paths) => paths,
+        Err(error) => return Some(Err(error)),
+    };
+    if !owner_lock_held(&paths) { return None; }
+    Some(async {
+        let response = request_at_with_timeout(&paths.socket_path, &ControlRequest {
+            op: "peer-connection-code".into(), argv: Vec::new(),
+        }, Duration::from_secs(8)).await?;
+        if !response.ok { return Err(response.error.unwrap_or_else(|| "Core could not share a connection code".into())); }
+        response.stdout.filter(|code| !code.is_empty()).ok_or_else(|| "Core returned no connection code".into())
+    }.await)
 }
 
 /// Runs CLI commands through an owning daemon/TUI when one is available.

@@ -1,4 +1,5 @@
 pub mod client;
+pub mod isolation;
 pub mod session;
 pub use session::CoreLinkSession;
 pub mod codec;

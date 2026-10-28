@@ -40,6 +40,7 @@ operit-runtime = { path = "../../core/crates/runtime/application" }
 operit-store = { path = "../../core/crates/persistence/store" }
 operit-tools = { path = "../../core/crates/tool/services" }
 operit-util = { path = "../../core/crates/foundation/util" }
+qrcode = { version = "0.14", default-features = false }
 ratatui = "0.28"
 unicode-width = "0.1"
 rand_core = { version = "0.6", features = ["getrandom"] }

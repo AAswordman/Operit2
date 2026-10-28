@@ -23,7 +23,7 @@ impl PreferenceStorageManager {
     ) -> Result<Option<Value>, PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         let key = normalizePreferenceKey(key)?;
-        Ok(preferencesDataStore(&fileName)
+        Ok(preferencesDataStore(&fileName)?
             .data()?
             .get(&stringPreferencesKey(&key))
             .cloned())
@@ -36,7 +36,7 @@ impl PreferenceStorageManager {
         keys: Vec<String>,
     ) -> Result<BTreeMap<String, Value>, PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
-        let preferences = preferencesDataStore(&fileName).data()?;
+        let preferences = preferencesDataStore(&fileName)?.data()?;
         let mut values = BTreeMap::new();
         for key in keys {
             let key = normalizePreferenceKey(&key)?;
@@ -53,7 +53,7 @@ impl PreferenceStorageManager {
         fileName: &str,
     ) -> Result<Flow<BTreeMap<String, Value>>, PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
-        Ok(preferencesDataStore(&fileName)
+        Ok(preferencesDataStore(&fileName)?
             .dataFlow()
             .map(|preferences| preferences.entries().into_iter().filter(|(key, _)| key != operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME).collect()))
     }
@@ -67,7 +67,7 @@ impl PreferenceStorageManager {
     ) -> Result<(), PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         let key = normalizePreferenceKey(key)?;
-        preferencesDataStore(&fileName).edit(|preferences| {
+        preferencesDataStore(&fileName)?.edit(|preferences| {
             preferences.set(&stringPreferencesKey(&key), value);
         })
     }
@@ -83,7 +83,7 @@ impl PreferenceStorageManager {
         for (key, value) in values {
             normalizedValues.insert(normalizePreferenceKey(&key)?, value);
         }
-        preferencesDataStore(&fileName).edit(|preferences| {
+        preferencesDataStore(&fileName)?.edit(|preferences| {
             for (key, value) in normalizedValues {
                 preferences.set(&stringPreferencesKey(&key), value);
             }
@@ -98,7 +98,7 @@ impl PreferenceStorageManager {
     ) -> Result<(), PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         let key = normalizePreferenceKey(key)?;
-        preferencesDataStore(&fileName).edit(|preferences| {
+        preferencesDataStore(&fileName)?.edit(|preferences| {
             preferences.remove(&stringPreferencesKey(&key));
         })
     }
@@ -114,7 +114,7 @@ impl PreferenceStorageManager {
         for key in keys {
             normalizedKeys.push(normalizePreferenceKey(&key)?);
         }
-        preferencesDataStore(&fileName).edit(|preferences| {
+        preferencesDataStore(&fileName)?.edit(|preferences| {
             for key in normalizedKeys {
                 preferences.remove(&stringPreferencesKey(&key));
             }
@@ -124,7 +124,7 @@ impl PreferenceStorageManager {
     /// Removes every key from a named custom preference file.
     pub fn clearPreferences(&self, fileName: &str) -> Result<(), PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
-        preferencesDataStore(&fileName).edit(|preferences| {
+        preferencesDataStore(&fileName)?.edit(|preferences| {
             for (key, _) in preferences.entries() {
                 if key == operit_store::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
                 preferences.remove(&stringPreferencesKey(&key));
@@ -134,20 +134,10 @@ impl PreferenceStorageManager {
 }
 
 /// Opens the shared host-backed store for one validated custom preference file.
-fn preferencesDataStore(fileName: &str) -> PreferencesDataStore {
-    let storage = defaultRuntimeStorageHost();
-    match fileName {
-        "user_preferences.preferences.json" => return super::UserPreferencesManager::UserPreferencesManager::store(storage),
-        "sidebar_dock.preferences.json" => return super::SidebarDockPreferences::SidebarDockPreferences::store(storage),
-        "onboarding_preferences" => return super::OnboardingPreferences::OnboardingPreferences::store(storage),
-        "remote_announcement_preferences" => return super::RemoteAnnouncementPreferences::RemoteAnnouncementPreferences::store(storage),
-        _ => {}
-    }
-    PreferencesDataStore::newWithStorage(
-        defaultRuntimeStorageHost(),
-        OperitPaths::customPreferenceStoragePath(fileName)
-            .expect("custom preference storage path must be valid"),
-    )
+fn preferencesDataStore(fileName: &str) -> Result<PreferencesDataStore, PreferencesDataStoreError> {
+    let path = OperitPaths::customPreferenceStoragePath(fileName)
+        .map_err(PreferencesDataStoreError::Message)?;
+    super::PreferenceSpaceMerge::open(defaultRuntimeStorageHost(), &path)
 }
 
 /// Validates and normalizes a plain custom preference file name.

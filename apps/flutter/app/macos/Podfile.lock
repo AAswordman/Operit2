@@ -18,6 +18,9 @@ PODS:
     - FlutterMacOS
   - image_picker_macos (0.0.1):
     - FlutterMacOS
+  - mobile_scanner (7.0.0):
+    - Flutter
+    - FlutterMacOS
   - operit_folder_access (0.1.0):
     - FlutterMacOS
   - operit_keep_alive (0.1.0):
@@ -47,6 +50,7 @@ DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
   - geolocator_apple (from `Flutter/ephemeral/.symlinks/plugins/geolocator_apple/darwin`)
   - image_picker_macos (from `Flutter/ephemeral/.symlinks/plugins/image_picker_macos/macos`)
+  - mobile_scanner (from `Flutter/ephemeral/.symlinks/plugins/mobile_scanner/darwin`)
   - operit_folder_access (from `Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos`)
   - operit_keep_alive (from `Flutter/ephemeral/.symlinks/plugins/operit_keep_alive/macos`)
   - package_info_plus (from `Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos`)
@@ -75,6 +79,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/geolocator_apple/darwin
   image_picker_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/image_picker_macos/macos
+  mobile_scanner:
+    :path: Flutter/ephemeral/.symlinks/plugins/mobile_scanner/darwin
   operit_folder_access:
     :path: Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos
   operit_keep_alive:
@@ -102,6 +108,7 @@ SPEC CHECKSUMS:
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   geolocator_apple: 66b711889fd333205763b83c9dcf0a57a28c7afd
   image_picker_macos: 2506ff19cb68903beebc6327ce4024277de6faa8
+  mobile_scanner: 77265f3dc8d580810e91849d4a0811a90467ed5e
   operit_folder_access: e49c215aae854e85a2c736a3105f8992373a9768
   operit_keep_alive: b2583e0fe8e3963dd038afd796a8067863e6a474
   package_info_plus: 12f1c5c2cfe8727ca46cbd0b26677728972d9a5b

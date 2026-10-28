@@ -20,6 +20,16 @@ pub struct DiscoveredPeer {
     pub displayName: String,
 }
 
+/// Public connection coordinates only; possession grants no pairing or Space authorization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerConnectionInfo {
+    pub version: u32,
+    pub nodeId: String,
+    pub displayName: String,
+    pub addresses: Vec<String>,
+}
+
 /// 已配对身份，不携带底层连接或凭证；传输渠道不改变身份。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairedPeer {

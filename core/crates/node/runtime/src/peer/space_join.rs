@@ -1,6 +1,7 @@
 //! Durable application records, not storage-engine changes. A paired gateway
 //! coordinates one request; only its assigned, authorized reviewer may decide.
 //! Applicant traffic stays direct. Reviewer traffic uses authenticated Space routes.
+use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_MERGE_INBOUND_PATH, RUNTIME_SPACE_MERGE_OUTBOUND_PATH, RUNTIME_SPACE_MERGE_REVIEW_INBOX_PATH, RUNTIME_SPACE_MERGE_REVIEW_RESULTS_PATH, RUNTIME_SPACE_DEPARTURES_PATH, RUNTIME_SPACE_REMOVAL_EFFECTS_PATH};
 use super::*;
 use crate::PeerStateStore::PeerStateStore;
 use operit_store::CoreSpaceStore::CoreSpaceDeviceConnection;
@@ -10,10 +11,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Mutex;
 
 // Group consent uses its own durable schema; single-device approval records are not group approvals.
-pub(crate) const INBOUND: &str = "runtime/link_access/space_merge_inbound.preferences.json";
-pub(crate) const OUTBOUND: &str = "runtime/link_access/space_merge_outbound.preferences.json";
-pub(crate) const INBOX: &str = "runtime/link_access/space_merge_review_inbox.preferences.json";
-pub(crate) const RESULTS: &str = "runtime/link_access/space_merge_review_results.preferences.json";
+pub(crate) const INBOUND: &str = RUNTIME_SPACE_MERGE_INBOUND_PATH;
+pub(crate) const OUTBOUND: &str = RUNTIME_SPACE_MERGE_OUTBOUND_PATH;
+pub(crate) const INBOX: &str = RUNTIME_SPACE_MERGE_REVIEW_INBOX_PATH;
+pub(crate) const RESULTS: &str = RUNTIME_SPACE_MERGE_REVIEW_RESULTS_PATH;
 const LIFETIME_MS: i64 = 15 * 60 * 1000;
 const OFFLINE_GRACE_MS: i64 = 30_000;
 static MUTATION: Mutex<()> = Mutex::new(());
@@ -82,7 +83,7 @@ fn expire(record: &mut Record, now: i64, spaceId: &str) {
     }
 }
 fn load(service: &dyn NodeSpaceContext, path: &str, id: &str) -> Result<Record, String> {
-    store(service).records::<Record>(path)?.remove(id).ok_or_else(|| "Join request not found".into())
+    store(service).record::<Record>(path, id)?.ok_or_else(|| "Join request not found".into())
 }
 // Accepted control history already lives in the common synchronization log.
 // Persist only the decision/membership receipt, not another complete log per
@@ -265,7 +266,7 @@ pub(crate) fn memberRemovalCommitted(service: &dyn NodeSpaceContext, nodeId: &st
 /// this device through several paths — control exchange, paired snapshot,
 /// notice, business replication. Tracking the operation itself, instead of the
 /// delivery, lets every path evaluate the removal and exactly one of them act.
-pub(crate) const REMOVAL_EFFECTS_PATH: &str = "runtime/link_access/space_removal_effects.preferences.json";
+pub(crate) const REMOVAL_EFFECTS_PATH: &str = RUNTIME_SPACE_REMOVAL_EFFECTS_PATH;
 
 /// Applies the membership consequences of removals that reached this device
 /// from any path: every member shrinks its own membership projection for the
@@ -419,73 +420,50 @@ pub(crate) fn retireRemovedLocalDevice(service: &dyn NodeSpaceContext, keepPeer:
 /// Local ownership recovery is independent of direct pairing. Serialize it
 /// with approval mutations so a decision cannot restore the Space being left.
 pub(crate) fn leave(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
-    let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+    let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     leaveLocked(service)
 }
 
 /// A crash can land between persisting the exit and switching the local Space.
 /// Finish only that committed transition; historical exits never undo admission.
 pub(crate) fn recoverLocalDeparture(service: &dyn NodeSpaceContext) -> Result<(), String> {
-    let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+    let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if service.networkControlStore().committedLocalDeparture()?.is_some() { leaveLocked(service)?; }
     Ok(())
 }
 
 fn leaveLocked(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
-    // The retired single-device approval schema has no readers or active
-    // requests. Explicit local exit deletes it without parsing or migration,
-    // before allocating the new Space's state on bounded storage.
-    for path in [
-        "runtime/link_access/space_join_inbound.preferences.json",
-        "runtime/link_access/space_join_outbound.preferences.json",
-        "runtime/link_access/space_join_review_inbox.preferences.json",
-        "runtime/link_access/space_join_review_results.preferences.json",
-    ] {
-        if service.storage().exists(path).map_err(|e| e.to_string())? {
-            service.storage().delete(path, false).map_err(|e| e.to_string())?;
-        }
+    // Notification is best effort. A device owns its local exit even when the
+    // old Space, its approval receipts or its peers cannot be read.
+    if let Err(error) = super::super::fault_isolation::run("prepare Space departure", || space_departure::prepare(service)) {
+        operit_util::AppLogger::AppLogger::w("SpaceJoin", &error);
+        let _ = CoreNodeStateStore::newWithStorage(service.storage(), RUNTIME_SPACE_DEPARTURES_PATH).delete();
     }
-    // Retire the old Space's application receipts before allocating its exit
-    // receipt and replacement identity on bounded storage. None can belong to
-    // the fresh Space, whose id has not been minted yet.
-    for path in [INBOUND, INBOX] {
-        for id in store(service).records::<Record>(path)?.into_keys() {
-            store(service).deleteRecord(RESULTS, &id)?;
-            store(service).deleteRecord(path, &id)?;
-        }
+    if let Err(error) = store(service).clearSpaceApprovals() {
+        operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("Exit Space: clear approvals: {error}"));
     }
-    for (id, record) in store(service).records::<Record>(OUTBOUND)? {
-        if !active(&record.request.status) { store(service).deleteRecord(OUTBOUND, &id)?; }
-    }
-    space_departure::prepare(service)?;
     let space = service.spaceStore().leave()?;
-    service.spaceStore().pruneNodeLocalProjection()?;
-    service.networkControlStore().pruneNodeLocalProjection()?;
-    service.networkControlStore().initializeCurrentSpace()?;
-    // The pairing world resets with the Space: this device takes a new pairing
-    // generation. A removal still in flight revokes the generation it was
-    // issued against, so it can never match the credentials this device pairs
-    // again with, and the profile announces the new generation from now on.
-    // Failures keep the previous generation and only prolong the known benign
-    // window, so they never fail an already-completed leave.
-    match store(service).renewPairingIncarnation() {
-        Ok(incarnation) => {
-            if let Some(profile) = service.spaceStore().deviceProfiles()?.remove(&service.localNodeId()) {
-                if let Some(coreVersion) = profile.coreVersion.clone() {
-                    if let Err(error) = service.spaceStore().writeLocalDeviceProfile(
-                        profile.displayName.clone(), profile.platform.clone(), profile.model.clone(),
-                        coreVersion, Some(incarnation),
-                    ) {
-                        operit_util::AppLogger::AppLogger::w("SpaceJoin",
-                            &format!("Pairing generation profile refresh failed error={error}"));
-                    }
-                }
+    for (operation, result) in [
+        ("reset old control projection", super::super::fault_isolation::run("reset control projection", || service.networkControlStore().resetLocalProjection())),
+        ("initialize new local policy", super::super::fault_isolation::run("initialize local policy", || service.networkControlStore().initializeCurrentSpace().map(|_| ()))) ,
+    ] {
+        if let Err(error) = result {
+            operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("Space {}: {operation}: {error}", space.spaceId));
+        }
+    }
+    // Once local membership has switched, ancillary failures cannot turn a
+    // completed exit into an error or keep the user attached to the old Space.
+    if let Err(error) = super::super::fault_isolation::run("refresh pairing generation after Space exit", || {
+        let incarnation = store(service).renewPairingIncarnation()?;
+        if let Some(profile) = service.spaceStore().deviceProfiles()?.remove(&service.localNodeId()) {
+            if let Some(coreVersion) = profile.coreVersion {
+                service.spaceStore().writeLocalDeviceProfile(profile.displayName, profile.platform,
+                    profile.model, coreVersion, Some(incarnation))?;
             }
         }
-        Err(error) => {
-            operit_util::AppLogger::AppLogger::w("SpaceJoin",
-                &format!("Pairing generation renewal failed error={error}"));
-        }
+        Ok(())
+    }) {
+        operit_util::AppLogger::AppLogger::w("SpaceJoin", &error);
     }
     Ok(space)
 }
@@ -572,7 +550,7 @@ fn validateResponse(local: &Record, remote: &Record) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn outgoing(service: &dyn NodeSpaceContext) -> Result<Vec<SpaceJoinRequest>, String> {
-    let mut records: Vec<_> = store(service).records::<Record>(OUTBOUND)?.into_values().map(|r| r.request).collect();
+    let mut records: Vec<_> = store(service).independentRecords::<Record>(OUTBOUND)?.into_values().map(|r| r.request).collect();
     // Do not expire locally: a lost reply may hide a completed remote approval.
     records.sort_by_key(|r| r.createdAt);
     Ok(records)
@@ -596,7 +574,7 @@ pub(crate) fn purgePeerRecords(store: &PeerStateStore, deviceId: &str) -> Result
         request: RequestPeers,
     }
 
-    let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+    let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     // Read only identities, not complete source snapshots. Validate every
     // request file before deleting anything, preserving unrelated requests.
     let records = [INBOUND, OUTBOUND, INBOX]
@@ -633,7 +611,7 @@ pub(crate) fn purgePeerRecords(store: &PeerStateStore, deviceId: &str) -> Result
 
 /// Receives applicant commands; cancellation never depends on reviewer discovery.
 pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreCallRequest) -> Result<CoreValue, String> {
-    let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+    let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     paired(service, peer, crate::NodeServices::PairingDirection::Either)?;
     let current = service.spaceStore().initialize()?;
     let now = currentTimeMillis();
@@ -660,13 +638,13 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
             return Err("Join request must merge a distinct source Space, not the target itself".into());
         }
         space_departure::observe(service, peer, &[], &input.source.controlOperations)?;
-        let mut records = store(service).records::<Record>(INBOUND)?;
-        if let Some(old) = records.get(&input.requestId) {
+        let mut records = store(service).independentRecords::<Record>(INBOUND)?;
+        if let Some(old) = store(service).record::<Record>(INBOUND, &input.requestId)? {
             if old.request.applicantDeviceId != peer || old.targetSpaceId != input.targetSpaceId
                 || old.sourceSpaceId != input.sourceSpaceId || old.sourceRevision != input.sourceRevision {
                 return Err("Join request id belongs to another submission".into());
             }
-            old.clone()
+            old
         } else {
             // A submission from a different source Space means the applicant
             // left and forked a new one; its previous application or admission
@@ -735,7 +713,7 @@ async fn approvalCall<T: serde::de::DeserializeOwned>(service: &dyn NodeSpaceCon
 /// Every reviewer pulls only its assignments from reachable same-Space gateways.
 /// No applicant data is replicated/broadcast and no other admin gets a popup.
 pub(crate) fn hasInbound(service: &dyn NodeSpaceContext) -> Result<bool, String> {
-    Ok(!store(service).records::<Record>(INBOUND)?.is_empty())
+    Ok(!store(service).independentRecords::<Record>(INBOUND)?.is_empty())
 }
 
 /// Read-only review-state summary for diagnostics, judged through the shared
@@ -745,7 +723,7 @@ pub(crate) fn doctorSummaries(service: &dyn NodeSpaceContext) -> Result<Vec<spac
     let mut summaries = Vec::new();
     let mut seen = BTreeSet::new();
     for path in [INBOUND, INBOX] {
-        for (_, record) in store(service).records::<Record>(path)? {
+        for (_, record) in store(service).independentRecords::<Record>(path)? {
             if !seen.insert(record.request.requestId.clone()) { continue; }
             let committed = record.request.status == SpaceJoinStatus::Approving
                 && record.approvedDecision == Some(true)
@@ -778,9 +756,16 @@ pub(crate) async fn incoming(service: &dyn NodeSpaceContext) -> Result<Vec<Space
     if !canReview(service, &local)? { return Ok(Vec::new()); }
     let mut result = Vec::new();
     for node in service.spaceStore().initialize()?.members {
-        if !service.nodeIsReachable(&node)? { continue; }
+        match service.nodeIsReachable(&node) {
+            Ok(true) => {},
+            Ok(false) => continue,
+            Err(error) => {
+                operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("peer={node}: {error}"));
+                continue;
+            }
+        }
         let fetched = if node == local {
-            let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+            let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             assignedRequests(service, &local, &localDecisionContext(service)?)
         } else { approvalCall::<Vec<Record>>(service, &node, "assigned", CoreValue::Null).await };
         let records = match fetched {
@@ -814,9 +799,14 @@ fn validateAssignment(service: &dyn NodeSpaceContext, record: &Record, origin: &
 }
 fn assignedRequests(service: &dyn NodeSpaceContext, origin: &str, current: &CoreSpace) -> Result<Vec<Record>, String> {
             let mut assigned = Vec::new();
-            for mut record in store(service).records::<Record>(INBOUND)?.into_values() {
-                reconcile(service, &mut record)?;
-                saveRecord(service, INBOUND, &record.request.requestId, &record)?;
+            for mut record in store(service).independentRecords::<Record>(INBOUND)?.into_values() {
+                if let Err(error) = crate::fault_isolation::run("join assignment", || {
+                    reconcile(service, &mut record)?;
+                    saveRecord(service, INBOUND, &record.request.requestId, &record)
+                }) {
+                    operit_util::AppLogger::AppLogger::w("SpaceJoin", &format!("request={}: {error}", record.request.requestId));
+                    continue;
+                }
                 if record.targetSpaceId == current.spaceId && record.request.reviewerDeviceId.as_deref() == Some(origin)
                     && matches!(record.request.status, SpaceJoinStatus::Pending | SpaceJoinStatus::Approving)
                     && canReview(service, origin)? { assigned.push(record); }
@@ -824,7 +814,7 @@ fn assignedRequests(service: &dyn NodeSpaceContext, origin: &str, current: &Core
     Ok(assigned)
 }
 pub(crate) fn receiveApproval(service: &dyn NodeSpaceContext, origin: &str, request: CoreCallRequest) -> Result<CoreValue, String> {
-    let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+    let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let current = service.spaceStore().initialize()?;
     if !current.members.iter().any(|n| n == origin) || service.networkControlStore().nodeIsDisconnected(origin)? {
         return Err("Approval requires an active member of this Space".into());
@@ -944,14 +934,14 @@ pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: 
     let onGateway = inbox.request.targetDeviceId == local;
     let decision = Decision { requestId: id.clone(), assignmentVersion: version, approve };
     let claim: Claim = if onGateway {
-        let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+        let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         claimDecision(service, &local, decision, localDecisionContext(service)?)?
     } else {
         approvalCall(service, &inbox.request.targetDeviceId, "claim", toCoreValue(decision).map_err(|e| e.to_string())?).await?
     };
     validateResponse(&inbox, &claim.record)?;
     if matches!(claim.record.request.status, SpaceJoinStatus::Approved | SpaceJoinStatus::Rejected) { return Ok(claim.record.request); }
-    let saved = store(service).records::<Outcome>(RESULTS)?.remove(&id);
+    let saved = store(service).record::<Outcome>(RESULTS, &id)?;
     let outcome = if let Some(saved) = saved {
         if saved.decision.assignmentVersion != version || saved.decision.approve != approve { return Err("Stored decision differs from the claim".into()); }
         saved
@@ -995,7 +985,7 @@ pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: 
         outcome
     };
     let record: Record = if onGateway {
-        let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+        let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         completeDecision(service, &local, outcome, localDecisionContext(service)?)?
     } else {
         approvalCall(service, &inbox.request.targetDeviceId, "complete", toCoreValue(outcome).map_err(|e| e.to_string())?).await?
@@ -1068,7 +1058,7 @@ pub(crate) async fn refresh(service: &dyn NodeSpaceContext, id: String) -> Resul
 
 /// Publishes a response without allowing an older poll to resurrect a terminal request.
 fn publishOutgoingResponse(service: &dyn NodeSpaceContext, id: &str, remote: &Record, cancellationAcknowledged: bool) -> Result<SpaceJoinRequest, String> {
-    let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+    let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let current = load(service, OUTBOUND, id)?;
     if preserveOutgoingStatus(&current.request.status, &remote.request.status)
         || (current.cancelRequested && !cancellationAcknowledged) {
@@ -1100,7 +1090,7 @@ async fn cancelRemote(service: &dyn NodeSpaceContext, local: Record) -> Result<S
 
 pub(crate) async fn cancel(service: &dyn NodeSpaceContext, id: String) -> Result<SpaceJoinRequest, String> {
     let local = {
-        let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+        let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut current = load(service, OUTBOUND, &id)?;
         if !active(&current.request.status) { return Ok(current.request); }
         // Record intent without overwriting a concurrently published decision.

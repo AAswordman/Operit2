@@ -494,6 +494,7 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         let mut has_result_store_paths_new = false;
         let mut has_core_proxy_new = false;
         let mut has_core_node_local_runtime_new = false;
+        let mut has_result_core_node_local_runtime_new = false;
         let mut has_public_instance_method = false;
 
         for item in &file.items {
@@ -570,8 +571,13 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                     }
                     has_core_proxy_new |= name == "new"
                         && function_has_single_named_argument(function, "LocalCoreProxy");
-                    has_core_node_local_runtime_new |= name == "new"
-                        && function_has_single_named_argument(function, "CoreNodeLocalRuntime");
+                    if name == "new" && function_has_single_named_argument(function, "CoreNodeLocalRuntime") {
+                        if function_return_type(function).contains("Result") {
+                            has_result_core_node_local_runtime_new = true;
+                        } else {
+                            has_core_node_local_runtime_new = true;
+                        }
+                    }
                     has_string_new |= name == "new"
                         && (arg_type.contains("impl Into < String >")
                             || arg_type.contains("impl Into<String>")
@@ -621,6 +627,9 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         }
         if has_core_proxy_new {
             return Some((type_name, ObjectAccess::CoreProxyConstruct));
+        }
+        if has_result_core_node_local_runtime_new {
+            return Some((type_name, ObjectAccess::ResultCoreNodeLocalRuntimeConstruct));
         }
         if has_core_node_local_runtime_new {
             return Some((type_name, ObjectAccess::CoreNodeLocalRuntimeConstruct));

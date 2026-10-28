@@ -577,7 +577,6 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-loperit_flutter_bridge",
-					"-ldns_sd",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = Runner/OperitFlutterBridge.h;
@@ -719,7 +718,6 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-loperit_flutter_bridge",
-					"-ldns_sd",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = Runner/OperitFlutterBridge.h;
@@ -749,7 +747,6 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-loperit_flutter_bridge",
-					"-ldns_sd",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = Runner/OperitFlutterBridge.h;

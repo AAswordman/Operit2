@@ -24,7 +24,7 @@ pub(crate) struct NetworkControlReadModel {
     projected: BTreeMap<String, SyncOperation>,
     commands: BTreeMap<String, Vec<SyncOperation>>,
     states: BTreeMap<String, NetworkControlState>,
-    error: Option<String>,
+    errors: BTreeMap<String, String>,
     recovery_error: Option<String>,
 }
 
@@ -54,7 +54,7 @@ impl NetworkControlReadModel {
     }
 
     pub(crate) fn state(&self, space_id: &str) -> Result<NetworkControlState, String> {
-        self.check()?;
+        self.check(space_id)?;
         match self.states.get(space_id) {
             Some(state) => Ok(state.clone()),
             None => Ok(emptyControlState(space_id)),
@@ -62,7 +62,7 @@ impl NetworkControlReadModel {
     }
 
     pub(crate) fn commands(&self, space_id: &str) -> Result<Vec<SyncOperation>, String> {
-        self.check()?;
+        self.check(space_id)?;
         Ok(self.commands.get(space_id).cloned().unwrap_or_default())
     }
 
@@ -70,11 +70,9 @@ impl NetworkControlReadModel {
         self.recovery_error = Some(error);
     }
 
-    fn check(&self) -> Result<(), String> {
-        if let Some(error) = &self.recovery_error {
-            return Err(error.clone());
-        }
-        match &self.error {
+    fn check(&self, space_id: &str) -> Result<(), String> {
+        if let Some(error) = &self.recovery_error { return Err(error.clone()); }
+        match self.errors.get(space_id) {
             Some(error) => Err(error.clone()),
             None => Ok(()),
         }
@@ -158,37 +156,44 @@ impl NetworkControlReadModel {
     fn rebuild(&mut self) {
         self.commands.clear();
         self.states.clear();
-        self.error = self.rebuild_inner().err();
-    }
-
-    fn rebuild_inner(&mut self) -> Result<(), String> {
+        self.errors.clear();
         let mut unique = BTreeMap::new();
-        for operation in self
-            .journal
-            .values()
-            .chain(self.received.values())
-            .chain(self.projected.values())
-        {
+        for operation in self.journal.values().chain(self.received.values()).chain(self.projected.values()) {
             if let Some(previous) = unique.insert(&operation.opId, operation) {
                 if previous != operation {
-                    return Err("Conflicting immutable Space control operation".into());
+                    // Fail closed for both affected Spaces, without poisoning
+                    // authorization reads for every other Space on this node.
+                    for conflicting in [previous, operation] {
+                        if let Some(space) = conflicting.payload.get("spaceId").and_then(serde_json::Value::as_str) {
+                            self.errors.insert(space.into(), format!("Space {space}: conflicting control operation {}", operation.opId));
+                        }
+                    }
                 }
             }
         }
         for operation in unique.into_values() {
-            let record = decodeControlOperation(operation)?;
-            self.commands
-                .entry(record.spaceId)
-                .or_default()
-                .push(operation.clone());
+            match decodeControlOperation(operation) {
+                Ok(record) => self.commands.entry(record.spaceId).or_default().push(operation.clone()),
+                Err(error) => {
+                    let error = format!("Space control operation {} (origin {}): {error}", operation.opId, operation.originDeviceId);
+                    if let Some(space) = operation.payload.get("spaceId").and_then(serde_json::Value::as_str).filter(|id| !id.trim().is_empty()) {
+                        self.errors.insert(space.into(), error.clone());
+                    }
+                    // An undecodable operation grants no authority. Keep its
+                    // diagnostic, but do not make unrelated Spaces unreadable.
+                    operit_util::AppLogger::AppLogger::w("NetworkControlReadModel", &error);
+                }
+            }
         }
         for (space_id, commands) in &mut self.commands {
             commands.sort_by_key(SyncOperationOrder::fromOperation);
-            let (state, _) = replayControlCommands(space_id, commands, None)?;
-            self.states.insert(space_id.clone(), state);
+            match replayControlCommands(space_id, commands, None) {
+                Ok((state, _)) => { self.states.insert(space_id.clone(), state); }
+                Err(error) => { self.errors.insert(space_id.clone(), format!("Space {space_id} control replay: {error}")); }
+            }
         }
-        Ok(())
     }
+
 }
 
 struct Entry {
@@ -285,4 +290,49 @@ pub(crate) fn beginControlWrite(
         _registry: registry,
         model,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SyncOperationStore::SyncOperationSemantics;
+
+    fn bootstrap(space: &str) -> SyncOperation {
+        SyncOperation {
+            opId: format!("bootstrap-{space}"), originDeviceId: "local".into(), sequence: 1,
+            domain: NETWORK_CONTROL_SYNC_DOMAIN.into(), entityType: "command".into(),
+            entityId: format!("bootstrap-{space}"), operation: "apply".into(),
+            semantics: SyncOperationSemantics::Transaction,
+            payload: serde_json::to_value(crate::NetworkControlStore::NetworkControlCommandRecord {
+                commandId: format!("bootstrap-{space}"), spaceId: space.into(), issuerNodeId: "local".into(),
+                command: crate::NetworkControlStore::NetworkControlCommand::Bootstrap { initialAdminNodeId: "local".into() },
+            }).unwrap(),
+            createdAt: 1, schemaVersion: 1,
+        }
+    }
+
+    #[test]
+    fn a_broken_space_does_not_poison_other_spaces_or_a_fresh_local_space() {
+        let good = bootstrap("healthy");
+        let mut broken = bootstrap("broken");
+        broken.payload["command"] = serde_json::Value::Null;
+        let mut model = NetworkControlReadModel::new(vec![good, broken], Vec::new(), Vec::new());
+        assert!(model.state("healthy").unwrap().initialized);
+        assert!(model.state("broken").unwrap_err().contains("bootstrap-broken"));
+        let fresh = bootstrap("fresh-after-exit");
+        model.append_journal([&fresh]);
+        assert!(model.state("fresh-after-exit").unwrap().initialized);
+        assert!(model.state("healthy").unwrap().initialized);
+    }
+
+    #[test]
+    fn a_conflicting_operation_blocks_only_its_own_spaces() {
+        let good = bootstrap("healthy");
+        let first = bootstrap("broken");
+        let mut conflicting = first.clone();
+        conflicting.createdAt += 1;
+        let model = NetworkControlReadModel::new(vec![good, first], Vec::new(), vec![conflicting]);
+        assert!(model.state("healthy").unwrap().initialized);
+        assert!(model.state("broken").unwrap_err().contains("conflicting"));
+    }
 }

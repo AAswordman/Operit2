@@ -129,7 +129,7 @@ impl CoreApplication {
         startSpaceSync: bool,
     ) -> Result<Self, String> {
         let nodeRuntime = localClient.coreNodeLocalRuntime();
-        let nodeRouter = Arc::new(CoreNodeRouter::new(nodeRuntime.clone()));
+        let nodeRouter = Arc::new(CoreNodeRouter::new(nodeRuntime.clone())?);
         nodeRouter.bindDeviceToolService(localClient.deviceToolService())?;
         // Reduced/test hosts may omit task scheduling. Device calls then fail
         // explicitly, while Core startup and synchronous local tools remain available.
@@ -141,7 +141,13 @@ impl CoreApplication {
         let accessServices = RuntimeRemoteLinkService::newWithRouter(
             nodeRuntime.clone(), (*nodeRouter).clone(),
         );
-        let deviceInfo = accessServices.initializeDeviceInfo(deviceInfo)?;
+        let deviceInfo = match accessServices.initializeDeviceInfo(deviceInfo.clone()) {
+            Ok(info) => info,
+            Err(error) => {
+                operit_util::AppLogger::AppLogger::w("CoreApplication", &format!("Initialize local Space device presentation: {error}"));
+                deviceInfo
+            }
+        };
         let routeChangeServices = accessServices.clone();
         localClient.bindCoreRouteChangeHandler(Arc::new(
             move |chatId, targetNodeId, resumeContext| {
@@ -186,7 +192,11 @@ impl CoreApplication {
     pub fn installNodeServices(&mut self, services: NodeServices) -> Result<(), String> {
         self.nodeRouter.installNodeServices(services)?;
         // 同步必须在通信服务注入后启动；不能先启动旧连接管理器填补空缺。
-        if self.startSpaceSync { self.accessServices.startSpaceSync()?; }
+        if self.startSpaceSync {
+            if let Err(error) = self.accessServices.startSpaceSync() {
+                operit_util::AppLogger::AppLogger::w("CoreApplication", &format!("Start Space synchronization: {error}"));
+            }
+        }
         Ok(())
     }
 

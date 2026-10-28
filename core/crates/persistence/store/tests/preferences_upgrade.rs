@@ -33,6 +33,16 @@ impl Drop for Fixture {
         std::fs::remove_dir_all(&self.root).unwrap();
     }
 }
+/// Declares just the paths used by the calling fixture.
+fn fixture_merge_schema(paths: &[&str]) -> PreferenceMergeSchema {
+    PreferenceMergeSchema {
+        stores: paths.iter().map(|path| PreferenceMergeStore::values(
+            *path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path),
+            |_| Ok(()),
+        )).collect(),
+    }
+}
+
 #[test]
 fn replay_keeps_existing_unjournaled_baseline() {
     let a = Fixture::new();
@@ -66,7 +76,7 @@ fn replay_keeps_existing_unjournaled_baseline() {
         .unwrap();
     applyOperations(
         a.host.clone(),
-        &PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &incoming,
         |_, _| true,
@@ -413,7 +423,7 @@ fn replay_skips_old_version_fields_before_current_root_assignment() {
             .withSchema(4, |_, _| Ok(())).data().unwrap();
         for batch in [vec![root.clone(), field.clone()], vec![field.clone(), root.clone()]] {
             let outcomes = operit_store::PreferenceMerge::applyIndependentOperations(
-                fixture.host.clone(), &PreferenceMergeSchema::default(), &[], &batch, |_,_| true);
+                fixture.host.clone(), &fixture_merge_schema(&[&path]), &[], &batch, |_,_| true);
             assert!(outcomes.iter().any(|outcome| outcome.skipped && outcome.result.is_ok() && outcome.operations == vec![field.clone()]));
             assert!(outcomes.iter().any(|outcome| outcome.result.is_ok() && outcome.operations.contains(&root)));
             let data = PreferencesDataStore::newWithStorage(fixture.host.clone(), path).data().unwrap();
@@ -443,7 +453,7 @@ fn effective_replay_preserves_sibling_mutations_and_following_edits() {
     }));
     let operations = vec![first, legacy_provider_field(path, 2), replacement, legacy_provider_field(path, 4)];
     for _ in 0..3 {
-        applyOperations(fixture.host.clone(), &PreferenceMergeSchema::default(), &[], &operations, |_,_| true).unwrap();
+        applyOperations(fixture.host.clone(), &fixture_merge_schema(&[&path]), &[], &operations, |_,_| true).unwrap();
         let data = PreferencesDataStore::newWithStorage(fixture.host.clone(), path).data().unwrap();
         assert_eq!(data.get(&stringPreferencesKey("counter")), Some(&json!(2)));
         assert_eq!(data.get(&stringPreferencesKey("provider_DEEPSEEK")), Some(&json!({"name":"older name"})));
@@ -460,10 +470,10 @@ fn effective_replay_honors_deletion_and_rejects_unresolved_field_dependencies() 
         "storagePath":path,"key":"provider_DEEPSEEK","value":null,"encrypted":false,"formatVersion":2
     }));
     let originals = vec![field, deletion];
-    applyOperations(fixture.host.clone(), &PreferenceMergeSchema::default(), &[], &originals, |_,_| true).unwrap();
+    applyOperations(fixture.host.clone(), &fixture_merge_schema(&[&path]), &[], &originals, |_,_| true).unwrap();
     let committed = fixture.host.readBytes(path).unwrap();
     let later = legacy_provider_field(path, 3);
-    let error = applyOperations(fixture.host.clone(), &PreferenceMergeSchema::default(), &[], &[later], |_,_| true).unwrap_err();
+    let error = applyOperations(fixture.host.clone(), &fixture_merge_schema(&[&path]), &[], &[later], |_,_| true).unwrap_err();
     assert!(error.contains("structured preference entry is missing"));
     assert_eq!(fixture.host.readBytes(path).unwrap(), committed);
     assert_eq!(history(&fixture), originals);
@@ -477,7 +487,7 @@ fn effective_replay_commits_no_sibling_of_an_invalid_transaction() {
     let initial = replay_operation(1, "set", json!({
         "storagePath":path,"key":"counter","value":10,"encrypted":false,"formatVersion":2
     }));
-    applyOperations(fixture.host.clone(), &PreferenceMergeSchema::default(), &[], &[initial], |_,_| true).unwrap();
+    applyOperations(fixture.host.clone(), &fixture_merge_schema(&[&path]), &[], &[initial], |_,_| true).unwrap();
     let committed = fixture.host.readBytes(path).unwrap();
     let transaction = replay_operation(3, "transaction", json!({
         "storagePath":path,"encrypted":false,"formatVersion":2,
@@ -487,7 +497,7 @@ fn effective_replay_commits_no_sibling_of_an_invalid_transaction() {
         ]
     }));
     let operations = [legacy_provider_field(path, 2), transaction];
-    assert!(applyOperations(fixture.host.clone(), &PreferenceMergeSchema::default(), &[], &operations, |_,_| true).is_err());
+    assert!(applyOperations(fixture.host.clone(), &fixture_merge_schema(&[&path]), &[], &operations, |_,_| true).is_err());
     assert_eq!(fixture.host.readBytes(path).unwrap(), committed);
 }
 
@@ -496,11 +506,13 @@ fn effective_replay_commits_no_sibling_of_an_invalid_transaction() {
 fn incremental_replay_only_materializes_the_changed_dataset() {
     use operit_store::SyncOperationStore::{SyncOperation, SyncOperationSemantics};
     let fixture = Fixture::new();
+    let paths = (0..50).map(|dataset| format!("{}/probe-{dataset}.preferences.json",
+        operit_util::RuntimeStorageLayout::CONFIG_PREFERENCES_DIR_PATH)).collect::<Vec<_>>();
     let mut history = Vec::new();
     for dataset in 0..50 {
         for sequence in 1..=200 {
             let origin = format!("probe-{dataset}");
-            let path = format!("runtime/config/preferences/probe-{dataset}.preferences.json");
+            let path = &paths[dataset];
             history.push(SyncOperation {
                 opId: format!("{origin}:{sequence}"), originDeviceId: origin, sequence,
                 domain: "preferences".into(), entityType: "entry".into(),
@@ -512,7 +524,7 @@ fn incremental_replay_only_materializes_the_changed_dataset() {
             });
         }
     }
-    let schema = PreferenceMergeSchema::default();
+    let schema = fixture_merge_schema(&paths.iter().map(String::as_str).collect::<Vec<_>>());
     applyOperations(fixture.host.clone(), &schema, &[], &history, |_,_| true).unwrap();
     let journal = SyncOperationStore::new(fixture.host.clone(), "runtime/sync");
     let start = operit_host_api::TimeUtils::currentTimeMillis();

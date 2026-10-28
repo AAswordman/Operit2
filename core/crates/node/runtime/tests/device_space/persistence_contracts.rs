@@ -178,8 +178,8 @@ async fn file_sync_rejects_node_local_and_path_escape_entities_without_writes() 
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
     let (node, _) = approvalService("file-boundary");
-    let before = durableFiles(&node);
     let beforeClock = operationStore(&node).localClock().unwrap();
+    let before = durableFiles(&node);
     for path in [
         "runtime/link_access/identity.preferences.json",
         "runtime/space/../link_access/secret",

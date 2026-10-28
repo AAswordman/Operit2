@@ -711,6 +711,9 @@ fn render_object_constructor(object: &SourceObject, mode: DispatchMode) -> Strin
         ObjectAccess::CoreNodeLocalRuntimeConstruct => {
             render_core_node_local_runtime_constructor("object", &object.full_type)
         }
+        ObjectAccess::ResultCoreNodeLocalRuntimeConstruct => {
+            format!("            let mut object = {}::new(proxy.coreNodeLocalRuntime()).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n", object.full_type)
+        }
         ObjectAccess::StorePathsConstruct => {
             format!(
                 "            let mut object = {}::new(operit_store::RuntimeStorePaths::RuntimeStorePaths::default());\n",
@@ -866,6 +869,9 @@ fn render_object_constructor_for_access(
         }
         ObjectAccess::CoreNodeLocalRuntimeConstruct => {
             render_core_node_local_runtime_constructor(variable_name, full_type)
+        }
+        ObjectAccess::ResultCoreNodeLocalRuntimeConstruct => {
+            format!("            let mut {variable_name} = {full_type}::new(proxy.coreNodeLocalRuntime()).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n")
         }
         ObjectAccess::StorePathsConstruct => {
             format!(

@@ -31,6 +31,16 @@ fn collected<T: Clone>(values: &Arc<Mutex<Vec<T>>>) -> Vec<T> {
         .clone()
 }
 
+/// Declares just the paths used by the calling fixture.
+fn fixture_merge_schema(paths: &[&str]) -> crate::PreferenceMerge::PreferenceMergeSchema {
+    crate::PreferenceMerge::PreferenceMergeSchema {
+        stores: paths.iter().map(|path| crate::PreferenceMerge::PreferenceMergeStore::values(
+            *path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path),
+            |_| Ok(()),
+        )).collect(),
+    }
+}
+
 #[test]
 fn combine2_emits_initial_and_updates_from_each_source() {
     let first = mutableStateFlow(1);
@@ -934,7 +944,7 @@ fn synchronized_preference_keys_merge_independently() {
             .expect("second host operations"),
     );
 
-    crate::PreferenceMerge::applyOperations(targetHost.clone(), &crate::PreferenceMerge::PreferenceMergeSchema::default(), &[], &operations, |_, _| true)
+    crate::PreferenceMerge::applyOperations(targetHost.clone(), &fixture_merge_schema(&[&storagePath]), &[], &operations, |_, _| true)
         .expect("preference operation application");
 
     let targetStore = PreferencesDataStore::newWithStorage(targetHost, storagePath);
@@ -958,7 +968,7 @@ fn whole_json_preferences_sync_independent_records() {
     let path = format!("{CONFIG_PREFERENCES_DIR_PATH}/whole_record_sync.preferences.json");
     let firstStore = PreferencesDataStore::newWithStorage(firstHost.clone(), path.clone());
     let secondStore = PreferencesDataStore::newWithStorage(secondHost.clone(), path.clone());
-    let targetStore = PreferencesDataStore::newWithStorage(targetHost.clone(), path);
+    let targetStore = PreferencesDataStore::newWithStorage(targetHost.clone(), path.clone());
     let first = json!({"id":"A", "name":"First", "models":[{"id":"m", "optional":null}]});
     let second = json!({"id":"B", "name":"Second", "models":[]});
     firstStore
@@ -986,7 +996,7 @@ fn whole_json_preferences_sync_independent_records() {
         assert!(operation.payload.get("jsonPath").is_none());
     }
 
-    crate::PreferenceMerge::applyOperations(targetHost, &crate::PreferenceMerge::PreferenceMergeSchema::default(), &[], &operations, |_, _| true).unwrap();
+    crate::PreferenceMerge::applyOperations(targetHost, &fixture_merge_schema(&[&path]), &[], &operations, |_, _| true).unwrap();
     let preferences = targetStore.data().unwrap();
     assert_eq!(
         preferences.get(&stringPreferencesKey("provider_A")),
@@ -1237,7 +1247,7 @@ fn structured_model_sync_after_editing_and_deleting_unused_model() {
         .operationsSince(&SyncClock::empty(), &["preferences".to_string()], 512)
         .expect("export initial model synchronization");
 
-    crate::PreferenceMerge::applyOperations(targetHost, &crate::PreferenceMerge::PreferenceMergeSchema::default(), &[], &operations, |_, _| true)
+    crate::PreferenceMerge::applyOperations(targetHost, &fixture_merge_schema(&[MODEL_CONFIGS_PREFERENCES_PATH]), &[], &operations, |_, _| true)
         .expect("new device must receive the configured model");
     let preferences = targetStore.data().expect("synced provider");
     let actual = preferences.get(&providerKey).unwrap().clone();
@@ -1303,7 +1313,7 @@ fn preference_sync_keeps_independent_binding_progress_when_model_file_fails() {
         .writeBytes(MODEL_CONFIGS_PREFERENCES_PATH, b"{")
         .unwrap();
     crate::PreferenceMerge::applyOperations(
-        targetHost.clone(), &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        targetHost.clone(), &fixture_merge_schema(&[MODEL_CONFIGS_PREFERENCES_PATH, operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH]),
         &[], &operations, |_, _| true,
     ).expect_err("a malformed dataset must report its own failure");
     assert_eq!(targetHost.readBytes(MODEL_CONFIGS_PREFERENCES_PATH).unwrap(), b"{");
@@ -1382,7 +1392,7 @@ fn preference_sync_replay_skips_unchanged_files_and_notifications() {
     let store = PreferencesDataStore::newWithStorage(host.clone(), MODEL_CONFIGS_PREFERENCES_PATH);
     let operations = [nativePreferenceOperation(MODEL_CONFIGS_PREFERENCES_PATH,
         vec![("setting", json!("synced-value"))], 1)];
-    let schema = crate::PreferenceMerge::PreferenceMergeSchema::default();
+    let schema = fixture_merge_schema(&[MODEL_CONFIGS_PREFERENCES_PATH]);
     crate::PreferenceMerge::applyOperations(host.clone(), &schema, &[], &operations, |_, _| true).unwrap();
     let writes = host.writeCount();
     let version = *store.changeSignal.version.lock().unwrap();
@@ -1392,18 +1402,19 @@ fn preference_sync_replay_skips_unchanged_files_and_notifications() {
     assert_eq!(*store.changeSignal.version.lock().unwrap(), version);
 }
 
-/// Conflicting encryption policies fail one dataset without committing business state.
+/// An encryption mismatch rejects that operation while the declared owner can still commit.
 #[test]
-fn preference_sync_rejects_mixed_encryption_before_writing_files() {
+fn preference_sync_isolates_an_operation_with_conflicting_encryption() {
     let host = Arc::new(MemoryStorageHost::default());
     let plain = nativePreferenceOperation(MODEL_CONFIGS_PREFERENCES_PATH,
         vec![("setting", json!("synced-value"))], 1);
     let mut encrypted = nativePreferenceOperation(MODEL_CONFIGS_PREFERENCES_PATH,
         vec![("setting", json!("synced-value"))], 2);
     encrypted.payload["encrypted"] = json!(true);
-    crate::PreferenceMerge::applyOperations(host.clone(), &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+    crate::PreferenceMerge::applyOperations(host.clone(), &fixture_merge_schema(&[MODEL_CONFIGS_PREFERENCES_PATH]),
         &[], &[plain, encrypted], |_, _| true).expect_err("a preferences file must have one encryption policy");
-    assert_eq!(host.writeCount(), 0);
+    assert_eq!(PreferencesDataStore::newWithStorage(host, MODEL_CONFIGS_PREFERENCES_PATH)
+        .data().unwrap().get(&stringPreferencesKey("setting")), Some(&json!("synced-value")));
 }
 
 /// Node-local cleanup must invalidate every handle sharing the deleted path.
@@ -1488,7 +1499,7 @@ fn preference_transactions_converge_when_an_overlapping_edit_arrives_first() {
     let reverse = Arc::new(MemoryStorageHost::default());
     crate::PreferenceMerge::applyOperations(
         forward.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[first.clone()],
         |_, _| true,
@@ -1496,7 +1507,7 @@ fn preference_transactions_converge_when_an_overlapping_edit_arrives_first() {
     .unwrap();
     crate::PreferenceMerge::applyOperations(
         forward.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[first.clone()],
         &[later.clone()],
         |_, _| true,
@@ -1504,7 +1515,7 @@ fn preference_transactions_converge_when_an_overlapping_edit_arrives_first() {
     .unwrap();
     crate::PreferenceMerge::applyOperations(
         reverse.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[later.clone()],
         |_, _| true,
@@ -1512,7 +1523,7 @@ fn preference_transactions_converge_when_an_overlapping_edit_arrives_first() {
     .unwrap();
     crate::PreferenceMerge::applyOperations(
         reverse.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[later],
         &[first],
         |_, _| true,
@@ -1537,9 +1548,9 @@ fn preference_transactions_converge_when_an_overlapping_edit_arrives_first() {
     );
 }
 
-/// Rejects a duplicate business key before reading or publishing any preference file.
+/// An invalid transaction commits none of its entries and leaves an independent operation usable.
 #[test]
-fn preference_transaction_validation_rejects_the_entire_batch() {
+fn preference_transaction_validation_rejects_only_the_invalid_transaction() {
     let path = "runtime/config/preferences/invalid-transaction.preferences.json";
     let host = Arc::new(MemoryStorageHost::default());
     let valid = nativePreferenceOperation(path, vec![("first", json!(true))], 1);
@@ -1548,14 +1559,16 @@ fn preference_transaction_validation_rejects_the_entire_batch() {
     invalid.payload["entries"][1]["key"] = json!("A");
     assert!(crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[valid, invalid],
         |_, _| true,
     )
     .is_err());
-    assert_eq!(host.writeCount(), 0);
-    assert_eq!(host.readCount(), 0);
+    let data = PreferencesDataStore::newWithStorage(host, path).data().unwrap();
+    assert_eq!(data.get(&stringPreferencesKey("first")), Some(&json!(true)));
+    assert!(!data.contains(&stringPreferencesKey("A")));
+    assert!(!data.contains(&stringPreferencesKey("B")));
 }
 
 /// A local storage migration changes representation without publishing business replacements.
@@ -1601,7 +1614,7 @@ fn preference_migration_replay_supersedes_legacy_encoded_root_values() {
     let host = Arc::new(MemoryStorageHost::default());
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[native.clone()],
         |_, _| true,
@@ -1609,7 +1622,7 @@ fn preference_migration_replay_supersedes_legacy_encoded_root_values() {
     .unwrap();
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[native],
         &[old],
         |_, _| true,
@@ -1637,7 +1650,7 @@ fn preference_transaction_owner_retirement_preserves_active_entries() {
     let host = Arc::new(MemoryStorageHost::default());
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[operation.clone()],
         |_, key| key != "retired",
@@ -1676,7 +1689,7 @@ fn preference_replay_history_is_independent_of_the_export_floor() {
     let remote = nativePreferenceOperation(path, vec![("A", json!({"name":"remote-old"}))], 1);
     crate::PreferenceMerge::applyOperations(
         host,
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &history,
         &[remote],
         |_, _| true,
@@ -1698,7 +1711,7 @@ fn historical_payload_is_skipped_after_a_local_schema_upgrade() {
     store.data().unwrap();
     let mut old = nativePreferenceOperation(path, vec![("setting", json!(true))], 1);
     old.payload.as_object_mut().unwrap().remove("formatVersion");
-    crate::PreferenceMerge::applyOperations(host, &Default::default(), &[], &[old], |_, _| {
+    crate::PreferenceMerge::applyOperations(host, &fixture_merge_schema(&[&path]), &[], &[old], |_, _| {
         true
     })
     .expect("an obsolete preference is terminally skipped");
@@ -1731,7 +1744,7 @@ fn replay_orders_native_history_without_copying_storage_versions() {
     new.payload["schemaVersion"] = json!(4);
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[new.clone()],
         |_, _| true,
@@ -1739,7 +1752,7 @@ fn replay_orders_native_history_without_copying_storage_versions() {
     .unwrap();
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &crate::PreferenceMerge::PreferenceMergeSchema::default(),
+        &fixture_merge_schema(&[&path]),
         &[new],
         &[old],
         |_, _| true,
@@ -1796,7 +1809,7 @@ fn explicit_preference_mutations_converge_without_business_key_policies() {
     let secondHistory = SyncOperationStore::new(secondHost.clone(), RUNTIME_SYNC_DIR_PATH)
         .preferenceHistory()
         .unwrap();
-    let schema = crate::PreferenceMerge::PreferenceMergeSchema::default();
+    let schema = fixture_merge_schema(&[&path]);
     for _ in 0..2 {
         crate::PreferenceMerge::applyOperations(
             firstHost.clone(),
@@ -2118,7 +2131,7 @@ fn offline_old_schema_increment_is_skipped_after_a_local_upgrade() {
     for _ in 0..2 {
         let outcomes = crate::PreferenceMerge::applyIndependentOperations(
             host.clone(),
-            &Default::default(),
+            &fixture_merge_schema(&[&path]),
             &[],
             &operations,
             |_, _| true,
@@ -2328,7 +2341,7 @@ fn failed_remote_commit_keeps_original_pending_until_atomic_retry() {
     host.failedWrites.lock().unwrap().insert(path.into());
     let outcomes = crate::PreferenceMerge::applyIndependentOperations(
         host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[operation.clone()],
         |_, _| true,
@@ -2343,7 +2356,7 @@ fn failed_remote_commit_keeps_original_pending_until_atomic_retry() {
     host.failedWrites.lock().unwrap().clear();
     let outcomes = crate::PreferenceMerge::applyIndependentOperations(
         host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[operation.clone()],
         |_, _| true,
@@ -2375,7 +2388,7 @@ fn replay_preserves_source_sequence_during_clock_rollback() {
     later.createdAt = 1;
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[later, earlier],
         |_, _| true,
@@ -2401,7 +2414,7 @@ fn local_preference_order_advances_past_remote_logical_time() {
     remote.payload["logicalTime"] = json!(future);
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &Default::default(),
+        &fixture_merge_schema(&[&path]),
         &[],
         &[remote],
         |_, _| true,
@@ -2507,7 +2520,7 @@ fn conflicting_origin_sequence_is_rejected_before_materialization() {
 /// Locked replay sees local commits made after the caller's history snapshot, both archived and pending.
 #[test]
 fn stale_history_preserves_local_transactions_in_the_journal_and_outbox() {
-    use crate::PreferenceMerge::{applyOperations, PreferenceMergeSchema};
+    use crate::PreferenceMerge::applyOperations;
     for archived in [false, true] {
         let host = Arc::new(MemoryStorageHost::default());
         let path = "runtime/config/preferences/stale-history.preferences.json";
@@ -2539,7 +2552,7 @@ fn stale_history_preserves_local_transactions_in_the_journal_and_outbox() {
         for _ in 0..2 {
             applyOperations(
                 host.clone(),
-                &PreferenceMergeSchema::default(),
+                &fixture_merge_schema(&[&path]),
                 &history,
                 &[remote.clone()],
                 |_, _| true,
@@ -2612,4 +2625,24 @@ fn dataset_history_filters_encrypted_owners_before_decryption() {
     assert!(error.contains("key id mismatch"), "{error}");
     assert!(error.contains(brokenPath), "{error}");
     assert_eq!(host.readBytes(&logPath).unwrap(), damaged);
+}
+
+/// User callbacks edit private snapshots; unwinding must not publish them or poison future edits.
+#[test]
+fn a_panicking_edit_reloads_the_commit_and_allows_the_next_edit() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let path = format!("{CONFIG_PREFERENCES_DIR_PATH}/panic-edit.preferences.json");
+    let store = PreferencesDataStore::newWithStorage(host, path);
+    let key = stringPreferencesKey("counter");
+    store.edit(|values| values.set(&key, 1)).unwrap();
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = store.edit(|values| {
+            values.set(&key, 999);
+            panic!("injected preference callback panic");
+        });
+    }));
+    assert!(failed.is_err());
+    assert_eq!(store.data().unwrap().get(&key), Some(&json!(1)));
+    store.edit(|values| values.set(&key, 2)).unwrap();
+    assert_eq!(store.data().unwrap().get(&key), Some(&json!(2)));
 }

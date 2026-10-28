@@ -621,6 +621,10 @@ unsafe extern "C" fn registerReply(
 }
 
 impl ServiceDiscoveryHost for AppleServiceDiscoveryHost {
+    fn localAddresses(&self) -> HostResult<Vec<std::net::IpAddr>> {
+        operit_host_native_common::ServiceDiscovery::localNetworkAddresses()
+    }
+
     /// Declares system Bonjour registration support.
     fn supportsAdvertisement(&self) -> bool {
         true

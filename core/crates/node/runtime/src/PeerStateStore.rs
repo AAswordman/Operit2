@@ -254,6 +254,38 @@ impl PeerStateStore {
     fn preferences(&self, path: &str) -> Result<Preferences, String> {
         self.store(path).data().map_err(|error| error.to_string())
     }
+    /// Deletes old approval state without decoding it; also invalidates shared snapshots.
+    pub(crate) fn clearSpaceApprovals(&self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        for path in RUNTIME_SPACE_APPROVAL_STATE_PATHS {
+            if let Err(error) = self.store(path).delete() { errors.push(format!("{path}: {error}")); }
+        }
+        if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
+    }
+
+    /// Reads only the requested record; another broken request has no bearing on this one.
+    pub(crate) fn record<T: DeserializeOwned>(&self, path: &str, id: &str) -> Result<Option<T>, String> {
+        self.preferences(path)?.get(&stringPreferencesKey(id)).cloned()
+            .map(|value| serde_json::from_value(value)
+                .map_err(|error| format!("Invalid peer state record at {path}, key {id}: {error}")))
+            .transpose()
+    }
+
+    /// Read-only enumeration isolates malformed rows. Security cleanup uses the strict reader below.
+    pub(crate) fn independentRecords<T: DeserializeOwned>(&self, path: &str) -> Result<BTreeMap<String, T>, String> {
+        let preferences = self.preferences(path)?;
+        let mut records = BTreeMap::new();
+        for (name, value) in preferences.iterEntries() {
+            if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
+            match serde_json::from_value(value.clone()) {
+                Ok(record) => { records.insert(name.to_owned(), record); },
+                Err(error) => { operit_util::AppLogger::AppLogger::w("PeerStateStore",
+                    &format!("Invalid peer state record at {path}, key {name}: {error}")); },
+            }
+        }
+        Ok(records)
+    }
+
     pub(crate) fn records<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -1776,6 +1808,26 @@ mod tests {
                 ["other"]
             );
         }
+    }
+
+    /// One malformed request must not prevent reading an unrelated request or displaying healthy rows.
+    #[test]
+    fn reading_one_request_does_not_decode_unrelated_corrupt_rows() {
+        use crate::NodeSpaceService::space_join::INBOUND;
+        let store = PeerStateStore::new(Arc::new(Storage::default()));
+        #[derive(serde::Deserialize, Debug, PartialEq)]
+        struct Request { value: u32 }
+        store.putRecord(INBOUND, "healthy", &serde_json::json!({"value": 7})).unwrap();
+        store.putRecord(INBOUND, "broken", &serde_json::json!({"value": "invalid"})).unwrap();
+        assert_eq!(store.record::<Request>(INBOUND, "healthy").unwrap(), Some(Request { value: 7 }));
+        assert!(store.record::<Request>(INBOUND, "broken").unwrap_err().contains("broken"));
+        assert_eq!(store.record::<Request>(INBOUND, "missing").unwrap(), None);
+        let healthy = store.independentRecords::<Request>(INBOUND).unwrap();
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy["healthy"], Request { value: 7 });
+        assert!(store.records::<Request>(INBOUND).is_err());
+        store.putRecord(INBOUND, "broken", &serde_json::json!({"value": 8})).unwrap();
+        assert_eq!(store.independentRecords::<Request>(INBOUND).unwrap().len(), 2);
     }
 
     /// Validates every join record before changing any existing credential.

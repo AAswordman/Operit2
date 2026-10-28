@@ -308,7 +308,7 @@ impl HostRuntimePeerService {
         self.state.router.upgrade().ok_or_else(|| CoreLinkError::new("PEER_ROUTER_CLOSED", "Peer router was released"))
     }
     fn connectionLock(&self, key: &str) -> Arc<AsyncMutex<()>> {
-        let mut locks = self.state.connectLocks.lock().unwrap();
+        let mut locks = self.state.connectLocks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         locks.retain(|_, lock| lock.strong_count() != 0);
         if let Some(lock) = locks.get(key).and_then(Weak::upgrade) { return lock; }
         let lock = Arc::new(AsyncMutex::new(()));
@@ -317,7 +317,7 @@ impl HostRuntimePeerService {
     }
     fn changed(&self) { let _ = self.state.changes.send(()); }
     fn track(&self, node: &str, raw: &Arc<dyn PeerConnection>) {
-        let mut connections = self.state.connections.lock().unwrap();
+        let mut connections = self.state.connections.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let list = connections.entry(node.into()).or_default();
         list.retain(|c| c.strong_count() != 0); list.push(Arc::downgrade(raw));
     }
@@ -435,13 +435,13 @@ impl HostRuntimePeerService {
     }
     /// Returns the peer's only authenticated connection while it remains usable.
     fn peerChannel(&self, node: &str) -> Option<Arc<MultiplexedChannel>> {
-        self.state.channels.lock().unwrap().get(node).and_then(Weak::upgrade).filter(|channel| !channel.isFailed())
+        self.state.channels.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(node).and_then(Weak::upgrade).filter(|channel| !channel.isFailed())
     }
 
     /// Rejects a second authenticated carrier instead of distributing operations across sockets.
     fn registerChannel(&self, node: &str, channel: &Arc<MultiplexedChannel>) -> Result<(), CoreLinkError> {
         self.requirePeerConnectionAllowed(node)?;
-        let mut channels = self.state.channels.lock().unwrap();
+        let mut channels = self.state.channels.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if channels.get(node).and_then(Weak::upgrade).is_some_and(|current| !current.isFailed()) {
             return Err(CoreLinkError::new("PEER_CHANNEL_EXISTS", "Peer already has an authenticated Link channel"));
         }
@@ -454,7 +454,7 @@ impl HostRuntimePeerService {
     /// Derives availability from the same channel used by every business operation.
     fn refreshPeerAvailability(&self, node: &str) {
         let available = self.requirePeerConnectionAllowed(node).is_ok() && self.hasLiveChannel(node);
-        let mut active = self.state.active.lock().unwrap();
+        let mut active = self.state.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let changed = if available { active.insert(node.into()) } else { active.remove(node) };
         drop(active);
         if changed { self.changed(); }
@@ -571,7 +571,7 @@ impl HostRuntimePeerService {
         // checks out, so random ids cannot drain the global budget.
         let source = pairingSource(&raw);
         let allowed = {
-            let mut throttle = self.state.pairingThrottle.lock().unwrap();
+            let mut throttle = self.state.pairingThrottle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             match hello.purpose.as_str() {
                 "start" => throttle.allowCreation(&source, currentTimeMillis()),
                 "finish" => throttle.allowConfirmation(&source, currentTimeMillis()),
@@ -605,7 +605,7 @@ impl HostRuntimePeerService {
         let admission = (|| {
             match hello.purpose.as_str() {
                 "start" => {
-                    let _guard = self.state.mutation.lock().unwrap();
+                    let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     // The initiator may have forgotten this one-way pairing. A new
                     // challenge is allowed, but must not revoke the old credential.
                     self.state.store.putPending(RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH, &id, &Pending {
@@ -617,7 +617,7 @@ impl HostRuntimePeerService {
                     self.changed();
                 }
                 "finish" => {
-                    let _guard = self.state.mutation.lock().unwrap();
+                    let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     let mut pending = self.pending(true, &id)?;
                     if pending.attempts >= PAIRING_MAX_ATTEMPTS {
                         return Err(error("Confirmation attempt limit reached"));
@@ -663,7 +663,7 @@ impl HostRuntimePeerService {
             let sessionSecret = sessionSecret.ok_or_else(|| error("Pairing confirmation secret is missing"))?;
             let mut replacing = false;
             let result = (|| {
-                let _guard = self.state.mutation.lock().unwrap();
+                let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 let pending = self.pending(true, &id)?;
                 // Only a peer that entered the same code derives this key; a
                 // wrong guess fails here after the attempt was already counted.
@@ -692,7 +692,7 @@ impl HostRuntimePeerService {
             }
             if result.is_ok() {
                 // A verified confirmation also proves this peer is online.
-                self.state.active.lock().unwrap().insert(hello.nodeId.clone());
+                self.state.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(hello.nodeId.clone());
                 self.changed();
             }
             channel.send(PeerMessage::Response(CoreLinkResponse::Call(CoreCallResponse { requestId: request.requestId, result }))).await?;
@@ -769,10 +769,27 @@ impl RuntimePeerService for HostRuntimePeerService {
             "LAN discovery completed records={recordCount} paired={} candidates={}", pairedNodeIds.len(), peers.len()));
         Ok(peers)
     }
+    async fn pairingAddresses(&self) -> Result<Vec<String>, CoreLinkError> {
+        // Snapshot actual listeners, never a saved wildcard or a requested port zero.
+        let listeners = self.state.listeners.lock().await;
+        let sockets = listeners.iter().filter_map(|(transport, listener)| {
+            isNetworkTransport(*transport).then(|| listener.localAddress()
+                .and_then(|address| address.parse::<std::net::SocketAddr>().ok())
+                .map(|socket| (*transport, socket))).flatten()
+        }).collect::<Vec<_>>();
+        drop(listeners);
+        let interfaces = if sockets.iter().any(|(_, socket)| socket.ip().is_unspecified()) {
+            self.state.host.serviceDiscoveryHost.as_ref()
+                .ok_or_else(|| error("Host cannot enumerate listener addresses"))?
+                .localAddresses().map_err(|failure| error(failure.to_string()))?
+        } else { Vec::new() };
+        crate::PeerConnectionCode::listenerAddresses(&sockets, &interfaces)
+    }
+
     /// Checks the known identity and the handshake result before creating a pairing transaction.
     async fn startPairing(&self, target: PeerEndpoint, transport: Option<PeerTransport>) -> Result<PendingPairing, CoreLinkError> {
         if !target.nodeId.is_empty() {
-            let _guard = self.state.mutation.lock().unwrap();
+            let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             self.ensureDeviceUnpaired(&target.nodeId)?;
         }
         // A bare `ip:port` input pairs without a user-picked carrier: classify
@@ -820,7 +837,7 @@ impl RuntimePeerService for HostRuntimePeerService {
         }
         let (_, id, info, root, node) = paired.ok_or_else(|| error("Pairing did not start"))??;
         {
-            let _guard = self.state.mutation.lock().unwrap();
+            let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             self.ensureDeviceUnpaired(&node)?;
             self.state
                 .store
@@ -850,7 +867,7 @@ impl RuntimePeerService for HostRuntimePeerService {
     /// Rechecks device uniqueness at each serialized confirmation boundary.
     async fn finishPairing(&self, id: &str, code: &str) -> Result<PairedPeer, CoreLinkError> {
         let pending = {
-            let _guard = self.state.mutation.lock().unwrap();
+            let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             let mut p = self.pending(false, id)?;
             self.ensureDeviceUnpaired(&p.peerNodeId)?;
             if p.attempts >= PAIRING_MAX_ATTEMPTS { return Err(error("Confirmation attempt limit reached")); }
@@ -894,7 +911,7 @@ impl RuntimePeerService for HostRuntimePeerService {
         raw.close().await; result?;
         let sessionSecret = sessionSecret.ok_or_else(|| error("Pairing confirmation secret is missing"))?;
         {
-            let _guard = self.state.mutation.lock().unwrap();
+            let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             self.pending(false, id)?; // 撤销/取消不能被正在完成的网络事务重新授予权限。
             self.ensureDeviceUnpaired(&pending.peerNodeId)?;
             self.state.store.putRecord(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, id, &StoredOutbound {
@@ -903,14 +920,14 @@ impl RuntimePeerService for HostRuntimePeerService {
                 sessionSecret: BASE64.encode(&sessionSecret), transport: transportName(pending.transport).into(),
             }).map_err(error)?;
             self.state.store.deleteRecord(RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, id).map_err(error)?;
-            self.state.active.lock().unwrap().insert(pending.peerNodeId.clone());
+            self.state.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(pending.peerNodeId.clone());
         }
         self.changed();
         Ok(PairedPeer { nodeId: pending.peerNodeId, displayName: pending.info.displayName(),
             inbound: false, outbound: true, pairingIncarnation: pending.info.pairingIncarnation.clone() })
     }
     async fn cancelPairing(&self, id: &str) -> Result<(), CoreLinkError> {
-        let _guard = self.state.mutation.lock().unwrap();
+        let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         self.state.store.deleteRecord(RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, id).map_err(error)?;
         self.changed(); Ok(())
     }
@@ -979,7 +996,7 @@ impl RuntimePeerService for HostRuntimePeerService {
                 let socket: std::net::SocketAddr = config.bindAddress.parse().map_err(|_| error("Discovery requires a concrete network bindAddress"))?;
                 let properties = [("nodeId".into(), self.state.nodeId.clone()), ("displayName".into(), self.state.info.displayName()),
                     ("transports".into(), requested.iter().filter(|t| isNetworkTransport(**t)).map(|t| transportName(*t)).collect::<Vec<_>>().join(","))].into();
-                if !opened.is_empty() || self.state.advertisements.lock().unwrap().is_empty() {
+                if !opened.is_empty() || self.state.advertisements.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_empty() {
                     advertisements.push(host.advertise(operit_host_api::ServiceDiscovery::ServiceAdvertisement {
                         serviceType: "_operit-link._tcp.local.".into(), instance: self.state.nodeId.clone(),
                         hostname: format!("{}.local.", self.state.nodeId), port: socket.port(), properties,
@@ -1012,7 +1029,7 @@ impl RuntimePeerService for HostRuntimePeerService {
         match result {
             Ok(advertisements) => {
                 listeners.extend(opened);
-                if !advertisements.is_empty() { *self.state.advertisements.lock().unwrap() = advertisements; }
+                if !advertisements.is_empty() { *self.state.advertisements.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = advertisements; }
                 self.startAvailabilityWorker()?;
                 self.changed(); Ok(())
             }
@@ -1026,14 +1043,14 @@ impl RuntimePeerService for HostRuntimePeerService {
     async fn stop(&self) -> Result<(), CoreLinkError> {
         let _lifecycle = self.state.lifecycle.lock().await;
         self.stopAvailabilityWorker().await;
-        self.state.advertisements.lock().unwrap().clear();
+        self.state.advertisements.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
         let listeners = std::mem::take(&mut *self.state.listeners.lock().await);
         for listener in listeners.into_values() { listener.close().await; }
-        let channels = std::mem::take(&mut *self.state.channels.lock().unwrap());
+        let channels = std::mem::take(&mut *self.state.channels.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
         for channel in channels.into_values().filter_map(|channel| channel.upgrade()) { channel.close().await; }
-        let connections = std::mem::take(&mut *self.state.connections.lock().unwrap());
+        let connections = std::mem::take(&mut *self.state.connections.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
         for raw in connections.into_values().flatten().filter_map(|v| v.upgrade()) { raw.close().await; }
-        self.state.active.lock().unwrap().clear(); self.changed(); Ok(())
+        self.state.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear(); self.changed(); Ok(())
     }
     async fn call(&self, node: &str, mut request: RoutedCoreRequest<CoreCallRequest>) -> CoreCallResponse {
         let id = request.payload.requestId.clone();
@@ -1068,7 +1085,7 @@ impl RuntimePeerService for HostRuntimePeerService {
     ) -> Result<(), CoreLinkError> {
         let parsed = parseOperatorEndpoint(endpoint)?;
         {
-            let _guard = self.state.mutation.lock().unwrap();
+            let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             self.updateOutboundEndpointLocked(node, &parsed, transport)?;
         }
         operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
@@ -1077,7 +1094,7 @@ impl RuntimePeerService for HostRuntimePeerService {
         Ok(())
     }
     fn outboundPeerNodeIds(&self) -> Result<BTreeSet<String>, CoreLinkError> { Ok(self.pairedPeers()?.into_iter().filter(|p| p.outbound).map(|p| p.nodeId).collect()) }
-    fn activePeerNodeIds(&self) -> Result<BTreeSet<String>, CoreLinkError> { Ok(self.state.active.lock().unwrap().clone()) }
+    fn activePeerNodeIds(&self) -> Result<BTreeSet<String>, CoreLinkError> { Ok(self.state.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()) }
     fn subscribePeerChanges(&self) -> broadcast::Receiver<()> { self.state.changes.subscribe() }
     fn pairingPrompts(&self) -> Result<Vec<PairingPrompt>, CoreLinkError> {
         Ok(self.pendingRecords(RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH)?.into_values()
@@ -1085,11 +1102,11 @@ impl RuntimePeerService for HostRuntimePeerService {
                 peerNodeId: p.clientDeviceId, displayName: p.info.displayName(), confirmationCode: p.confirmationCode.unwrap_or_default() }).collect())
     }
     async fn disconnectPeer(&self, node: &str) -> Result<(), CoreLinkError> {
-        let channel = self.state.channels.lock().unwrap().remove(node).and_then(|channel| channel.upgrade());
+        let channel = self.state.channels.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(node).and_then(|channel| channel.upgrade());
         if let Some(channel) = channel { channel.close().await; }
-        let connections = self.state.connections.lock().unwrap().remove(node).unwrap_or_default();
+        let connections = self.state.connections.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(node).unwrap_or_default();
         for raw in connections.into_iter().filter_map(|v| v.upgrade()) { raw.close().await; }
-        self.state.active.lock().unwrap().remove(node); self.changed(); Ok(())
+        self.state.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(node); self.changed(); Ok(())
     }
     async fn removePairedPeer(&self, node: &str) -> Result<(), CoreLinkError> {
         self.forgetPairingRecords(&[node.to_string()])?;
@@ -1099,7 +1116,7 @@ impl RuntimePeerService for HostRuntimePeerService {
     fn forgetPairingRecords(&self, nodeIds: &[String]) -> Result<(), CoreLinkError> {
         if nodeIds.is_empty() { return Ok(()); }
         {
-            let _guard = self.state.mutation.lock().unwrap();
+            let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             self.forgetPairingRecordsLocked(nodeIds)?;
         }
         self.changed();

@@ -112,6 +112,10 @@ dependencies:
   operit_keep_alive:
     path: ../thirdparty/operit_keep_alive
   geolocator: ^14.1.1
+  mobile_scanner: ^7.4.2
+  qr_flutter: ^4.1.0
+  zxing2: ^0.2.4
+  image: ^4.10.0
 
 dev_dependencies:
   file_selector_web: ^0.9.5

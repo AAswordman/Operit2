@@ -28,7 +28,7 @@ impl HostRuntimePeerService {
 
     /// Starts bounded, independent connection attempts; established channels monitor themselves.
     pub(super) fn startAvailabilityWorker(&self) -> Result<(), CoreLinkError> {
-        let mut worker = self.state.availability.lock().map_err(|_| error("Peer availability lock poisoned"))?;
+        let mut worker = self.state.availability.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if worker.is_some() { return Ok(()); }
         let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.clone()
             .ok_or_else(|| error("Host scheduler is not installed"))?;
@@ -93,7 +93,9 @@ impl HostRuntimePeerService {
                             let service = service.clone();
                             pending.push(Box::pin(async move {
                                 // The acquisition carries its own connect deadline.
-                                let result = service.acquireChannel(&node).await.map(drop);
+                                let result = crate::fault_isolation::link(
+                                    &format!("connect peer={node}"), service.acquireChannel(&node),
+                                ).await.map(drop);
                                 (node, result)
                             }));
                         }
@@ -109,7 +111,7 @@ impl HostRuntimePeerService {
 
     /// Cancels connection establishment and waits without retaining the worker state lock.
     pub(super) async fn stopAvailabilityWorker(&self) {
-        let worker = self.state.availability.lock().unwrap().take();
+        let worker = self.state.availability.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
         if let Some(AvailabilityWorker { stop, done }) = worker {
             let _ = stop.send(());
             let _ = done.await;

@@ -808,7 +808,7 @@ mod core_edge {
             }),
             application.clone(),
         );
-        let router = Arc::new(CoreNodeRouter::new(runtime.clone()));
+        let router = Arc::new(CoreNodeRouter::new(runtime.clone()).unwrap());
         let info = operit_link::protocol::LinkDeviceInfo {
             platform: "windows".into(),
             model: "Windows desktop".into(),

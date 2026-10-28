@@ -11,7 +11,7 @@ default = ["full"]
 route-catalog = []
 # Shared pairing/session engine; no ChatServiceCore, Provider or ToolPkg.
 # Networking/execution belongs to Host providers; do not enable native Tokio I/O here.
-peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:spake2", "dep:rand_core", "tokio/time"]
+peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:spake2", "dep:url", "dep:rand_core", "tokio/time"]
 peer-state = ["dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
 full = ["route-catalog", "peer-runtime", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "dep:operit-rslink-runtime", "tokio/time"]
 test-support = []
@@ -51,3 +51,7 @@ operit-rslink-runtime = { path = "../../rslink/runtime" }
 rusqlite.workspace = true
 
 operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", features = ["tcp", "http", "scheduler"] }
+
+[dependencies.url]
+version = "2.5"
+optional = true

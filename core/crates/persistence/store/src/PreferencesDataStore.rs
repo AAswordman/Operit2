@@ -1844,12 +1844,7 @@ impl CoreNodeStateStore {
     /// A raw host deletion would leave an identical later import cached and
     /// silently skip recreating the durable file. Failed deletion preserves cache.
     pub fn delete(&self) -> Result<(), PreferencesDataStoreError> {
-        let transaction = self
-            .inner
-            .sharedState
-            .transaction
-            .lock()
-            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        let transaction = self.inner.lockTransaction();
         if self.inner.storageHost.exists(&self.inner.storagePath)? {
             self.inner
                 .storageHost
@@ -2931,11 +2926,7 @@ impl PreferencesDataStore {
     where
         F: FnOnce(&mut Preferences) -> Result<R, PreferencesDataStoreError>,
     {
-        let transaction = self
-            .sharedState
-            .transaction
-            .lock()
-            .expect("preferences transaction mutex");
+        let transaction = self.lockTransaction();
         self.loadUnlocked()?;
         let previous = self.loadedPreferences().expect("dataset loaded");
         let mut preferences = previous.clone();
@@ -2974,11 +2965,7 @@ impl PreferencesDataStore {
                 return Ok(preferences);
             }
         }
-        let _transaction = self
-            .sharedState
-            .transaction
-            .lock()
-            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        let _transaction = self.lockTransaction();
         self.loadUnlocked()?;
         self.migrateSchemaUnlocked()?;
         Ok(self
@@ -2986,8 +2973,26 @@ impl PreferencesDataStore {
             .expect("PreferencesDataStore must be loaded after a successful load"))
     }
 
+    /// Mutation callbacks work on private snapshots. After an unwind, reload the durable commit
+    /// instead of retaining a possibly stale cache or poisoning all future use of this file.
+    fn lockTransaction(&self) -> std::sync::MutexGuard<'_, ()> {
+        match self.sharedState.transaction.lock() {
+            Ok(transaction) => transaction,
+            Err(poisoned) => {
+                let transaction = poisoned.into_inner();
+                let mut loaded = self.sharedState.preferences.lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                loaded.loaded = false;
+                self.sharedState.preferences.clear_poison();
+                self.sharedState.transaction.clear_poison();
+                transaction
+            }
+        }
+    }
+
     /// Returns the current cached snapshot when this store has already loaded it.
     fn loadedPreferences(&self) -> Option<Preferences> {
+        if self.sharedState.transaction.is_poisoned() { return None; }
         let loaded = self
             .sharedState
             .preferences
@@ -3214,11 +3219,7 @@ impl PreferencesDataStore {
         F: FnOnce(&mut Preferences) -> Result<T, E>,
         E: From<PreferencesDataStoreError>,
     {
-        let _transaction = self
-            .sharedState
-            .transaction
-            .lock()
-            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        let _transaction = self.lockTransaction();
         self.loadUnlocked().map_err(E::from)?;
         // Upgrade a private snapshot. Publishing the migration before the edit
         // exposes schema-only files during first-time record creation.
@@ -3259,11 +3260,7 @@ impl PreferencesDataStore {
 
     /// Replaces the full preferences snapshot and notifies observers.
     pub fn replace(&self, mut preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
-        let _transaction = self
-            .sharedState
-            .transaction
-            .lock()
-            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        let _transaction = self.lockTransaction();
         self.loadUnlocked()?;
         // Keep migration and replacement at one durable publication point so
         // readers can only observe the previous or the complete new record.
@@ -3531,11 +3528,7 @@ impl PreferencesDataStore {
         &self,
         journal: &SyncOperationStore,
     ) -> Result<(), PreferencesDataStoreError> {
-        let _transaction = self
-            .sharedState
-            .transaction
-            .lock()
-            .expect("preferences transaction mutex");
+        let _transaction = self.lockTransaction();
         self.loadUnlocked()?;
         let mut preferences = self.loadedPreferences().expect("outbox store loaded");
         if preferences.replication.outbox.is_empty() {

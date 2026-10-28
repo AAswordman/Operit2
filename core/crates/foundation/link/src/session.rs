@@ -44,7 +44,12 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
     /// side effects. Closing the connection instead drops all remaining streams.
     pub async fn dispatch(&mut self, request: CoreLinkRequest) -> CoreLinkResponse {
         match request {
-            CoreLinkRequest::Call(request) => CoreLinkResponse::Call(self.client.call(request).await),
+            CoreLinkRequest::Call(request) => {
+                let context = format!("Link call {}::{} [{}]", request.target, request.methodName, request.requestId.0);
+                let requestId = request.requestId.clone();
+                let response = crate::isolation::future(&context, async { Ok(self.client.call(request).await) }).await;
+                CoreLinkResponse::Call(response.unwrap_or_else(|error| crate::CoreCallResponse::err(requestId, error)))
+            },
             CoreLinkRequest::Watch(request) => self.watch(request).await,
             CoreLinkRequest::Push(request) => self.push(request).await,
         }
@@ -56,14 +61,14 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
             CoreLinkWatchRequest::Close { requestId } => requestId.clone(),
         };
         let result = match request {
-            CoreLinkWatchRequest::Snapshot(request) => self.client.watchSnapshot(request).await
+            CoreLinkWatchRequest::Snapshot(request) => crate::isolation::future(&format!("Link watch snapshot {}", requestId.0), self.client.watchSnapshot(request)).await
                 .map(CoreLinkWatchResponse::Snapshot),
             CoreLinkWatchRequest::Open(request) => {
                 if self.watches.contains_key(&requestId) {
                     Err(CoreLinkError::new("LINK_DUPLICATE_WATCH", "Watch id is already open"))
                 } else if let Err(error) = self.ensureCapacity() { Err(error) }
                 else {
-                    match self.client.watch(request).await {
+                    match crate::isolation::future(&format!("Link watch open {}", requestId.0), self.client.watch(request)).await {
                         Ok(stream) => {
                             self.watches.insert(requestId.clone(), stream);
                             Ok(CoreLinkWatchResponse::Opened)
@@ -93,7 +98,7 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
                     Err(CoreLinkError::new("LINK_DUPLICATE_PUSH", "Push id is already open"))
                 } else if let Err(error) = self.ensureCapacity() { Err(error) }
                 else {
-                    match self.client.openPush(request).await {
+                    match crate::isolation::future(&format!("Link push open {pushId}"), self.client.openPush(request)).await {
                         Ok(session) => {
                             self.pushes.insert(pushId.clone(), Push { session, nextSequence: 0 });
                             Ok(CoreLinkPushResponse::Opened)
@@ -110,7 +115,7 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
                     Some(push) => {
                         match push.nextSequence.checked_add(1) {
                             None => Err(CoreLinkError::new("LINK_PUSH_SEQUENCE", "Push sequence exhausted")),
-                            Some(next) => match push.session.send(item.args).await {
+                            Some(next) => match crate::isolation::future(&format!("Link push item {pushId} sequence {}", item.sequence), push.session.send(item.args)).await {
                                 Ok(()) => {
                                     push.nextSequence = next;
                                     Ok(CoreLinkPushResponse::ItemAccepted { sequence: item.sequence })
@@ -127,7 +132,7 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
                 }
             },
             CoreLinkPushRequestMessage::Close { .. } => match self.pushes.remove(&pushId) {
-                Some(push) => push.session.close().await.map(|()| CoreLinkPushResponse::Closed),
+                Some(push) => crate::isolation::future(&format!("Link push close {pushId}"), push.session.close()).await.map(|()| CoreLinkPushResponse::Closed),
                 None => Err(CoreLinkError::new("LINK_PUSH_NOT_FOUND", "Push is not open")),
             },
         };
@@ -142,7 +147,15 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
         let mut batch = vec![self.nextWatchEvent().await?];
         self.watches.retain(|requestId, stream| {
             for _ in 0..=stream.pendingCount() {
-                let result = match stream.try_recv() {
+                let received = crate::isolation::polling(&format!("Link watch {requestId:?} event"), || stream.try_recv());
+                let result = match received {
+                    Err(error) => {
+                        batch.push(CoreLinkResponse::Watch { requestId: requestId.clone(), result: Err(error) });
+                        return false;
+                    },
+                    Ok(result) => result,
+                };
+                let result = match result {
                     Ok(event) => CoreLinkWatchResponse::Event(event),
                     Err(TryRecvError::Empty) => return true,
                     Err(TryRecvError::Disconnected) => CoreLinkWatchResponse::Closed,
@@ -164,14 +177,18 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
         let (requestId, event) = poll_fn(|cx| {
             let start = self.lastWatch.clone().map_or(Bound::Unbounded, Bound::Excluded);
             for (id, stream) in self.watches.range_mut((start, Bound::Unbounded)) {
-                if let Poll::Ready(event) = stream.poll_recv(cx) {
-                    return Poll::Ready((id.clone(), event));
+                match crate::isolation::polling(&format!("Link watch {} event", id.0), || stream.poll_recv(cx)) {
+                    Ok(Poll::Ready(event)) => return Poll::Ready((id.clone(), Ok(event))),
+                    Ok(Poll::Pending) => {},
+                    Err(error) => return Poll::Ready((id.clone(), Err(error))),
                 }
             }
             if let Some(last) = &self.lastWatch {
                 for (id, stream) in self.watches.range_mut(..=last.clone()) {
-                    if let Poll::Ready(event) = stream.poll_recv(cx) {
-                        return Poll::Ready((id.clone(), event));
+                    match crate::isolation::polling(&format!("Link watch {} event", id.0), || stream.poll_recv(cx)) {
+                        Ok(Poll::Ready(event)) => return Poll::Ready((id.clone(), Ok(event))),
+                        Ok(Poll::Pending) => {},
+                        Err(error) => return Poll::Ready((id.clone(), Err(error))),
                     }
                 }
             }
@@ -179,8 +196,12 @@ impl<C: CoreLinkClient> CoreLinkSession<C> {
         }).await;
         self.lastWatch = Some(requestId.clone());
         let result = match event {
-            Some(event) => CoreLinkWatchResponse::Event(event),
-            None => {
+            Err(error) => {
+                self.watches.remove(&requestId);
+                return Some(CoreLinkResponse::Watch { requestId, result: Err(error) });
+            },
+            Ok(Some(event)) => CoreLinkWatchResponse::Event(event),
+            Ok(None) => {
                 self.watches.remove(&requestId);
                 CoreLinkWatchResponse::Closed
             },

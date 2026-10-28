@@ -1,5 +1,4 @@
-use operit_host_api::PluginStorage::{StoragePreferencesMergeCatalog, StoragePreferencesMergeDescriptor, StoragePreferencesMergeKey, StoragePreferencesMergeReference, StoragePreferencesMergeProjection};
-use operit_store::PreferenceMerge::PreferenceMergeStore;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -19,7 +18,7 @@ use super::ThemePreferenceSnapshot::{
 };
 
 pub(super) const THEME_CONFIG_PREFIX: &str = "theme_config_";
-const ACTIVE_THEME_CONFIG_ID_KEY: &str = "active_theme_config_id";
+pub(super) const ACTIVE_THEME_CONFIG_ID_KEY: &str = "active_theme_config_id";
 
 /// Stores one independent named appearance configuration with a complete Flutter snapshot.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -47,39 +46,7 @@ pub struct ThemeConfigManager {
 }
 
 impl ThemeConfigManager {
-    /// Declares this owner's catalog and references using the shared merge contract.
-    pub(crate) fn spaceMergeStore() -> PreferenceMergeStore {
-        let path = operit_util::RuntimeStorageLayout::USER_PREFERENCES_PATH;
-        PreferenceMergeStore {
-            path: path.to_string(),
-            encrypted: false,
-            open: |storage, _| super::UserPreferencesManager::UserPreferencesManager::store(storage),
-            decode: Some(super::UserPreferencesManager::UserPreferencesManager::decodeSyncedEntry),
-            merge: StoragePreferencesMergeDescriptor {
-                version: 1,
-                catalog: Some(StoragePreferencesMergeCatalog {
-                    key_prefix: THEME_CONFIG_PREFIX.to_string(),
-                    key_suffix: "".to_string(),
-                    identity_field: "id".to_string(),
-                    name_field: "name".to_string(),
-                    ignored_fields: vec!["createdAt".to_string(), "updatedAt".to_string()],
-                    retired_keys: vec![],
-                }),
-                references: vec![StoragePreferencesMergeReference {
-                    key: StoragePreferencesMergeKey::Exact { key: ACTIVE_THEME_CONFIG_ID_KEY.to_string() },
-                    path: vec![],
-                    target: path.to_string(),
-                }],
-                projection: Some(StoragePreferencesMergeProjection {
-                    selection_key: ACTIVE_THEME_CONFIG_ID_KEY.to_string(),
-                    source_field: "snapshot".to_string(),
-                    fields: super::ThemePreferenceSnapshot::snapshotFields()
-                        .map(|field| (field.json_key.to_string(), field.preference_key.to_string())).collect(),
-                    retired_keys: vec!["use_system_theme".to_string()],
-                }),
-            },
-        }
-    }
+
 
     /// Opens ordinary user preferences through the owning runtime's actual storage host.
     pub fn new(storageHost: Arc<dyn RuntimeStorageHost>) -> Self {

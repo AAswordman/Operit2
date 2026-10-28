@@ -1,8 +1,17 @@
 //! Composes preference merge declarations and prepares source-owned migrations.
 use std::sync::Arc;
 
+use super::ApiPreferences::ApiPreferences;
+use super::OnboardingPreferences::OnboardingPreferences;
+use super::RemoteAnnouncementPreferences::RemoteAnnouncementPreferences;
+use super::SidebarDockPreferences::SidebarDockPreferences;
+use operit_host_api::PluginStorage::{
+    StoragePreferencesMergeCatalog, StoragePreferencesMergeDescriptor, StoragePreferencesMergeKey,
+    StoragePreferencesMergePathSegment, StoragePreferencesMergeProjection,
+    StoragePreferencesMergeReference,
+};
 use operit_host_api::RuntimeStorageHost;
-use operit_store::PreferenceMerge::PreferenceMergeSchema;
+use operit_store::PreferenceMerge::{PreferenceMergeSchema, PreferenceMergeStore};
 
 use super::FunctionalConfigManager::FunctionalConfigManager;
 use super::ModelConfigManager::ModelConfigManager;
@@ -16,16 +25,148 @@ pub(crate) fn schema(
 ) -> PreferenceMergeSchema {
     let mut schema = PreferenceMergeSchema {
         stores: vec![
-            ModelConfigManager::spaceMergeStore(),
-            TtsConfigManager::spaceMergeStore(),
-            SttConfigManager::spaceMergeStore(),
-            ThemeConfigManager::spaceMergeStore(),
-            FunctionalConfigManager::spaceMergeStore(),
-            super::ApiPreferences::ApiPreferences::spaceMergeStore(),
-            super::OnboardingPreferences::OnboardingPreferences::spaceMergeStore(),
-            super::RemoteAnnouncementPreferences::RemoteAnnouncementPreferences::spaceMergeStore(),
-            super::SidebarDockPreferences::SidebarDockPreferences::spaceMergeStore(),
-            operit_store::repository::WorkspacePreferenceStore::WorkspacePreferenceStore::preferenceSyncStore(),
+            {
+                let path = operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH;
+                PreferenceMergeStore {
+                    path: path.to_string(),
+                    encrypted: true,
+                    open: |storage, path| ModelConfigManager::preferenceStore(storage, path),
+                    decode: Some(ModelConfigManager::decodeSyncedEntry),
+                    merge: StoragePreferencesMergeDescriptor {
+                        version: 1,
+                        catalog: Some(StoragePreferencesMergeCatalog {
+                            key_prefix: "provider_".to_string(),
+                            key_suffix: "".to_string(),
+                            identity_field: "id".to_string(),
+                            name_field: "name".to_string(),
+                            ignored_fields: vec!["createdAt".to_string(), "updatedAt".to_string()],
+                            retired_keys: vec!["provider_list".to_string()],
+                        }),
+                        references: vec![],
+                        projection: None,
+                    },
+                }
+            },
+            {
+                let path = operit_util::RuntimeStorageLayout::TTS_CONFIGS_PREFERENCES_PATH;
+                PreferenceMergeStore {
+                    path: path.to_string(),
+                    encrypted: true,
+                    open: |storage, path| TtsConfigManager::preferenceStore(storage, path),
+                    decode: Some(TtsConfigManager::decodeSyncedEntry),
+                    merge: StoragePreferencesMergeDescriptor {
+                        version: 1,
+                        catalog: Some(StoragePreferencesMergeCatalog {
+                            key_prefix: "tts_config_".to_string(),
+                            key_suffix: "_json".to_string(),
+                            identity_field: "id".to_string(),
+                            name_field: "name".to_string(),
+                            ignored_fields: vec!["createdAt".to_string(), "updatedAt".to_string()],
+                            retired_keys: vec!["tts_config_list".to_string()],
+                        }),
+                        references: vec![StoragePreferencesMergeReference {
+                                key: StoragePreferencesMergeKey::Exact { key: "current_tts_config_id".to_string() },
+                                path: vec![],
+                                target: path.to_string(),
+                        }],
+                        projection: None,
+                    },
+                }
+            },
+            {
+                let path = operit_util::RuntimeStorageLayout::STT_CONFIGS_PREFERENCES_PATH;
+                PreferenceMergeStore {
+                    path: path.to_string(),
+                    encrypted: true,
+                    open: |storage, path| SttConfigManager::preferenceStore(storage, path),
+                    decode: Some(SttConfigManager::decodeSyncedEntry),
+                    merge: StoragePreferencesMergeDescriptor {
+                        version: 1,
+                        catalog: Some(StoragePreferencesMergeCatalog {
+                            key_prefix: "stt_config_".to_string(),
+                            key_suffix: "_json".to_string(),
+                            identity_field: "id".to_string(),
+                            name_field: "name".to_string(),
+                            ignored_fields: vec!["createdAt".to_string(), "updatedAt".to_string()],
+                            retired_keys: vec!["stt_config_list".to_string()],
+                        }),
+                        references: vec![StoragePreferencesMergeReference {
+                                key: StoragePreferencesMergeKey::Exact { key: "current_stt_config_id".to_string() },
+                                path: vec![],
+                                target: path.to_string(),
+                        }],
+                        projection: None,
+                    },
+                }
+            },
+            {
+                let path = operit_util::RuntimeStorageLayout::USER_PREFERENCES_PATH;
+                PreferenceMergeStore {
+                    path: path.to_string(),
+                    encrypted: false,
+                    open: |storage, _| super::UserPreferencesManager::UserPreferencesManager::store(storage),
+                    decode: Some(super::UserPreferencesManager::UserPreferencesManager::decodeSyncedEntry),
+                    merge: StoragePreferencesMergeDescriptor {
+                        version: 1,
+                        catalog: Some(StoragePreferencesMergeCatalog {
+                            key_prefix: super::ThemeConfigManager::THEME_CONFIG_PREFIX.to_string(),
+                            key_suffix: "".to_string(),
+                            identity_field: "id".to_string(),
+                            name_field: "name".to_string(),
+                            ignored_fields: vec!["createdAt".to_string(), "updatedAt".to_string()],
+                            retired_keys: vec![],
+                        }),
+                        references: vec![StoragePreferencesMergeReference {
+                                key: StoragePreferencesMergeKey::Exact { key: super::ThemeConfigManager::ACTIVE_THEME_CONFIG_ID_KEY.to_string() },
+                                path: vec![],
+                                target: path.to_string(),
+                        }],
+                        projection: Some(StoragePreferencesMergeProjection {
+                            selection_key: super::ThemeConfigManager::ACTIVE_THEME_CONFIG_ID_KEY.to_string(),
+                            source_field: "snapshot".to_string(),
+                            fields: super::ThemePreferenceSnapshot::snapshotFields()
+                                .map(|field| (field.json_key.to_string(), field.preference_key.to_string())).collect(),
+                            retired_keys: vec!["use_system_theme".to_string()],
+                        }),
+                    },
+                }
+            },
+            {
+                PreferenceMergeStore {
+                    path: operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH.to_string(),
+                    encrypted: false,
+                    open: |storage, path| FunctionalConfigManager::preferenceStore(storage, path),
+                    decode: Some(FunctionalConfigManager::decodeSyncedEntry),
+                    merge: StoragePreferencesMergeDescriptor {
+                        version: 1,
+                        catalog: None,
+                        references: vec![StoragePreferencesMergeReference {
+                                key: StoragePreferencesMergeKey::Exact { key: "function_model_binding".to_string() },
+                                path: vec![StoragePreferencesMergePathSegment::ObjectValues,
+                                    StoragePreferencesMergePathSegment::Field { name: "providerId".to_string() }],
+                                target: operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH.to_string(),
+                        }],
+                        projection: None,
+                    },
+                }
+            },
+            {
+                operit_store::PreferenceMerge::PreferenceMergeStore::values(operit_util::RuntimeStorageLayout::API_PREFERENCES_PATH, false, |storage, _| ApiPreferences::store(storage), ApiPreferences::decodeSyncedEntry)
+            },
+            {
+                operit_store::PreferenceMerge::PreferenceMergeStore::values(operit_util::RuntimeStorageLayout::ONBOARDING_PREFERENCES_PATH, false, |storage, _| OnboardingPreferences::store(storage), OnboardingPreferences::decodeSyncedEntry)
+            },
+            {
+                operit_store::PreferenceMerge::PreferenceMergeStore::values(operit_util::RuntimeStorageLayout::REMOTE_ANNOUNCEMENT_PREFERENCES_PATH, false, |storage, _| RemoteAnnouncementPreferences::store(storage), RemoteAnnouncementPreferences::decodeSyncedEntry)
+            },
+            {
+                operit_store::PreferenceMerge::PreferenceMergeStore::values(operit_util::RuntimeStorageLayout::SIDEBAR_DOCK_PREFERENCES_PATH, false, |storage, _| SidebarDockPreferences::store(storage), SidebarDockPreferences::decodeSyncedEntry)
+            },
+            PreferenceMergeStore::values(
+            operit_util::RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH, false,
+            operit_store::repository::WorkspacePreferenceStore::WorkspacePreferenceStore::openStore,
+            operit_store::repository::WorkspacePreferenceStore::WorkspacePreferenceStore::decodeSyncedEntry,
+            ),
         ],
     };
     let paths = history
@@ -45,6 +186,25 @@ pub(crate) fn schema(
     );
     schema
 }
+/// Opens only explicitly configured native preference owners, including their versioned migrations.
+pub(crate) fn open(
+    storage: Arc<dyn RuntimeStorageHost>,
+    path: &str,
+) -> Result<
+    operit_store::PreferencesDataStore::PreferencesDataStore,
+    operit_store::PreferencesDataStore::PreferencesDataStoreError,
+> {
+    let owner = schema(&[])
+        .stores
+        .into_iter()
+        .find(|owner| owner.path == path)
+        .ok_or_else(|| {
+            operit_store::PreferencesDataStore::PreferencesDataStoreError::Message(format!(
+                "Undeclared preference owner: {path}"
+            ))
+        })?;
+    Ok((owner.open)(storage, path))
+}
 /// Versions preference ownership changes separately from each file's representation.
 pub(crate) fn layout(
     storage: Arc<dyn RuntimeStorageHost>,
@@ -55,10 +215,7 @@ pub(crate) fn layout(
     };
     operit_store::PreferenceLayout::PreferenceLayout::new(
         storage,
-        &format!(
-            "{}/preference_layout.preferences.json",
-            operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH
-        ),
+        operit_util::RuntimeStorageLayout::RUNTIME_SYNC_PREFERENCE_LAYOUT_PATH,
     )
     .withSchema(1, |from, migration| match from {
         0 => {
@@ -74,7 +231,10 @@ pub(crate) fn layout(
             }
             migration.retireFile(PACKAGE_MANAGER_PREFERENCES_PATH);
             migration.retireFile(SKILL_VISIBILITY_PREFERENCES_PATH);
-            migration.retireDirectory("runtime/extensions/space/settings");
+            migration.retireDirectory(
+                &operit_store::ExtensionStore::legacySettingsDirectory("space")
+                    .map_err(PreferencesDataStoreError::Message)?,
+            );
             Ok(())
         }
         from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
@@ -84,22 +244,28 @@ pub(crate) fn layout(
 /// Prepares existing datasets through the same migration, import and replay path as incoming data.
 pub(crate) fn prepare(storage: Arc<dyn RuntimeStorageHost>) -> Vec<String> {
     use operit_store::PreferenceMerge::applyIndependentOperations;
+    let mut errors = Vec::new();
     if let Err(error) = layout(storage.clone()).prepare() {
-        return vec![format!("preference layout: {error}")];
+        errors.push(format!("preference layout: {error}"));
     }
     let mut schema = schema(&[]);
-    let mut errors = Vec::new();
     schema.stores.retain(|owner| {
-        let required = (|| -> Result<bool, String> {
-            if !storage.exists(&owner.path).map_err(|error| error.to_string())? {
-                return Ok(false);
-            }
-            let store = (owner.open)(storage.clone(), &owner.path);
-            store
-                .isSyncPrepared()
-                .map(|ready| !ready)
-                .map_err(|error| error.to_string())
-        })();
+        let required = operit_link::isolation::sync(
+            &format!("preference preparation path={}", owner.path),
+            || {
+                if !storage
+                    .exists(&owner.path)
+                    .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?
+                {
+                    return Ok(false);
+                }
+                let store = (owner.open)(storage.clone(), &owner.path);
+                store
+                    .isSyncPrepared()
+                    .map(|ready| !ready)
+                    .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
+            },
+        );
         match required {
             Ok(required) => required,
             Err(error) => {
@@ -110,24 +276,29 @@ pub(crate) fn prepare(storage: Arc<dyn RuntimeStorageHost>) -> Vec<String> {
     });
     for outcome in applyIndependentOperations(storage, &schema, &[], &[], |_, _| true) {
         if let Err(error) = outcome.result {
-            errors.push(format!("preference migration paths={:?}: {error}", outcome.paths));
+            errors.push(format!(
+                "preference migration paths={:?}: {error}",
+                outcome.paths
+            ));
         }
     }
     errors
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use operit_host_native_storage::NativeRuntimeStorageHost;
-    use operit_util::RuntimeStorageLayout;
     use operit_store::PreferenceMerge::{applyIndependentOperations, PreferenceMergeSchema};
     use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
     use operit_store::SyncOperationStore::{SyncOperation, SyncOperationSemantics};
+    use operit_util::RuntimeStorageLayout;
     use serde_json::{json, Value};
     use std::path::PathBuf;
 
-    struct Fixture { root: PathBuf, host: Arc<NativeRuntimeStorageHost> }
+    struct Fixture {
+        root: PathBuf,
+        host: Arc<NativeRuntimeStorageHost>,
+    }
 
     impl Fixture {
         /// Opens a real storage host in an isolated directory for owner-contract replay checks.
@@ -176,7 +347,6 @@ mod tests {
             schemaVersion: 1,
         }
     }
-
 
     /// Migrates released catalog files on the sender before replaying their current-version operations.
     #[test]
@@ -310,7 +480,7 @@ mod tests {
         use operit_store::SyncOperationStore::SyncOperationStore;
         let source = Fixture::new();
         let target = Fixture::new();
-        let path = operit_util::OperitPaths::API_PREFERENCES_PATH;
+        let path = operit_util::RuntimeStorageLayout::API_PREFERENCES_PATH;
         let counter = stringPreferencesKey("token_input_test");
         CoreNodeStateStore::newWithStorage(source.host.clone(), path)
             .withSchema(1, |_, _| Ok(()))
@@ -368,56 +538,117 @@ mod tests {
         let record = json!({"spaceId":"old-space","spaceName":"ios-aarch64","spaceRevision":12,
             "nodeId":"old-peer","joinedAt":1,"updatedAt":2});
         let mut operations = Vec::new();
-        for (index, directory) in [RuntimeStorageLayout::RUNTIME_SPACE_MEMBERS_DIR_PATH,
+        for (index, directory) in [
+            RuntimeStorageLayout::RUNTIME_SPACE_MEMBERS_DIR_PATH,
             RuntimeStorageLayout::RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
             RuntimeStorageLayout::RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH,
-            RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH].iter().enumerate() {
+            RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH,
+        ]
+        .iter()
+        .enumerate()
+        {
             let path = format!("{directory}/old-peer.preferences.json");
-            fixture.host.writeBytesAtomically(&path, &serde_json::to_vec(&json!({
-                "record":record.to_string(),"__operit_preferences_schema_version":2,
-            })).unwrap()).unwrap();
-            let mut operation = historical(&path, "record", json!(record.to_string()), 0, false, index as i64 + 1);
-            operation.payload.as_object_mut().unwrap().remove("schemaVersion");
+            fixture
+                .host
+                .writeBytesAtomically(
+                    &path,
+                    &serde_json::to_vec(&json!({
+                        "record":record.to_string(),"__operit_preferences_schema_version":2,
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            let mut operation = historical(
+                &path,
+                "record",
+                json!(record.to_string()),
+                0,
+                false,
+                index as i64 + 1,
+            );
+            operation
+                .payload
+                .as_object_mut()
+                .unwrap()
+                .remove("schemaVersion");
             operations.push(operation);
         }
         let journal = operit_store::SyncOperationStore::SyncOperationStore::new(
-            fixture.host.clone(), RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
+            fixture.host.clone(),
+            RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+        );
         journal.receiveOperations(&operations).unwrap();
         for _ in 0..2 {
-            let outcomes = applyIndependentOperations(fixture.host.clone(), &schema(&operations),
-                &[], &operations, |_, _| true);
-            assert!(outcomes.iter().all(|outcome| outcome.result.is_ok()), "{:?}",
-                outcomes.iter().map(|outcome| &outcome.result).collect::<Vec<_>>());
-            let skipped = outcomes.into_iter().filter(|outcome| outcome.skipped)
-                .flat_map(|outcome| outcome.operations).collect::<Vec<_>>();
+            let outcomes = applyIndependentOperations(
+                fixture.host.clone(),
+                &schema(&operations),
+                &[],
+                &operations,
+                |_, _| true,
+            );
+            assert!(
+                outcomes.iter().all(|outcome| outcome.result.is_ok()),
+                "{:?}",
+                outcomes
+                    .iter()
+                    .map(|outcome| &outcome.result)
+                    .collect::<Vec<_>>()
+            );
+            let skipped = outcomes
+                .into_iter()
+                .filter(|outcome| outcome.skipped)
+                .flat_map(|outcome| outcome.operations)
+                .collect::<Vec<_>>();
             assert_eq!(skipped.len(), operations.len());
             journal.skipOperations(&skipped).unwrap();
             for operation in &operations {
                 let path = operation.payload["storagePath"].as_str().unwrap();
-                let data = PreferencesDataStore::newWithStorage(fixture.host.clone(), path).data().unwrap();
+                let data = PreferencesDataStore::newWithStorage(fixture.host.clone(), path)
+                    .data()
+                    .unwrap();
                 assert_eq!(data.get(&stringPreferencesKey("record")), Some(&record));
             }
-            CoreSpaceStore::new(fixture.host.clone()).initialize().unwrap();
+            CoreSpaceStore::new(fixture.host.clone())
+                .initialize()
+                .unwrap();
         }
         let journal = operit_store::SyncOperationStore::SyncOperationStore::new(
-            fixture.host.clone(), RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
+            fixture.host.clone(),
+            RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+        );
         for operation in operations {
-            assert!(journal.preferenceHistory().unwrap().contains(&operation), "original operation must remain immutable");
+            assert!(
+                journal.preferenceHistory().unwrap().contains(&operation),
+                "original operation must remain immutable"
+            );
         }
     }
 
     /// Generic string entries remain strings even when their contents happen to be valid JSON.
     #[test]
-    fn undeclared_string_values_are_never_guessed_as_encoded_json() {
+    fn declared_plain_string_values_are_never_guessed_as_encoded_json() {
         let fixture = Fixture::new();
-        let path = "runtime/config/preferences/literal.preferences.json";
+        let path = &format!("{}/literal.preferences.json", RuntimeStorageLayout::CONFIG_PREFERENCES_DIR_PATH);
         PreferencesDataStore::newWithStorage(fixture.host.clone(), path)
-            .withSchema(1, |_, _| Ok(())).data().unwrap();
+            .withSchema(1, |_, _| Ok(()))
+            .data()
+            .unwrap();
         let original = json!("{\"id\":\"literal\"}");
         let operation = historical(path, "literal", original.clone(), 1, false, 1);
         let outcomes = applyIndependentOperations(
             fixture.host.clone(),
-            &PreferenceMergeSchema::default(),
+            &PreferenceMergeSchema {
+                stores: vec![PreferenceMergeStore::values(
+                    path,
+                    false,
+                    |storage, path| {
+                        operit_store::PreferencesDataStore::PreferencesDataStore::newWithStorage(
+                            storage, path,
+                        )
+                    },
+                    |_| Ok(()),
+                )],
+            },
             &[],
             &[operation],
             |_, _| true,
@@ -518,33 +749,47 @@ mod tests {
     #[test]
     fn preparation_imports_unopened_owners_once_through_the_shared_schema() {
         let fixture = Fixture::new();
-        let sidebar = super::super::SidebarDockPreferences::SidebarDockPreferences::spaceMergeStore().path;
-        let extension = format!("runtime/extensions/space/settings/package-{}.preferences.json", "a".repeat(64));
-        fixture.host.writeBytesAtomically(&sidebar, br#"{"layout":"{\"wide\":true}"}"#).unwrap();
-        fixture.host.writeBytesAtomically(&extension, br#"{"settings":"{\"enabled\":true}"}"#).unwrap();
+        let sidebar = operit_util::RuntimeStorageLayout::SIDEBAR_DOCK_PREFERENCES_PATH.to_owned();
+        let extension = operit_store::ExtensionStore::legacySettingsPath("package", "unopened", "space").unwrap();
+        fixture
+            .host
+            .writeBytesAtomically(&sidebar, br#"{"layout":"{\"wide\":true}"}"#)
+            .unwrap();
+        fixture
+            .host
+            .writeBytesAtomically(&extension, br#"{"settings":"{\"enabled\":true}"}"#)
+            .unwrap();
         assert_eq!(prepare(fixture.host.clone()), Vec::<String>::new());
         let journal = operit_store::SyncOperationStore::SyncOperationStore::new(
-            fixture.host.clone(), RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+            fixture.host.clone(),
+            RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
         );
         let history = journal.preferenceHistory().unwrap();
         assert_eq!(history.len(), 1);
-        assert_eq!(PreferencesDataStore::newWithStorage(fixture.host.clone(), &sidebar)
-            .data().unwrap().get(&stringPreferencesKey("layout")), Some(&json!({"wide":true})));
-        assert!(!history.iter().any(|operation| operation.payload["storagePath"] == extension));
-        assert!(!fixture.host.exists(RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH).unwrap());
+        assert_eq!(
+            PreferencesDataStore::newWithStorage(fixture.host.clone(), &sidebar)
+                .data()
+                .unwrap()
+                .get(&stringPreferencesKey("layout")),
+            Some(&json!({"wide":true}))
+        );
+        assert!(!history
+            .iter()
+            .any(|operation| operation.payload["storagePath"] == extension));
+        assert!(!fixture
+            .host
+            .exists(RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH)
+            .unwrap());
         assert!(prepare(fixture.host.clone()).is_empty());
         assert_eq!(journal.preferenceHistory().unwrap(), history);
     }
 
-
     /// Creates the three retired source paths that previously left fifteen operations pending.
     fn retired_extension_operations(source: &Fixture) -> Vec<SyncOperation> {
-        use sha2::{Digest, Sha256};
-        let digest = format!("{:x}", Sha256::digest(b"demo"));
         for path in [
             RuntimeStorageLayout::PACKAGE_MANAGER_PREFERENCES_PATH.to_owned(),
-            format!("runtime/extensions/space/settings/package-{digest}.preferences.json"),
-            format!("runtime/extensions/space/settings/skill-{digest}.preferences.json"),
+            operit_store::ExtensionStore::legacySettingsPath("package", "demo", "space").unwrap(),
+            operit_store::ExtensionStore::legacySettingsPath("skill", "demo", "space").unwrap(),
         ] {
             let store = PreferencesDataStore::newWithStorage(source.host.clone(), path)
                 .withSchema(2, |_, _| Ok(()));
@@ -570,14 +815,12 @@ mod tests {
     fn layout_transfers_extension_settings_before_completing_fifteen_retired_operations() {
         use operit_store::ExtensionStore::{ExtensionRecord, ExtensionStore};
         use operit_store::SyncOperationStore::SyncOperationStore;
-        use sha2::{Digest, Sha256};
         let source = Fixture::new();
         let incoming = retired_extension_operations(&source);
         let target = Fixture::new();
-        let digest = format!("{:x}", Sha256::digest(b"demo"));
-        let recordPath = format!("runtime/extensions/space/records/package-{digest}.json");
+        let recordPath = operit_store::ExtensionStore::recordPath("package", "demo", "space").unwrap();
         let settingsPath =
-            format!("runtime/extensions/space/settings/package-{digest}.preferences.json");
+            operit_store::ExtensionStore::legacySettingsPath("package", "demo", "space").unwrap();
         let record = ExtensionRecord {
             schemaVersion: 0,
             kind: "package".into(),
@@ -625,9 +868,7 @@ mod tests {
         assert_eq!(migrated.settings["builtin"], false);
         assert!(!target
             .host
-            .exists(&format!(
-                "runtime/extensions/space/settings/skill-{digest}.preferences.json"
-            ))
+            .exists(&operit_store::ExtensionStore::legacySettingsPath("skill", "demo", "space").unwrap())
             .unwrap());
         migrated.settings["order"] = json!(9);
         extensions
@@ -667,7 +908,7 @@ mod tests {
         let source = Fixture::new();
         let incoming = retired_extension_operations(&source);
         let target = Fixture::new();
-        let broken = "runtime/extensions/space/records/package-broken.json";
+        let broken = &format!("{}/package-broken.json", operit_store::ExtensionStore::SPACE_EXTENSION_RECORDS);
         target
             .host
             .writeBytesAtomically(broken, b"invalid record")
@@ -687,7 +928,7 @@ mod tests {
         assert_eq!(journal.pendingOperationCount().unwrap(), 15);
         assert!(!target
             .host
-            .exists("runtime/sync/preference_layout.preferences.json")
+            .exists(RuntimeStorageLayout::RUNTIME_SYNC_PREFERENCE_LAYOUT_PATH)
             .unwrap());
         target.host.delete(broken, false).unwrap();
         assert_eq!(
