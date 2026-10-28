@@ -560,6 +560,9 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
         return _switch(context);
       case 'Slider':
         return _slider();
+      case 'SegmentedControl':
+      case 'Select':
+        return _selectionControl(context, type);
       case 'Checkbox':
         return _checkbox();
       case 'RadioButton':
@@ -683,6 +686,8 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
           chatId: props['chatId'] as String?,
           showInput: props['showInput'] as bool? ?? true,
         );
+      case 'Table':
+        return _table();
       case 'AdaptiveSidePanel':
         return _adaptiveSidePanel();
       case 'PullToRefreshBox':

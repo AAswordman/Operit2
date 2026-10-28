@@ -495,6 +495,350 @@ impl StreamPlugin for StreamMarkdownUnorderedListPlugin {
     }
 }
 
+macro_rules! double_delimiter_plugin {
+    ($type_name:ident, $start_char:expr, $end_char:expr, $field_name:ident) => {
+        #[derive(Debug, Clone)]
+        pub struct $type_name {
+            $field_name: bool,
+            state: PluginState,
+            start_state: usize,
+            end_state: usize,
+        }
+
+        impl $type_name {
+            pub fn new($field_name: bool) -> Self {
+                let mut value = Self {
+                    $field_name,
+                    state: PluginState::Idle,
+                    start_state: 0,
+                    end_state: 0,
+                };
+                value.reset();
+                value
+            }
+        }
+
+        impl Default for $type_name {
+            fn default() -> Self {
+                Self::new(true)
+            }
+        }
+
+        impl StreamPlugin for $type_name {
+            fn name(&self) -> &'static str {
+                stringify!($type_name)
+            }
+
+            fn state(&self) -> PluginState {
+                self.state
+            }
+
+            fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+                if self.state == PluginState::Processing {
+                    if self.end_state == 0 {
+                        if c == $end_char {
+                            self.end_state = 1;
+                            return self.$field_name;
+                        }
+                        return true;
+                    }
+                    if self.end_state == 1 {
+                        if c == $end_char {
+                            self.reset();
+                            return self.$field_name;
+                        }
+                        self.end_state = 0;
+                        return true;
+                    }
+                    self.end_state = 0;
+                    return true;
+                }
+
+                if self.start_state == 0 {
+                    if c == $start_char {
+                        self.start_state = 1;
+                        self.state = PluginState::Trying;
+                        return self.$field_name;
+                    }
+                    return true;
+                }
+                if self.start_state == 1 {
+                    if c == $start_char {
+                        self.start_state = 2;
+                        self.state = PluginState::Trying;
+                        return self.$field_name;
+                    }
+                    self.reset();
+                    return true;
+                }
+                if self.start_state == 2 {
+                    if c != $start_char && c != '\n' {
+                        self.state = PluginState::Processing;
+                        self.start_state = 0;
+                        self.end_state = 0;
+                        return true;
+                    }
+                    self.reset();
+                    return true;
+                }
+
+                self.reset();
+                true
+            }
+
+            fn init_plugin(&mut self) -> bool {
+                self.reset();
+                true
+            }
+
+            fn destroy(&mut self) {}
+
+            fn reset(&mut self) {
+                self.state = PluginState::Idle;
+                self.start_state = 0;
+                self.end_state = 0;
+            }
+        }
+    };
+}
+
+double_delimiter_plugin!(
+    StreamMarkdownStrikethroughPlugin,
+    '~',
+    '~',
+    include_delimiters
+);
+double_delimiter_plugin!(StreamMarkdownUnderlinePlugin, '_', '_', include_delimiters);
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownInlineLaTeXPlugin {
+    include_delimiters: bool,
+    state: PluginState,
+    start_state: usize,
+    end_state: usize,
+    pending: Vec<char>,
+}
+
+impl StreamMarkdownInlineLaTeXPlugin {
+    pub fn new(include_delimiters: bool) -> Self {
+        let mut value = Self {
+            include_delimiters,
+            state: PluginState::Idle,
+            start_state: 0,
+            end_state: 0,
+            pending: Vec::new(),
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownInlineLaTeXPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownInlineLaTeXPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownInlineLaTeXPlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        // Guard against OpenUI program text leaking into math mode through
+        // `$steps = 3` and similar state declarations.
+        if self.start_state == 1 {
+            self.pending.push(c);
+            if is_open_ui_program_start(&self.pending) {
+                self.reset();
+                return true;
+            }
+            if !is_open_ui_program_prefix(&self.pending) {
+                if c != '$' && c != '\n' {
+                    self.state = PluginState::Processing;
+                    self.start_state = 0;
+                    self.end_state = 0;
+                    self.pending.clear();
+                } else {
+                    self.reset();
+                }
+                return true;
+            }
+            return true;
+        }
+
+        if self.state == PluginState::Processing {
+            if self.end_state == 0 && c == '$' {
+                self.end_state = 1;
+                self.reset();
+                return self.include_delimiters;
+            }
+            return true;
+        }
+
+        if self.start_state == 0 {
+            if c == '$' {
+                self.start_state = 1;
+                self.state = PluginState::Trying;
+                return self.include_delimiters;
+            }
+            return true;
+        }
+
+        self.reset();
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.start_state = 0;
+        self.end_state = 0;
+        self.pending.clear();
+    }
+}
+
+const OPEN_UI_PROGRAM_START: [&str; 2] = ["steps=", "root="];
+
+/// Returns whether buffered characters after `$` complete an OpenUI program start.
+fn is_open_ui_program_start(buffer: &[char]) -> bool {
+    let text = normalized_program_buffer(buffer);
+    OPEN_UI_PROGRAM_START
+        .iter()
+        .any(|marker| text.starts_with(marker))
+}
+
+/// Returns whether buffered characters after `$` can still become an OpenUI program start.
+fn is_open_ui_program_prefix(buffer: &[char]) -> bool {
+    let text = normalized_program_buffer(buffer);
+    OPEN_UI_PROGRAM_START.iter().any(|marker| {
+        marker
+            .starts_with(&text.as_str())
+    })
+}
+
+/// Lowercases a pending buffer and removes whitespace so `steps =` matches `steps=`.
+fn normalized_program_buffer(buffer: &[char]) -> String {
+    buffer
+        .iter()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownInlineParenLaTeXPlugin {
+    include_delimiters: bool,
+    state: PluginState,
+    start_state: usize,
+    end_state: usize,
+}
+
+impl StreamMarkdownInlineParenLaTeXPlugin {
+    pub fn new(include_delimiters: bool) -> Self {
+        let mut value = Self {
+            include_delimiters,
+            state: PluginState::Idle,
+            start_state: 0,
+            end_state: 0,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownInlineParenLaTeXPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownInlineParenLaTeXPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownInlineParenLaTeXPlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Processing {
+            if self.end_state == 0 {
+                if c == '\\' {
+                    self.end_state = 1;
+                    return self.include_delimiters;
+                }
+                return true;
+            }
+            if self.end_state == 1 {
+                if c == ')' {
+                    self.reset();
+                    return self.include_delimiters;
+                }
+                self.end_state = 0;
+                return true;
+            }
+            self.end_state = 0;
+            return true;
+        }
+
+        if self.start_state == 0 {
+            if c == '\\' {
+                self.start_state = 1;
+                self.state = PluginState::Trying;
+                return self.include_delimiters;
+            }
+            return true;
+        }
+        if self.start_state == 1 {
+            if c == '(' {
+                self.start_state = 2;
+                self.state = PluginState::Trying;
+                return self.include_delimiters;
+            }
+            self.reset();
+            return true;
+        }
+        if self.start_state == 2 {
+            if c != '\n' {
+                self.state = PluginState::Processing;
+                self.start_state = 0;
+                self.end_state = 0;
+                return true;
+            }
+            self.reset();
+            return true;
+        }
+
+        self.reset();
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.start_state = 0;
+        self.end_state = 0;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StreamMarkdownBlockLaTeXPlugin {
     include_delimiters: bool,
@@ -974,5 +1318,52 @@ impl StreamPlugin for StreamMarkdownFootnoteDefinitionPlugin {
     fn destroy(&mut self) {}
     fn reset(&mut self) {
         *self = Self::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StreamMarkdownInlineLaTeXPlugin;
+    use crate::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
+
+    /// Keeps genuine inline math working after the OpenUI guard.
+    #[test]
+    fn ordinary_inline_latex_still_processes() {
+        let mut plugin = StreamMarkdownInlineLaTeXPlugin::new(false);
+        for c in "inline $a+b$ math".chars() {
+            plugin.process_char(c, false);
+        }
+        assert_eq!(plugin.state(), PluginState::Idle);
+    }
+
+    /// `$steps=...` is an OpenUI state declaration, not inline math.
+    #[test]
+    fn open_ui_state_declaration_does_not_enter_math_mode() {
+        let mut plugin = StreamMarkdownInlineLaTeXPlugin::new(false);
+        for c in "$steps = 3\nroot = Card([])".chars() {
+            plugin.process_char(c, c == '\n');
+        }
+        assert_eq!(plugin.state(), PluginState::Idle);
+    }
+
+    /// A `$` followed by unrelated text still becomes inline math.
+    #[test]
+    fn non_program_dollar_pair_still_processes() {
+        let mut plugin = StreamMarkdownInlineLaTeXPlugin::new(false);
+        for c in "$x$".chars() {
+            plugin.process_char(c, false);
+        }
+        assert_eq!(plugin.state(), PluginState::Idle);
+    }
+
+    /// The guard must observe Processing before the closing delimiter, not
+    /// only the final Idle state after reset.
+    #[test]
+    fn ordinary_inline_latex_reaches_processing_before_close() {
+        let mut plugin = StreamMarkdownInlineLaTeXPlugin::new(false);
+        for c in "$a".chars() {
+            plugin.process_char(c, false);
+        }
+        assert_eq!(plugin.state(), PluginState::Processing);
     }
 }
