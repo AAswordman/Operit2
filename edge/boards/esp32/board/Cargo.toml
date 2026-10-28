@@ -1,0 +1,21 @@
+[package]
+name = "operit-board-esp32"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "ESP32-2432S028 board capabilities for Operit Edge Core apps."
+
+[dependencies]
+log = "0.4"
+operit-host-api = { path = "../../../../core/crates/foundation/host-api" }
+
+[target.'cfg(target_os = "espidf")'.dependencies]
+esp-idf-hal = "0.46.2"
+async-trait = "0.1"
+tokio = { version = "1", default-features = false, features = ["sync", "time"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync", "time"] }
+operit-host-native-scheduler = { path = "../../../../hosts/common/operit-host-native-scheduler", default-features = false }

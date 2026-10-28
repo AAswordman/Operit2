@@ -1679,6 +1679,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "flume",
+ "if-addrs",
  "libc",
  "mdns-sd",
  "operit-host-api",

@@ -95,11 +95,11 @@ The exact scope of snapshots, configuration, and identity data is determined by 
 | --- | --- | --- |
 | Flutter App | The primary graphical access surface for mobile and desktop, and it can also host a CoreNode | Host and build conditions differ across Android, Windows, Linux, macOS, iOS, OpenHarmony, and Web |
 | Rust CLI/TUI | Local CoreNode and operations/development entry point | The current CLI Host mainly covers Windows, Linux, and macOS |
-| PB_SBC01_H3 | Linux hardware control entry point for running a complete Core | Uses Linux Host capabilities together with board Host capabilities; the application entry point is `apps/pb_sbc01_h3` |
+| PB_SBC01_H3 | Linux hardware control entry point for running a complete Core | Uses Linux Host capabilities together with board Host capabilities; the application entry point is `edge/boards/pb_sbc01_h3` |
 | Web Access | Browser entry point for accessing a running CoreNode | Not a browser node that automatically joins the Space, and not a centralized Agent Server |
 | WebAssembly/browser Host | Local capability boundary of the browser runtime | Separate from the Web Access surface; exact capabilities depend on the browser and current Web build mode |
 | Linux cloud device | Ordinary CoreNode in a Space | Can handle more tasks when it is always online, but does not thereby gain a central identity |
-| [ESP32 Edge Node](docs/edge-architecture.md) | Native device applications and Edge Services | Owns local configuration and bounded operation, participates in Space control and can consume Core services; no full business replica |
+| [ESP32 Edge Node](edge/docs/architecture.md) | Native device applications and Edge Services | Owns local configuration and bounded operation, participates in Space control and can consume Core services; no full business replica |
 | Server | Future deployment form and Host direction | The current repository does not yet contain a complete Server product that can be published directly |
 
 The repository contains Host adaptation paths for multiple platforms, but "can build" does not mean that cross-device interoperability has been validated. Follow [`BUILDING.md`](BUILDING.md) and the corresponding workflows for platform build, signing, and release conditions.

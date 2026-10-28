@@ -95,11 +95,11 @@ operit2 cli backup restore <snapshot.zip>
 | --- | --- | --- |
 | Flutter App | 移动端和桌面端的主要图形访问面，也可以承载一个 CoreNode | Android、Windows、Linux、macOS、iOS、OpenHarmony 和 Web 的 Host/构建条件不同 |
 | Rust CLI/TUI | 本地 CoreNode 和运维/开发入口 | 当前 CLI Host 主要覆盖 Windows、Linux 和 macOS |
-| PB_SBC01_H3 | 运行完整 Core 的 Linux 硬件主控入口 | 使用 Linux Host 加板卡 Host 能力，应用入口位于 `apps/pb_sbc01_h3` |
+| PB_SBC01_H3 | 运行完整 Core 的 Linux 硬件主控入口 | 使用 Linux Host 加板卡 Host 能力，应用入口位于 `edge/boards/pb_sbc01_h3` |
 | Web Access | 访问某个已运行 CoreNode 的浏览器入口 | 不是自动加入 Space 的浏览器节点，也不是中心化 Agent Server |
 | WebAssembly/browser Host | 浏览器运行时的本地能力边界 | 与 Web Access 访问面分开，具体能力取决于浏览器和当前 Web 构建模式 |
 | Linux 云端设备 | Space 中的普通 CoreNode | 长期在线可以承担更多任务，但不因此拥有中心身份 |
-| [ESP32 Edge Node](docs/edge-architecture.md) | 设备原生业务与 Edge Service 能力节点 | 保存身份、配对、空间控制及自身配置；支持有界独立运行和按需使用 Core，不保存完整业务副本 |
+| [ESP32 Edge Node](edge/docs/architecture.md) | 设备原生业务与 Edge Service 能力节点 | 保存身份、配对、空间控制及自身配置；支持有界独立运行和按需使用 Core，不保存完整业务副本 |
 | Server | 未来的部署形态和 Host 方向 | 当前仓库还没有可以直接发布的完整 Server 产品 |
 
 仓库包含多平台 Host 适配路径，但“能够构建”不等于“已经完成跨设备互操作验证”。平台构建、签名和发布条件请以 [`BUILDING.md`](BUILDING.md) 与对应 workflow 为准。

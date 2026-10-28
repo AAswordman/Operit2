@@ -1,0 +1,85 @@
+[package]
+name = "operit-esp32"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Operit Edge firmware for ESP32-2432S028."
+
+[[bin]]
+name = "operit-esp32"
+path = "src/main.rs"
+
+[dependencies]
+operit-edge-sdk = { path = "../../sdk", features = ["space", "scene"] }
+uuid = { version = "1", features = ["v4"] }
+operit-host-native-scheduler = { path = "../../../hosts/common/operit-host-native-scheduler", default-features = false }
+operit-peer-link = { path = "../../../core/crates/node/peer-link" }
+async-trait = "0.1"
+# UART console logging is disabled after boot to protect binary Link frames.
+# Compile out Rust log formatting too; startup errors and USB health remain available.
+log = { version = "0.4", features = ["release_max_level_off"] }
+operit-board-esp32 = { path = "board" }
+operit-host-api = { path = "../../../core/crates/foundation/host-api" }
+operit-link = { path = "../../../core/crates/foundation/link" }
+operit-util = { path = "../../../core/crates/foundation/util", default-features = false }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+
+[target.'cfg(target_os = "espidf")'.dependencies]
+serde = { version = "1", features = ["derive"] }
+esp-idf-hal = "0.46.2"
+esp-idf-svc = "0.52.1"
+esp-idf-sys = "0.37.2"
+
+[build-dependencies]
+embuild = { version = "0.33", features = ["espidf"] }
+
+[package.metadata.esp-idf-sys]
+esp_idf_components = [
+  "main",
+  "app_update",
+  "bootloader",
+  "driver",
+  "fatfs",
+  "spiffs",
+  "wear_levelling",
+  "nvs_flash",
+  "esp_event",
+  "esp_netif",
+  "esp_wifi",
+  "esp_http_server",
+  "esp_http_client",
+  "espressif__mdns",
+  "ui_port",
+  "operit_board_audio",
+]
+extra_components = [
+  { remote_component = { name = "espressif/mdns", version = "1.2.0" } },
+  { component_dirs = ["ui_port", "board/operit_board_audio"] },
+]
+
+# Remove duplicated code across the shared device runtime without changing the
+# fixed 4 MB board/partition layout or the package-specific Xtensa workarounds.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+
+# Xtensa LLVM cannot lower the vectorized UUID hex parser at opt-level 3.
+# Keep the workaround scoped to UUID; the firmware remains a release build.
+[profile.release.package.uuid]
+opt-level = 1
+
+# Prepare with: python ../../edge/boards/esp32/editor/prepare-tokio.py
+# ESP-only overlay: avoid over-aligned stack frames in the esp LLVM 21 backend.
+# opt-level=1 did NOT fix this; see README.md (Xtensa build overlays).
+[patch.crates-io]
+tokio = { path = ".embuild/tokio-1.53.1" }
+# Prepared by the editor build; keep Poly1305 Rust/C padding within Xtensa ABI.
+ring = { path = ".embuild/ring-0.17.14" }
+
+# The pinned alignment overlay and final ELF ABI check protect Xtensa frames.
+# Optimize Tokio for the same fixed flash budget as the rest of the firmware.
+[profile.release.package.tokio]
+opt-level = "z"

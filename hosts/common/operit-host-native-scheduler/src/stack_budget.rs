@@ -1,10 +1,7 @@
 //! Guarded desktop stacks with an exact usable budget for device execution.
-#[cfg(windows)]
-#[path = "stack_budget_windows.rs"]
+#[cfg_attr(windows, path = "stack_budget_windows.rs")]
+#[cfg_attr(unix, path = "stack_budget_unix.rs")]
 mod platform;
-#[cfg(unix)]
-use corosensei::stack::DefaultStack as BoundedStack;
-#[cfg(windows)]
 use platform::BoundedStack;
 
 /// Runs a complete device task on a guarded stack, independent of native thread minima.

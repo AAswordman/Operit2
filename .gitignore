@@ -97,15 +97,15 @@ apps/flutter/app/ios/Runner/python/
 target/
 
 # ESP32 / ESP-IDF build outputs
-apps/esp32/.embuild/
+edge/boards/esp32/.embuild/
 **/.embuild/
-apps/esp32/sdkconfig
-apps/esp32/sdkconfig.old
-apps/esp32/bootloader.bin
-apps/esp32/partition-table.bin
-apps/esp32/partitions.bin
-apps/esp32/*.elf
-apps/esp32/*.bin
+edge/boards/esp32/sdkconfig
+edge/boards/esp32/sdkconfig.old
+edge/boards/esp32/bootloader.bin
+edge/boards/esp32/partition-table.bin
+edge/boards/esp32/partitions.bin
+edge/boards/esp32/*.elf
+edge/boards/esp32/*.bin
 /bootloader.bin
 /partition-table.bin
 
@@ -216,7 +216,7 @@ AGENTS.md
 tools/ios-runtime/native/sources
 
 # Local ESP32 Edge pairing secret
-apps/esp32/.edge-token
+edge/boards/esp32/.edge-token
 artifacts/*
 apps/flutter/app/web/runtime/generated/*
 # Developer-local Flutter macOS signing identity (never includes a private key).

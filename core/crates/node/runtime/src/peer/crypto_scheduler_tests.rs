@@ -106,7 +106,7 @@ fn watchCloseUsesTheOwningSchedulerWithoutAmbientTokio() {
     assert_eq!(
         names,
         [
-            "peer-channel-reader",
+            "peer-multiplexed-reader",
             "peer-multiplexed-dispatch",
             "peer-multiplexed-watch-close"
         ]

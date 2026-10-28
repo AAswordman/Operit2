@@ -3012,7 +3012,6 @@ dependencies = [
  "flate2",
  "operit-host-api",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "tokio",

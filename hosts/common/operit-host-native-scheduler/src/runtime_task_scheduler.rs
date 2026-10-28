@@ -955,12 +955,52 @@ mod pool_tests {
     /// Serializes tests that deliberately occupy the shared blocking pool.
     static BLOCKING_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    /// Returns the worker name so tests can prove which pool ran a task.
-    fn threadName() -> String {
-        std::thread::current()
-            .name()
-            .unwrap_or_default()
-            .to_string()
+    /// Identifies the actual thread, including replacements that reuse its name.
+    fn workerIdentity() -> (std::thread::ThreadId, String) {
+        let thread = std::thread::current();
+        (thread.id(), thread.name().unwrap_or_default().to_string())
+    }
+
+    /// Occupies every worker before releasing any, so coverage does not depend on
+    /// short tasks happening to visit every dispatcher under load balancing.
+    fn allPoolWorkers() -> HashSet<(&'static str, (std::thread::ThreadId, String))> {
+        let scheduler = NativeHostRuntimeTaskSchedulerHost::new();
+        let (entered, started) = mpsc::channel();
+        let (done, finished) = mpsc::channel();
+        let mut releases = Vec::new();
+        for (role, count) in [
+            ("coordination", RUNTIME_WORKER_COUNT),
+            ("blocking", BLOCKING_WORKER_COUNT),
+        ] {
+            for _ in 0..count {
+                let (release, wait) = mpsc::channel();
+                releases.push(release);
+                let entered = entered.clone();
+                let done = done.clone();
+                let task: HostRuntimeAsyncTask = Box::new(move || Box::pin(async move {
+                    entered.send((role, workerIdentity())).unwrap();
+                    wait.recv_timeout(Duration::from_secs(10)).unwrap();
+                    done.send(()).unwrap();
+                }));
+                if role == "coordination" {
+                    scheduler.scheduleHostRuntimeAsyncTask("identify-pool", task)
+                } else {
+                    scheduler.scheduleHostRuntimeBlockingAsyncTask("identify-pool", task)
+                }.unwrap();
+            }
+        }
+        let count = RUNTIME_WORKER_COUNT + BLOCKING_WORKER_COUNT;
+        let workers = (0..count)
+            .map(|_| started.recv_timeout(Duration::from_secs(5)).unwrap())
+            .collect::<HashSet<_>>();
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for _ in 0..count {
+            finished.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        assert_eq!(workers.len(), count);
+        workers
     }
 
     /// Verifies task kinds stay on their declared pool and the pools never overlap.
@@ -969,8 +1009,8 @@ mod pool_tests {
         let _guard = BLOCKING_TEST_LOCK.lock().unwrap();
         let scheduler = NativeHostRuntimeTaskSchedulerHost::new();
         let (sender, receiver) = mpsc::channel();
-        let mut first_workers = HashSet::new();
-        for round in 0..2 {
+        let first_workers = allPoolWorkers();
+        for _ in 0..2 {
             for index in 0..320 {
                 let sender = sender.clone();
                 let other = NativeHostRuntimeTaskSchedulerHost::new();
@@ -978,14 +1018,14 @@ mod pool_tests {
                     0 => scheduler.scheduleHostRuntimeTask(
                         "pool-sync",
                         Box::new(move || {
-                            sender.send(("blocking", threadName())).unwrap();
+                            sender.send(("blocking", workerIdentity())).unwrap();
                         }),
                     ),
                     1 => other.scheduleHostRuntimeBlockingAsyncTask(
                         "pool-blocking-async",
                         Box::new(move || {
                             Box::pin(async move {
-                                sender.send(("blocking", threadName())).unwrap();
+                                sender.send(("blocking", workerIdentity())).unwrap();
                             })
                         }),
                     ),
@@ -998,7 +1038,7 @@ mod pool_tests {
                                 tokio::time::sleep(Duration::from_millis(1)).await;
                                 assert_eq!(owner, std::thread::current().id());
                                 assert_eq!(*local, 42);
-                                sender.send(("coordination", threadName())).unwrap();
+                                sender.send(("coordination", workerIdentity())).unwrap();
                             })
                         }),
                     ),
@@ -1006,7 +1046,7 @@ mod pool_tests {
                         "pool-cooperative",
                         Box::new(move || {
                             Box::pin(async move {
-                                sender.send(("coordination", threadName())).unwrap();
+                                sender.send(("coordination", workerIdentity())).unwrap();
                             })
                         }),
                     ),
@@ -1014,7 +1054,7 @@ mod pool_tests {
                         "pool-delayed",
                         1,
                         Box::new(move || {
-                            sender.send(("blocking", threadName())).unwrap();
+                            sender.send(("blocking", workerIdentity())).unwrap();
                         }),
                     ),
                 }
@@ -1026,28 +1066,25 @@ mod pool_tests {
             let coordination = workers
                 .iter()
                 .filter(|(pool, _)| *pool == "coordination")
-                .map(|(_, name)| name.clone())
+                .map(|(_, identity)| identity.clone())
                 .collect::<HashSet<_>>();
             let blocking = workers
                 .iter()
                 .filter(|(pool, _)| *pool == "blocking")
-                .map(|(_, name)| name.clone())
+                .map(|(_, identity)| identity.clone())
                 .collect::<HashSet<_>>();
-            assert_eq!(coordination.len(), RUNTIME_WORKER_COUNT);
-            assert_eq!(blocking.len(), BLOCKING_WORKER_COUNT);
+            assert!(!coordination.is_empty());
+            assert!(!blocking.is_empty());
+            assert!(workers.is_subset(&first_workers));
             assert!(coordination.is_disjoint(&blocking));
             assert!(coordination
                 .iter()
-                .all(|name| name.starts_with(RUNTIME_WORKER_PREFIX)));
+                .all(|(_, name)| name.starts_with(RUNTIME_WORKER_PREFIX)));
             assert!(blocking
                 .iter()
-                .all(|name| name.starts_with(BLOCKING_WORKER_PREFIX)));
-            if round == 0 {
-                first_workers = workers;
-            } else {
-                assert_eq!(workers, first_workers);
-            }
+                .all(|(_, name)| name.starts_with(BLOCKING_WORKER_PREFIX)));
         }
+        assert_eq!(allPoolWorkers(), first_workers);
     }
 
     /// Verifies a fully occupied blocking pool cannot delay coordination tasks.

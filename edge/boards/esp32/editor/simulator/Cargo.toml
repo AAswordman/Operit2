@@ -1,0 +1,46 @@
+[package]
+name = "operit-esp32-simulator"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+# Cross-kind protocol tests link the full Core only when explicitly requested.
+core-integration-tests = ["dep:operit-node-runtime", "operit-node-runtime/full", "dep:operit-tools"]
+
+[[test]]
+name = "space_admission"
+path = "tests/space_admission.rs"
+required-features = ["core-integration-tests"]
+
+[dependencies]
+operit-node-runtime = { path = "../../../../../core/crates/node/runtime", default-features = false, optional = true }
+operit-tools = { path = "../../../../../core/crates/tool/services", default-features = false, optional = true }
+operit-edge-sdk = { path = "../../../../sdk", features = ["space", "scene"] }
+operit-host-native-storage = { path = "../../../../../hosts/common/operit-host-native-storage" }
+linked_list_allocator = "0.10.6"
+uuid = { version = "1", features = ["v4"] }
+operit-host-native-common = { path = "../../../../../hosts/common/operit-host-native-common", features = ["tcp", "storage", "http"] }
+operit-host-native-scheduler = { path = "../../../../../hosts/common/operit-host-native-scheduler", default-features = false, features = ["esp32-compat"] }
+operit-peer-link = { path = "../../../../../core/crates/node/peer-link" }
+async-trait = "0.1"
+log = "0.4"
+base64 = "0.22"
+operit-host-api = { path = "../../../../../core/crates/foundation/host-api" }
+operit-util = { path = "../../../../../core/crates/foundation/util", default-features = false }
+operit-link = { path = "../../../../../core/crates/foundation/link" }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "macros", "net", "sync", "time", "io-util"] }
+
+# The protocol fixtures share firmware code and its fixed Host worker stack budgets.
+# Match simulator release optimization for the fixture and its Host/runtime dependencies.
+[profile.test]
+opt-level = 3
+
+# The simulator uses sixteen desktop discovery events rather than 1024-entry OS queues.
+# Run ../prepare-simulator.py before invoking Cargo directly.
+[patch.crates-io]
+polling = { path = ".embuild/polling-2.8.0" }

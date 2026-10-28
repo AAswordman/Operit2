@@ -21,7 +21,7 @@ ESP 模拟器使用浏览器作为麦克风和播放驱动：聊天页麦克风�
 ```sh
 tsc -p plugins/packages/examples/device_speech_processor/tsconfig.json
 node --test plugins/packages/examples/device_speech_processor/tests/processor.test.cjs
-node --test --experimental-strip-types tools/esp32-editor/tests/speech-processor.test.mjs
+node --test --experimental-strip-types edge/boards/esp32/editor/tests/speech-processor.test.mjs
 ```
 
 把 `manifest.json` 和 `dist/` 打包为 ZIP，扩展名改为 `.toolpkg`，通过现有插件导入入口安装。

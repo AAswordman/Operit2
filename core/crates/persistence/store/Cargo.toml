@@ -13,7 +13,7 @@ documentation = "https://docs.rs/operit-store"
 default = ["full"]
 # The same node identity, Preferences and network-policy records on embedded hosts.
 node-state = []
-full = ["node-state", "dep:operit-model", "dep:regex", "dep:jieba-rs"]
+full = ["node-state", "dep:operit-model", "dep:regex", "dep:jieba-rs", "dep:sqlparser", "operit-util/full"]
 
 [dependencies]
 base64.workspace = true
@@ -22,13 +22,13 @@ chrono.workspace = true
 getrandom = "0.2"
 operit-host-api = { version = "0.1.0", path = "../../foundation/host-api" }
 operit-model = { version = "2.0.0-preview.17", path = "../../foundation/model", optional = true }
-operit-util = { version = "2.0.0-preview.17", path = "../../foundation/util" }
+operit-util = { version = "2.0.0-preview.17", path = "../../foundation/util", default-features = false }
 regex = { workspace = true, optional = true }
 jieba-rs = { version = "=0.8.1", optional = true }
 serde.workspace = true
 serde_bytes = "0.11"
 serde_json = { workspace = true, features = ["raw_value"] }
-sqlparser = { version = "0.63", default-features = false, features = ["std", "visitor"] }
+sqlparser = { version = "0.63", default-features = false, features = ["std", "visitor"], optional = true }
 sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

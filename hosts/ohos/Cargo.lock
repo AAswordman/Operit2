@@ -613,7 +613,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
 dependencies = [
  "futures-core",
- "futures-sink",
 ]
 
 [[package]]
@@ -1368,6 +1367,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "flume",
+ "if-addrs",
  "libc",
  "mdns-sd",
  "operit-host-api",
@@ -1482,7 +1482,6 @@ dependencies = [
  "flate2",
  "operit-host-api",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -1753,7 +1752,6 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64",
  "bytes",
- "futures-channel",
  "futures-core",
  "futures-util",
  "http",

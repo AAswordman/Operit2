@@ -5535,8 +5535,11 @@ mod tests {
                 stream.descriptor.args.clone(),
             ))
             .expect("real live embedded ChatMessage stream must reopen through CoreNodeRouter");
-        // Each observer creates its own renderer and replays ordered chunks.
-        // A fresh renderer does not restore a snapshot or emit an initial reset.
+        // Each observer starts with a reset for its own renderer, then replays
+        // ordered chunks before receiving live updates.
+        let reset = receiveEvent(&mut openedStream).await;
+        let reset: MarkdownStreamEvent = operit_link::fromCoreValue(reset.value).unwrap();
+        assert_eq!(reset.eventType, "reset");
         let replay = receiveEvent(&mut openedStream).await;
         assert_eq!(replay.kind, CoreEventKind::Changed);
         let replayEvent: MarkdownStreamEvent = operit_link::fromCoreValue(replay.value).unwrap();

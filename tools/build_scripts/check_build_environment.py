@@ -179,8 +179,8 @@ def check_common_tools(products: str) -> list[CheckResult]:
 def check_esp32_tools() -> list[CheckResult]:
     emsdk = os.environ.get("EMSDK", "").strip()
     results = [
-        check_directory("ESP32 app directory", REPO_ROOT / "apps" / "esp32"),
-        check_directory("ESP32 editor directory", REPO_ROOT / "tools" / "esp32-editor"),
+        check_directory("ESP32 app directory", REPO_ROOT / "edge" / "boards" / "esp32"),
+        check_directory("ESP32 editor directory", REPO_ROOT / "edge" / "boards" / "esp32" / "editor"),
         check_command("espflash", ["--version"]),
         check_command("ldproxy"),
     ]

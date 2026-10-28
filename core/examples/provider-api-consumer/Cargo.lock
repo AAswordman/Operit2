@@ -1018,6 +1018,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "chrono",
  "http",
  "http-body-util",
  "js-sys",
@@ -1032,6 +1033,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "operit-host-api",
+ "rmp",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -1241,7 +1243,6 @@ dependencies = [
  "flate2",
  "operit-host-api",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "tokio",

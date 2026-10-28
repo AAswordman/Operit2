@@ -1,0 +1,21 @@
+[package]
+name = "operit-node-edge"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Lightweight Edge Core node boundary for device apps."
+
+[dependencies]
+operit-node-runtime = { path = "../../../core/crates/node/runtime", default-features = false, features = ["peer-runtime"] }
+async-trait.workspace = true
+operit-host-api = { path = "../../../core/crates/foundation/host-api" }
+operit-edge-contract = { path = "../contract" }
+operit-link = { path = "../../../core/crates/foundation/link" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }

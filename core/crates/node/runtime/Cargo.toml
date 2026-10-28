@@ -13,7 +13,7 @@ route-catalog = []
 # Networking/execution belongs to Host providers; do not enable native Tokio I/O here.
 peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:spake2", "dep:url", "dep:rand_core", "tokio/time"]
 peer-state = ["dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
-full = ["route-catalog", "peer-runtime", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "dep:operit-rslink-runtime", "tokio/time"]
+full = ["operit-util/full", "route-catalog", "peer-runtime", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "dep:operit-rslink-runtime", "tokio/time"]
 test-support = []
 
 [dependencies]
@@ -35,7 +35,7 @@ operit-rslink-runtime = { path = "../../rslink/runtime", optional = true }
 operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"], optional = true }
 operit-store = { path = "../../persistence/store", default-features = false, features = ["node-state"], optional = true }
 operit-tools = { path = "../../tool/services", default-features = false, optional = true }
-operit-util = { path = "../../foundation/util", optional = true }
+operit-util = { path = "../../foundation/util", default-features = false, optional = true }
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "sync", "rt"] }

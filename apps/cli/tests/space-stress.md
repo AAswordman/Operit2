@@ -303,7 +303,7 @@ python3 apps/cli/tests/space_stress_session.py --focus silent-removal --transpor
 
 分别强杀 B、A：存活端的设备列表和状态接口均显示对方 Offline，但保留两端成员资格。存活端为离线端写入配置后，重启离线端，无需再次配对或申请加入即恢复双方 Online、同步离线配置；重连后再次验证双向配置同步。
 
-纯 TCP 共 6/6 场景、164 条真实 CLI 命令通过，用时 7.89 秒。报告为 `/tmp/operit-space-stress-15p5lkrv/report.json`，清理错误为空，所有测试 CLI 子进程均已退出。 此次使用工作区已有的 `apps/cli/target/debug/operit2` 二进制。收尾时工作区存在另外的未解决合并冲突：`core/crates/node/edge/src/space_admission_tests.rs` 和 `core/crates/tool/services/src/tools/AIToolHandler.rs`，且部分运行时源码晚于该二进制。因此这次运行证明现有二进制的行为，不代表当前合并中的源码已经构建验证。未修改或处理这些合并冲突。逐端证据保留为 `joined-{A,B}.json`、`renamed-{A,B}.json`、`restarted-{A,B}-{A,B}.json`；离线状态为 `offline-B-seen-by-A.json`、`offline-A-seen-by-B.json`。本轮只补回归，无产品代码改动。
+纯 TCP 共 6/6 场景、164 条真实 CLI 命令通过，用时 7.89 秒。报告为 `/tmp/operit-space-stress-15p5lkrv/report.json`，清理错误为空，所有测试 CLI 子进程均已退出。 此次使用工作区已有的 `apps/cli/target/debug/operit2` 二进制。收尾时工作区存在另外的未解决合并冲突：`edge/sdk/node/src/space_admission_tests.rs` 和 `core/crates/tool/services/src/tools/AIToolHandler.rs`，且部分运行时源码晚于该二进制。因此这次运行证明现有二进制的行为，不代表当前合并中的源码已经构建验证。未修改或处理这些合并冲突。逐端证据保留为 `joined-{A,B}.json`、`renamed-{A,B}.json`、`restarted-{A,B}-{A,B}.json`；离线状态为 `offline-B-seen-by-A.json`、`offline-A-seen-by-B.json`。本轮只补回归，无产品代码改动。
 
 ```sh
 python3 apps/cli/tests/space_stress_session.py --focus directed-pair --transport tcp

@@ -1382,6 +1382,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "flume",
+ "if-addrs",
  "mdns-sd",
  "operit-host-api",
  "operit-host-native-http",

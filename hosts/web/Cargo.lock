@@ -1205,6 +1205,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "operit-host-api",
+ "rmp",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -1262,6 +1263,7 @@ dependencies = [
  "spake2",
  "syn 2.0.117",
  "tokio",
+ "url",
  "uuid",
 ]
 
@@ -1401,6 +1403,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "operit-command-core",
+ "operit-edge-contract",
  "operit-host-api",
  "operit-link",
  "operit-local-models",
@@ -1585,7 +1588,6 @@ dependencies = [
  "flate2",
  "operit-host-api",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "tokio",

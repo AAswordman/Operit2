@@ -633,20 +633,22 @@ impl SyncOperationStore {
     fn projectedControlOperations(
         store: &crate::PreferencesDataStore::CoreNodeStateStore,
     ) -> Result<Vec<SyncOperation>, String> {
-        let mut operations = BTreeMap::<String, SyncOperation>::new();
-        for (key, value) in store.data().map_err(|error| error.to_string())?.entries() {
-            if key == crate::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME {
-                continue;
-            }
-            let operation: SyncOperation =
-                serde_json::from_value(value).map_err(|error| error.to_string())?;
-            if let Some(previous) = operations.insert(operation.opId.clone(), operation.clone()) {
-                if previous != operation {
-                    return Err("Conflicting immutable Space control operation".into());
+        // Keep outer projection values encoded on constrained Hosts. Building
+        // a generic Preferences tree here duplicates every nested authority
+        // payload and exhausts the device's fixed approval worker stack.
+        store.withEncodedEntries(|entries| {
+            let mut operations = BTreeMap::<String, SyncOperation>::new();
+            for value in entries.values() {
+                let operation: SyncOperation = serde_json::from_str(value.get())
+                    .map_err(|error| error.to_string())?;
+                if let Some(previous) = operations.insert(operation.opId.clone(), operation.clone()) {
+                    if previous != operation {
+                        return Err("Conflicting immutable Space control operation".into());
+                    }
                 }
             }
-        }
-        Ok(operations.into_values().collect())
+            Ok(operations.into_values().collect())
+        }).map_err(|error| error.to_string())?
     }
 
     /// Called by the durable endpoint/import write path, never by state reads.

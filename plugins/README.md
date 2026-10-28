@@ -38,5 +38,5 @@ port used by Flutter for a connected phone). Keep the authenticated URL private.
 
 See [硬件 ToolPkg 接入](docs/edge-plugin-guide.md) for generic Call / Watch / Push,
 `Tools.device(nodeId).Edge` / `Io`, payload limits and device-local interaction.
-[Edge responsibilities](../docs/edge-architecture.md) defines Space membership,
+[Edge responsibilities](../edge/docs/architecture.md) defines Space membership,
 device configuration and the boundary between firmware and host processing.

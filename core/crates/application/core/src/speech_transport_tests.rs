@@ -10,7 +10,7 @@ use operit_tools::tools::AIToolHandler::AIToolHandler;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-#[path = "../../../../../apps/esp32/src/device_speech.rs"]
+#[path = "../../../../../edge/boards/esp32/src/device_speech.rs"]
 mod device_speech;
 
 #[derive(Default)]

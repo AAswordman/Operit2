@@ -8,7 +8,7 @@
 
 ```powershell
 python -X utf8 plugins/packages/external/edge_pixel_pet/generate_assets.py
-node tools/esp32-editor/node_modules/typescript/bin/tsc -p plugins/packages/external/edge_pixel_pet/tsconfig.json
+node edge/boards/esp32/editor/node_modules/typescript/bin/tsc -p plugins/packages/external/edge_pixel_pet/tsconfig.json
 python -X utf8 -c "from pathlib import Path; from plugins.tools.sync_plugin_packages import _pack_toolpkg_folder; root=Path.cwd(); _pack_toolpkg_folder(root, root/'plugins/packages/external/edge_pixel_pet', root/'core/crates/runtime/application/assets/plugins/external/edge_pixel_pet.toolpkg')"
 ```
 

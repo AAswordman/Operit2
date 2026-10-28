@@ -1,0 +1,46 @@
+[package]
+name = "operit-edge-sdk"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Handwritten manufacturer SDK for local agents and Operit device spaces."
+
+[workspace]
+members = [".", "contract", "node", "proxy", "scene"]
+default-members = ["."]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false }
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = []
+# Authenticated pairing, device space membership and typed remote services.
+space = ["dep:operit-node-edge", "dep:operit-node-runtime", "dep:operit-host-api", "dep:operit-link", "dep:operit-store", "dep:operit-edge-contract", "dep:operit-proxy-edge"]
+# Display products can opt into scene rendering; headless products do not link it.
+scene = ["dep:operit-edge-scene"]
+# Bounded OpenAI-compatible tool calling, using the product's HTTP Host.
+http-agent = ["dep:operit-host-api", "dep:serde_json", "dep:tokio"]
+
+[dependencies]
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["sync", "time"], optional = true }
+operit-node-edge = { path = "node", optional = true }
+operit-edge-contract = { path = "contract", optional = true }
+operit-proxy-edge = { path = "proxy", optional = true }
+operit-edge-scene = { path = "scene", optional = true }
+operit-node-runtime = { path = "../../core/crates/node/runtime", default-features = false, features = ["peer-runtime"], optional = true }
+operit-store = { path = "../../core/crates/persistence/store", default-features = false, features = ["node-state"], optional = true }
+operit-host-api = { path = "../../core/crates/foundation/host-api", optional = true }
+operit-link = { path = "../../core/crates/foundation/link", optional = true }

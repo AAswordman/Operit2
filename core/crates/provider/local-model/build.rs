@@ -154,7 +154,10 @@ fn main() {
             return;
         }
         match os.as_str() {
-            "macos" | "ios" => println!("cargo:rustc-link-lib=c++"),
+            "macos" | "ios" => {
+                println!("cargo:rustc-link-lib=c++");
+                println!("cargo:rustc-link-lib=framework=Accelerate");
+            }
             _ => {
                 let libraries = std::fs::read_to_string(build.join("operit_cxx_runtime.txt"))
                     .expect("CMake must report the configured C++ runtime");

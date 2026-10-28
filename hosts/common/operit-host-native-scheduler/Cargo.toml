@@ -9,7 +9,7 @@ publish = false
 default = ["javascript"]
 javascript = ["dep:v8"]
 # Desktop simulator mode that uses the ESP32 host worker stack budget.
-esp32-compat = ["dep:corosensei", "dep:windows-sys"]
+esp32-compat = ["dep:corosensei", "dep:windows-sys", "dep:libc"]
 
 [dependencies]
 corosensei = { version = "0.3.4", optional = true }
@@ -33,3 +33,6 @@ tokio = { version = "1", default-features = false, features = ["io-util"] }
 # Guarded stack tests optimize the executor and task code without changing stack budgets.
 [profile.test]
 opt-level = 3
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }

@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-operit-edge-contract = { path = "../../node/edge-contract" }
+operit-edge-contract = { path = "../../../../edge/sdk/contract" }
 operit-node-runtime = { path = "../../node/runtime" }
 operit-peer-link = { path = "../../node/peer-link" }
 async-trait.workspace = true
