@@ -26,6 +26,7 @@ struct TcpPeerListener {
 }
 #[async_trait]
 impl PeerListener for TcpPeerListener {
+    fn localAddress(&self) -> Option<String> { Some(self.source.address.clone()) }
     async fn accept(&self) -> Result<Option<Arc<dyn PeerConnection>>, String> {
         let connection = self.listener.accept().await.map_err(|e| e.to_string())?;
         Ok(Some(FramedPeerConnection::new(
@@ -73,5 +74,7 @@ pub(super) async fn listen(
         .bind(&source.address)
         .await
         .map_err(|e| e.to_string())?;
+    let mut source = source;
+    source.address = listener.local_address().map_err(|e| e.to_string())?;
     Ok(Arc::new(TcpPeerListener { listener, source, maxMessageBytes }))
 }

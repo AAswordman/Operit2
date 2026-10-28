@@ -71,22 +71,11 @@ async fn run_node_pairing_command(args: &[String]) -> Result<(), String> {
     result
 }
 
-/// 读取本机监听配置；`link listen` 与 TUI 启动共用同一份默认，不各自造配置。
-/// 显式启动监听时统一使用自动避让端口，包括更早保存的固定端口配置。
-pub(crate) fn cli_listener_config(
-    services: &operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService,
-) -> Result<operit_node_runtime::PeerStateStore::PeerHostConfig, String> {
-    use operit_node_runtime::PeerStateStore::PeerHostPortMode;
-    let mut config = services.localHostConfig()?.ok_or("Node listener preferences are not initialized")?;
-    config.portMode = PeerHostPortMode::Automatic;
-    Ok(config)
-}
-
 /// 管理配置仍保存原路径；监听由统一 RuntimePeerService 拥有。
 async fn start_node_listener(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<Option<u64>, String> {
     use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::PeerHostPortMode};
     let mut transports = Vec::new();
-    let mut config = cli_listener_config(&application.accessServices())?;
+    let mut config = application.accessServices().localHostConfig()?.ok_or("Node listener preferences are not initialized")?;
     let mut duration = None;
     let mut index = 0;
     while index < args.len() {
@@ -101,6 +90,7 @@ async fn start_node_listener(application: &operit_core_application::CoreApplicat
             },
             "--no-discovery" => config.discoveryEnabled = false,
             "--fixed-port" => config.portMode = PeerHostPortMode::Fixed,
+            "--automatic-port" => config.portMode = PeerHostPortMode::Automatic,
             value => for mode in value.split(',') {
                 let transport = match mode {
                     "http" => PeerTransport::Http, "ws" => PeerTransport::WebSocket, "tcp" => PeerTransport::Tcp,
@@ -1109,12 +1099,12 @@ pub(crate) fn print_link_usage() {
     println!("operit2 cli link pair-start <node-id> <address> <http|ws|tcp|serial|bluetooth>");
     println!("operit2 cli link pair-finish <pairing-id> <code>");
     println!("operit2 cli link pair-cancel <pairing-id> | unpair <node-id> | peers");
-    println!("operit2 cli link listen <http|ws|tcp|serial|bluetooth>");
+    println!("operit2 cli link listen <http|ws|tcp|serial|bluetooth> [--automatic-port|--fixed-port] [--bind <host:port>]");
     println!("operit2 cli link space <show|topology|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>");
     println!("operit2 cli link space requests <incoming|outgoing> | refresh <request-id> | cancel <request-id>");
     println!("operit2 cli link space approve|reject <request-id> <assignment-version> | sync");
     println!("operit2 cli link space preferences <node-id> | preference-set <node-id> <key> <JSON> | preference-delete <node-id> <key>");
-    println!("operit2 cli link session <http|ws|tcp> [--bind <host:port>] [--no-discovery]  # live interactive management");
+    println!("operit2 cli link session <http|ws|tcp> [--automatic-port|--fixed-port] [--bind <host:port>] [--no-discovery]  # live interactive management");
     println!("operit2 cli link control <show|bootstrap|audit|identity|device|policy>");
     println!("  identity list|define <name> <all|audit|relay|storage|execute|view|manage-identities|assign-identity|approve|join>...|set <device-name> <identity-name>|clear <device-name>");
     println!("  device list|admit <device-name>|remove <device-name>|disconnect <device-name>");

@@ -823,7 +823,7 @@ async fn start_listeners(
     let services = core_application.accessServices();
     let explicit = !options.listen.is_empty();
     let transports = if explicit {
-        let mut config = crate::cli::link::cli_listener_config(&services)?;
+        let mut config = services.localHostConfig()?.ok_or("Node listener preferences are not initialized")?;
         config.transports = options.listen.clone();
         config.updatedAt = operit_host_api::TimeUtils::currentTimeMillis();
         services.saveLocalHostConfig(config)?;

@@ -319,7 +319,7 @@ async fn start_tui_listeners(
     let services = core_application.accessServices();
     let explicit = !link_args.listen.is_empty();
     let transports = if explicit {
-        let mut config = crate::cli::link::cli_listener_config(&services)?;
+        let mut config = services.localHostConfig()?.ok_or("Node listener preferences are not initialized")?;
         config.transports = link_args.listen.clone();
         config.updatedAt = operit_host_api::TimeUtils::currentTimeMillis();
         services.saveLocalHostConfig(config)?;

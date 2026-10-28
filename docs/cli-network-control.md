@@ -6,10 +6,11 @@ CLI 与 Flutter 共用 `CoreApplication`、`RuntimeRemoteLinkService` 和同一�
 ## TUI 启动时的监听
 
 TUI 与 Flutter 一样在启动时应用已保存的监听配置，不需要额外传参：首次运行使用存储迁移写入的默认
-`http,ws`、`0.0.0.0:37195` 与发现开关，之后沿用上次保存的传输集合。
+`http,ws`、`0.0.0.0:0`（系统自动分配端口）与发现开关，之后沿用已保存的监听策略。
+自动模式首次请求系统分配可用端口，通过服务发现公布实际端口；之后优先复用上次分配结果，端口被占用时重新请求系统分配。旧版默认固定配置会自动迁移。
 
 - `--link-listen <transport>[,<transport>...]`：用给定传输替换并保存暴露配置，随后立即启动监听；
-  与 `operit2 cli link listen` 一致默认自动避让端口。显式指定时绑定失败会让启动失败。
+  与 `operit2 cli link listen` 一致遵循核心保存的端口分配策略。显式启动时绑定失败会让启动失败。
 - 不传 `--link-listen`：按已保存配置启动。Host 不支持的传输会被跳过；绑定失败（例如端口被其它
   实例占用）只写入日志并在 TUI 状态行提示，不阻止终端启动。
 - `--no-listen`：本次启动只出站，不改动已保存的配置。
@@ -17,11 +18,12 @@ TUI 与 Flutter 一样在启动时应用已保存的监听配置，不需要额�
 ## 常驻终端
 
 ```sh
-operit2 cli link session tcp --bind 0.0.0.0:37195
+operit2 cli link session tcp
 ```
 
 `session` 同时运行监听和后台同步。下列命令始终使用**同一个运行中的应用实例**，不会逐条重启，退出用 `quit` 或 Ctrl-C。
 也可以选择 `http`、`ws` 或 `http,ws`；TCP 不能与 HTTP/WS 共用同一监听端口。
+需要固定端口时，使用 `--fixed-port --bind 0.0.0.0:37195`；仅替换传输不会覆盖已保存的固定策略，`--automatic-port` 可切回系统分配。
 
 终端内输入：
 

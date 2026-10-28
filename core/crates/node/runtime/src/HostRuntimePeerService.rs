@@ -937,15 +937,37 @@ impl RuntimePeerService for HostRuntimePeerService {
         let result = async {
             for transport in transports {
                 if listeners.contains_key(transport) || opened.contains_key(transport) { continue; }
-                // Choose an address only for the first network listener. HTTP and
-                // WS must then attach to the same server, never select two ports.
-                let canMove = config.portMode == PeerHostPortMode::Automatic
-                    && !listeners.keys().chain(opened.keys()).any(|t| isNetworkTransport(*t));
-                let (listener, address) = listenWithPortFallback(&self.state.link, self.state.host.clone(),
-                    PeerEndpoint { nodeId: self.state.nodeId.clone(), address: config.bindAddress.clone() },
-                    *transport, canMove).await.map_err(error)?;
-                config.bindAddress = address;
-                opened.insert(*transport, listener);
+                let mut socket = if isNetworkTransport(*transport) {
+                    let socket = config.bindAddress.parse::<std::net::SocketAddr>()
+                        .map_err(|_| error("Listener requires an IP address and port"))?;
+                    if config.portMode == PeerHostPortMode::Fixed && socket.port() == 0 {
+                        return Err(error("Fixed listener port must be nonzero"));
+                    }
+                    Some(socket)
+                } else { None };
+                let endpoint = PeerEndpoint { nodeId: self.state.nodeId.clone(), address: config.bindAddress.clone() };
+                let listener = match self.state.link.listen(self.state.host.clone(), endpoint.clone(), *transport).await {
+                    Ok(listener) => listener,
+                    Err(message) if config.portMode == PeerHostPortMode::Automatic
+                        && socket.is_some_and(|socket| socket.port() != 0)
+                        && !listeners.keys().chain(opened.keys()).any(|t| isNetworkTransport(*t))
+                        && isAddressInUse(&message) => {
+                        // Reuse the last assigned port when available, preserving
+                        // reconnects without LAN discovery. A collision delegates
+                        // allocation to the Host once, with no port scanning.
+                        let socket = socket.as_mut().unwrap();
+                        socket.set_port(0);
+                        self.state.link.listen(self.state.host.clone(),
+                            PeerEndpoint { address: socket.to_string(), ..endpoint }, *transport)
+                            .await.map_err(error)?
+                    }
+                    Err(message) => return Err(error(message)),
+                };
+                opened.insert(*transport, listener.clone());
+                if isNetworkTransport(*transport) {
+                    config.bindAddress = listener.localAddress()
+                        .ok_or_else(|| error("Network listener did not report its bound address"))?;
+                }
             }
             let mut advertisements = Vec::new();
             if config.discoveryEnabled && capabilities.discoveryAdvertisement && requested.iter().any(|t| isNetworkTransport(*t)) {
@@ -979,7 +1001,7 @@ impl RuntimePeerService for HostRuntimePeerService {
             if config.bindAddress != previousAddress {
                 config.updatedAt = currentTimeMillis();
                 self.state.store.saveHostConfig(&config).map_err(error)?;
-                operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!("Listener port occupied; moved from {previousAddress} to {}", config.bindAddress));
+                operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!("Listener bound to {}", config.bindAddress));
             }
             Ok::<_, CoreLinkError>(advertisements)
         }.await;
@@ -1170,95 +1192,15 @@ mod discovery_ranking_tests {
     }
 }
 
-fn isNetworkTransport(transport: PeerTransport) -> bool {
-    matches!(transport, PeerTransport::Http | PeerTransport::WebSocket | PeerTransport::Tcp)
-}
-
-// PeerLink currently exposes Host bind errors as strings. Only address-in-use
-// errors qualify for retry; permissions, invalid addresses and missing Hosts do not.
+/// Host bind failures currently cross the PeerLink boundary as strings.
 fn isAddressInUse(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("address already in use") || message.contains("os error 48")
         || message.contains("os error 98") || message.contains("os error 10048")
 }
 
-async fn listenWithPortFallback(
-    link: &dyn PeerLink, host: Arc<HostManager>, mut endpoint: PeerEndpoint,
-    transport: PeerTransport, automatic: bool,
-) -> Result<(Arc<dyn PeerListener>, String), String> {
-    let mut socket = if isNetworkTransport(transport) {
-        Some(endpoint.address.parse::<std::net::SocketAddr>().map_err(|_| "Listener requires an IP address and port".to_string())?)
-    } else { None };
-    // Port zero cannot be advertised correctly by the current PeerListener API.
-    if let Some(address) = socket.as_mut() {
-        if address.port() == 0 {
-            if !automatic { return Err("Fixed listener port must be nonzero".into()); }
-            address.set_port(37195);
-            endpoint.address = address.to_string();
-        }
-    }
-    for attempt in 0..128 {
-        match link.listen(host.clone(), endpoint.clone(), transport).await {
-            Ok(listener) => return Ok((listener, endpoint.address)),
-            Err(e) if automatic && socket.is_some() && isAddressInUse(&e) && attempt < 127 => {
-                let address = socket.as_mut().unwrap();
-                address.set_port(if address.port() == u16::MAX { 49152 } else { address.port() + 1 });
-                endpoint.address = address.to_string();
-            }
-            Err(e) => return Err(format!("Cannot listen on {}: {e}", endpoint.address)),
-        }
-    }
-    unreachable!()
-}
-
-#[cfg(test)]
-mod port_fallback_tests {
-    use super::*;
-    struct Listener;
-    #[async_trait]
-    impl PeerListener for Listener {
-        async fn accept(&self) -> Result<Option<Arc<dyn PeerConnection>>, String> { Ok(None) }
-        async fn close(&self) {}
-    }
-    struct Link {
-        addresses: Mutex<Vec<String>>,
-        failures: usize,
-        error: &'static str,
-    }
-    #[async_trait]
-    impl PeerLink for Link {
-        async fn connect(&self, _: Arc<HostManager>, _: PeerEndpoint, _: PeerEndpoint, _: PeerTransport) -> Result<Arc<dyn PeerConnection>, String> { unreachable!() }
-        async fn listen(&self, _: Arc<HostManager>, source: PeerEndpoint, _: PeerTransport) -> Result<Arc<dyn PeerListener>, String> {
-            let mut addresses = self.addresses.lock().unwrap();
-            addresses.push(source.address);
-            if addresses.len() <= self.failures { Err(self.error.into()) } else { Ok(Arc::new(Listener)) }
-        }
-    }
-    async fn bind(link: &Link, address: &str, automatic: bool) -> Result<(Arc<dyn PeerListener>, String), String> {
-        listenWithPortFallback(link, Arc::new(HostManager::default()), PeerEndpoint { nodeId: "test".into(), address: address.into() }, PeerTransport::Http, automatic).await
-    }
-    #[tokio::test]
-    async fn automatic_skips_multiple_occupied_ports() {
-        let link = Link { addresses: Mutex::new(vec![]), failures: 2, error: "Address already in use (os error 48)" };
-        assert_eq!(bind(&link, "0.0.0.0:37195", true).await.unwrap().1, "0.0.0.0:37197");
-        assert_eq!(*link.addresses.lock().unwrap(), ["0.0.0.0:37195", "0.0.0.0:37196", "0.0.0.0:37197"]);
-    }
-    #[tokio::test]
-    async fn fixed_and_non_collision_errors_do_not_retry() {
-        for (automatic, error) in [(false, "Address already in use (os error 98)"), (true, "Permission denied"), (true, "HTTP server Host is not installed")] {
-            let link = Link { addresses: Mutex::new(vec![]), failures: 200, error };
-            assert!(bind(&link, "127.0.0.1:37195", automatic).await.is_err());
-            assert_eq!(link.addresses.lock().unwrap().len(), 1);
-        }
-    }
-    #[tokio::test]
-    async fn ipv6_wraps_without_selecting_zero_and_retries_are_bounded() {
-        let link = Link { addresses: Mutex::new(vec![]), failures: 1, error: "os error 10048" };
-        assert_eq!(bind(&link, "[::]:65535", true).await.unwrap().1, "[::]:49152");
-        let link = Link { addresses: Mutex::new(vec![]), failures: 200, error: "os error 98" };
-        assert!(bind(&link, "127.0.0.1:37195", true).await.is_err());
-        assert_eq!(link.addresses.lock().unwrap().len(), 128);
-    }
+fn isNetworkTransport(transport: PeerTransport) -> bool {
+    matches!(transport, PeerTransport::Http | PeerTransport::WebSocket | PeerTransport::Tcp)
 }
 
 #[cfg(test)]

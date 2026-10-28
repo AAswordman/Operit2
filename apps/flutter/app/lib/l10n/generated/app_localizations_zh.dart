@@ -3690,13 +3690,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsPeerPortModeHelp =>
-      '固定模式使用填写的 IP 和端口，适用于内网穿透和端口映射。固定端口被占用时会报错，不会改变监听地址。';
+      '默认由系统分配可用端口，并通过局域网发现公布。固定模式使用填写的监听地址和端口，端口被占用时会报错。';
 
   @override
   String get settingsPeerPortMode => '端口分配方式';
 
   @override
-  String get settingsPeerPortModeFixed => '固定 IP 和端口';
+  String get settingsPeerPortModeFixed => '固定监听地址和端口';
 
   @override
   String get settingsPeerPortModeAutomatic => '自动分配端口';
@@ -3730,7 +3730,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsPeerBindPortHelp => '固定模式使用此端口监听。';
 
   @override
-  String get settingsPeerBindPortAutomaticHelp => '自动模式会从此端口开始选择空闲端口。';
+  String get settingsPeerBindPortAutomaticHelp => '由系统分配可用端口；启动后显示实际端口。';
 
   @override
   String get settingsPeerDiscoveryNeedsTransport => '开启允许被搜索前，请至少选择一种暴露方式。';

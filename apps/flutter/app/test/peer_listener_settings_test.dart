@@ -12,10 +12,10 @@ import 'package:operit2/ui/features/settings/runtime/PeerListenerSettings.dart';
 
 class TestBridge extends OperitRuntimeBridge {
   Map<String, Object?>? config = {
-    'bindAddress': '0.0.0.0:37195',
+    'bindAddress': '0.0.0.0:0',
     'transports': ['http', 'webSocket'],
     'discoveryEnabled': true,
-    'portMode': 'fixed',
+    'portMode': 'automatic',
     'updatedAt': 1,
   };
   Map<String, Object?> capabilities = {
@@ -167,7 +167,7 @@ void main() {
           .selected,
       true,
     );
-    expect(find.text('Fixed address and port'), findsOneWidget);
+    expect(find.text('Automatic port'), findsOneWidget);
     expect(find.text('Save'), findsOneWidget);
   });
   testWidgets('discovery changes are applied only by the footer save', (
@@ -293,6 +293,8 @@ void main() {
     tester,
   ) async {
     final bridge = TestBridge();
+    bridge.config!['portMode'] = 'fixed';
+    bridge.config!['bindAddress'] = '0.0.0.0:37195';
     await mount(tester, bridge);
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
@@ -305,6 +307,7 @@ void main() {
   ) async {
     final bridge = TestBridge();
     bridge.config!['bindAddress'] = '[::1]:41234';
+    bridge.config!['portMode'] = 'fixed';
     await mount(tester, bridge);
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
@@ -338,20 +341,45 @@ void main() {
     await mount(tester, bridge);
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
-    expect(bridge.config!['portMode'], 'fixed');
+    expect(bridge.config!['portMode'], 'automatic');
     await tester.tap(find.text('Advanced options'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Fixed address and port'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Automatic port'));
     await tester.pumpAndSettle();
     final portField = tester.widget<TextField>(
       find.byKey(const ValueKey('peer-bind-port')),
     );
-    expect(portField.controller?.text, '37195');
+    expect(portField.controller?.text, '0');
     expect(portField.enabled, isFalse);
     await save(tester);
+    expect(bridge.writes.last['bindAddress'], '0.0.0.0:0');
     expect(bridge.config!['bindAddress'], '0.0.0.0:37196');
+    expect(bridge.config!['portMode'], 'automatic');
+  });
+  testWidgets('saving automatic mode preserves its last assigned port', (
+    tester,
+  ) async {
+    final bridge = TestBridge();
+    bridge.config!['bindAddress'] = '0.0.0.0:41234';
+    await mount(tester, bridge);
+    await save(tester);
+    expect(bridge.writes.last['bindAddress'], '0.0.0.0:41234');
+    expect(bridge.config!['portMode'], 'automatic');
+  });
+  testWidgets('switching from fixed to automatic requests system allocation', (
+    tester,
+  ) async {
+    final bridge = TestBridge()..selectedAddress = '0.0.0.0:41234';
+    bridge.config!['portMode'] = 'fixed';
+    bridge.config!['bindAddress'] = '0.0.0.0:37195';
+    await mount(tester, bridge);
+    await tester.tap(find.text('Advanced options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fixed listen address and port'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Automatic port').last);
+    await tester.pumpAndSettle();
+    await save(tester);
+    expect(bridge.writes.last['bindAddress'], '0.0.0.0:0');
+    expect(bridge.config!['bindAddress'], '0.0.0.0:41234');
     expect(bridge.config!['portMode'], 'automatic');
   });
   testWidgets('listener failures report the cause without rewriting config', (
@@ -365,7 +393,7 @@ void main() {
     await save(tester);
     expect(bridge.config!['transports'], ['http', 'webSocket']);
     expect(bridge.config!['discoveryEnabled'], true);
-    expect(bridge.config!['portMode'], 'fixed');
+    expect(bridge.config!['portMode'], 'automatic');
     expect(bridge.writes.length, writesBefore + 1);
     expect(bridge.calls.where((call) => call == 'startListening').length, 1);
     expect(find.textContaining('unsupported transport'), findsOneWidget);

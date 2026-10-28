@@ -363,6 +363,7 @@ fn browserPreflight(request: &ServerRequest) -> ServerResponse {
 // no global server registry and no second socket when exposing both carriers.
 pub(super) type ServerRegistry = Mutex<BTreeMap<(usize, String), Weak<SharedServer>>>;
 pub(super) struct SharedServer {
+    address: String,
     handlers: Arc<StdMutex<BTreeMap<PeerTransport, HttpServerHandler>>>,
     stop: watch::Sender<bool>,
     done: watch::Receiver<Option<Result<(), String>>>,
@@ -396,6 +397,7 @@ impl Drop for Listener {
 }
 #[async_trait]
 impl PeerListener for Listener {
+    fn localAddress(&self) -> Option<String> { Some(self.server.address.clone()) }
     async fn accept(&self) -> Result<Option<Arc<dyn PeerConnection>>, String> {
         let mut rx = self.incoming.lock().await;
         let mut stop = self.stop.subscribe();
@@ -447,6 +449,7 @@ pub(super) async fn serve(
         Some(server) if !*server.stop.borrow() => server,
         _ => {
             let socket = provider.bind(address).await.map_err(|e| e.to_string())?;
+            let boundAddress = socket.localAddress().map_err(|e| e.to_string())?.to_string();
             let (stop, mut stopped) = watch::channel(false);
             let (done, finished) = watch::channel(None);
             let handlers = Arc::new(StdMutex::new(
@@ -487,11 +490,14 @@ pub(super) async fn serve(
                 )
                 .map_err(|e| e.to_string())?;
             let server = Arc::new(SharedServer {
+                address: boundAddress.clone(),
                 handlers,
                 stop,
                 done: finished,
             });
-            registry.insert(key, Arc::downgrade(&server));
+            // Register the concrete socket so HTTP and WebSocket share the
+            // same server after a port-zero bind. Port zero never reuses one.
+            registry.insert((key.0, boundAddress), Arc::downgrade(&server));
             server
         }
     };

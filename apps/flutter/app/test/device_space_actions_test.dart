@@ -12,10 +12,10 @@ import 'space_join_dialog_test.dart' show JoinBridge, joinRequest;
 
 class DeviceBridge extends JoinBridge {
   Map<String, Object?>? config = {
-    'bindAddress': '0.0.0.0:37195',
+    'bindAddress': '0.0.0.0:0',
     'transports': ['http', 'webSocket'],
     'discoveryEnabled': true,
-    'portMode': 'fixed',
+    'portMode': 'automatic',
     'updatedAt': 1,
   };
   Completer<Uint8List>? discovery;

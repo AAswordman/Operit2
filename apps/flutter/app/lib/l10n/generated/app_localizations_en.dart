@@ -3840,13 +3840,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsPeerPortModeHelp =>
-      'Fixed mode keeps the entered IP and port for tunnels and port forwarding. A busy fixed port reports an error without changing the address.';
+      'By default, the system assigns an available port and LAN discovery advertises it. Fixed mode uses the entered listen address and port and reports an error if the port is busy.';
 
   @override
   String get settingsPeerPortMode => 'Port allocation';
 
   @override
-  String get settingsPeerPortModeFixed => 'Fixed address and port';
+  String get settingsPeerPortModeFixed => 'Fixed listen address and port';
 
   @override
   String get settingsPeerPortModeAutomatic => 'Automatic port';
@@ -3883,7 +3883,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsPeerBindPortAutomaticHelp =>
-      'Automatic mode selects a free port starting from this value.';
+      'The system assigns an available port. The actual port appears after startup.';
 
   @override
   String get settingsPeerDiscoveryNeedsTransport =>

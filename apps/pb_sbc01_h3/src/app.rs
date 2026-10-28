@@ -39,9 +39,18 @@ pub async fn run() -> Result<(), String> {
     // 原配置文件是唯一来源；命令行只覆盖显式给出的字段。
     let store = PeerStateStore::new(core.nodeRuntime().runtimeStorageHost());
     let mut listenerConfig = store.hostConfig()?.ok_or("Node listener preferences are not initialized")?;
-    if let Some(bind) = config.bindAddress { listenerConfig.bindAddress = bind; }
-    store.saveHostConfig(&listenerConfig)?;
+    if let Some(bind) = config.bindAddress {
+        listenerConfig.bindAddress = bind;
+        listenerConfig.portMode = if listenerConfig.bindAddress.parse::<std::net::SocketAddr>()
+            .map_err(|error| error.to_string())?.port() == 0 {
+            operit_node_runtime::PeerStateStore::PeerHostPortMode::Automatic
+        } else {
+            operit_node_runtime::PeerStateStore::PeerHostPortMode::Fixed
+        };
+        store.saveHostConfig(&listenerConfig)?;
+    }
     core.accessServices().startListening(vec![PeerTransport::Http]).await.map_err(|error| error.to_string())?;
+    let listenerConfig = store.hostConfig()?.ok_or("Node listener preferences are not initialized")?;
     boardProxy.setExpression("online".into()).await.map_err(|error| error.to_string())?;
     println!("operit-pb-sbc01-h3 listening {} as {}", listenerConfig.bindAddress, core.deviceInfo().displayName());
     println!("PB_SBC01_H3 face state file: {}", board.robotFaceStatePath().display());

@@ -6833,7 +6833,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPeerPortModeHelp.
   ///
   /// In en, this message translates to:
-  /// **'Fixed mode keeps the entered IP and port for tunnels and port forwarding. A busy fixed port reports an error without changing the address.'**
+  /// **'By default, the system assigns an available port and LAN discovery advertises it. Fixed mode uses the entered listen address and port and reports an error if the port is busy.'**
   String get settingsPeerPortModeHelp;
 
   /// No description provided for @settingsPeerPortMode.
@@ -6845,7 +6845,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPeerPortModeFixed.
   ///
   /// In en, this message translates to:
-  /// **'Fixed address and port'**
+  /// **'Fixed listen address and port'**
   String get settingsPeerPortModeFixed;
 
   /// No description provided for @settingsPeerPortModeAutomatic.
@@ -6905,7 +6905,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPeerBindPortAutomaticHelp.
   ///
   /// In en, this message translates to:
-  /// **'Automatic mode selects a free port starting from this value.'**
+  /// **'The system assigns an available port. The actual port appears after startup.'**
   String get settingsPeerBindPortAutomaticHelp;
 
   /// No description provided for @settingsPeerDiscoveryNeedsTransport.

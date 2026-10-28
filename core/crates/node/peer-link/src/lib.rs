@@ -72,6 +72,9 @@ pub trait PeerConnection: Send + Sync {
 /// Accepts connections only; accepting never implies successful authentication or pairing.
 #[async_trait]
 pub trait PeerListener: Send + Sync {
+    /// Actual bound socket for network listeners, including the Host-selected port.
+    /// Non-network transports have no socket address.
+    fn localAddress(&self) -> Option<String> { None }
     /// Accepted connections use source = local endpoint, target = remote endpoint.
     /// None means the listener has closed. Remote identity remains untrusted runtime input.
     async fn accept(&self) -> Result<Option<Arc<dyn PeerConnection>>, String>;

@@ -168,13 +168,14 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       return false;
     }
     final host = _bindHost.text.trim().replaceAll(RegExp(r'^\[|\]$'), '');
+    final automatic = _portMode == PeerHostPortMode.automatic;
     final portText = _bindPort.text.trim();
     final port = int.tryParse(portText);
     if (host.isEmpty) {
       setState(() => _error = l10n.settingsPeerAddressRequired);
       return false;
     }
-    if (port == null || port < 1 || port > 65535) {
+    if (port == null || port < (automatic ? 0 : 1) || port > 65535) {
       setState(() => _error = l10n.settingsPeerPortRequired);
       return false;
     }
@@ -344,18 +345,23 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
                     isExpanded: true,
                     items: [
                       DropdownMenuItem(
-                        value: PeerHostPortMode.fixed,
-                        child: Text(l10n.settingsPeerPortModeFixed),
-                      ),
-                      DropdownMenuItem(
                         value: PeerHostPortMode.automatic,
                         child: Text(l10n.settingsPeerPortModeAutomatic),
+                      ),
+                      DropdownMenuItem(
+                        value: PeerHostPortMode.fixed,
+                        child: Text(l10n.settingsPeerPortModeFixed),
                       ),
                     ],
                     onChanged: enabled
                         ? (value) {
                             if (value != null) {
-                              setState(() => _portMode = value);
+                              setState(() {
+                                _portMode = value;
+                                if (value == PeerHostPortMode.automatic) {
+                                  _bindPort.text = '0';
+                                }
+                              });
                             }
                           }
                         : null,

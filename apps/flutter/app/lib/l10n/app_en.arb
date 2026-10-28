@@ -2024,9 +2024,9 @@
       }
     }
   },
-  "settingsPeerPortModeHelp": "Fixed mode keeps the entered IP and port for tunnels and port forwarding. A busy fixed port reports an error without changing the address.",
+  "settingsPeerPortModeHelp": "By default, the system assigns an available port and LAN discovery advertises it. Fixed mode uses the entered listen address and port and reports an error if the port is busy.",
   "settingsPeerPortMode": "Port allocation",
-  "settingsPeerPortModeFixed": "Fixed address and port",
+  "settingsPeerPortModeFixed": "Fixed listen address and port",
   "settingsPeerPortModeAutomatic": "Automatic port",
   "settingsPeerAdvanced": "Advanced options",
   "settingsPeerDiscoveryUnavailable": "This Host cannot advertise listeners on the local network. Direct connections remain available for supported transports.",
@@ -2043,7 +2043,7 @@
   "settingsPeerBindAddressHelp": "Example: 0.0.0.0 for LAN access; IPv6 addresses are also supported.",
   "settingsPeerBindPort": "Listen port",
   "settingsPeerBindPortHelp": "The port used by fixed listener mode.",
-  "settingsPeerBindPortAutomaticHelp": "Automatic mode selects a free port starting from this value.",
+  "settingsPeerBindPortAutomaticHelp": "The system assigns an available port. The actual port appears after startup.",
   "settingsPeerDiscoveryNeedsTransport": "Select at least one transport before enabling discovery.",
   "settingsPeerPortConflict": "TCP cannot currently share a listen port with HTTP/WebSocket. Select TCP or HTTP/WebSocket.",
   "settingsPeerAddressRequired": "Enter a listen IP address.",

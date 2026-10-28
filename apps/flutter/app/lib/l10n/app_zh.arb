@@ -2017,9 +2017,9 @@
       }
     }
   },
-  "settingsPeerPortModeHelp": "固定模式使用填写的 IP 和端口，适用于内网穿透和端口映射。固定端口被占用时会报错，不会改变监听地址。",
+  "settingsPeerPortModeHelp": "默认由系统分配可用端口，并通过局域网发现公布。固定模式使用填写的监听地址和端口，端口被占用时会报错。",
   "settingsPeerPortMode": "端口分配方式",
-  "settingsPeerPortModeFixed": "固定 IP 和端口",
+  "settingsPeerPortModeFixed": "固定监听地址和端口",
   "settingsPeerPortModeAutomatic": "自动分配端口",
   "settingsPeerAdvanced": "高级选项",
   "settingsPeerDiscoveryUnavailable": "当前 Host 不支持在局域网广播监听服务。支持的协议仍可通过地址直接连接。",
@@ -2036,7 +2036,7 @@
   "settingsPeerBindAddressHelp": "例如 0.0.0.0，允许局域网访问；也支持 IPv6 地址。",
   "settingsPeerBindPort": "监听端口",
   "settingsPeerBindPortHelp": "固定模式使用此端口监听。",
-  "settingsPeerBindPortAutomaticHelp": "自动模式会从此端口开始选择空闲端口。",
+  "settingsPeerBindPortAutomaticHelp": "由系统分配可用端口；启动后显示实际端口。",
   "settingsPeerDiscoveryNeedsTransport": "开启允许被搜索前，请至少选择一种暴露方式。",
   "settingsPeerPortConflict": "当前 TCP 不能与 HTTP/WebSocket 共用监听端口，请选择 TCP 或 HTTP/WebSocket。",
   "settingsPeerAddressRequired": "请输入监听 IP 地址。",

@@ -6,7 +6,6 @@ pub struct Esp32FirmwareConfig {
     pub wifiSsid: String,
     pub wifiPassword: String,
     pub httpPort: u16,
-    pub edgePort: u16,
 }
 
 impl Esp32FirmwareConfig {
@@ -18,7 +17,6 @@ impl Esp32FirmwareConfig {
                 .unwrap_or("")
                 .to_string(),
             httpPort: 80,
-            edgePort: 8765,
         }
     }
 
@@ -50,7 +48,6 @@ impl Esp32FirmwareConfig {
                 settings.wifiPassword.clone()
             },
             httpPort: build.httpPort,
-            edgePort: build.edgePort,
         }
     }
 }
@@ -73,7 +70,6 @@ mod tests {
             wifiSsid: String::new(),
             wifiPassword: String::new(),
             httpPort: 80,
-            edgePort: 8765,
         };
         assert!(!config.hasWifi());
 

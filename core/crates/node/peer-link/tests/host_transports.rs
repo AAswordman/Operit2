@@ -89,18 +89,19 @@ async fn pair(
     String,
 ) {
     let host = host();
-    let bind = address().await;
     let server = HostPeerLink::default()
         .listen(
             host.clone(),
             PeerEndpoint {
                 nodeId: "server".into(),
-                address: bind.clone(),
+                address: "127.0.0.1:0".into(),
             },
             transport,
         )
         .await
         .unwrap();
+    let bind = server.localAddress().unwrap();
+    assert_ne!(bind.parse::<std::net::SocketAddr>().unwrap().port(), 0);
     let scheme = if transport == PeerTransport::Http {
         "http"
     } else {
@@ -302,3 +303,45 @@ async fn websocket_final_response_survives_immediate_server_close() {
 
 #[path = "host_transports/http_batching.rs"]
 mod http_batching;
+
+/// Port-zero HTTP listeners are independent; WS attaches to the resolved socket.
+#[tokio::test]
+async fn automatic_http_listeners_are_independent_and_websocket_shares_resolved_socket() {
+    let host = host();
+    let link = HostPeerLink::default();
+    let endpoint = |address: String| PeerEndpoint {
+        nodeId: "server".into(),
+        address,
+    };
+    let first = link
+        .listen(
+            host.clone(),
+            endpoint("127.0.0.1:0".into()),
+            PeerTransport::Http,
+        )
+        .await
+        .unwrap();
+    let second = link
+        .listen(
+            host.clone(),
+            endpoint("127.0.0.1:0".into()),
+            PeerTransport::Http,
+        )
+        .await
+        .unwrap();
+    let firstAddress = first.localAddress().unwrap();
+    assert_ne!(firstAddress, second.localAddress().unwrap());
+    let ws = link
+        .listen(
+            host,
+            endpoint(firstAddress.clone()),
+            PeerTransport::WebSocket,
+        )
+        .await
+        .unwrap();
+    assert_eq!(ws.localAddress().unwrap(), firstAddress);
+    first.close().await;
+    assert!(NativeHttpServerHost.bind(&firstAddress).await.is_err());
+    ws.close().await;
+    second.close().await;
+}

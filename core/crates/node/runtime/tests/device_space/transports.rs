@@ -890,9 +890,8 @@ async fn listener_capabilities_validate_all_transports_before_binding() {
         );
     }
     peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
-    // Another process may already hold the automatic port; the fallback retry
-    // then binds twice while still binding only the requested transport.
-    assert!(binds.load(Ordering::SeqCst) >= 1);
+    assert_eq!(binds.load(Ordering::SeqCst), 1);
+    assert_ne!(store.hostConfig().unwrap().unwrap().bindAddress, "127.0.0.1:0");
     let config = store.hostConfig().unwrap().unwrap();
     assert!(config.discoveryEnabled);
     assert_eq!(
@@ -1033,5 +1032,160 @@ async fn core_discovery_returns_only_unpaired_devices_for_all_callers() {
     );
     peer.removePairedPeer("outgoing").await.unwrap();
     assert_eq!(service.discoverPeers(1).await.unwrap().len(), 3);
+    peer.stop().await.unwrap();
+}
+
+/// Automatic ports recover from collisions and reuse their allocation on restart.
+#[tokio::test]
+async fn listener_port_policy_uses_host_allocation_and_preserves_explicit_fixed_ports() {
+    use crate::HostRuntimePeerService::HostRuntimePeerService;
+    use crate::PeerStateStore::{PeerHostPortMode, PeerStateStore};
+    use operit_host_api::HostManager::HostManager;
+    use operit_host_native_common::NativeTcpHost;
+    use operit_link::protocol::LinkDeviceInfo;
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (router, _) = approvalService("port-policy");
+    let router = Arc::new(router);
+    let host = Arc::new(HostManager {
+        runtimeStorageHost: Some(router.localCore.runtimeStorageHost()),
+        tcpHost: Some(Arc::new(NativeTcpHost)),
+        hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
+        ..HostManager::default()
+    });
+    let peer = HostRuntimePeerService::new(
+        host,
+        &router,
+        LinkDeviceInfo {
+            platform: "test".into(),
+            model: "test".into(),
+            pairingIncarnation: None,
+        },
+    )
+    .unwrap();
+    let store = PeerStateStore::new(router.localCore.runtimeStorageHost());
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let occupiedAddress = occupied.local_addr().unwrap().to_string();
+    let mut config = store.hostConfig().unwrap().unwrap();
+    config.bindAddress = occupiedAddress.clone();
+    config.transports = vec![PeerTransport::Tcp];
+    config.discoveryEnabled = false;
+    store.saveHostConfig(&config).unwrap();
+    peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
+    let selected = store.hostConfig().unwrap().unwrap();
+    assert_eq!(selected.portMode, PeerHostPortMode::Automatic);
+    assert_ne!(selected.bindAddress, occupiedAddress);
+    let socket: std::net::SocketAddr = selected.bindAddress.parse().unwrap();
+    assert!(socket.ip().is_loopback());
+    assert_ne!(socket.port(), 0);
+    assert!(std::net::TcpListener::bind(socket).is_err());
+    peer.stop().await.unwrap();
+    peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
+    assert_eq!(
+        store.hostConfig().unwrap().unwrap().bindAddress,
+        selected.bindAddress
+    );
+    peer.stop().await.unwrap();
+
+    config.portMode = PeerHostPortMode::Fixed;
+    store.saveHostConfig(&config).unwrap();
+    assert!(peer.startListening(&[PeerTransport::Tcp]).await.is_err());
+    assert_eq!(
+        store.hostConfig().unwrap().unwrap().bindAddress,
+        occupiedAddress
+    );
+    drop(occupied);
+    peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
+    assert_eq!(
+        store.hostConfig().unwrap().unwrap().bindAddress,
+        occupiedAddress
+    );
+    peer.stop().await.unwrap();
+    config.bindAddress = "127.0.0.1:0".into();
+    store.saveHostConfig(&config).unwrap();
+    assert!(peer
+        .startListening(&[PeerTransport::Tcp])
+        .await
+        .unwrap_err()
+        .message
+        .contains("Fixed listener port must be nonzero"));
+}
+
+/// Default HTTP/WS listeners advertise the same nonzero socket selected by the Host.
+#[tokio::test]
+async fn automatic_default_listener_advertises_its_actual_shared_port() {
+    use crate::HostRuntimePeerService::HostRuntimePeerService;
+    use crate::PeerStateStore::{PeerHostPortMode, PeerStateStore};
+    use operit_host_api::HostManager::HostManager;
+    use operit_host_api::ServiceDiscovery::{
+        DiscoveredService, DiscoveryAdvertisement, DiscoveryCallback, DiscoverySubscription,
+        ServiceAdvertisement, ServiceDiscoveryHost,
+    };
+    use operit_host_api::{HostError, HostResult};
+    use operit_host_native_common::NativeHttpServerHost;
+    use operit_link::protocol::LinkDeviceInfo;
+
+    #[derive(Default)]
+    struct Discovery(std::sync::Mutex<Vec<ServiceAdvertisement>>);
+    struct Advertisement;
+    impl DiscoveryAdvertisement for Advertisement {}
+    impl ServiceDiscoveryHost for Discovery {
+        fn supportsAdvertisement(&self) -> bool {
+            true
+        }
+        fn advertise(
+            &self,
+            record: ServiceAdvertisement,
+        ) -> HostResult<Box<dyn DiscoveryAdvertisement>> {
+            self.0.lock().unwrap().push(record);
+            Ok(Box::new(Advertisement))
+        }
+        fn discover(&self, _: &str, _: u64) -> HostResult<Vec<DiscoveredService>> {
+            Ok(vec![])
+        }
+        fn subscribe(
+            &self,
+            _: &str,
+            _: DiscoveryCallback,
+        ) -> HostResult<Box<dyn DiscoverySubscription>> {
+            Err(HostError::new("Snapshot-only test discovery"))
+        }
+    }
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (router, _) = approvalService("automatic-default");
+    let router = Arc::new(router);
+    let discovery = Arc::new(Discovery::default());
+    let host = Arc::new(HostManager {
+        runtimeStorageHost: Some(router.localCore.runtimeStorageHost()),
+        httpServerHost: Some(Arc::new(NativeHttpServerHost)),
+        serviceDiscoveryHost: Some(discovery.clone()),
+        hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
+        ..HostManager::default()
+    });
+    let peer = HostRuntimePeerService::new(
+        host,
+        &router,
+        LinkDeviceInfo {
+            platform: "test".into(),
+            model: "test".into(),
+            pairingIncarnation: None,
+        },
+    )
+    .unwrap();
+    let store = PeerStateStore::new(router.localCore.runtimeStorageHost());
+    let initial = store.hostConfig().unwrap().unwrap();
+    assert_eq!(initial.bindAddress, "0.0.0.0:0");
+    assert_eq!(initial.portMode, PeerHostPortMode::Automatic);
+    peer.startListening(&initial.transports).await.unwrap();
+    let bound = store.hostConfig().unwrap().unwrap();
+    let address: std::net::SocketAddr = bound.bindAddress.parse().unwrap();
+    assert_ne!(address.port(), 0);
+    assert!(address.ip().is_unspecified());
+    let records = discovery.0.lock().unwrap().clone();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].port, address.port());
+    assert_eq!(records[0].properties["transports"], "http,ws");
+    assert!(std::net::TcpListener::bind(address).is_err());
     peer.stop().await.unwrap();
 }

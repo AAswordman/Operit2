@@ -97,7 +97,7 @@ fn runFirmware(
     use operit_link::protocol::LinkDeviceInfo;
     use operit_node_edge::PeerRouter::EdgePeerRouter;
     use operit_node_runtime::NodeServices::NodeServices;
-    use operit_node_runtime::PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore};
+    use operit_node_runtime::PeerStateStore::PeerStateStore;
     use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 
     esp_idf_svc::sys::link_patches();
@@ -210,7 +210,6 @@ fn runFirmware(
     logRuntimeHealth("wifi-ready");
     status.setWifiConnected(wifiMode == crate::wifi::Esp32WifiMode::Station && _wifi.stationConnected());
     let peerTransports = Esp32FirmwareConfig::peerTransports(wifiMode == crate::wifi::Esp32WifiMode::Station);
-    let peerBindAddress = format!("0.0.0.0:{}", config.edgePort);
     let _sntp = if wifiMode == crate::wifi::Esp32WifiMode::Station {
         Some(Esp32Wifi::startTimeSync()?)
     } else {
@@ -275,25 +274,12 @@ fn runFirmware(
     };
     if injectedServices.is_none() {
         let peers = PeerStateStore::new(runtimeStorage.clone());
-        let configChanged = match peers.hostConfig().map_err(HostError::new)? {
-            Some(saved) => {
-                saved.bindAddress != peerBindAddress
-                    || saved.transports != peerTransports
-                    || !saved.discoveryEnabled
-                    || saved.portMode != PeerHostPortMode::Fixed
-            }
-            None => true,
-        };
-        if configChanged {
-            peers
-                .saveHostConfig(&PeerHostConfig {
-                    bindAddress: peerBindAddress,
-                    transports: peerTransports.clone(),
-                    discoveryEnabled: true,
-                    portMode: PeerHostPortMode::Fixed,
-                    updatedAt: currentTimeMillis(),
-                })
-                .map_err(HostError::new)?;
+        let mut saved = peers.hostConfig().map_err(HostError::new)?
+            .ok_or_else(|| HostError::new("Node listener preferences are not initialized"))?;
+        if saved.transports != peerTransports {
+            saved.transports = peerTransports.clone();
+            saved.updatedAt = currentTimeMillis();
+            peers.saveHostConfig(&saved).map_err(HostError::new)?;
         }
     }
     let spaceService = operit_node_runtime::NodeSpaceService::NodeSpaceService::new(
