@@ -25,7 +25,7 @@ use crate::services::RuntimeHostInteractionService::{
     RuntimeHostInteractionToolPermissionRequest,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
-    WorkspaceBackupManager, WorkspaceFileChange,
+    WorkspaceBackupManager, WorkspaceFileChange, WorkspaceRewindOutcome,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use base64::engine::general_purpose::STANDARD;
@@ -36,6 +36,7 @@ use operit_link::{
     CoreEvent, CoreEventKind, CoreEventStream, CoreStream, CoreStreamSource, CoreValue,
 };
 use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
 use operit_model::ChatMessage::ChatMessage;
@@ -850,14 +851,53 @@ impl ChatServiceCore {
         Ok(())
     }
 
-    /// Marks the source chat as paused while route synchronization is in progress.
+    /// Compacts the source chat into a checkpoint before its Binding moves to another node.
     #[operit_route_macros::before_change_route]
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn beforeChangeRoute(&mut self, chatId: String) -> Result<(), String> {
         AppLogger::i(
             "ChatServiceCore",
-            &format!("route change paused chatId={chatId}"),
+            &format!("route change compacting chatId={chatId}"),
         );
+        let executionLease = self
+            .chatHistoryDelegate
+            .chatHistoryManager
+            .beginChatExecution(&chatId)
+            .map_err(|error| error.to_string())?;
+        let compacted = if self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
+            let Some(mut enhancedAiService) = self.newEnhancedAiServiceForChat(&chatId) else {
+                executionLease
+                    .release()
+                    .map_err(|error| error.to_string())?;
+                return Err("route change requires an initialized AI runtime".to_string());
+            };
+            match self.messageCoordinationDelegate.as_mut() {
+                Some(delegate) => {
+                    delegate
+                        .manuallySummarizeConversationForChat(
+                            &mut enhancedAiService,
+                            chatId.clone(),
+                        )
+                        .await
+                }
+                None => {
+                    executionLease
+                        .release()
+                        .map_err(|error| error.to_string())?;
+                    return Err("route change requires the coordination delegate".to_string());
+                }
+            }
+        } else {
+            false
+        };
+        executionLease
+            .release()
+            .map_err(|error| error.to_string())?;
+        if !compacted && self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
+            return Err(format!(
+                "route change could not compact the source chat: {chatId}"
+            ));
+        }
         Ok(())
     }
 
@@ -891,6 +931,14 @@ impl ChatServiceCore {
             }
         self.messageProcessingDelegate.completeCancelledTurnReceipt(&chatId, partialMessage.as_ref());
         Ok(())
+    }
+
+    /// Guides the active logical turn without cancelling its current model or tool round.
+    #[allow(non_snake_case)]
+    #[operit_route_macros::operit_core_route(binding = chatId)]
+    pub fn steerMessage(&mut self, chatId: String, messageText: String) -> Result<(), String> {
+        self.chatHistoryDelegate.requireChatExists(&chatId)?;
+        self.messageProcessingDelegate.steerMessage(chatId, messageText)
     }
 
     /// Adds one message to the queue owned by a specific chat.
@@ -1058,6 +1106,7 @@ impl ChatServiceCore {
         setAsCurrentChat: bool,
         sourceChatId: Option<String>,
         parentChatId: Option<String>,
+        workspaceId: Option<String>,
         input: Option<serde_json::Value>,
     ) -> Result<String, String> {
         let service = self
@@ -1067,7 +1116,14 @@ impl ChatServiceCore {
             .clone();
         let chatId = self
             .chatHistoryDelegate
-            .createNewChat(&service, setAsCurrentChat, sourceChatId, parentChatId, input)
+            .createNewChat(
+                &service,
+                setAsCurrentChat,
+                sourceChatId,
+                parentChatId,
+                workspaceId,
+                input,
+            )
             .await?;
         if setAsCurrentChat {
             self.initialized = true;
@@ -1213,10 +1269,15 @@ impl ChatServiceCore {
             .enhancedAiService
             .as_ref()
             .ok_or("Chat deletion requires an initialized runtime")?;
+        let backupChatId = chatId.clone();
         let deleted = self
             .chatHistoryDelegate
             .deleteChatHistory(service, chatId)
             .await?;
+        if deleted {
+            WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext())
+                .deleteChatState(Some(backupChatId));
+        }
         self.syncTokenStatisticsForCurrentChat();
         Ok(deleted)
     }
@@ -1385,6 +1446,37 @@ impl ChatServiceCore {
                 .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
             return false;
         }
+        let configuration = match enhancedAiService.resolveChatConfigurationForOptions(
+            &operit_providers::chat::EnhancedAIService::SendMessageOptions {
+                chatId: Some(currentChatId.clone()),
+                ..operit_providers::chat::EnhancedAIService::SendMessageOptions::new()
+            },
+        ).await {
+            Ok(configuration) => configuration,
+            Err(error) => {
+                self.messageProcessingDelegate
+                    .setInputProcessingStateForChat(
+                        currentChatId,
+                        InputProcessingState::Error { message: error.to_string() },
+                    );
+                return false;
+            }
+        };
+        let startTime = currentTimeMillis();
+        let pendingPlaceholder = ChatMessage {
+            sender: "summary".to_string(),
+            timestamp: ChatMessageTimestampAllocator::next(),
+            roleName: "system".to_string(),
+            sentAt: startTime,
+            ..ChatMessage::new("summary".to_string())
+        };
+        let persistedPending = self.chatHistoryDelegate.addSummaryMessage(
+            pendingPlaceholder,
+            beforeTimestamp.clone(),
+            afterTimestamp.clone(),
+            Some(currentChatId.clone()),
+        );
+
         let summaryMessage = match AIMessageManager::summarizeMemory(
             &mut enhancedAiService,
             messagesToSummarize,
@@ -1393,17 +1485,34 @@ impl ChatServiceCore {
         {
             Ok(Some(summaryMessage)) => summaryMessage,
             _ => {
+                if let Some(pending) = persistedPending {
+                    let _ = self.chatHistoryDelegate.deleteMessageByTimestamp(currentChatId.clone(), pending.timestamp);
+                }
                 self.messageProcessingDelegate
                     .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
                 return false;
             }
         };
-        self.chatHistoryDelegate.addSummaryMessage(
-            summaryMessage,
-            beforeTimestamp,
-            afterTimestamp,
-            Some(currentChatId.clone()),
-        );
+
+        if let Some(pending) = persistedPending {
+            let updated = ChatMessage {
+                parts: summaryMessage.parts,
+                inputTokens: summaryMessage.inputTokens,
+                outputTokens: summaryMessage.outputTokens,
+                waitDurationMs: summaryMessage.waitDurationMs,
+                completedAt: summaryMessage.completedAt,
+                sentAt: summaryMessage.sentAt,
+                ..pending
+            };
+            self.chatHistoryDelegate.updateSummaryMessage(updated, Some(currentChatId.clone()));
+        } else {
+            self.chatHistoryDelegate.addSummaryMessage(
+                summaryMessage,
+                beforeTimestamp,
+                afterTimestamp,
+                Some(currentChatId.clone()),
+            );
+        }
         if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
             delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
             delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
@@ -1427,6 +1536,42 @@ impl ChatServiceCore {
     /// Returns branch chats that were derived from the requested parent chat.
     pub fn getBranches(&self, parentChatId: String) -> Vec<operit_model::ChatHistory::ChatHistory> {
         self.chatHistoryDelegate.getBranches(parentChatId)
+    }
+
+    /// Manually compacts the current chat into a checkpoint, regardless of thresholds.
+    #[allow(non_snake_case)]
+    #[operit_route_macros::operit_core_route(binding = chatId)]
+    pub async fn compactChat(&mut self, chatId: Option<String>) -> Result<bool, String> {
+        let targetChatId = match chatId {
+            Some(id) if !id.trim().is_empty() => id,
+            _ => self.chatHistoryDelegate.currentChatIdFlow.value().ok_or_else(|| "No chat is active".to_string())?,
+        };
+        let executionLease = self
+            .chatHistoryDelegate
+            .chatHistoryManager
+            .beginChatExecution(&targetChatId)
+            .map_err(|error| error.to_string())?;
+        let Some(mut enhancedAiService) = self.newEnhancedAiServiceForChat(&targetChatId) else {
+            return Ok(false);
+        };
+        let compacted = match self.messageCoordinationDelegate.as_mut() {
+            Some(delegate) => {
+                let compacted = delegate
+                    .manuallySummarizeConversationForChat(
+                        &mut enhancedAiService,
+                        targetChatId.clone(),
+                    )
+                    .await;
+                self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
+                self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
+                compacted
+            }
+            None => false,
+        };
+        executionLease
+            .release()
+            .map_err(|error| error.to_string())?;
+        Ok(compacted)
     }
 
     /// Updates whether a chat is locked against destructive changes.
@@ -1495,6 +1640,35 @@ impl ChatServiceCore {
             .map(|_| ())
     }
 
+    /// Moves a chat to an existing workspace without changing mounted folders.
+    #[allow(non_snake_case)]
+    pub fn moveChatToWorkspace(
+        &mut self,
+        chatId: String,
+        workspaceId: String,
+    ) -> Result<(), String> {
+        let workspaceId = workspaceId.trim().to_string();
+        if workspaceId.is_empty() {
+            return Err("workspace id is required".to_string());
+        }
+        self.chatHistoryDelegate
+            .chatHistoryManager
+            .loadChatHistory(chatId.clone())
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("Chat does not exist: {chatId}"))?;
+        self.chatHistoryDelegate
+            .chatHistoryManager
+            .getWorkspace(&workspaceId)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("workspace does not exist: {workspaceId}"))?;
+        self.chatHistoryDelegate
+            .chatHistoryManager
+            .updateChatWorkspaceId(chatId.clone(), Some(workspaceId))
+            .map_err(|error| error.to_string())?;
+        self.chatHistoryDelegate.notifyChatWorkspaceChanged(&chatId);
+        Ok(())
+    }
+
     /// Creates the default workspace directory for a chat and returns its path.
     #[allow(non_snake_case)]
     pub fn createAndGetDefaultWorkspace(
@@ -1558,20 +1732,21 @@ impl ChatServiceCore {
     }
 
     /// Shows file changes that would be applied when rewinding before one message timestamp.
+    /// Returns `None` when the snapshot for that message is no longer retained.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn previewWorkspaceChangesForMessage(
         &mut self,
         chatId: String,
         messageTimestamp: i64,
-    ) -> Vec<WorkspaceFileChange> {
-        let Some((chatId, workspacePath, rewindTimestamp)) =
+    ) -> Option<Vec<WorkspaceFileChange>> {
+        let Some((chatId, workspacePath)) =
             self.resolveWorkspaceRewindTarget(chatId, messageTimestamp)
         else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext())
-            .previewChangesForRewind(workspacePath, rewindTimestamp, Some(chatId))
+            .previewChangesForMessage(workspacePath, messageTimestamp, Some(chatId))
     }
 
     /// Restores the bound workspace to the snapshot before one message timestamp.
@@ -1582,7 +1757,10 @@ impl ChatServiceCore {
         chatId: String,
         messageTimestamp: i64,
     ) -> bool {
-        self.rewindWorkspaceForMessageTimestamp(chatId, messageTimestamp)
+        !matches!(
+            self.rewindWorkspaceForMessageTimestamp(chatId, messageTimestamp),
+            WorkspaceRewindOutcome::Unavailable
+        )
     }
 
     /// Restores the bound workspace before one timestamp without crossing route again.
@@ -1591,18 +1769,14 @@ impl ChatServiceCore {
         &mut self,
         chatId: String,
         messageTimestamp: i64,
-    ) -> bool {
-        let Some((chatId, workspacePath, rewindTimestamp)) =
+    ) -> WorkspaceRewindOutcome {
+        let Some((chatId, workspacePath)) =
             self.resolveWorkspaceRewindTarget(chatId, messageTimestamp)
         else {
-            return false;
+            return WorkspaceRewindOutcome::NoRestoreNeeded;
         };
-        WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext()).syncState(
-            workspacePath,
-            rewindTimestamp,
-            Some(chatId),
-        );
-        true
+        WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext())
+            .restoreWorkspaceForMessage(workspacePath, messageTimestamp, Some(chatId))
     }
 
     /// Rolls an explicit chat back to a prior message timestamp.
@@ -1625,9 +1799,14 @@ impl ChatServiceCore {
         if targetMessage.sender != "user" {
             return None;
         }
-        self.rewindWorkspaceForMessageTimestamp(chatId.clone(), messageTimestamp);
+        if matches!(
+            self.rewindWorkspaceForMessageTimestamp(chatId.clone(), messageTimestamp),
+            WorkspaceRewindOutcome::Unavailable
+        ) {
+            return None;
+        }
         self.chatHistoryDelegate
-            .truncateChatHistoryForChat(chatId, Some(messageTimestamp));
+            .truncateChatHistoryForChat(chatId.clone(), Some(messageTimestamp));
         Some(stripXmlLikeTags(&targetMessage.displayText()))
     }
 
@@ -1652,7 +1831,12 @@ impl ChatServiceCore {
         if targetMessage.sender != "user" {
             return false;
         }
-        self.rewindWorkspaceForMessageTimestamp(chatId.clone(), messageTimestamp);
+        if matches!(
+            self.rewindWorkspaceForMessageTimestamp(chatId.clone(), messageTimestamp),
+            WorkspaceRewindOutcome::Unavailable
+        ) {
+            return false;
+        }
         self.chatHistoryDelegate
             .truncateChatHistoryForChat(chatId.clone(), Some(messageTimestamp));
         self.sendUserMessage(
@@ -1702,18 +1886,13 @@ impl ChatServiceCore {
         &self,
         chatId: String,
         messageTimestamp: i64,
-    ) -> Option<(String, String, i64)> {
+    ) -> Option<(String, String)> {
         let currentMessages = self
             .chatHistoryDelegate
             .chatMessagesSnapshotForChat(chatId.clone());
-        let targetIndex = currentMessages
+        currentMessages
             .iter()
             .position(|message| message.timestamp == messageTimestamp)?;
-        let rewindTimestamp = if targetIndex > 0 {
-            currentMessages[targetIndex - 1].timestamp
-        } else {
-            0
-        };
         let currentChat = self
             .chatHistoryDelegate
             .chatHistoriesFlow
@@ -1724,7 +1903,7 @@ impl ChatServiceCore {
             .workspacePrimaryPath
             .clone()
             .filter(|value| !value.trim().is_empty())?;
-        Some((chatId, workspacePath, rewindTimestamp))
+        Some((chatId, workspacePath))
     }
 
     /// Clears the token counters associated with the current chat service.
@@ -1842,7 +2021,7 @@ impl ChatServiceCore {
             .showToast("已添加粘贴文本附件".to_string());
     }
 
-    /// Adds the supplied pasted image as a clean-on-exit file attachment.
+    /// Adds the supplied pasted image as a persisted chat-attachment file.
     #[allow(non_snake_case)]
     fn attachPastedImage(&mut self, payloadJson: &str) {
         let payload: PastedImageAttachmentPayload = match serde_json::from_str(payloadJson) {
@@ -2254,7 +2433,7 @@ impl ChatServiceCore {
             return Err("Chat changed while uploading the attachment".to_string());
         }
         super::AttachmentTransferManager::validateAttachmentFileName(&attachment.fileName)?;
-        let directory = OperitPaths::cleanOnExitDir()?;
+        let directory = OperitPaths::chatAttachmentsDir()?;
         let path = Path::new(&attachment.filePath);
         if !path.starts_with(&directory)
             || path
@@ -2441,7 +2620,7 @@ impl ChatServiceCore {
         chatId: String,
         input: Option<serde_json::Value>,
     ) -> Result<String, String> {
-        self.createNewChat(false, Some(chatId), None, input).await
+        self.createNewChat(false, Some(chatId), None, None, input).await
     }
 
     /// Returns messages from the Core selected by Binding for one explicit chat.
@@ -3217,7 +3396,7 @@ fn fileUrlToPathBuf(url: &Url) -> Result<PathBuf, ()> {
 }
 
 #[allow(non_snake_case)]
-/// Copies an attachment into clean-on-exit storage through the supplied file-system host.
+/// Copies an attachment into persistent chat-attachment storage through the supplied file-system host.
 fn createTempFileFromPath(
     fileSystemHost: &dyn FileSystemHost,
     sourcePath: &Path,
@@ -3228,11 +3407,11 @@ fn createTempFileFromPath(
         .map(|(_, extension)| extension)
         .filter(|extension| !extension.trim().is_empty())
         .unwrap_or("jpg");
-    let externalDir = OperitPaths::cleanOnExitDir()?;
+    let externalDir = OperitPaths::chatAttachmentsDir()?;
     let externalDirText = externalDir.to_string_lossy();
     fileSystemHost
         .makeDirectory(&externalDirText, true)
-        .map_err(|error| format!("无法创建附件临时目录: {}", error.message))?;
+        .map_err(|error| format!("无法创建附件目录: {}", error.message))?;
     let noMediaFile = externalDir.join(".nomedia");
     fileSystemHost
         .writeFile(&noMediaFile.to_string_lossy(), "", false)
@@ -3247,14 +3426,14 @@ fn createTempFileFromPath(
         .map_err(|error| format!("无法复制附件: {}", error.message))?;
     let copied = fileSystemHost
         .fileExists(&tempFile.to_string_lossy())
-        .map_err(|error| format!("无法读取附件临时文件: {}", error.message))?;
+        .map_err(|error| format!("无法读取附件文件: {}", error.message))?;
     if !copied.exists || copied.isDirectory || copied.size == 0 {
         return Err(format!("无法添加附件: {}", sourcePath.display()));
     }
     Ok(tempFile)
 }
 
-/// Writes pasted image bytes into clean-on-exit storage through the supplied file-system host.
+/// Writes pasted image bytes into persistent chat-attachment storage through the supplied file-system host.
 #[allow(non_snake_case)]
 fn createTempFileFromBytes(
     fileSystemHost: &dyn FileSystemHost,
@@ -3267,11 +3446,11 @@ fn createTempFileFromBytes(
         .map(|(_, extension)| extension)
         .filter(|extension| !extension.trim().is_empty())
         .ok_or_else(|| format!("无法添加粘贴图片: {fileName}"))?;
-    let externalDir = OperitPaths::cleanOnExitDir()?;
+    let externalDir = OperitPaths::chatAttachmentsDir()?;
     let externalDirText = externalDir.to_string_lossy();
     fileSystemHost
         .makeDirectory(&externalDirText, true)
-        .map_err(|error| format!("无法创建附件临时目录: {}", error.message))?;
+        .map_err(|error| format!("无法创建附件目录: {}", error.message))?;
     let noMediaFile = externalDir.join(".nomedia");
     fileSystemHost
         .writeFile(&noMediaFile.to_string_lossy(), "", false)

@@ -272,7 +272,7 @@ pub async fn invokeToolPkgIpc(
             eprintln!(
                 "event=compose_ipc_timing kind=target traceId={} operation={} wallMillis={} elapsedMs={} {}",
                 timing.trace_id, channel,
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),
+                operit_host_api::TimeUtils::currentTimeMillis(),
                 timing.previous.saturating_sub(timing.started), phases,
             );
         }

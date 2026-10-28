@@ -614,9 +614,9 @@ fn format_bytes(size: i64) -> String {
     }
 }
 
-/// Writes the clean-on-exit marker and returns the target path for a clipboard image.
+/// Writes the media marker and returns the persisted target path for a clipboard image.
 fn clipboard_image_attachment_path(file_name: &str) -> Result<PathBuf, String> {
-    let dir = OperitPaths::cleanOnExitDir()?;
+    let dir = OperitPaths::chatAttachmentsDir()?;
     fs::create_dir_all(&dir)
         .map_err(|error| format!("clipboard image directory creation failed: {error}"))?;
     let marker = dir.join(".nomedia");

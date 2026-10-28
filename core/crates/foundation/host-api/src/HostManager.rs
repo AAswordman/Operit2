@@ -4,7 +4,7 @@ use crate::ServiceDiscovery::ServiceDiscoveryHost;
 use crate::{
     ArchiveStagingHost, AudioPlaybackHost, BluetoothHost, BrowserAutomationHost,
     BrowserAutomationHostFactory,
-    BrowserSessionHost, ComposeDslWebViewHost, DeviceIoHost, FileSystemHost,
+    BrowserSessionHost, ClipboardHost, ComposeDslWebViewHost, DeviceIoHost, FileSystemHost,
     HostEnvironmentDescriptor, HostJavaScriptRuntimeHost, HostRuntimeEventHost,
     HostRuntimeEventSchedulerHost, HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost,
     LocalInferenceHost, ManagedRuntimeHost, PluginSdkIpc::PluginSdkIpcHost, RobotFaceHost,
@@ -150,6 +150,7 @@ pub struct HostManager {
     pub webSocketHost: Option<Arc<dyn WebSocketHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub toastHost: Option<Arc<dyn ToastHost>>,
+    pub clipboardHost: Option<Arc<dyn ClipboardHost>>,
     pub audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
     pub bluetoothHost: Option<Arc<dyn BluetoothHost>>,
     pub deviceIoHost: Option<Arc<dyn DeviceIoHost>>,
@@ -196,6 +197,7 @@ impl HostManager {
             serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
+            clipboardHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -238,6 +240,7 @@ impl HostManager {
             serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
+            clipboardHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -283,6 +286,7 @@ impl HostManager {
             serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
+            clipboardHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -329,6 +333,7 @@ impl HostManager {
             serviceDiscoveryHost: None,
             systemOperationHost: Some(systemOperationHost),
             toastHost: None,
+            clipboardHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -386,6 +391,7 @@ impl HostManager {
             serviceDiscoveryHost: None,
             systemOperationHost: Some(systemOperationHost),
             toastHost: None,
+            clipboardHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -421,6 +427,13 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withToastHost(mut self, toastHost: Arc<dyn ToastHost>) -> Self {
         self.toastHost = Some(toastHost);
+        self
+    }
+
+    /// Adds frontend-owned system clipboard writing.
+    #[allow(non_snake_case)]
+    pub fn withClipboardHost(mut self, clipboardHost: Arc<dyn ClipboardHost>) -> Self {
+        self.clipboardHost = Some(clipboardHost);
         self
     }
 

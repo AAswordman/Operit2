@@ -37,6 +37,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -1143,12 +1144,15 @@ pub struct BrowserSessionSnapshot {
     pub resultJson: String,
 }
 
+/// Browser session hosts answer from the owner application UI, so every call can
+/// wait for a remote round trip; implementations must not block the caller.
+#[async_trait(?Send)]
 pub trait BrowserSessionHost: Send + Sync {
     /// Lists interactive browser sessions owned by the host.
-    fn listBrowserSessions(&self) -> HostResult<Vec<BrowserSessionInfo>>;
+    async fn listBrowserSessions(&self) -> HostResult<Vec<BrowserSessionInfo>>;
 
     /// Creates an interactive browser session on the host.
-    fn createBrowserSession(
+    async fn createBrowserSession(
         &self,
         initialUrl: &str,
         userAgent: Option<&str>,
@@ -1156,7 +1160,7 @@ pub trait BrowserSessionHost: Send + Sync {
     ) -> HostResult<BrowserSessionInfo>;
 
     /// Updates host-owned browser session request metadata.
-    fn updateBrowserSession(
+    async fn updateBrowserSession(
         &self,
         sessionId: &str,
         userAgent: Option<&str>,
@@ -1164,16 +1168,16 @@ pub trait BrowserSessionHost: Send + Sync {
     ) -> HostResult<BrowserSessionInfo>;
 
     /// Submits a semantic browser command to the host session.
-    fn submitBrowserCommand(
+    async fn submitBrowserCommand(
         &self,
         command: BrowserSessionCommand,
     ) -> HostResult<BrowserSessionCommandResult>;
 
     /// Reads the latest host-owned browser session snapshot.
-    fn getBrowserSessionSnapshot(&self, sessionId: &str) -> HostResult<BrowserSessionSnapshot>;
+    async fn getBrowserSessionSnapshot(&self, sessionId: &str) -> HostResult<BrowserSessionSnapshot>;
 
     /// Closes a host-owned browser session.
-    fn closeBrowserSession(&self, sessionId: &str) -> HostResult<BrowserSessionCommandResult>;
+    async fn closeBrowserSession(&self, sessionId: &str) -> HostResult<BrowserSessionCommandResult>;
 }
 
 /// Selects the single source used by a Compose DSL file-picker request.
@@ -2893,6 +2897,11 @@ pub trait ToastHost: Send + Sync {
     fn toast(&self, message: &str) -> HostResult<()>;
 }
 
+pub trait ClipboardHost: Send + Sync {
+    /// Replaces the system clipboard text and returns the stored text.
+    fn setClipboardText(&self, text: &str) -> HostResult<String>;
+}
+
 impl<F> ToastHost for F
 where
     F: Fn(&str) -> HostResult<()> + Send + Sync,
@@ -2900,6 +2909,16 @@ where
     /// Invokes the frontend-owned toast presenter.
     fn toast(&self, message: &str) -> HostResult<()> {
         self(message)
+    }
+}
+
+impl<F> ClipboardHost for F
+where
+    F: Fn(&str) -> HostResult<String> + Send + Sync,
+{
+    /// Invokes the frontend-owned clipboard writer.
+    fn setClipboardText(&self, text: &str) -> HostResult<String> {
+        self(text)
     }
 }
 
@@ -2950,8 +2969,24 @@ pub trait FileSystemHost: Send + Sync {
     fn readFile(&self, path: &str) -> HostResult<String>;
     fn readFileWithLimit(&self, path: &str, maxBytes: usize) -> HostResult<String>;
     fn readFileBytes(&self, path: &str) -> HostResult<Vec<u8>>;
+    /// Reads one bounded byte range without materializing the complete file.
+    /// Streaming hosts must override this; unsupported hosts fail explicitly.
+    fn readFileBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let _ = (path, offset, length);
+        Err(HostError::new(
+            "File system host does not expose bounded range reads",
+        ))
+    }
     fn writeFile(&self, path: &str, content: &str, append: bool) -> HostResult<()>;
     fn writeFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
+    /// Appends bytes to a binary file, creating it when missing.
+    /// Streaming hosts must override this; unsupported hosts fail explicitly.
+    fn appendFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let _ = (path, content);
+        Err(HostError::new(
+            "File system host does not expose binary appends",
+        ))
+    }
     fn deleteFile(&self, path: &str, recursive: bool) -> HostResult<()>;
     fn fileExists(&self, path: &str) -> HostResult<FileExistence>;
     fn moveFile(&self, source: &str, destination: &str) -> HostResult<()>;

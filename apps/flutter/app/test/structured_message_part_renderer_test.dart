@@ -78,6 +78,7 @@ void main() {
               xmlStream: const Stream<String>.empty(),
               xmlMarkdownEventStream: markdownController.stream,
               showThinkingProcess: true,
+              initialThinkingExpanded: true,
               splitMarkdownContent: _splitMarkdownContent,
             ),
           ),
@@ -131,7 +132,7 @@ void main() {
     expect(find.text('✓ Task completed'), findsOneWidget);
   });
 
-  testWidgets('uses compact rendering for completed structured tool calls', (
+  testWidgets('uses the shared tool row for completed structured tool calls', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -149,8 +150,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(CompactToolDisplay), findsOneWidget);
-    expect(find.byType(DetailedToolDisplay), findsNothing);
+    expect(find.byType(ToolCallRow), findsOneWidget);
+    expect(find.text('Read'), findsOneWidget);
+    expect(find.text('README.md'), findsOneWidget);
   });
 
   testWidgets('preserves structured tool-result error and file-diff rendering', (
@@ -181,8 +183,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Read'));
+    await tester.pumpAndSettle();
+
     expect(find.text('permission denied'), findsOneWidget);
     expect(find.byType(FileDiffDisplay), findsOneWidget);
+    expect(find.text('lib/main.dart'), findsOneWidget);
+    expect(find.textContaining('line'), findsWidgets);
   });
 
   testWidgets('groups persisted thinking and one tool call like live XML', (
@@ -234,10 +241,159 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('思考与工具调用（1）'), findsOneWidget);
+    expect(find.text('已完成 · 2 次思考 · 1 次调用'), findsOneWidget);
     expect(find.text('思考过程'), findsNothing);
     expect(find.byType(CompactToolDisplay), findsNothing);
   });
+
+  testWidgets('keeps persisted Markdown between execution groups in order', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _messagePartApp(
+        const <MessagePart>[
+          MessagePart(
+            partId: 'thinking-1',
+            sequence: 0,
+            kind: MessagePartKind.thinking,
+            content: 'first plan',
+            toolCallId: null,
+            toolName: null,
+            attributes: <String, String>{},
+          ),
+          MessagePart(
+            partId: 'tool-call-1',
+            sequence: 1,
+            kind: MessagePartKind.toolCall,
+            content: '',
+            toolCallId: 'call-1',
+            toolName: 'read_file',
+            attributes: <String, String>{},
+          ),
+          MessagePart(
+            partId: 'tool-result-1',
+            sequence: 2,
+            kind: MessagePartKind.toolResult,
+            content: 'first result',
+            toolCallId: 'call-1',
+            toolName: 'read_file',
+            attributes: <String, String>{'status': 'SUCCESS'},
+          ),
+          MessagePart(
+            partId: 'markdown-1',
+            sequence: 3,
+            kind: MessagePartKind.markdown,
+            content: 'Persisted intermediate A',
+            toolCallId: null,
+            toolName: null,
+            attributes: <String, String>{},
+          ),
+          MessagePart(
+            partId: 'thinking-2',
+            sequence: 4,
+            kind: MessagePartKind.thinking,
+            content: 'second plan',
+            toolCallId: null,
+            toolName: null,
+            attributes: <String, String>{},
+          ),
+          MessagePart(
+            partId: 'tool-call-2',
+            sequence: 5,
+            kind: MessagePartKind.toolCall,
+            content: '',
+            toolCallId: 'call-2',
+            toolName: 'grep_code',
+            attributes: <String, String>{},
+          ),
+          MessagePart(
+            partId: 'tool-result-2',
+            sequence: 6,
+            kind: MessagePartKind.toolResult,
+            content: 'second result',
+            toolCallId: 'call-2',
+            toolName: 'grep_code',
+            attributes: <String, String>{'status': 'SUCCESS'},
+          ),
+          MessagePart(
+            partId: 'markdown-2',
+            sequence: 7,
+            kind: MessagePartKind.markdown,
+            content: 'Persisted intermediate B',
+            toolCallId: null,
+            toolName: null,
+            attributes: <String, String>{},
+          ),
+        ],
+        locale: const Locale('zh'),
+        nodeGrouper: const ThinkToolsXmlNodeGrouper(showThinkingProcess: true),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final groupHeaders = find.text('已完成 · 1 次思考 · 1 次调用');
+    final markdownA = find.text(
+      'Persisted intermediate A',
+      findRichText: true,
+    );
+    final markdownB = find.text(
+      'Persisted intermediate B',
+      findRichText: true,
+    );
+    expect(groupHeaders, findsNWidgets(2));
+    expect(markdownA, findsOneWidget);
+    expect(markdownB, findsOneWidget);
+    expect(
+      tester.getTopLeft(groupHeaders.at(0)).dy,
+      lessThan(tester.getTopLeft(markdownA).dy),
+    );
+    expect(
+      tester.getTopLeft(markdownA).dy,
+      lessThan(tester.getTopLeft(groupHeaders.at(1)).dy),
+    );
+    expect(
+      tester.getTopLeft(groupHeaders.at(1)).dy,
+      lessThan(tester.getTopLeft(markdownB).dy),
+    );
+  });
+
+  testWidgets(
+    'restores persisted execution duration on historical message header',
+    (tester) async {
+      await tester.pumpWidget(
+        _messagePartApp(
+          <MessagePart>[
+            MessagePart(
+              partId: 'thinking-1',
+              sequence: 0,
+              kind: MessagePartKind.thinking,
+              content: 'plan time lookup',
+              toolCallId: null,
+              toolName: null,
+              attributes: <String, String>{},
+            ),
+            MessagePart(
+              partId: 'call-1',
+              sequence: 1,
+              kind: MessagePartKind.toolCall,
+              content: '',
+              toolCallId: 'call-1',
+              toolName: 'daily_life:get_current_time',
+              attributes: <String, String>{},
+            ),
+          ],
+          locale: const Locale('zh'),
+          nodeGrouper: const ThinkToolsXmlNodeGrouper(
+            showThinkingProcess: true,
+            defaultCompletedDuration: Duration(seconds: 75),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('已完成 (1min 15s) · 1 次思考 · 1 次调用'), findsOneWidget);
+    },
+  );
 }
 
 /// Wraps structured parts in the localized Material test surface.

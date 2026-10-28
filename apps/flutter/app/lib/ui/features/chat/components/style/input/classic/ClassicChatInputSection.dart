@@ -20,6 +20,7 @@ import '../agent/AgentInputMenuPopup.dart';
 import '../agent/AgentModelSelectorPopup.dart';
 import '../common/ChatAttachmentImagePreview.dart';
 import '../common/ChatAttachmentMenuPopup.dart';
+import '../common/ChatComposerSendActionMenu.dart';
 import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
@@ -39,6 +40,8 @@ class ClassicChatInputSection extends StatefulWidget {
     required this.currentChatId,
     required this.onSendMessage,
     required this.onQueueMessage,
+    this.onGuideMessage,
+    this.onInterruptAndSendMessage,
     required this.onCancelMessage,
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
@@ -49,6 +52,7 @@ class ClassicChatInputSection extends StatefulWidget {
     this.onDeletePendingQueueMessage,
     this.onEditPendingQueueMessage,
     this.onSendPendingQueueMessage,
+    this.onGuidePendingQueueMessage,
     this.attachments = const <AttachmentInfo>[],
     this.onRemoveAttachment,
     this.onInsertAttachment,
@@ -75,6 +79,8 @@ class ClassicChatInputSection extends StatefulWidget {
   final String? currentChatId;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
+  final VoidCallback? onGuideMessage;
+  final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
@@ -85,6 +91,7 @@ class ClassicChatInputSection extends StatefulWidget {
   final ValueChanged<int>? onDeletePendingQueueMessage;
   final ValueChanged<int>? onEditPendingQueueMessage;
   final ValueChanged<int>? onSendPendingQueueMessage;
+  final ValueChanged<int>? onGuidePendingQueueMessage;
   final List<AttachmentInfo> attachments;
   final ValueChanged<String>? onRemoveAttachment;
   final ValueChanged<AttachmentInfo>? onInsertAttachment;
@@ -273,6 +280,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
             currentChatId: chatId,
             onDismiss: _dismissInputMenuPopup,
             isChatContextCurrent: isChatContextCurrent,
+            showNativeStatistics: false,
             leadingChildren: <Widget>[
               AgentModelMenuSection(
                 viewModel: widget.viewModel,
@@ -471,6 +479,8 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                   onDeleteMessage: widget.onDeletePendingQueueMessage,
                   onEditMessage: widget.onEditPendingQueueMessage,
                   onSendMessage: widget.onSendPendingQueueMessage,
+                  onGuideMessage: widget.onGuidePendingQueueMessage,
+                  canGuide: processing,
                 ),
               KeyedSubtree(
                 key: _mentionPopupTargetKey,
@@ -510,6 +520,9 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                         hostMissing: widget.hostMissing,
                         onSendMessage: widget.onSendMessage,
                         onQueueMessage: widget.onQueueMessage,
+                        onGuideMessage: widget.onGuideMessage,
+                        onInterruptAndSendMessage:
+                            widget.onInterruptAndSendMessage,
                         onCancelMessage: widget.onCancelMessage,
                         isSpeechRecording: widget.isSpeechRecording,
                         isSpeechTranscribing: widget.isSpeechTranscribing,
@@ -551,6 +564,8 @@ class _ClassicInputBody extends StatelessWidget {
     required this.hostMissing,
     required this.onSendMessage,
     required this.onQueueMessage,
+    this.onGuideMessage,
+    this.onInterruptAndSendMessage,
     required this.onCancelMessage,
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
@@ -579,6 +594,8 @@ class _ClassicInputBody extends StatelessWidget {
   final bool hostMissing;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
+  final VoidCallback? onGuideMessage;
+  final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
@@ -606,6 +623,12 @@ class _ClassicInputBody extends StatelessWidget {
         !isSpeechTranscribing;
     final inputContent = ThemeClassicComposerBody(
       inputExpanded: inputExpanded,
+      actionWidth:
+          showQueueAction &&
+              onGuideMessage != null &&
+              onInterruptAndSendMessage != null
+          ? 66
+          : 36,
       editor: _ClassicDesktopEnterSendShortcuts(
         controller: controller,
         canSendMessage: canSendMessage,
@@ -689,75 +712,96 @@ class _ClassicInputBody extends StatelessWidget {
           ),
         ),
       ),
-      action: _ClassicActionButton(
-        key: const ValueKey<String>('chat.send'),
-        imageAsset: showMissingHost
-            ? null
-            : resolveThemeInputActionAsset(
-                OperitTheme.of(context).themePreferenceSnapshot,
-                isStop: isSpeechRecording || showCancelAction,
-                isSend: showQueueAction || canSendMessage,
-              ),
-        imageSize: showMissingHost
-            ? null
-            : resolveThemeInputActionAssetSize(
-                OperitTheme.of(context).themePreferenceSnapshot,
-                isStop: isSpeechRecording || showCancelAction,
-                isSend: showQueueAction || canSendMessage,
-              ),
-        processing: processing || isSpeechTranscribing,
-        progress: isSpeechTranscribing ? null : _classicProgressFor(inputState),
-        background: isSpeechRecording
-            ? colorScheme.error
-            : _classicActionBackground(
-                colorScheme,
-                showCancelAction: showCancelAction,
-                showQueueAction: showQueueAction,
-                canSend: canSendMessage,
-              ),
-        foreground: isSpeechRecording
-            ? colorScheme.onError
-            : _classicActionForeground(
-                colorScheme,
-                showCancelAction: showCancelAction,
-                showQueueAction: showQueueAction,
-                canSend: canSendMessage,
-              ),
-        icon: isSpeechRecording
-            ? Icons.stop
-            : isSpeechTranscribing
-            ? Icons.graphic_eq
-            : showMissingHost
-            ? Icons.device_unknown
-            : _classicActionIcon(
-                showCancelAction: showCancelAction,
-                showQueueAction: showQueueAction,
-                canSend: canSendMessage,
-              ),
-        tooltip: isSpeechRecording
-            ? '停止录音'
-            : isSpeechTranscribing
-            ? '正在识别'
-            : showCancelAction
-            ? l10n.cancel
-            : showQueueAction
-            ? l10n.chatQueueAddMessage
-            : showMissingHost
-            ? l10n.chatRouteClaimHostPrompt
-            : (canSendMessage ? l10n.send : ''),
-        onPressed: isSpeechTranscribing
-            ? null
-            : () {
-                if (showCancelAction) {
-                  onCancelMessage();
-                } else if (showQueueAction) {
+      action: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (showQueueAction &&
+              onGuideMessage != null &&
+              onInterruptAndSendMessage != null)
+            ChatComposerSendActionMenu(
+              onAction: (action) {
+                if (action == ChatComposerSendAction.queue) {
                   onQueueMessage();
-                } else if (showMissingHost || canSendMessage) {
-                  onSendMessage();
+                } else if (action == ChatComposerSendAction.guide) {
+                  onGuideMessage!();
                 } else {
-                  onSpeechInput();
+                  onInterruptAndSendMessage!();
                 }
               },
+            ),
+          _ClassicActionButton(
+            key: const ValueKey<String>('chat.send'),
+            imageAsset: showMissingHost
+                ? null
+                : resolveThemeInputActionAsset(
+                    OperitTheme.of(context).themePreferenceSnapshot,
+                    isStop: isSpeechRecording || showCancelAction,
+                    isSend: showQueueAction || canSendMessage,
+                  ),
+            imageSize: showMissingHost
+                ? null
+                : resolveThemeInputActionAssetSize(
+                    OperitTheme.of(context).themePreferenceSnapshot,
+                    isStop: isSpeechRecording || showCancelAction,
+                    isSend: showQueueAction || canSendMessage,
+                  ),
+            processing: processing || isSpeechTranscribing,
+            progress: isSpeechTranscribing
+                ? null
+                : _classicProgressFor(inputState),
+            background: isSpeechRecording
+                ? colorScheme.error
+                : _classicActionBackground(
+                    colorScheme,
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    canSend: canSendMessage,
+                  ),
+            foreground: isSpeechRecording
+                ? colorScheme.onError
+                : _classicActionForeground(
+                    colorScheme,
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    canSend: canSendMessage,
+                  ),
+            icon: isSpeechRecording
+                ? Icons.stop
+                : isSpeechTranscribing
+                ? Icons.graphic_eq
+                : showMissingHost
+                ? Icons.device_unknown
+                : _classicActionIcon(
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    canSend: canSendMessage,
+                  ),
+            tooltip: isSpeechRecording
+                ? '停止录音'
+                : isSpeechTranscribing
+                ? '正在识别'
+                : showCancelAction
+                ? l10n.cancel
+                : showQueueAction
+                ? l10n.chatQueueAddMessage
+                : showMissingHost
+                ? l10n.chatRouteClaimHostPrompt
+                : (canSendMessage ? l10n.send : ''),
+            onPressed: isSpeechTranscribing
+                ? null
+                : () {
+                    if (showCancelAction) {
+                      onCancelMessage();
+                    } else if (showQueueAction) {
+                      onQueueMessage();
+                    } else if (showMissingHost || canSendMessage) {
+                      onSendMessage();
+                    } else {
+                      onSpeechInput();
+                    }
+                  },
+          ),
+        ],
       ),
     );
     return DropTarget(

@@ -405,6 +405,50 @@ void main() {
     },
   );
 
+  test(
+    'sidebar directory pins apply synced changes without writing back',
+    () async {
+      final bridge = _PreferenceBridge();
+      final preferences = SidebarDockPreferences(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      final values = <Set<SidebarDirectory>>[];
+      final subscription = preferences.watchDirectoryPins().listen(values.add);
+      addTearDown(subscription.cancel);
+      await _drainEvents();
+      expect(values.single, isEmpty);
+
+      const unbound = SidebarDirectory.workspace(null);
+      const projectGroup = SidebarDirectory.group(
+        workspaceId: 'project:A',
+        groupName: 'Research',
+      );
+      const otherProjectGroup = SidebarDirectory.group(
+        workspaceId: 'project:B',
+        groupName: 'Research',
+      );
+      bridge.applyPeerPreferences(_dockFile, <String, Object?>{
+        unbound.preferenceKey: true,
+        projectGroup.preferenceKey: true,
+        otherProjectGroup.preferenceKey: true,
+      });
+      await _drainEvents();
+      expect(values.last, <SidebarDirectory>{
+        unbound,
+        projectGroup,
+        otherProjectGroup,
+      });
+      expect(bridge.preferenceWrites, 0);
+
+      bridge.applyPeerPreferences(_dockFile, <String, Object?>{
+        projectGroup.preferenceKey: true,
+      });
+      await _drainEvents();
+      expect(values.last, <SidebarDirectory>{projectGroup});
+      expect(bridge.preferenceWrites, 0);
+    },
+  );
+
   test('initial watch errors retain their original cause', () async {
     final bridge = _PreferenceBridge()
       ..watchError = StateError('peer watch failed');

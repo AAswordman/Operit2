@@ -146,11 +146,13 @@ class ThemeClassicComposerBody extends StatelessWidget {
     required this.editor,
     required this.attachment,
     required this.action,
+    this.actionWidth = 36,
   });
   final bool inputExpanded;
   final Widget editor;
   final Widget attachment;
   final Widget action;
+  final double actionWidth;
   @override
   Widget build(BuildContext context) => AnimatedSize(
     duration: const Duration(milliseconds: 340),
@@ -162,7 +164,7 @@ class ThemeClassicComposerBody extends StatelessWidget {
       children: <Widget>[
         Expanded(child: editor),
         ThemeComposerHorizontalVisibility(
-          width: 86,
+          width: 50 + actionWidth,
           height: 36,
           visible: !inputExpanded,
           alignment: AlignmentDirectional.centerEnd,

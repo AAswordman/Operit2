@@ -359,9 +359,14 @@ final class AppleRuntimeChannel: NSObject {
   }
 
   /// Returns the default Apple runtime and workspace roots.
+  ///
+  /// The sandbox is reported through `/var/...`, whose ancestor `/var` is a system
+  /// symlink to `/private/var`. The native rescue boundary rejects symlinked
+  /// ancestors, so the host resolves the physical path before crossing the ABI.
   private func defaultStorageRoots() -> (runtime: URL, workspace: URL) {
     let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Operit2", isDirectory: true)
+      .resolvingSymlinksInPath
     return (
       base.appendingPathComponent("runtime", isDirectory: true),
       base.appendingPathComponent("workspaces", isDirectory: true)

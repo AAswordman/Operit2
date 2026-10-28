@@ -145,6 +145,10 @@ impl OperitTui {
             self.render_join_decision_modal(frame);
         }
 
+        if let Some(modal) = &self.diff_viewer {
+            super::diff::render_diff_viewer_modal(modal, frame);
+        }
+
         if self.control_panel.is_some() {
             self.render_control_panel(frame);
         }

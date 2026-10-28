@@ -107,6 +107,37 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatQueueAdded => 'Added to queue';
 
   @override
+  String get chatSendOptions => 'Choose how to send';
+
+  @override
+  String get chatQueueAddMessageDescription =>
+      'Send after the current reply finishes (default)';
+
+  @override
+  String get chatGuideCurrentTurn => 'Guide current conversation';
+
+  @override
+  String get chatGuideCurrentTurnDescription =>
+      'Apply in a later model request without interrupting this turn';
+
+  @override
+  String get chatInterruptAndSend => 'Interrupt and send';
+
+  @override
+  String get chatInterruptAndSendDescription =>
+      'Stop the current reply and send this message now';
+
+  @override
+  String get chatGuidanceAccepted => 'Guidance added for a later model request';
+
+  @override
+  String get chatGuidanceTextOnly =>
+      'Guidance supports text only. Remove attachments and the reply target first.';
+
+  @override
+  String get chatQueueWithdrawToEditor => 'Withdraw to editor';
+
+  @override
   String get chatPleaseCreateNewChat => 'Please create a chat';
 
   @override
@@ -380,7 +411,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Choose the default workspace type to create';
 
   @override
-  String get workspaceUnbindTitle => 'Unbind workspace';
+  String get workspaceUnbindTitle => 'Remove project from this chat';
 
   @override
   String get workspaceUnbindDescription =>
@@ -2744,7 +2775,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsAppearanceChatDisplaySection => 'Chat display';
 
   @override
-  String get settingsAppearanceMessageStyle => 'Message style';
+  String get settingsAppearanceUserMessageStyle => 'User message style';
+
+  @override
+  String get settingsAppearanceAiMessageStyle => 'AI message style';
 
   @override
   String get settingsAppearanceMessageStyleClean => 'Command';

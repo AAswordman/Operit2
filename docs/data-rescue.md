@@ -25,6 +25,8 @@ Restore is staged and verified before publication. The maintenance lease is excl
 
 If the normal process is still holding the lease, the maintenance screen reports the concrete lock error. Android exposes an explicit stop-normal-process command from its maintenance activity. iOS requires a cold launch through the Home Screen shortcut. Other platforms require the normal process to be closed by the user or by the platform's normal lifecycle controls.
 
+Hosts resolve system-managed path aliases to their physical form — the Android per-user namespace such as `/data/user/0`, Apple's `/var` — before any path crosses the native rescue boundary, so the boundary's symlink policy only ever sees links that the user or the data tree actually created.
+
 An import retains the displaced native roots and application-owned entries. A durable interrupted publication blocks normal startup and is only advanced by an explicit resume operation. Incomplete pre-publication staging is discarded when the user closes the maintenance session. Corrupt archive metadata, unsupported filesystem objects such as symbolic links, overlapping roots, or modified pending payloads produce an explicit error before the corresponding publication step. External disk failure, device loss, storage hardware failure, and OS-level revocation remain outside software guarantees; keep the exported archive on a separate device or storage medium.
 
 Native and browser archives are deliberately not cross-importable in this version. The logical data contract differs between native filesystem data and browser OPFS/IndexedDB records.

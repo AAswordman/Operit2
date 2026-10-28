@@ -954,6 +954,7 @@ fn legacyPartKindLabel(kind: &operit_model::MessagePart::MessagePartKind) -> &'s
         operit_model::MessagePart::MessagePartKind::ToolCall => "tool_call",
         operit_model::MessagePart::MessagePartKind::ToolResult => "tool_result",
         operit_model::MessagePart::MessagePartKind::Status => "status",
+        operit_model::MessagePart::MessagePartKind::InteractiveUi => "interactive_ui",
     }
 }
 

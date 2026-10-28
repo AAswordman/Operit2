@@ -494,7 +494,8 @@ class _PreviewBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final bubbleStyle =
-        snapshot.chatStyle == ThemePreferenceDefaults.CHAT_STYLE_BUBBLE;
+        (user ? snapshot.userChatStyle : snapshot.aiChatStyle) ==
+        ThemePreferenceDefaults.CHAT_STYLE_BUBBLE;
     final showsAvatar = bubbleStyle && snapshot.bubbleShowAvatar;
     final contentWidth = (MediaQuery.sizeOf(context).width - 36)
         .clamp(

@@ -447,13 +447,26 @@ class AppearanceSettingsPanel extends StatelessWidget {
           icon: Icons.chat_bubble_outline,
           children: <Widget>[
             _AppearanceFieldBlock(
-              label: l10n.settingsAppearanceMessageStyle,
-              badge: _messageStyleLabel(l10n, snapshot.chatStyle),
+              label: l10n.settingsAppearanceUserMessageStyle,
+              badge: _messageStyleLabel(l10n, snapshot.userChatStyle),
               child: _MessageStyleSelector(
-                value: snapshot.chatStyle,
+                value: snapshot.userChatStyle,
                 onChanged: (value) {
                   unawaited(
-                    themeController.saveThemeSettings(chatStyle: value),
+                    themeController.saveThemeSettings(userChatStyle: value),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceAiMessageStyle,
+              badge: _messageStyleLabel(l10n, snapshot.aiChatStyle),
+              child: _MessageStyleSelector(
+                value: snapshot.aiChatStyle,
+                onChanged: (value) {
+                  unawaited(
+                    themeController.saveThemeSettings(aiChatStyle: value),
                   );
                 },
               ),
@@ -1143,7 +1156,9 @@ class _ChatAppearanceLivePreviewCard extends StatelessWidget {
       title: l10n.settingsAppearanceLivePreviewTitle,
       icon: Icons.preview_outlined,
       action: SettingsInfoBadge(
-        label: _messageStyleLabel(l10n, snapshot.chatStyle),
+        label:
+            '${_messageStyleLabel(l10n, snapshot.userChatStyle)} / '
+            '${_messageStyleLabel(l10n, snapshot.aiChatStyle)}',
       ),
       children: <Widget>[
         ChatAppearancePreview(showInputPreview: showInputPreview),

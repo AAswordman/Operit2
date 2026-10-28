@@ -557,6 +557,7 @@ extension _ComposeInteractiveNodes on _ComposeProgramExecutorState {
       },
       breakpoint: _number(props['breakpoint']) ?? 600,
       defaultWidth: _number(props['defaultWidth']) ?? 360,
+      defaultWidthFraction: _number(props['defaultWidthFraction']),
       minWidth: _number(props['minWidth']) ?? 280,
       minContentWidth: _number(props['minContentWidth']) ?? 320,
       panel: _adaptiveSidePanelSlot('side'),

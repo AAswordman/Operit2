@@ -150,6 +150,7 @@ impl TuiText {
             "chat_summarizing_generating" => {
                 self.raw(TuiTextKey::ChatSummarizingGenerating).to_string()
             }
+            "chat_compressing_history" => self.raw(TuiTextKey::CompressingHistory).to_string(),
             "compressing history" => self.raw(TuiTextKey::CompressingHistory).to_string(),
             _ => message.trim().to_string(),
         }

@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -113,6 +113,26 @@ impl FileSystemHost for AppleFileSystemHost {
         fs::read(path).map_err(HostError::from)
     }
 
+    fn readFileBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        self.validateReadableFile(path)?;
+        let mut file = File::open(path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut buffer = vec![0u8; length];
+        let mut read = 0;
+        loop {
+            let readCount = file.read(&mut buffer[read..])?;
+            if readCount == 0 {
+                break;
+            }
+            read += readCount;
+            if read == buffer.len() {
+                break;
+            }
+        }
+        buffer.truncate(read);
+        Ok(buffer)
+    }
+
     fn writeFile(&self, path: &str, content: &str, append: bool) -> HostResult<()> {
         self.validatePath(path, "path")?;
         ensure_parent_directory(path)?;
@@ -132,6 +152,14 @@ impl FileSystemHost for AppleFileSystemHost {
         self.validatePath(path, "path")?;
         ensure_parent_directory(path)?;
         fs::write(path, content).map_err(HostError::from)
+    }
+
+    fn appendFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.validatePath(path, "path")?;
+        ensure_parent_directory(path)?;
+        let mut file = fs::OpenOptions::new().create(true).append(true).open(path)?;
+        file.write_all(content)?;
+        Ok(())
     }
 
     fn deleteFile(&self, path: &str, recursive: bool) -> HostResult<()> {

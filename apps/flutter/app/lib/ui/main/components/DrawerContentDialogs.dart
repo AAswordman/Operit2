@@ -11,6 +11,8 @@ enum ConversationAction {
   rename,
   moveUp,
   moveDown,
+  bindWorkspace,
+  moveToWorkspace,
   togglePinned,
   toggleLocked,
   unbindWorkspace,
@@ -99,12 +101,14 @@ class ConversationActionDialog extends StatelessWidget {
     required this.canOpenInWindow,
     required this.canMoveUp,
     required this.canMoveDown,
+    this.canMoveToWorkspace = false,
   });
 
   final core_proxy.ChatHistoryListItem history;
   final bool canOpenInWindow;
   final bool canMoveUp;
   final bool canMoveDown;
+  final bool canMoveToWorkspace;
 
   /// Offers chat actions and explicit detachment for existing workspace bindings.
   @override
@@ -167,6 +171,20 @@ class ConversationActionDialog extends StatelessWidget {
                   ? () => Navigator.of(context).pop(ConversationAction.moveDown)
                   : null,
             ),
+            _ConversationActionTile(
+              icon: Icons.folder_open_outlined,
+              label: '项目绑定',
+              onTap: () =>
+                  Navigator.of(context).pop(ConversationAction.bindWorkspace),
+            ),
+            if (canMoveToWorkspace)
+              _ConversationActionTile(
+                icon: Icons.drive_file_move_outlined,
+                label: '移动到项目',
+                onTap: () => Navigator.of(
+                  context,
+                ).pop(ConversationAction.moveToWorkspace),
+              ),
             _ConversationActionTile(
               icon: Icons.push_pin,
               label: history.pinned ? l10n.unpin : l10n.pin,
@@ -240,6 +258,63 @@ class _ConversationActionTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class WorkspacePickerDialog extends StatelessWidget {
+  const WorkspacePickerDialog({
+    super.key,
+    required this.workspaces,
+    this.currentWorkspaceId,
+  });
+
+  final List<core_proxy.Workspace> workspaces;
+  final String? currentWorkspaceId;
+
+  @override
+  Widget build(BuildContext context) {
+    final choices = workspaces
+        .where((workspace) => workspace.id != currentWorkspaceId)
+        .toList(growable: false);
+    return AlertDialog(
+      title: const Text('移动到项目'),
+      content: SizedBox(
+        width: 360,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 360),
+          child: ListView.separated(
+            itemCount: choices.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final workspace = choices[index];
+              final folderSummary = workspace.folders
+                  .map((folder) => folder.path)
+                  .join('\n');
+              return ListTile(
+                leading: const Icon(Icons.folder_special_outlined),
+                title: Text(
+                  workspace.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  folderSummary,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () => Navigator.of(context).pop(workspace.id),
+              );
+            },
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+      ],
     );
   }
 }

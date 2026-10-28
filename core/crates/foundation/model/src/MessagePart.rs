@@ -11,6 +11,7 @@ pub enum MessagePartKind {
     ToolCall,
     ToolResult,
     Status,
+    InteractiveUi,
 }
 
 /// Stores one semantic unit of a chat message without embedding protocol markup in text.
@@ -82,6 +83,11 @@ impl MessagePart {
         }
     }
 
+    /// Creates an interactive-UI part carrying the OpenUI program source.
+    pub fn interactiveUi(partId: String, sequence: i32, content: String) -> Self {
+        Self::new(partId, sequence, MessagePartKind::InteractiveUi, content)
+    }
+
     /// Creates a semantic message part.
     pub fn new(partId: String, sequence: i32, kind: MessagePartKind, content: String) -> Self {
         Self {
@@ -94,4 +100,5 @@ impl MessagePart {
             attributes: BTreeMap::new(),
         }
     }
+
 }

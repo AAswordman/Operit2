@@ -43,7 +43,8 @@ class ThemePreferenceSnapshot {
     this.inputSendAssetSize = 26,
     this.inputStopAsset,
     this.inputStopAssetSize = 26,
-    required this.chatStyle,
+    required this.userChatStyle,
+    required this.aiChatStyle,
     required this.bubbleShowAvatar,
     required this.bubbleWideLayoutEnabled,
     required this.cursorUserBubbleColor,
@@ -148,7 +149,8 @@ class ThemePreferenceSnapshot {
   final double inputSendAssetSize;
   final String? inputStopAsset;
   final double inputStopAssetSize;
-  final String chatStyle;
+  final String userChatStyle;
+  final String aiChatStyle;
   final bool bubbleShowAvatar;
   final bool bubbleWideLayoutEnabled;
   final int? cursorUserBubbleColor;
@@ -255,7 +257,8 @@ class ThemePreferenceSnapshot {
       'inputSendAssetSize': inputSendAssetSize,
       'inputStopAsset': inputStopAsset,
       'inputStopAssetSize': inputStopAssetSize,
-      'chatStyle': chatStyle,
+      'userChatStyle': userChatStyle,
+      'aiChatStyle': aiChatStyle,
       'bubbleShowAvatar': bubbleShowAvatar,
       'bubbleWideLayoutEnabled': bubbleWideLayoutEnabled,
       'cursorUserBubbleColor': cursorUserBubbleColor,
@@ -394,7 +397,8 @@ class ThemePreferenceSnapshot {
       inputStopAsset: optionalString('inputStopAsset'),
       inputStopAssetSize:
           (json['inputStopAssetSize'] as num?)?.toDouble() ?? 26,
-      chatStyle: requiredString('chatStyle'),
+      userChatStyle: (json['userChatStyle'] as String?) ?? 'cursor',
+      aiChatStyle: (json['aiChatStyle'] as String?) ?? 'cursor',
       bubbleShowAvatar: requiredBool('bubbleShowAvatar'),
       bubbleWideLayoutEnabled: requiredBool('bubbleWideLayoutEnabled'),
       cursorUserBubbleColor: optionalInt('cursorUserBubbleColor'),

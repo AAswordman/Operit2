@@ -530,6 +530,12 @@ fn registerSystemOperationTools(
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
+        BuiltinToolName::SetClipboardText,
+        SystemOperationToolOperation::SetClipboardText,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
         BuiltinToolName::SendNotification,
         SystemOperationToolOperation::SendNotification,
     );

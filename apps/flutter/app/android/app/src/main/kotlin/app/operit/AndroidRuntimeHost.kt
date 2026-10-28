@@ -266,14 +266,21 @@ class AndroidRuntimeHost(context: Context) {
     fun defaultStoragePathsMap(): Map<String, String> {
         val base = applicationContext.filesDir
         return mapOf(
-            "runtimeRoot" to File(base, "runtime").absolutePath,
-            "workspaceRoot" to File(base, "workspaces").absolutePath,
+            "runtimeRoot" to File(base, "runtime").canonicalFile.absolutePath,
+            "workspaceRoot" to File(base, "workspaces").canonicalFile.absolutePath,
         )
     }
 
-    /** Returns the platform default Runtime root used to locate client bootstrap state. */
+    /**
+     * Returns the platform default Runtime root used to locate client bootstrap state.
+     *
+     * `filesDir` is reported under the per-user alias (`/data/user/0/...`), whose
+     * ancestors include the system symlink `/data/user/0 -> /data/data`. The native
+     * rescue boundary rejects symlinked ancestors, so the host hands the resolved
+     * physical path to the Rust ABI instead of the aliased form.
+     */
     fun defaultRuntimeRootPath(): String {
-        return File(applicationContext.filesDir, "runtime").absolutePath
+        return File(applicationContext.filesDir, "runtime").canonicalFile.absolutePath
     }
 
     /** Returns normalized storage paths without creating the runtime. */

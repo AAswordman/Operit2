@@ -55,6 +55,7 @@ part 'compose_dsl/box_layout.dart';
 part 'compose_dsl/flex_layout.dart';
 part 'compose_dsl/desktop_widget.dart';
 part 'compose_dsl/material_controls.dart';
+part 'compose_dsl/selection_controls.dart';
 part 'compose_dsl/navigation_nodes.dart';
 part 'compose_dsl/interactive_nodes.dart';
 part 'compose_dsl/renderer_slots.dart';

@@ -32,11 +32,10 @@ class CursorStyleChatMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     switch (message.sender) {
       case 'user':
-        return UserMessageComposable(message: message, useBubbleStyle: false);
+        return UserMessageComposable(message: message);
       case 'ai':
         return AiMessageComposable(
           message: message,
-          useBubbleStyle: false,
           avatarImagePath: identityAvatarUri,
           onIdentityTap: enableDialogs ? onIdentityTap : null,
           splitMarkdownContent: splitMarkdownContent,
@@ -49,6 +48,7 @@ class CursorStyleChatMessage extends StatelessWidget {
               : () => onDeleteMessage!(message.timestamp),
           onEdit: onEditSummary,
           enableDialog: enableDialogs,
+          splitMarkdownContent: splitMarkdownContent,
         );
     }
     return _SystemMessageComposable(message: message);

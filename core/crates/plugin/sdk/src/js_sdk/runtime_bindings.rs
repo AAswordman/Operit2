@@ -163,6 +163,7 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "System", method: "startApp", target: BuiltinToolName::StartApp, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System", method: "stopApp", target: BuiltinToolName::StopApp, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System", method: "toast", target: BuiltinToolName::Toast, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "System", method: "setClipboardText", target: BuiltinToolName::SetClipboardText, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System", method: "uninstallApp", target: BuiltinToolName::UninstallApp, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System", method: "usePackage", target: BuiltinToolName::UsePackage, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.bluetooth", method: "accept", target: BuiltinToolName::BluetoothAccept, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },

@@ -689,12 +689,21 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                         .ok_or_else(|| "Chat creation requires an initialized AI runtime".to_string())?;
                     (core.chatHistoryDelegate.clone_for_core(), service)
                 };
-                return history.createNewChat(&service, false, sourceChatId, parentChatId, input).await;
+                return history
+                    .createNewChat(
+                        &service,
+                        false,
+                        sourceChatId,
+                        parentChatId,
+                        None,
+                        input,
+                    )
+                    .await;
             }
             let mut holder = self.chatRuntimeHolder.lock().await;
             let chatId = holder
                 .getCore(ChatRuntimeSlot::MAIN)
-                .createNewChat(setAsCurrentChat, sourceChatId, parentChatId, input)
+                .createNewChat(setAsCurrentChat, sourceChatId, parentChatId, None, input)
                 .await?;
             holder.observeStats();
             Ok(chatId)

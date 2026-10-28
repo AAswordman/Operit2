@@ -98,6 +98,11 @@ impl FileSystemHost for OhosFileSystemHost {
         self.inner.readFileBytes(path)
     }
 
+    /// Reads a bounded byte range from OpenHarmony storage.
+    fn readFileBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        self.inner.readFileBytesRange(path, offset, length)
+    }
+
     /// Writes a UTF-8 text file into OpenHarmony storage.
     fn writeFile(&self, path: &str, content: &str, append: bool) -> HostResult<()> {
         self.inner.writeFile(path, content, append)
@@ -106,6 +111,11 @@ impl FileSystemHost for OhosFileSystemHost {
     /// Writes raw file bytes into OpenHarmony storage.
     fn writeFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.inner.writeFileBytes(path, content)
+    }
+
+    /// Appends raw file bytes into OpenHarmony storage.
+    fn appendFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.inner.appendFileBytes(path, content)
     }
 
     /// Deletes an OpenHarmony file or directory.

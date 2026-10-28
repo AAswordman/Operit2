@@ -23,7 +23,7 @@ use operit_model::ChatMessage::ChatMessage;
 use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerBrowserSession, RuntimeHostInteractionBrowserSessionPayload,
+    requestOwnerBrowserSessionAsync, RuntimeHostInteractionBrowserSessionPayload,
 };
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
@@ -139,10 +139,11 @@ impl HostSecretStore for TestSecretStore {
     }
 }
 
+#[async_trait::async_trait(?Send)]
 impl BrowserSessionHost for OwnerInteractionBrowserHost {
     /// Lists sessions by requesting the runtime owner app through Core interaction.
-    fn listBrowserSessions(&self) -> HostResult<Vec<BrowserSessionInfo>> {
-        let response = requestOwnerBrowserSession(
+    async fn listBrowserSessions(&self) -> HostResult<Vec<BrowserSessionInfo>> {
+        let response = requestOwnerBrowserSessionAsync(
             RuntimeHostInteractionBrowserSessionPayload {
                 commandJson: json!({
                     "action": "list",
@@ -157,6 +158,7 @@ impl BrowserSessionHost for OwnerInteractionBrowserHost {
             },
             Duration::from_secs(2),
         )
+        .await
         .expect("owner browser response must arrive");
         let result: BrowserSessionCommandResult =
             serde_json::from_str(&response.resultJson).expect("browser result must decode");
@@ -164,7 +166,7 @@ impl BrowserSessionHost for OwnerInteractionBrowserHost {
     }
 
     /// Rejects session creation because this test only exercises listing.
-    fn createBrowserSession(
+    async fn createBrowserSession(
         &self,
         _initialUrl: &str,
         _userAgent: Option<&str>,
@@ -174,7 +176,7 @@ impl BrowserSessionHost for OwnerInteractionBrowserHost {
     }
 
     /// Rejects session updates because this test only exercises listing.
-    fn updateBrowserSession(
+    async fn updateBrowserSession(
         &self,
         _sessionId: &str,
         _userAgent: Option<&str>,
@@ -184,7 +186,7 @@ impl BrowserSessionHost for OwnerInteractionBrowserHost {
     }
 
     /// Rejects semantic commands because this test only exercises listing.
-    fn submitBrowserCommand(
+    async fn submitBrowserCommand(
         &self,
         _command: BrowserSessionCommand,
     ) -> HostResult<BrowserSessionCommandResult> {
@@ -192,12 +194,18 @@ impl BrowserSessionHost for OwnerInteractionBrowserHost {
     }
 
     /// Rejects snapshots because this test only exercises listing.
-    fn getBrowserSessionSnapshot(&self, _sessionId: &str) -> HostResult<BrowserSessionSnapshot> {
+    async fn getBrowserSessionSnapshot(
+        &self,
+        _sessionId: &str,
+    ) -> HostResult<BrowserSessionSnapshot> {
         panic!("getBrowserSessionSnapshot is not used by this test")
     }
 
     /// Rejects session closing because this test only exercises listing.
-    fn closeBrowserSession(&self, _sessionId: &str) -> HostResult<BrowserSessionCommandResult> {
+    async fn closeBrowserSession(
+        &self,
+        _sessionId: &str,
+    ) -> HostResult<BrowserSessionCommandResult> {
         panic!("closeBrowserSession is not used by this test")
     }
 }
@@ -534,12 +542,12 @@ async fn child_chat_creation_preserves_parent_without_cloning_history() {
         let mut holder = holder.lock().await;
         let target = LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain").unwrap();
         let core = holder.coreForTarget(target).unwrap();
-        let parent = core.createNewChat(true, None, None, None).await.unwrap();
+        let parent = core.createNewChat(true, None, None, None, None).await.unwrap();
         core.chatHistoryDelegate.addMessageToChat(
             ChatMessage::new_with_markdown("user".into(), "parent history must stay in its conversation".into()),
             Some(parent.clone()),
         );
-        let child = core.createNewChat(false, Some(parent.clone()), Some(parent.clone()), None).await.unwrap();
+        let child = core.createNewChat(false, Some(parent.clone()), Some(parent.clone()), None, None).await.unwrap();
         assert_ne!(child, parent);
         assert_eq!(core.currentChatIdFlow().await.unwrap().value(), Some(parent.clone()));
         let stored = core.chatHistoryDelegate.chatHistoryManager.loadChatHistory(child.clone()).unwrap().unwrap();
@@ -548,11 +556,11 @@ async fn child_chat_creation_preserves_parent_without_cloning_history() {
         let summaries = core.chatHistoryListItemsFlow().value();
         assert_eq!(summaries.iter().find(|chat| chat.id == child).unwrap().parentChatId, Some(parent.clone()));
         let before = summaries.len();
-        let error = core.createNewChat(false, Some(parent), Some("absent-parent".into()), None).await.unwrap_err();
+        let error = core.createNewChat(false, Some(parent), Some("absent-parent".into()), None, None).await.unwrap_err();
         assert_eq!(error, "Parent chat does not exist: absent-parent");
         assert_eq!(core.chatHistoryListItemsFlow().value().len(), before);
-        let empty = core.createNewChat(true, None, None, None).await.unwrap();
-        let selectedChild = core.createNewChat(true, Some(empty.clone()), Some(empty.clone()), None).await.unwrap();
+        let empty = core.createNewChat(true, None, None, None, None).await.unwrap();
+        let selectedChild = core.createNewChat(true, Some(empty.clone()), Some(empty.clone()), None, None).await.unwrap();
         assert_ne!(selectedChild, empty, "An explicit child cannot reuse its empty source");
         let selected = core.chatHistoryDelegate.chatHistoryManager.loadChatHistory(selectedChild).unwrap().unwrap();
         assert_eq!(selected.parentChatId, Some(empty));
@@ -587,7 +595,7 @@ async fn generated_proxy_chat_instance_uses_detached_runtime_slot() {
                     .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
                 main_core
-                    .createNewChat(true, None, None, None)
+                    .createNewChat(true, None, None, None, None)
                     .await
                     .expect("test chat creation must succeed");
                 let main_chat_id = main_core
@@ -604,7 +612,7 @@ async fn generated_proxy_chat_instance_uses_detached_runtime_slot() {
                     .coreForInstanceId(detached_slot_id.to_string())
                     .expect("detached runtime core must exist");
                 detached_core
-                    .createNewChat(true, None, None, None)
+                    .createNewChat(true, None, None, None, None)
                     .await
                     .expect("test chat creation must succeed");
                 let detached_chat_id = detached_core
@@ -693,7 +701,7 @@ async fn local_chat_messages_flow_update_opens_embedded_stream() {
                 let core = holder
                     .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
-                core.createNewChat(true, None, None, None)
+                core.createNewChat(true, None, None, None, None)
                     .await
                     .expect("test chat creation must succeed");
                 core.chatHistoryDelegate
@@ -851,7 +859,7 @@ async fn local_chat_messages_flow_update_inside_async_capture_opens_embedded_str
                 let core = holder
                     .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
-                core.createNewChat(true, None, None, None)
+                core.createNewChat(true, None, None, None, None)
                     .await
                     .expect("test chat creation must succeed");
                 core.chatHistoryDelegate

@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:operit2/core/browser/BrowserSessions.dart';
+import 'package:operit2/core/host/RuntimeHostInteractionSubscriber.dart';
 import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 
@@ -15,6 +16,8 @@ import 'downloads/WorkspaceBrowserDownloadStore.dart';
 import 'permissions/WorkspaceBrowserPermissionStore.dart';
 import 'tabs/WorkspaceBrowserTabModels.dart';
 import 'userscripts/WorkspaceUserscriptModels.dart';
+
+export 'tabs/WorkspaceBrowserTabModels.dart';
 
 class WorkspaceBrowserViewDelegate {
   /// Creates workspace-only browser presentation callbacks.
@@ -106,6 +109,9 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
 
   /// Loads local browser chrome stores and existing Core sessions.
   Future<void> ensureLoaded() {
+    if (!kIsWeb && !RuntimeHostInteractionSubscriber.isInstalled) {
+      RuntimeHostInteractionSubscriber.install();
+    }
     if (_loaded) {
       return Future<void>.value();
     }
@@ -589,7 +595,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   }
 
   /// Returns the attached tab with the requested session identifier.
-  WorkspaceBrowserTabState? _tabById(String sessionId) {
+  WorkspaceBrowserTabState? tabById(String sessionId) {
     for (final tab in _tabs) {
       if (tab.id == sessionId) {
         return tab;
@@ -597,6 +603,8 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
     }
     return null;
   }
+
+  WorkspaceBrowserTabState? _tabById(String sessionId) => tabById(sessionId);
 
   /// Returns the current tab or reports a missing attachment.
   WorkspaceBrowserTabState _requireCurrentTab() {

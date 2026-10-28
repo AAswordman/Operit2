@@ -20,3 +20,13 @@ pub(super) const USER_CARD_BG: Color = Color::Rgb(55, 65, 81);
 pub(super) const TOOL_RESULT: Color = Color::Rgb(129, 140, 156);
 pub(super) const ERROR: Color = Color::Rgb(248, 113, 113);
 pub(super) const ERROR_DIM: Color = Color::Rgb(252, 165, 165);
+
+/// Diff palette shared by the standalone diff viewer and inline `diff` code
+/// blocks in the transcript.
+pub(super) const DIFF_ADD_FG: Color = Color::Rgb(134, 239, 172);
+pub(super) const DIFF_ADD_BG: Color = Color::Rgb(18, 48, 28);
+pub(super) const DIFF_ADD_HIGHLIGHT: Color = Color::Rgb(36, 96, 48);
+pub(super) const DIFF_DELETE_FG: Color = Color::Rgb(252, 165, 165);
+pub(super) const DIFF_DELETE_BG: Color = Color::Rgb(56, 20, 24);
+pub(super) const DIFF_DELETE_HIGHLIGHT: Color = Color::Rgb(112, 32, 40);
+pub(super) const DIFF_HUNK_FG: Color = Color::Rgb(56, 189, 248);

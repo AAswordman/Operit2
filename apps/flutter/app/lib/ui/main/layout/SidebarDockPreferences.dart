@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -113,6 +115,136 @@ class SidebarDockPreferences {
       values: <String, Object?>{_layoutKey: layout.toJson()},
     );
   }
+
+  Stream<Set<SidebarDirectory>> watchDirectoryPins() {
+    return _clients.preferencesPreferenceStorageManager
+        .preferencesFlow(fileName: _fileName)
+        .map((values) {
+          final directories = <SidebarDirectory>{};
+          for (final entry in values.entries) {
+            if (!entry.key.startsWith(SidebarDirectory._keyPrefix)) continue;
+            final directory = SidebarDirectory.fromPreferenceKey(entry.key);
+            if (_decodeDirectoryPinned(entry.value)) {
+              directories.add(directory);
+            }
+          }
+          return Set<SidebarDirectory>.unmodifiable(directories);
+        })
+        .distinct((left, right) => setEquals(left, right));
+  }
+
+  Future<bool> isDirectoryPinned(SidebarDirectory directory) async {
+    final value = await _clients.preferencesPreferenceStorageManager
+        .getPreference(fileName: _fileName, key: directory.preferenceKey);
+    return _decodeDirectoryPinned(value);
+  }
+
+  Future<void> setDirectoryPinned(SidebarDirectory directory, bool pinned) {
+    if (pinned) {
+      return _clients.preferencesPreferenceStorageManager.setPreference(
+        fileName: _fileName,
+        key: directory.preferenceKey,
+        value: true,
+      );
+    }
+    return _clients.preferencesPreferenceStorageManager.removePreference(
+      fileName: _fileName,
+      key: directory.preferenceKey,
+    );
+  }
+
+  Future<void> moveDirectoryPin({
+    required SidebarDirectory from,
+    required SidebarDirectory to,
+  }) async {
+    if (!await isDirectoryPinned(from)) return;
+    await setDirectoryPinned(to, true);
+    await setDirectoryPinned(from, false);
+  }
+
+  static bool _decodeDirectoryPinned(Object? value) {
+    if (value == null) return false;
+    if (value is! bool) {
+      throw const FormatException('sidebar directory pin must be a boolean');
+    }
+    return value;
+  }
+}
+
+enum SidebarDirectoryKind { workspace, group }
+
+@immutable
+class SidebarDirectory {
+  const SidebarDirectory.workspace(this.workspaceId)
+    : kind = SidebarDirectoryKind.workspace,
+      groupName = null;
+
+  const SidebarDirectory.group({
+    required this.workspaceId,
+    required this.groupName,
+  }) : kind = SidebarDirectoryKind.group;
+
+  static const String _keyPrefix = 'directory_pinned:';
+
+  final SidebarDirectoryKind kind;
+  final String? workspaceId;
+  final String? groupName;
+
+  String get preferenceKey =>
+      '$_keyPrefix${jsonEncode(<String, Object?>{'kind': kind.name, 'workspaceId': workspaceId, 'groupName': groupName})}';
+
+  factory SidebarDirectory.fromPreferenceKey(String key) {
+    if (!key.startsWith(_keyPrefix)) {
+      throw const FormatException('invalid sidebar directory pin key');
+    }
+    final decoded = jsonDecode(key.substring(_keyPrefix.length));
+    if (decoded is! Map ||
+        decoded.length != 3 ||
+        !decoded.containsKey('kind') ||
+        !decoded.containsKey('workspaceId') ||
+        !decoded.containsKey('groupName')) {
+      throw const FormatException('invalid sidebar directory identity');
+    }
+    final workspaceId = decoded['workspaceId'];
+    if (workspaceId != null &&
+        (workspaceId is! String ||
+            workspaceId.isEmpty ||
+            workspaceId != workspaceId.trim())) {
+      throw const FormatException('invalid sidebar directory workspace');
+    }
+    final groupName = decoded['groupName'];
+    switch (decoded['kind']) {
+      case 'workspace':
+        if (groupName != null) {
+          throw const FormatException(
+            'workspace directory cannot have a group',
+          );
+        }
+        return SidebarDirectory.workspace(workspaceId as String?);
+      case 'group':
+        if (groupName != null &&
+            (groupName is! String ||
+                groupName.isEmpty ||
+                groupName != groupName.trim())) {
+          throw const FormatException('invalid sidebar directory group');
+        }
+        return SidebarDirectory.group(
+          workspaceId: workspaceId as String?,
+          groupName: groupName,
+        );
+    }
+    throw const FormatException('unknown sidebar directory kind');
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is SidebarDirectory &&
+      other.kind == kind &&
+      other.workspaceId == workspaceId &&
+      other.groupName == groupName;
+
+  @override
+  int get hashCode => Object.hash(kind, workspaceId, groupName);
 }
 
 /// Decodes a strict list of non-empty persisted identifiers.

@@ -1,23 +1,17 @@
 // ignore_for_file: file_names
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../../../util/ChatMarkupRegex.dart';
-import '../../../../common/components/OperitDialog.dart';
-import '../../../../common/interactions/MessagePressShield.dart';
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
+import 'FileDiffDisplay.dart';
 import 'ToolDisplayComponents.dart';
-import 'XmlCanvasSummaryComponents.dart';
 
-/// Merges ordered tool calls and equally ordered, name-matched results.
+/// Merges ordered tool calls with any results that have arrived so far.
 class ToolCallResultMergeRender extends MarkdownNodeMergeRender {
   const ToolCallResultMergeRender();
 
-  /// Matches either one call/result pair or one batched calls/results sequence.
   @override
   MarkdownMergeMatch? match({
     required List<MarkdownNodeStable> nodes,
@@ -38,6 +32,7 @@ class ToolCallResultMergeRender extends MarkdownNodeMergeRender {
     final callNames = <String>[];
     var resultCount = 0;
     var readingResults = false;
+    var lastToolIndex = startIndex;
     for (var index = startIndex; index <= endIndexInclusive; index += 1) {
       final node = nodes[index];
       if (_isToolMergeSeparator(node)) {
@@ -46,30 +41,26 @@ class ToolCallResultMergeRender extends MarkdownNodeMergeRender {
       final parsed = _parseToolMergeNode(node);
       if (!readingResults && parsed?.kind == _ToolMergeNodeKind.call) {
         callNames.add(parsed!.matchToolName);
+        lastToolIndex = index;
         continue;
       }
-      if (parsed?.kind == _ToolMergeNodeKind.result) {
+      if (parsed?.kind == _ToolMergeNodeKind.result &&
+          resultCount < callNames.length &&
+          parsed!.matchToolName == callNames[resultCount]) {
         readingResults = true;
-        if (resultCount >= callNames.length ||
-            parsed!.matchToolName != callNames[resultCount]) {
-          return null;
-        }
         resultCount += 1;
-        if (resultCount == callNames.length) {
-          return MarkdownMergeMatch(
-            startIndex: startIndex,
-            endIndexInclusive: index,
-            stableKey: 'tool-results-$startIndex-$index',
-          );
-        }
+        lastToolIndex = index;
         continue;
       }
-      return null;
+      break;
     }
-    return null;
+    return MarkdownMergeMatch(
+      startIndex: startIndex,
+      endIndexInclusive: lastToolIndex,
+      stableKey: 'tool-calls-$startIndex',
+    );
   }
 
-  /// Renders every matched call/result pair as one compact row.
   @override
   Widget renderMerge({
     required MarkdownMergeMatch match,
@@ -100,23 +91,27 @@ class ToolCallResultMergeRender extends MarkdownNodeMergeRender {
           break;
       }
     }
-    if (calls.length != results.length) {
-      throw StateError('A tool merge match must contain complete pairs.');
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         for (var index = 0; index < calls.length; index += 1)
           MergedToolCallResultRow(
             key: ValueKey<String>(
-              '$renderInstanceKey-${calls[index].index}-${results[index].index}',
+              '$renderInstanceKey-${calls[index].node.callId ?? calls[index].index}',
             ),
             toolName: calls[index].node.toolName,
+            callId: calls[index].node.callId,
             parameterMarkup: calls[index].node.parameterMarkup,
-            resultText: results[index].node.resultText,
-            isSuccess: results[index].node.isSuccess,
+            resultText: index < results.length
+                ? results[index].node.resultText
+                : '',
+            isSuccess: index < results.length
+                ? results[index].node.isSuccess
+                : null,
             textColor: textColor,
-            isStreaming: nodes[results[index].index].isStreaming,
+            isStreaming:
+                index >= results.length ||
+                nodes[results[index].index].isStreaming,
           ),
       ],
     );
@@ -133,6 +128,7 @@ class _ToolMergeNode {
     required this.parameterMarkup,
     required this.resultText,
     required this.isSuccess,
+    this.callId,
   });
 
   final _ToolMergeNodeKind kind;
@@ -141,6 +137,7 @@ class _ToolMergeNode {
   final String parameterMarkup;
   final String resultText;
   final bool isSuccess;
+  final String? callId;
 }
 
 class _IndexedToolMergeNode {
@@ -150,7 +147,7 @@ class _IndexedToolMergeNode {
   final _ToolMergeNode node;
 }
 
-/// Displays one completed tool invocation as a compact merged row.
+/// Adapts one call and its current result to the shared native tool row.
 class MergedToolCallResultRow extends StatelessWidget {
   const MergedToolCallResultRow({
     super.key,
@@ -160,219 +157,54 @@ class MergedToolCallResultRow extends StatelessWidget {
     required this.isSuccess,
     required this.textColor,
     required this.isStreaming,
+    this.callId,
   });
 
   final String toolName;
+  final String? callId;
   final String parameterMarkup;
   final String resultText;
-  final bool isSuccess;
+  final bool? isSuccess;
   final Color textColor;
   final bool isStreaming;
 
-  /// Builds one completion row with details available through one interaction.
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final display = normalizeToolDisplayForStrictProxy(
-      toolName,
-      parameterMarkup,
-    );
-    final requestSummary = buildParamsHeadPreview(display.params);
-
-    /// Opens the complete request and result for this merged row.
-    void openDetail() {
-      _showMergedToolDetailDialog(
-        context,
-        toolName: display.toolName,
-        parameterMarkup: display.params,
-        resultText: resultText,
+    return ToolCallRow(
+      presentation: ToolPresentation.fromCall(
+        toolName,
+        parameterMarkup,
+        callId: callId,
+        result: resultText,
         isSuccess: isSuccess,
-      );
+      ),
+      isStreaming: isStreaming,
+    );
+  }
+}
+
+/// Returns the most recent tool call that still lacks a matched result.
+String? resolvePendingToolName(Iterable<MarkdownNodeStable> nodes) {
+  final pendingCalls = <_ToolMergeNode>[];
+  for (final node in nodes) {
+    final parsed = _parseToolMergeNode(node);
+    if (parsed?.kind == _ToolMergeNodeKind.call) {
+      pendingCalls.add(parsed!);
+      continue;
     }
-
-    return CanvasToolSummaryRow(
-      toolName: display.toolName,
-      summary: requestSummary,
-      semanticDescription: buildToolSemanticDescription(
-        display.toolName,
-        display.params,
-        useByteSummary: false,
-      ),
-      leadingIcon: getToolIcon(display.toolName),
-      titleColor: theme.colorScheme.primary,
-      summaryColor: textColor.withValues(alpha: 0.7),
-      onClick: openDetail,
-      trailing: _MergedToolResultActions(
-        isSuccess: isSuccess,
-        resultText: resultText,
-        isStreaming: isStreaming,
-      ),
-    );
-  }
-}
-
-class _MergedToolResultActions extends StatelessWidget {
-  const _MergedToolResultActions({
-    required this.isSuccess,
-    required this.resultText,
-    required this.isStreaming,
-  });
-
-  final bool isSuccess;
-  final String resultText;
-  final bool isStreaming;
-
-  /// Builds result actions at the same 16px content height as the tool row.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final statusColor = isSuccess
-        ? theme.colorScheme.primary
-        : theme.colorScheme.error;
-    return SizedBox(
-      height: 16,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(
-            isSuccess ? Icons.check : Icons.close,
-            size: 15,
-            color: statusColor,
-          ),
-          if (resultText.isNotEmpty) ...<Widget>[
-            const SizedBox(width: 4),
-            MessagePressShieldRegion(
-              child: Tooltip(
-                message: 'Copy result',
-                child: InkResponse(
-                  onTap: () {
-                    unawaited(_copyMergedToolResult(resultText));
-                  },
-                  radius: 14,
-                  child: Icon(
-                    Icons.content_copy,
-                    size: 14,
-                    color: theme.colorScheme.primary.withValues(alpha: 0.6),
-                  ),
-                ),
-              ),
-            ),
-          ],
-          if (isStreaming) ...<Widget>[
-            const SizedBox(width: 6),
-            const StreamingCursor(),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// Opens the full call and result content for one merged row.
-void _showMergedToolDetailDialog(
-  BuildContext context, {
-  required String toolName,
-  required String parameterMarkup,
-  required String resultText,
-  required bool isSuccess,
-}) {
-  showDialog<void>(
-    context: context,
-    builder: (dialogContext) {
-      final theme = Theme.of(dialogContext);
-      return OperitDialogScaffold(
-        title: toolName,
-        icon: Icon(getToolIcon(toolName), size: 20),
-        maxWidth: 720,
-        actions: <Widget>[
-          FilledButton(
-            onPressed: () {
-              Navigator.of(dialogContext).pop();
-            },
-            child: const Text('Close'),
-          ),
-        ],
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 420),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Text('Call parameters', style: theme.textTheme.labelMedium),
-                const SizedBox(height: 6),
-                _MergedToolDetailSurface(
-                  text: parameterMarkup,
-                  color: theme.colorScheme.surfaceContainerHighest,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: <Widget>[
-                    Icon(
-                      isSuccess ? Icons.check : Icons.close,
-                      size: 16,
-                      color: isSuccess
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.error,
-                    ),
-                    const SizedBox(width: 6),
-                    Text('Result', style: theme.textTheme.labelMedium),
-                    const Spacer(),
-                    if (resultText.isNotEmpty)
-                      IconButton(
-                        onPressed: () {
-                          unawaited(_copyMergedToolResult(resultText));
-                        },
-                        icon: const Icon(Icons.content_copy, size: 18),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                _MergedToolDetailSurface(
-                  text: resultText,
-                  color: isSuccess
-                      ? theme.colorScheme.surfaceContainerHighest
-                      : theme.colorScheme.errorContainer,
-                ),
-              ],
-            ),
-          ),
-        ),
+    if (parsed?.kind == _ToolMergeNodeKind.result) {
+      final result = parsed!;
+      final matchIndex = pendingCalls.indexWhere(
+        (call) => call.matchToolName == result.matchToolName,
       );
-    },
-  );
-}
-
-class _MergedToolDetailSurface extends StatelessWidget {
-  const _MergedToolDetailSurface({required this.text, required this.color});
-
-  final String text;
-  final Color color;
-
-  /// Builds one selectable detail surface in the merged tool dialog.
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: SelectableText(text, style: Theme.of(context).textTheme.bodySmall),
-    );
+      if (matchIndex != -1) {
+        pendingCalls.removeAt(matchIndex);
+      }
+    }
   }
+  return pendingCalls.isEmpty ? null : pendingCalls.last.toolName;
 }
 
-/// Copies the merged result while keeping platform failures observable.
-Future<void> _copyMergedToolResult(String resultText) async {
-  try {
-    await Clipboard.setData(ClipboardData(text: resultText));
-  } on PlatformException catch (error, stackTrace) {
-    debugPrint('Failed to copy merged tool result: $error\n$stackTrace');
-  }
-}
-
-/// Parses one complete tool-like XML node for deterministic merge matching.
 _ToolMergeNode? _parseToolMergeNode(MarkdownNodeStable node) {
   if (node.type != MarkdownNodeType.xmlBlock) {
     return null;
@@ -387,6 +219,7 @@ _ToolMergeNode? _parseToolMergeNode(MarkdownNodeStable node) {
   if (toolName == null || toolName.isEmpty) {
     return null;
   }
+  final callId = node.xmlAttributes?['call_id']?.trim();
   if (normalizedTag == 'tool') {
     final matchToolName = _resolveProxyTargetToolName(toolName, node);
     if (matchToolName == null) {
@@ -395,6 +228,7 @@ _ToolMergeNode? _parseToolMergeNode(MarkdownNodeStable node) {
     return _ToolMergeNode(
       kind: _ToolMergeNodeKind.call,
       toolName: toolName,
+      callId: callId,
       matchToolName: matchToolName,
       parameterMarkup: _parameterMarkup(node.xmlChildren),
       resultText: '',
@@ -405,6 +239,7 @@ _ToolMergeNode? _parseToolMergeNode(MarkdownNodeStable node) {
   return _ToolMergeNode(
     kind: _ToolMergeNodeKind.result,
     toolName: toolName,
+    callId: callId,
     matchToolName: toolName,
     parameterMarkup: '',
     resultText: _resultText(node),
@@ -412,7 +247,6 @@ _ToolMergeNode? _parseToolMergeNode(MarkdownNodeStable node) {
   );
 }
 
-/// Resolves proxy wrappers to the concrete target named by their parameters.
 String? _resolveProxyTargetToolName(String toolName, MarkdownNodeStable node) {
   if (toolName != 'proxy' && toolName != 'package_proxy') {
     return toolName;
@@ -424,10 +258,9 @@ String? _resolveProxyTargetToolName(String toolName, MarkdownNodeStable node) {
       return targetToolName.isEmpty ? null : targetToolName;
     }
   }
-  return null;
+  return toolName;
 }
 
-/// Serializes Rust-decoded parameter children for the existing tool display.
 String _parameterMarkup(List<MarkdownXmlChildStable> children) {
   return children
       .where((child) => child.tagName != null)
@@ -447,7 +280,6 @@ String _parameterMarkup(List<MarkdownXmlChildStable> children) {
       .trim();
 }
 
-/// Returns readable result text from direct child metadata without reparsing XML.
 String _resultText(MarkdownNodeStable node) {
   if (node.xmlChildren.isEmpty) {
     return node.xmlBody?.trim() ?? '';
@@ -455,7 +287,6 @@ String _resultText(MarkdownNodeStable node) {
   return node.xmlChildren.map((child) => child.body).join().trim();
 }
 
-/// Escapes an attribute value reconstructed from stream metadata.
 String _escapeXmlAttribute(String value) {
   return value
       .replaceAll('&', '&amp;')
@@ -464,7 +295,6 @@ String _escapeXmlAttribute(String value) {
       .replaceAll('>', '&gt;');
 }
 
-/// Identifies formatting-only nodes permitted inside one tool batch.
 bool _isToolMergeSeparator(MarkdownNodeStable node) {
   if (node.type == MarkdownNodeType.plainText) {
     return node.content.trim().isEmpty;

@@ -154,6 +154,7 @@ String _assistantProtocolMarkupForParts(List<core_proxy.MessagePart> parts) {
       case core_proxy.MessagePartKind.toolCall:
       case core_proxy.MessagePartKind.toolResult:
       case core_proxy.MessagePartKind.status:
+      case core_proxy.MessagePartKind.interactiveUi:
         markup.write(_structuredPartMarkup(part));
         break;
     }
@@ -226,6 +227,12 @@ String _structuredPartMarkup(core_proxy.MessagePart part) {
         ..write('>')
         ..write(part.content)
         ..write('</status>');
+      break;
+    case core_proxy.MessagePartKind.interactiveUi:
+      markup
+        ..write('<openui>')
+        ..write(part.content)
+        ..write('</openui>');
       break;
   }
   return markup.toString();

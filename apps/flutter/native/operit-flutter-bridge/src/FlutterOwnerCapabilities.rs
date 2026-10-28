@@ -64,6 +64,25 @@ pub(crate) fn presentFlutterToast(message: &str) -> HostResult<()> {
     ownerConfirmed("toast", serde_json::json!({ "message": message }))
 }
 
+/// Writes system clipboard text through the owner interaction boundary.
+pub(crate) fn setFlutterClipboardText(text: &str) -> HostResult<String> {
+    #[derive(serde::Deserialize)]
+    struct ClipboardWrite {
+        success: bool,
+        text: String,
+    }
+    let response: ClipboardWrite = ownerSystemOperation(
+        "set_clipboard_text",
+        serde_json::json!({ "text": text }),
+    )?;
+    if !response.success {
+        return Err(HostError::new(
+            "set_clipboard_text was not confirmed by the owner",
+        ));
+    }
+    Ok(response.text)
+}
+
 /// Reads a location from the owner that can display its authorization UI.
 pub(crate) fn ownerLocation(
     timeout: i32,
