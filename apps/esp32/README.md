@@ -291,46 +291,47 @@ The hardware smoke tool requires an already paired/admitted device and does not
 complete first-pairing or full-chat acceptance. See the editor's verification
 commands and distinguish simulator, build and physical-device results.
 
-Physical validation on 2026-10-25 used an isolated Core and UART/TCP, preserving
-identity, pairing, Wi-Fi, the existing Space and the layout partition. The v72
-image completed one sync but failed its immediate repeat; the first upstream
-merge then exceeded the application partition by 38,352 bytes. These are
-historical results, not the current build status.
+### Build and simulator verification (2026-10-28)
 
-Building the standard library with `backtrace-trace-only` brought the image
-inside the original partition. With the matching-policy `observeSpaceProjection`
-reply and boxed Core projection future, v74 passed five consecutive full sync
-rounds (28.936–39.186 seconds), with actual paging verified on every round.
-There were no resets, allocation failures or session errors during those rounds;
-minimum free heap was 18,892 bytes and NVS use remained stable. This verifies
-repeated synchronization with identical authority history only.
+After rebasing onto upstream `main` at `fdf162a2` and consolidating repeated
+node-local schema checks, the complete
+`npm run test:device-budget --prefix tools/esp32-editor -- --firmware` gate passed:
+firmware and Xtensa ABI checks, shared C/Wasm UI, TypeScript, fixed heap/stack
+probes, and three authenticated TCP scenarios covering pairing/admission/restart,
+standalone chat across restart, and remote chat with storage recovery and speech.
+The standalone scenario peaked at 208,736 / 262,144 Rust heap bytes; remote chat,
+storage recovery and speech peaked at 213,104 / 262,144 bytes. Every sampled state
+reported zero allocation failures. Desktop regression passed 61 simulator tests,
+29 board tests, 116 editor tests and eight serial debug tests.
 
-Subsequent Core leave/rejoin attempts exposed approval OOM, receipt/topology
-storage failures, and a full-policy allocation hidden inside paged export.
-Compact approval references, lossless local topology encoding, and range-based
-permission-page scans address those failures. The original explicit approval
-completed using the same request, and Core adopted the original Edge Space at
-revision 13 with both members. The approval reply carries membership; Core
-fetches and verifies the complete current authority separately before adoption.
+The built image uses **3,948,096 / 3,997,696 bytes** (**49,600 free**).
+Its `.flash.text` uses **3,327,646 / 3,342,304 bytes** (**14,658 free**): code mapping
+and image partition capacity are separate limits. This image has not yet been
+flashed for another hardware acceptance run.
 
-Final v87 hardware validation on 2026-10-26 passed five consecutive real paged
-syncs (54.472–57.788 seconds), then two more after restarting both peers. Each
-round verified actual page/header calls, with no resets, allocation failures or
-session errors. Minimum free heap was 18,284 bytes. The original request stayed
-`joined`, the original two-member Space survived restart, and the chat page
-returned to connected/ready. This verifies the existing interrupted approval's
-recovery and repeated synchronization at the tested history size.
+Speech integration verified 65 seconds of PCM/WAV byte volume, recognition text
+over 8 KiB and ordered multi-segment TTS with deterministic providers. These
+checks cover transport behavior; physical long recording and actual recognition
+quality require hardware validation. Simulator heap/stack measurements exclude
+ESP-IDF, Wi-Fi, TLS and native driver overhead.
 
-The image uses **3,972,592 / 3,997,696 bytes** (**25,104 free**). The final logical
-snapshot uses **6,940 / 7,000 bytes** (**60 free**). Identity, pairing and encryption
-key contents were preserved; layout and authority-history bytes match their
-backups. Old requests and source/approval facts remain. Neither the original
-partition nor the logical budget was enlarged. The isolated Core was stopped
-and the serial port released after validation; the device retains its Space.
+### Hardware verification (2026-10-28)
 
-The hardware measurements above describe the recorded firmware image. Simulator
-checks use separately enforced Rust heap and task-stack budgets and are not board
-telemetry. See the [current chain and acceptance scope](../../docs/edge-core-entry-protocol.md).
+The earlier hardware-tested image preserved identity, pairing, Wi-Fi and the
+existing Space. With the [audio wiring below](#native-inmp441-and-onboard-speaker),
+the user confirmed an audible test tone. Duplicate-start rejection, intentional
+stop/restart and 20 consecutive short self-tests passed, with 44,544–46,080
+captured left-channel samples per test and no RX/queue overflow, observed reset
+or recorded allocation failure. Lowest free heap was 16,684 bytes; free heap
+after tests was 70,456–75,768 bytes. Capture resources were released on close.
+
+Those timed self-tests precede the WAV/PCM layering cleanup and upstream rebase.
+They establish short acquisition and restart behavior, without verifying queued
+recording tails, microphone acoustic quality, physical long recording or a Core
+STT/TTS round trip. The board and Windows Core had different Spaces; the existing
+Windows Space was preserved. A successful DMA write alone does not establish
+audible playback, and nonzero microphone samples do not establish recognition
+quality. See the [current chain and acceptance scope](../../docs/edge-core-entry-protocol.md).
 
 ## Recovering from an unavailable Space administrator
 
@@ -677,36 +678,5 @@ Firmware release builds omit Rust console log formatting and IDF info/warning
 logs that are disabled at runtime once Link owns UART; early startup failures,
 C error logs, UI errors, allocation evidence and USB diagnostics remain available.
 
-Hardware check on 2026-10-28 (ESP32-2432S028 with the wiring above): the user
-confirmed the test tone was audible. The hardware-tested firmware passed duplicate-start
-rejection, intentional stop/restart and 20 consecutive short self-tests, with
-44,544–46,080 captured left-channel samples per test and no RX/queue overflow.
-There were no observed resets or recorded allocation failures. Lowest free heap
-was 16,684 bytes; free heap after tests was 70,456–75,768 bytes. These self-tests
-end by elapsed time, so their sample counts can differ and they do not verify
-that queued recording tails are delivered. Capture resources are released on close.
-This verifies bounded acquisition and restart behavior. It does not establish
-microphone acoustic quality, a single long recording, or the Core STT/TTS round
-trip. The latter requires an admitted speech processor and supported WAV output.
-The device and Windows Core used for this check had different Spaces; the
-existing Windows Space was preserved.
-
-The hardware results above precede the WAV/PCM layering cleanup and rebase onto
-upstream `main` at `fdf162a2`. The revised firmware builds successfully at
-3,962,448 / 3,997,696 bytes (35,248 bytes free), passes the Xtensa ABI checks,
-and has not yet been flashed for another hardware acceptance run. Its
-`.flash.text` is 3,341,994 / 3,342,304 bytes: the code-mapping region has only
-310 bytes free, separately from the remaining image partition capacity.
-Desktop regression passes 61 simulator tests (including the shared WAV decoder),
-29 board tests (including both audio conversions), 116 editor tests and eight
-serial debug tests.
-
-After the rebase, `npm run test:device-budget --prefix tools/esp32-editor -- --firmware`
-passed end to end, including the fresh firmware/ABI build, fixed heap/stack
-probes and all three authenticated TCP integration scenarios. Standalone chat
-across restart peaked at 208,888 / 262,144 Rust heap bytes; remote chat, storage
-failure recovery and binary speech peaked at 213,088 / 262,144 bytes. Every
-sampled state reported zero allocation failures. The speech integration verified
-65 seconds of PCM/WAV byte volume, recognition text over 8 KiB and ordered TTS
-with deterministic providers; it does not establish physical long recording or
-actual speech recognition quality.
+Recorded build, simulator and hardware results are maintained in
+[Verification and current limitations](#verification-and-current-limitations).
