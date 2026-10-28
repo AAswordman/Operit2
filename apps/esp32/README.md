@@ -69,8 +69,9 @@ See [CLI commands](../../docs/cli-network-control.md).
 
 Without a `chat` configuration, the optional remote Core mode below remains
 available. Existing STT/TTS Stream/ReverseStream processing is retained. The
-ESP32-2432S028 firmware still has no microphone capture or speaker playback
-driver, so independent text chat does not imply verified physical voice I/O.
+ESP32-2432S028 firmware includes the board audio adapter described below.
+Independent text chat does not imply a connected STT/TTS processor or verified
+physical voice I/O.
 
 ## Memory and connection lifetime
 
@@ -601,4 +602,91 @@ maximum). The Core example processor owns up to 300 seconds of PCM and WAV
 assembly. Device TTS input is limited to 4,096 UTF-8 bytes and Core calls the
 existing provider in text segments of at most 1,024 bytes. Provider recording
 limits and actual recognition/playback quality remain separate from transport
-validation. This board still has no configured microphone or speaker driver.
+validation. The native adapter below is specific to the documented wiring;
+transport tests do not substitute for physical recording/playback acceptance.
+
+
+## Native INMP441 and onboard speaker
+
+The board audio adapter uses the existing speech protocol, not a second speech
+service. The supported wiring is INMP441 VDD=3.3V, GND=GND, L/R=GND (left),
+SCK/BCLK=GPIO27, WS=GPIO22, SD=GPIO35. GPIO21 remains the display backlight;
+do not connect the microphone clock there. The passive speaker uses the board's
+two-pin amplified speaker connector driven by DAC GPIO26.
+
+Capture runs on I2S1 at 16 kHz, with 32-bit stereo slots (64 bit clocks/frame).
+Only the left slot is converted to mono PCM16, with DC removal, bounded gain and
+saturation. A priority-10 native task drains DMA independently of Host workflows.
+Its fixed 32-block queue retains 512 ms of high-16-bit mono input and raw signal
+statistics in 16,768 bytes; the original PCM filter uses exactly those same high
+bits, so conversion is unchanged. Its 3 KiB stack, queue and scratch storage are
+released on close. Four DMA descriptors of 256 stereo frames provide a fixed
+8 KiB / 64 ms hardware ring. The ISR and its callback remain in IRAM during
+Flash cache suspension. DMA and PCM queue overflow fail capture explicitly.
+Audio also shares the existing device-work guard with background Space/NVS
+materialization. The existing Host worker sends PCM incrementally through
+`DeviceSpeech` with backpressure and request identity; there is no second Rust
+runtime or full-recording buffer. Statistics are published once per block and
+speech phase updates remain responsive. Completed text waits for local state
+work to finish before entering chat. Press the
+chat microphone again to stop; capture is limited to 300 seconds. Recognition
+requires a connected Core speech processor, and its completed text enters the
+existing chat send path once.
+
+Playback uses the GPIO26 DAC continuous driver / I2S0 and starts as PCM arrives.
+The initial gain is one quarter. Supported Core output is uncompressed PCM16 WAV,
+8–48 kHz, mono or stereo (downmixed). WAV headers, metadata and sample frames may
+cross transport blocks; only fixed parser/sample buffers are retained. MP3, Opus,
+and other compressed audio are rejected explicitly rather than sent as PCM noise.
+The Core provider must be configured to return a supported WAV format.
+
+The firmware application owns WAV parsing in `src/wav.rs` and speech/session
+orchestration in `src/audio.rs` and `src/device_speech.rs`. The streaming decoder
+emits mono PCM16 independently of hardware; the simulator tests this same source.
+`hosts/boards/esp32` owns native I2S/DAC resources, acquisition buffering and signal
+conversion, including the final PCM16-to-DAC8 conversion. It does not parse WAV
+or Core speech packets.
+
+In Settings → Device operations, **Audio self-test** works without a Space or
+speech processor: it plays a quiet 250 ms tone, then captures roughly three seconds
+of microphone sample statistics. It does not save or upload the recording.
+USB diagnostics expose the same test and status:
+
+```powershell
+python tools/esp32-editor/device-debug.py audio --port COM24 --text test
+python tools/esp32-editor/device-debug.py audio --port COM24 --text status
+```
+
+Use the actual attached COM port and close any other UART owner first. Tests
+report sample count, nonzero samples, left/right raw peak, clipping, sums and driver
+errors. A successful DMA write does not prove audible sound; nonzero microphone
+samples do not prove recognition quality. Hardware results must be recorded
+separately from desktop unit/transport tests.
+
+With an admitted Core speech processor attached, USB `audio --text "speak 你好"`
+requests synthesis through the existing processor and plays returned PCM16 WAV.
+The standalone hardware self-test does not establish this Core round trip.
+Firmware release builds omit Rust console log formatting and IDF info/warning
+logs that are disabled at runtime once Link owns UART; early startup failures,
+C error logs, UI errors, allocation evidence and USB diagnostics remain available.
+
+Hardware check on 2026-10-28 (ESP32-2432S028 with the wiring above): the user
+confirmed the test tone was audible. The hardware-tested firmware passed duplicate-start
+rejection, intentional stop/restart and 20 consecutive short self-tests, with
+44,544–46,080 captured left-channel samples per test and no RX/queue overflow.
+There were no observed resets or recorded allocation failures. Lowest free heap
+was 16,684 bytes; free heap after tests was 70,456–75,768 bytes. These self-tests
+end by elapsed time, so their sample counts can differ and they do not verify
+that queued recording tails are delivered. Capture resources are released on close.
+This verifies bounded acquisition and restart behavior. It does not establish
+microphone acoustic quality, a single long recording, or the Core STT/TTS round
+trip. The latter requires an admitted speech processor and supported WAV output.
+The device and Windows Core used for this check had different Spaces; the
+existing Windows Space was preserved.
+
+The hardware results above precede the WAV/PCM layering cleanup. The revised
+firmware builds successfully at 3,962,080 / 3,997,696 bytes (35,616 bytes free),
+passes the Xtensa ABI checks, and has not yet been flashed for another hardware
+acceptance run. Desktop regression passes 61 simulator tests (including the
+shared WAV decoder), two board audio conversion tests, 116 editor tests and
+eight serial debug tests.
