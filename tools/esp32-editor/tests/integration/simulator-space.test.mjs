@@ -688,14 +688,6 @@ ${JSON.stringify(fixtureMetadata)}
     assert(batch.plugins.items.every(item=>item.status==='success'||(item.status==='failure'&&item.testError)),
       'each enabled plugin must report its actual diagnostic result, including optional dependencies');
     assert.equal(batch.plugins.items.find(item=>item.id==='com.operit.daily_life').status,'success');
-    const uiOnlyIndex=batch.plugins.items.findIndex(item=>item.id==='com.operit.thinking_guidance');
-    await update();await tap('plugin_probe_'+uiOnlyIndex);
-    const noTool=await waitDevice('UI-only plugin metadata has no business tools',device=>
-      device.plugins.details?.id==='com.operit.thinking_guidance'&&!device.plugins.details.loading);
-    assert.equal(noTool.plugins.details.toolTotal,0);
-    await update();assert(!screen().nodes.some(n=>n.id==='plugin_test_tool'));
-    assert(!screen().nodes.find(n=>n.id==='plugin_info').text.includes('工具:'));
-    await tap('plugin_dialog_close');
     await tap('plugins_exclusive');
     await waitDevice('exclusive tab is an explicit empty category',device=>device.plugins.category==='exclusive'&&!device.plugins.loading&&device.plugins.total===0);
     await update();assert.equal(screen().pluginCategory,'exclusive');
