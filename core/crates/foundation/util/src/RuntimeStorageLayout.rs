@@ -260,6 +260,14 @@ pub const RUNTIME_CLEAN_ON_EXIT: RuntimeStoragePathDefinition = RuntimeStoragePa
     RuntimeStorageOwnership::Ephemeral,
 );
 pub const RUNTIME_CLEAN_ON_EXIT_DIR_PATH: &str = RUNTIME_CLEAN_ON_EXIT.path;
+/// Owns persisted chat attachment files; unlike RUNTIME_CLEAN_ON_EXIT these survive restarts.
+pub const RUNTIME_CHAT_ATTACHMENTS: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::tree("runtime/chat_attachments", RuntimeStorageOwnership::CoreNode);
+pub const RUNTIME_CHAT_ATTACHMENTS_DIR_PATH: &str = RUNTIME_CHAT_ATTACHMENTS.path;
+/// Owns the single-turn workspace edit snapshots used for rollback and preview.
+pub const RUNTIME_WORKSPACE_BACKUPS: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::tree("runtime/workspace_backups", RuntimeStorageOwnership::CoreNode);
+pub const RUNTIME_WORKSPACE_BACKUPS_DIR_PATH: &str = RUNTIME_WORKSPACE_BACKUPS.path;
 pub const RUNTIME_SYNC: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree("runtime/sync", RuntimeStorageOwnership::CoreNode);
 pub const RUNTIME_SYNC_DIR_PATH: &str = RUNTIME_SYNC.path;
@@ -432,6 +440,8 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     EXTENSIONS_PLUGIN_CONFIGS,
     EXTENSIONS_PLUGIN_DATA,
     RUNTIME_CLEAN_ON_EXIT,
+    RUNTIME_CHAT_ATTACHMENTS,
+    RUNTIME_WORKSPACE_BACKUPS,
     RUNTIME_SYNC,
     RUNTIME_IMPORTED_OPERIT1_FILES,
     RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES,

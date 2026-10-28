@@ -29,7 +29,7 @@ class UploadBridge extends OperitRuntimeBridge {
       case 'completeAttachmentUpload':
         result = <String, Object?>{
           'filePath':
-              '/receiver/runtime/temp/clean_on_exit/attachment_id_文档.apk',
+              '/receiver/runtime/chat_attachments/attachment_id_文档.apk',
           'nodeId': 'core-receiver',
           'fileName': '文档.apk',
           'mimeType': 'application/octet-stream',

@@ -19,7 +19,7 @@ use serde_json::json;
 
 /// Exercise the same generated import boundary that Flutter uses, before chat-send routing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn imported_attachment_keeps_its_actual_node_and_ephemeral_storage() {
+async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let root = std::env::temp_dir().join(format!(
@@ -97,13 +97,13 @@ async fn imported_attachment_keeps_its_actual_node_and_ephemeral_storage() {
             assert_eq!(attachment.nodeId.as_deref(), Some("core-source-b"));
             assert_eq!(std::fs::read(&attachment.filePath).unwrap(), [0, 1, 255]);
             assert!(std::path::Path::new(&attachment.filePath)
-                .starts_with(runtime_root.join("temp/clean_on_exit")));
+                .starts_with(runtime_root.join("chat_attachments")));
             assert!(attachment
                 .fileToolPath()
-                .starts_with("/app/data/temp/clean_on_exit/"));
+                .starts_with("/app/data/chat_attachments/"));
             assert_eq!(
-                runtimeStorageOwnership("runtime/temp/clean_on_exit/file.pdf").unwrap(),
-                RuntimeStorageOwnership::Ephemeral
+                runtimeStorageOwnership("runtime/chat_attachments/file.pdf").unwrap(),
+                RuntimeStorageOwnership::CoreNode
             );
 
             let stale_chat = CoreLinkSharedClient::call(

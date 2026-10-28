@@ -7,14 +7,14 @@ use operit_host_api::{FileSystemHost, RuntimeStorageHost, RuntimeStorageWriteHos
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_util::stream::ReverseStream::ReverseStream;
-use operit_util::{OperitPaths, RuntimeStorageLayout::RUNTIME_CLEAN_ON_EXIT_DIR_PATH};
+use operit_util::{OperitPaths, RuntimeStorageLayout::RUNTIME_CHAT_ATTACHMENTS_DIR_PATH};
 use uuid::Uuid;
 
 use super::ChatServiceCore::getMimeTypeFromPath;
 
 const ATTACHMENT_UPLOAD_MAX_CHUNK_BYTES: usize = 1024 * 1024;
 
-/// Receives selected files directly into ephemeral Host storage with bounded memory.
+/// Receives selected files directly into persistent Host storage with bounded memory.
 #[derive(Clone)]
 pub struct AttachmentTransferManager {
     storageHost: Arc<dyn RuntimeStorageHost>,
@@ -119,6 +119,13 @@ impl AttachmentTransferManager {
         if expectedByteLength.is_some_and(|expected| expected != stored.size) {
             return Err("Uploaded attachment byte length mismatch".to_string());
         }
+        let noMediaMarker = path
+            .parent()
+            .ok_or("Uploaded attachment path has no parent directory")?
+            .join(".nomedia");
+        self.fileSystemHost
+            .writeFile(&noMediaMarker.to_string_lossy(), "", false)
+            .map_err(|error| error.to_string())?;
         Ok(AttachmentInfo {
             nodeId: CoreNodeIdentityStore::new(self.storageHost.clone())
                 .identity()
@@ -175,7 +182,7 @@ fn attachmentStoragePath(uploadId: &str, fileName: &str) -> Result<String, Strin
     validateAttachmentFileName(fileName)?;
     let id = Uuid::parse_str(uploadId).map_err(|_| "Invalid attachment upload identity")?;
     Ok(format!(
-        "{RUNTIME_CLEAN_ON_EXIT_DIR_PATH}/attachment_{}_{}",
+        "{RUNTIME_CHAT_ATTACHMENTS_DIR_PATH}/attachment_{}_{}",
         id.simple(),
         fileName
     ))
@@ -186,12 +193,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn upload_paths_are_ephemeral_and_cannot_escape_the_attachment_directory() {
+    fn upload_paths_are_persistent_and_cannot_escape_the_attachment_directory() {
         let id = Uuid::new_v4().simple().to_string();
         assert!(
             attachmentStoragePath(&id, "文档.apk")
                 .unwrap()
-                .starts_with("runtime/temp/clean_on_exit/")
+                .starts_with("runtime/chat_attachments/")
         );
         for name in ["", " ", ".", "..", "../bad", "a/b", "a\\b", "a\0b"] {
             assert!(attachmentStoragePath(&id, name).is_err(), "{name:?}");
