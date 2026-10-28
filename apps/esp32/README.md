@@ -293,19 +293,20 @@ commands and distinguish simulator, build and physical-device results.
 
 ### Build and simulator verification (2026-10-28)
 
-After rebasing onto upstream `main` at `fdf162a2` and consolidating repeated
-node-local schema checks, the complete
+The Edge changes target upstream `review/pr356-edge-space-sync-memory` at
+`269d910d`. After rebasing the remaining device changes onto that dedicated
+branch and consolidating repeated node-local schema checks, the complete
 `npm run test:device-budget --prefix tools/esp32-editor -- --firmware` gate passed:
 firmware and Xtensa ABI checks, shared C/Wasm UI, TypeScript, fixed heap/stack
 probes, and three authenticated TCP scenarios covering pairing/admission/restart,
 standalone chat across restart, and remote chat with storage recovery and speech.
-The standalone scenario peaked at 208,736 / 262,144 Rust heap bytes; remote chat,
-storage recovery and speech peaked at 213,104 / 262,144 bytes. Every sampled state
+The standalone scenario peaked at 208,224 / 262,144 Rust heap bytes; remote chat,
+storage recovery and speech peaked at 212,840 / 262,144 bytes. Every sampled state
 reported zero allocation failures. Desktop regression passed 61 simulator tests,
 29 board tests, 116 editor tests and eight serial debug tests.
 
-The built image uses **3,948,096 / 3,997,696 bytes** (**49,600 free**).
-Its `.flash.text` uses **3,327,646 / 3,342,304 bytes** (**14,658 free**): code mapping
+The built image uses **3,945,104 / 3,997,696 bytes** (**52,592 free**).
+Its `.flash.text` uses **3,324,810 / 3,342,304 bytes** (**17,494 free**): code mapping
 and image partition capacity are separate limits. This image has not yet been
 flashed for another hardware acceptance run.
 
