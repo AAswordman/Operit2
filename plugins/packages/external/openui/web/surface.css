@@ -1,0 +1,5 @@
+html, body { margin: 0; padding: 0; background: transparent; }
+body { font-family: system-ui, sans-serif; }
+#surface { display: flow-root; padding: 4px; }
+#root { min-width: 0; }
+#error { white-space: pre-wrap; overflow-wrap: anywhere; color: #b42318; font: 12px/1.5 monospace; }

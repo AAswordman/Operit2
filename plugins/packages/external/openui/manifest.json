@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.openui",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "OpenUI 交互界面",
+    "en": "OpenUI"
+  },
+  "description": {
+    "zh": "通过可选插件渲染 OpenUI Lang，使用官方完整组件库，支持流式界面、表单、图表与交互动作。",
+    "en": "Optional OpenUI Lang rendering with the full upstream component library, streaming, forms, charts and actions."
+  },
+  "enabled_by_default": false,
+  "installation_scope": "space",
+  "resources": [
+    {
+      "key": "openui_html",
+      "path": "dist/web/index.html",
+      "mime": "text/html"
+    },
+    {
+      "key": "openui_js",
+      "path": "dist/web/openui.js",
+      "mime": "application/javascript"
+    },
+    {
+      "key": "openui_css",
+      "path": "dist/web/openui.css",
+      "mime": "text/css"
+    },
+    {
+      "key": "openui_license",
+      "path": "THIRD_PARTY_NOTICES.md",
+      "mime": "text/markdown"
+    }
+  ]
+}
