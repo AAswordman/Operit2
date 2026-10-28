@@ -54,6 +54,44 @@ execution owns the canonical lease, input-hook dispatch, persistence receipt,
 completion publication and lease release. An accepted send is not dependent on
 plugin code eventually calling a separate finish method.
 
+## Flutter active-turn guidance
+
+The Flutter composer has three explicit busy-turn delivery choices. Enter and the
+primary action keep the existing **queue** behavior. **Guide current conversation**
+calls the dedicated internal `steerMessage(chatId, messageText)` Core route.
+**Interrupt and send** is the only composer action that deliberately combines
+`cancelMessage` with a new ordinary send. Guidance is currently text-only; an
+attachment or reply target is rejected without clearing the draft.
+
+Guidance is not a second ordinary send and does not acquire another execution
+lease. The active chat turn owns a shared FIFO inbox. The provider peeks at that
+inbox after finalized tool results and before starting another model request. It
+does not cancel an in-flight provider request or tool invocation and does not
+consume the inbox itself.
+
+At the completed physical-response boundary, the outer chat turn commits the
+current assistant segment, then drains and persists each guidance entry as its own
+visible user message. It resumes from the last committed guidance timestamp under
+the same logical turn and execution lease. Rebuilt model history therefore keeps
+the actual order: original user input, assistant segment, guidance entries, next
+assistant segment. Multiple entries are consumed once in FIFO order; entries that
+arrive after a continuation cutoff remain for the following segment. The final
+receipt still identifies the original user submission while returning the final
+assistant revision.
+
+An empty final inbox closes atomically, so a later guidance request receives an
+error instead of being stranded in a finished turn. Cancellation closes the inbox
+and discards only entries not yet committed. Route resume history includes any
+already committed guidance. There is no automatic conversion to a queued or
+ordinary send after a guidance error.
+
+Queued messages retain their existing independent actions: withdraw to the
+editor, guide the active turn, interrupt and send, or delete. A queued item is
+atomically claimed before guidance and restored if its submit hook or Core rejects
+delivery. Withdrawing edits a pending queue item; guidance already accepted by the
+active turn is no longer part of that pending queue. This Flutter/Core control
+route is not a new plugin SDK method.
+
 ## Semantic observation
 
 ```ts

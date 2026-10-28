@@ -217,7 +217,7 @@ async fn rollback_chat(
             "Rolled back {chatId} to message {messageTimestamp}"
         ));
     } else {
-        output.push_stdout_line("Rollback not applied: message must exist and be a user message");
+        output.push_stdout_line("Rollback not applied: message must exist and be a user message, and its workspace snapshot must still be available (only the latest editing turn is kept; use Git for older changes)");
     }
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -382,6 +382,7 @@ fn show_chat_stats(output: &mut CoreCommandOutput) -> Result<(), String> {
 struct ChatNewArgs {
     setAsCurrentChat: bool,
     sourceChatId: Option<String>,
+    workspaceId: Option<String>,
     input: Option<serde_json::Value>,
 }
 
@@ -404,22 +405,24 @@ async fn create_chat(
             options.setAsCurrentChat,
             options.sourceChatId.clone(),
             None,
+            options.workspaceId.clone(),
             options.input.clone(),
         )
         .await
     }
     .await?;
     output.push_stdout_line(format!("Created chat {chatId}"));
-    output.setJsonStdout(json!({ "chatId": chatId, "setAsCurrentChat": options.setAsCurrentChat, "sourceChatId": options.sourceChatId, "input": options.input }));
+    output.setJsonStdout(json!({ "chatId": chatId, "setAsCurrentChat": options.setAsCurrentChat, "sourceChatId": options.sourceChatId, "workspaceId": options.workspaceId, "input": options.input }));
     Ok(())
 }
 
 /// Parses only the generic source, opaque JSON input and current-selection switches.
 fn parse_chat_new_args(args: &[String]) -> Result<ChatNewArgs, String> {
-    let usage = "usage: operit2 chat new [--set-current <true|false>] [--source <chat-id>] [--input <json-object>]";
+    let usage = "usage: operit2 chat new [--set-current <true|false>] [--source <chat-id>] [--workspace <workspace-id>] [--input <json-object>]";
     let mut options = ChatNewArgs {
         setAsCurrentChat: true,
         sourceChatId: None,
+        workspaceId: None,
         input: None,
     };
     let mut hasSetCurrent = false;
@@ -444,6 +447,15 @@ fn parse_chat_new_args(args: &[String]) -> Result<ChatNewArgs, String> {
                     return Err("Source chat id must be nonblank canonical text".to_string());
                 }
                 options.sourceChatId = Some(value.clone());
+            }
+            "--workspace" => {
+                if options.workspaceId.is_some() {
+                    return Err("Duplicate --workspace option".to_string());
+                }
+                if value.trim().is_empty() || value.trim() != value {
+                    return Err("Workspace id must be nonblank canonical text".to_string());
+                }
+                options.workspaceId = Some(value.clone());
             }
             "--input" => {
                 if options.input.is_some() {

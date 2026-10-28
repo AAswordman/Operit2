@@ -284,6 +284,60 @@ abstract class AppLocalizations {
   /// **'Added to queue'**
   String get chatQueueAdded;
 
+  /// No description provided for @chatSendOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how to send'**
+  String get chatSendOptions;
+
+  /// No description provided for @chatQueueAddMessageDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Send after the current reply finishes (default)'**
+  String get chatQueueAddMessageDescription;
+
+  /// No description provided for @chatGuideCurrentTurn.
+  ///
+  /// In en, this message translates to:
+  /// **'Guide current conversation'**
+  String get chatGuideCurrentTurn;
+
+  /// No description provided for @chatGuideCurrentTurnDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply in a later model request without interrupting this turn'**
+  String get chatGuideCurrentTurnDescription;
+
+  /// No description provided for @chatInterruptAndSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Interrupt and send'**
+  String get chatInterruptAndSend;
+
+  /// No description provided for @chatInterruptAndSendDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop the current reply and send this message now'**
+  String get chatInterruptAndSendDescription;
+
+  /// No description provided for @chatGuidanceAccepted.
+  ///
+  /// In en, this message translates to:
+  /// **'Guidance added for a later model request'**
+  String get chatGuidanceAccepted;
+
+  /// No description provided for @chatGuidanceTextOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Guidance supports text only. Remove attachments and the reply target first.'**
+  String get chatGuidanceTextOnly;
+
+  /// No description provided for @chatQueueWithdrawToEditor.
+  ///
+  /// In en, this message translates to:
+  /// **'Withdraw to editor'**
+  String get chatQueueWithdrawToEditor;
+
   /// No description provided for @chatPleaseCreateNewChat.
   ///
   /// In en, this message translates to:
@@ -779,7 +833,7 @@ abstract class AppLocalizations {
   /// No description provided for @workspaceUnbindTitle.
   ///
   /// In en, this message translates to:
-  /// **'Unbind workspace'**
+  /// **'Remove project from this chat'**
   String get workspaceUnbindTitle;
 
   /// No description provided for @workspaceUnbindDescription.
@@ -4982,11 +5036,17 @@ abstract class AppLocalizations {
   /// **'Chat display'**
   String get settingsAppearanceChatDisplaySection;
 
-  /// No description provided for @settingsAppearanceMessageStyle.
+  /// No description provided for @settingsAppearanceUserMessageStyle.
   ///
   /// In en, this message translates to:
-  /// **'Message style'**
-  String get settingsAppearanceMessageStyle;
+  /// **'User message style'**
+  String get settingsAppearanceUserMessageStyle;
+
+  /// No description provided for @settingsAppearanceAiMessageStyle.
+  ///
+  /// In en, this message translates to:
+  /// **'AI message style'**
+  String get settingsAppearanceAiMessageStyle;
 
   /// No description provided for @settingsAppearanceMessageStyleClean.
   ///

@@ -104,6 +104,33 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatQueueAdded => '已加入发送队列';
 
   @override
+  String get chatSendOptions => '选择发送方式';
+
+  @override
+  String get chatQueueAddMessageDescription => '当前回复结束后自动发送（默认）';
+
+  @override
+  String get chatGuideCurrentTurn => '引导当前对话';
+
+  @override
+  String get chatGuideCurrentTurnDescription => '不打断当前任务，在后续模型请求中生效';
+
+  @override
+  String get chatInterruptAndSend => '打断并发送';
+
+  @override
+  String get chatInterruptAndSendDescription => '停止当前回复，立即发送这条消息';
+
+  @override
+  String get chatGuidanceAccepted => '已添加引导，将在后续模型请求中生效';
+
+  @override
+  String get chatGuidanceTextOnly => '引导仅支持文本，请先移除附件和回复目标。';
+
+  @override
+  String get chatQueueWithdrawToEditor => '撤回到编辑框';
+
+  @override
   String get chatPleaseCreateNewChat => '请新建对话';
 
   @override
@@ -370,7 +397,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get workspaceProjectTypeDialogDescription => '请选择要创建的默认工作区类型';
 
   @override
-  String get workspaceUnbindTitle => '解除绑定';
+  String get workspaceUnbindTitle => '从当前对话移除项目';
 
   @override
   String get workspaceUnbindDescription => '解除当前会话的关联，保留工作区文件';
@@ -2640,7 +2667,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceChatDisplaySection => '聊天显示';
 
   @override
-  String get settingsAppearanceMessageStyle => '消息样式';
+  String get settingsAppearanceUserMessageStyle => '用户消息样式';
+
+  @override
+  String get settingsAppearanceAiMessageStyle => 'AI 消息样式';
 
   @override
   String get settingsAppearanceMessageStyleClean => '命令式';
